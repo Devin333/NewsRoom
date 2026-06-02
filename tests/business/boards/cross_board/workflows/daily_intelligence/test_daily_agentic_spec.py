@@ -70,6 +70,8 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert "sources.recollection_profile" in steps["planner_agent"].metadata["optional_read_keys"]
     assert "source_recollection_execution_plan" in steps["planner_agent"].metadata["optional_read_keys"]
     assert "sources.recollection_execution_plan" in steps["planner_agent"].metadata["optional_read_keys"]
+    assert "source_recollection_execution_report" in steps["planner_agent"].metadata["optional_read_keys"]
+    assert "sources.recollection_execution_report" in steps["planner_agent"].metadata["optional_read_keys"]
 
     assert steps["analyst_agent"].step_type == StepType.AGENT_LOOP
     assert steps["analyst_agent"].metadata["agent_id"] == ANALYST_AGENT_ID
@@ -131,6 +133,9 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert "sources.raw_items" in steps["recollect_sources"].metadata["optional_read_keys"]
     assert "sources.fetch_requests" in steps["recollect_sources"].write_keys
     assert "sources.fetch_results" in steps["recollect_sources"].write_keys
+    assert "source_recollection_execution_report" in steps["recollect_sources"].write_keys
+    assert "sources.recollection_execution_report" in steps["recollect_sources"].write_keys
+    assert "source_recollection_execution_report" in steps["recollect_sources"].required_output_keys
     assert "agent_feedback_events" in steps["finalize_report"].read_keys
     assert "agent.feedback.events" in steps["finalize_report"].read_keys
     assert "agent_feedback_route" in steps["finalize_report"].read_keys

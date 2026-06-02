@@ -129,6 +129,7 @@ def _planner_agent_step() -> StepSpec:
                 "agent_feedback_loop_state",
                 "source_recollection_profile",
                 "source_recollection_execution_plan",
+                "source_recollection_execution_report",
             ]),
         },
     )
@@ -367,6 +368,7 @@ def _recollect_sources_step() -> StepSpec:
             "source_fallback_report",
             "source_selection_report",
             "source_coverage_report",
+            "source_recollection_execution_report",
         ]),
         required_output_keys=[
             "raw_items",
@@ -384,6 +386,7 @@ def _recollect_sources_step() -> StepSpec:
             "source_fallback_report",
             "source_selection_report",
             "source_coverage_report",
+            "source_recollection_execution_report",
         ],
         metadata={
             "optional_read_keys": with_namespaced_read_keys([

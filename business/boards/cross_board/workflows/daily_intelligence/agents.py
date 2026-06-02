@@ -27,7 +27,10 @@ def build_planner_agent() -> AgentSpec:
             "only to refine the next research plan within the existing source "
             "boundary. If a source_recollection_execution_plan is provided, treat "
             "its tasks as explicit source recollection work items for planning; "
-            "do not claim they have already been fetched. Return JSON only."
+            "do not claim they have already been fetched. If a "
+            "source_recollection_execution_report is provided, use only its "
+            "explicit execution status and counts when adjusting the next plan. "
+            "Return JSON only."
         ),
         input_keys=[
             "request",
@@ -40,6 +43,7 @@ def build_planner_agent() -> AgentSpec:
             "agent_feedback_loop_state",
             "source_recollection_profile",
             "source_recollection_execution_plan",
+            "source_recollection_execution_report",
         ],
         output_key="research_plan",
         validation_policy=daily_agent_validation_policy(),

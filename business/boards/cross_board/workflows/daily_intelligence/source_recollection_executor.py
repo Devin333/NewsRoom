@@ -36,9 +36,11 @@ from business.boards.cross_board.workflows.daily_intelligence.source_fetch_recor
 from business.boards.cross_board.workflows.daily_intelligence.source_health_flow import SourceHealthFlow
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection_execution import (
     DailySourceRecollectionExecutionPlan,
+    DailySourceRecollectionExecutionReportService,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection_execution import (
     DailySourceRecollectionExecutionTask,
+    DailySourceRecollectionExecutionTaskResult,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_processing import (
     source_event as _source_event,
@@ -57,10 +59,14 @@ class DailySourceRecollectionExecutor:
         source_registry: SourceRegistry,
         source_dispatcher: SourceDispatcher,
         source_health_manager: BasicSourceHealthManager,
+        execution_report_service: DailySourceRecollectionExecutionReportService | None = None,
     ) -> None:
         self.source_registry = source_registry
         self.source_dispatcher = source_dispatcher
         self.source_health_manager = source_health_manager
+        self.execution_report_service = (
+            execution_report_service or DailySourceRecollectionExecutionReportService()
+        )
 
     def recollect_sources(
         self,
@@ -79,7 +85,7 @@ class DailySourceRecollectionExecutor:
         previous_source_events = _source_events(read_optional_buffer_list(buffer, "source_events"))
         metrics = _pipeline_metrics(read_optional_buffer_value(buffer, "source_pipeline_metrics"))
         if plan is None or not plan.tasks:
-            return build_source_collection_output(
+            output = build_source_collection_output(
                 raw_items=previous_raw_items,
                 source_errors=previous_source_errors,
                 skipped_sources=previous_skipped_sources,
@@ -100,6 +106,13 @@ class DailySourceRecollectionExecutor:
                     fallback_used=False,
                 ),
             )
+            output["source_recollection_execution_report"] = (
+                self.execution_report_service.skipped_report(
+                    reason="missing_or_empty_execution_plan",
+                    plan=plan,
+                )
+            )
+            return with_namespaced_aliases(output)
 
         raw_items = list(previous_raw_items)
         source_errors = list(previous_source_errors)
@@ -118,11 +131,17 @@ class DailySourceRecollectionExecutor:
         limit_per_task = _limit_per_task(request)
         selected_sources_by_id = {}
         matched_source_count = 0
+        task_results: list[DailySourceRecollectionExecutionTaskResult] = []
         for task in plan.tasks:
             selected_sources, selection_report = self.source_registry.select_sources_with_report(
                 topic=task.query,
                 fallback_to_enabled=True,
             )
+            selected_source_ids = [source.source_id for source in selected_sources]
+            task_fetch_request_ids: list[str] = []
+            task_fetch_result_ids: list[str] = []
+            task_raw_item_count = 0
+            task_error_count = 0
             matched_source_count += selection_report.matched_source_count
             for source in selected_sources:
                 selected_sources_by_id.setdefault(source.source_id, source)
@@ -142,6 +161,7 @@ class DailySourceRecollectionExecutor:
                 )
                 fetch_request = _with_recollection_metadata(fetch_request, plan, task)
                 source_fetch_requests.append(fetch_request)
+                task_fetch_request_ids.append(request_id)
                 metrics.record_source_seen(source.source_type, source.reliability)
                 skip_decision = health_flow.decide_fetch(source)
                 if skip_decision.should_skip:
@@ -149,14 +169,14 @@ class DailySourceRecollectionExecutor:
                     skip_metadata = dict(skip_decision.metadata or {})
                     skip_metadata.update(_recollection_metadata(plan, task))
                     skipped_sources.append(skip_metadata)
-                    source_fetch_results.append(
-                        skipped_source_fetch_result(
-                            source,
-                            request_id=request_id,
-                            skip_reason=skip_reason,
-                            metadata=skip_metadata,
-                        )
+                    fetch_result = skipped_source_fetch_result(
+                        source,
+                        request_id=request_id,
+                        skip_reason=skip_reason,
+                        metadata=skip_metadata,
                     )
+                    source_fetch_results.append(fetch_result)
+                    task_fetch_result_ids.append(fetch_result.request_id)
                     metrics.sources_skipped += 1
                     metrics.record_source_skipped(source.source_type)
                     continue
@@ -174,17 +194,19 @@ class DailySourceRecollectionExecutor:
                 errors = with_error_request_id(errors, request_id)
                 items = [_with_recollection_item_metadata(item, plan, task) for item in items]
                 fetch_latency_ms = elapsed_ms(latency_start)
-                source_fetch_results.append(
-                    final_source_fetch_result(
-                        source=source,
-                        request_id=request_id,
-                        connector_fetch_result=connector_fetch_result,
-                        success=bool(items),
-                        latency_ms=fetch_latency_ms,
-                        items=items,
-                        errors=errors,
-                    )
+                fetch_result = final_source_fetch_result(
+                    source=source,
+                    request_id=request_id,
+                    connector_fetch_result=connector_fetch_result,
+                    success=bool(items),
+                    latency_ms=fetch_latency_ms,
+                    items=items,
+                    errors=errors,
                 )
+                source_fetch_results.append(fetch_result)
+                task_fetch_result_ids.append(fetch_result.request_id)
+                task_raw_item_count += len(items)
+                task_error_count += len(errors)
                 metrics.record_fetch_latency(fetch_latency_ms)
                 raw_items.extend(items)
                 remaining = max(0, limit_per_task - _task_item_count(raw_items, task))
@@ -243,6 +265,29 @@ class DailySourceRecollectionExecutor:
                                 error,
                                 fetch_latency_ms=fetch_latency_ms,
                             )
+            task_results.append(
+                DailySourceRecollectionExecutionTaskResult(
+                    task_id=task.task_id,
+                    query=task.query,
+                    selected_source_ids=selected_source_ids,
+                    fetch_request_ids=task_fetch_request_ids,
+                    fetch_result_ids=task_fetch_result_ids,
+                    raw_item_count=task_raw_item_count,
+                    error_count=task_error_count,
+                    status=_task_result_status(
+                        selected_source_ids=selected_source_ids,
+                        fetch_request_ids=task_fetch_request_ids,
+                        raw_item_count=task_raw_item_count,
+                        error_count=task_error_count,
+                    ),
+                    reason=_task_result_reason(
+                        selected_source_ids=selected_source_ids,
+                        fetch_request_ids=task_fetch_request_ids,
+                        raw_item_count=task_raw_item_count,
+                        error_count=task_error_count,
+                    ),
+                )
+            )
         metrics.sources_total += len(selected_sources_by_id)
         metrics.raw_items_count = len(raw_items)
         source_events.append(
@@ -254,7 +299,7 @@ class DailySourceRecollectionExecutor:
             )
         )
         selected_sources = list(selected_sources_by_id.values())
-        return build_source_collection_output(
+        output = build_source_collection_output(
             raw_items=raw_items,
             source_errors=source_errors,
             skipped_sources=skipped_sources,
@@ -272,6 +317,13 @@ class DailySourceRecollectionExecutor:
                 fallback_used=False,
             ),
         )
+        output["source_recollection_execution_report"] = (
+            self.execution_report_service.build_report(
+                plan=plan,
+                tasks=task_results,
+            )
+        )
+        return with_namespaced_aliases(output)
 
 
 def _execution_plan(value: Any) -> DailySourceRecollectionExecutionPlan | None:
@@ -342,6 +394,44 @@ def _limit_per_task(request: dict[str, Any]) -> int:
         return max(1, int(value))
     except (TypeError, ValueError):
         return 3
+
+
+def _task_result_status(
+    *,
+    selected_source_ids: list[str],
+    fetch_request_ids: list[str],
+    raw_item_count: int,
+    error_count: int,
+) -> str:
+    if raw_item_count > 0 and error_count == 0:
+        return "succeeded"
+    if raw_item_count > 0:
+        return "partial"
+    if error_count > 0:
+        return "failed"
+    if selected_source_ids or fetch_request_ids:
+        return "skipped"
+    return "skipped"
+
+
+def _task_result_reason(
+    *,
+    selected_source_ids: list[str],
+    fetch_request_ids: list[str],
+    raw_item_count: int,
+    error_count: int,
+) -> str | None:
+    if raw_item_count > 0 and error_count == 0:
+        return None
+    if raw_item_count > 0 and error_count > 0:
+        return "items_collected_with_errors"
+    if error_count > 0:
+        return "all_fetches_failed"
+    if not selected_source_ids:
+        return "no_sources_selected"
+    if not fetch_request_ids:
+        return "task_limit_reached"
+    return "no_items_collected"
 
 
 def _source_errors(values: list[Any]) -> list[SourceError]:

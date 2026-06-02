@@ -270,6 +270,9 @@ class DailyIntelligenceArtifactPublisher:
                 "source_freshness_report": "source_freshness_report.json",
                 "source_traceability_report": "source_traceability_report.json",
                 "source_governance_report": "source_governance_report.json",
+                "source_recollection_profile": "source_recollection/profile.json",
+                "source_recollection_execution_plan": "source_recollection/execution_plan.json",
+                "source_recollection_execution_report": "source_recollection/execution_report.json",
             },
         )
         output = context.output
@@ -279,6 +282,7 @@ class DailyIntelligenceArtifactPublisher:
             context.manifest["source_quality_score_count"] = len(output["source_quality_scores"])
         if "source_ranking_scores" in output:
             context.manifest["source_ranking_score_count"] = len(output["source_ranking_scores"])
+        _update_source_recollection_manifest_fields(context.manifest, output)
         source_artifacts = SourceArtifactWriter(context.artifact_manager).write_source_artifacts(
             context.run_id,
             raw_items=output.get("raw_items"),
@@ -439,6 +443,29 @@ def _update_quality_manifest_fields(manifest: dict[str, Any], output: dict[str, 
     decision = _field_value(quality_result, "decision")
     if decision is not None:
         manifest["quality_decision"] = decision
+
+
+def _update_source_recollection_manifest_fields(
+    manifest: dict[str, Any],
+    output: dict[str, Any],
+) -> None:
+    report = output.get("source_recollection_execution_report")
+    if report is None:
+        return
+    manifest["source_recollection"] = {
+        "plan_id": _field_value(report, "plan_id"),
+        "status": _field_value(report, "status"),
+        "task_count": _int_value(_field_value(report, "task_count")),
+        "raw_item_count": _int_value(_field_value(report, "raw_item_count")),
+        "error_count": _int_value(_field_value(report, "error_count")),
+        "fetch_request_count": _int_value(_field_value(report, "fetch_request_count")),
+        "fetch_result_count": _int_value(_field_value(report, "fetch_result_count")),
+        "artifact": "source_recollection/execution_report.json",
+    }
+    if "source_recollection_profile" in output:
+        manifest["source_recollection"]["profile_artifact"] = "source_recollection/profile.json"
+    if "source_recollection_execution_plan" in output:
+        manifest["source_recollection"]["plan_artifact"] = "source_recollection/execution_plan.json"
 
 
 def _agentic_summary(context: ArtifactPublishContext) -> dict[str, Any]:

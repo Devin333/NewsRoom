@@ -58,6 +58,7 @@ def test_daily_agent_specs_define_contract_keys() -> None:
         "agent_feedback_loop_state",
         "source_recollection_profile",
         "source_recollection_execution_plan",
+        "source_recollection_execution_report",
     ]
     assert planner.output_key == "research_plan"
     assert planner.output_schema is not None

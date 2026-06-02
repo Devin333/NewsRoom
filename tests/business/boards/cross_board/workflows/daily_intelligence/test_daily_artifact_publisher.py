@@ -119,6 +119,23 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
             "source_fetch_results": [{"request_id": "req-1", "source_id": "feed", "success": True}],
             "source_events": [{"event_type": "source_fetch_succeeded"}],
             "source_pipeline_metrics": {"raw_items_count": 1},
+            "source_recollection_profile": {"profile_id": "profile-1", "query_count": 1},
+            "source_recollection_execution_plan": {
+                "plan_id": "plan-1",
+                "profile_id": "profile-1",
+                "task_count": 1,
+            },
+            "source_recollection_execution_report": {
+                "plan_id": "plan-1",
+                "profile_id": "profile-1",
+                "status": "succeeded",
+                "task_count": 1,
+                "raw_item_count": 1,
+                "error_count": 0,
+                "fetch_request_count": 1,
+                "fetch_result_count": 1,
+                "tasks": [],
+            },
         },
     )
 
@@ -127,10 +144,38 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
     run_dir = tmp_path / "run-1"
     assert manifest["artifacts"]["raw_items"] == "raw_items.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
+    assert manifest["artifacts"]["source_recollection_profile"] == "source_recollection/profile.json"
+    assert (
+        manifest["artifacts"]["source_recollection_execution_plan"]
+        == "source_recollection/execution_plan.json"
+    )
+    assert (
+        manifest["artifacts"]["source_recollection_execution_report"]
+        == "source_recollection/execution_report.json"
+    )
     assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
     assert manifest["source_event_count"] == 1
+    assert manifest["source_recollection"] == {
+        "plan_id": "plan-1",
+        "status": "succeeded",
+        "task_count": 1,
+        "raw_item_count": 1,
+        "error_count": 0,
+        "fetch_request_count": 1,
+        "fetch_result_count": 1,
+        "artifact": "source_recollection/execution_report.json",
+        "profile_artifact": "source_recollection/profile.json",
+        "plan_artifact": "source_recollection/execution_plan.json",
+    }
     assert manifest["source_artifacts"]["item_count"] == 1
     assert (run_dir / "source_artifacts" / "index.json").exists()
+    assert (run_dir / "source_recollection" / "profile.json").exists()
+    report = json.loads(
+        (run_dir / "source_recollection" / "execution_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert report["status"] == "succeeded"
 
 
 def test_daily_artifact_publisher_writes_agent_feedback_artifacts(tmp_path) -> None:
