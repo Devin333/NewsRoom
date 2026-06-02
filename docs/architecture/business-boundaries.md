@@ -106,6 +106,14 @@ source connector、fetch policy、外部错误分类和具体 fetch 实现属于
 
 `business/layers/signal/source_health/checker.py` 只负责 source health workflow、cooldown、rate limit decision 与结果记录；默认 HTTP probe、robots、retry 和具体请求实现由 interface/infrastructure 适配器注入。checker 不导入外部 source 基础设施。
 
+### Source Tools Runtime 边界
+
+`business/layers/signal/tools.py` 只负责 tool schema 注册、输入校验、source health 读写、allowed domain 校验、业务 fetch policy 合成和业务域限流。RSS/Atom/HTML/manual 解析、默认 HTTP 请求、robots.txt、redirect/retry 以及具体 connector 调用通过 `SourceToolRuntime` 注入。
+
+默认适配器位于 `interfaces/services/source_tool_runtime.py`，它负责把 business `SourceDefinition` / `SourceFetchPolicy` 转成 infra source connector 所需模型，并把 infra item/error 转回 business 模型。业务层不再直接导入 `infrastructure.external.sources` 来执行 source tools。
+
+`source.fetch_url`、`source.probe` 和 `source.fetch_official_blog` 共享业务层 `SourceDomainRateLimiter`；`source.fetch_official_blog` 在业务层完成限流判定后，把去除限流字段的 policy 传给 runtime，避免 connector 层重复计数。新 source tool 若需要外部 I/O 或 connector 能力，应扩展 `SourceToolRuntime` 协议并在接口层实现适配器，而不是在 business 层新增 concrete infrastructure import。
+
 ## Foundation Skills 边界
 
 `business/foundation/skills/` 放业务技能内容包和 deterministic fallback。`BusinessSkillRuntime` 是业务层对 framework skill runner 的适配门面：

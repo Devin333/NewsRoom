@@ -5,6 +5,7 @@ from typing import Any
 
 from business.tools import build_business_tool_registry
 from framework.tool import ToolPolicy, build_tool_catalog
+from interfaces.services.source_tool_runtime import default_source_tool_runtime
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,10 @@ class ToolApplicationService:
         allow_mcp: bool = False,
         include_dangerous: bool = False,
     ) -> ToolCatalogApplicationResult:
-        registry = build_business_tool_registry(include_dangerous_tools=include_dangerous)
+        registry = build_business_tool_registry(
+            include_dangerous_tools=include_dangerous,
+            source_tool_runtime=default_source_tool_runtime(),
+        )
         catalog = build_tool_catalog(
             registry,
             agent_id="cli",
@@ -63,7 +67,10 @@ class ToolApplicationService:
         allow_mcp: bool = False,
         include_dangerous: bool = False,
     ) -> ToolSchemaApplicationResult:
-        registry = build_business_tool_registry(include_dangerous_tools=include_dangerous)
+        registry = build_business_tool_registry(
+            include_dangerous_tools=include_dangerous,
+            source_tool_runtime=default_source_tool_runtime(),
+        )
         tools = registry.export_schema_for_llm(
             agent_id,
             self.tool_policy(

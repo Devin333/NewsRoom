@@ -8,11 +8,11 @@ from framework.tool import (
     ToolRegistry,
     ToolStatus,
 )
+from business.foundation.models.source import SourceDefinition, SourceError, SourceFetchPolicy
 from business.layers.signal.tools import register_source_tools
-from business.foundation.models.source import SourceDefinition, SourceError
 from business.foundation.registry.source_registry import SourceRegistry
-from infrastructure.external.sources import SourceFetchPolicy
 from business.layers.signal.source_health import BasicSourceHealthManager
+from interfaces.services.source_tool_runtime import default_source_tool_runtime
 
 
 RSS_FIXTURE = """<?xml version="1.0"?>
@@ -80,10 +80,16 @@ HTML_FIXTURE = """<!doctype html>
 """
 
 
+def register_test_source_tools(registry: ToolRegistry, **kwargs) -> None:
+    fetch_text = kwargs.pop("fetch_text", None)
+    kwargs.setdefault("source_runtime", default_source_tool_runtime(fetch_text=fetch_text))
+    register_source_tools(registry, **kwargs)
+
+
 def test_source_fetch_url_tool_fetches_configured_source_through_executor() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or "source content",
     )
@@ -133,7 +139,7 @@ def test_source_fetch_url_tool_retries_transient_fetch_error() -> None:
             raise RuntimeError("temporary fetch failure")
         return "source content"
 
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=fetch_text,
         fetch_policy=SourceFetchPolicy(retry_times=1),
@@ -163,7 +169,7 @@ def test_source_fetch_url_tool_retries_transient_fetch_error() -> None:
 def test_source_fetch_url_tool_rejects_non_http_urls_before_fetch() -> None:
     registry = ToolRegistry()
     calls = {"count": 0}
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: calls.__setitem__("count", calls["count"] + 1) or "content",
     )
@@ -192,7 +198,7 @@ def test_source_fetch_url_tool_rejects_non_http_urls_before_fetch() -> None:
 def test_source_fetch_url_tool_allows_configured_domain_and_subdomain() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or "source content",
         allowed_domains=["example.com"],
@@ -221,7 +227,7 @@ def test_source_fetch_url_tool_allows_configured_domain_and_subdomain() -> None:
 def test_source_fetch_url_tool_rejects_domains_outside_allowlist_before_fetch() -> None:
     registry = ToolRegistry()
     calls = {"count": 0}
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: calls.__setitem__("count", calls["count"] + 1) or "content",
         allowed_domains=["example.com"],
@@ -251,7 +257,7 @@ def test_source_fetch_url_tool_rejects_domains_outside_allowlist_before_fetch() 
 def test_source_fetch_url_tool_rate_limits_shared_domain_before_fetch() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or "source content",
         fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
@@ -301,7 +307,7 @@ def test_source_fetch_url_tool_skips_cooling_source_before_fetch() -> None:
         SourceError(source_id="cooling", error_type="fetch_timeout", error_message="timeout"),
     )
     calls = {"count": 0}
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: calls.__setitem__("count", calls["count"] + 1) or "content",
         health_manager=health_manager,
@@ -341,7 +347,7 @@ def test_source_check_health_tool_reads_health_manager_state() -> None:
             url="https://example.com/feed.xml",
         ),
     )
-    register_source_tools(registry, health_manager=health_manager)
+    register_test_source_tools(registry, health_manager=health_manager)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -366,7 +372,7 @@ def test_source_check_health_tool_reads_health_manager_state() -> None:
 def test_source_check_health_tool_uses_source_argument_context() -> None:
     registry = ToolRegistry()
     health_manager = BasicSourceHealthManager()
-    register_source_tools(registry, health_manager=health_manager)
+    register_test_source_tools(registry, health_manager=health_manager)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -396,7 +402,7 @@ def test_source_probe_tool_records_success_without_returning_content() -> None:
     registry = ToolRegistry()
     health_manager = BasicSourceHealthManager()
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or "probe body",
         health_manager=health_manager,
@@ -436,7 +442,7 @@ def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
     def failing_fetch(url: str) -> str:
         raise RuntimeError(f"cannot reach {url}")
 
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=failing_fetch,
         health_manager=health_manager,
@@ -471,7 +477,7 @@ def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
 def test_source_probe_tool_returns_rate_limit_error_without_fetching() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or "content",
         fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
@@ -517,7 +523,7 @@ def test_source_probe_tool_returns_rate_limit_error_without_fetching() -> None:
 def test_source_fetch_official_blog_tool_fetches_marked_feed() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or RSS_FIXTURE,
         allowed_domains=["example.com"],
@@ -555,7 +561,7 @@ def test_source_fetch_official_blog_tool_fetches_marked_feed() -> None:
 def test_source_fetch_official_blog_tool_uses_shared_rate_limiter() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or RSS_FIXTURE,
         fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
@@ -628,7 +634,7 @@ def test_source_fetch_official_blog_tool_selects_registry_source_by_topic() -> N
         ]
     )
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or ATOM_FIXTURE,
         allowed_domains=["example.com"],
@@ -656,7 +662,7 @@ def test_source_fetch_official_blog_tool_selects_registry_source_by_topic() -> N
 def test_source_fetch_official_blog_tool_rejects_unmarked_source_before_fetch() -> None:
     registry = ToolRegistry()
     calls = {"count": 0}
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_text=lambda url: calls.__setitem__("count", calls["count"] + 1) or RSS_FIXTURE,
     )
@@ -697,7 +703,7 @@ def test_source_fetch_official_blog_tool_fetches_marked_html_source() -> None:
         ]
     )
     seen_urls: list[str] = []
-    register_source_tools(
+    register_test_source_tools(
         registry,
         source_registry=source_registry,
         fetch_text=lambda url: seen_urls.append(url) or HTML_FIXTURE,
@@ -735,7 +741,7 @@ def test_source_fetch_official_blog_tool_accepts_official_blog_source_type() -> 
             )
         ]
     )
-    register_source_tools(
+    register_test_source_tools(
         registry,
         source_registry=source_registry,
         fetch_text=lambda url: HTML_FIXTURE,
@@ -791,7 +797,7 @@ def test_source_search_tool_selects_sources_by_topic_filters_and_limit() -> None
             ),
         ]
     )
-    register_source_tools(registry, source_registry=source_registry)
+    register_test_source_tools(registry, source_registry=source_registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -833,7 +839,7 @@ def test_source_search_tool_lists_configured_sources_when_query_is_omitted() -> 
             ),
         ]
     )
-    register_source_tools(registry, source_registry=source_registry)
+    register_test_source_tools(registry, source_registry=source_registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -872,7 +878,7 @@ def test_source_search_tool_filters_by_source_type() -> None:
             ),
         ]
     )
-    register_source_tools(registry, source_registry=source_registry)
+    register_test_source_tools(registry, source_registry=source_registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -909,7 +915,7 @@ def test_source_search_tool_filters_by_reliability() -> None:
             ),
         ]
     )
-    register_source_tools(registry, source_registry=source_registry)
+    register_test_source_tools(registry, source_registry=source_registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -926,7 +932,7 @@ def test_source_search_tool_filters_by_reliability() -> None:
 
 def test_source_fetch_url_tool_applies_max_bytes_to_injected_fetcher() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry, fetch_text=lambda url: "abcdef")
+    register_test_source_tools(registry, fetch_text=lambda url: "abcdef")
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -977,9 +983,12 @@ def test_source_fetch_url_tool_default_fetch_uses_source_fetch_policy(monkeypatc
         captured["max_redirects"] = policy.max_redirects
         return Response()
 
-    monkeypatch.setattr("business.layers.signal.tools.open_request_with_fetch_policy", fake_open_request)
+    monkeypatch.setattr(
+        "interfaces.services.source_tool_runtime.open_request_with_fetch_policy",
+        fake_open_request,
+    )
     registry = ToolRegistry()
-    register_source_tools(
+    register_test_source_tools(
         registry,
         fetch_policy=SourceFetchPolicy(
             timeout_seconds=3,
@@ -1043,7 +1052,7 @@ def test_source_fetch_url_tool_enforces_redirect_limit() -> None:
     thread.start()
     try:
         registry = ToolRegistry()
-        register_source_tools(
+        register_test_source_tools(
             registry,
             fetch_policy=SourceFetchPolicy(max_redirects=1),
         )
@@ -1097,7 +1106,7 @@ def test_source_fetch_url_tool_respects_robots_txt() -> None:
     thread.start()
     try:
         registry = ToolRegistry()
-        register_source_tools(registry)
+        register_test_source_tools(registry)
         executor = ToolExecutor(registry)
         url = f"http://127.0.0.1:{server.server_port}/blocked/feed.xml"
 
@@ -1126,7 +1135,7 @@ def test_source_fetch_url_tool_respects_robots_txt() -> None:
 
 def test_source_parse_rss_tool_uses_feed_connector_through_executor() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1162,7 +1171,7 @@ def test_source_parse_rss_tool_uses_feed_connector_through_executor() -> None:
 
 def test_source_extract_items_tool_extracts_rss_content() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1193,7 +1202,7 @@ def test_source_extract_items_tool_extracts_rss_content() -> None:
 
 def test_source_extract_items_tool_extracts_atom_content() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1222,7 +1231,7 @@ def test_source_extract_items_tool_extracts_atom_content() -> None:
 
 def test_source_extract_html_tool_extracts_html_content() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1253,7 +1262,7 @@ def test_source_extract_html_tool_extracts_html_content() -> None:
 
 def test_source_extract_html_tool_accepts_web_page_source_type() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1281,7 +1290,7 @@ def test_source_extract_html_tool_accepts_web_page_source_type() -> None:
 
 def test_source_extract_items_tool_dispatches_html_content() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1310,7 +1319,7 @@ def test_source_extract_items_tool_dispatches_html_content() -> None:
 
 def test_source_extract_items_tool_parses_json_feed_content() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1338,7 +1347,7 @@ def test_source_extract_items_tool_parses_json_feed_content() -> None:
 
 def test_source_extract_manual_tool_extracts_curated_records() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1376,7 +1385,7 @@ def test_source_extract_manual_tool_extracts_curated_records() -> None:
 
 def test_source_extract_items_tool_dispatches_manual_records() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1404,7 +1413,7 @@ def test_source_extract_items_tool_dispatches_manual_records() -> None:
 
 def test_source_normalize_url_tool_removes_tracking_parameters() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(
@@ -1421,7 +1430,7 @@ def test_source_normalize_url_tool_removes_tracking_parameters() -> None:
 
 def test_source_normalize_url_tool_resolves_relative_url_with_base_url() -> None:
     registry = ToolRegistry()
-    register_source_tools(registry)
+    register_test_source_tools(registry)
     executor = ToolExecutor(registry)
 
     observation = executor.execute(

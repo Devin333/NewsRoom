@@ -108,6 +108,16 @@ def test_signal_source_health_checker_uses_probe_adapter_boundary() -> None:
     assert violations == []
 
 
+def test_signal_source_tools_use_runtime_adapter_boundary() -> None:
+    imported_modules = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "tools.py")
+    violations = _matching_forbidden(
+        imported_modules,
+        ("infrastructure.external.sources",),
+    )
+
+    assert violations == []
+
+
 def test_signal_pipeline_does_not_import_legacy_source_processing() -> None:
     violations: list[str] = []
     for path in (

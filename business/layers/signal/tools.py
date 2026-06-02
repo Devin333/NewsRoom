@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from typing import Any
 from urllib.parse import urlsplit
-from urllib.request import Request
 
 from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
@@ -13,34 +11,23 @@ from business.foundation.models.source import (
     RawSourceItem,
     SourceDefinition,
     SourceError,
+    SourceFetchPolicy,
     SourceReliability,
     SourceType,
 )
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
-from infrastructure.external.sources import (
-    DomainRateLimiter,
-    FeedConnector,
-    HtmlConnector,
-    ManualConnector,
-    SourceFetchPolicy,
-    effective_fetch_policy,
-    ensure_robots_allowed,
-    open_request_with_fetch_policy,
-    rate_limited_source_error,
-    run_with_fetch_retries,
-)
-from infrastructure.external.sources.models import (
-    RawSourceItem as InfraRawSourceItem,
-    SourceDefinition as InfraSourceDefinition,
-    SourceError as InfraSourceError,
-    SourceReliability as InfraSourceReliability,
-    SourceType as InfraSourceType,
+from business.layers.signal.source_tool_runtime import (
+    FetchText,
+    SourceDomainRateLimiter,
+    SourceTextFetchResult,
+    SourceToolRuntime,
+    effective_source_fetch_policy,
+    run_fetch_with_retries,
+    source_fetch_policy_without_rate_limit,
+    source_rate_limited_error,
 )
 from business.layers.signal.records import canonicalize_source_url
-
-
-FetchText = Callable[[str], str]
 
 
 def register_source_tools(
@@ -51,12 +38,13 @@ def register_source_tools(
     allowed_domains: list[str] | None = None,
     health_manager: BasicSourceHealthManager | None = None,
     source_registry: SourceRegistry | None = None,
-    rate_limiter: DomainRateLimiter | None = None,
+    rate_limiter: SourceDomainRateLimiter | None = None,
+    source_runtime: SourceToolRuntime | None = None,
 ) -> None:
-    fetch_policy = fetch_policy or SourceFetchPolicy()
+    fetch_policy = _coerce_fetch_policy(fetch_policy)
     allowed_domain_tuple = _allowed_domains(allowed_domains)
     health_manager = health_manager or BasicSourceHealthManager()
-    rate_limiter = rate_limiter or DomainRateLimiter()
+    rate_limiter = rate_limiter or SourceDomainRateLimiter()
     registry.register(
         ToolDefinition(
             name="source.fetch_url",
@@ -85,6 +73,7 @@ def register_source_tools(
             allowed_domains=allowed_domain_tuple,
             health_manager=health_manager,
             rate_limiter=rate_limiter,
+            source_runtime=source_runtime,
         ),
     )
     registry.register(
@@ -95,7 +84,11 @@ def register_source_tools(
             side_effect="read_only",
             concurrency_safe=True,
         ),
-        lambda args: _parse_feed(args, default_source_type=SourceType.RSS),
+        lambda args: _parse_feed(
+            args,
+            default_source_type=SourceType.RSS,
+            source_runtime=source_runtime,
+        ),
     )
     registry.register(
         ToolDefinition(
@@ -113,7 +106,7 @@ def register_source_tools(
             side_effect="read_only",
             concurrency_safe=True,
         ),
-        _extract_items,
+        lambda args: _extract_items(args, source_runtime=source_runtime),
     )
     registry.register(
         ToolDefinition(
@@ -150,6 +143,7 @@ def register_source_tools(
             allowed_domains=allowed_domain_tuple,
             health_manager=health_manager,
             rate_limiter=rate_limiter,
+            source_runtime=source_runtime,
         ),
     )
     registry.register(
@@ -198,6 +192,7 @@ def register_source_tools(
             allowed_domains=allowed_domain_tuple,
             health_manager=health_manager,
             rate_limiter=rate_limiter,
+            source_runtime=source_runtime,
         ),
     )
     if source_registry is not None:
@@ -232,7 +227,11 @@ def register_source_tools(
             side_effect="read_only",
             concurrency_safe=True,
         ),
-        lambda args: _parse_feed(args, default_source_type=SourceType.ATOM),
+        lambda args: _parse_feed(
+            args,
+            default_source_type=SourceType.ATOM,
+            source_runtime=source_runtime,
+        ),
     )
     registry.register(
         ToolDefinition(
@@ -250,7 +249,7 @@ def register_source_tools(
             side_effect="read_only",
             concurrency_safe=True,
         ),
-        _parse_html,
+        lambda args: _parse_html(args, source_runtime=source_runtime),
     )
     registry.register(
         ToolDefinition(
@@ -268,7 +267,7 @@ def register_source_tools(
             side_effect="read_only",
             concurrency_safe=True,
         ),
-        _parse_manual,
+        lambda args: _parse_manual(args, source_runtime=source_runtime),
     )
     registry.register(
         ToolDefinition(
@@ -306,11 +305,17 @@ def _parse_feed_schema() -> dict[str, Any]:
     }
 
 
-def _parse_feed(args: dict[str, Any], *, default_source_type: SourceType) -> dict[str, Any]:
+def _parse_feed(
+    args: dict[str, Any],
+    *,
+    default_source_type: SourceType,
+    source_runtime: SourceToolRuntime | None,
+) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=default_source_type)
     limit = args.get("limit")
-    items = FeedConnector().parse(
-        _infra_source(source),
+    runtime = _require_source_runtime(source_runtime, "source.parse_rss")
+    items = runtime.parse_feed(
+        source,
         str(args["xml"]),
         limit=int(limit) if limit is not None else None,
     )
@@ -320,29 +325,33 @@ def _parse_feed(args: dict[str, Any], *, default_source_type: SourceType) -> dic
     }
 
 
-def _extract_items(args: dict[str, Any]) -> dict[str, Any]:
+def _extract_items(args: dict[str, Any], *, source_runtime: SourceToolRuntime | None) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     if _is_html_backed_source_type(SourceType(source.source_type)):
         return _parse_html(
-            {"source": args["source"], "html": args["content"], "limit": args.get("limit")}
+            {"source": args["source"], "html": args["content"], "limit": args.get("limit")},
+            source_runtime=source_runtime,
         )
     if source.source_type == SourceType.MANUAL:
         return _parse_manual(
-            {"source": args["source"], "records": args["content"], "limit": args.get("limit")}
+            {"source": args["source"], "records": args["content"], "limit": args.get("limit")},
+            source_runtime=source_runtime,
         )
     return _parse_feed(
         {"source": args["source"], "xml": args["content"], "limit": args.get("limit")},
         default_source_type=SourceType.RSS,
+        source_runtime=source_runtime,
     )
 
 
-def _parse_html(args: dict[str, Any]) -> dict[str, Any]:
+def _parse_html(args: dict[str, Any], *, source_runtime: SourceToolRuntime | None) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.HTML)
     if not _is_html_backed_source_type(SourceType(source.source_type)):
         raise ValueError("source.extract_html requires source_type=html, official_blog, or web_page")
     limit = args.get("limit")
-    items = HtmlConnector().parse(
-        _infra_source(source),
+    runtime = _require_source_runtime(source_runtime, "source.extract_html")
+    items = runtime.parse_html(
+        source,
         str(args["html"]),
         limit=int(limit) if limit is not None else None,
     )
@@ -352,15 +361,16 @@ def _parse_html(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _parse_manual(args: dict[str, Any]) -> dict[str, Any]:
+def _parse_manual(args: dict[str, Any], *, source_runtime: SourceToolRuntime | None) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.MANUAL)
     if source.source_type != SourceType.MANUAL:
         raise ValueError("source.extract_manual requires source_type=manual")
     records = args["records"]
     if not isinstance(records, list):
         raise ValueError("source.extract_manual records must be an array")
-    items, errors = ManualConnector().fetch(
-        _infra_source(source),
+    runtime = _require_source_runtime(source_runtime, "source.extract_manual")
+    items, errors = runtime.fetch_manual(
+        source,
         records=records,
         limit=_optional_limit(args.get("limit")),
     )
@@ -380,7 +390,8 @@ def _fetch_official_blog(
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
     health_manager: BasicSourceHealthManager,
-    rate_limiter: DomainRateLimiter,
+    rate_limiter: SourceDomainRateLimiter,
+    source_runtime: SourceToolRuntime | None,
 ) -> dict[str, Any]:
     source = _official_blog_source(args, source_registry=source_registry)
     _ensure_official_blog(source)
@@ -388,15 +399,16 @@ def _fetch_official_blog(
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
     _ensure_source_health_allows_fetch(source, health_manager, respect_interval=True)
-    infra_source = _infra_source(source)
-    policy = effective_fetch_policy(_fetch_policy(args, default_policy), infra_source)
-    connector = _official_blog_connector(
-        infra_source,
-        fetch_text=fetch_text,
-        policy=policy,
-        rate_limiter=rate_limiter,
+    policy = effective_source_fetch_policy(_fetch_policy(args, default_policy), source)
+    rate_limit_error = _source_rate_limit_error(source, policy, rate_limiter)
+    if rate_limit_error is not None:
+        return _official_blog_error_result(source, [rate_limit_error])
+    runtime = _require_source_runtime(source_runtime, "source.fetch_official_blog")
+    items, errors = runtime.fetch_official_blog(
+        source,
+        policy=source_fetch_policy_without_rate_limit(policy),
+        limit=_optional_limit(args.get("limit")),
     )
-    items, errors = connector.fetch(infra_source, limit=_optional_limit(args.get("limit")))
     return {
         "source": _source_definition_to_dict(source),
         "item_count": len(items),
@@ -413,16 +425,22 @@ def _fetch_url(
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
     health_manager: BasicSourceHealthManager,
-    rate_limiter: DomainRateLimiter,
+    rate_limiter: SourceDomainRateLimiter,
+    source_runtime: SourceToolRuntime | None,
 ) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
     _ensure_source_health_allows_fetch(source, health_manager, respect_interval=True)
-    infra_source = _infra_source(source)
-    policy = effective_fetch_policy(_fetch_policy(args, default_policy), infra_source)
+    policy = effective_source_fetch_policy(_fetch_policy(args, default_policy), source)
     _ensure_source_rate_limit_allows_fetch(source, policy, rate_limiter)
-    content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
+    fetch_result = _fetch_text(
+        source.url,
+        policy,
+        fetch_text,
+        source_runtime=source_runtime,
+    )
+    content = fetch_result.content
     content_bytes = len(content.encode("utf-8"))
     if content_bytes > policy.max_bytes:
         raise ValueError(f"source response exceeds max_bytes: {policy.max_bytes}")
@@ -434,8 +452,8 @@ def _fetch_url(
         "canonical_url": canonicalize_source_url(source.url),
         "content": content,
         "content_bytes": content_bytes,
-        "status_code": status_code,
-        "content_type": content_type,
+        "status_code": fetch_result.status_code,
+        "content_type": fetch_result.content_type,
         "fetched_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "fetch_policy": {
             "timeout_seconds": policy.timeout_seconds,
@@ -454,13 +472,13 @@ def _probe_source(
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
     health_manager: BasicSourceHealthManager,
-    rate_limiter: DomainRateLimiter,
+    rate_limiter: SourceDomainRateLimiter,
+    source_runtime: SourceToolRuntime | None,
 ) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
     _ensure_http_url(source.url)
     _ensure_allowed_domain(source.url, allowed_domains)
-    infra_source = _infra_source(source)
-    policy = effective_fetch_policy(_fetch_policy(args, default_policy), infra_source)
+    policy = effective_source_fetch_policy(_fetch_policy(args, default_policy), source)
     blocked = _source_health_blocked_result(
         source,
         health_manager,
@@ -483,7 +501,12 @@ def _probe_source(
             ).to_dict(),
         }
     try:
-        content, status_code, content_type = _fetch_text(source.url, policy, fetch_text)
+        fetch_result = _fetch_text(
+            source.url,
+            policy,
+            fetch_text,
+            source_runtime=source_runtime,
+        )
     except Exception as exc:
         error = SourceError(
             source_id=source.source_id,
@@ -518,9 +541,9 @@ def _probe_source(
         "source_id": source.source_id,
         "url": source.url,
         "canonical_url": canonicalize_source_url(source.url),
-        "status_code": status_code,
-        "content_type": content_type,
-        "content_bytes": len(content.encode("utf-8")),
+        "status_code": fetch_result.status_code,
+        "content_type": fetch_result.content_type,
+        "content_bytes": len(fetch_result.content.encode("utf-8")),
         "health": health.to_dict(),
     }
 
@@ -583,6 +606,23 @@ def _fetch_policy(args: dict[str, Any], default_policy: SourceFetchPolicy) -> So
         rate_limit_per_domain_per_minute=default_policy.rate_limit_per_domain_per_minute,
         retry_times=default_policy.retry_times,
         retry_on_status_codes=default_policy.retry_on_status_codes,
+    )
+
+
+def _coerce_fetch_policy(policy: Any | None) -> SourceFetchPolicy:
+    if policy is None:
+        return SourceFetchPolicy()
+    if isinstance(policy, SourceFetchPolicy):
+        return policy
+    return SourceFetchPolicy(
+        timeout_seconds=float(getattr(policy, "timeout_seconds")),
+        max_bytes=int(getattr(policy, "max_bytes")),
+        max_redirects=int(getattr(policy, "max_redirects")),
+        respect_robots=bool(getattr(policy, "respect_robots")),
+        user_agent=str(getattr(policy, "user_agent")),
+        rate_limit_per_domain_per_minute=getattr(policy, "rate_limit_per_domain_per_minute"),
+        retry_times=int(getattr(policy, "retry_times")),
+        retry_on_status_codes=tuple(getattr(policy, "retry_on_status_codes")),
     )
 
 
@@ -677,7 +717,7 @@ def _probe_blocked_result(
 def _ensure_source_rate_limit_allows_fetch(
     source: SourceDefinition,
     policy: SourceFetchPolicy,
-    rate_limiter: DomainRateLimiter,
+    rate_limiter: SourceDomainRateLimiter,
 ) -> None:
     error = _source_rate_limit_error(source, policy, rate_limiter)
     if error is None:
@@ -690,7 +730,7 @@ def _ensure_source_rate_limit_allows_fetch(
 def _source_rate_limit_error(
     source: SourceDefinition,
     policy: SourceFetchPolicy,
-    rate_limiter: DomainRateLimiter,
+    rate_limiter: SourceDomainRateLimiter,
 ) -> SourceError | None:
     decision = rate_limiter.reserve(
         source.url,
@@ -698,46 +738,36 @@ def _source_rate_limit_error(
     )
     if decision.allowed:
         return None
-    return _business_source_error(rate_limited_source_error(_infra_source(source), decision, url=source.url))
+    return source_rate_limited_error(source, decision, url=source.url)
 
 
 def _fetch_text(
     url: str,
     policy: SourceFetchPolicy,
     fetch_text: FetchText | None,
-) -> tuple[str, int | None, str | None]:
+    *,
+    source_runtime: SourceToolRuntime | None,
+) -> SourceTextFetchResult:
     if fetch_text is not None:
-        return run_with_fetch_retries(lambda: (fetch_text(url), None, None), policy)
-    return run_with_fetch_retries(lambda: _default_fetch_text(url, policy), policy)
+        return run_fetch_with_retries(lambda: _call_fetch_text(fetch_text, url, policy), policy)
+    runtime = _require_source_runtime(source_runtime, "source.fetch_url")
+    return runtime.fetch_text(url, policy)
 
 
-def _default_fetch_text(url: str, policy: SourceFetchPolicy) -> tuple[str, int | None, str | None]:
-    ensure_robots_allowed(url, policy)
-    request = Request(url, headers={"User-Agent": policy.user_agent})
-    with open_request_with_fetch_policy(request, policy) as response:
-        body = response.read(policy.max_bytes + 1)
-        status_code = getattr(response, "status", None)
-        headers = getattr(response, "headers", None)
-        content_type = headers.get_content_type() if headers is not None else None
-    if len(body) > policy.max_bytes:
+def _call_fetch_text(fetch_text: FetchText, url: str, policy: SourceFetchPolicy) -> SourceTextFetchResult:
+    content = fetch_text(url)
+    if len(content.encode("utf-8")) > policy.max_bytes:
         raise ValueError(f"source response exceeds max_bytes: {policy.max_bytes}")
-    return body.decode("utf-8", errors="replace"), status_code, content_type
+    return SourceTextFetchResult(content=content)
 
 
-def _policy_fetch_text(
-    fetch_text: FetchText | None,
-    policy: SourceFetchPolicy,
-) -> FetchText | None:
-    if fetch_text is None:
-        return None
-
-    def wrapped(url: str) -> str:
-        content = fetch_text(url)
-        if len(content.encode("utf-8")) > policy.max_bytes:
-            raise ValueError(f"source response exceeds max_bytes: {policy.max_bytes}")
-        return content
-
-    return wrapped
+def _require_source_runtime(
+    source_runtime: SourceToolRuntime | None,
+    tool_name: str,
+) -> SourceToolRuntime:
+    if source_runtime is None:
+        raise RuntimeError(f"{tool_name} requires a source tool runtime adapter")
+    return source_runtime
 
 
 def _ensure_http_url(url: str) -> None:
@@ -824,24 +854,18 @@ def _ensure_official_blog_source_type(source: SourceDefinition) -> None:
         )
 
 
-def _official_blog_connector(
-    source: InfraSourceDefinition,
-    *,
-    fetch_text: FetchText | None,
-    policy: SourceFetchPolicy,
-    rate_limiter: DomainRateLimiter,
-) -> FeedConnector | HtmlConnector:
-    if _is_html_backed_source_type(source.source_type):
-        return HtmlConnector(
-            fetch_text=_policy_fetch_text(fetch_text, policy),
-            fetch_policy=policy,
-            rate_limiter=rate_limiter,
-        )
-    return FeedConnector(
-        fetch_text=_policy_fetch_text(fetch_text, policy),
-        fetch_policy=policy,
-        rate_limiter=rate_limiter,
-    )
+def _official_blog_error_result(
+    source: SourceDefinition,
+    errors: list[SourceError],
+) -> dict[str, Any]:
+    return {
+        "source": _source_definition_to_dict(source),
+        "item_count": 0,
+        "items": [],
+        "error_count": len(errors),
+        "errors": [error.to_dict() for error in errors],
+    }
+
 
 
 def _truthy(value: Any) -> bool:
@@ -888,38 +912,6 @@ def _source_definition(payload: Any, *, default_source_type: SourceType) -> Sour
         language=payload.get("language"),
         region=payload.get("region"),
         metadata=dict(payload.get("metadata") or {}),
-    )
-
-
-def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
-    return InfraSourceDefinition(
-        source_id=source.source_id,
-        name=source.name,
-        source_type=InfraSourceType(SourceType(source.source_type).value),
-        url=source.url,
-        reliability=InfraSourceReliability(SourceReliability(source.reliability).value),
-        authority_score=source.authority_score,
-        enabled=source.enabled,
-        fetch_interval_seconds=source.fetch_interval_seconds,
-        respect_robots=source.respect_robots,
-        user_agent=source.user_agent,
-        topics=list(source.topics),
-        category=source.category,
-        language=source.language,
-        region=source.region,
-        metadata=dict(source.metadata),
-    )
-
-
-def _business_source_error(error: InfraSourceError) -> SourceError:
-    return SourceError(
-        source_id=error.source_id,
-        source_name=error.source_name,
-        error_type=error.error_type,
-        error_message=error.error_message,
-        url=error.url,
-        retryable=error.retryable,
-        metadata=dict(error.metadata),
     )
 
 
@@ -973,7 +965,7 @@ def _source_definition_to_dict(source: SourceDefinition) -> dict[str, Any]:
     }
 
 
-def _raw_source_item_to_dict(item: RawSourceItem | InfraRawSourceItem) -> dict[str, Any]:
+def _raw_source_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
     return {
         "source_item_id": item.source_item_id,
         "source_id": item.source_id,
