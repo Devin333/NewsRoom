@@ -20,7 +20,7 @@ from infrastructure.storage.artifacts import ArtifactRef
 from infrastructure.storage.local_json import LocalJsonRepository
 from business.boards.cross_board.workflows.weekly_intelligence.trend_analyzer import WeeklyTrendAnalyzer
 from business.boards.cross_board.workflows.weekly_intelligence.weekly_historian import WeeklyHistorian
-from business.boards.cross_board.workflows.weekly_intelligence.weekly_improvement import WeeklyImprovementBuilder
+from business.boards.cross_board.weekly_improvement import WeeklyImprovementBuilder
 from business.boards.cross_board.workflows.weekly_intelligence.weekly_quality import WeeklyQualityBuilder
 from business.boards.cross_board.workflows.weekly_intelligence.weekly_subscription import WeeklySubscriptionBuilder
 from business.boards.cross_board.workflows.daily_intelligence.profiles import (

@@ -176,6 +176,13 @@ improvement 主流程是：
 `applied_overrides` 和 `skipped_overrides` 只作为历史兼容属性保留，内容等同于 policy experiment 结果。
 旧 `proposed_patch` 字段只用于读取历史持久化数据；新 proposal 不再生成 patch payload。
 
+Weekly intelligence 的 improvement 逻辑由 `business/boards/cross_board/weekly_improvement.py` 承载：
+
+- `WeeklyImprovementRecommendationService` 消费 `weekly_quality` 和 `weekly_trends`，生成 `ImprovementRecommendation` 与 `PolicyExperimentProfile`。
+- `WeeklyImprovementReport` 对外输出 `recommendations`、`policy_experiment_profiles`、`policy_experiment_profile_ids`、`risks` 和 `next_actions`。
+- `business/boards/cross_board/workflows/weekly_intelligence/weekly_improvement.py` 只保留历史导入路径兼容，不再承载推荐规则。
+- Weekly 新输出不得生成 `*_override` target type、override 风险文案或 `proposed_patch`；如旧消费者仍需要 override 视图，必须在兼容层由 policy experiment 结果投影。
+
 ## 禁止依赖
 
 - `framework/` 不得导入 `business`、`interfaces` 或具体 `infrastructure`。
