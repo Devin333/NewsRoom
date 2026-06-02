@@ -118,17 +118,16 @@ def test_signal_source_tools_use_runtime_adapter_boundary() -> None:
     assert violations == []
 
 
-def test_signal_pipeline_does_not_import_legacy_source_processing() -> None:
-    violations: list[str] = []
-    for path in (
-        BUSINESS_ROOT / "layers" / "signal" / "pipeline.py",
-        BUSINESS_ROOT / "layers" / "signal" / "records.py",
-    ):
-        imported_modules = _imports_for_file(path)
-        for imported in _matching_forbidden(imported_modules, ("business.foundation.models.source", "business.layers.signal.source_processing")):
-            violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {imported}")
+def test_signal_pipeline_uses_records_facade_for_source_processing() -> None:
+    pipeline_imports = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "pipeline.py")
+    assert _matching_forbidden(
+        pipeline_imports,
+        ("business.foundation.models.source", "business.layers.signal.source_processing"),
+    ) == []
 
-    assert violations == []
+    record_imports = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "records.py")
+    assert "business.foundation.models.source" in record_imports
+    assert any(imported.startswith("business.layers.signal.source_processing") for imported in record_imports)
 
 
 def test_relation_lineage_boundary_does_not_import_storage_lineage() -> None:

@@ -69,6 +69,8 @@ source 处理链路的正式中间模型是：
 
 `metadata["lineage"]`、`metadata["source_quality"]`、`metadata["source_authority_score"]` 和 `metadata["duplicate_cluster"]` 只作为 artifact-facing / legacy 输出投影保留。质量评分、ranking report 和 traceability report 必须消费正式字段；旧 payload 可以在模型构造时被投影成正式字段，但业务逻辑不得通过修改 metadata 来影响 ranking、traceability 或 quality 判断。
 
+`business.layers.signal.records` 是历史导入路径兼容 facade，只允许 re-export foundation source models 和 canonical `source_processing` service；不得重新实现 normalize、deduplicate、rank 或 quality 算法。`business.layers.signal.pipeline` 消费该 facade，不直接复制 source ranking 规则。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

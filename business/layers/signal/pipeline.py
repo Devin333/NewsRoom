@@ -24,6 +24,7 @@ from business.layers.signal.records import (
     RankedSourceItem,
     RawSourceItem,
     SignalLineage,
+    SourceRankingSignals,
     deduplicate_items,
     normalize_items,
     rank_items,
@@ -269,6 +270,7 @@ class SignalPipeline:
             published_at=item.published_at,
         )
         confidence_value = _source_confidence_value(item)
+        ranking_signals = _ranking_signals_from_raw_item(item)
         return Signal(
             signal_id=signal_id,
             signal_type=signal_type,
@@ -286,7 +288,7 @@ class SignalPipeline:
             metrics={
                 **{
                     "source_reliability": item.metadata.get("source_reliability", "medium"),
-                    "source_authority_score": item.metadata.get("source_authority_score", 0.5),
+                    "source_authority_score": ranking_signals.authority_score,
                     "canonical_url": canonicalize_url(item.url) or item.url,
                 },
                 **metrics,
@@ -605,23 +607,27 @@ def _ranked_confidence_factors(item: RankedSourceItem) -> list[ScoreFactor]:
 
 def _source_confidence_value(item: RawSourceItem) -> float:
     reliability = _reliability_value(item.metadata.get("source_reliability"))
-    authority = _clamp_float(item.metadata.get("source_authority_score", 0.5))
+    authority = _ranking_signals_from_raw_item(item).authority_score
     content = 0.7 if item.summary else 0.5
     return max(0.0, min(1.0, round(0.4 + reliability * 0.3 + authority * 0.2 + content * 0.1, 4)))
 
 
 def _confidence_factors(item: RawSourceItem, value: float) -> list[ScoreFactor]:
+    ranking_signals = _ranking_signals_from_raw_item(item)
     return [
         ScoreFactor(name="source_reliability", value=_reliability_value(item.metadata.get("source_reliability")), weight=0.4),
-        ScoreFactor(name="source_authority", value=_clamp_float(item.metadata.get("source_authority_score", 0.5)), weight=0.3),
+        ScoreFactor(name="source_authority", value=ranking_signals.authority_score, weight=0.3),
         ScoreFactor(name="content_presence", value=1.0 if item.summary or item.raw_content else 0.5, weight=0.3),
     ]
 
 
+def _ranking_signals_from_raw_item(item: RawSourceItem) -> SourceRankingSignals:
+    return SourceRankingSignals.from_metadata(item.metadata, tags=item.tags)
+
+
 def _signal_tags(item: RawSourceItem) -> list[str]:
     tags: list[str] = []
-    tags.extend(_string_list(item.tags))
-    tags.extend(_string_list(item.metadata.get("tags")))
+    tags.extend(_ranking_signals_from_raw_item(item).tags)
     tags.extend(_string_list(item.metadata.get("signal_tags")))
     cleaned = []
     seen = set()
@@ -642,14 +648,6 @@ def _reliability_value(value: Any) -> float:
         "low": 0.4,
     }
     return mapping.get(text, 0.7)
-
-
-def _clamp_float(value: Any) -> float:
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return 0.5
-    return max(0.0, min(1.0, numeric))
 
 
 def _string_list(value: Any) -> list[str]:
