@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
 from framework.specs import EdgeCondition, StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
@@ -14,6 +15,7 @@ from framework.workflow.runtime.state_machine import (
     WorkflowStateMachine,
 )
 from framework.workflow.runtime.step_invoker import StepInvoker, is_budget_exceeded_outcome
+from framework.workflow.runtime.timeout import WorkflowTimeoutBudget, workflow_timeout_budget
 from framework.workflow.routing import RoutingEngine
 
 
@@ -28,6 +30,7 @@ class WorkflowExecutionLoop:
         event_bridge: RuntimeEventBridge,
         manifest_updater: ManifestUpdater,
         is_run_cancelled: Callable[[str], bool],
+        monotonic_fn: Callable[[], float] | None = None,
     ) -> None:
         self._state_machine = state_machine
         self._routing_engine = routing_engine
@@ -36,10 +39,22 @@ class WorkflowExecutionLoop:
         self._event_bridge = event_bridge
         self._manifest_updater = manifest_updater
         self._is_run_cancelled = is_run_cancelled
+        self._monotonic_fn = monotonic_fn or time.perf_counter
 
     def run(self, context: WorkflowExecutionContext) -> None:
         workflow = context.workflow
+        timeout_budget = workflow_timeout_budget(
+            workflow,
+            started_monotonic=context.started_monotonic,
+        )
         while context.current_step_ids:
+            if self._timeout_if_exceeded(
+                context,
+                timeout_budget,
+                pending_step_id=context.current_step_ids[0],
+            ):
+                self._write_checkpoint(context)
+                break
             if self._cancel_if_requested(context):
                 break
             current_step_id = context.current_step_ids.pop(0)
@@ -48,10 +63,70 @@ class WorkflowExecutionLoop:
 
             step = workflow.step_by_id(current_step_id)
             outcome = self._invoke_step(context, step)
+            if self._timeout_if_exceeded(context, timeout_budget, step_id=step.step_id):
+                self._write_checkpoint(context)
+                break
             stop_after_checkpoint = self._handle_step_outcome(context, step, outcome)
             if stop_after_checkpoint:
                 break
             self._write_checkpoint(context)
+
+    def _timeout_if_exceeded(
+        self,
+        context: WorkflowExecutionContext,
+        timeout_budget: WorkflowTimeoutBudget | None,
+        *,
+        step_id: str | None = None,
+        pending_step_id: str | None = None,
+    ) -> bool:
+        if timeout_budget is None:
+            return False
+        now_monotonic = self._monotonic_fn()
+        if not timeout_budget.is_exceeded(now_monotonic):
+            return False
+        details = timeout_budget.details(now_monotonic)
+        if step_id is not None:
+            details["step_id"] = step_id
+        if pending_step_id is not None:
+            details["pending_step_id"] = pending_step_id
+        context.status = workflow_transition(
+            self._state_machine,
+            context.status,
+            WorkflowRuntimeEvent(
+                event_type=WorkflowRuntimeEventType.FAIL,
+                reason="workflow_timeout_exceeded",
+                step_id=step_id,
+                metadata=details,
+            ),
+        )
+        context.error = WorkflowError(
+            error_type="WorkflowTimeoutExceeded",
+            message=(
+                "workflow exceeded timeout of "
+                f"{timeout_budget.timeout_seconds:g} seconds"
+            ),
+            step_id=step_id,
+            details=details,
+        )
+        context.current_step_ids = []
+        context.manifest["runtime_timeout"] = {
+            "exceeded": True,
+            **details,
+        }
+        context.recorder.emit(
+            "workflow_timeout_exceeded",
+            {
+                "run_id": context.run_id,
+                "workflow_id": context.workflow.workflow_id,
+                **details,
+            },
+            trace_context=(
+                context.step_trace_contexts.get(step_id)
+                if step_id is not None
+                else context.trace_context
+            ),
+        )
+        return True
 
     def _cancel_if_requested(self, context: WorkflowExecutionContext) -> bool:
         if not self._is_run_cancelled(context.run_id):
