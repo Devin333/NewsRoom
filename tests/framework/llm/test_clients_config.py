@@ -124,6 +124,20 @@ def test_models_config_rejects_unknown_top_level_field() -> None:
         validate_openai_compatible_models_config(payload)
 
 
+def test_models_config_parse_error_is_configuration_error_without_file_content(tmp_path: Path) -> None:
+    secret = "sk-test-secret-value"
+    path = tmp_path / "models.json"
+    path.write_text(f'{{"api_key": "{secret}",', encoding="utf-8")
+
+    with pytest.raises(LLMConfigurationError) as exc_info:
+        load_openai_compatible_deployment(path, route_id="writer")
+
+    message = str(exc_info.value)
+    assert "not valid JSON" in message
+    assert str(path) in message
+    assert secret not in message
+
+
 def test_models_config_rejects_unknown_deployment_field() -> None:
     payload = _valid_payload()
     payload["model_groups"]["writer-group"]["deployments"][0]["timeout_second"] = 30

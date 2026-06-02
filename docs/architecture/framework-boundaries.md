@@ -27,3 +27,5 @@ Framework code defines reusable runtime behavior only. NewsRoom business concept
 ## LLM Configuration
 
 `framework.llm` owns domain-neutral model configuration loading and schema validation. `configs/models.yaml` is validated at load time for known top-level, route, deployment, and capability fields so misspelled model config keys fail fast before any business workflow starts.
+
+Config file read and decode failures are normalized to `LLMConfigurationError` without echoing file content, so interface-layer diagnostics and live smoke readiness checks can report `model_config` failures without duplicating framework schema rules or leaking secrets.
