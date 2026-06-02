@@ -7,15 +7,13 @@ from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
 from business.memory.intelligence_recall import IntelligenceMemoryRecallService
 from framework.llm import LLMClient
+from business.layers.signal.source_config import build_default_source_registry
 
 from business.boards.cross_board.workflows.daily_intelligence.dependency_bundle import (
     DailyIntelligenceRuntime,
 )
 from business.boards.cross_board.workflows.daily_intelligence.report_writer import ReportWriter
 from business.boards.cross_board.workflows.daily_intelligence.source_collection import DailySourceCollector
-from business.boards.cross_board.workflows.daily_intelligence.source_config import (
-    build_default_source_registry,
-)
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_bundle import (
     DailySourceConnectorBundle,
 )

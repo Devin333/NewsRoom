@@ -139,9 +139,29 @@ def test_cross_board_daily_source_config_uses_business_source_policy_boundary() 
     )
 
     assert "infrastructure.external.sources" not in imports
-    assert "business.foundation.models.source" in imports
+    assert "business.foundation.registry.source_registry" in imports
     assert "business.layers.signal.source_config" in imports
     assert _matching_forbidden(imports, ("domain.sources", "sources")) == []
+
+
+def test_cross_board_daily_source_runtime_uses_canonical_source_config_loader() -> None:
+    runtime_imports = _imports_for_file(
+        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "runtime_assembly.py"
+    )
+    connector_factory_imports = _imports_for_file(
+        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_connector_factory.py"
+    )
+
+    assert "business.layers.signal.source_config" in runtime_imports
+    assert "business.layers.signal.source_config" in connector_factory_imports
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.source_config"
+        not in runtime_imports
+    )
+    assert (
+        "business.boards.cross_board.workflows.daily_intelligence.source_config"
+        not in connector_factory_imports
+    )
 
 
 def test_cross_board_daily_source_processing_uses_business_signal_layer() -> None:

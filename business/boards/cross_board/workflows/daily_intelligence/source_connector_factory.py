@@ -16,10 +16,8 @@ from infrastructure.external.sources import (
     RedditConnector,
     StackOverflowConnector,
 )
+from business.layers.signal.source_config import build_default_source_fetch_policy
 
-from business.boards.cross_board.workflows.daily_intelligence.source_config import (
-    build_default_source_fetch_policy,
-)
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_bundle import (
     DailySourceConnectorBundle,
 )

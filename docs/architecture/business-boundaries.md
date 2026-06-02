@@ -53,6 +53,8 @@ daily intelligence 的全局运行时预算声明在业务 workflow spec 中，�
 
 fetch policy 的 `allowed_domains` 是 live source URL 的边界。加载 source registry 时必须校验所有 fetchable source URL 落在 allowlist 内，并拒绝 `fixture://`、URL 凭证、secret-like metadata 和拼写错误配置字段。
 
+daily intelligence runtime 直接从 `business.layers.signal.source_config` 加载默认 source registry 和 fetch policy；`daily_intelligence/source_config.py` 只保留 `ensure_live_source_registry()` 这类 workflow-local live gate，不再作为默认配置 loader 的 legacy adapter。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

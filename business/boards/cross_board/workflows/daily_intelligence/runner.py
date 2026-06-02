@@ -40,7 +40,7 @@ from business.boards.cross_board.workflows.daily_intelligence.registry import bu
 from business.boards.cross_board.workflows.daily_intelligence.routing_predicates import (
     build_daily_intelligence_routing_predicate_registry,
 )
-from business.boards.cross_board.workflows.daily_intelligence.source_config import (
+from business.layers.signal.source_config import (
     build_default_source_fetch_policy,
     build_default_source_registry,
 )
