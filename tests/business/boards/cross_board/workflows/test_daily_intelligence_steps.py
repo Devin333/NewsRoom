@@ -110,6 +110,58 @@ def test_daily_source_and_quality_steps_declare_namespaced_alias_read_keys() -> 
     assert "memory.context" in steps["quality_gate"].metadata["optional_read_keys"]
 
 
+def test_daily_source_evidence_steps_prefer_namespaced_read_keys() -> None:
+    steps = {step.step_id: step for step in build_source_and_evidence_steps()}
+
+    assert steps["require_sources"].read_keys == [
+        "sources.raw_items",
+        "raw_items",
+        "sources.errors",
+        "source_errors",
+    ]
+    assert steps["normalize_sources"].read_keys == [
+        "sources.raw_items",
+        "raw_items",
+        "sources.errors",
+        "source_errors",
+        "sources.events",
+        "source_events",
+        "sources.pipeline_metrics",
+        "source_pipeline_metrics",
+    ]
+    assert steps["deduplicate_sources"].read_keys == [
+        "sources.normalized_items",
+        "normalized_items",
+        "sources.errors",
+        "source_errors",
+        "sources.events",
+        "source_events",
+        "sources.pipeline_metrics",
+        "source_pipeline_metrics",
+    ]
+    assert steps["rank_sources"].read_keys == [
+        "sources.deduplicated_items",
+        "deduplicated_items",
+        "request",
+        "sources.errors",
+        "source_errors",
+        "sources.skipped",
+        "skipped_sources",
+        "sources.failed",
+        "failed_sources",
+        "sources.selection_report",
+        "source_selection_report",
+        "sources.events",
+        "source_events",
+        "sources.pipeline_metrics",
+        "source_pipeline_metrics",
+    ]
+    assert steps["build_evidence"].read_keys == [
+        "sources.ranked_items",
+        "ranked_items",
+    ]
+
+
 def test_require_sources_fails_with_source_error_summary() -> None:
     buffer = DataBuffer(
         {

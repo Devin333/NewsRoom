@@ -100,6 +100,8 @@ daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key
 
 `finalize_report` 已进入命名空间优先读取阶段：workflow spec 通过 `with_namespaced_primary_read_keys()` 先声明 `report.*`、`quality.*`、`evidence.*`、`agent.feedback.*` 和 `sources.recollection_quality_assessment`，再保留旧 key 作为兼容入口；workflow adapter 仍通过统一 buffer access helper 读取，不直接关心 legacy / namespaced 分支。
 
+source/evidence 主链路也已进入命名空间优先读取阶段：`require_sources`、`normalize_sources`、`deduplicate_sources`、`rank_sources` 和 `build_evidence` 的 workflow spec 先声明 `sources.*` / `evidence.*` 输入，再保留旧 key 作为兼容入口。对应业务函数仍通过 `workflow_buffer_access.read_buffer_value()` 读取 canonical 业务 key，由 helper 负责 namespaced-first fallback；step 不应自行写 legacy / namespaced 分支判断。
+
 Agent loop step 的业务输出也必须走同一迁移规则：daily agent output normalizer 负责把旧业务 key 投影成命名空间 alias，agentic workflow spec 必须在对应 agent step 的 `write_keys` 中声明这些 alias，framework `AgentLoopStepRunner` 不承载 daily 专属 key 规则。
 
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
