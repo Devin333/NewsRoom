@@ -42,7 +42,8 @@ def test_routing_prefers_source_recollect_before_writer_rewrite() -> None:
     assert loop_state["rewrite_requested"] is False
     assert loop_state["rewrite_rounds"] == 0
     assert route["decision"] == "source_recollect_required"
-    assert route["next_step_id"] == "planner_agent"
+    assert route["next_step_id"] == "recollect_sources"
+    assert route["target_agent_id"] == SOURCE_RECOLLECT_TARGET
     assert route["policy_target_id"] == SOURCE_RECOLLECT_TARGET
 
 

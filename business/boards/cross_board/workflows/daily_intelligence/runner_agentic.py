@@ -59,6 +59,9 @@ from business.boards.cross_board.workflows.daily_intelligence.source_processing 
     rank_sources,
     require_sources,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection_executor import (
+    DailySourceRecollectionExecutor,
+)
 from business.boards.cross_board.workflows.daily_intelligence.spec_agentic import (
     AGENTIC_WORKFLOW_ID,
     AGENTIC_WORKFLOW_VERSION,
@@ -185,6 +188,18 @@ class AgenticDailyIntelligenceRunner:
         registry.register(
             "daily.collect_sources",
             lambda buffer: self.source_collector.collect_sources(
+                buffer,
+                _source_collection_profile(profile),
+            ),
+        )
+        source_recollection_executor = DailySourceRecollectionExecutor(
+            source_registry=self.source_registry,
+            source_dispatcher=self.source_dispatcher,
+            source_health_manager=self.source_health_manager,
+        )
+        registry.register(
+            "daily.recollect_sources",
+            lambda buffer: source_recollection_executor.recollect_sources(
                 buffer,
                 _source_collection_profile(profile),
             ),

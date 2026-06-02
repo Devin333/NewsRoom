@@ -55,8 +55,8 @@ def test_build_profile_from_source_recollect_recommendation() -> None:
         ),
         route={
             "decision": "source_recollect_required",
-            "next_step_id": "planner_agent",
-            "target_agent_id": "daily.planner",
+            "next_step_id": "recollect_sources",
+            "target_agent_id": SOURCE_RECOLLECT_TARGET,
             "policy_target_id": SOURCE_RECOLLECT_TARGET,
             "source_recollect_round": 1,
             "max_source_recollect_rounds": 1,

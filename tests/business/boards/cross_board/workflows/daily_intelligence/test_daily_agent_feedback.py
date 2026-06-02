@@ -263,8 +263,8 @@ def test_collect_agent_feedback_routes_analyst_evidence_gap_to_planner() -> None
     assert summary.policy_recommendations[0].recommended_action == "source_recollect"
     assert summary.policy_recommendations[0].target_agent_id == "daily.source_recollect"
     assert output["agent_feedback_route"]["decision"] == "source_recollect_required"
-    assert output["agent_feedback_route"]["next_step_id"] == "planner_agent"
-    assert output["agent_feedback_route"]["target_agent_id"] == "daily.planner"
+    assert output["agent_feedback_route"]["next_step_id"] == "recollect_sources"
+    assert output["agent_feedback_route"]["target_agent_id"] == "daily.source_recollect"
     assert output["agent_feedback_route"]["policy_target_id"] == "daily.source_recollect"
     assert output["agent_feedback_loop_state"]["source_recollect_rounds"] == 1
     assert output["agent_feedback_loop_state"]["rewrite_rounds"] == 0

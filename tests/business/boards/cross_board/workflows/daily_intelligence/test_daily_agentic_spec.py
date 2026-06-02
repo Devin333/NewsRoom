@@ -123,6 +123,14 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert "sources.recollection_profile" in steps["collect_agent_feedback"].write_keys
     assert "source_recollection_execution_plan" in steps["collect_agent_feedback"].write_keys
     assert "sources.recollection_execution_plan" in steps["collect_agent_feedback"].write_keys
+    assert steps["recollect_sources"].step_type == StepType.FUNCTION
+    assert steps["recollect_sources"].implementation == "daily.recollect_sources"
+    assert "source_recollection_execution_plan" in steps["recollect_sources"].read_keys
+    assert "sources.recollection_execution_plan" in steps["recollect_sources"].read_keys
+    assert "raw_items" in steps["recollect_sources"].metadata["optional_read_keys"]
+    assert "sources.raw_items" in steps["recollect_sources"].metadata["optional_read_keys"]
+    assert "sources.fetch_requests" in steps["recollect_sources"].write_keys
+    assert "sources.fetch_results" in steps["recollect_sources"].write_keys
     assert "agent_feedback_events" in steps["finalize_report"].read_keys
     assert "agent.feedback.events" in steps["finalize_report"].read_keys
     assert "agent_feedback_route" in steps["finalize_report"].read_keys
@@ -157,7 +165,8 @@ def test_agentic_daily_workflow_routes_evidence_to_agents_to_finalize() -> None:
     assert edges["writer-to-verifier"] == ("writer_agent", "verifier_agent")
     assert edges["verifier-to-feedback"] == ("verifier_agent", "collect_agent_feedback")
     assert edges["editor-to-feedback"] == ("editor_agent", "collect_agent_feedback")
-    assert edges["feedback-recollect-to-planner"] == ("collect_agent_feedback", "planner_agent")
+    assert edges["feedback-recollect-to-sources"] == ("collect_agent_feedback", "recollect_sources")
+    assert edges["recollect-to-normalize"] == ("recollect_sources", "normalize_sources")
     assert edges["feedback-retry-to-writer"] == ("collect_agent_feedback", "writer_agent")
     assert edges["feedback-pass-to-editor"] == ("collect_agent_feedback", "editor_agent")
     assert edges["feedback-to-finalize"] == ("collect_agent_feedback", "finalize_report")
@@ -168,9 +177,9 @@ def test_agentic_daily_workflow_declares_bounded_feedback_routes() -> None:
     edges = {edge.edge_id: edge for edge in workflow.edges}
 
     assert edges["verifier-to-feedback"].condition == EdgeCondition.ON_SUCCESS
-    assert edges["feedback-recollect-to-planner"].condition == EdgeCondition.CONDITIONAL
-    assert edges["feedback-recollect-to-planner"].condition_expr == (
-        "outcome.outputs.agent_feedback_route.next_step_id == 'planner_agent'"
+    assert edges["feedback-recollect-to-sources"].condition == EdgeCondition.CONDITIONAL
+    assert edges["feedback-recollect-to-sources"].condition_expr == (
+        "outcome.outputs.agent_feedback_route.next_step_id == 'recollect_sources'"
     )
     assert edges["feedback-retry-to-writer"].condition == EdgeCondition.CONDITIONAL
     assert edges["feedback-retry-to-writer"].condition_expr == (
@@ -184,7 +193,7 @@ def test_agentic_daily_workflow_declares_bounded_feedback_routes() -> None:
     assert edges["feedback-to-finalize"].condition_expr == (
         "outcome.outputs.agent_feedback_route.next_step_id == 'finalize_report'"
     )
-    assert edges["feedback-recollect-to-planner"].priority < edges["feedback-retry-to-writer"].priority
+    assert edges["feedback-recollect-to-sources"].priority < edges["feedback-retry-to-writer"].priority
     assert edges["feedback-retry-to-writer"].priority < edges["feedback-to-finalize"].priority
 
 
@@ -218,6 +227,7 @@ def _step_runner_registry():
         "daily.rank_sources",
         "daily.build_evidence",
         "daily.collect_agent_feedback",
+        "daily.recollect_sources",
         "daily.finalize_report",
     ]:
         function_registry.register(implementation, lambda buffer: {})

@@ -9,7 +9,6 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_mod
 )
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
     EDITOR_AGENT_ID,
-    PLANNER_AGENT_ID,
     WRITER_AGENT_ID,
 )
 
@@ -81,8 +80,8 @@ class DailyAgentFeedbackRoutingService:
         ):
             return {
                 "decision": "source_recollect_required",
-                "next_step_id": "planner_agent",
-                "target_agent_id": PLANNER_AGENT_ID,
+                "next_step_id": "recollect_sources",
+                "target_agent_id": SOURCE_RECOLLECT_TARGET,
                 "policy_target_id": SOURCE_RECOLLECT_TARGET,
                 "reason": "agent feedback requested source recollection planning",
                 "source_recollect_round": loop_state["source_recollect_rounds"],

@@ -41,6 +41,7 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             _verifier_agent_step(),
             _editor_agent_step(),
             _collect_agent_feedback_step(),
+            _recollect_sources_step(),
             _finalize_report_step(),
         ],
         edges=[
@@ -56,13 +57,14 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             EdgeSpec("verifier-to-feedback", "verifier_agent", "collect_agent_feedback"),
             EdgeSpec("editor-to-feedback", "editor_agent", "collect_agent_feedback"),
             EdgeSpec(
-                "feedback-recollect-to-planner",
+                "feedback-recollect-to-sources",
                 "collect_agent_feedback",
-                "planner_agent",
+                "recollect_sources",
                 condition=EdgeCondition.CONDITIONAL,
-                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'planner_agent'",
+                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'recollect_sources'",
                 priority=-20,
             ),
+            EdgeSpec("recollect-to-normalize", "recollect_sources", "normalize_sources"),
             EdgeSpec(
                 "feedback-retry-to-writer",
                 "collect_agent_feedback",
@@ -335,6 +337,65 @@ def _collect_agent_feedback_step() -> StepSpec:
             "optional_read_keys": with_namespaced_read_keys([
                 "editor_review",
                 "agent_feedback_loop_state",
+            ])
+        },
+    )
+
+
+def _recollect_sources_step() -> StepSpec:
+    return StepSpec(
+        step_id="recollect_sources",
+        implementation="daily.recollect_sources",
+        step_type=StepType.FUNCTION,
+        read_keys=with_namespaced_read_keys([
+            "request",
+            "source_recollection_execution_plan",
+        ]),
+        write_keys=with_namespaced_write_keys([
+            "raw_items",
+            "source_errors",
+            "skipped_sources",
+            "failed_sources",
+            "source_fetch_requests",
+            "source_fetch_results",
+            "source_health_updates",
+            "source_health_report",
+            "source_events",
+            "source_pipeline_metrics",
+            "source_connector_dispatch_report",
+            "source_error_policy_report",
+            "source_fallback_report",
+            "source_selection_report",
+            "source_coverage_report",
+        ]),
+        required_output_keys=[
+            "raw_items",
+            "source_errors",
+            "skipped_sources",
+            "failed_sources",
+            "source_fetch_requests",
+            "source_fetch_results",
+            "source_health_updates",
+            "source_health_report",
+            "source_events",
+            "source_pipeline_metrics",
+            "source_connector_dispatch_report",
+            "source_error_policy_report",
+            "source_fallback_report",
+            "source_selection_report",
+            "source_coverage_report",
+        ],
+        metadata={
+            "optional_read_keys": with_namespaced_read_keys([
+                "raw_items",
+                "source_errors",
+                "skipped_sources",
+                "failed_sources",
+                "source_fetch_requests",
+                "source_fetch_results",
+                "source_health_updates",
+                "source_events",
+                "source_pipeline_metrics",
             ])
         },
     )
