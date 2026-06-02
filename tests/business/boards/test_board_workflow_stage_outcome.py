@@ -56,6 +56,12 @@ def test_failed_workflow_stage_is_recorded_and_exception_is_reraised() -> None:
     assert failed_stages[0].error_type == "RuntimeError"
     assert failed_stages[0].recovery_action == WorkflowRecoveryAction.BLOCK
     assert workflow.last_execution.failed_stage_count == 1
+    assert workflow.last_execution.finished_at is not None
+    assert [stage.stage_name for stage in workflow.last_execution.stages] == [
+        "resolve_context",
+        "select_signals",
+        "run_pipeline",
+    ]
 
 
 def test_workflow_stage_status_supports_skipped() -> None:

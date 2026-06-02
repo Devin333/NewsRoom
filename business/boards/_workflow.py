@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from pydantic import Field
 
 from business.boards._service import BoardServiceBase
-from business.boards._workflow_runtime import BoardWorkflowExecution, stage_result
+from business.boards._workflow_execution import BoardWorkflowRunState
+from business.boards._workflow_runtime import BoardWorkflowExecution
 from business.foundation import (
     AnalysisContext,
     BoardRunResult,
@@ -23,10 +22,6 @@ from business.foundation import (
 )
 
 ServiceT = TypeVar("ServiceT", bound=BoardServiceBase)
-StageResultT = TypeVar("StageResultT")
-StageMetric = int | None | Callable[[StageResultT], int | None]
-StageWarnings = list[str] | None | Callable[[StageResultT], list[str] | None]
-StageMetadata = dict[str, Any] | None | Callable[[StageResultT], dict[str, Any] | None]
 
 
 class BoardWorkflowTrace(PrimitiveModel):
@@ -86,7 +81,7 @@ class BoardWorkflowBase(Generic[ServiceT]):
 
     def run(self, items: list[Any], *, context: AnalysisContext | None = None) -> BoardWorkflowResult:
         input_items = list(items)
-        run_state = _WorkflowRunState(
+        run_state = BoardWorkflowRunState(
             execution=BoardWorkflowExecution(
                 workflow_id=f"{self.board_type.value}_board_workflow",
                 board_type=self.board_type.value,
@@ -357,94 +352,5 @@ def _guard_status(guards: list[BusinessRegressionGuardResult]) -> str:
     if any(guard.warnings for guard in guards):
         return "warning"
     return "pass"
-
-
-@dataclass
-class _WorkflowRunState:
-    execution: BoardWorkflowExecution
-    publish: Callable[[BoardWorkflowExecution], None]
-
-    def __post_init__(self) -> None:
-        self.publish(self.execution)
-
-    def run_stage(
-        self,
-        stage_name: str,
-        operation: Callable[[], StageResultT],
-        *,
-        input_count: int | None = None,
-        output_count: StageMetric = None,
-        warnings: StageWarnings = None,
-        metadata: StageMetadata = None,
-    ) -> StageResultT:
-        started_at = _utc_now()
-        try:
-            result = operation()
-        except Exception as exc:
-            self._record_failed_stage(stage_name, started_at, exc)
-            raise
-        self._record_completed_stage(
-            stage_name,
-            started_at,
-            input_count=input_count,
-            output_count=_resolve_stage_value(output_count, result),
-            warnings=_resolve_stage_value(warnings, result) or [],
-            metadata=_resolve_stage_value(metadata, result) or {},
-        )
-        return result
-
-    def finish(self) -> BoardWorkflowExecution:
-        self.execution = self.execution.finish()
-        self.publish(self.execution)
-        return self.execution
-
-    def _record_completed_stage(
-        self,
-        stage_name: str,
-        started_at,
-        *,
-        input_count: int | None,
-        output_count: int | None,
-        warnings: list[str],
-        metadata: dict[str, Any],
-    ) -> None:
-        self.execution = self.execution.add_stage(
-            stage_result(
-                stage_name,
-                started_at=started_at,
-                input_count=input_count,
-                output_count=output_count,
-                warnings=warnings,
-                metadata=metadata,
-            )
-        )
-        self.publish(self.execution)
-
-    def _record_failed_stage(self, stage_name: str, started_at, exc: BaseException) -> None:
-        self.execution = self.execution.add_stage(
-            stage_result(
-                stage_name,
-                started_at=started_at,
-                error=exc,
-            )
-        ).finish()
-        self.publish(self.execution)
-
-
-def _resolve_stage_value(
-    value: StageMetric | StageWarnings | StageMetadata,
-    result: StageResultT,
-):
-    if callable(value):
-        return value(result)
-    return value
-
-
-def _utc_now():
-    from datetime import datetime, timezone as _tz
-    UTC = _tz.utc
-
-    return datetime.now(UTC)
-
 
 __all__ = ["BoardWorkflowBase", "BoardWorkflowResult", "BoardWorkflowTrace"]

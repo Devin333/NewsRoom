@@ -27,6 +27,12 @@ workflow IO 声明集中在 `business/boards/productized/workflow.py`；
 step adapter 集中在 `business/boards/productized/steps.py`；
 `business/boards/_productized_steps.py` 只保留旧导入路径兼容。
 
+## Board Workflow Execution 边界
+
+`business/boards/_workflow.py` 负责编排 board 业务阶段：context 解析、signal selection、pipeline、board result、policy、quality feedback 和最终结果组装。
+
+stage 执行、stage outcome 记录、失败 stage 的 finish/publish 语义由 `business/boards/_workflow_execution.py` 承载。业务 workflow 不在异常路径继续构建 board result；失败会记录到 `BoardWorkflowExecution` 后立即重新抛出，调用方可从 `last_execution` 或 metadata 中读取执行证据。
+
 ## Daily Runtime Assembly 边界
 
 daily intelligence 的普通 Runner 和 agentic Runner 都以 `DailyIntelligenceRuntime` 作为主装配模型。`source_runtime_assembly_from_runtime()` 只负责从 runtime 投影 connector/source collector 兼容视图，不再由各 Runner 手工拼装 connector。
