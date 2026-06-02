@@ -9,6 +9,9 @@ UTC = _tz.utc
 
 
 class ProductizedArtifactMetadataService:
+    def __init__(self, *, board_type: BoardType | None = None) -> None:
+        self.board_type = board_type
+
     def build(
         self,
         *,
@@ -34,15 +37,18 @@ class ProductizedArtifactMetadataService:
     def build_outputs(
         self,
         *,
-        board_type: BoardType,
+        board_type: BoardType | None = None,
         request: dict[str, Any],
         cards: list[dict[str, Any]],
         quality_summary: dict[str, Any],
         subscription_payload: dict[str, Any],
     ) -> dict[str, Any]:
+        resolved_board_type = board_type or self.board_type
+        if resolved_board_type is None:
+            raise ValueError("board_type is required for productized artifact metadata outputs")
         return {
             "artifact_metadata": self.build(
-                board_type=board_type,
+                board_type=resolved_board_type,
                 request=request,
                 cards=cards,
                 quality_summary=quality_summary,

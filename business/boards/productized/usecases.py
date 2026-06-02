@@ -34,7 +34,6 @@ class ProductizedBoardUseCases:
         feedback_service: BoardFeedbackService,
         improvement_service: BoardImprovementService,
     ) -> None:
-        self.board_type = board_type
         self.classification_service = ProductizedSignalClassificationService(
             board_service=board_service,
         )
@@ -65,7 +64,9 @@ class ProductizedBoardUseCases:
             improvement_service=improvement_service,
             board_type=board_type,
         )
-        self.artifact_metadata_service = ProductizedArtifactMetadataService()
+        self.artifact_metadata_service = ProductizedArtifactMetadataService(
+            board_type=board_type,
+        )
         self.output_service = ProductizedBoardOutputService(
             board_service=board_service,
             skill_runtime=skill_runtime,
@@ -212,7 +213,6 @@ class ProductizedBoardUseCases:
         subscription_payload: dict[str, Any],
     ) -> dict[str, Any]:
         return self.artifact_metadata_service.build_outputs(
-            board_type=self.board_type,
             request=request,
             cards=cards,
             quality_summary=quality_summary,
