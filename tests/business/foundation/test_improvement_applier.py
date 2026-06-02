@@ -35,6 +35,8 @@ def test_improvement_applier_only_applies_approved_supported_proposals() -> None
 
     assert [item["proposal_id"] for item in context.applied_overrides] == ["approved"]
     assert context.applied_overrides[0]["target_type"] == "ranking_weight"
+    assert context.applied_policy_experiments == context.applied_overrides
+    assert context.skipped_policy_experiments == context.skipped_overrides
     assert context.skipped_overrides[0]["proposal_id"] == "proposed"
     assert context.measurement_plan["compare_metrics"]
 

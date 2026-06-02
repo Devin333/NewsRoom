@@ -98,6 +98,7 @@ class ProductizedImprovementWorkflowService:
             "improvement_recommendations": [item.to_dict() for item in recommendations],
             "improvement_proposals": [item.to_dict() for item in proposals],
             "applied_policy_experiments": improvement_context.applied_policy_experiments,
+            "skipped_policy_experiments": improvement_context.skipped_policy_experiments,
             "applied_overrides": improvement_context.applied_overrides,
             "improvement_measurement": measurement.to_dict(),
             "self_improvement_report": report.to_dict(),

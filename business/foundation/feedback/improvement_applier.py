@@ -50,6 +50,7 @@ class ImprovementApplier:
             board_type=board_type,
             applied_overrides=applied,
             applied_policy_experiments=applied,
+            skipped_policy_experiments=skipped,
             skipped_overrides=skipped,
             proposal_ids=[proposal.proposal_id for proposal in proposals],
             measurement_plan={

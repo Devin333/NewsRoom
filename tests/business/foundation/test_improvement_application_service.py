@@ -22,6 +22,7 @@ def test_improvement_application_service_filters_store_proposals_by_board() -> N
 
     assert context.proposal_ids == ["proposal-ai"]
     assert [item["proposal_id"] for item in context.applied_policy_experiments] == ["proposal-ai"]
+    assert context.skipped_policy_experiments == []
     assert context.skipped_overrides == []
 
     legacy_context = ImprovementApplicationService(proposal_store=store).apply_approved(
@@ -29,6 +30,7 @@ def test_improvement_application_service_filters_store_proposals_by_board() -> N
         board_type="ai_news",
     )
     assert legacy_context.applied_overrides == legacy_context.applied_policy_experiments
+    assert legacy_context.skipped_overrides == legacy_context.skipped_policy_experiments
 
 
 def _proposal(proposal_id: str, *, board_type: str) -> ImprovementProposal:
