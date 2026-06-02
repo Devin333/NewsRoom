@@ -3,6 +3,7 @@ from __future__ import annotations
 from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_models import (
     DailyAgentFeedbackEvent,
     DailyAgentFeedbackPolicyRecommendation,
+    SOURCE_RECOLLECT_TARGET,
 )
 from business.boards.cross_board.workflows.daily_intelligence.agents import WRITER_AGENT_ID
 
@@ -27,6 +28,15 @@ class DailyAgentFeedbackPolicyService:
                 action="human_review",
                 recommendation_id="daily-agent-feedback-policy-human-review",
                 priority="warning",
+            )
+        )
+        recommendations.extend(
+            self._recommend_for_action(
+                events,
+                action="source_recollect",
+                recommendation_id="daily-agent-feedback-policy-source-recollect",
+                priority="warning",
+                target_agent_id=SOURCE_RECOLLECT_TARGET,
             )
         )
         recommendations.extend(

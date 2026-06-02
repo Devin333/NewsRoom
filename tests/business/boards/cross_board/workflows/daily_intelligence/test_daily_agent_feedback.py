@@ -61,6 +61,10 @@ def test_collect_agent_feedback_records_verifier_and_editor_rewrite_requests() -
         "max_rewrite_rounds": 1,
         "rewrite_requested": False,
         "rewrite_exhausted": False,
+        "source_recollect_rounds": 0,
+        "max_source_recollect_rounds": 1,
+        "source_recollect_requested": False,
+        "source_recollect_exhausted": False,
     }
 
 
@@ -218,6 +222,96 @@ def test_collect_agent_feedback_can_route_verifier_feedback_before_editor_runs()
     assert output["agent_feedback_loop_state"]["rewrite_rounds"] == 1
 
 
+def test_collect_agent_feedback_routes_analyst_evidence_gap_to_planner() -> None:
+    output = collect_agent_feedback(
+        _feedback_buffer(
+            analysis_result={
+                "findings": [],
+                "trend_signals": [],
+                "risk_notes": [],
+                "uncertainty_notes": [],
+                "evidence_gaps": [
+                    {"reason": "Need a second independent source for model launch timing."}
+                ],
+                "source_recollection_requests": [
+                    {"query": "model launch timing official announcement"}
+                ],
+                "missing_information": ["official launch date confirmation"],
+            },
+            verification_result={
+                "status": "pass",
+                "risk_level": "low",
+                "unsupported_claims": [],
+                "missing_citations": [],
+                "reasons": [],
+            },
+            citation_check_result={},
+            support_matrix={},
+            editor_review=None,
+        )
+    )
+
+    events = output["agent_feedback_events"]
+    summary = output["agent_feedback_summary"]
+
+    assert [event.feedback_type for event in events] == ["source_recollection_request"]
+    assert events[0].source_agent_id == "daily.analyst"
+    assert events[0].target_agent_id == "daily.source_recollect"
+    assert events[0].requested_action == "source_recollect"
+    assert events[0].reason == "model launch timing official announcement"
+    assert summary.source_recollect_request_count == 1
+    assert summary.policy_recommendations[0].recommended_action == "source_recollect"
+    assert summary.policy_recommendations[0].target_agent_id == "daily.source_recollect"
+    assert output["agent_feedback_route"]["decision"] == "source_recollect_required"
+    assert output["agent_feedback_route"]["next_step_id"] == "planner_agent"
+    assert output["agent_feedback_route"]["target_agent_id"] == "daily.planner"
+    assert output["agent_feedback_route"]["policy_target_id"] == "daily.source_recollect"
+    assert output["agent_feedback_loop_state"]["source_recollect_rounds"] == 1
+    assert output["agent_feedback_loop_state"]["rewrite_rounds"] == 0
+
+
+def test_collect_agent_feedback_exhausts_bounded_source_recollect_loop() -> None:
+    output = collect_agent_feedback(
+        _feedback_buffer(
+            analysis_result={
+                "findings": [],
+                "trend_signals": [],
+                "risk_notes": [],
+                "uncertainty_notes": [],
+                "evidence_gaps": [{"reason": "Need a primary source."}],
+            },
+            verification_result={
+                "status": "pass",
+                "risk_level": "low",
+                "unsupported_claims": [],
+                "missing_citations": [],
+                "reasons": [],
+            },
+            citation_check_result={},
+            support_matrix={},
+            editor_review=None,
+            agent_feedback_loop_state={
+                "rewrite_rounds": 0,
+                "max_rewrite_rounds": 1,
+                "rewrite_requested": False,
+                "rewrite_exhausted": False,
+                "source_recollect_rounds": 1,
+                "max_source_recollect_rounds": 1,
+                "source_recollect_requested": True,
+                "source_recollect_exhausted": False,
+            },
+        )
+    )
+
+    assert output["agent_feedback_route"]["decision"] == "blocked"
+    assert output["agent_feedback_route"]["next_step_id"] == "finalize_report"
+    assert output["agent_feedback_route"]["reason"] == (
+        "agent feedback source recollection rounds exhausted"
+    )
+    assert output["agent_feedback_loop_state"]["source_recollect_rounds"] == 1
+    assert output["agent_feedback_loop_state"]["source_recollect_exhausted"] is True
+
+
 def test_collect_agent_feedback_exhausts_bounded_writer_rewrite_loop() -> None:
     output = collect_agent_feedback(
         _feedback_buffer(
@@ -249,6 +343,7 @@ def test_collect_agent_feedback_exhausts_bounded_writer_rewrite_loop() -> None:
 
 def _feedback_buffer(
     *,
+    analysis_result: dict | None = None,
     verification_result: dict,
     citation_check_result: dict,
     support_matrix: dict,
@@ -256,6 +351,7 @@ def _feedback_buffer(
     agent_feedback_loop_state: dict | None = None,
 ):
     values = {
+        "analysis_result": analysis_result or {},
         "verification_result": verification_result,
         "citation_check_result": citation_check_result,
         "support_matrix": support_matrix,
@@ -266,6 +362,7 @@ def _feedback_buffer(
         values["agent_feedback_loop_state"] = agent_feedback_loop_state
     return DataBuffer(values).scope(
         read_keys=[
+            "analysis_result",
             "verification_result",
             "citation_check_result",
             "support_matrix",

@@ -62,6 +62,10 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
         "sources.errors",
         "sources.pipeline_metrics",
     ]
+    assert "agent_feedback_summary" in steps["planner_agent"].metadata["optional_read_keys"]
+    assert "agent.feedback.summary" in steps["planner_agent"].metadata["optional_read_keys"]
+    assert "agent_feedback_route" in steps["planner_agent"].metadata["optional_read_keys"]
+    assert "agent.feedback.route" in steps["planner_agent"].metadata["optional_read_keys"]
 
     assert steps["analyst_agent"].step_type == StepType.AGENT_LOOP
     assert steps["analyst_agent"].metadata["agent_id"] == ANALYST_AGENT_ID
@@ -93,6 +97,7 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["collect_agent_feedback"].implementation == "daily.collect_agent_feedback"
     assert steps["collect_agent_feedback"].required_output_keys == ["agent_feedback_summary"]
     assert steps["collect_agent_feedback"].read_keys == [
+        "analysis_result",
         "verification_result",
         "citation_check_result",
         "support_matrix",
@@ -144,6 +149,7 @@ def test_agentic_daily_workflow_routes_evidence_to_agents_to_finalize() -> None:
     assert edges["writer-to-verifier"] == ("writer_agent", "verifier_agent")
     assert edges["verifier-to-feedback"] == ("verifier_agent", "collect_agent_feedback")
     assert edges["editor-to-feedback"] == ("editor_agent", "collect_agent_feedback")
+    assert edges["feedback-recollect-to-planner"] == ("collect_agent_feedback", "planner_agent")
     assert edges["feedback-retry-to-writer"] == ("collect_agent_feedback", "writer_agent")
     assert edges["feedback-pass-to-editor"] == ("collect_agent_feedback", "editor_agent")
     assert edges["feedback-to-finalize"] == ("collect_agent_feedback", "finalize_report")
@@ -154,6 +160,10 @@ def test_agentic_daily_workflow_declares_bounded_feedback_routes() -> None:
     edges = {edge.edge_id: edge for edge in workflow.edges}
 
     assert edges["verifier-to-feedback"].condition == EdgeCondition.ON_SUCCESS
+    assert edges["feedback-recollect-to-planner"].condition == EdgeCondition.CONDITIONAL
+    assert edges["feedback-recollect-to-planner"].condition_expr == (
+        "outcome.outputs.agent_feedback_route.next_step_id == 'planner_agent'"
+    )
     assert edges["feedback-retry-to-writer"].condition == EdgeCondition.CONDITIONAL
     assert edges["feedback-retry-to-writer"].condition_expr == (
         "outcome.outputs.agent_feedback_route.next_step_id == 'writer_agent'"
@@ -166,6 +176,7 @@ def test_agentic_daily_workflow_declares_bounded_feedback_routes() -> None:
     assert edges["feedback-to-finalize"].condition_expr == (
         "outcome.outputs.agent_feedback_route.next_step_id == 'finalize_report'"
     )
+    assert edges["feedback-recollect-to-planner"].priority < edges["feedback-retry-to-writer"].priority
     assert edges["feedback-retry-to-writer"].priority < edges["feedback-to-finalize"].priority
 
 

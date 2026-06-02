@@ -9,6 +9,7 @@ from business.foundation import PrimitiveModel
 
 HUMAN_REVIEW_TARGET = "daily.human_review"
 PUBLICATION_GATE_TARGET = "daily.publication_gate"
+SOURCE_RECOLLECT_TARGET = "daily.source_recollect"
 
 
 class DailyAgentFeedbackEvent(PrimitiveModel):
@@ -35,6 +36,7 @@ class DailyAgentFeedbackPolicyRecommendation(PrimitiveModel):
 class DailyAgentFeedbackSummary(PrimitiveModel):
     event_count: int
     rewrite_request_count: int = 0
+    source_recollect_request_count: int = 0
     human_review_request_count: int = 0
     block_request_count: int = 0
     highest_severity: str = "none"

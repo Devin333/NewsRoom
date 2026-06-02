@@ -32,6 +32,9 @@ def validate_analysis_result(payload: Any) -> dict[str, Any]:
     for key in ("findings", "trend_signals", "risk_notes", "uncertainty_notes"):
         if not isinstance(result[key], list):
             raise ValueError(f"analysis_result.{key} must be a list")
+    for key in ("evidence_gaps", "source_recollection_requests", "missing_information"):
+        if key in result and not isinstance(result[key], list):
+            raise ValueError(f"analysis_result.{key} must be a list")
     return dict(result)
 
 

@@ -25,7 +25,16 @@ def build_planner_agent() -> AgentSpec:
             "metadata from the provided evidence bundle, but do not fetch sources "
             "or infer facts. Return JSON only."
         ),
-        input_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
+        input_keys=[
+            "request",
+            "evidence_bundle",
+            "source_errors",
+            "source_pipeline_metrics",
+            "agent_feedback_events",
+            "agent_feedback_summary",
+            "agent_feedback_route",
+            "agent_feedback_loop_state",
+        ],
         output_key="research_plan",
         validation_policy=daily_agent_validation_policy(),
         allowed_tools=["daily.source_metadata"],
@@ -75,6 +84,9 @@ def build_analyst_agent() -> AgentSpec:
                         "trend_signals": {"type": "array", "items": {"type": "object"}},
                         "risk_notes": {"type": "array", "items": {"type": "string"}},
                         "uncertainty_notes": {"type": "array", "items": {"type": "string"}},
+                        "evidence_gaps": {"type": "array", "items": {"type": "object"}},
+                        "source_recollection_requests": {"type": "array", "items": {"type": "object"}},
+                        "missing_information": {"type": "array", "items": {"type": "string"}},
                     },
                 },
                 "analyst_notes": {"type": "object"},

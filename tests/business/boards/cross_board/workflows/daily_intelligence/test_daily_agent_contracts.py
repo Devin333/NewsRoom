@@ -52,6 +52,10 @@ def test_daily_agent_specs_define_contract_keys() -> None:
         "evidence_bundle",
         "source_errors",
         "source_pipeline_metrics",
+        "agent_feedback_events",
+        "agent_feedback_summary",
+        "agent_feedback_route",
+        "agent_feedback_loop_state",
     ]
     assert planner.output_key == "research_plan"
     assert planner.output_schema is not None
@@ -212,6 +216,17 @@ def test_daily_agent_output_validators_reject_missing_keys(validator, payload) -
             "findings must be a list",
         ),
         (
+            validate_analysis_result,
+            {
+                "findings": [],
+                "trend_signals": [],
+                "risk_notes": [],
+                "uncertainty_notes": [],
+                "evidence_gaps": {},
+            },
+            "evidence_gaps must be a list",
+        ),
+        (
             validate_report_draft,
             {
                 "title": "Daily Brief",
@@ -363,6 +378,9 @@ def _valid_analysis_result() -> dict:
         "trend_signals": [{"title": "Adoption signal", "inference": True}],
         "risk_notes": ["Single-source evidence."],
         "uncertainty_notes": ["Trend remains inferential."],
+        "evidence_gaps": [{"reason": "Need a second independent policy source."}],
+        "source_recollection_requests": [{"query": "AI chip policy official update"}],
+        "missing_information": ["Independent confirmation of policy scope."],
     }
 
 

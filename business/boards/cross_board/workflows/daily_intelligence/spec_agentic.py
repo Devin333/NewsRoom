@@ -56,6 +56,14 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
             EdgeSpec("verifier-to-feedback", "verifier_agent", "collect_agent_feedback"),
             EdgeSpec("editor-to-feedback", "editor_agent", "collect_agent_feedback"),
             EdgeSpec(
+                "feedback-recollect-to-planner",
+                "collect_agent_feedback",
+                "planner_agent",
+                condition=EdgeCondition.CONDITIONAL,
+                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'planner_agent'",
+                priority=-20,
+            ),
+            EdgeSpec(
                 "feedback-retry-to-writer",
                 "collect_agent_feedback",
                 "writer_agent",
@@ -107,10 +115,18 @@ def _planner_agent_step() -> StepSpec:
             "planner_llm_call_artifacts",
         ],
         required_output_keys=["research_plan"],
-        metadata=_agent_step_metadata(
-            PLANNER_AGENT_ID,
-            prefix="planner",
-        ),
+        metadata={
+            **_agent_step_metadata(
+                PLANNER_AGENT_ID,
+                prefix="planner",
+            ),
+            "optional_read_keys": with_namespaced_read_keys([
+                "agent_feedback_events",
+                "agent_feedback_summary",
+                "agent_feedback_route",
+                "agent_feedback_loop_state",
+            ]),
+        },
     )
 
 
@@ -299,6 +315,7 @@ def _collect_agent_feedback_step() -> StepSpec:
         implementation="daily.collect_agent_feedback",
         step_type=StepType.FUNCTION,
         read_keys=with_namespaced_read_keys([
+            "analysis_result",
             "verification_result",
             "citation_check_result",
             "support_matrix",

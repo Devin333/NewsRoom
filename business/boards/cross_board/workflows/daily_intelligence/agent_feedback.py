@@ -6,6 +6,7 @@ from framework.workflow import StepScopedDataBufferView
 from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_models import (
     HUMAN_REVIEW_TARGET,
     PUBLICATION_GATE_TARGET,
+    SOURCE_RECOLLECT_TARGET,
     DailyAgentFeedbackEvent,
     DailyAgentFeedbackSummary,
 )
@@ -13,7 +14,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_pol
     DailyAgentFeedbackPolicyService,
 )
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
+    ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,
+    PLANNER_AGENT_ID,
     VERIFIER_AGENT_ID,
     WRITER_AGENT_ID,
 )
@@ -26,11 +29,13 @@ from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_ac
 
 
 MAX_AGENT_FEEDBACK_REWRITE_ROUNDS = 1
+MAX_AGENT_FEEDBACK_SOURCE_RECOLLECT_ROUNDS = 1
 
 
 def collect_agent_feedback(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     editor_review = _optional_buffer_dict(buffer, "editor_review")
     events = DailyAgentFeedbackCollector().collect(
+        analysis_result=_optional_buffer_dict(buffer, "analysis_result"),
         verification_result=_optional_buffer_dict(buffer, "verification_result"),
         citation_check_result=_optional_buffer_dict(buffer, "citation_check_result"),
         support_matrix=_optional_buffer_dict(buffer, "support_matrix"),
@@ -40,7 +45,7 @@ def collect_agent_feedback(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     loop_state = _next_feedback_loop_state(
         buffer,
         summary,
-        writer_rewrite_routable=not bool(editor_review),
+        agent_reroute_allowed=not bool(editor_review),
     )
     return with_namespaced_aliases({
         "agent_feedback_events": events,
@@ -58,18 +63,51 @@ class DailyAgentFeedbackCollector:
     def collect(
         self,
         *,
+        analysis_result: dict[str, Any],
         verification_result: dict[str, Any],
         citation_check_result: dict[str, Any],
         support_matrix: dict[str, Any],
         editor_review: dict[str, Any],
     ) -> list[DailyAgentFeedbackEvent]:
         events: list[DailyAgentFeedbackEvent] = []
+        self._collect_analyst_feedback(events, analysis_result)
         self._collect_verifier_feedback(events, verification_result, citation_check_result, support_matrix)
         self._collect_editor_feedback(events, editor_review)
         return [
             event.model_copy(update={"feedback_id": f"daily-agent-feedback-{index + 1}"})
             for index, event in enumerate(events)
         ]
+
+    def _collect_analyst_feedback(
+        self,
+        events: list[DailyAgentFeedbackEvent],
+        analysis_result: dict[str, Any],
+    ) -> None:
+        evidence_gaps = _list_value(analysis_result.get("evidence_gaps"))
+        recollection_requests = _list_value(analysis_result.get("source_recollection_requests"))
+        missing_information = _list_value(analysis_result.get("missing_information"))
+        if not (evidence_gaps or recollection_requests or missing_information):
+            return
+        events.append(
+            _feedback_event(
+                source_agent_id=ANALYST_AGENT_ID,
+                target_agent_id=SOURCE_RECOLLECT_TARGET,
+                feedback_type="source_recollection_request",
+                severity="warning",
+                requested_action="source_recollect",
+                reason=_first_text(
+                    _feedback_item_texts(recollection_requests),
+                    _feedback_item_texts(evidence_gaps),
+                    _feedback_item_texts(missing_information),
+                    default="analyst requested source recollection",
+                ),
+                metadata={
+                    "evidence_gaps": evidence_gaps,
+                    "source_recollection_requests": recollection_requests,
+                    "missing_information": missing_information,
+                },
+            )
+        )
 
     def _collect_verifier_feedback(
         self,
@@ -211,6 +249,9 @@ def summarize_agent_feedback(events: list[DailyAgentFeedbackEvent]) -> DailyAgen
     return DailyAgentFeedbackSummary(
         event_count=len(events),
         rewrite_request_count=sum(1 for event in events if event.requested_action == "rewrite"),
+        source_recollect_request_count=sum(
+            1 for event in events if event.requested_action == "source_recollect"
+        ),
         human_review_request_count=sum(1 for event in events if event.requested_action == "human_review"),
         block_request_count=sum(1 for event in events if event.requested_action == "block"),
         highest_severity=_highest_severity(events),
@@ -229,6 +270,34 @@ def _feedback_route(
     *,
     editor_review_available: bool,
 ) -> dict[str, Any]:
+    if (
+        not editor_review_available
+        and loop_state["source_recollect_requested"]
+        and not loop_state["source_recollect_exhausted"]
+    ):
+        return {
+            "decision": "source_recollect_required",
+            "next_step_id": "planner_agent",
+            "target_agent_id": PLANNER_AGENT_ID,
+            "policy_target_id": SOURCE_RECOLLECT_TARGET,
+            "reason": "agent feedback requested source recollection planning",
+            "source_recollect_round": loop_state["source_recollect_rounds"],
+            "max_source_recollect_rounds": loop_state["max_source_recollect_rounds"],
+        }
+    if (
+        not editor_review_available
+        and loop_state["source_recollect_requested"]
+        and loop_state["source_recollect_exhausted"]
+    ):
+        return {
+            "decision": "blocked",
+            "next_step_id": "finalize_report",
+            "target_agent_id": PUBLICATION_GATE_TARGET,
+            "policy_target_id": SOURCE_RECOLLECT_TARGET,
+            "reason": "agent feedback source recollection rounds exhausted",
+            "source_recollect_round": loop_state["source_recollect_rounds"],
+            "max_source_recollect_rounds": loop_state["max_source_recollect_rounds"],
+        }
     if (
         not editor_review_available
         and loop_state["rewrite_requested"]
@@ -280,11 +349,27 @@ def _next_feedback_loop_state(
     buffer: StepScopedDataBufferView,
     summary: DailyAgentFeedbackSummary,
     *,
-    writer_rewrite_routable: bool,
+    agent_reroute_allowed: bool,
 ) -> dict[str, Any]:
     previous = _optional_buffer_dict(buffer, "agent_feedback_loop_state")
     previous_rounds = _int_value(previous.get("rewrite_rounds"), default=0)
-    rewrite_requested = writer_rewrite_routable and _writer_rewrite_requested(summary)
+    previous_source_recollect_rounds = _int_value(
+        previous.get("source_recollect_rounds"),
+        default=0,
+    )
+    source_recollect_requested = agent_reroute_allowed and _source_recollect_requested(summary)
+    source_recollect_exhausted = (
+        source_recollect_requested
+        and previous_source_recollect_rounds >= MAX_AGENT_FEEDBACK_SOURCE_RECOLLECT_ROUNDS
+    )
+    source_recollect_rounds = previous_source_recollect_rounds
+    if source_recollect_requested and not source_recollect_exhausted:
+        source_recollect_rounds += 1
+    rewrite_requested = (
+        agent_reroute_allowed
+        and not source_recollect_requested
+        and _writer_rewrite_requested(summary)
+    )
     rewrite_exhausted = (
         rewrite_requested
         and previous_rounds >= MAX_AGENT_FEEDBACK_REWRITE_ROUNDS
@@ -297,7 +382,23 @@ def _next_feedback_loop_state(
         "max_rewrite_rounds": MAX_AGENT_FEEDBACK_REWRITE_ROUNDS,
         "rewrite_requested": rewrite_requested,
         "rewrite_exhausted": rewrite_exhausted,
+        "source_recollect_rounds": source_recollect_rounds,
+        "max_source_recollect_rounds": MAX_AGENT_FEEDBACK_SOURCE_RECOLLECT_ROUNDS,
+        "source_recollect_requested": source_recollect_requested,
+        "source_recollect_exhausted": source_recollect_exhausted,
     }
+
+
+def _source_recollect_requested(summary: DailyAgentFeedbackSummary) -> bool:
+    if summary.source_recollect_request_count <= 0:
+        return False
+    for recommendation in summary.policy_recommendations:
+        if (
+            recommendation.recommended_action == "source_recollect"
+            and recommendation.target_agent_id == SOURCE_RECOLLECT_TARGET
+        ):
+            return True
+    return SOURCE_RECOLLECT_TARGET in summary.target_agent_ids
 
 
 def _writer_rewrite_requested(summary: DailyAgentFeedbackSummary) -> bool:
@@ -357,6 +458,22 @@ def _list_value(value: Any) -> list[Any]:
 
 def _string_list(value: Any) -> list[str]:
     return [str(item).strip() for item in _list_value(value) if str(item).strip()]
+
+
+def _feedback_item_texts(values: list[Any]) -> list[str]:
+    texts: list[str] = []
+    for item in values:
+        if isinstance(item, dict):
+            for key in ("reason", "query", "description", "title"):
+                text = str(item.get(key) or "").strip()
+                if text:
+                    texts.append(text)
+                    break
+            continue
+        text = str(item).strip()
+        if text:
+            texts.append(text)
+    return texts
 
 
 def _first_text(*groups: list[str], default: str) -> str:

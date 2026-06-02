@@ -142,8 +142,9 @@ Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不
 - 聚合指标写入 `agent_feedback_summary`，供 final report、blocked report、quality result 和 artifact manifest 使用。
 - `DailyAgentFeedbackPolicyService` 将 feedback events 转换为 `policy_recommendations`，作为后续 rewrite / human review / block routing 的正式策略输入。
 - workflow routing 消费 `agent_feedback_route` 和 `agent_feedback_loop_state`，对 verifier 阶段发现的问题最多触发一轮 bounded writer rewrite；第二次仍要求 rewrite 时进入 finalize/quality policy 路径，不允许无限 agent 循环。
+- analyst 只能通过显式 `analysis_result.evidence_gaps`、`source_recollection_requests` 或 `missing_information` 生成 `daily.source_recollect` recommendation；collector 不从自然语言 notes 中猜测缺口。当前 route 会把 source recollection profile 交回 planner 重新规划，后续接入真实 source recollection service 时也必须通过 application service，不得在 feedback step 内直接抓源。
 - `finalize_daily_report()` 在 strict quality gate 场景消费这些 recommendation，并可将发布路线调整为 blocked / human review / rewrite；non-social-media bypass 仍由统一 bypass policy 优先决定。
-- 当前闭环雏形只允许 writer 根据 verifier feedback 做一次 source-bounded rewrite；editor 产出的 rewrite / edited draft 仍由 finalization 消费。planner 调整或 source recollect 应由应用层 routing / policy service 消费这些正式反馈模型后显式扩展。
+- 当前闭环雏形允许 writer 根据 verifier feedback 做一次 source-bounded rewrite，也允许 analyst evidence gap 触发一次 planner/source recollect planning route；editor 产出的 rewrite / edited draft 仍由 finalization 消费。真正的 source recollect 执行应由后续应用层 service 消费 `daily.source_recollect` recommendation 后显式扩展。
 
 ## BoardServiceBase 边界
 

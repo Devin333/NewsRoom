@@ -24,7 +24,7 @@
 
 仍建议继续推进的长期方向：
 
-- Agent 间反馈闭环目前已有 bounded writer rewrite 雏形；下一轮可继续扩展 planner/source recollect 的显式 policy routing。
+- Agent 间反馈闭环目前已有 bounded writer rewrite 和 analyst evidence gap -> planner/source recollect policy route 雏形；下一轮可继续把 `daily.source_recollect` 接入真实 source recollection application service。
 - source/model 配置、workflow buffer、business layer boundary 已有基础 guard；后续应继续把 dotted key 迁移从兼容双写推进到正式消费。
 - `docs/prd1.md` 仍保留旧审查摘要，如继续作为任务入口使用，需要同步状态或改为历史附件。
 
