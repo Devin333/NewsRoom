@@ -95,19 +95,10 @@ class ProductizedBoardUseCases:
         board_signals: list[Any],
         productized_run: ProductizedRunState,
     ) -> dict[str, Any]:
-        bundle = self.evidence_service.build(
-            board_signals,
-            extracted_entities=productized_run.extracted_entities,
+        return self.evidence_service.build_outputs(
+            board_signals=board_signals,
+            productized_run=productized_run,
         )
-        run_state = productized_run.with_updates(
-            evidence_refs=bundle.refs,
-            evidence_items=bundle.items,
-        )
-        return {
-            "evidence_refs": bundle.refs,
-            "evidence_items": bundle.items,
-            "productized_run": run_state,
-        }
 
     def deduplicate_events(
         self,

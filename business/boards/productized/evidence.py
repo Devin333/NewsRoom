@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.boards.productized.models import ProductizedEvidenceBundle
+from business.boards.productized.models import ProductizedEvidenceBundle, ProductizedRunState
 from business.foundation import Signal
 
 
@@ -33,6 +33,26 @@ class ProductizedEvidenceService:
                 }
             )
         return ProductizedEvidenceBundle(refs=refs, items=items)
+
+    def build_outputs(
+        self,
+        *,
+        board_signals: list[Signal],
+        productized_run: ProductizedRunState,
+    ) -> dict[str, Any]:
+        bundle = self.build(
+            board_signals,
+            extracted_entities=productized_run.extracted_entities,
+        )
+        run_state = productized_run.with_updates(
+            evidence_refs=bundle.refs,
+            evidence_items=bundle.items,
+        )
+        return {
+            "evidence_refs": bundle.refs,
+            "evidence_items": bundle.items,
+            "productized_run": run_state,
+        }
 
 
 __all__ = ["ProductizedEvidenceService"]
