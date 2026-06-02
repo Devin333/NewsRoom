@@ -126,6 +126,25 @@ class ProductizedImprovementMeasurementService:
             ),
         )
 
+    def measure_productized(
+        self,
+        *,
+        previous_baseline: dict[str, Any] | None,
+        quality_summary: dict[str, Any],
+        cards: list[dict[str, Any]],
+        subscription_payload: dict[str, Any],
+        productized_run: Any,
+    ) -> ImprovementMeasurement:
+        return self.measure_input(
+            previous_baseline=previous_baseline,
+            measurement_input=ProductizedImprovementMeasurementInput.from_productized_run(
+                quality_summary=quality_summary,
+                cards=cards,
+                subscription_payload=subscription_payload,
+                productized_run=productized_run,
+            ),
+        )
+
     def measure_input(
         self,
         *,

@@ -89,15 +89,22 @@ class ProductizedImprovementWorkflowService:
             run_id=run_id,
             board_type=board_type,
         )
-        measurement = self.measurement_service.measure_input(
-            previous_baseline=request.get("previous_measurement_baseline"),
-            measurement_input=ProductizedImprovementMeasurementInput.from_legacy_inputs(
+        measurement = (
+            self.measurement_service.measure_productized(
+                previous_baseline=request.get("previous_measurement_baseline"),
                 quality_summary=quality_summary,
                 cards=cards,
                 subscription_payload=subscription_payload,
-                board_run_result=board_run_result,
                 productized_run=productized_run,
-            ),
+            )
+            if productized_run is not None
+            else self.measurement_service.measure(
+                previous_baseline=request.get("previous_measurement_baseline"),
+                quality_summary=quality_summary,
+                cards=cards,
+                board_run_result=board_run_result,
+                subscription_payload=subscription_payload,
+            )
         )
         report = self.improvement_service.build_report(
             feedback_events=parsed_feedback,

@@ -40,6 +40,46 @@ def test_productized_improvement_workflow_service_builds_outputs_from_request() 
     assert result["self_improvement_report"]["next_actions"] == ["continue monitoring"]
 
 
+def test_productized_improvement_workflow_uses_formal_run_state_measurement() -> None:
+    service = ProductizedImprovementWorkflowService(
+        improvement_service=BoardImprovementService(),
+        board_type=BoardType.AI_NEWS,
+    )
+    productized_run = ProductizedRunState(
+        board_type=BoardType.AI_NEWS,
+        run_id="improvement-run",
+        deduplication_result={
+            "event_groups": [
+                {"item_ids": ["signal-1", "signal-2"]},
+                {"item_ids": ["signal-3"]},
+            ]
+        },
+    )
+
+    class LegacyBoardRunResult:
+        metadata = {
+            "deduplication_result": {
+                "event_groups": [{"item_ids": ["legacy-1"]}]
+            }
+        }
+
+    result = service.build_outputs(
+        request={
+            "run_id": "improvement-run",
+            "previous_measurement_baseline": {"duplicate_rate": 0.0},
+        },
+        board_run_result=LegacyBoardRunResult(),
+        quality_summary={"score": 0.72},
+        cards=[{"card_id": "card-1", "evidence_refs": [{"source_id": "source-1"}]}],
+        feedback_events=[],
+        learning_signals=[],
+        subscription_payload={"targets": [{"topic": "Agent Memory"}]},
+        productized_run=productized_run,
+    )
+
+    assert result["improvement_measurement"]["duplicate_rate_delta"] == 0.5
+
+
 def test_productized_improvement_measurement_reads_formal_productized_run_state() -> None:
     service = ProductizedImprovementMeasurementService()
     productized_run = ProductizedRunState(
@@ -56,6 +96,30 @@ def test_productized_improvement_measurement_reads_formal_productized_run_state(
     measurement = service.measure(
         previous_baseline={"duplicate_rate": 0.0},
         board_run_result=StubBoardRunResult(),
+        quality_summary={"score": 0.72},
+        cards=[{"card_id": "card-1", "evidence_refs": [{"source_id": "source-1"}]}],
+        subscription_payload={"targets": [{"topic": "Agent Memory"}]},
+        productized_run=productized_run,
+    )
+
+    assert measurement.to_dict()["duplicate_rate_delta"] == 0.5
+
+
+def test_productized_improvement_measurement_formal_entrypoint_reads_run_state() -> None:
+    service = ProductizedImprovementMeasurementService()
+    productized_run = ProductizedRunState(
+        board_type=BoardType.AI_NEWS,
+        run_id="improvement-run",
+        deduplication_result={
+            "event_groups": [
+                {"item_ids": ["signal-1", "signal-2"]},
+                {"item_ids": ["signal-3"]},
+            ]
+        },
+    )
+
+    measurement = service.measure_productized(
+        previous_baseline={"duplicate_rate": 0.0},
         quality_summary={"score": 0.72},
         cards=[{"card_id": "card-1", "evidence_refs": [{"source_id": "source-1"}]}],
         subscription_payload={"targets": [{"topic": "Agent Memory"}]},
