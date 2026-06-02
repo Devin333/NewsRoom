@@ -8,6 +8,7 @@ from typing import Any
 from business.foundation.models.source import (
     SourceDefinition,
     SourceError as BusinessSourceError,
+    SourceFetchPolicy as BusinessSourceFetchPolicy,
     SourceReliability as BusinessSourceReliability,
     SourceType as BusinessSourceType,
 )
@@ -38,7 +39,7 @@ from infrastructure.external.sources import (
     RedditConnector,
     RawSourceItem,
     SourceError,
-    SourceFetchPolicy,
+    SourceFetchPolicy as InfraSourceFetchPolicy,
     StackOverflowConnector,
     DevToConnector,
     default_arxiv_connector,
@@ -173,7 +174,7 @@ class SourceApplicationService:
         source_health_store: SourceHealthStore | None = None,
         health_probe_fetcher=None,
         source_config_path: str | Path | None = None,
-        fetch_policy: SourceFetchPolicy | None = None,
+        fetch_policy: BusinessSourceFetchPolicy | InfraSourceFetchPolicy | None = None,
         rate_limiter: DomainRateLimiter | None = None,
         arxiv_connector: Any | None = None,
         github_connector: Any | None = None,
@@ -184,7 +185,7 @@ class SourceApplicationService:
         if fetch_policy is None:
             fetch_policy = build_default_source_fetch_policy(source_config_path=source_config_path)
         self.source_registry = source_registry
-        self.fetch_policy = fetch_policy
+        self.fetch_policy = _infra_fetch_policy(fetch_policy)
         self.rate_limiter = rate_limiter or DomainRateLimiter()
         self.source_health_store = source_health_store or source_health_store_from_env()
         self.health_manager = health_manager or BasicSourceHealthManager(
@@ -722,6 +723,21 @@ def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
         language=source.language,
         region=source.region,
         metadata=dict(source.metadata),
+    )
+
+
+def _infra_fetch_policy(policy: BusinessSourceFetchPolicy | InfraSourceFetchPolicy) -> InfraSourceFetchPolicy:
+    if isinstance(policy, InfraSourceFetchPolicy):
+        return policy
+    return InfraSourceFetchPolicy(
+        timeout_seconds=policy.timeout_seconds,
+        max_bytes=policy.max_bytes,
+        max_redirects=policy.max_redirects,
+        user_agent=policy.user_agent,
+        respect_robots=policy.respect_robots,
+        rate_limit_per_domain_per_minute=policy.rate_limit_per_domain_per_minute,
+        retry_times=policy.retry_times,
+        retry_on_status_codes=tuple(policy.retry_on_status_codes),
     )
 
 

@@ -9,9 +9,8 @@ except ImportError:
 from pathlib import Path
 from typing import Any
 
-from business.foundation.models.source import SourceDefinition
+from business.foundation.models.source import SourceDefinition, SourceFetchPolicy
 from business.foundation.registry.source_registry import SourceRegistry
-from infrastructure.external.sources.fetch_policy import SourceFetchPolicy
 
 
 class SourceConfigError(ValueError):

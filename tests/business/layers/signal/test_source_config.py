@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from business.foundation.models.source import SourceFetchPolicy
 from business.layers.signal.source_config import (
     SourceConfigError,
     load_source_definitions,
@@ -87,6 +88,7 @@ def test_load_source_fetch_policy_reads_top_level_fetch_config(tmp_path) -> None
 
     policy = load_source_fetch_policy(config_path)
 
+    assert isinstance(policy, SourceFetchPolicy)
     assert policy.timeout_seconds == 9.5
     assert policy.max_bytes == 2048
     assert policy.max_redirects == 4

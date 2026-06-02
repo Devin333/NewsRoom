@@ -334,8 +334,8 @@ class SourceDispatcher:
         if policy is None and _source_type(source) == SourceType.MEDIUM:
             feed_connector = getattr(connector, "feed_connector", None)
             policy = getattr(feed_connector, "fetch_policy", None)
-        if isinstance(policy, SourceFetchPolicy):
-            return effective_fetch_policy(policy, _infra_source(source))
+        if policy is not None:
+            return effective_fetch_policy(_infra_fetch_policy(policy), _infra_source(source))
         return None
 
     def _connector_for_source(self, source: SourceDefinition) -> Any:
@@ -371,6 +371,21 @@ def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
         language=source.language,
         region=source.region,
         metadata=dict(source.metadata),
+    )
+
+
+def _infra_fetch_policy(policy: Any) -> SourceFetchPolicy:
+    if isinstance(policy, SourceFetchPolicy):
+        return policy
+    return SourceFetchPolicy(
+        timeout_seconds=policy.timeout_seconds,
+        max_bytes=policy.max_bytes,
+        max_redirects=policy.max_redirects,
+        user_agent=policy.user_agent,
+        respect_robots=policy.respect_robots,
+        rate_limit_per_domain_per_minute=policy.rate_limit_per_domain_per_minute,
+        retry_times=policy.retry_times,
+        retry_on_status_codes=tuple(policy.retry_on_status_codes),
     )
 
 

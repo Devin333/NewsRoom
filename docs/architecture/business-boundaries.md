@@ -102,6 +102,8 @@ source connector、fetch policy、外部错误分类和具体 fetch 实现属于
 
 `business/layers/signal/source_router.py` 只负责根据 `SourceType` 选择已注入 connector，并把业务层 `SourceDefinition` 传给 connector。默认 connector 装配留在 interface/infrastructure 适配路径；router 不导入或实例化具体外部 source connector。
 
+`business/layers/signal/source_config.py` 解析配置并返回 foundation 的 `SourceFetchPolicy`，不返回 infra fetch policy。接口层在装配真实 connector 时负责把业务 fetch policy 转换成具体 infra policy。
+
 ## Foundation Skills 边界
 
 `business/foundation/skills/` 放业务技能内容包和 deterministic fallback。`BusinessSkillRuntime` 是业务层对 framework skill runner 的适配门面：

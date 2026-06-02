@@ -1,9 +1,14 @@
 from datetime import UTC, datetime
 
-from business.foundation.models.source import RawSourceItem, SourceDefinition, SourceError
+from business.foundation.models.source import (
+    RawSourceItem,
+    SourceDefinition,
+    SourceError,
+    SourceFetchPolicy as BusinessSourceFetchPolicy,
+)
 from interfaces.services.source_service import SourceApplicationService
 from business.foundation.registry.source_registry import SourceRegistry
-from infrastructure.external.sources import SourceFetchPolicy
+from infrastructure.external.sources import SourceFetchPolicy as InfraSourceFetchPolicy
 from business.layers.signal.source_health import BasicSourceHealthManager, ProbeObservation
 
 
@@ -271,7 +276,7 @@ def test_source_service_health_check_uses_shared_rate_limiter() -> None:
 
     service = SourceApplicationService(
         source_registry=registry,
-        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+        fetch_policy=InfraSourceFetchPolicy(rate_limit_per_domain_per_minute=1),
         health_probe_fetcher=probe,
     )
 
@@ -281,6 +286,24 @@ def test_source_service_health_check_uses_shared_rate_limiter() -> None:
     assert result.skipped_count == 1
     assert probed_urls == ["https://example.com/first.xml"]
     assert result.entries[1].skip_reason == "rate_limited"
+
+
+def test_source_service_accepts_business_fetch_policy_for_connector_setup() -> None:
+    service = SourceApplicationService(
+        source_registry=SourceRegistry([]),
+        fetch_policy=BusinessSourceFetchPolicy(
+            timeout_seconds=7,
+            max_bytes=4096,
+            user_agent="NewsRoomBusinessPolicy/1.0",
+            respect_robots=False,
+        ),
+    )
+
+    assert isinstance(service.fetch_policy, InfraSourceFetchPolicy)
+    assert service.arxiv_connector.fetch_policy.timeout_seconds == 7.0
+    assert service.arxiv_connector.fetch_policy.max_bytes == 4096
+    assert service.arxiv_connector.fetch_policy.user_agent == "NewsRoomBusinessPolicy/1.0"
+    assert service.arxiv_connector.fetch_policy.respect_robots is False
 
 
 def test_source_service_default_preview_connectors_use_configured_fetch_policy(tmp_path) -> None:

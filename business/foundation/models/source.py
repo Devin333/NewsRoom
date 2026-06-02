@@ -39,6 +39,9 @@ class SourceHealthStatus(str, Enum):
     DISABLED = "disabled"
 
 
+DEFAULT_SOURCE_FETCH_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
+
+
 def utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -170,6 +173,52 @@ class SourceFetchRequest:
             "since": _dt(self.since),
             "limit": self.limit,
             "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class SourceFetchPolicy:
+    timeout_seconds: float = 15.0
+    max_bytes: int = 1_000_000
+    max_redirects: int = 3
+    user_agent: str = "news-intelligence-system"
+    respect_robots: bool = True
+    rate_limit_per_domain_per_minute: int | None = None
+    retry_times: int = 2
+    retry_on_status_codes: tuple[int, ...] = DEFAULT_SOURCE_FETCH_RETRY_STATUS_CODES
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.max_bytes < 1:
+            raise ValueError("max_bytes must be at least 1")
+        if self.max_redirects < 0:
+            raise ValueError("max_redirects must be non-negative")
+        if not self.user_agent:
+            raise ValueError("user_agent is required")
+        if (
+            self.rate_limit_per_domain_per_minute is not None
+            and self.rate_limit_per_domain_per_minute < 1
+        ):
+            raise ValueError("rate_limit_per_domain_per_minute must be at least 1")
+        if self.retry_times < 0:
+            raise ValueError("retry_times must be non-negative")
+        retry_on_status_codes = tuple(int(code) for code in self.retry_on_status_codes)
+        for status_code in retry_on_status_codes:
+            if status_code < 100 or status_code > 599:
+                raise ValueError("retry_on_status_codes must contain valid HTTP status codes")
+        object.__setattr__(self, "retry_on_status_codes", retry_on_status_codes)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timeout_seconds": self.timeout_seconds,
+            "max_bytes": self.max_bytes,
+            "max_redirects": self.max_redirects,
+            "user_agent": self.user_agent,
+            "respect_robots": self.respect_robots,
+            "rate_limit_per_domain_per_minute": self.rate_limit_per_domain_per_minute,
+            "retry_times": self.retry_times,
+            "retry_on_status_codes": list(self.retry_on_status_codes),
         }
 
 
