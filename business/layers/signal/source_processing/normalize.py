@@ -7,7 +7,7 @@ UTC = _tz.utc
 
 from business.foundation.models.source import Lineage, NormalizedSourceItem, RawSourceItem, SourceReliability, SourceType
 from business.layers.signal.source_processing.language import detect_language
-from infrastructure.external.sources.url_utils import canonicalize_url
+from business.layers.signal.source_processing.url_normalization import canonicalize_url
 
 
 FUTURE_PUBLISHED_AT_TOLERANCE = timedelta(minutes=5)

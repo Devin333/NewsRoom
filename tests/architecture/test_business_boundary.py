@@ -69,6 +69,15 @@ def test_signal_artifact_boundary_does_not_import_storage_artifacts() -> None:
     assert violations == []
 
 
+def test_signal_source_processing_does_not_import_external_source_infrastructure() -> None:
+    violations = _forbidden_imports(
+        BUSINESS_ROOT / "layers" / "signal" / "source_processing",
+        forbidden_prefixes=("infrastructure.external.sources",),
+    )
+
+    assert violations == []
+
+
 def test_signal_pipeline_does_not_import_legacy_source_processing() -> None:
     violations: list[str] = []
     for path in (

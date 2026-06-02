@@ -94,6 +94,12 @@ Daily intelligence report writer 使用 `DailyReportContextMetadata` 生成 memo
 
 这保证 layer/board worker handler 继续返回旧调用方期待的字典结构，同时把隐式 report metadata 通道收敛到一个正式模型。
 
+## Signal Source Processing 边界
+
+`business/layers/signal/source_processing/` 承载 source item 的 normalize、deduplicate、quality、rank、traceability 等业务处理。该目录不直接导入 `infrastructure.external.sources`；需要的 source URL 规范化放在 `url_normalization.py`，由业务层维护当前 source processing 语义。
+
+source connector、fetch policy、外部错误分类和具体 fetch 实现属于基础设施或适配边界。业务层需要这些能力时，应通过正式模型、端口或上层 service 注入，不把具体基础设施工具散落在处理规则里。
+
 ## Foundation Skills 边界
 
 `business/foundation/skills/` 放业务技能内容包和 deterministic fallback。`BusinessSkillRuntime` 是业务层对 framework skill runner 的适配门面：
