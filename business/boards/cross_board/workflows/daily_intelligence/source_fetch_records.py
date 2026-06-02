@@ -4,6 +4,9 @@ from dataclasses import replace
 from time import perf_counter
 from typing import Any
 
+from pydantic import Field
+
+from business.foundation import PrimitiveModel
 from business.foundation.models.source import (
     SourceDefinition,
     SourceError,
@@ -27,6 +30,88 @@ def dt(value) -> str | None:
 
 def source_fetch_request_id(existing: list[SourceFetchRequest], source: SourceDefinition) -> str:
     return f"source-fetch-{len(existing) + 1:04d}-{source.source_id}"
+
+
+class SourceFetchResultMetadata(PrimitiveModel):
+    schema_version: str = "business.cross_board.daily_source_fetch.metadata.v1"
+    source_type: str
+    url: str | None = None
+    item_count: int = 0
+    error_count: int = 0
+    response_url: str | None = None
+    response_headers: dict[str, Any] = Field(default_factory=dict)
+    fetch_response: dict[str, Any] | None = None
+    skip: dict[str, Any] | None = None
+
+    @classmethod
+    def from_observations(
+        cls,
+        *,
+        source: SourceDefinition,
+        items: list[Any],
+        errors: list[SourceError],
+    ) -> "SourceFetchResultMetadata":
+        response_metadata = response_metadata_from_observations(items=items, errors=errors)
+        return cls(
+            source_type=SourceType(source.source_type).value,
+            url=source.url,
+            item_count=len(items),
+            error_count=len(errors),
+            response_url=response_metadata.get("url") if response_metadata is not None else None,
+            response_headers=response_metadata.get("headers", {}) if response_metadata is not None else {},
+            fetch_response=response_metadata,
+        )
+
+    @classmethod
+    def from_result_metadata(cls, metadata: dict[str, Any]) -> "SourceFetchResultMetadata":
+        formal = metadata.get("source_fetch_result_metadata")
+        payload = dict(formal) if isinstance(formal, dict) else {}
+        return cls(
+            source_type=str(payload.get("source_type") or metadata.get("source_type") or "unknown"),
+            url=payload.get("url") or metadata.get("url"),
+            item_count=int(_metadata_value(payload, metadata, "item_count", default=0)),
+            error_count=int(_metadata_value(payload, metadata, "error_count", default=0)),
+            response_url=payload.get("response_url") or metadata.get("response_url"),
+            response_headers=dict(payload.get("response_headers") or metadata.get("response_headers") or {}),
+            fetch_response=payload.get("fetch_response") or metadata.get("fetch_response"),
+            skip=payload.get("skip") or metadata.get("skip"),
+        )
+
+    def with_counts(self, *, item_count: int, error_count: int) -> "SourceFetchResultMetadata":
+        return self.model_copy(update={"item_count": item_count, "error_count": error_count})
+
+    def with_skip(self, skip: dict[str, Any]) -> "SourceFetchResultMetadata":
+        return self.model_copy(update={"skip": dict(skip)})
+
+    def to_result_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "source_type": self.source_type,
+            "url": self.url,
+            "item_count": self.item_count,
+            "error_count": self.error_count,
+            "source_fetch_result_metadata": self.to_dict(),
+        }
+        if self.fetch_response is not None:
+            metadata["response_url"] = self.response_url
+            metadata["response_headers"] = dict(self.response_headers)
+            metadata["fetch_response"] = dict(self.fetch_response)
+        if self.skip is not None:
+            metadata["skip"] = dict(self.skip)
+        return metadata
+
+
+def _metadata_value(
+    formal: dict[str, Any],
+    legacy: dict[str, Any],
+    key: str,
+    *,
+    default: Any,
+) -> Any:
+    if key in formal:
+        return formal[key]
+    if key in legacy:
+        return legacy[key]
+    return default
 
 
 def source_fetch_request(
@@ -92,8 +177,11 @@ def final_source_fetch_result(
         return fallback
     metadata = dict(fallback.metadata)
     metadata.update(dict(connector_fetch_result.metadata))
-    metadata["item_count"] = len(items)
-    metadata["error_count"] = len(errors)
+    formal_metadata = SourceFetchResultMetadata.from_result_metadata(metadata).with_counts(
+        item_count=len(items),
+        error_count=len(errors),
+    )
+    metadata.update(formal_metadata.to_result_metadata())
     first_error = errors[0] if errors else None
     return replace(
         connector_fetch_result,
@@ -132,17 +220,12 @@ def source_fetch_result(
     skip_reason: str | None = None,
 ) -> SourceFetchResult:
     first_error = errors[0] if errors else None
-    response_metadata = response_metadata_from_observations(items=items, errors=errors)
-    metadata: dict[str, Any] = {
-        "source_type": SourceType(source.source_type).value,
-        "url": source.url,
-        "item_count": len(items),
-        "error_count": len(errors),
-    }
-    if response_metadata is not None:
-        metadata["response_url"] = response_metadata.get("url")
-        metadata["response_headers"] = response_metadata.get("headers", {})
-        metadata["fetch_response"] = response_metadata
+    metadata_payload = SourceFetchResultMetadata.from_observations(
+        source=source,
+        items=items,
+        errors=errors,
+    )
+    response_metadata = metadata_payload.fetch_response
     return SourceFetchResult(
         request_id=request_id,
         source_id=source.source_id,
@@ -163,7 +246,7 @@ def source_fetch_result(
         error_message=first_error.error_message if first_error else None,
         skipped=skipped,
         skip_reason=skip_reason,
-        metadata=metadata,
+        metadata=metadata_payload.to_result_metadata(),
     )
 
 
@@ -184,11 +267,9 @@ def skipped_source_fetch_result(
         skipped=True,
         skip_reason=skip_reason,
     )
-    result_metadata = dict(result.metadata)
-    result_metadata["skip"] = {
-        key: value for key, value in metadata.items() if value is not None
-    }
-    return replace(result, metadata=result_metadata)
+    skip_metadata = {key: value for key, value in metadata.items() if value is not None}
+    result_metadata = SourceFetchResultMetadata.from_result_metadata(result.metadata).with_skip(skip_metadata)
+    return replace(result, metadata=result_metadata.to_result_metadata())
 
 
 def with_error_request_id(errors: list[SourceError], request_id: str) -> list[SourceError]:
