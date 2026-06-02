@@ -9,6 +9,9 @@ from business.foundation.models.source import SourceDefinition, SourceError, Sou
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import SourceFetchContext
+from business.boards.cross_board.workflows.daily_intelligence.source_error_normalization import (
+    normalize_source_errors,
+)
 
 
 def fetch_with_registered_connector(
@@ -128,7 +131,10 @@ def _invoke_sync_connector(
         items, errors = result
     except (TypeError, ValueError) as exc:
         raise TypeError("registered source connector fetch must return (items, errors)") from exc
-    return list(items or []), _coerce_source_errors(errors or []), None
+    return list(items or []), normalize_source_errors(
+        errors or [],
+        context="registered source connector errors",
+    ), None
 
 
 def _registered_fetch_kwargs(
@@ -160,7 +166,10 @@ def _connector_errors(
     errors_for = getattr(connector, "errors_for", None)
     if callable(errors_for):
         errors = _run_maybe_awaitable(errors_for(fetch_request.request_id))
-        return _coerce_source_errors(errors or [])
+        return normalize_source_errors(
+            errors or [],
+            context="registered source connector errors",
+        )
     if fetch_result.error_type is None:
         return []
     return [
@@ -234,32 +243,6 @@ def _coerce_source_fetch_result(value: Any) -> SourceFetchResult:
     if fetched_at is not None:
         kwargs["fetched_at"] = fetched_at
     return SourceFetchResult(**kwargs)
-
-
-def _coerce_source_errors(values: Any) -> list[SourceError]:
-    return [_coerce_source_error(value) for value in list(values or [])]
-
-
-def _coerce_source_error(value: Any) -> SourceError:
-    if isinstance(value, SourceError):
-        return value
-    if not all(hasattr(value, field_name) for field_name in ("source_id", "error_type", "error_message")):
-        raise TypeError("registered source connector errors must be SourceError values")
-    kwargs: dict[str, Any] = {
-        "source_id": str(getattr(value, "source_id")),
-        "source_name": getattr(value, "source_name", None),
-        "error_type": str(getattr(value, "error_type")),
-        "error_message": str(getattr(value, "error_message")),
-        "url": getattr(value, "url", None),
-        "retryable": getattr(value, "retryable", None),
-        "request_ref": getattr(value, "request_ref", None),
-        "response_ref": getattr(value, "response_ref", None),
-        "metadata": dict(getattr(value, "metadata", {}) or {}),
-    }
-    occurred_at = getattr(value, "occurred_at", None)
-    if occurred_at is not None:
-        kwargs["occurred_at"] = occurred_at
-    return SourceError(**kwargs)
 
 
 def _registered_connector_error(source: SourceDefinition, exc: Exception) -> SourceError:

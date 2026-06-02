@@ -16,6 +16,9 @@ from business.layers.signal.source_processing import (
     rank_items,
 )
 from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
+from business.boards.cross_board.workflows.daily_intelligence.source_error_normalization import (
+    normalize_source_errors,
+)
 
 
 class AllSourcesFailedError(RuntimeError):
@@ -35,11 +38,8 @@ def require_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     if raw_items:
         return {"source_collection_status": "ready"}
 
-    source_errors = buffer.read("source_errors")
-    error_types = [
-        error.error_type if hasattr(error, "error_type") else error.get("error_type", "unknown")
-        for error in source_errors
-    ]
+    source_errors = normalize_source_errors(buffer.read("source_errors"))
+    error_types = [error.error_type for error in source_errors]
     raise AllSourcesFailedError(
         "all_sources_failed: no source items collected from enabled sources "
         f"(errors: {', '.join(error_types)})"
@@ -48,7 +48,7 @@ def require_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
 
 def normalize_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     raw_items = buffer.read("raw_items")
-    source_errors = list(buffer.read("source_errors"))
+    source_errors = normalize_source_errors(buffer.read("source_errors"))
     normalized_items = []
     normalization_errors: list[SourceError] = []
     for raw_item in raw_items:
@@ -85,7 +85,7 @@ def normalize_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
 
 def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     normalized_items = buffer.read("normalized_items")
-    source_errors = list(buffer.read("source_errors"))
+    source_errors = normalize_source_errors(buffer.read("source_errors"))
     try:
         dedup_result = deduplicate_with_result(normalized_items)
         deduplicated_items = dedup_result.kept_items
@@ -128,7 +128,7 @@ def deduplicate_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
 def rank_sources(buffer: StepScopedDataBufferView) -> dict[str, Any]:
     request = buffer.read("request")
     deduplicated_items = buffer.read("deduplicated_items")
-    source_errors = list(buffer.read("source_errors"))
+    source_errors = normalize_source_errors(buffer.read("source_errors"))
     try:
         ranked_items = rank_items(deduplicated_items, topic=request["topic"])
         ranking_errors: list[SourceError] = []

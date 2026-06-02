@@ -86,6 +86,51 @@ def test_require_sources_fails_with_source_error_summary() -> None:
         require_sources(buffer.scope(read_keys=["raw_items", "source_errors"], write_keys=[]))
 
 
+def test_require_sources_normalizes_source_error_mappings_for_summary() -> None:
+    buffer = DataBuffer(
+        {
+            "raw_items": [],
+            "source_errors": [
+                {
+                    "source_id": "feed",
+                    "error_type": "fetch_timeout",
+                    "error_message": "timed out",
+                    "metadata": {"retryable": True},
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(AllSourcesFailedError, match="fetch_timeout"):
+        require_sources(buffer.scope(read_keys=["raw_items", "source_errors"], write_keys=[]))
+
+
+def test_normalize_sources_returns_typed_source_errors() -> None:
+    buffer = _initial_source_buffer()
+    buffer.write(
+        "source_errors",
+        [
+            {
+                "source_id": "feed",
+                "source_name": "Feed",
+                "error_type": "fetch_timeout",
+                "error_message": "timed out",
+                "metadata": {"retryable": True},
+            }
+        ],
+    )
+
+    output = normalize_sources(
+        buffer.scope(
+            read_keys=["raw_items", "source_errors", "source_events", "source_pipeline_metrics"],
+            write_keys=[],
+        )
+    )
+
+    assert all(isinstance(error, SourceError) for error in output["source_errors"])
+    assert output["source_errors"][0].error_type == "fetch_timeout"
+
+
 def test_daily_source_steps_build_ranked_items_and_reports() -> None:
     buffer = _initial_source_buffer()
 
