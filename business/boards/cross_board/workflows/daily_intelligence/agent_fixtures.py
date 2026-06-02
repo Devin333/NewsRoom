@@ -9,13 +9,29 @@ from business.boards.cross_board.workflows.daily_intelligence.profiles import (
 )
 
 
+DAILY_AGENT_FIXTURE_SCENARIO_PASS = "pass"
+DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_VALID = "rewrite-valid"
+DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_INVALID_SOURCE = "rewrite-invalid-source"
+DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_MISSING_EDIT = "rewrite-missing-edit"
+DAILY_AGENT_FIXTURE_SCENARIOS = frozenset(
+    {
+        DAILY_AGENT_FIXTURE_SCENARIO_PASS,
+        DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_VALID,
+        DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_INVALID_SOURCE,
+        DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_MISSING_EDIT,
+    }
+)
+
+
 def build_daily_agent_fake_llm_client(
     profile: str,
     topic: str | None = None,
+    *,
+    scenario: str = DAILY_AGENT_FIXTURE_SCENARIO_PASS,
 ) -> FakeLLMClient:
     _ = profile
     normalized_topic = (topic or "AI").strip() or "AI"
-    scenario = _fake_scenario(normalized_topic)
+    resolved_scenario = _validate_fixture_scenario(scenario)
     return FakeLLMClient(
         [
             _agent_action(
@@ -148,7 +164,7 @@ def build_daily_agent_fake_llm_client(
                     },
                 }
             ),
-            _agent_action(_fake_editor_output(normalized_topic, scenario)),
+            _agent_action(_fake_editor_output(normalized_topic, resolved_scenario)),
         ]
     )
 
@@ -193,25 +209,14 @@ def _fake_report_draft(topic: str) -> dict:
     }
 
 
-def _fake_scenario(topic: str) -> str:
-    normalized = topic.lower()
-    if "rewrite-invalid-source" in normalized:
-        return "rewrite-invalid-source"
-    if "rewrite-missing-edit" in normalized:
-        return "rewrite-missing-edit"
-    if "rewrite-valid" in normalized or "rewrite" in normalized:
-        return "rewrite-valid"
-    return "pass"
-
-
 def _fake_editor_output(topic: str, scenario: str) -> dict:
-    if scenario == "rewrite-valid":
+    if scenario == DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_VALID:
         return {
             "editor_review": _fake_rewrite_review(),
             "edited_report_draft": _fake_edited_report_draft(topic),
             "editor_notes": {"mode": "offline", "rewrite_scenario": scenario},
         }
-    if scenario == "rewrite-invalid-source":
+    if scenario == DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_INVALID_SOURCE:
         return {
             "editor_review": _fake_rewrite_review(),
             "edited_report_draft": _fake_edited_report_draft(
@@ -220,7 +225,7 @@ def _fake_editor_output(topic: str, scenario: str) -> dict:
             ),
             "editor_notes": {"mode": "offline", "rewrite_scenario": scenario},
         }
-    if scenario == "rewrite-missing-edit":
+    if scenario == DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_MISSING_EDIT:
         return {
             "editor_review": _fake_rewrite_review(),
             "edited_report_draft": None,
@@ -236,6 +241,13 @@ def _fake_editor_output(topic: str, scenario: str) -> dict:
         "edited_report_draft": None,
         "editor_notes": {"mode": "offline"},
     }
+
+
+def _validate_fixture_scenario(value: str) -> str:
+    scenario = str(value or DAILY_AGENT_FIXTURE_SCENARIO_PASS).strip()
+    if scenario not in DAILY_AGENT_FIXTURE_SCENARIOS:
+        raise ValueError(f"unsupported daily agent fixture scenario: {scenario}")
+    return scenario
 
 
 def _fake_rewrite_review() -> dict:
@@ -281,4 +293,11 @@ def _fake_edited_report_draft(
     }
 
 
-__all__ = ["build_daily_agent_fake_llm_client"]
+__all__ = [
+    "DAILY_AGENT_FIXTURE_SCENARIOS",
+    "DAILY_AGENT_FIXTURE_SCENARIO_PASS",
+    "DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_INVALID_SOURCE",
+    "DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_MISSING_EDIT",
+    "DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_VALID",
+    "build_daily_agent_fake_llm_client",
+]

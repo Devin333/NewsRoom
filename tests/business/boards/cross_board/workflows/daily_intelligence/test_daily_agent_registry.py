@@ -4,9 +4,11 @@ import pytest
 
 import business.boards.cross_board.workflows.daily_intelligence.agent_registry as agent_registry_module
 from framework.agent import AgentLoopStatus
+from framework.llm import LLMRequest
 from business.foundation.models.source import Lineage
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem
 from business.boards.cross_board.workflows.daily_intelligence.agent_fixtures import (
+    DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_VALID,
     build_daily_agent_fake_llm_client,
 )
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
@@ -54,6 +56,31 @@ def test_daily_agent_registry_does_not_export_fake_llm_fixture() -> None:
 def test_daily_agent_registry_requires_explicit_offline_llm_client() -> None:
     with pytest.raises(ValueError, match="requires an explicit llm_client"):
         build_daily_agent_runner(profile=PROFILE_AGENTIC_OFFLINE)
+
+
+def test_daily_agent_fixture_uses_explicit_scenario() -> None:
+    llm = build_daily_agent_fake_llm_client(
+        PROFILE_AGENTIC_OFFLINE,
+        topic="AI policy",
+        scenario=DAILY_AGENT_FIXTURE_SCENARIO_REWRITE_VALID,
+    )
+
+    for _ in range(4):
+        llm.complete(_fixture_request())
+    editor_response = llm.complete(_fixture_request()).content
+
+    assert editor_response is not None
+    assert "rewrite-valid" in editor_response
+    assert "AI policy rewrite" not in editor_response
+
+
+def test_daily_agent_fixture_rejects_unknown_scenario() -> None:
+    with pytest.raises(ValueError, match="unsupported daily agent fixture scenario"):
+        build_daily_agent_fake_llm_client(
+            PROFILE_AGENTIC_OFFLINE,
+            topic="AI policy",
+            scenario="topic-keyword-hidden-scenario",
+        )
 
 
 def test_daily_agent_tool_registry_exposes_evidence_and_quality_tools() -> None:
@@ -240,3 +267,7 @@ def _evidence_bundle() -> dict:
             )
         ],
     ).to_dict()
+
+
+def _fixture_request() -> LLMRequest:
+    return LLMRequest(messages=[{"role": "user", "content": "fixture"}])

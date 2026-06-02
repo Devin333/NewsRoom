@@ -195,6 +195,7 @@ class AgenticDailyIntelligenceRunner:
         topic: str,
         source_limit: int = 3,
         run_id: str | None = None,
+        agent_fixture_scenario: str | None = None,
     ) -> RunResult:
         validate_daily_profile(profile)
         function_registry = self._function_registry(profile)
@@ -204,6 +205,7 @@ class AgenticDailyIntelligenceRunner:
             profile=profile,
             llm_client=self.llm_client,
             topic=topic,
+            fixture_scenario=agent_fixture_scenario,
         )
         runner = WorkflowRunner(
             artifact_root=self.artifact_root,
