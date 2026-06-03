@@ -143,7 +143,7 @@ Agent loop step 也使用命名空间优先读取，但 agent 本身仍消费 ca
 agent evidence 输入兼容由 `agent_evidence_input_view.py` 承载：`DailyEvidenceOutputValidator` 只消费 `DailyAgentEvidenceInputView.evidence_bundle` 和 `allowed_evidence_ids`，不再内联 `evidence_bundle` / `bundle` 的 request fallback、dict item coercion 或 allowed id 计算。
 
 artifact publisher 也进入命名空间优先输出读取阶段：发布器只能通过 `daily_intelligence.output_projection` 的 `daily_output_value()` / `daily_output_contains()` 消费 `sources.*`、`evidence.*`、`quality.*`、`report.*`、`agent.feedback.*` 和 `agent.<label>.loop.*`，legacy key 只作为该 projection 内部的兼容兜底；发布器不得直接导入 `DAILY_BUFFER_ALIASES` 或重新维护 dotted/legacy 分支。对外 artifact key、manifest key 和文件路径继续保持现有稳定命名，例如 `quality_result.json`、`source_recollection/execution_report.json` 和 `agentic/agent_feedback_summary.json`。
-quality manifest 字段由 `project_daily_output_for_quality_artifacts()` 投影后消费；evidence artifact 字段由 `project_daily_output_for_evidence_artifacts()` 投影后消费。legacy fallback 只保留在这些 artifact-facing projection 内，`quality_artifact_projection.py` 和 `evidence_artifact_projection.py` 不直接调用泛用 output accessor。
+quality manifest 字段由 `project_daily_output_for_quality_artifacts()` 投影后消费；evidence artifact 字段由 `project_daily_output_for_evidence_artifacts()` 投影后消费；source recollection manifest 字段由 `project_daily_output_for_source_recollection_artifacts()` 投影后消费。legacy fallback 只保留在这些 artifact-facing projection 内，`quality_artifact_projection.py`、`evidence_artifact_projection.py` 和 `source_recollection_artifact_projection.py` 不直接调用泛用 output accessor。
 
 daily run service、persistence、memory ingestion 和 board output attachment 不应各自维护 dotted/legacy 分支。服务层消费 daily workflow output 前，必须通过 `daily_intelligence.output_projection` 的统一 helper 做命名空间优先投影：
 

@@ -139,6 +139,17 @@ def project_daily_output_for_evidence_artifacts(output: Mapping[str, Any]) -> di
     )
 
 
+def project_daily_output_for_source_recollection_artifacts(
+    output: Mapping[str, Any],
+) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_SOURCE_RECOLLECTION_ARTIFACT_OUTPUT_KEYS,
+        include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+    )
+
+
 def apply_daily_public_output_aliases(
     output: MutableMapping[str, Any],
 ) -> MutableMapping[str, Any]:
@@ -298,6 +309,13 @@ DAILY_EVIDENCE_ARTIFACT_OUTPUT_KEYS = (
     "verified_findings",
 )
 
+DAILY_SOURCE_RECOLLECTION_ARTIFACT_OUTPUT_KEYS = (
+    "source_recollection_profile",
+    "source_recollection_execution_plan",
+    "source_recollection_execution_report",
+    "source_recollection_quality_assessment",
+)
+
 DAILY_PUBLIC_OUTPUT_ALIAS_KEYS = (
     "final_report",
     "blocked_report",
@@ -330,6 +348,7 @@ __all__ = [
     "DAILY_INTERFACE_METADATA_OUTPUT_KEYS",
     "DAILY_EVIDENCE_ARTIFACT_OUTPUT_KEYS",
     "DAILY_QUALITY_ARTIFACT_OUTPUT_KEYS",
+    "DAILY_SOURCE_RECOLLECTION_ARTIFACT_OUTPUT_KEYS",
     "DailyOutputProjectionReadPolicy",
     "apply_daily_board_attachment_result",
     "apply_daily_public_output_aliases",
@@ -345,4 +364,5 @@ __all__ = [
     "project_daily_output_for_legacy_consumers",
     "project_daily_output_for_quality_artifacts",
     "project_daily_output_for_run_inspection",
+    "project_daily_output_for_source_recollection_artifacts",
 ]

@@ -4,8 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    daily_output_contains,
-    daily_output_value,
+    project_daily_output_for_source_recollection_artifacts,
 )
 
 
@@ -24,7 +23,8 @@ SOURCE_RECOLLECTION_QUALITY_ASSESSMENT_ARTIFACT = (
 def source_recollection_manifest_summary(
     output: Mapping[str, Any],
 ) -> dict[str, Any] | None:
-    report = daily_output_value(output, "source_recollection_execution_report")
+    source_recollection_output = project_daily_output_for_source_recollection_artifacts(output)
+    report = source_recollection_output.get("source_recollection_execution_report")
     if report is None:
         return None
 
@@ -38,12 +38,12 @@ def source_recollection_manifest_summary(
         "fetch_result_count": _int_value(_field_value(report, "fetch_result_count")),
         "artifact": SOURCE_RECOLLECTION_EXECUTION_REPORT_ARTIFACT,
     }
-    if daily_output_contains(output, "source_recollection_profile"):
+    if "source_recollection_profile" in source_recollection_output:
         summary["profile_artifact"] = SOURCE_RECOLLECTION_PROFILE_ARTIFACT
-    if daily_output_contains(output, "source_recollection_execution_plan"):
+    if "source_recollection_execution_plan" in source_recollection_output:
         summary["plan_artifact"] = SOURCE_RECOLLECTION_EXECUTION_PLAN_ARTIFACT
 
-    assessment = daily_output_value(output, "source_recollection_quality_assessment")
+    assessment = source_recollection_output.get("source_recollection_quality_assessment")
     if assessment is not None:
         summary["quality"] = source_recollection_quality_manifest_summary(assessment)
     return summary

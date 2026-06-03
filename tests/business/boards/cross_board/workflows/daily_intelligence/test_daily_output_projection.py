@@ -15,6 +15,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     project_daily_output_for_legacy_consumers,
     project_daily_output_for_quality_artifacts,
     project_daily_output_for_run_inspection,
+    project_daily_output_for_source_recollection_artifacts,
 )
 
 
@@ -271,6 +272,21 @@ def test_project_daily_output_for_evidence_artifacts_keeps_legacy_fallback() -> 
     assert projected == {
         "evidence_bundle": {"bundle_id": "namespaced"},
         "evidence_source_map": {"ev-1": ["https://example.com/source"]},
+    }
+
+
+def test_project_daily_output_for_source_recollection_artifacts_keeps_legacy_fallback() -> None:
+    output = {
+        "source_recollection_execution_report": {"status": "legacy"},
+        "sources.recollection_execution_report": {"status": "succeeded"},
+        "source_recollection_quality_assessment": {"decision": "pass"},
+    }
+
+    projected = project_daily_output_for_source_recollection_artifacts(output)
+
+    assert projected == {
+        "source_recollection_execution_report": {"status": "succeeded"},
+        "source_recollection_quality_assessment": {"decision": "pass"},
     }
 
 
