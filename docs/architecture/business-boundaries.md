@@ -142,13 +142,15 @@ daily workflow 的 dotted key 迁移规则仍属于 business daily output projec
 
 daily intelligence 的 `quality_gate_step.py` 是 workflow adapter，只负责读取 report draft、evidence、verified findings、quality events、memory/historian context 和 injected memory repository，然后组装 `DailyQualityGateInput`。
 
-质量评估、rewrite 尝试、non-social-media bypass 和 human review 路由由 `quality_gate_usecase.py` 的 `evaluate_daily_quality_gate()` 承载。final/blocked report、markdown、quality result alias、memory quality metadata 投影由 `quality_gate_outputs.py` 构建。两者都不依赖 `framework.workflow`，可脱离 `DataBuffer` 单独测试。
+`quality_gate_usecase.py` 只编排三类服务：`DailyQualityGateContextService` 加载正式运行上下文，`DailyQualityGateEvaluationService` 生成质量评估结果，`quality_gate_outputs.py` 构建 final/blocked report、markdown、quality result alias 和 memory quality metadata 投影。usecase 不再承载 rewrite、bypass 或 human review 的业务分支。
 
-memory context、historian context 和 memory quality result 的组合由 `quality_context_projection.py` 的 `DailyQualityContextProjectionService` 构建。显式 `historian_context` 优先；从 report 或 memory metadata 读取 historian 只作为旧数据兼容入口，不能散落在 quality gate usecase 中。
+memory context、historian context 和 memory quality result 的组合由 `quality_gate_context.py` 的 `DailyQualityGateContextService` 发起，并委托 `quality_context_projection.py` 的 `DailyQualityContextProjectionService` 构建。显式 `historian_context` 优先；从 report 或 memory metadata 读取 historian 只作为旧数据兼容入口，不能散落在 quality gate usecase 中。
+
+质量评估、rewrite 尝试、non-social-media bypass 和 human review 路由由 `quality_gate_evaluation.py` 的 `DailyQualityGateEvaluationService` 承载。critical memory issue 判定收敛到 `memory_quality.py` 的 `has_critical_memory_quality_issue()`，避免在 usecase 或 step 中重新扫描 memory quality payload。
 
 quality gate 的单次运行观测指标由 `quality_observability.py` 构建，输出可聚合的 count/rate 字段（例如 block、rewrite、human review、memory conflict）。workflow step 不维护历史窗口；窗口聚合应由 artifact/storage/monitoring 层消费这些正式指标完成。
 
-新增 quality gate 规则时，应优先扩展 usecase 输入模型或拆分 quality routing/output 子服务，不要把业务分支重新写回 workflow step。
+新增 quality gate 规则时，应优先扩展 `DailyQualityGateInput`、`QualityGateContext`、`QualityGateEvaluation` 或拆分 quality routing/output 子服务，不要把业务分支重新写回 workflow step。
 
 non-social-media bypass 判定统一由 `quality_gate_policy.assess_non_social_media_bypass()` 返回，quality gate 和 report finalization 只能消费该 assessment，不应各自重新判断或拼接 bypass 事件字段。
 

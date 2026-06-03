@@ -324,6 +324,13 @@ def memory_context_from_payload(payload: dict[str, Any]) -> IntelligenceMemoryCo
     )
 
 
+def has_critical_memory_quality_issue(memory_quality_result: dict[str, Any]) -> bool:
+    return any(
+        isinstance(issue, dict) and issue.get("severity") == "critical"
+        for issue in memory_quality_result.get("issues") or []
+    )
+
+
 def _evidence_from_payload(payload: dict[str, Any]) -> EvidenceMemory:
     source_urls = [str(item) for item in payload.get("source_urls") or [] if item is not None]
     source_url = payload.get("source_url")
@@ -435,5 +442,6 @@ def _take(items: list[Any], limit: int) -> list[Any]:
 __all__ = [
     "ContextMemoryQualityRepository",
     "DailyMemoryQualityService",
+    "has_critical_memory_quality_issue",
     "memory_context_from_payload",
 ]

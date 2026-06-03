@@ -10,9 +10,15 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_context_pr
     DailyQualityContextProjectionInput,
     DailyQualityContextProjectionService,
 )
+from business.boards.cross_board.workflows.daily_intelligence.quality_gate_context import (
+    DailyQualityGateContextService,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_usecase import (
     DailyQualityGateInput,
     evaluate_daily_quality_gate,
+)
+from business.boards.cross_board.workflows.daily_intelligence.memory_quality import (
+    has_critical_memory_quality_issue,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_evaluation import evaluate_report_quality
 from business.boards.cross_board.workflows.daily_intelligence.registry import build_daily_intelligence_registry
@@ -240,6 +246,44 @@ def test_quality_gate_usecase_runs_without_workflow_buffer() -> None:
     assert output["final_report"].title == "Daily Intelligence: AI policy"
     assert output["quality.result"] == output["quality_result"]
     assert quality_events == []
+
+
+def test_quality_gate_context_service_copies_events_and_appends_memory_check() -> None:
+    quality_events = []
+
+    context = DailyQualityGateContextService().load(
+        DailyQualityGateInput(
+            report_draft=_report_draft(),
+            evidence_bundle=_evidence_bundle(),
+            verified_findings=VerifiedFindings(),
+            quality_events=quality_events,
+            memory_context={
+                "query": "AI policy",
+                "topic": "AI policy",
+                "claims": [],
+                "events": [],
+                "evidence": [],
+                "entities": [],
+                "decisions": [],
+                "preferences": [],
+                "conflicts": [{"issue_type": "claim_conflict", "message": "Historical conflict"}],
+                "metadata": {"memory_available": True},
+            },
+        )
+    )
+
+    assert quality_events == []
+    assert context.quality_events[0].event_type == "memory_quality_checked"
+    assert context.memory_quality_result["metadata"]["conflict_count"] == 1
+
+
+def test_memory_quality_boundary_identifies_critical_issues() -> None:
+    assert has_critical_memory_quality_issue(
+        {"issues": [{"severity": "critical", "message": "Critical memory issue."}]}
+    )
+    assert not has_critical_memory_quality_issue(
+        {"issues": [{"severity": "warning", "message": "Non-critical memory issue."}]}
+    )
 
 
 def test_quality_gate_output_builder_publishes_without_usecase_or_workflow_buffer() -> None:
