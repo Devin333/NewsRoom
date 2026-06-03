@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from business.boards.cross_board.profiles import daily_workflow_ids
+from business.layers.output.report_quality_projection import (
+    normalize_quality_result_records,
+    project_report_quality_payload,
+)
 from interfaces.models.common import ApiActionResult
 from infrastructure.storage.lineage.evidence import quality_lineage_summary
 from infrastructure.storage.local_json import LocalJsonRepository
@@ -144,7 +148,11 @@ class ReportApplicationService:
 
     def report_quality(self, report_id: str) -> ReportQualityResult:
         record = self.get_report(report_id)
-        quality = _quality_payload(record.report_json)
+        quality_results = _quality_result_records(self.repository, record.run_id)
+        quality = project_report_quality_payload(
+            record.report_json,
+            quality_records=quality_results,
+        )
         return ReportQualityResult(
             report_id=record.report_id,
             run_id=record.run_id,
@@ -152,7 +160,12 @@ class ReportApplicationService:
             quality_score=record.quality_score,
             quality={
                 **quality,
-                "quality_lineage": _quality_lineage_payload(self.repository, record.run_id, record.report_id),
+                "quality_lineage": _quality_lineage_payload(
+                    self.repository,
+                    record.run_id,
+                    record.report_id,
+                    quality_results=quality_results,
+                ),
             },
         )
 
@@ -218,32 +231,31 @@ def _report_repository(
     return LocalJsonRepository(artifact_root)
 
 
-def _quality_payload(report_json: Any) -> dict[str, Any]:
-    if not isinstance(report_json, dict):
-        return {}
-    quality_trace = report_json.get("quality_trace")
-    if isinstance(quality_trace, dict):
-        return dict(quality_trace)
-    for key in ("quality", "quality_gate", "editor_review", "quality_metrics"):
-        value = report_json.get(key)
-        if isinstance(value, dict):
-            return dict(value)
-    return {}
-
-
-def _quality_lineage_payload(repository: Any, run_id: str, report_id: str) -> dict[str, Any]:
+def _quality_lineage_payload(
+    repository: Any,
+    run_id: str,
+    report_id: str,
+    *,
+    quality_results: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     list_claims = getattr(repository, "list_claims", None)
-    list_quality_results = getattr(repository, "list_quality_results", None)
     raw_claims = list_claims(run_id) if callable(list_claims) else []
-    raw_quality_results = list_quality_results(run_id) if callable(list_quality_results) else []
     claims = [dict(item) for item in raw_claims] if isinstance(raw_claims, list) else []
-    quality_results = [dict(item) for item in raw_quality_results] if isinstance(raw_quality_results, list) else []
+    resolved_quality_results = quality_results
+    if resolved_quality_results is None:
+        resolved_quality_results = _quality_result_records(repository, run_id)
     return quality_lineage_summary(
         run_id=run_id,
         report_id=report_id,
         claims=claims,
-        quality_results=quality_results,
+        quality_results=resolved_quality_results,
     )
+
+
+def _quality_result_records(repository: Any, run_id: str) -> list[dict[str, Any]]:
+    list_quality_results = getattr(repository, "list_quality_results", None)
+    raw_quality_results = list_quality_results(run_id) if callable(list_quality_results) else []
+    return normalize_quality_result_records(raw_quality_results)
 
 
 def _workflow_ids_for_family(workflow_family: str | None) -> tuple[str, ...] | None:

@@ -177,13 +177,42 @@ def test_report_service_quality_keeps_reviewer_artifact_refs_visible(tmp_path) -
     }
     assert result.to_dict()["quality"]["quality_lineage"]["supporting_evidence_ids"] == []
 
-
     service = ReportApplicationService(artifact_root=tmp_path)
 
     with pytest.raises(ValueError, match="query is required"):
         service.search_reports(query="")
 
 
+def test_report_service_quality_falls_back_to_quality_record_payload(tmp_path) -> None:
+    _write_report_run(tmp_path, "run-record", "2026-05-11T00:00:00Z", "Record Daily")
+    repository = _FakeReportRepository(
+        record=ReportApplicationService(artifact_root=tmp_path).get_report("run-record:final"),
+        claims=[],
+        quality_results=[
+            {
+                "quality_result_id": "run-record:quality",
+                "run_id": "run-record",
+                "decision": "blocked",
+                "passed": False,
+                "quality_score": 0.25,
+                "payload": {
+                    "quality_result": {
+                        "decision": "human_review",
+                        "route": "human_review",
+                    }
+                },
+            }
+        ],
+    )
+
+    result = ReportApplicationService(repository=repository).report_quality("run-record:final")
+
+    quality = result.to_dict()["quality"]
+    assert quality["decision"] == "human_review"
+    assert quality["route"] == "human_review"
+    assert quality["passed"] is False
+    assert quality["quality_score"] == 0.25
+    assert quality["quality_lineage"]["quality_result_count"] == 1
 
 
 def test_report_service_quality_exposes_quality_lineage_from_repository(tmp_path) -> None:

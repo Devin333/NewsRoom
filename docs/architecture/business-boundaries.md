@@ -118,6 +118,8 @@ interfaces 可以调用这些 business projection helper，但不得在接口服
 
 run inspection 读取 manifest output 构建 quality preview / lineage 时，也必须先判断 workflow 是否属于 daily family，再调用同一 projection helper 生成业务消费视图。inspection 可以保留原始 output key 作为调试预览，但质量决策、route、citation check、support matrix、candidate claims、verified findings 和 report id 只能从投影后的业务视图读取；接口层不得重新实现 daily key fallback。
 
+report quality API 不应在接口层猜测 `report_json` 或 repository quality record 的历史形状。`business.layers.output.report_quality_projection` 负责从 `quality_trace`、旧 `quality` / `quality_gate` / `editor_review` / `quality_metrics` 字段，以及 `QualityResultRecord.payload` 中投影正式质量视图；`ReportApplicationService` 只负责读取 repository 记录、调用 projection，并把 lineage summary 组合到响应里。后续如果质量记录模型继续演进，应扩展该业务 projection 或正式 record model，不要在接口服务里新增结构分支。
+
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
 
 ## Quality Gate 边界
