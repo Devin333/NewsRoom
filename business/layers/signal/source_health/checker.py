@@ -21,6 +21,10 @@ from business.foundation.models.source import (
 )
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health.manager import BasicSourceHealthManager
+from business.layers.signal.source_processing.error_metadata import (
+    SourceErrorMetadataInput,
+    source_error_metadata,
+)
 
 
 ProbeFetcher = Callable[[SourceDefinition, SourceFetchPolicy], "ProbeObservation"]
@@ -403,27 +407,22 @@ def _event(event_type: str, source: SourceDefinition, **metadata: Any) -> Source
 
 def _exception_source_error(source: SourceDefinition, exc: Exception) -> SourceError:
     error_type, retryable, health_affecting = _classify_probe_exception(exc)
-    metadata: dict[str, Any] = {
-        "phase": "probe",
-        "retryable": retryable,
-        "source_health_affecting": health_affecting,
-        "original_exception_type": type(exc).__name__,
-    }
+    extra: dict[str, Any] = {}
     if isinstance(exc, HTTPError):
-        metadata["status_code"] = exc.code
+        extra["status_code"] = exc.code
     exception_type = type(exc).__name__
     if exception_type == "UnsupportedContentTypeError":
-        metadata["content_type"] = getattr(exc, "content_type", None)
-        metadata["supported_content_types"] = list(getattr(exc, "supported_content_types", ()) or ())
+        extra["content_type"] = getattr(exc, "content_type", None)
+        extra["supported_content_types"] = list(getattr(exc, "supported_content_types", ()) or ())
     if exception_type == "TooManyRedirectsError":
-        metadata["redirect_url"] = getattr(exc, "url", None)
-        metadata["max_redirects"] = getattr(exc, "max_redirects", None)
+        extra["redirect_url"] = getattr(exc, "url", None)
+        extra["max_redirects"] = getattr(exc, "max_redirects", None)
     if exception_type == "RobotsDisallowedError":
-        metadata["robots_url"] = getattr(exc, "robots_url", None)
-        metadata["user_agent"] = getattr(exc, "user_agent", None)
+        extra["robots_url"] = getattr(exc, "robots_url", None)
+        extra["user_agent"] = getattr(exc, "user_agent", None)
     attempts = getattr(exc, "source_fetch_attempts", None)
     if attempts is not None:
-        metadata["attempts"] = attempts
+        extra["attempts"] = attempts
     return SourceError(
         source_id=source.source_id,
         source_name=source.name,
@@ -431,7 +430,16 @@ def _exception_source_error(source: SourceDefinition, exc: Exception) -> SourceE
         error_message=str(exc),
         url=source.url,
         retryable=retryable,
-        metadata=metadata,
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase="probe",
+                retryable=retryable,
+                source_health_affecting=health_affecting,
+                workflow_blocking=False,
+                original_exception_type=type(exc).__name__,
+                extra=extra,
+            )
+        ),
     )
 
 
@@ -453,15 +461,20 @@ def _rate_limit_error(
         error_message=f"source fetch rate limit reached for domain: {decision.domain}",
         url=source.url,
         retryable=True,
-        metadata={
-            "phase": "fetch",
-            "retryable": True,
-            "source_health_affecting": False,
-            "domain": decision.domain,
-            "limit_per_minute": decision.limit_per_minute,
-            "window_seconds": getattr(decision, "window_seconds", 60),
-            "retry_after_seconds": decision.retry_after_seconds,
-        },
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase="fetch",
+                retryable=True,
+                source_health_affecting=False,
+                workflow_blocking=False,
+                extra={
+                    "domain": decision.domain,
+                    "limit_per_minute": decision.limit_per_minute,
+                    "window_seconds": getattr(decision, "window_seconds", 60),
+                    "retry_after_seconds": decision.retry_after_seconds,
+                },
+            )
+        ),
     )
 
 

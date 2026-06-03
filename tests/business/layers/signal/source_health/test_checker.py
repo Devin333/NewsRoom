@@ -2,6 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 from business.foundation.models.source import SourceDefinition, SourceError, SourceFetchPolicy, SourceHealthStatus
 from business.foundation.registry.source_registry import SourceRegistry
+from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
+from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
 from business.layers.signal.source_health import BasicSourceHealthManager, ProbeObservation, SourceHealthChecker
 
 
@@ -51,6 +53,17 @@ def test_source_health_checker_records_failure_and_cooldown_event() -> None:
     assert entry.ok is False
     assert entry.error is not None
     assert entry.error.error_type == "fetch_timeout"
+    assert entry.error.metadata[SOURCE_ERROR_RUNTIME_METADATA_KEY] == {
+        "phase": "probe",
+        "retryable": True,
+        "source_health_affecting": True,
+    }
+    assert entry.error.metadata[SOURCE_ERROR_POLICY_METADATA_KEY] == {
+        "source_health_affecting": True,
+        "workflow_blocking": False,
+        "operator_action_required": False,
+    }
+    assert entry.error.metadata["phase"] == "probe"
     assert entry.health is not None
     assert entry.health.status == SourceHealthStatus.DOWN
     assert any(event.event_type == "source_cooldown_started" for event in result.events)
@@ -116,6 +129,16 @@ def test_source_health_checker_rate_limits_same_domain_before_probe() -> None:
     assert skipped.skip_reason == "rate_limited"
     assert skipped.error is not None
     assert skipped.error.error_type == "rate_limited"
+    assert skipped.error.metadata[SOURCE_ERROR_RUNTIME_METADATA_KEY] == {
+        "phase": "fetch",
+        "retryable": True,
+        "source_health_affecting": False,
+    }
+    assert skipped.error.metadata[SOURCE_ERROR_POLICY_METADATA_KEY] == {
+        "source_health_affecting": False,
+        "workflow_blocking": False,
+        "operator_action_required": False,
+    }
     assert skipped.error.metadata["source_health_affecting"] is False
     assert manager.get("second").consecutive_failures == 0
     assert any(
