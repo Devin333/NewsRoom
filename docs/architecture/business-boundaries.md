@@ -112,7 +112,8 @@ daily run service、persistence、memory ingestion 和 board output attachment �
 
 - `daily_output_value()` / `daily_output_contains()`：业务层 output accessor，统一执行 dotted-first、legacy fallback。
 - `project_daily_output_for_persistence()`：只为落库 record 输入投影 persistence 所需 canonical key，不补齐无关 legacy 字段。
-- `ensure_legacy_daily_output_aliases()`：在需要保留原 output 写回副作用的路径上原地补齐 legacy 兼容 key，例如 board output attachment。
+- `project_daily_output_for_board_attachment()`：只为 board attachment 投影 signals/source/evidence 输入 key；board 产出的 `board_outputs` 和 `cross_board_output` 再作为正式结果字段合并回 run output。
+- `ensure_legacy_daily_output_aliases()`：只在公开 `RunResult.output` 需要保持历史兼容字段时原地补齐 legacy key，不作为下游服务调用的前置条件。
 - `project_daily_output_for_legacy_consumers()`：为 memory ingestion 等 legacy consumer 生成兼容 copy，避免 consumer 直接理解 daily alias 表。
 
 interfaces 可以调用这些 business projection helper，但不得在接口服务里复制 `DAILY_BUFFER_ALIASES` 或手写 `report.final -> final_report` 这类映射。memory 和 board 通用服务继续消费 canonical legacy 字段；daily workflow 的命名空间迁移规则只留在 daily workflow business 边界内。

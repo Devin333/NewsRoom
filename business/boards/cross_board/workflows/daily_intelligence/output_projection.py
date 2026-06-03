@@ -43,6 +43,13 @@ def project_daily_output_for_persistence(output: Mapping[str, Any]) -> dict[str,
     )
 
 
+def project_daily_output_for_board_attachment(output: Mapping[str, Any]) -> dict[str, Any]:
+    return project_daily_output_for_legacy_consumers(
+        output,
+        keys=DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS,
+    )
+
+
 def ensure_legacy_daily_output_aliases(
     output: MutableMapping[str, Any],
     *,
@@ -100,12 +107,28 @@ DAILY_PERSISTENCE_OUTPUT_KEYS = (
     "verified_findings",
 )
 
+DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS = (
+    "signals",
+    "ranked_items",
+    "normalized_items",
+    "raw_items",
+    "evidence_bundle",
+)
+
+DAILY_BOARD_ATTACHMENT_RESULT_KEYS = (
+    "board_outputs",
+    "cross_board_output",
+)
+
 
 __all__ = [
+    "DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS",
+    "DAILY_BOARD_ATTACHMENT_RESULT_KEYS",
     "DAILY_PERSISTENCE_OUTPUT_KEYS",
     "daily_output_contains",
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",
+    "project_daily_output_for_board_attachment",
     "project_daily_output_for_persistence",
     "project_daily_output_for_legacy_consumers",
 ]

@@ -16,7 +16,9 @@ from business.boards.cross_board.profiles import (
     daily_agentic_enabled,
 )
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
+    DAILY_BOARD_ATTACHMENT_RESULT_KEYS,
     ensure_legacy_daily_output_aliases,
+    project_daily_output_for_board_attachment,
     project_daily_output_for_legacy_consumers,
 )
 from business.layers.memory.ingestion import MemoryIngestionService
@@ -132,9 +134,9 @@ class DailyRunApplicationService:
             run_id=run_id,
         )
         self._persist_daily_result(repository, result, profile=profile)
-        self._prepare_daily_output_for_service_consumers(result)
         self._attach_board_outputs_if_possible(result, topic=topic)
         self._index_memory_if_configured(result, topic=topic)
+        self._prepare_daily_output_for_service_consumers(result)
         return result
 
     def _persist_daily_result(self, repository, result: RunResult, *, profile: str) -> None:
@@ -177,10 +179,14 @@ class DailyRunApplicationService:
             return
         if self.board_service_factory is None:
             return
+        board_output = project_daily_output_for_board_attachment(result.output)
         try:
-            self.board_service_factory().attach_run_board_outputs(result.output, topic=topic)
+            self.board_service_factory().attach_run_board_outputs(board_output, topic=topic)
         except (TypeError, ValueError):
             return
+        for key in DAILY_BOARD_ATTACHMENT_RESULT_KEYS:
+            if key in board_output:
+                result.output[key] = board_output[key]
 
 
 def resolve_daily_runner_cls(profile: str):

@@ -56,6 +56,9 @@ def test_daily_run_service_projects_namespaced_output_for_service_consumers(tmp_
     assert memory.output["final_report"] == result.output["final_report"]
     assert memory.output["quality_result"] == result.output["quality_result"]
     assert board.output["ranked_items"] == [{"title": "Namespaced item"}]
+    assert result.output["ranked_items"] == [{"title": "Namespaced item"}]
+    assert result.output["board_outputs"] == {"ai_news": {"cards": []}}
+    assert result.output["cross_board_output"] == {"board_type": "cross_board"}
 
 
 def test_daily_run_service_falls_back_to_projected_result_when_input_writer_is_unconfigured(
@@ -153,6 +156,9 @@ class _CapturingBoard:
 
     def attach_run_board_outputs(self, output, *, topic):
         self.output = dict(output)
+        output["ranked_items"] = [{"title": "board-mutated item"}]
+        output["board_outputs"] = {"ai_news": {"cards": []}}
+        output["cross_board_output"] = {"board_type": "cross_board"}
 
 
 class _CapturingPersistence:
