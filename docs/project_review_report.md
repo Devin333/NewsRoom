@@ -700,7 +700,7 @@ Daily agentic workflow 通过 `daily_workflow_runtime_policy()` 声明全局 tim
 ### 下一轮剩余方向
 
 1. 继续把 dotted key 从兼容双写推进到正式消费，逐步缩小 legacy key fallback 面。
-2. artifact-facing projection 的 legacy fallback 已由架构测试限制在明确白名单内；后续继续收敛具体 fallback key 时必须保持 artifact key、manifest key 和历史 consumer 行为稳定。
+2. artifact-facing projection 的 legacy fallback 已由架构测试限制在明确白名单内，并通过 `output_legacy_fallback_plan.py` 固定具体 fallback key 下线顺序；后续执行下线时必须保持 artifact key、manifest key 和历史 consumer 行为稳定。
 3. quality gate 的 block / rewrite / memory conflict / human review route 已有跨 run 聚合入口，后续可接入持久化 run inspection 或 dashboard。
 4. 继续减少 metadata 作为隐式数据通道的历史兼容面，优先新增正式 input view 或 domain model。
 5. source connector metadata 读取已由架构测试固定在 `SourceConnectorRuntimeOptions` / metadata view 边界，后续只需要对历史 fallback key 做分批下线计划。
@@ -734,7 +734,8 @@ Daily agentic workflow 通过 `daily_workflow_runtime_policy()` 声明全局 tim
 ### 建议下一轮小步
 
 - [x] 用架构测试固定 daily output legacy fallback 只允许出现在 artifact-facing projection 和显式 legacy helper。
-- [ ] 为 artifact-facing projection 制定具体 legacy fallback key 下线顺序。
+- [x] 为 artifact-facing projection 制定具体 legacy fallback key 下线顺序。
+- [ ] 按 `output_legacy_fallback_plan.py` 执行 artifact-facing legacy fallback key 分阶段下线。
 - [x] 为 quality observability 增加跨 run 聚合入口，沉淀 block / rewrite / human review / memory conflict 指标。
 - [x] 用架构测试禁止 source connector 运行路径新增直接 metadata 读取。
 - [ ] 为 source connector metadata fallback 制定历史 key 下线顺序。
