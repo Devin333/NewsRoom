@@ -14,6 +14,10 @@ from business.boards.cross_board.profiles import (
     PROFILE_LIVE_OFFLINE,
     daily_agentic_enabled,
 )
+from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
+    ensure_legacy_daily_output_aliases,
+    project_daily_output_for_legacy_consumers,
+)
 from business.layers.memory.ingestion import MemoryIngestionService
 from framework import RunResult
 from framework.specs import WorkflowStatus
@@ -122,10 +126,15 @@ class DailyRunApplicationService:
             source_limit=source_limit,
             run_id=run_id,
         )
+        self._prepare_daily_output_for_service_consumers(result)
         self.persistence_service.persist_prepared_result(repository, result, profile=profile)
         self._attach_board_outputs_if_possible(result, topic=topic)
         self._index_memory_if_configured(result, topic=topic)
         return result
+
+    def _prepare_daily_output_for_service_consumers(self, result: RunResult) -> None:
+        if isinstance(result.output, dict):
+            ensure_legacy_daily_output_aliases(result.output)
 
     def _index_memory_if_configured(self, result: RunResult, *, topic: str) -> None:
         memory_service = self.memory_ingestion_service
@@ -133,8 +142,9 @@ class DailyRunApplicationService:
             memory_service = self.memory_ingestion_service_factory()
         if memory_service is None:
             return
+        output = project_daily_output_for_legacy_consumers(result.output)
         ingestion_result = memory_service.ingest_run_output(
-            result.output,
+            output,
             run_id=result.run_id,
             report_id=f"{result.run_id}:final",
             topic=topic,

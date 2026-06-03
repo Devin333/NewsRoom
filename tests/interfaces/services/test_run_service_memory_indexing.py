@@ -59,6 +59,40 @@ def test_run_service_indexes_memory_when_injected(tmp_path, monkeypatch) -> None
     assert "indexed_documents" in payload
 
 
+def test_run_service_indexes_namespaced_only_daily_output(tmp_path, monkeypatch) -> None:
+    import interfaces.services.run_service as run_service_module
+    import interfaces.services.daily_run_service as daily_run_service_module
+
+    fake_memory = _FakeMemoryIngestionService()
+    monkeypatch.setattr(
+        run_service_module,
+        "repository_from_env",
+        lambda artifact_root: _FakePersistenceRepository(),
+    )
+    monkeypatch.setattr(
+        daily_run_service_module,
+        "resolve_daily_runner_cls",
+        lambda profile: (lambda artifact_root: _NamespacedOnlyDailyRunner()),
+    )
+
+    result = RunApplicationService(
+        artifact_root=tmp_path,
+        memory_ingestion_service=fake_memory,
+    ).run_daily(
+        profile="live-offline",
+        topic="AI policy",
+        source_limit=1,
+        run_id="memory-indexed",
+    )
+
+    indexed_output = fake_memory.calls[0]["output"]
+    assert indexed_output["final_report"] == {"title": "Namespaced report", "sections": []}
+    assert indexed_output["evidence_bundle"] == {"items": []}
+    assert indexed_output["quality_result"] == {"decision": "pass", "route": "final"}
+    assert result.output["final_report"] == indexed_output["final_report"]
+    assert result.output["memory_ingestion_result"]["documents_indexed"] == 3
+
+
 def test_run_service_migrates_repository_before_daily_workflow(tmp_path, monkeypatch) -> None:
     import interfaces.services.run_service as run_service_module
     import interfaces.services.daily_run_service as daily_run_service_module
@@ -147,4 +181,19 @@ class _RecordingDailyRunner:
             workflow_version="1",
             status=WorkflowStatus.SUCCEEDED,
             output={},
+        )
+
+
+class _NamespacedOnlyDailyRunner:
+    def run(self, *, profile, topic, source_limit, run_id=None):
+        return RunResult(
+            run_id=run_id or "generated",
+            workflow_id="daily_intelligence",
+            workflow_version="1",
+            status=WorkflowStatus.SUCCEEDED,
+            output={
+                "report.final": {"title": "Namespaced report", "sections": []},
+                "evidence.bundle": {"items": []},
+                "quality.result": {"decision": "pass", "route": "final"},
+            },
         )

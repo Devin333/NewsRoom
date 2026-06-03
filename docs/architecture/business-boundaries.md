@@ -108,6 +108,14 @@ Agent loop step 也使用命名空间优先读取，但 agent 本身仍消费 ca
 
 artifact publisher 也进入命名空间优先输出读取阶段：发布器通过集中 output lookup helper 优先消费 `sources.*`、`evidence.*`、`quality.*`、`report.*`、`agent.feedback.*` 和 `agent.<label>.loop.*`，legacy key 只作为兼容兜底；对外 artifact key、manifest key 和文件路径继续保持现有稳定命名，例如 `quality_result.json`、`source_recollection/execution_report.json` 和 `agentic/agent_feedback_summary.json`。
 
+daily run service、persistence、memory ingestion 和 board output attachment 不应各自维护 dotted/legacy 分支。服务层消费 daily workflow output 前，必须通过 `daily_intelligence.output_projection` 的统一 helper 做命名空间优先投影：
+
+- `daily_output_value()` / `daily_output_contains()`：业务层 output accessor，统一执行 dotted-first、legacy fallback。
+- `ensure_legacy_daily_output_aliases()`：在需要保留原 output 写回副作用的路径上原地补齐 legacy 兼容 key，例如 persistence 和 board output attachment。
+- `project_daily_output_for_legacy_consumers()`：为 memory ingestion 等 legacy consumer 生成兼容 copy，避免 consumer 直接理解 daily alias 表。
+
+interfaces 可以调用这些 business projection helper，但不得在接口服务里复制 `DAILY_BUFFER_ALIASES` 或手写 `report.final -> final_report` 这类映射。memory 和 board 通用服务继续消费 canonical legacy 字段；daily workflow 的命名空间迁移规则只留在 daily workflow business 边界内。
+
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
 
 ## Quality Gate 边界
