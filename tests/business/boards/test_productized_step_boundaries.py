@@ -33,3 +33,12 @@ def test_productized_workflow_declares_only_step_read_keys() -> None:
         "report_summary",
     ]
     assert read_keys_by_step["build_feedback_events"] == ["board_run_result"]
+
+
+def test_productized_workflow_declares_policy_experiment_application_context() -> None:
+    workflow = build_productized_board_workflow(BoardType.AI_NEWS)
+    write_keys_by_step = {step.step_id: step.write_keys for step in workflow.steps}
+
+    assert "policy_experiment_application_context" in write_keys_by_step[
+        "build_improvement_recommendations"
+    ]

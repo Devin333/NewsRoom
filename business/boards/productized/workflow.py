@@ -127,6 +127,7 @@ _WRITE_KEYS = {
         "improvement_proposals",
         "policy_experiment_profiles",
         "policy_experiment_profile_ids",
+        "policy_experiment_application_context",
         "applied_policy_experiments",
         "skipped_policy_experiments",
         "applied_overrides",

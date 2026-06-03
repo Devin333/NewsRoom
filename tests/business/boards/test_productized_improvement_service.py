@@ -34,6 +34,25 @@ def test_productized_improvement_workflow_service_builds_outputs_from_request() 
     assert result["improvement_proposals"] is not None
     assert result["policy_experiment_profiles"] == []
     assert result["policy_experiment_profile_ids"] == []
+    assert result["policy_experiment_application_context"] == {
+        "run_id": "improvement-run",
+        "board_type": "ai_news",
+        "applied_policy_experiments": [],
+        "skipped_policy_experiments": [],
+        "proposal_ids": [],
+        "measurement_plan": {
+            "compare_metrics": [
+                "quality_score",
+                "card_count",
+                "evidence_coverage",
+                "duplicate_rate",
+                "empty_output",
+                "subscription_match",
+            ],
+        },
+        "applied_overrides": [],
+        "skipped_overrides": [],
+    }
     assert result["applied_policy_experiments"] == []
     assert result["skipped_policy_experiments"] == []
     assert result["applied_overrides"] == []
@@ -73,6 +92,9 @@ def test_productized_improvement_workflow_exports_policy_experiment_profiles() -
     assert result["policy_experiment_profile_ids"] == [
         result["policy_experiment_profiles"][0]["profile_id"]
     ]
+    assert result["policy_experiment_application_context"]["run_id"] == "improvement-run"
+    assert result["policy_experiment_application_context"]["board_type"] == "ai_news"
+    assert result["policy_experiment_application_context"]["applied_policy_experiments"] == []
     assert result["improvement_proposals"][0]["change_type"] == "policy_experiment"
     assert "proposed_patch" not in result["improvement_proposals"][0]
     assert (

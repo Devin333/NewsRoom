@@ -269,7 +269,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `ProductizedBoardOutputBundleBuilder` 不再把完整 `ProductizedRunState` 合并进 `BoardRunResult.metadata`；运行态通过 `ProductizedBoardOutputBundle.run_state` 和 workflow `productized_run` key 传递。
 - `ProductizedBoardOutputBundle.report_summary` 是 report-writing skill 输出摘要的正式投影，并通过 workflow `report_summary` key 传给订阅用例；旧 `board_output.metadata.report.summary` 只作兼容兜底。
 - `ProductizedRunStateMetadataProjector` 负责把 run state 投影成 artifact-facing 或历史兼容 metadata；`ProductizedRunState` 本身只作为正式运行态模型，旧 metadata 方法仅作薄兼容入口。
-- `ProductizedImprovementWorkflowService` 负责 recommendation、proposal、policy experiment application 和 report 输出协调。
+- `ProductizedImprovementWorkflowService` 负责 recommendation、proposal、policy experiment application 和 report 输出协调，并通过 `policy_experiment_application_context` 正式承载 `run_id`、`board_type`、applied/skipped policy experiments、proposal ids 和 measurement plan；`applied_overrides` 只保留为旧消费者兼容视图。
 - `ProductizedImprovementMeasurementService` 负责 measurement snapshot 和 delta 计算，主算法消费 `ProductizedImprovementMeasurementInput`，其中 `deduplication_result` 是正式字段；productized workflow 必须优先调用 `measure_productized()`，旧 `board_run_result.metadata` 读取只保留在 `measurement_legacy.py` / compatibility constructor 中。
 
 跨 step 的运行态中间结果使用 `ProductizedRunState`。`metadata` 只保留对外 artifact 和历史兼容字段。
