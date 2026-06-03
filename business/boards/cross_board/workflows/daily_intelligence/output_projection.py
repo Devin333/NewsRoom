@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, MutableMapping
+from enum import Enum
 from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     DAILY_BUFFER_ALIASES,
 )
+
+
+_MISSING = object()
+
+
+class DailyOutputProjectionReadPolicy(str, Enum):
+    NAMESPACED_ONLY = "namespaced_only"
+    NAMESPACED_WITH_LEGACY_FALLBACK = "namespaced_with_legacy_fallback"
 
 
 def daily_output_value(
@@ -14,14 +23,23 @@ def daily_output_value(
     *,
     default: Any = None,
 ) -> Any:
-    for candidate_key in _output_key_candidates(key):
+    for candidate_key in _output_key_candidates(
+        key,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+    ):
         if candidate_key in output:
             return output[candidate_key]
     return default
 
 
 def daily_output_contains(output: Mapping[str, Any], key: str) -> bool:
-    return any(candidate_key in output for candidate_key in _output_key_candidates(key))
+    return any(
+        candidate_key in output
+        for candidate_key in _output_key_candidates(
+            key,
+            read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+        )
+    )
 
 
 def project_daily_output_for_legacy_consumers(
@@ -41,6 +59,7 @@ def project_daily_output_for_persistence(output: Mapping[str, Any]) -> dict[str,
         output,
         DAILY_PERSISTENCE_OUTPUT_KEYS,
         include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
     )
 
 
@@ -49,6 +68,7 @@ def project_daily_output_for_board_attachment(output: Mapping[str, Any]) -> dict
         output,
         DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS,
         include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
     )
 
 
@@ -57,6 +77,7 @@ def project_daily_output_for_memory_ingestion(output: Mapping[str, Any]) -> dict
         output,
         DAILY_MEMORY_INGESTION_OUTPUT_KEYS,
         include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
     )
 
 
@@ -65,6 +86,7 @@ def project_daily_output_for_run_inspection(output: Mapping[str, Any]) -> dict[s
         output,
         DAILY_RUN_INSPECTION_OUTPUT_KEYS,
         include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
     )
 
 
@@ -79,13 +101,21 @@ def ensure_legacy_daily_output_aliases(
     return output
 
 
-def _output_key_candidates(key: str) -> list[str]:
+def _output_key_candidates(
+    key: str,
+    *,
+    read_policy: DailyOutputProjectionReadPolicy,
+) -> list[str]:
     namespaced_key = DAILY_BUFFER_ALIASES.get(key)
     if namespaced_key is not None:
+        if read_policy == DailyOutputProjectionReadPolicy.NAMESPACED_ONLY:
+            return [namespaced_key]
         return [namespaced_key, key]
 
     legacy_key = _DAILY_OUTPUT_LEGACY_ALIASES.get(key)
     if legacy_key is not None:
+        if read_policy == DailyOutputProjectionReadPolicy.NAMESPACED_ONLY:
+            return [key]
         return [key, legacy_key]
     return [key]
 
@@ -107,12 +137,32 @@ def _project_daily_output_for_keys(
     keys: Iterable[str],
     *,
     include_original: bool,
+    read_policy: DailyOutputProjectionReadPolicy,
 ) -> dict[str, Any]:
     projected = dict(output) if include_original else {}
     for key in keys:
-        if daily_output_contains(output, key):
-            projected[_canonical_projection_key(key)] = daily_output_value(output, key)
+        value = _daily_output_value(
+            output,
+            key,
+            read_policy=read_policy,
+            default=_MISSING,
+        )
+        if value is not _MISSING:
+            projected[_canonical_projection_key(key)] = value
     return projected
+
+
+def _daily_output_value(
+    output: Mapping[str, Any],
+    key: str,
+    *,
+    read_policy: DailyOutputProjectionReadPolicy,
+    default: Any = None,
+) -> Any:
+    for candidate_key in _output_key_candidates(key, read_policy=read_policy):
+        if candidate_key in output:
+            return output[candidate_key]
+    return default
 
 
 def _canonical_projection_key(key: str) -> str:
@@ -188,6 +238,7 @@ __all__ = [
     "DAILY_MEMORY_INGESTION_OUTPUT_KEYS",
     "DAILY_PERSISTENCE_OUTPUT_KEYS",
     "DAILY_RUN_INSPECTION_OUTPUT_KEYS",
+    "DailyOutputProjectionReadPolicy",
     "daily_output_contains",
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",

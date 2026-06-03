@@ -120,6 +120,8 @@ daily run service、persistence、memory ingestion 和 board output attachment �
 - `ensure_legacy_daily_output_aliases()`：只在公开 `RunResult.output` 需要保持历史兼容字段时原地补齐 legacy key，不作为下游服务调用的前置条件。
 - `project_daily_output_for_legacy_consumers()`：仅作为历史兼容 helper 保留；新增服务消费面必须优先定义专用 projection，避免 consumer 直接理解 daily alias 表或接收整份 runtime output。
 
+`DailyOutputProjectionReadPolicy` 用于显式标注 projection 的读取策略：当前专用 projection 仍使用 `NAMESPACED_WITH_LEGACY_FALLBACK` 保持旧运行结果兼容，但 legacy fallback 不得再隐式散落在 consumer 中；下一轮下线旧 key 时，应逐个把专用 projection 切到 `NAMESPACED_ONLY` 并补对应调用方测试。
+
 interfaces 可以调用这些 business projection helper，但不得在接口服务里复制 `DAILY_BUFFER_ALIASES` 或手写 `report.final -> final_report` 这类映射。memory 和 board 通用服务继续消费 canonical legacy 字段；daily workflow 的命名空间迁移规则只留在 daily workflow business 边界内。
 
 run inspection 读取 manifest output 构建 quality preview / lineage 时，也必须先判断 workflow 是否属于 daily family，再调用 `project_daily_output_for_run_inspection()` 生成业务消费视图。inspection 可以保留原始 output key 作为调试预览，但质量决策、route、citation check、support matrix、candidate claims、verified findings 和 report id 只能从投影后的业务视图读取；接口层不得重新实现 daily key fallback，也不得调用泛化 legacy consumer projection。
