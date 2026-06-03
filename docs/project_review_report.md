@@ -636,18 +636,17 @@ buffer.read("quality_events").append(new_event)
 
 ---
 
-### 5.3 memory context 缺失时没有可见提示
+### 5.3 memory context 缺失时的可见提示已闭环
 
 当 `recall_service` 为 None 时，`draft_report` 不会写入 `memory_context`，`quality_gate` 会走 optional path。
 
-这个降级行为本身可以接受，但 live 环境中应该有 warning 日志。
-
-**建议：**
+这个降级行为本身可以接受，但 live 环境中必须有 warning 日志。当前已由 `report_writer.py` 记录：
 
 ```python
-if recall_service is None:
-    logger.warning("Memory recall service is not configured; memory context will be skipped.")
+logger.warning("Memory recall service is not configured; memory context will be skipped.")
 ```
+
+对应回归测试为 `test_daily_memory_recall_consumption.py` 中的 memory recall consumption 用例。
 
 ---
 
@@ -657,115 +656,91 @@ if recall_service is None:
 
 `DailyEvidenceOutputValidator` 对 Agent 输出进行 evidence boundary 检查，这是非常重要的防护点。它可以防止 Agent 引用 evidence bundle 之外的 URL，降低引用幻觉和越界引用风险。
 
-### 6.2 仍需补齐的风险点
+### 6.2 已收敛的风险点
 
-1. **source URL 缺少白名单校验**
+1. **source URL/domain 白名单校验已接入**
 
-`sources.yaml` 中虽然配置了多个 source，但加载时没有看到 URL/domain 白名单校验。如果配置被恶意修改，fetcher 可能访问任意 URL。
+`business.layers.signal.source_config` 加载 source registry 时会校验 `fetch.allowed_domains`，`SourceDispatcher` 运行期也会拒绝不在 fetch policy allowlist 内的 URL。证据包括 `test_source_config.py::test_load_source_registry_rejects_source_url_outside_allowed_domains` 和 `test_daily_intelligence_runner.py::test_daily_intelligence_runner_blocks_source_outside_runtime_allowed_domains`。
 
-2. **Agent 输出缺少大小限制**
+2. **Agent 输出大小与深度限制已接入**
 
-LLM 可能返回异常大的 JSON，导致：
+Daily agent spec 已声明 `DAILY_AGENT_OUTPUT_BUDGET`，agent loop 由 `AgentOutputBudgetValidator` 执行输出预算校验；`_collect_evidence_ids()` 也已有 `max_depth` 参数和回归测试，避免深层 payload 递归遍历失控。
 
-- 递归遍历成本过高；
-- 内存占用异常；
-- report draft normalization 处理过重。
+3. **memory quality gate 已恢复为真实业务路径**
 
-3. **memory quality gate 当前失效**
+`_NoopMemoryQualityRepository` 已移除，quality gate 消费注入 repository 或 `memory_context`。`test_quality_memory_integration.py` 覆盖了 social-media critical memory issue 被阻断、non-social media 通过策略绕行的路径。
 
-由于 `_NoopMemoryQualityRepository` 的存在，history-aware 的质量门控目前无法发挥作用。
+4. **workflow / connector timeout 已有统一边界**
 
-4. **外部 connector 的 timeout 策略需要统一**
+Daily agentic workflow 通过 `daily_workflow_runtime_policy()` 声明全局 timeout，framework runtime 会根据 workflow policy 生成 `WorkflowTimeoutBudget`；source fetch policy 继续承载 connector 级 timeout。
 
-如果 timeout 只依赖各 connector 自己实现，workflow 层面可能缺少全局兜底。
+5. **失败降级路径不再清空有效输入**
+
+`deduplicate_sources()` 失败时保留 normalized items，`rank_sources()` 失败时把 deduplicated items 包装为 fallback ranked items，并写入正式 `SourceError` 和 source event。对应测试在 `test_daily_intelligence_steps.py`。
 
 ---
 
 ## 7. 重构建议
 
-### 短期：必须优先修复
+### 已闭环事项
 
-1. 修复 `_NoopMemoryQualityRepository`，将真实 memory repository 注入 `quality_gate`。
-2. 实现 `build_daily_agent_tool_registry()`，为 Agent 注册必要工具。
-3. 移除 `DailyIntelligenceRunner` 中的动态 `setattr`。
-4. 统一 non-social-media bypass 逻辑。
-5. 统一 `source_errors` 的数据结构，避免 duck typing。
-6. 修复 `deduplicate_sources()` 和 `rank_sources()` 的失败降级逻辑。
+1. `_NoopMemoryQualityRepository` 已移除，quality gate 使用真实 memory context / repository 输入。
+2. `build_daily_agent_tool_registry()` 已注册 daily evidence/source/citation/report draft 工具。
+3. `DailyIntelligenceRunner` 的动态 connector `setattr` 路径已移除。
+4. non-social-media bypass 已统一到 `quality_gate_policy.assess_non_social_media_bypass()`。
+5. `source_errors` 已统一通过 `normalize_source_errors()` 和 `SourceErrorArtifactInput` 边界归一化。
+6. deduplicate / rank 失败降级已改为保留有效 item 并写正式 error/event。
+7. `DailyIntelligenceRunner` 与 `AgenticDailyIntelligenceRunner` 已通过 source runtime assembly 投影统一关键装配边界。
+8. `spec.py` 与 `spec_agentic.py` 已复用 `build_source_and_evidence_steps()`。
+9. fake LLM / fixture 代码已迁出 `agent_registry.py`，生产 registry 有架构测试防回归。
+10. `quality_gate()` 已拆为 workflow adapter、usecase、evaluation、outputs、policy 等模块。
+11. `finalize_report_step.py` 已变为 adapter，报告归一化、路由和输出构建下沉到业务服务。
+12. workflow buffer 已引入命名空间 key 约定和 `buffer_key_aliases` / `workflow_buffer_access` 边界。
 
----
+### 下一轮剩余方向
 
-### 中期：改善架构扩展性
-
-1. 统一 `DailyIntelligenceRunner` 与 `AgenticDailyIntelligenceRunner` 的初始化模式。
-2. 提取 `spec.py` 与 `spec_agentic.py` 中重复的 source/evidence steps。
-3. 将 fake LLM client 和 fixture 代码迁出 `agent_registry.py`。
-4. 拆分 `quality_gate()` 主函数。
-5. 将 `finalize_report_step.py` 中的通用 helper 下沉到 shared 层。
-6. 引入 buffer key 命名空间规范。
-
----
-
-### 长期：产品化能力补齐
-
-1. 设计 Agent 间反馈循环。
-2. 为 analyst / verifier / writer / editor 提供真实工具能力。
-3. 为 `sources.yaml` 和 `models.yaml` 增加 schema 校验。
-4. 增加 workflow 级别全局 timeout。
-5. 增加 source URL/domain 白名单校验。
-6. 为 memory quality check 增加集成测试。
-7. 建立 quality gate 的可观测性指标，例如 block rate、rewrite rate、memory conflict rate。
+1. 继续把 dotted key 从兼容双写推进到正式消费，逐步缩小 legacy key fallback 面。
+2. 继续收敛 artifact-facing projection 中的 legacy fallback，但保持 artifact key、manifest key 和历史 consumer 行为稳定。
+3. 为 quality gate 的 block / rewrite / memory conflict / human review route 建立更系统的运行期指标聚合。
+4. 继续减少 metadata 作为隐式数据通道的历史兼容面，优先新增正式 input view 或 domain model。
+5. 对 source connector metadata fallback 做分批下线计划，保留 `SourceConnectorRuntimeOptions` 作为唯一业务读取口。
 
 ---
 
 ## 8. 推荐的下一步行动
 
-### 立即处理
+### 当前闭环清单
 
-- [ ] 修复 `_NoopMemoryQualityRepository`，让 `quality_gate` 使用真实 memory repository。
-- [ ] 实现 `build_daily_agent_tool_registry()`，至少为 analyst 和 verifier 注册 evidence 查询与验证工具。
-
-### 高优先级
-
-- [ ] 统一两套 Runner 初始化模式。
-- [ ] 移除 `DailyIntelligenceRunner.__init__` 中的动态 `setattr`。
-- [ ] 提取 `spec.py` 和 `spec_agentic.py` 的公共 source/evidence steps。
-- [ ] 将 fake LLM / fixture 代码迁移出 `agent_registry.py`。
-- [ ] 重构 `quality_gate()`，拆分为多个可测试子函数。
-
-### 中优先级
-
-- [ ] 统一 non-social-media bypass 逻辑。
-- [ ] 修复 deduplicate / rank 失败时返回空列表的问题。
-- [ ] 统一 `source_errors` 的数据类型。
-- [ ] 迁移 `finalize_report_step.py` 中的通用工具函数。
-- [ ] 当 `recall_service` 为 None 时增加 warning 日志。
-
-### 低优先级
-
-- [ ] 引入 buffer key 命名空间约定。
-- [ ] 为 `_collect_evidence_ids()` 增加最大递归深度。
-- [ ] 将 `_normalize_report_draft()` 的格式异常路由到 blocked / human review，而不是直接作为 system error 抛出。
-
-### 长期建设
-
+- [x] 修复 `_NoopMemoryQualityRepository`，让 `quality_gate` 使用真实 memory repository / memory context。
+- [x] 实现 `build_daily_agent_tool_registry()`，为 agent 注册 evidence 查询、source metadata、citation validate 和 section draft 工具。
+- [x] 统一两套 Runner 初始化模式的 source runtime 边界。
+- [x] 移除 `DailyIntelligenceRunner.__init__` 中的动态 connector `setattr`。
+- [x] 提取 `spec.py` 和 `spec_agentic.py` 的公共 source/evidence steps。
+- [x] 将 fake LLM / fixture 代码迁移出 `agent_registry.py`。
+- [x] 重构 `quality_gate()`，拆分为可测试业务模块。
+- [x] 统一 non-social-media bypass 逻辑。
+- [x] 修复 deduplicate / rank 失败时返回空列表的问题。
+- [x] 统一 `source_errors` 的数据类型。
+- [x] 迁移 `finalize_report_step.py` 中的通用工具函数。
+- [x] 当 `recall_service` 为 None 时增加 warning 日志。
+- [x] 引入 buffer key 命名空间约定。
+- [x] 为 `_collect_evidence_ids()` 增加最大递归深度。
+- [x] 将 report draft 格式异常路由到 blocked report，而不是直接作为 system error 抛出。
 - [x] 设计 Agent 间反馈闭环。
-- [ ] 增加配置 schema 启动校验。
+- [x] 增加配置 schema 启动校验。
 - [x] 增加 workflow 级别全局 timeout。
-- [ ] 增加 source URL/domain 白名单校验。
+- [x] 增加 source URL/domain 白名单校验。
+
+### 建议下一轮小步
+
+- [ ] 对 daily output 的 artifact-facing projection 继续做 legacy fallback 消费面审计。
+- [ ] 为 quality observability 增加跨 run 聚合入口，沉淀 block / rewrite / memory conflict 指标。
+- [ ] 为 source connector metadata fallback 制定下线顺序，并用架构测试禁止新增直接 metadata 读取。
 
 ---
 
 ## 9. 总体结论
 
-当前项目已经具备较完整的 daily intelligence / agentic workflow 骨架，模块划分、Agent 角色定义、workflow buffer、evidence boundary validation 等设计方向是正确的。
+当前项目的 daily intelligence / agentic workflow 已经从“骨架可运行”推进到“核心生产边界基本闭环”的状态。原报告中两个 P0 风险，即 memory quality check 空实现和 Agent tool registry 缺失，已经闭环；fixture 混入生产 registry、runner 动态装配、quality gate 过重、source error duck typing、dedup/rank 失败清空输入、缺少全局 timeout / allowlist 等问题也已有代码和测试证据。
 
-但从生产级 Agent 系统的标准来看，当前仍存在几个关键问题：
-
-1. **核心能力有空实现**：memory quality check 和 Agent tool registry 都处于未完成状态；
-2. **生产代码与测试 fixture 混杂**：`agent_registry.py` 中 fake client 逻辑过重；
-3. **Runner 初始化模式不统一**：两套装配路径会增加长期维护成本；
-4. **质量门控逻辑过于集中**：`quality_gate()` 需要拆分；
-5. **部分失败路径不合理**：deduplicate / rank 失败时不应清空全部结果；
-6. **Agent 间缺少反馈闭环**：当前更像线性 workflow，而不是完整的自修正 Agent 系统。
-
-建议先处理两个 P0 问题：真实 memory repository 注入和 Agent 工具注册。否则该项目虽然形式上是 agentic workflow，但实际运行时仍会退化成“无工具、弱记忆、线性 LLM 调用”的流程。
+接下来不建议继续做大爆炸式重构。更合适的方向是沿着已建立的 business boundary 小步收敛：减少 legacy key fallback，减少 metadata 兼容读取，把 artifact / quality / source connector 的历史兼容面继续压缩到明确 projection 或 input view 内。
