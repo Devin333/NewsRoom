@@ -4,7 +4,18 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 
-REPORT_PAYLOAD_KEYS = ("report", "report_metadata", "blocked_report")
+REPORT_PAYLOAD_KEYS = (
+    "report.final",
+    "report.metadata",
+    "report",
+    "report_metadata",
+    "report.blocked",
+    "blocked_report",
+)
+BLOCKED_REPORT_PAYLOAD_KEYS = frozenset({"report.blocked", "blocked_report"})
+REPORT_STATUS_PAYLOAD_KEYS = tuple(
+    key for key in REPORT_PAYLOAD_KEYS if key not in BLOCKED_REPORT_PAYLOAD_KEYS
+)
 
 
 @dataclass(frozen=True)
@@ -20,8 +31,12 @@ class WorkerReportPayload:
                 continue
             report = output.get(key)
             if isinstance(report, Mapping):
-                return cls(source_key=key, payload=dict(report), blocked=key == "blocked_report")
-            if key == "blocked_report":
+                return cls(
+                    source_key=key,
+                    payload=dict(report),
+                    blocked=key in BLOCKED_REPORT_PAYLOAD_KEYS,
+                )
+            if key in BLOCKED_REPORT_PAYLOAD_KEYS:
                 return cls(source_key=key, blocked=True)
         return cls(source_key=None)
 
@@ -60,15 +75,16 @@ class WorkerOutputEnvelope:
 
 def report_status_from_output(output: Any) -> str | None:
     if isinstance(output, Mapping):
-        for key in ("report", "report_metadata"):
+        for key in REPORT_STATUS_PAYLOAD_KEYS:
             report = output.get(key)
             if not isinstance(report, Mapping):
                 continue
             status = WorkerReportPayload(source_key=key, payload=dict(report)).status
             if status is not None:
                 return status
-        if "blocked_report" in output:
-            return WorkerReportPayload.from_mapping({"blocked_report": output.get("blocked_report")}).status
+        for key in BLOCKED_REPORT_PAYLOAD_KEYS:
+            if key in output:
+                return WorkerReportPayload.from_mapping({key: output.get(key)}).status
     return None
 
 
