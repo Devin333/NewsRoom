@@ -183,12 +183,16 @@ def test_productized_workflow_steps_delegate_business_logic_to_productized_servi
 
 
 def test_business_boards_use_policy_experiment_application_api() -> None:
-    violations = _attribute_calls(
+    call_violations = _attribute_calls(
         BUSINESS_ROOT / "boards",
         forbidden_names=("apply_approved_overrides",),
     )
+    import_violations = _imported_symbol_violations(
+        BUSINESS_ROOT / "boards",
+        forbidden_names=("BoardImprovementContext",),
+    )
 
-    assert violations == []
+    assert [*call_violations, *import_violations] == []
 
 
 def test_daily_agent_registry_stays_fixture_free() -> None:
@@ -280,6 +284,21 @@ def _attribute_calls(root: Path, *, forbidden_names: tuple[str, ...]) -> list[st
                 violations.append(
                     f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: {node.attr}"
                 )
+    return violations
+
+
+def _imported_symbol_violations(root: Path, *, forbidden_names: tuple[str, ...]) -> list[str]:
+    violations: list[str] = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            for alias in node.names:
+                if alias.name in forbidden_names:
+                    violations.append(
+                        f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: {alias.name}"
+                    )
     return violations
 
 

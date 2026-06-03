@@ -5,7 +5,7 @@ from business.boards.productized import ProductizedSignalPreparationService
 from business.boards.productized.workflow import build_productized_board_workflow
 from business.evaluation.fixtures import sample_signal
 from business.foundation import BoardType
-from business.foundation.feedback import BoardImprovementContext
+from business.foundation.feedback import PolicyExperimentApplicationContext
 from business.foundation.skills import BusinessSkillRuntime
 
 
@@ -72,6 +72,11 @@ class _FormalImprovementService:
     def __init__(self) -> None:
         self.calls: list[dict[str, str]] = []
 
-    def apply_approved_policy_experiments(self, *, run_id: str, board_type: str) -> BoardImprovementContext:
+    def apply_approved_policy_experiments(
+        self,
+        *,
+        run_id: str,
+        board_type: str,
+    ) -> PolicyExperimentApplicationContext:
         self.calls.append({"run_id": run_id, "board_type": board_type})
-        return BoardImprovementContext(run_id=run_id, board_type=board_type)
+        return PolicyExperimentApplicationContext(run_id=run_id, board_type=board_type)
