@@ -87,6 +87,28 @@ def test_daily_run_service_memory_ingestion_ignores_legacy_only_daily_outputs(tm
     assert result.output["memory_ingestion_result"]["documents_indexed"] == 1
 
 
+def test_daily_run_service_board_attachment_ignores_legacy_only_daily_outputs(tmp_path) -> None:
+    board = _CapturingBoard()
+    service = DailyRunApplicationService(
+        artifact_root=tmp_path,
+        persistence_service=_CapturingPersistence(),
+        board_service_factory=lambda: board,
+        runner_cls_resolver=lambda profile: lambda artifact_root: _LegacyOnlyRunner(),
+    )
+
+    result = service.run_daily(
+        profile="live-offline",
+        topic="AI",
+        source_limit=1,
+        run_id="run-1",
+    )
+
+    assert board.output == {}
+    assert result.output["ranked_items"] == [{"title": "Legacy item"}]
+    assert "board_outputs" not in result.output
+    assert "cross_board_output" not in result.output
+
+
 def test_daily_run_service_falls_back_to_projected_result_when_input_writer_is_unconfigured(
     tmp_path,
 ) -> None:
@@ -165,6 +187,7 @@ class _LegacyOnlyRunner:
                 "final_report": {"title": "Legacy report", "sections": []},
                 "evidence_bundle": {"items": []},
                 "quality_result": {"decision": "pass", "route": "final"},
+                "ranked_items": [{"title": "Legacy item"}],
             },
         )
 
@@ -197,6 +220,8 @@ class _CapturingBoard:
 
     def attach_run_board_outputs(self, output, *, topic):
         self.output = dict(output)
+        if "ranked_items" not in output:
+            return
         output["ranked_items"] = [{"title": "board-mutated item"}]
         output["board_outputs"] = {"ai_news": {"cards": []}}
         output["cross_board_output"] = {"board_type": "cross_board"}

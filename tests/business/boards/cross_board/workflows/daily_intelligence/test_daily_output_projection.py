@@ -97,6 +97,18 @@ def test_project_daily_output_for_board_attachment_projects_board_input_keys() -
     assert "unmapped_runtime_state" not in projected
 
 
+def test_board_attachment_projection_requires_namespaced_daily_outputs() -> None:
+    output = {
+        "ranked_items": [{"title": "legacy ranked"}],
+        "evidence_bundle": {"items": []},
+        "quality.result": {"decision": "pass"},
+    }
+
+    projected = project_daily_output_for_board_attachment(output)
+
+    assert projected == {}
+
+
 def test_project_daily_output_for_memory_ingestion_projects_only_memory_inputs() -> None:
     output = {
         "request": {"topic": "AI"},
