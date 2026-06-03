@@ -74,7 +74,6 @@ DAILY_BUSINESS_PROJECTION_INTERFACE_BOUNDARIES = {
     "interfaces/services/daily_interface_projection.py",
     "interfaces/services/daily_output_projection.py",
     "interfaces/services/daily_persistence_projection.py",
-    "interfaces/services/run_inspection_service.py",
 }
 
 

@@ -7,6 +7,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     apply_daily_public_output_aliases,
     project_daily_output_for_board_attachment,
     project_daily_output_for_memory_ingestion,
+    project_daily_output_for_run_inspection,
 )
 
 
@@ -16,6 +17,10 @@ def project_daily_run_output_for_memory_ingestion(output: Any) -> dict[str, Any]
 
 def project_daily_run_output_for_board_attachment(output: dict[str, Any]) -> dict[str, Any]:
     return project_daily_output_for_board_attachment(output)
+
+
+def project_daily_run_output_for_run_inspection(output: dict[str, Any]) -> dict[str, Any]:
+    return project_daily_output_for_run_inspection(output)
 
 
 def apply_daily_run_board_attachment_result(
@@ -34,4 +39,5 @@ __all__ = [
     "apply_daily_run_public_output_aliases",
     "project_daily_run_output_for_board_attachment",
     "project_daily_run_output_for_memory_ingestion",
+    "project_daily_run_output_for_run_inspection",
 ]

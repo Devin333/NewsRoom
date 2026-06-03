@@ -5,6 +5,7 @@ from interfaces.services.daily_output_projection import (
     apply_daily_run_public_output_aliases,
     project_daily_run_output_for_board_attachment,
     project_daily_run_output_for_memory_ingestion,
+    project_daily_run_output_for_run_inspection,
 )
 
 
@@ -40,6 +41,32 @@ def test_project_daily_run_output_for_board_attachment_reads_namespaced_only_out
         "normalized_items": [{"title": "Normalized"}],
         "raw_items": [{"title": "Raw"}],
         "evidence_bundle": {"items": []},
+    }
+
+
+def test_project_daily_run_output_for_run_inspection_reads_quality_preview_keys() -> None:
+    output = {
+        "run_id": "run-1",
+        "quality_result": {"decision": "legacy"},
+        "quality.result": {"decision": "blocked", "route": "human_review"},
+        "quality.citation_check_result": {"unsupported_claims": ["claim-1"]},
+        "quality.support_matrix": {"unsupported_sections": ["Summary"]},
+        "report.final": {"report_id": "run-1:final"},
+        "evidence.candidate_claims": [{"claim_id": "claim-1"}],
+        "evidence.verified_findings": {"accepted_claims": [{"claim_id": "claim-1"}]},
+        "sources.ranked_items": [{"title": "Ranked"}],
+    }
+
+    projected = project_daily_run_output_for_run_inspection(output)
+
+    assert projected == {
+        "run_id": "run-1",
+        "final_report": {"report_id": "run-1:final"},
+        "quality_result": {"decision": "blocked", "route": "human_review"},
+        "citation_check_result": {"unsupported_claims": ["claim-1"]},
+        "support_matrix": {"unsupported_sections": ["Summary"]},
+        "candidate_claims": [{"claim_id": "claim-1"}],
+        "verified_findings": {"accepted_claims": [{"claim_id": "claim-1"}]},
     }
 
 
