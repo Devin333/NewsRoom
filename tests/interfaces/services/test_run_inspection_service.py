@@ -150,6 +150,44 @@ def test_run_inspection_projects_namespaced_daily_output_for_quality_preview(tmp
     assert quality_trace["quality_lineage"]["report_id"] == "run-1:final"
 
 
+def test_run_inspection_ignores_legacy_only_daily_output_for_quality_preview(tmp_path) -> None:
+    _write_manifest(
+        tmp_path,
+        "run-1",
+        {
+            "run_id": "run-1",
+            "status": "succeeded",
+            "workflow_id": "daily-intelligence-agentic",
+            "workflow_version": "1.0",
+            "profile": "test",
+            "started_at": "2026-05-11T00:00:00Z",
+            "path": [],
+            "steps": {},
+            "output": {
+                "quality_result": {"decision": "legacy", "route": "legacy"},
+                "citation_check_result": {"unsupported_claims": ["claim-1"]},
+                "support_matrix": {"unsupported_sections": ["Summary"]},
+                "final_report": {"report_id": "legacy-final", "title": "Daily"},
+                "candidate_claims": [{"claim_id": "claim-1"}],
+                "verified_findings": {
+                    "accepted_claims": [{"claim_id": "claim-1"}],
+                    "rejected_claims": [],
+                    "uncertain_claims": [],
+                },
+            },
+        },
+    )
+
+    result = RunInspectionService(tmp_path).get_run("run-1")
+
+    output_preview = result.to_dict()["output_preview"]
+    assert output_preview["quality_result"] == {
+        "type": "object",
+        "keys": ["decision", "route"],
+    }
+    assert "quality_trace" not in output_preview
+
+
 def test_run_inspection_reads_events_jsonl(tmp_path) -> None:
     _write_run_with_events(
         tmp_path,

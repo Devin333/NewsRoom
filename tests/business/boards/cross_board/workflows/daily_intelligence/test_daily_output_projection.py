@@ -168,6 +168,22 @@ def test_project_daily_output_for_run_inspection_projects_only_quality_preview_i
     }
 
 
+def test_run_inspection_projection_requires_namespaced_daily_outputs() -> None:
+    output = {
+        "run_id": "run-1",
+        "final_report": {"report_id": "legacy-final"},
+        "quality_result": {"decision": "legacy"},
+        "citation_check_result": {"unsupported_claims": ["claim-1"]},
+        "support_matrix": {"unsupported_sections": ["Summary"]},
+        "candidate_claims": [{"claim_id": "claim-1"}],
+        "verified_findings": {"accepted_claims": [{"claim_id": "claim-1"}]},
+    }
+
+    projected = project_daily_output_for_run_inspection(output)
+
+    assert projected == {"run_id": "run-1"}
+
+
 def test_ensure_legacy_daily_output_aliases_mutates_output_for_service_consumers() -> None:
     output = {
         "ranked_items": [{"title": "legacy"}],

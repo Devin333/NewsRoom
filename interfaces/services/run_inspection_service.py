@@ -553,6 +553,8 @@ def _quality_lineage_preview(output: dict[str, Any]) -> dict[str, Any]:
     )
     raw_quality_result = output.get("quality_result")
     quality_results = [dict(raw_quality_result)] if isinstance(raw_quality_result, dict) else []
+    if not (claims or candidate_claims or report or quality_results):
+        return {}
     return quality_lineage_summary(
         run_id=str(output.get("run_id") or ""),
         report_id=str(output.get("report_id") or report.get("report_id") or output.get("run_id") or ""),

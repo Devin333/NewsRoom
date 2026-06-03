@@ -116,11 +116,11 @@ daily run service、persistence、memory ingestion 和 board output attachment �
 - `project_daily_output_for_persistence()`：只为落库 record 输入投影 persistence 所需 canonical key，不补齐无关 legacy 字段。
 - `project_daily_output_for_board_attachment()`：只为 board attachment 投影 signals/source/evidence 输入 key；board 产出的 `board_outputs` 和 `cross_board_output` 再作为正式结果字段合并回 run output；该 projection 已切到 `NAMESPACED_ONLY`，不再从 legacy-only daily source/evidence output key 构造 board 输入。
 - `project_daily_output_for_memory_ingestion()`：只为 memory ingestion 投影 report、evidence、quality decision 和 request/topic 所需 canonical key，不把 source ranking、agent feedback 或其它 daily runtime 字段带入 memory 消费面；该 projection 已切到 `NAMESPACED_ONLY`，不再从 legacy-only daily output key 构造 memory 输入。
-- `project_daily_output_for_run_inspection()`：只为 run inspection 的 quality preview / lineage 投影 report、quality、citation、support matrix、candidate claims 和 verified findings 所需 canonical key，不把整份 runtime output 当作业务视图。
+- `project_daily_output_for_run_inspection()`：只为 run inspection 的 quality preview / lineage 投影 report、quality、citation、support matrix、candidate claims 和 verified findings 所需 canonical key，不把整份 runtime output 当作业务视图；该 projection 已切到 `NAMESPACED_ONLY`，不再从 legacy-only daily output key 构造 quality preview / lineage。
 - `ensure_legacy_daily_output_aliases()`：只在公开 `RunResult.output` 需要保持历史兼容字段时原地补齐 legacy key，不作为下游服务调用的前置条件。
 - `project_daily_output_for_legacy_consumers()`：仅作为历史兼容 helper 保留；新增服务消费面必须优先定义专用 projection，避免 consumer 直接理解 daily alias 表或接收整份 runtime output。
 
-`DailyOutputProjectionReadPolicy` 用于显式标注 projection 的读取策略：persistence 和 run inspection 当前仍使用 `NAMESPACED_WITH_LEGACY_FALLBACK` 保持旧运行结果兼容，但 legacy fallback 不得再隐式散落在 consumer 中；下一轮下线旧 key 时，应逐个把剩余专用 projection 切到 `NAMESPACED_ONLY` 并补对应调用方测试。
+`DailyOutputProjectionReadPolicy` 用于显式标注 projection 的读取策略：persistence 当前仍使用 `NAMESPACED_WITH_LEGACY_FALLBACK` 保持旧运行结果兼容，但 legacy fallback 不得再隐式散落在 consumer 中；下一轮下线旧 key 时，应把 persistence projection 切到 `NAMESPACED_ONLY` 并补对应调用方测试。
 
 interfaces 可以调用这些 business projection helper，但不得在接口服务里复制 `DAILY_BUFFER_ALIASES` 或手写 `report.final -> final_report` 这类映射。memory 和 board 通用服务继续消费 canonical legacy 字段；daily workflow 的命名空间迁移规则只留在 daily workflow business 边界内。
 

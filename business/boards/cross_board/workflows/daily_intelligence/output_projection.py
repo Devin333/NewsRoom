@@ -86,7 +86,7 @@ def project_daily_output_for_run_inspection(output: Mapping[str, Any]) -> dict[s
         output,
         DAILY_RUN_INSPECTION_OUTPUT_KEYS,
         include_original=False,
-        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_ONLY,
     )
 
 
