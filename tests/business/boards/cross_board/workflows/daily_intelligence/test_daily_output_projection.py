@@ -15,6 +15,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     project_daily_output_for_persistence,
     project_daily_output_for_legacy_consumers,
     project_daily_output_for_quality_artifacts,
+    project_daily_output_for_report_artifacts,
     project_daily_output_for_run_inspection,
     project_daily_output_for_source_diagnostic_artifacts,
     project_daily_output_for_source_recollection_artifacts,
@@ -324,6 +325,22 @@ def test_project_daily_output_for_agentic_artifacts_keeps_legacy_fallback() -> N
         "planner_agent_loop_result": {"status": "accepted"},
         "agent_feedback_summary": {"highest_severity": "warning"},
         "quality_result": {"decision": "rewrite_required"},
+    }
+
+
+def test_project_daily_output_for_report_artifacts_keeps_legacy_fallback() -> None:
+    output = {
+        "final_report": {"title": "legacy"},
+        "report.final": {"title": "namespaced"},
+        "report_markdown": "# Legacy",
+        "sources.events": [{"event_type": "not report"}],
+    }
+
+    projected = project_daily_output_for_report_artifacts(output)
+
+    assert projected == {
+        "final_report": {"title": "namespaced"},
+        "report_markdown": "# Legacy",
     }
 
 

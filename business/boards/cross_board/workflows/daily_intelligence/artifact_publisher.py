@@ -16,6 +16,7 @@ from business.boards.cross_board.workflows.daily_intelligence.evidence_artifact_
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
     daily_output_contains as _output_contains,
     daily_output_value as _output_value,
+    project_daily_output_for_report_artifacts,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_artifact_projection import (
     quality_manifest_fields,
@@ -150,17 +151,17 @@ class DailyIntelligenceArtifactPublisher:
 
     def _publish_report_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
         refs: list[ArtifactRef] = []
-        output = context.output
-        if _output_contains(output, "final_report"):
+        report_output = project_daily_output_for_report_artifacts(context.output)
+        if "final_report" in report_output:
             refs.append(
                 _write_json_artifact(
                     context,
                     "report_json",
                     "report.json",
-                    _output_value(output, "final_report"),
+                    report_output["final_report"],
                 )
             )
-        report_markdown = _output_value(output, "report_markdown")
+        report_markdown = report_output.get("report_markdown")
         if isinstance(report_markdown, str):
             refs.append(
                 _write_text_artifact(
@@ -171,13 +172,13 @@ class DailyIntelligenceArtifactPublisher:
                     content_type="text/markdown",
                 )
             )
-        if _output_contains(output, "blocked_report"):
+        if "blocked_report" in report_output:
             refs.append(
                 _write_json_artifact(
                     context,
                     "blocked_report",
                     "blocked_report.json",
-                    _output_value(output, "blocked_report"),
+                    report_output["blocked_report"],
                 )
             )
         return refs

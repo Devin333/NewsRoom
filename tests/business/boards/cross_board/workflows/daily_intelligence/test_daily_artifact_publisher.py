@@ -137,6 +137,32 @@ def test_daily_artifact_publisher_reads_namespaced_report_and_quality_output(tmp
     assert manifest["quality_decision"] == "pass"
 
 
+def test_daily_artifact_publisher_prefers_namespaced_report_artifacts(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manifest = {"artifacts": {}}
+    output = {
+        "final_report": {"title": "Legacy", "sections": []},
+        "report.final": {"title": "Namespaced", "sections": []},
+        "report_markdown": "# Legacy",
+        "report.markdown": "# Namespaced",
+    }
+    context = _context(
+        manager,
+        manifest=manifest,
+        output=output,
+    )
+
+    DailyIntelligenceArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    assert (
+        json.loads((run_dir / "report.json").read_text(encoding="utf-8"))["title"]
+        == "Namespaced"
+    )
+    assert (run_dir / "report.md").read_text(encoding="utf-8") == "# Namespaced"
+
+
 def test_daily_artifact_publisher_writes_blocked_report_even_on_succeeded_status(tmp_path) -> None:
     manager = ArtifactManager(tmp_path)
     manager.start_run("run-1")
