@@ -148,7 +148,7 @@ class LobstersConnector(_JsonCommunityConnector):
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
         return self._fetch_json_items(
             source,
-            url=build_lobsters_url(source.url or LOBSTERS_BASE_URL, tag=tag or _metadata_text(source, "tag")),
+            url=build_lobsters_url(source.url or LOBSTERS_BASE_URL, tag=_community_tag(source, tag=tag)),
             parser=parse_lobsters_items,
             limit=limit,
             empty_error_type="empty_lobsters_items",
@@ -165,7 +165,7 @@ class StackOverflowConnector(_JsonCommunityConnector):
         site: str | None = None,
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
-        tagged = tag or _metadata_text(source, "tagged") or _metadata_text(source, "tag")
+        tagged = _stackoverflow_tagged(source, tag=tag)
         if not tagged:
             return [], [
                 _source_error(
@@ -185,7 +185,7 @@ class StackOverflowConnector(_JsonCommunityConnector):
             url=build_stackoverflow_questions_url(
                 source.url or STACKOVERFLOW_API_URL,
                 tagged=tagged,
-                site=site or _metadata_text(source, "site") or "stackoverflow",
+                site=_community_site(source, site=site) or "stackoverflow",
                 limit=limit or 10,
             ),
             parser=parse_stackoverflow_items,
@@ -207,7 +207,7 @@ class DevToConnector(_JsonCommunityConnector):
             source,
             url=build_devto_articles_url(
                 source.url or DEVTO_API_URL,
-                tag=tag or _metadata_text(source, "tag"),
+                tag=_community_tag(source, tag=tag),
                 limit=limit or 10,
             ),
             parser=parse_devto_items,
@@ -228,7 +228,7 @@ class MediumConnector:
         tag: str | None = None,
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
-        feed_url = build_medium_feed_url(source.url or MEDIUM_BASE_URL, tag=tag or _metadata_text(source, "tag"))
+        feed_url = build_medium_feed_url(source.url or MEDIUM_BASE_URL, tag=_community_tag(source, tag=tag))
         feed_source = replace(source, url=feed_url)
         return self.feed_connector.fetch(feed_source, limit=limit)
 
@@ -509,7 +509,19 @@ def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: 
     )
 
 
-def _metadata_text(source: SourceDefinition, key: str) -> str | None:
+def _community_tag(source: SourceDefinition, *, tag: str | None) -> str | None:
+    return _optional_text(tag) or _legacy_community_option(source, "tag")
+
+
+def _stackoverflow_tagged(source: SourceDefinition, *, tag: str | None) -> str | None:
+    return _optional_text(tag) or _legacy_community_option(source, "tagged") or _legacy_community_option(source, "tag")
+
+
+def _community_site(source: SourceDefinition, *, site: str | None) -> str | None:
+    return _optional_text(site) or _legacy_community_option(source, "site")
+
+
+def _legacy_community_option(source: SourceDefinition, key: str) -> str | None:
     return _optional_text(source.metadata.get(key))
 
 

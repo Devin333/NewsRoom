@@ -107,6 +107,24 @@ def test_lobsters_connector_fetches_tagged_stories() -> None:
     assert items[0].metadata["community_surface"] == "lobsters"
 
 
+def test_lobsters_connector_fetch_accepts_explicit_runtime_tag() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return LOBSTERS_ITEMS
+
+    items, errors = LobstersConnector(fetch_text=fetch_text).fetch(
+        _source("lobsters", LOBSTERS_BASE_URL),
+        tag="ai",
+        limit=1,
+    )
+
+    assert errors == []
+    assert captured["url"] == "https://lobste.rs/t/ai.json"
+    assert items[0].title == "Runtime discussion"
+
+
 def test_stackoverflow_connector_fetches_tag_questions() -> None:
     captured = {}
 
@@ -134,6 +152,28 @@ def test_stackoverflow_connector_fetches_tag_questions() -> None:
     assert items[0].metadata["question_id"] == 123
 
 
+def test_stackoverflow_connector_fetch_accepts_explicit_runtime_options() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return STACKOVERFLOW_ITEMS
+
+    items, errors = StackOverflowConnector(fetch_text=fetch_text).fetch(
+        _source("stackoverflow", STACKOVERFLOW_API_URL),
+        tag="python",
+        site="stackoverflow",
+        limit=1,
+    )
+
+    assert errors == []
+    assert captured["url"] == (
+        "https://api.stackexchange.com/2.3/questions?"
+        "order=desc&sort=activity&tagged=python&site=stackoverflow&pagesize=1"
+    )
+    assert items[0].title == "How to run a source pipeline?"
+
+
 def test_stackoverflow_connector_requires_tag() -> None:
     items, errors = StackOverflowConnector(fetch_text=lambda url: STACKOVERFLOW_ITEMS).fetch(
         _source("stackoverflow", STACKOVERFLOW_API_URL),
@@ -158,6 +198,24 @@ def test_devto_connector_fetches_articles() -> None:
     assert items[0].metadata["community_surface"] == "devto"
 
 
+def test_devto_connector_fetch_accepts_explicit_runtime_tag() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return DEVTO_ITEMS
+
+    items, errors = DevToConnector(fetch_text=fetch_text).fetch(
+        _source("devto", DEVTO_API_URL),
+        tag="ai",
+        limit=1,
+    )
+
+    assert errors == []
+    assert captured["url"] == "https://dev.to/api/articles?per_page=1&tag=ai"
+    assert items[0].title == "Building source pipelines"
+
+
 def test_medium_connector_uses_feed_connector_for_tag_feed() -> None:
     captured = {}
 
@@ -167,6 +225,24 @@ def test_medium_connector_uses_feed_connector_for_tag_feed() -> None:
 
     items, errors = MediumConnector(feed_connector=FeedConnector(fetch_text=fetch_text)).fetch(
         _source("medium", MEDIUM_BASE_URL, metadata={"tag": "engineering"}),
+        limit=1,
+    )
+
+    assert errors == []
+    assert captured["url"] == "https://medium.com/feed/tag/engineering"
+    assert items[0].title == "Engineering Post"
+
+
+def test_medium_connector_fetch_accepts_explicit_runtime_tag() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return MEDIUM_FEED
+
+    items, errors = MediumConnector(feed_connector=FeedConnector(fetch_text=fetch_text)).fetch(
+        _source("medium", MEDIUM_BASE_URL),
+        tag="engineering",
         limit=1,
     )
 

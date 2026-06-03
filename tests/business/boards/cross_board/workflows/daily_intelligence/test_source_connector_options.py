@@ -96,6 +96,20 @@ def test_connector_options_project_stackoverflow_tagged_before_tag() -> None:
     assert options.site == "stackoverflow"
 
 
+def test_connector_options_project_community_tag() -> None:
+    source = _source(
+        source_type=SourceType.DEVTO,
+        metadata={"tag": "ai"},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "ignored"},
+    )
+
+    assert options.tag == "ai"
+
+
 def test_connector_options_project_reddit_runtime_options() -> None:
     source = _source(
         source_type=SourceType.REDDIT,

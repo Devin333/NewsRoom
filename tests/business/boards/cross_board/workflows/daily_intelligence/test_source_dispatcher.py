@@ -123,12 +123,91 @@ def test_source_dispatcher_passes_hackernews_runtime_options() -> None:
     ]
 
 
+def test_source_dispatcher_passes_devto_runtime_options() -> None:
+    source = SourceDefinition(
+        source_id="devto",
+        name="dev.to",
+        source_type=SourceType.DEVTO,
+        url="https://dev.to/api",
+        metadata={"tag": "ai"},
+    )
+    connector = _RecordingTagConnector()
+
+    items, errors, result = _dispatcher(source, devto_connector=connector).fetch_source(
+        source,
+        request={"topic": "AI policy"},
+        fetch_request=SourceFetchRequest(
+            request_id="source-fetch-1",
+            source_id=source.source_id,
+            source_type=source.source_type,
+        ),
+        profile="live",
+        limit=1,
+        connector_options=SourceConnectorRuntimeOptions.from_source(
+            source,
+            request={"topic": "AI policy"},
+        ),
+    )
+
+    assert items == []
+    assert errors == []
+    assert result is None
+    assert connector.calls == [
+        {
+            "source_id": "devto",
+            "tag": "ai",
+            "limit": 1,
+        }
+    ]
+
+
+def test_source_dispatcher_passes_stackoverflow_runtime_options() -> None:
+    source = SourceDefinition(
+        source_id="stackoverflow",
+        name="Stack Overflow",
+        source_type=SourceType.STACKOVERFLOW,
+        url="https://api.stackexchange.com/2.3",
+        metadata={"tagged": "python", "site": "stackoverflow"},
+    )
+    connector = _RecordingStackOverflowConnector()
+
+    items, errors, result = _dispatcher(source, stackoverflow_connector=connector).fetch_source(
+        source,
+        request={"topic": "AI policy"},
+        fetch_request=SourceFetchRequest(
+            request_id="source-fetch-1",
+            source_id=source.source_id,
+            source_type=source.source_type,
+        ),
+        profile="live",
+        limit=1,
+        connector_options=SourceConnectorRuntimeOptions.from_source(
+            source,
+            request={"topic": "AI policy"},
+        ),
+    )
+
+    assert items == []
+    assert errors == []
+    assert result is None
+    assert connector.calls == [
+        {
+            "source_id": "stackoverflow",
+            "tag": "python",
+            "site": "stackoverflow",
+            "limit": 1,
+        }
+    ]
+
+
 def _dispatcher(
     source: SourceDefinition,
     *,
     arxiv_connector=None,
+    devto_connector=None,
     hackernews_connector=None,
     reddit_connector=None,
+    stackoverflow_connector=None,
 ) -> SourceDispatcher:
     unused_connector = _UnusedConnector()
     return SourceDispatcher(
@@ -141,8 +220,8 @@ def _dispatcher(
         hackernews_connector=hackernews_connector or unused_connector,
         reddit_connector=reddit_connector or unused_connector,
         lobsters_connector=unused_connector,
-        stackoverflow_connector=unused_connector,
-        devto_connector=unused_connector,
+        stackoverflow_connector=stackoverflow_connector or unused_connector,
+        devto_connector=devto_connector or unused_connector,
         medium_connector=unused_connector,
     )
 
@@ -187,6 +266,37 @@ class _RecordingHackerNewsConnector:
             {
                 "source_id": source.source_id,
                 "story_list": story_list,
+                "limit": limit,
+            }
+        )
+        return [], []
+
+
+class _RecordingTagConnector:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def fetch(self, source, *, tag, limit):
+        self.calls.append(
+            {
+                "source_id": source.source_id,
+                "tag": tag,
+                "limit": limit,
+            }
+        )
+        return [], []
+
+
+class _RecordingStackOverflowConnector:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def fetch(self, source, *, tag, site, limit):
+        self.calls.append(
+            {
+                "source_id": source.source_id,
+                "tag": tag,
+                "site": site,
                 "limit": limit,
             }
         )
