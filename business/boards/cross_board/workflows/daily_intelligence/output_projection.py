@@ -72,6 +72,16 @@ def project_daily_output_for_board_attachment(output: Mapping[str, Any]) -> dict
     )
 
 
+def apply_daily_board_attachment_result(
+    output: MutableMapping[str, Any],
+    board_output: Mapping[str, Any],
+) -> MutableMapping[str, Any]:
+    for key in DAILY_BOARD_ATTACHMENT_RESULT_KEYS:
+        if key in board_output:
+            output[key] = board_output[key]
+    return output
+
+
 def project_daily_output_for_memory_ingestion(output: Mapping[str, Any]) -> dict[str, Any]:
     return _project_daily_output_for_keys(
         output,
@@ -239,6 +249,7 @@ __all__ = [
     "DAILY_PERSISTENCE_OUTPUT_KEYS",
     "DAILY_RUN_INSPECTION_OUTPUT_KEYS",
     "DailyOutputProjectionReadPolicy",
+    "apply_daily_board_attachment_result",
     "daily_output_contains",
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",

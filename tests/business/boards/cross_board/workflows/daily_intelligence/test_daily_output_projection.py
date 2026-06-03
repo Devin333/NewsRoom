@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
+    apply_daily_board_attachment_result,
     daily_output_contains,
     daily_output_value,
     ensure_legacy_daily_output_aliases,
@@ -104,6 +105,25 @@ def test_board_attachment_projection_requires_namespaced_daily_outputs() -> None
     projected = project_daily_output_for_board_attachment(output)
 
     assert projected == {}
+
+
+def test_apply_daily_board_attachment_result_copies_only_attachment_outputs() -> None:
+    output = {"report.final": {"title": "Namespaced report"}}
+    board_output = {
+        "ranked_items": [{"title": "board-mutated item"}],
+        "board_outputs": {"ai_news": {"cards": []}},
+        "cross_board_output": {"board_type": "cross_board"},
+        "internal_selection_trace": {"hidden": True},
+    }
+
+    result = apply_daily_board_attachment_result(output, board_output)
+
+    assert result is output
+    assert output == {
+        "report.final": {"title": "Namespaced report"},
+        "board_outputs": {"ai_news": {"cards": []}},
+        "cross_board_output": {"board_type": "cross_board"},
+    }
 
 
 def test_project_daily_output_for_memory_ingestion_projects_only_memory_inputs() -> None:

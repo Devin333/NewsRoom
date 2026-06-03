@@ -158,6 +158,8 @@ report quality API 不应在接口层猜测 `report_json` 或 repository quality
 
 daily workflow 的 dotted key 迁移规则仍属于 business daily output projection；persistence 不得重新维护 `report.final -> final_report`、`quality.result -> quality_result` 这类 alias 表。需要落库前，由 `DailyRunApplicationService` 调用接口层 `daily_persistence_projection`，先使用 business projection 生成 persistence-only canonical view，再构造 `RunPersistenceInput` 并通过 `persist_prepared_input()` 落库。这样 storage 层不依赖 `business`，daily service 也不需要为了 persistence 提前原地写回 legacy key。
 
+board attachment 的输入投影和结果回写白名单同样归 `business.boards.cross_board.workflows.daily_intelligence.output_projection` 管理；`DailyRunApplicationService` 只负责调用 board facade，不再维护 `board_outputs` / `cross_board_output` 这类 attachment result key。
+
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
 
 ## Quality Gate 边界

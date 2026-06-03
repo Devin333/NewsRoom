@@ -16,7 +16,7 @@ from business.boards.cross_board.profiles import (
     daily_agentic_enabled,
 )
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    DAILY_BOARD_ATTACHMENT_RESULT_KEYS,
+    apply_daily_board_attachment_result,
     ensure_legacy_daily_output_aliases,
     project_daily_output_for_board_attachment,
     project_daily_output_for_memory_ingestion,
@@ -184,9 +184,7 @@ class DailyRunApplicationService:
             self.board_service_factory().attach_run_board_outputs(board_output, topic=topic)
         except (TypeError, ValueError):
             return
-        for key in DAILY_BOARD_ATTACHMENT_RESULT_KEYS:
-            if key in board_output:
-                result.output[key] = board_output[key]
+        apply_daily_board_attachment_result(result.output, board_output)
 
 
 def resolve_daily_runner_cls(profile: str):
