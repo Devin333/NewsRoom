@@ -179,6 +179,7 @@ def source_fetch_request(
         options = connector_options or SourceConnectorRuntimeOptions.from_source(source, request=request)
         query = options.query or ""
     user_agent = fetch_policy.user_agent if fetch_policy is not None else source.user_agent
+    resolved_connector_name = connector_name or source_connector_name(source)
     return SourceFetchRequest(
         request_id=request_id,
         source_id=source.source_id,
@@ -191,6 +192,7 @@ def source_fetch_request(
         user_agent=user_agent,
         headers={"User-Agent": user_agent} if user_agent else {},
         limit=limit,
+        connector_name=resolved_connector_name,
         metadata={
             "profile": profile,
             "topic": request.get("topic"),
@@ -199,7 +201,7 @@ def source_fetch_request(
             "authority_score": source.authority_score,
             "fetch_interval_seconds": source.fetch_interval_seconds,
             "respect_robots": source.respect_robots,
-            "connector_name": connector_name or source_connector_name(source),
+            "connector_name": resolved_connector_name,
             **(_fetch_policy_metadata(fetch_policy) if fetch_policy is not None else {}),
         },
     )

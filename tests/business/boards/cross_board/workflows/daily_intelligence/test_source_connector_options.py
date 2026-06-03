@@ -74,6 +74,8 @@ def test_source_fetch_request_consumes_connector_options_for_arxiv_query() -> No
     )
 
     assert request.query == "cat:cs.AI"
+    assert request.connector_name == "ArxivConnector"
+    assert request.metadata["connector_name"] == "ArxivConnector"
 
 
 def _source(

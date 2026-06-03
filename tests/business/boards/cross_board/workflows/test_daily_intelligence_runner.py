@@ -891,6 +891,7 @@ def test_daily_intelligence_runner_dispatches_registered_sync_connector(tmp_path
     assert result.status == WorkflowStatus.SUCCEEDED
     assert connector.calls == [{"source_id": "registry-rss", "limit": 1}]
     assert result.output["raw_items"][0].url == source_url
+    assert result.output["source_fetch_requests"][0].connector_name == "_RegistrySyncConnector"
     assert result.output["source_fetch_requests"][0].metadata["connector_name"] == "_RegistrySyncConnector"
     assert result.output["source_connector_dispatch_report"].connector_counts == {
         "_RegistrySyncConnector": 1
@@ -925,6 +926,7 @@ def test_daily_intelligence_runner_dispatches_registered_protocol_connector(tmp_
     assert connector.calls == [{"source_id": "protocol-rss", "limit": 1}]
     fetch_request = result.output["source_fetch_requests"][0]
     fetch_result = result.output["source_fetch_results"][0]
+    assert fetch_request.connector_name == "_ProtocolBackedSyncConnector"
     assert fetch_request.metadata["connector_name"] == "_ProtocolBackedSyncConnector"
     assert fetch_result.metadata["connector_name"] == "_ProtocolBackedSyncConnector"
     assert fetch_result.metadata["context"]["profile"] == "live"

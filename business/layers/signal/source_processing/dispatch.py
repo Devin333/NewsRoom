@@ -23,8 +23,7 @@ def build_source_connector_dispatch_report(
     for request in fetch_requests:
         request_id = str(_value(request, "request_id") or "")
         result = results_by_request_id.get(request_id)
-        metadata = _metadata(request)
-        connector_name = str(metadata.get("connector_name") or _value(request, "source_type") or "unknown")
+        connector_name = _connector_name(request)
         success = bool(_value(result, "success")) if result is not None else False
         skipped = bool(_value(result, "skipped")) if result is not None else False
         error_type = _value(result, "error_type") if result is not None else "missing_fetch_result"
@@ -63,6 +62,16 @@ def build_source_connector_dispatch_report(
     )
 
 
+def _connector_name(request: Any) -> str:
+    connector_name = _optional_text(_value(request, "connector_name"))
+    if connector_name is not None:
+        return connector_name
+    metadata_connector_name = _optional_text(_metadata(request).get("connector_name"))
+    if metadata_connector_name is not None:
+        return metadata_connector_name
+    return str(_value(request, "source_type") or "unknown")
+
+
 def _metadata(value: Any) -> dict[str, Any]:
     metadata = _value(value, "metadata")
     return dict(metadata) if isinstance(metadata, dict) else {}
@@ -82,6 +91,13 @@ def _source_type_value(value: Any) -> str | None:
     if hasattr(value, "value"):
         return str(value.value)
     return str(value)
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _increment(metrics: dict[str, int], key: str) -> None:

@@ -159,13 +159,14 @@ def test_build_source_connector_dispatch_report_joins_requests_and_results() -> 
             request_id="req-1",
             source_id="feed",
             source_type="rss",
-            metadata={"connector_name": "FeedConnector"},
+            connector_name="FeedConnector",
+            metadata={"connector_name": "LegacyFeedConnector"},
         ),
         SourceFetchRequest(
             request_id="req-2",
             source_id="html",
             source_type="web_page",
-            metadata={"connector_name": "HtmlConnector"},
+            connector_name="HtmlConnector",
         ),
         SourceFetchRequest(
             request_id="req-3",
@@ -198,6 +199,7 @@ def test_build_source_connector_dispatch_report_joins_requests_and_results() -> 
     assert report.failed_count == 1
     assert report.skipped_count == 1
     assert report.connector_counts == {"FeedConnector": 2, "HtmlConnector": 1}
+    assert report.rows[0]["connector_name"] == "FeedConnector"
     assert report.success_by_connector == {"FeedConnector": 1}
     assert report.failed_by_connector == {"HtmlConnector": 1}
     assert report.skipped_by_connector == {"FeedConnector": 1}

@@ -151,6 +151,7 @@ class SourceFetchRequest:
     headers: dict[str, str] = field(default_factory=dict)
     since: datetime | None = None
     limit: int | None = None
+    connector_name: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -165,6 +166,9 @@ class SourceFetchRequest:
             raise ValueError("max_bytes must be at least 1")
         if self.max_redirects < 0:
             raise ValueError("max_redirects must be non-negative")
+        if self.connector_name is not None:
+            connector_name = str(self.connector_name).strip()
+            object.__setattr__(self, "connector_name", connector_name or None)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -180,6 +184,7 @@ class SourceFetchRequest:
             "headers": dict(self.headers),
             "since": _dt(self.since),
             "limit": self.limit,
+            "connector_name": self.connector_name,
             "metadata": dict(self.metadata),
         }
 

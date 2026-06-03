@@ -50,6 +50,7 @@ def test_source_fetch_request_and_result_serialize() -> None:
         url="https://example.com/feed.xml",
         max_redirects=2,
         limit=5,
+        connector_name="FeedConnector",
         since=datetime(2026, 5, 11, tzinfo=UTC),
     )
     result = SourceFetchResult(
@@ -67,6 +68,7 @@ def test_source_fetch_request_and_result_serialize() -> None:
     assert request.to_dict()["source_type"] == "rss"
     assert request.to_dict()["since"] == "2026-05-11T00:00:00Z"
     assert request.to_dict()["max_redirects"] == 2
+    assert request.to_dict()["connector_name"] == "FeedConnector"
     assert result.to_dict()["request_id"] == "fetch-1"
     assert result.to_dict()["success"] is False
     assert result.to_dict()["skip_reason"] == "robots"
