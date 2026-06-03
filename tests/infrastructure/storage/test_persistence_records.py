@@ -285,6 +285,114 @@ def test_report_record_from_result_extracts_final_report() -> None:
     assert record.report_json["quality_trace"]["unsupported_sections"] == []
 
 
+def test_record_builders_extract_report_and_quality_records_from_projected_daily_output() -> None:
+    result = RunResult(
+        run_id="run-projected",
+        workflow_id="daily",
+        workflow_version="1",
+        status=WorkflowStatus.SUCCEEDED,
+        output={
+            "final_report": FinalReport(
+                title="Projected Daily",
+                sections=[{"title": "Summary", "content": "Supported daily update."}],
+                source_urls=["https://example.com/a"],
+                metadata={"evidence_bundle_id": "bundle-1"},
+            ),
+            "report_markdown": "# Projected Daily\n",
+            "report_quality_summary": ReportQualitySummary(
+                quality_score=0.88,
+                support_coverage=0.9,
+                citation_passed=True,
+                citation_coverage_score=0.82,
+                claim_support_score=0.76,
+                evidence_alignment_score=0.8,
+                accepted_claims_count=2,
+                rejected_claims_count=1,
+                uncertain_claims_count=1,
+                unsupported_claims_count=1,
+                high_severity_unsupported_claims_count=0,
+                passed=True,
+                decision="pass",
+            ),
+            "quality_result": {
+                "decision": "pass",
+                "passed": True,
+                "route": "final",
+                "quality_score": 0.9,
+                "citation_coverage_score": 0.84,
+                "claim_support_score": 0.78,
+                "evidence_alignment_score": 0.81,
+                "metadata": {
+                    "citation_failure_categories": ["missing_citation"],
+                    "remediation": ["add cited source"],
+                    "reviewer_trace": {"editor": "accepted"},
+                    "accepted_claims_count": 2,
+                    "rejected_claims_count": 1,
+                    "uncertain_claims_count": 1,
+                    "unsupported_claims_count": 1,
+                },
+            },
+            "citation_check_result": {
+                "citation_coverage_score": 0.7,
+                "claim_support_score": 0.75,
+                "unsupported_claims": ["unsupported claim"],
+                "rejected_claim_usage": ["rejected source used"],
+            },
+            "support_matrix": {"unsupported_sections": ["Summary"]},
+            "quality_gate_metrics": QualityGateMetrics(
+                evidence_items_count=3,
+                unsupported_urls_count=1,
+                missing_section_sources_count=0,
+                unsupported_sections_count=1,
+                blocked=False,
+                decision="pass",
+                citation_coverage_score=0.91,
+                support_coverage=0.9,
+                quality_score=0.88,
+                accepted_claims_count=2,
+                rejected_claims_count=1,
+                uncertain_claims_count=1,
+                unsupported_claims_count=1,
+                claim_support_score=0.78,
+            ),
+        },
+        manifest_path="runs/run-projected/manifest.json",
+    )
+
+    batch = run_persistence_batch_from_result(result, profile="live-offline")
+
+    assert batch.report is not None
+    assert batch.quality_result is not None
+    assert batch.report.report_id == "run-projected:final"
+    assert batch.report.quality_score == 0.88
+    assert batch.report.citation_coverage_score == 0.91
+    assert batch.report.report_json["quality_trace"] == {
+        "decision": "pass",
+        "route": "final",
+        "citation_failure_categories": ["missing_citation"],
+        "unsupported_claims": ["unsupported claim"],
+        "rejected_claim_usage": ["rejected source used"],
+        "unsupported_sections": ["Summary"],
+        "remediation": ["add cited source"],
+        "reviewer_trace": {"editor": "accepted"},
+        "accepted_claims_count": 2,
+        "rejected_claims_count": 1,
+        "uncertain_claims_count": 1,
+        "unsupported_claims_count": 1,
+        "evidence_bundle_id": "bundle-1",
+    }
+    assert batch.workflow_run.metrics["report_quality_summary"]["decision"] == "pass"
+    assert batch.quality_result.decision == "pass"
+    assert batch.quality_result.quality_score == 0.9
+    assert batch.quality_result.citation_coverage_score == 0.84
+    assert batch.quality_result.claim_support_score == 0.78
+    assert batch.quality_result.evidence_alignment_score == 0.81
+    assert batch.quality_result.payload["quality_summary"]["quality_score"] == 0.88
+    assert batch.quality_result.payload["citation_check"]["unsupported_claims"] == [
+        "unsupported claim"
+    ]
+
+
 def test_report_record_from_result_preserves_blocked_report_status() -> None:
     result = RunResult(
         run_id="run-blocked",

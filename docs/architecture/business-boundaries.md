@@ -120,6 +120,16 @@ run inspection 读取 manifest output 构建 quality preview / lineage 时，也
 
 report quality API 不应在接口层猜测 `report_json` 或 repository quality record 的历史形状。`business.layers.output.report_quality_projection` 负责从 `quality_trace`、旧 `quality` / `quality_gate` / `editor_review` / `quality_metrics` 字段，以及 `QualityResultRecord.payload` 中投影正式质量视图；`ReportApplicationService` 只负责读取 repository 记录、调用 projection，并把 lineage summary 组合到响应里。后续如果质量记录模型继续演进，应扩展该业务 projection 或正式 record model，不要在接口服务里新增结构分支。
 
+## Persistence Record Construction 边界
+
+持久化 record 构造属于 storage adapter 边界，但它只能消费上游 application service 已投影好的 canonical workflow output。
+
+- `infrastructure.storage.persistence.records` 定义正式 storage record 模型，例如 `WorkflowRunRecord`、`ReportRecord` 和 `RunPersistenceBatch`。
+- `infrastructure.storage.persistence.record_builders` 负责把 `RunResult` 中的 canonical output 转成 workflow/report/source/evidence/claim/quality records。
+- `infrastructure.storage.persistence.repository` 只保留 repository protocol、adapter 编排、环境选择和读写 helper，不再内联 report/quality/source/evidence/claim 字段拼装。
+
+daily workflow 的 dotted key 迁移规则仍属于 business daily output projection；persistence 不得重新维护 `report.final -> final_report`、`quality.result -> quality_result` 这类 alias 表。需要落库前，由 `DailyRunApplicationService` 等应用服务调用 `daily_intelligence.output_projection` 补齐 legacy-compatible canonical view，再交给 persistence record builder。这样 storage 层不依赖 `business`，也不会把 daily 专属 buffer key 规则扩散到 repository。
+
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
 
 ## Quality Gate 边界
