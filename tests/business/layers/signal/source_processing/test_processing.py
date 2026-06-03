@@ -398,7 +398,7 @@ def test_build_source_error_policy_report_counts_policy_fields() -> None:
     assert report.rows[1]["workflow_blocking"] is True
 
 
-def test_build_source_error_policy_report_normalizes_source_error_mappings() -> None:
+def test_build_source_error_policy_report_accepts_serialized_source_errors() -> None:
     report = build_source_error_policy_report(
         [
             {
@@ -421,6 +421,11 @@ def test_build_source_error_policy_report_normalizes_source_error_mappings() -> 
     assert report.health_affecting_error_count == 0
     assert report.workflow_blocking_error_count == 1
     assert report.rows[0]["source_name"] == "Feed"
+
+
+def test_build_source_error_policy_report_rejects_unstructured_source_errors() -> None:
+    with pytest.raises(TypeError, match="source error policy errors entries must be SourceError"):
+        build_source_error_policy_report(["fetch_timeout"])
 
 
 def test_build_source_error_policy_report_projects_formal_policy_metadata() -> None:

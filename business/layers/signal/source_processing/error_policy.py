@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,11 +11,15 @@ from business.foundation.models.source_error_normalization import normalize_sour
 SOURCE_ERROR_POLICY_METADATA_KEY = "source_error_policy"
 
 
-def build_source_error_policy_report(source_errors: list[SourceError | dict[str, Any]]) -> SourceErrorPolicyReport:
+def build_source_error_policy_report(source_errors: Iterable[Any]) -> SourceErrorPolicyReport:
+    normalized_source_errors = normalize_source_errors(
+        source_errors,
+        context="source error policy errors",
+    )
     rows: list[dict[str, Any]] = []
     errors_by_type: dict[str, int] = {}
 
-    for error in normalize_source_errors(source_errors):
+    for error in normalized_source_errors:
         policy_input = SourceErrorPolicyInput.from_error(error)
         errors_by_type[policy_input.error_type] = errors_by_type.get(policy_input.error_type, 0) + 1
         rows.append(
