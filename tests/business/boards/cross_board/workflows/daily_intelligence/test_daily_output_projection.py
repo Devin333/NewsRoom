@@ -16,6 +16,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     project_daily_output_for_legacy_consumers,
     project_daily_output_for_quality_artifacts,
     project_daily_output_for_report_artifacts,
+    project_daily_output_for_routing_predicates,
     project_daily_output_for_run_inspection,
     project_daily_output_for_source_diagnostic_artifacts,
     project_daily_output_for_source_recollection_artifacts,
@@ -346,6 +347,22 @@ def test_project_daily_output_for_report_artifacts_keeps_legacy_fallback() -> No
     assert projected == {
         "final_report": {"title": "namespaced"},
         "report_markdown": "# Legacy",
+    }
+
+
+def test_project_daily_output_for_routing_predicates_requires_namespaced_outputs() -> None:
+    output = {
+        "quality_gate_metrics": {"decision": "blocked"},
+        "quality.gate_metrics": {"decision": "pass"},
+        "agent.feedback.route": {"decision": "retry_required"},
+        "report.final": {"title": "not routing"},
+    }
+
+    projected = project_daily_output_for_routing_predicates(output)
+
+    assert projected == {
+        "agent_feedback_route": {"decision": "retry_required"},
+        "quality_gate_metrics": {"decision": "pass"},
     }
 
 

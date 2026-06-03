@@ -154,6 +154,7 @@ daily run service、persistence、memory ingestion 和 board output attachment �
 - `project_daily_output_for_run_inspection()`：只为 run inspection 的 quality preview / lineage 投影 report、quality、citation、support matrix、candidate claims 和 verified findings 所需 canonical key，不把整份 runtime output 当作业务视图；该 projection 已切到 `NAMESPACED_ONLY`，不再从 legacy-only daily output key 构造 quality preview / lineage。
 - `project_daily_output_for_interface_metadata()`：只为接口展示投影 agent loop metrics 等元数据；该 projection 已切到 `NAMESPACED_ONLY`，不再从 legacy-only `agent_loop_metrics` 构造接口指标。
 - `project_daily_output_for_agent_validation()`：只为 agent output validator 投影最终报告候选；该 projection 已切到 `NAMESPACED_ONLY`，不再从 legacy-only `final_report` 构造证据边界校验输入。
+- `project_daily_output_for_routing_predicates()`：只为 daily routing predicate 投影 agent feedback route、quality gate metrics、verification / citation / editor / quality summary 等路由判定输入；该 projection 已切到 `NAMESPACED_ONLY`，不再从 legacy-only daily outcome key 构造路由判定输入；routing predicate 不直接调用泛用 output accessor，也不接收整份 workflow output。
 - `apply_daily_public_output_aliases()`：只在公开 `RunResult.output` 回写 final report、quality、evidence 和公开 source item 兼容字段；agent feedback、agent loop telemetry、source pipeline metrics 等内部 runtime alias 不进入 service consumer output。
 - `ensure_legacy_daily_output_aliases()`：只作为历史全量 alias 兼容 helper 保留，不作为下游服务调用或公开输出准备的前置条件。
 - `project_daily_output_for_legacy_consumers()`：仅作为历史兼容 helper 保留；新增服务消费面必须优先定义专用 projection，避免 consumer 直接理解 daily alias 表或接收整份 runtime output。

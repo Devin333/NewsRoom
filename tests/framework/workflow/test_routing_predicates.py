@@ -28,7 +28,7 @@ def test_routing_engine_uses_generic_builtin_predicates() -> None:
     assert decision.target_step_id == "done"
 
 
-def test_business_predicates_can_handle_legacy_quality_conditions() -> None:
+def test_business_predicates_can_handle_daily_quality_conditions() -> None:
     workflow = WorkflowSpec(
         workflow_id="wf",
         name="Workflow",
@@ -39,7 +39,7 @@ def test_business_predicates_can_handle_legacy_quality_conditions() -> None:
             EdgeSpec("e1", "review", "publish", condition=EdgeCondition.VALIDATION_PASS),
         ],
     )
-    outcome = StepOutcome.success("review", {"editor_review": {"decision": "pass"}})
+    outcome = StepOutcome.success("review", {"quality.editor_review": {"decision": "pass"}})
 
     default_decision = RoutingEngine().decide(workflow, workflow.step_by_id("review"), outcome)
     business_decision = RoutingEngine(
@@ -74,7 +74,7 @@ def test_business_predicates_route_verifier_rewrite_status() -> None:
     )
     outcome = StepOutcome.success(
         "verify",
-        {"verification_result": {"status": "needs_rewrite"}},
+        {"quality.verification_result": {"status": "needs_rewrite"}},
     )
 
     decision = RoutingEngine(
@@ -98,6 +98,33 @@ def test_business_predicates_route_dotted_quality_gate_metrics_from_outcome() ->
     outcome = StepOutcome.success(
         "quality",
         {"quality.gate_metrics": {"decision": "pass"}},
+    )
+
+    decision = RoutingEngine(
+        predicate_registry=build_daily_intelligence_routing_predicate_registry()
+    ).decide(workflow, workflow.step_by_id("quality"), outcome)
+
+    assert decision.target_step_id == "publish"
+
+
+def test_business_predicates_prefer_dotted_quality_gate_metrics_from_outcome() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="wf",
+        name="Workflow",
+        version="1",
+        start_step_id="quality",
+        steps=[StepSpec("quality"), StepSpec("publish"), StepSpec("blocked")],
+        edges=[
+            EdgeSpec("blocked", "quality", "blocked", condition=EdgeCondition.VALIDATION_BLOCKED),
+            EdgeSpec("pass", "quality", "publish", condition=EdgeCondition.VALIDATION_PASS),
+        ],
+    )
+    outcome = StepOutcome.success(
+        "quality",
+        {
+            "quality_gate_metrics": {"decision": "blocked"},
+            "quality.gate_metrics": {"decision": "pass"},
+        },
     )
 
     decision = RoutingEngine(
@@ -182,7 +209,7 @@ def test_business_predicates_route_agent_feedback_retry() -> None:
     )
     outcome = StepOutcome.success(
         "feedback",
-        {"agent_feedback_route": {"decision": "retry_required"}},
+        {"agent.feedback.route": {"decision": "retry_required"}},
     )
 
     decision = RoutingEngine(

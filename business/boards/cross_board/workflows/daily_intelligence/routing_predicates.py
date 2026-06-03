@@ -4,7 +4,7 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
     namespaced_first_key_candidates,
 )
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    daily_output_value,
+    project_daily_output_for_routing_predicates,
 )
 from framework.workflow.routing import RoutingPredicateContext, RoutingPredicateRegistry
 from framework.workflow.routing.predicates import lookup, lookup_buffer
@@ -86,7 +86,8 @@ def _validation_sources(context: RoutingPredicateContext) -> tuple[object, ...]:
 
 
 def _daily_outcome_value(context: RoutingPredicateContext, key: str) -> object:
-    return daily_output_value(context.outcome.outputs, key)
+    routing_output = project_daily_output_for_routing_predicates(context.outcome.outputs)
+    return routing_output.get(key)
 
 
 def _daily_buffer_value(context: RoutingPredicateContext, key: str) -> object:
