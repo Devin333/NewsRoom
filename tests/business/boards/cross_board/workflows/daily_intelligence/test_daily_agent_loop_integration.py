@@ -12,6 +12,7 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_output_budge
 from business.boards.cross_board.workflows.daily_intelligence.agent_loop_integration import (
     _collect_evidence_ids,
     build_daily_output_judge,
+    canonicalize_daily_agent_inputs,
     normalize_daily_agent_output,
 )
 from business.boards.cross_board.workflows.daily_intelligence.agents import build_writer_agent
@@ -424,6 +425,60 @@ def test_daily_agent_output_normalizer_projects_namespaced_buffer_aliases() -> N
     assert output["quality.verification_result"] == output["verification_result"]
     assert output["quality.citation_check_result"] == output["citation_check_result"]
     assert output["quality.support_matrix"] == output["support_matrix"]
+
+
+def test_daily_agent_input_canonicalizer_prefers_namespaced_buffer_aliases() -> None:
+    inputs = canonicalize_daily_agent_inputs(
+        {
+            "evidence_bundle": "legacy-bundle",
+            "evidence.bundle": "namespaced-bundle",
+            "quality.verification_result": {"status": "pass"},
+            "sources.errors": [],
+            "unmapped": "kept",
+        }
+    )
+
+    assert inputs == {
+        "evidence_bundle": "namespaced-bundle",
+        "verification_result": {"status": "pass"},
+        "source_errors": [],
+        "unmapped": "kept",
+    }
+
+
+def test_daily_agent_runner_canonicalizes_namespaced_inputs_before_judge() -> None:
+    llm = FakeLLMClient(
+        [
+            json.dumps(
+                {
+                    "action_type": "final_output",
+                    "output": {
+                        "report_draft": {
+                            "title": "Daily Brief",
+                            "sections": [],
+                            "supporting_evidence_ids": ["ev-999"],
+                        }
+                    },
+                }
+            )
+        ]
+    )
+
+    result = build_daily_agent_runner(
+        profile="agentic-live",
+        llm_client=llm,
+    ).run(
+        _writer(),
+        {
+            "request": {"topic": "AI agents", "profile": "agentic-live"},
+            "evidence.bundle": _bundle(),
+        },
+    )
+
+    assert result.success is False
+    assert result.status == AgentLoopStatus.BLOCKED
+    assert result.verdict is not None
+    assert result.verdict.policy_violations == ["evidence id outside boundary: ev-999"]
 
 
 def test_daily_agent_runner_normalizes_agentic_live_writer_output_to_grounded_cards() -> None:

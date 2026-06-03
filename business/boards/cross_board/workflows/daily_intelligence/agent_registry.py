@@ -9,6 +9,7 @@ from framework.llm import (
 )
 from infrastructure.storage.conversation import LocalJsonConversationStore
 from business.boards.cross_board.workflows.daily_intelligence.agent_loop_integration import (
+    DailyAgentInputCanonicalizingRunner,
     build_daily_output_judge,
     normalize_daily_agent_output,
 )
@@ -50,7 +51,7 @@ def build_daily_agent_runner(
     llm_client: LLMClient | None = None,
     conversation_store: LocalJsonConversationStore | None = None,
     topic: str | None = None,
-) -> AgentRunner:
+) -> DailyAgentInputCanonicalizingRunner:
     _ = topic
     if llm_client is None and profile in {PROFILE_AGENTIC_OFFLINE, PROFILE_LIVE_OFFLINE}:
         raise ValueError(
@@ -60,11 +61,12 @@ def build_daily_agent_runner(
     resolved_llm_client = llm_client or build_openai_compatible_client_from_config(
         route_id=DAILY_AGENTIC_MODEL_ROUTE_ID
     )
-    return AgentRunner(
+    runner = AgentRunner(
         llm_client=cast(Any, resolved_llm_client),
         tool_registry=build_daily_agent_tool_registry(),
         conversation_store=conversation_store,
         output_judge=build_daily_output_judge(),
         output_normalizer=normalize_daily_agent_output,
     )
+    return DailyAgentInputCanonicalizingRunner(runner)
 

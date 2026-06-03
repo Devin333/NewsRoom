@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from framework.agent import AgentRunner
 from framework.llm import LLMClient
 from infrastructure.storage.conversation import LocalJsonConversationStore
 
+from business.boards.cross_board.workflows.daily_intelligence.agent_loop_integration import (
+    DailyAgentInputCanonicalizingRunner,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agent_fixtures import (
     DAILY_AGENT_FIXTURE_SCENARIO_PASS,
     build_daily_agent_fake_llm_client,
@@ -24,7 +26,7 @@ def build_profiled_daily_agent_runner(
     conversation_store: LocalJsonConversationStore | None = None,
     topic: str | None = None,
     fixture_scenario: str | None = None,
-) -> AgentRunner:
+) -> DailyAgentInputCanonicalizingRunner:
     resolved_llm_client = llm_client
     if resolved_llm_client is None and profile in {PROFILE_AGENTIC_OFFLINE, PROFILE_LIVE_OFFLINE}:
         resolved_llm_client = build_daily_agent_fake_llm_client(

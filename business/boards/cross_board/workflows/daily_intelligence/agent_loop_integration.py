@@ -17,6 +17,7 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_output_budge
     DAILY_AGENT_OUTPUT_BUDGET,
 )
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    DAILY_BUFFER_ALIASES,
     with_namespaced_aliases,
 )
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE
@@ -29,6 +30,41 @@ def build_daily_output_judge() -> OutputJudge:
         ],
         output_validators=[DailyEvidenceOutputValidator()],
     )
+
+
+class DailyAgentInputCanonicalizingRunner:
+    def __init__(self, delegate: Any) -> None:
+        self._delegate = delegate
+
+    def run(
+        self,
+        agent: AgentSpec,
+        inputs: dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        return self._delegate.run(
+            agent,
+            canonicalize_daily_agent_inputs(inputs),
+            **kwargs,
+        )
+
+    def run_spec(
+        self,
+        spec: AgentSpec,
+        input_text: str | dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        inputs = input_text if isinstance(input_text, dict) else {"input_text": input_text}
+        return self.run(spec, dict(inputs), **kwargs)
+
+
+def canonicalize_daily_agent_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    values = dict(inputs)
+    for legacy_key, namespaced_key in DAILY_BUFFER_ALIASES.items():
+        if namespaced_key in values:
+            values[legacy_key] = values[namespaced_key]
+            values.pop(namespaced_key, None)
+    return values
 
 
 def normalize_daily_agent_output(

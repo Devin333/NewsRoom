@@ -55,12 +55,12 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["planner_agent"].implementation == PLANNER_AGENT_ID
     assert steps["planner_agent"].read_keys == [
         "request",
-        "evidence_bundle",
-        "source_errors",
-        "source_pipeline_metrics",
         "evidence.bundle",
+        "evidence_bundle",
         "sources.errors",
+        "source_errors",
         "sources.pipeline_metrics",
+        "source_pipeline_metrics",
     ]
     assert "agent_feedback_summary" in steps["planner_agent"].metadata["optional_read_keys"]
     assert "agent.feedback.summary" in steps["planner_agent"].metadata["optional_read_keys"]
@@ -78,19 +78,64 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["analyst_agent"].step_type == StepType.AGENT_LOOP
     assert steps["analyst_agent"].metadata["agent_id"] == ANALYST_AGENT_ID
     assert steps["analyst_agent"].implementation == ANALYST_AGENT_ID
+    assert steps["analyst_agent"].read_keys == [
+        "request",
+        "research_plan",
+        "evidence.bundle",
+        "evidence_bundle",
+        "sources.errors",
+        "source_errors",
+        "sources.pipeline_metrics",
+        "source_pipeline_metrics",
+    ]
 
     assert steps["writer_agent"].step_type == StepType.AGENT_LOOP
     assert steps["writer_agent"].metadata["agent_id"] == WRITER_AGENT_ID
     assert steps["writer_agent"].implementation == WRITER_AGENT_ID
+    assert steps["writer_agent"].read_keys == [
+        "request",
+        "research_plan",
+        "analysis_result",
+        "evidence.verified_findings",
+        "verified_findings",
+        "evidence.bundle",
+        "evidence_bundle",
+        "sources.errors",
+        "source_errors",
+        "sources.pipeline_metrics",
+        "source_pipeline_metrics",
+    ]
     assert "report.draft" in steps["writer_agent"].write_keys
-    assert "agent_feedback_summary" in steps["writer_agent"].metadata["optional_read_keys"]
-    assert "agent.feedback.summary" in steps["writer_agent"].metadata["optional_read_keys"]
-    assert "agent_feedback_loop_state" in steps["writer_agent"].metadata["optional_read_keys"]
-    assert "agent.feedback.loop_state" in steps["writer_agent"].metadata["optional_read_keys"]
+    assert steps["writer_agent"].metadata["optional_read_keys"] == [
+        "quality.citation_check_result",
+        "citation_check_result",
+        "quality.support_matrix",
+        "support_matrix",
+        "quality.verification_result",
+        "verification_result",
+        "agent.feedback.events",
+        "agent_feedback_events",
+        "agent.feedback.summary",
+        "agent_feedback_summary",
+        "agent.feedback.route",
+        "agent_feedback_route",
+        "agent.feedback.loop_state",
+        "agent_feedback_loop_state",
+    ]
 
     assert steps["verifier_agent"].step_type == StepType.AGENT_LOOP
     assert steps["verifier_agent"].metadata["agent_id"] == VERIFIER_AGENT_ID
     assert steps["verifier_agent"].implementation == VERIFIER_AGENT_ID
+    assert steps["verifier_agent"].read_keys == [
+        "report.draft",
+        "report_draft",
+        "evidence.bundle",
+        "evidence_bundle",
+        "evidence.candidate_claims",
+        "candidate_claims",
+        "evidence.verified_findings",
+        "verified_findings",
+    ]
     assert "quality.verification_result" in steps["verifier_agent"].write_keys
     assert "quality.citation_check_result" in steps["verifier_agent"].write_keys
     assert "quality.support_matrix" in steps["verifier_agent"].write_keys
@@ -98,6 +143,18 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert steps["editor_agent"].step_type == StepType.AGENT_LOOP
     assert steps["editor_agent"].metadata["agent_id"] == EDITOR_AGENT_ID
     assert steps["editor_agent"].implementation == EDITOR_AGENT_ID
+    assert steps["editor_agent"].read_keys == [
+        "report.draft",
+        "report_draft",
+        "quality.verification_result",
+        "verification_result",
+        "quality.citation_check_result",
+        "citation_check_result",
+        "quality.support_matrix",
+        "support_matrix",
+        "evidence.bundle",
+        "evidence_bundle",
+    ]
     assert "quality.editor_review" in steps["editor_agent"].write_keys
     assert "report.edited_draft" in steps["editor_agent"].write_keys
 
