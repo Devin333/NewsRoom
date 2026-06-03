@@ -193,7 +193,14 @@ class SourceDispatcher:
         limit: int,
         connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        return _connector_result(self.manual_connector.fetch(_infra_source(source), limit=limit))
+        manual_records = connector_options.manual_records
+        return _connector_result(
+            self.manual_connector.fetch(
+                _infra_source(source),
+                records=manual_records.records if manual_records is not None else None,
+                limit=limit,
+            )
+        )
 
     def _fetch_arxiv(
         self,

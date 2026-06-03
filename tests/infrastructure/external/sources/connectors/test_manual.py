@@ -60,6 +60,32 @@ def test_manual_connector_fetch_reads_source_metadata_records_and_limit() -> Non
     assert items[0].title == "First"
 
 
+def test_manual_connector_fetch_prefers_explicit_records_over_legacy_metadata() -> None:
+    source = SourceDefinition(
+        source_id="manual",
+        name="Manual",
+        source_type="manual",
+        url="manual://operator",
+        metadata={
+            "records": [
+                {"title": "Legacy", "url": "https://example.com/legacy"},
+            ]
+        },
+    )
+
+    items, errors = ManualConnector().fetch(
+        source,
+        records=[
+            {"title": "Explicit", "url": "https://example.com/explicit"},
+        ],
+        limit=1,
+    )
+
+    assert errors == []
+    assert len(items) == 1
+    assert items[0].title == "Explicit"
+
+
 def test_manual_connector_returns_structured_parse_error_for_invalid_record() -> None:
     items, errors = ManualConnector().fetch(_source(), records=[{"url": "https://example.com/missing-title"}])
 

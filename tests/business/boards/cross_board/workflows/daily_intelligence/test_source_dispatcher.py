@@ -48,6 +48,50 @@ def test_source_dispatcher_passes_reddit_runtime_options() -> None:
     ]
 
 
+def test_source_dispatcher_passes_manual_records_runtime_options() -> None:
+    records = [
+        {
+            "title": "Manual item",
+            "url": "https://example.com/manual",
+        }
+    ]
+    source = SourceDefinition(
+        source_id="manual",
+        name="Manual",
+        source_type=SourceType.MANUAL,
+        url="manual://operator",
+        metadata={"records": records},
+    )
+    connector = _RecordingManualConnector()
+
+    items, errors, result = _dispatcher(source, manual_connector=connector).fetch_source(
+        source,
+        request={"topic": "AI policy"},
+        fetch_request=SourceFetchRequest(
+            request_id="source-fetch-1",
+            source_id=source.source_id,
+            source_type=source.source_type,
+        ),
+        profile="live",
+        limit=1,
+        connector_options=SourceConnectorRuntimeOptions.from_source(
+            source,
+            request={"topic": "AI policy"},
+        ),
+    )
+
+    assert items == []
+    assert errors == []
+    assert result is None
+    assert connector.calls == [
+        {
+            "source_id": "manual",
+            "records": records,
+            "limit": 1,
+        }
+    ]
+
+
 def test_source_dispatcher_passes_arxiv_runtime_options() -> None:
     source = SourceDefinition(
         source_id="arxiv",
@@ -248,6 +292,7 @@ def _dispatcher(
     devto_connector=None,
     github_connector=None,
     hackernews_connector=None,
+    manual_connector=None,
     reddit_connector=None,
     stackoverflow_connector=None,
 ) -> SourceDispatcher:
@@ -256,7 +301,7 @@ def _dispatcher(
         source_registry=SourceRegistry([source]),
         feed_connector=unused_connector,
         html_connector=unused_connector,
-        manual_connector=unused_connector,
+        manual_connector=manual_connector or unused_connector,
         arxiv_connector=arxiv_connector or unused_connector,
         github_connector=github_connector or unused_connector,
         hackernews_connector=hackernews_connector or unused_connector,
@@ -279,6 +324,21 @@ class _RecordingRedditConnector:
                 "subreddit": subreddit,
                 "listing": listing,
                 "time_range": time_range,
+                "limit": limit,
+            }
+        )
+        return [], []
+
+
+class _RecordingManualConnector:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def fetch(self, source, *, records, limit):
+        self.calls.append(
+            {
+                "source_id": source.source_id,
+                "records": records,
                 "limit": limit,
             }
         )

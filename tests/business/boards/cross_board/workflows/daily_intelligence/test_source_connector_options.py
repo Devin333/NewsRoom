@@ -140,6 +140,41 @@ def test_connector_options_project_reddit_runtime_options() -> None:
     assert options.time_range == "week"
 
 
+def test_connector_options_project_manual_records_as_formal_payload() -> None:
+    records = [
+        {
+            "title": "Manual item",
+            "url": "https://example.com/manual",
+        }
+    ]
+    source = _source(
+        source_type=SourceType.MANUAL,
+        metadata={"records": records},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "ignored"},
+    )
+
+    assert options.manual_records is not None
+    assert options.manual_records.records == records
+
+
+def test_connector_options_ignore_invalid_manual_records_for_connector_legacy_error() -> None:
+    source = _source(
+        source_type=SourceType.MANUAL,
+        metadata={"records": "invalid"},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "ignored"},
+    )
+
+    assert options.manual_records is None
+
+
 def test_connector_options_project_legacy_reddit_time_key() -> None:
     source = _source(
         source_type=SourceType.REDDIT,
