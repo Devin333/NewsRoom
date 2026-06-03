@@ -16,7 +16,12 @@ def test_old_repository_path_exports_new_persistence_symbols() -> None:
         == "infrastructure.storage.persistence.local_json_adapter"
     )
     assert legacy_repository.repository_from_env is persistence.repository_from_env
+    assert legacy_repository.persist_run_input is persistence.persist_run_input
     assert legacy_repository.persist_run_result is persistence.persist_run_result
+    assert (
+        legacy_repository.run_persistence_input_from_output
+        is persistence.run_persistence_input_from_output
+    )
     assert (
         legacy_repository.run_persistence_input_from_result
         is persistence.run_persistence_input_from_result

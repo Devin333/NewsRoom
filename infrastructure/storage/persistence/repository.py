@@ -32,6 +32,7 @@ from infrastructure.storage.persistence.record_builders import (
 )
 from infrastructure.storage.persistence.record_inputs import (
     RunPersistenceInput,
+    run_persistence_input_from_output,
     run_persistence_input_from_result,
 )
 from infrastructure.storage.persistence.records import (
@@ -105,6 +106,17 @@ def persist_run_result(
     if migrate:
         repository.migrate()
     input_model = run_persistence_input_from_result(result, profile=profile)
+    persist_run_input(repository, input_model, migrate=False)
+
+
+def persist_run_input(
+    repository: PersistenceRepository,
+    input_model: RunPersistenceInput,
+    *,
+    migrate: bool = True,
+) -> None:
+    if migrate:
+        repository.migrate()
     batch = run_persistence_batch_from_input(input_model)
     save_batch = getattr(repository, "save_run_records", None)
     if save_batch is not None:

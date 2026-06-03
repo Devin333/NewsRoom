@@ -21,7 +21,7 @@ from interfaces.services.live_smoke_service import (
 )
 from interfaces.services.run_persistence_service import RunPersistenceApplicationService
 from interfaces.services.weekly_run_service import WeeklyRunApplicationService, build_default_weekly_run_service
-from infrastructure.storage.repository import persist_run_result, repository_from_env
+from infrastructure.storage.repository import persist_run_input, persist_run_result, repository_from_env
 
 
 class RunApplicationService:
@@ -140,6 +140,7 @@ class RunApplicationService:
             artifact_root=self.artifact_root,
             repository_factory=repository_from_env,
             persist_result=persist_run_result,
+            persist_input=persist_run_input,
         )
 
     def _daily_service(self) -> DailyRunApplicationService:
@@ -230,6 +231,7 @@ __all__ = [  # noqa: F822 - several compatibility exports are resolved lazily by
     "build_test_agent_loop_workflow",
     "build_test_no_llm_registry",
     "build_test_no_llm_workflow",
+    "persist_run_input",
     "persist_run_result",
     "repository_from_env",
 ]

@@ -4,6 +4,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     daily_output_contains,
     daily_output_value,
     ensure_legacy_daily_output_aliases,
+    project_daily_output_for_persistence,
     project_daily_output_for_legacy_consumers,
 )
 
@@ -40,6 +41,22 @@ def test_project_daily_output_for_legacy_consumers_returns_projected_copy() -> N
     assert projected["final_report"] == {"title": "namespaced"}
     assert projected["quality_result"] == {"decision": "pass"}
     assert projected["unmapped"] == "kept"
+
+
+def test_project_daily_output_for_persistence_projects_only_record_input_keys() -> None:
+    output = {
+        "report.final": {"title": "namespaced"},
+        "quality.result": {"decision": "pass"},
+        "sources.raw_items": [{"title": "raw"}],
+        "sources.ranked_items": [{"title": "ranked"}],
+    }
+
+    projected = project_daily_output_for_persistence(output)
+
+    assert projected["final_report"] == {"title": "namespaced"}
+    assert projected["quality_result"] == {"decision": "pass"}
+    assert projected["raw_items"] == [{"title": "raw"}]
+    assert "ranked_items" not in projected
 
 
 def test_ensure_legacy_daily_output_aliases_mutates_output_for_service_consumers() -> None:

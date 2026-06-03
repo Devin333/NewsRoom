@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -23,6 +24,10 @@ from framework import RunResult
 from framework.specs import WorkflowStatus
 
 from interfaces.services.board_service import BoardApplicationService
+from interfaces.services.daily_persistence_projection import (
+    daily_run_persistence_input_from_result,
+    project_daily_run_output_for_persistence,
+)
 from interfaces.services.memory_service import memory_ingestion_service_from_env
 from interfaces.services.run_persistence_service import RunPersistenceApplicationService
 
@@ -126,11 +131,25 @@ class DailyRunApplicationService:
             source_limit=source_limit,
             run_id=run_id,
         )
+        self._persist_daily_result(repository, result, profile=profile)
         self._prepare_daily_output_for_service_consumers(result)
-        self.persistence_service.persist_prepared_result(repository, result, profile=profile)
         self._attach_board_outputs_if_possible(result, topic=topic)
         self._index_memory_if_configured(result, topic=topic)
         return result
+
+    def _persist_daily_result(self, repository, result: RunResult, *, profile: str) -> None:
+        persistence_input = daily_run_persistence_input_from_result(result, profile=profile)
+        persist_input = getattr(self.persistence_service, "persist_prepared_input", None)
+        configured_persist_input = getattr(self.persistence_service, "persist_input", persist_input)
+        if callable(persist_input) and configured_persist_input is not None:
+            persist_input(repository, persistence_input)
+            return
+
+        projected_result = replace(
+            result,
+            output=project_daily_run_output_for_persistence(result),
+        )
+        self.persistence_service.persist_prepared_result(repository, projected_result, profile=profile)
 
     def _prepare_daily_output_for_service_consumers(self, result: RunResult) -> None:
         if isinstance(result.output, dict):

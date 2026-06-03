@@ -111,7 +111,8 @@ artifact publisher 也进入命名空间优先输出读取阶段：发布器通�
 daily run service、persistence、memory ingestion 和 board output attachment 不应各自维护 dotted/legacy 分支。服务层消费 daily workflow output 前，必须通过 `daily_intelligence.output_projection` 的统一 helper 做命名空间优先投影：
 
 - `daily_output_value()` / `daily_output_contains()`：业务层 output accessor，统一执行 dotted-first、legacy fallback。
-- `ensure_legacy_daily_output_aliases()`：在需要保留原 output 写回副作用的路径上原地补齐 legacy 兼容 key，例如 persistence 和 board output attachment。
+- `project_daily_output_for_persistence()`：只为落库 record 输入投影 persistence 所需 canonical key，不补齐无关 legacy 字段。
+- `ensure_legacy_daily_output_aliases()`：在需要保留原 output 写回副作用的路径上原地补齐 legacy 兼容 key，例如 board output attachment。
 - `project_daily_output_for_legacy_consumers()`：为 memory ingestion 等 legacy consumer 生成兼容 copy，避免 consumer 直接理解 daily alias 表。
 
 interfaces 可以调用这些 business projection helper，但不得在接口服务里复制 `DAILY_BUFFER_ALIASES` 或手写 `report.final -> final_report` 这类映射。memory 和 board 通用服务继续消费 canonical legacy 字段；daily workflow 的命名空间迁移规则只留在 daily workflow business 边界内。
@@ -125,12 +126,12 @@ report quality API 不应在接口层猜测 `report_json` 或 repository quality
 持久化 record 构造属于 storage adapter 边界，但它只能消费上游 application service 已投影好的 canonical workflow output。
 
 - `infrastructure.storage.persistence.records` 定义正式 storage record 模型，例如 `WorkflowRunRecord`、`ReportRecord` 和 `RunPersistenceBatch`。
-- `infrastructure.storage.persistence.record_inputs` 定义 `RunPersistenceInput`，显式列出落库构造会消费的 canonical workflow output 字段。
+- `infrastructure.storage.persistence.record_inputs` 定义 `RunPersistenceInput`，显式列出落库构造会消费的 canonical workflow output 字段；`run_persistence_input_from_output()` 只消费调用方传入的 canonical view，不理解 daily dotted key。
 - `infrastructure.storage.persistence.record_builders` 负责把 `RunPersistenceInput` 转成 workflow/report/source/evidence/claim/quality records；旧 `*_from_result()` API 只作为 compatibility projection 入口保留。
 - `infrastructure.storage.persistence.local_json_adapter` 承载本地 JSON adapter 和 record 文件读写细节。
-- `infrastructure.storage.persistence.repository` 只保留 repository protocol、环境选择和 `persist_run_result()` 编排，不再内联 adapter 实现或 report/quality/source/evidence/claim 字段拼装。
+- `infrastructure.storage.persistence.repository` 只保留 repository protocol、环境选择和 `persist_run_result()` / `persist_run_input()` 编排，不再内联 adapter 实现或 report/quality/source/evidence/claim 字段拼装。
 
-daily workflow 的 dotted key 迁移规则仍属于 business daily output projection；persistence 不得重新维护 `report.final -> final_report`、`quality.result -> quality_result` 这类 alias 表。需要落库前，由 `DailyRunApplicationService` 等应用服务调用 `daily_intelligence.output_projection` 补齐 legacy-compatible canonical view，再交给 persistence record builder。这样 storage 层不依赖 `business`，也不会把 daily 专属 buffer key 规则扩散到 repository。
+daily workflow 的 dotted key 迁移规则仍属于 business daily output projection；persistence 不得重新维护 `report.final -> final_report`、`quality.result -> quality_result` 这类 alias 表。需要落库前，由 `DailyRunApplicationService` 调用接口层 `daily_persistence_projection`，先使用 business projection 生成 persistence-only canonical view，再构造 `RunPersistenceInput` 并通过 `persist_prepared_input()` 落库。这样 storage 层不依赖 `business`，daily service 也不需要为了 persistence 提前原地写回 legacy key。
 
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
 

@@ -36,6 +36,13 @@ def project_daily_output_for_legacy_consumers(
     return projected
 
 
+def project_daily_output_for_persistence(output: Mapping[str, Any]) -> dict[str, Any]:
+    return project_daily_output_for_legacy_consumers(
+        output,
+        keys=DAILY_PERSISTENCE_OUTPUT_KEYS,
+    )
+
+
 def ensure_legacy_daily_output_aliases(
     output: MutableMapping[str, Any],
     *,
@@ -75,10 +82,30 @@ _DAILY_OUTPUT_LEGACY_ALIASES = {
     for legacy_key, namespaced_key in DAILY_BUFFER_ALIASES.items()
 }
 
+DAILY_PERSISTENCE_OUTPUT_KEYS = (
+    "source_pipeline_metrics",
+    "agent_loop_metrics",
+    "report_quality_summary",
+    "quality_gate_metrics",
+    "final_report",
+    "blocked_report",
+    "report_markdown",
+    "quality_result",
+    "quality_route",
+    "citation_check_result",
+    "support_matrix",
+    "editor_review",
+    "raw_items",
+    "evidence_bundle",
+    "verified_findings",
+)
+
 
 __all__ = [
+    "DAILY_PERSISTENCE_OUTPUT_KEYS",
     "daily_output_contains",
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",
+    "project_daily_output_for_persistence",
     "project_daily_output_for_legacy_consumers",
 ]

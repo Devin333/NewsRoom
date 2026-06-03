@@ -50,11 +50,36 @@ def test_daily_run_service_projects_namespaced_output_for_service_consumers(tmp_
 
     assert result.output["final_report"] == {"title": "Namespaced report", "sections": []}
     assert result.output["quality_result"] == {"decision": "pass", "route": "final"}
-    assert persistence.persisted_output["final_report"] == result.output["final_report"]
-    assert persistence.persisted_output["evidence_bundle"] == {"items": []}
+    assert persistence.persisted_input.final_report == result.output["final_report"]
+    assert persistence.persisted_input.quality_result == result.output["quality_result"]
+    assert persistence.persisted_input.evidence_bundle == {"items": []}
     assert memory.output["final_report"] == result.output["final_report"]
     assert memory.output["quality_result"] == result.output["quality_result"]
     assert board.output["ranked_items"] == [{"title": "Namespaced item"}]
+
+
+def test_daily_run_service_falls_back_to_projected_result_when_input_writer_is_unconfigured(
+    tmp_path,
+) -> None:
+    persistence = _InputMethodWithoutWriterPersistence()
+    service = DailyRunApplicationService(
+        artifact_root=tmp_path,
+        persistence_service=persistence,
+        runner_cls_resolver=lambda profile: lambda artifact_root: _NamespacedRunner(),
+    )
+
+    service.run_daily(
+        profile="live-offline",
+        topic="AI",
+        source_limit=1,
+        run_id="run-1",
+    )
+
+    assert persistence.persisted_output["final_report"] == {
+        "title": "Namespaced report",
+        "sections": [],
+    }
+    assert persistence.persisted_output["evidence_bundle"] == {"items": []}
 
 
 class _Persistence:
@@ -132,10 +157,29 @@ class _CapturingBoard:
 
 class _CapturingPersistence:
     def __init__(self):
+        self.persisted_input = None
+
+    def prepare_repository(self):
+        return object()
+
+    def persist_prepared_input(self, repository, input_model):
+        self.persisted_input = input_model
+
+    def persist_prepared_result(self, repository, result, *, profile):
+        raise AssertionError("namespaced daily output should persist via RunPersistenceInput")
+
+
+class _InputMethodWithoutWriterPersistence:
+    persist_input = None
+
+    def __init__(self):
         self.persisted_output = {}
 
     def prepare_repository(self):
         return object()
+
+    def persist_prepared_input(self, repository, input_model):
+        raise AssertionError("unconfigured input persistence should use result fallback")
 
     def persist_prepared_result(self, repository, result, *, profile):
         self.persisted_output = dict(result.output)

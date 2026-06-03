@@ -24,11 +24,13 @@ from infrastructure.storage.repository import (
     WorkflowRunRecord,
     claim_records_from_result,
     evidence_item_records_from_result,
+    persist_run_input,
     persist_run_result,
     quality_result_record_from_result,
     report_record_from_result,
     run_persistence_batch_from_input,
     run_persistence_batch_from_result,
+    run_persistence_input_from_output,
     run_persistence_input_from_result,
     source_item_records_from_result,
     workflow_run_record_from_result,
@@ -402,6 +404,31 @@ def test_record_builders_extract_report_and_quality_records_from_projected_daily
     ]
 
 
+def test_run_persistence_input_from_output_consumes_projected_view_without_mutating_result() -> None:
+    final_report = FinalReport(
+        title="Projected Daily",
+        sections=[],
+        source_urls=[],
+    )
+    result = RunResult(
+        run_id="run-output-view",
+        workflow_id="daily",
+        workflow_version="1",
+        status=WorkflowStatus.SUCCEEDED,
+        output={"report.final": final_report},
+    )
+
+    input_model = run_persistence_input_from_output(
+        result,
+        {"final_report": final_report},
+        profile="live-offline",
+    )
+
+    assert "final_report" not in result.output
+    assert input_model.final_report is final_report
+    assert input_model.profile == "live-offline"
+
+
 def test_report_record_from_result_preserves_blocked_report_status() -> None:
     result = RunResult(
         run_id="run-blocked",
@@ -547,6 +574,18 @@ def test_persist_run_result_uses_repository_batch_boundary_when_available() -> N
     repository = _BatchRepository()
 
     persist_run_result(repository, _storage_run_result(), profile="live-offline")
+
+    assert repository.migrated is True
+    assert len(repository.batches) == 1
+    assert repository.batches[0].workflow_run.run_id == "run-1"
+    assert repository.individual_writes == []
+
+
+def test_persist_run_input_uses_explicit_record_input_boundary() -> None:
+    repository = _BatchRepository()
+    input_model = run_persistence_input_from_result(_storage_run_result(), profile="live-offline")
+
+    persist_run_input(repository, input_model)
 
     assert repository.migrated is True
     assert len(repository.batches) == 1

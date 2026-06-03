@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,7 +40,15 @@ def run_persistence_input_from_result(
     *,
     profile: str = "",
 ) -> RunPersistenceInput:
-    output = result.output
+    return run_persistence_input_from_output(result, result.output, profile=profile)
+
+
+def run_persistence_input_from_output(
+    result: RunResult,
+    output: Mapping[str, Any],
+    *,
+    profile: str = "",
+) -> RunPersistenceInput:
     return RunPersistenceInput(
         run_id=result.run_id,
         workflow_id=result.workflow_id,
@@ -68,4 +77,8 @@ def run_persistence_input_from_result(
     )
 
 
-__all__ = ["RunPersistenceInput", "run_persistence_input_from_result"]
+__all__ = [
+    "RunPersistenceInput",
+    "run_persistence_input_from_output",
+    "run_persistence_input_from_result",
+]
