@@ -7,6 +7,10 @@ UTC = _tz.utc
 from typing import Protocol
 
 from business.foundation.models.source import SourceError, SourceHealth, SourceHealthStatus
+from business.layers.signal.source_processing.error_metadata import (
+    SourceErrorMetadataInput,
+    source_error_metadata,
+)
 
 HEALTH_WINDOW = timedelta(hours=24)
 
@@ -202,7 +206,16 @@ class BasicSourceHealthManager:
             error_type="source_disabled",
             error_message=reason or "source is disabled",
             url=url or previous.url,
-            metadata={"retryable": False, "source_health_affecting": False},
+            retryable=False,
+            metadata=source_error_metadata(
+                SourceErrorMetadataInput(
+                    phase="health",
+                    retryable=False,
+                    source_health_affecting=False,
+                    workflow_blocking=False,
+                    operator_action_required=True,
+                )
+            ),
         )
         health = SourceHealth(
             source_id=source_id,

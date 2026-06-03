@@ -2,6 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 from business.foundation.models.source import SourceError, SourceHealth, SourceHealthStatus
 from business.layers.signal.source_health import BasicSourceHealthManager
+from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
+from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
 
 
 class FakeHealthStore:
@@ -192,6 +194,22 @@ def test_health_manager_records_disabled_source_as_skipped() -> None:
     assert health.last_error.url == "https://example.com/rss"
     assert health.last_error.error_type == "source_disabled"
     assert health.last_error.error_message == "manual disable"
+    assert health.last_error.retryable is False
+    assert health.last_error.metadata["phase"] == "health"
+    assert health.last_error.metadata["retryable"] is False
+    assert health.last_error.metadata["source_health_affecting"] is False
+    assert health.last_error.metadata["workflow_blocking"] is False
+    assert health.last_error.metadata["operator_action_required"] is True
+    assert health.last_error.metadata[SOURCE_ERROR_RUNTIME_METADATA_KEY] == {
+        "phase": "health",
+        "retryable": False,
+        "source_health_affecting": False,
+    }
+    assert health.last_error.metadata[SOURCE_ERROR_POLICY_METADATA_KEY] == {
+        "source_health_affecting": False,
+        "workflow_blocking": False,
+        "operator_action_required": True,
+    }
     assert manager.should_skip("source") is True
 
 
