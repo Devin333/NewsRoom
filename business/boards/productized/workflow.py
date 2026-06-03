@@ -139,7 +139,6 @@ _WRITE_KEYS = {
         "policy_experiment_application_context",
         "applied_policy_experiments",
         "skipped_policy_experiments",
-        "applied_overrides",
         "improvement_measurement",
         "self_improvement_report",
     ],

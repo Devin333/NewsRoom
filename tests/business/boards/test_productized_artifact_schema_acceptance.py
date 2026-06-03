@@ -98,6 +98,7 @@ def test_productized_board_artifact_schema_acceptance(board_type: str, tmp_path)
     assert _json(run_dir / "applied_overrides.json") == policy_context[
         "applied_policy_experiments"
     ]
+    assert "applied_overrides" not in result.output
 
     assert (run_dir / "summary.md").read_text(encoding="utf-8").strip()
 

@@ -42,3 +42,6 @@ def test_productized_workflow_declares_policy_experiment_application_context() -
     assert "policy_experiment_application_context" in write_keys_by_step[
         "build_improvement_recommendations"
     ]
+    assert "applied_overrides" not in write_keys_by_step[
+        "build_improvement_recommendations"
+    ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
@@ -46,13 +47,25 @@ class BoardArtifactPublisher:
         metadata = _artifact_metadata(context, self.board_type)
         context.manifest["business_productization"] = metadata
         for key, relative_path in BOARD_ARTIFACTS.items():
-            if key not in context.output:
+            payload = _artifact_payload(context.output, key)
+            if payload is _MISSING:
                 continue
-            refs.append(_write_json_artifact(context, key, relative_path, context.output[key], metadata))
+            refs.append(_write_json_artifact(context, key, relative_path, payload, metadata))
         summary = context.output.get("summary_md")
         if isinstance(summary, str):
             refs.append(_write_text_artifact(context, "summary", "summary.md", summary, metadata))
         return refs
+
+
+_MISSING = object()
+
+
+def _artifact_payload(output: Mapping[str, Any], key: str) -> Any:
+    if key in output:
+        return output[key]
+    if key == "applied_overrides" and "applied_policy_experiments" in output:
+        return output["applied_policy_experiments"]
+    return _MISSING
 
 
 def _write_json_artifact(

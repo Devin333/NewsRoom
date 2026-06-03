@@ -33,5 +33,5 @@ def test_approved_proposal_is_applied_on_next_board_run(tmp_path) -> None:
     applied = result.output["applied_policy_experiments"]
     assert applied and applied[0]["proposal_id"] == "approved-ranking"
     assert policy_context["applied_policy_experiments"] == applied
-    assert result.output["applied_overrides"] == applied
+    assert "applied_overrides" not in result.output
     assert result.output["improvement_measurement"]
