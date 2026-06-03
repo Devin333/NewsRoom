@@ -12,6 +12,8 @@ from business.foundation.models.source import SourceDefinition, SourceError, Sou
 from business.layers.signal.tools import register_source_tools
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
+from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
+from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
 from interfaces.services.source_tool_runtime import default_source_tool_runtime
 
 
@@ -466,12 +468,81 @@ def test_source_probe_tool_records_fetch_failure_as_health_failure() -> None:
 
     assert observation.status == ToolStatus.SUCCEEDED
     assert observation.result.output["ok"] is False
-    assert observation.result.output["error"]["error_type"] == "RuntimeError"
-    assert observation.result.output["error"]["source_name"] == "Example RSS"
+    error = observation.result.output["error"]
+    assert error["error_type"] == "fetch_connection_error"
+    assert error["source_name"] == "Example RSS"
+    assert error["retryable"] is True
+    assert error["metadata"]["phase"] == "probe"
+    assert error["metadata"]["tool"] == "source.probe"
+    assert error["metadata"]["original_exception_type"] == "RuntimeError"
+    assert error["metadata"][SOURCE_ERROR_RUNTIME_METADATA_KEY] == {
+        "phase": "probe",
+        "retryable": True,
+        "source_health_affecting": True,
+    }
+    assert error["metadata"][SOURCE_ERROR_POLICY_METADATA_KEY] == {
+        "source_health_affecting": True,
+        "workflow_blocking": False,
+        "operator_action_required": False,
+    }
     assert observation.result.output["health"]["status"] == "down"
     assert observation.result.output["health"]["source_name"] == "Example RSS"
     assert observation.result.output["health"]["url"] == "https://example.com/feed.xml"
     assert health_manager.get("rss-example").consecutive_failures == 1
+
+
+def test_source_probe_tool_projects_formal_metadata_for_cooling_source_skip() -> None:
+    registry = ToolRegistry()
+    health_manager = BasicSourceHealthManager(failure_threshold=1, cooldown_seconds=300)
+    health_manager.record_failure(
+        "cooling",
+        SourceError(source_id="cooling", error_type="fetch_timeout", error_message="timeout"),
+    )
+    calls = {"count": 0}
+    register_test_source_tools(
+        registry,
+        fetch_text=lambda url: calls.__setitem__("count", calls["count"] + 1) or "content",
+        health_manager=health_manager,
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.probe",
+            arguments={
+                "source": {
+                    "source_id": "cooling",
+                    "name": "Cooling",
+                    "url": "https://example.com/cooling.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.probe"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert calls["count"] == 0
+    assert observation.result.output["ok"] is False
+    error = observation.result.output["error"]
+    assert error["error_type"] == "source_fetch_skipped"
+    assert error["retryable"] is True
+    assert error["metadata"]["phase"] == "probe"
+    assert error["metadata"]["tool"] == "source.probe"
+    assert error["metadata"]["skip_reason"] == "cooldown"
+    assert error["metadata"]["source_health_affecting"] is False
+    assert error["metadata"][SOURCE_ERROR_RUNTIME_METADATA_KEY] == {
+        "phase": "probe",
+        "retryable": True,
+        "source_health_affecting": False,
+    }
+    assert error["metadata"][SOURCE_ERROR_POLICY_METADATA_KEY] == {
+        "source_health_affecting": False,
+        "workflow_blocking": False,
+        "operator_action_required": False,
+    }
+    assert observation.result.output["health"]["status"] == "down"
+    assert observation.result.output["health"]["cooldown_until"] is not None
 
 
 def test_source_probe_tool_returns_rate_limit_error_without_fetching() -> None:

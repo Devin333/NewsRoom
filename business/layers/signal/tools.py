@@ -17,6 +17,11 @@ from business.foundation.models.source import (
 )
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
+from business.layers.signal.source_processing.error_metadata import (
+    SourceErrorMetadataInput,
+    source_error_metadata,
+)
+from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
 from business.layers.signal.source_tool_runtime import (
     FetchText,
     SourceDomainRateLimiter,
@@ -508,14 +513,7 @@ def _probe_source(
             source_runtime=source_runtime,
         )
     except Exception as exc:
-        error = SourceError(
-            source_id=source.source_id,
-            source_name=source.name,
-            error_type=type(exc).__name__,
-            error_message=str(exc),
-            url=source.url,
-            metadata={"tool": "source.probe"},
-        )
+        error = _probe_exception_error(source, exc)
         health = health_manager.record_failure(
             source.source_id,
             error,
@@ -661,7 +659,9 @@ def _source_health_blocked_result(
             error_type="source_fetch_skipped",
             error_message=f"source fetch skipped: disabled for source {source.source_id}",
             health=health,
-            metadata={"skip_reason": "disabled", "source_health_affecting": False},
+            retryable=False,
+            source_health_affecting=False,
+            metadata={"skip_reason": "disabled"},
         )
     decision = health_manager.fetch_decision(
         source.source_id,
@@ -685,6 +685,8 @@ def _source_health_blocked_result(
         error_type="source_fetch_skipped",
         error_message=f"source fetch skipped: {reason} for source {source.source_id}",
         health=decision.health,
+        retryable=True,
+        source_health_affecting=False,
         metadata=metadata,
     )
 
@@ -695,6 +697,8 @@ def _probe_blocked_result(
     error_type: str,
     error_message: str,
     health,
+    retryable: bool,
+    source_health_affecting: bool,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
     error = SourceError(
@@ -703,8 +707,16 @@ def _probe_blocked_result(
         error_type=error_type,
         error_message=error_message,
         url=source.url,
-        retryable=True,
-        metadata={"tool": "source.probe", **metadata},
+        retryable=retryable,
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase="probe",
+                retryable=retryable,
+                source_health_affecting=source_health_affecting,
+                workflow_blocking=False,
+                extra={"tool": "source.probe", **metadata},
+            )
+        ),
     )
     return {
         "ok": False,
@@ -714,6 +726,37 @@ def _probe_blocked_result(
         "error": error.to_dict(),
         "health": health.to_dict(),
     }
+
+
+def _probe_exception_error(source: SourceDefinition, exc: Exception) -> SourceError:
+    classification = classify_source_exception(
+        exc,
+        phase="probe",
+        invalid_config_keywords=("source url",),
+    )
+    extra: dict[str, Any] = {"tool": "source.probe"}
+    attempts = getattr(exc, "source_fetch_attempts", None)
+    if attempts is not None:
+        extra["attempts"] = attempts
+    return SourceError(
+        source_id=source.source_id,
+        source_name=source.name,
+        error_type=classification.error_type,
+        error_message=str(exc),
+        url=source.url,
+        retryable=classification.retryable,
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase="probe",
+                retryable=classification.retryable,
+                source_health_affecting=classification.source_health_affecting,
+                workflow_blocking=classification.workflow_blocking,
+                operator_action_required=classification.operator_action_required,
+                original_exception_type=type(exc).__name__,
+                extra=extra,
+            )
+        ),
+    )
 
 
 def _ensure_source_rate_limit_allows_fetch(
