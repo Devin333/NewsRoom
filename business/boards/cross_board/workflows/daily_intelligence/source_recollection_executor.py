@@ -23,9 +23,8 @@ from business.boards.cross_board.workflows.daily_intelligence.source_collection_
 from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 from business.boards.cross_board.workflows.daily_intelligence.source_event_recorder import SourceEventRecorder
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
+    SourceErrorRuntimeMetadata,
     elapsed_ms,
-    error_metadata_bool,
-    error_phase,
     final_source_fetch_result,
     skipped_source_fetch_result,
     source_fetch_request,
@@ -266,25 +265,24 @@ class DailySourceRecollectionExecutor:
                             error_type=errors[0].error_type,
                             error_count=len(errors),
                             fetch_latency_ms=fetch_latency_ms,
-                        )
+                    )
                     for error in errors:
-                        retryable = error_metadata_bool(error, "retryable", default=True)
-                        source_health_affecting = error_metadata_bool(
-                            error,
-                            "source_health_affecting",
-                            default=True,
-                        )
+                        error_runtime_metadata = SourceErrorRuntimeMetadata.from_error(error)
                         event_recorder.fetch_failed(
                             source,
                             error=error,
-                            retryable=retryable,
-                            source_health_affecting=source_health_affecting,
+                            retryable=error_runtime_metadata.retryable,
+                            source_health_affecting=error_runtime_metadata.source_health_affecting,
                             fetch_latency_ms=fetch_latency_ms,
                         )
-                        if error_phase(error) == "parse":
-                            event_recorder.parse_failed(source, error=error, retryable=retryable)
+                        if error_runtime_metadata.phase == "parse":
+                            event_recorder.parse_failed(
+                                source,
+                                error=error,
+                                retryable=error_runtime_metadata.retryable,
+                            )
                         metrics.record_error(error)
-                        if source_health_affecting:
+                        if error_runtime_metadata.source_health_affecting:
                             health_flow.record_failure(
                                 source,
                                 error,

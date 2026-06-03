@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
+    SourceErrorRuntimeMetadata,
     SourceFetchResultMetadata,
+    error_metadata_bool,
+    error_phase,
     skipped_source_fetch_result,
     source_fetch_result,
 )
-from business.foundation.models.source import SourceDefinition, SourceType
+from business.foundation.models.source import SourceDefinition, SourceError, SourceType
 
 
 def test_source_fetch_result_metadata_keeps_compatibility_fields() -> None:
@@ -70,6 +73,30 @@ def test_source_fetch_result_metadata_prefers_formal_zero_counts() -> None:
 
     assert payload.item_count == 0
     assert payload.error_count == 0
+
+
+def test_source_error_runtime_metadata_projects_legacy_error_metadata() -> None:
+    error = SourceError(
+        source_id="source-1",
+        error_type="parse_error",
+        error_message="Could not parse feed.",
+        metadata={
+            "retryable": False,
+            "source_health_affecting": False,
+            "phase": "parse",
+            "request_id": "fetch-1",
+        },
+    )
+
+    runtime_metadata = SourceErrorRuntimeMetadata.from_error(error)
+
+    assert runtime_metadata.retryable is False
+    assert runtime_metadata.source_health_affecting is False
+    assert runtime_metadata.phase == "parse"
+    assert runtime_metadata.request_id == "fetch-1"
+    assert error_metadata_bool(error, "retryable", default=True) is False
+    assert error_metadata_bool(error, "source_health_affecting", default=True) is False
+    assert error_phase(error) == "parse"
 
 
 def _source() -> SourceDefinition:

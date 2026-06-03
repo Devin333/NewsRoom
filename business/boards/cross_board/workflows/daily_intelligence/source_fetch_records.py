@@ -102,6 +102,31 @@ class SourceFetchResultMetadata(PrimitiveModel):
         return metadata
 
 
+class SourceErrorRuntimeMetadata(PrimitiveModel):
+    schema_version: str = "business.cross_board.daily_source_error.runtime_metadata.v1"
+    retryable: bool = True
+    source_health_affecting: bool = True
+    phase: str | None = None
+    request_id: str | None = None
+
+    @classmethod
+    def from_error(cls, error: SourceError) -> "SourceErrorRuntimeMetadata":
+        metadata = dict(error.metadata or {})
+        return cls(
+            retryable=(
+                bool(error.retryable)
+                if error.retryable is not None
+                else _bool_value(metadata.get("retryable"), default=True)
+            ),
+            source_health_affecting=_bool_value(
+                metadata.get("source_health_affecting"),
+                default=True,
+            ),
+            phase=_optional_text(metadata.get("phase")),
+            request_id=_optional_text(metadata.get("request_id")),
+        )
+
+
 def _metadata_value(
     formal: dict[str, Any],
     legacy: dict[str, Any],
@@ -302,19 +327,17 @@ def with_error_request_id(errors: list[SourceError], request_id: str) -> list[So
 
 
 def error_metadata_bool(error: SourceError, key: str, *, default: bool) -> bool:
+    runtime_metadata = SourceErrorRuntimeMetadata.from_error(error)
     if key == "retryable" and error.retryable is not None:
-        return error.retryable
+        return runtime_metadata.retryable
+    if key == "source_health_affecting":
+        return runtime_metadata.source_health_affecting
     value = error.metadata.get(key, default)
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+    return _bool_value(value, default=default)
 
 
 def error_phase(error: SourceError) -> str | None:
-    value = error.metadata.get("phase")
-    return str(value) if value is not None else None
+    return SourceErrorRuntimeMetadata.from_error(error).phase
 
 
 def _fetch_policy_metadata(fetch_policy: SourceFetchPolicy) -> dict[str, Any]:
@@ -366,3 +389,11 @@ def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _bool_value(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
