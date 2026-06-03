@@ -24,7 +24,6 @@ class SelfImprovementReportBuilder:
             applied_policy_experiments=applied_policy_experiments,
             applied_overrides=applied_overrides,
         )
-        compatibility_overrides = list(applied_overrides) if applied_overrides is not None else list(policy_experiments)
         policy_experiment_profiles = policy_experiment_profiles_from_proposals(proposals)
         return SelfImprovementReport(
             feedback_events=[_to_dict(event) for event in feedback_events],
@@ -34,7 +33,7 @@ class SelfImprovementReportBuilder:
             policy_experiment_profiles=policy_experiment_profiles,
             policy_experiment_profile_ids=policy_experiment_profile_ids(policy_experiment_profiles),
             applied_policy_experiments=policy_experiments,
-            applied_overrides=compatibility_overrides,
+            applied_overrides=[dict(item) for item in policy_experiments],
             measurement=_to_dict(measurement),
             risks=risk_notes_from_proposals(proposals),
             next_actions=next_actions_for_proposals(proposals),

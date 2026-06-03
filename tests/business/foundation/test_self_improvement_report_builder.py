@@ -116,3 +116,18 @@ def test_self_improvement_report_builder_uses_policy_experiment_application_cont
 
     assert report.applied_policy_experiments == context.applied_policy_experiments
     assert report.applied_overrides == report.applied_policy_experiments
+
+
+def test_self_improvement_report_builder_keeps_legacy_overrides_as_policy_experiment_mirror() -> None:
+    report = SelfImprovementReportBuilder().build(
+        feedback_events=[],
+        learning_signals=[],
+        recommendations=[],
+        proposals=[],
+        applied_policy_experiments=[{"proposal_id": "formal"}],
+        applied_overrides=[{"proposal_id": "legacy"}],
+        measurement={},
+    )
+
+    assert report.applied_policy_experiments == [{"proposal_id": "formal"}]
+    assert report.applied_overrides == report.applied_policy_experiments
