@@ -1,5 +1,9 @@
 from business.layers.signal.artifact_refs import SignalArtifactRef
 from business.layers.signal.pipeline import SignalPipeline, SignalPipelineResult
+from business.layers.signal.source_artifact_publication import (
+    SourceArtifactPublication,
+    SourceArtifactPublicationService,
+)
 from business.layers.signal.models import (
     RawSignalInput,
     RejectedSignal,
@@ -20,6 +24,8 @@ __all__ = [
     "SignalPipelineError",
     "SignalPipelineResult",
     "SignalPipelineStats",
+    "SourceArtifactPublication",
+    "SourceArtifactPublicationService",
     "SourceArtifactWriter",
     "SourceHealthCheckTaskHandler",
     "source_artifact_ref_extractor",

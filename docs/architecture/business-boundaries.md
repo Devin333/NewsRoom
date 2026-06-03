@@ -95,6 +95,8 @@ source item artifact 输入由同一模块的 `SourceItemArtifactInput` 投影�
 
 source item、raw content 和 parsed-items index 的具体写入职责由 `_SourceItemArtifactWriter` 承载；fetch request/result、response headers 和 request/result artifact ref 索引由 `_SourceFetchArtifactWriter` 承载；source error artifact、request/response ref 关联和 redacted error payload 构建由 `_SourceErrorArtifactWriter` 承载；source artifact index 的计数和写入由 `_SourceArtifactIndexWriter` 承载；`SourceArtifactWriter` 只负责编排 item/fetch/error/index 写入结果。新增 source artifact 类型时，应优先新增对应 input view 或小型 writer，不要把 payload 解析、ref 索引、index 汇总和文件写入细节继续堆回 `SourceArtifactWriter.write_source_artifacts()`。
 
+source artifact 发布到 workflow manifest 的业务投影由 `SourceArtifactPublicationService` 承载。daily workflow artifact publisher 只负责从 workflow output 读取已声明 key、注册已有 `source_artifacts/index.json` artifact ref，并把 service 返回的 `manifest_summary` 写入 manifest；item/error/fetch 计数、可选 response headers / parsed-items 计数和 total count 的汇总规则不得散落在 workflow publisher 中。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

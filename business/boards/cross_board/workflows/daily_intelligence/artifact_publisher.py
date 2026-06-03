@@ -11,7 +11,11 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     daily_output_contains as _output_contains,
     daily_output_value as _output_value,
 )
-from business.layers.signal.artifacts import SourceArtifactWriter
+from business.layers.signal.source_artifact_publication import (
+    SOURCE_ARTIFACT_INDEX_KEY,
+    SOURCE_ARTIFACT_INDEX_PATH,
+    SourceArtifactPublicationService,
+)
 from framework.workflow.runtime.artifact_publishers import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
@@ -320,7 +324,9 @@ class DailyIntelligenceArtifactPublisher:
                 _output_value(output, "source_ranking_scores")
             )
         _update_source_recollection_manifest_fields(context.manifest, output)
-        source_artifacts = SourceArtifactWriter(context.artifact_manager).write_source_artifacts(
+        source_artifacts = SourceArtifactPublicationService(
+            context.artifact_manager
+        ).publish(
             context.run_id,
             raw_items=_output_value(output, "raw_items"),
             source_fetch_requests=_output_value(output, "source_fetch_requests"),
@@ -331,27 +337,12 @@ class DailyIntelligenceArtifactPublisher:
             refs.append(
                 _register_existing_artifact(
                     context,
-                    "source_artifacts",
-                    "source_artifacts/index.json",
+                    SOURCE_ARTIFACT_INDEX_KEY,
+                    SOURCE_ARTIFACT_INDEX_PATH,
                     content_type="application/json",
                 )
             )
-            context.manifest["source_artifacts"] = {
-                "item_count": source_artifacts["item_count"],
-                "error_count": source_artifacts["error_count"],
-                "raw_content_count": source_artifacts["raw_content_count"],
-                "fetch_request_count": source_artifacts["fetch_request_count"],
-                "fetch_result_count": source_artifacts["fetch_result_count"],
-                "total_count": len(source_artifacts["entries"]),
-            }
-            if source_artifacts.get("response_headers_count"):
-                context.manifest["source_artifacts"]["response_headers_count"] = source_artifacts[
-                    "response_headers_count"
-                ]
-            if source_artifacts.get("parsed_items_count"):
-                context.manifest["source_artifacts"]["parsed_items_count"] = source_artifacts[
-                    "parsed_items_count"
-                ]
+            context.manifest["source_artifacts"] = source_artifacts.manifest_summary
         return refs
 
 
