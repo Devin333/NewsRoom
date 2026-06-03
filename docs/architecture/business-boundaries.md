@@ -156,6 +156,7 @@ daily run service、persistence、memory ingestion 和 board output attachment �
 - `project_daily_output_for_legacy_consumers()`：仅作为历史兼容 helper 保留；新增服务消费面必须优先定义专用 projection，避免 consumer 直接理解 daily alias 表或接收整份 runtime output。
 
 `DailyOutputProjectionReadPolicy` 用于显式标注 projection 的读取策略：persistence、memory ingestion、board attachment 和 run inspection 专用 projection 已切到 `NAMESPACED_ONLY`；`NAMESPACED_WITH_LEGACY_FALLBACK` 只保留在公开 output accessor 与历史兼容 helper 中，不得作为新增服务消费面的默认策略。
+架构测试会检查所有 `project_daily_output_for_*` 服务投影，除 `project_daily_output_for_legacy_consumers` 外必须显式使用 `NAMESPACED_ONLY`，防止新增服务消费面重新读取 legacy-only daily output。
 
 interfaces 可以调用这些 business projection helper，但不得在接口服务里复制 `DAILY_BUFFER_ALIASES` 或手写 `report.final -> final_report` 这类映射。memory 和 board 通用服务继续消费 canonical legacy 字段；daily workflow 的命名空间迁移规则只留在 daily workflow business 边界内。
 

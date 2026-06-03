@@ -224,6 +224,32 @@ def test_productized_artifact_publisher_delegates_legacy_override_projection() -
     assert "applied_overrides" not in source
 
 
+def test_daily_service_output_projections_require_namespaced_daily_keys() -> None:
+    projection_path = (
+        BUSINESS_ROOT
+        / "boards"
+        / "cross_board"
+        / "workflows"
+        / "daily_intelligence"
+        / "output_projection.py"
+    )
+    tree = ast.parse(projection_path.read_text(encoding="utf-8"), filename=str(projection_path))
+    violations: list[str] = []
+
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if not node.name.startswith("project_daily_output_for_"):
+            continue
+        if node.name == "project_daily_output_for_legacy_consumers":
+            continue
+        policies = _keyword_attribute_values(node, keyword_name="read_policy")
+        if policies != ["NAMESPACED_ONLY"]:
+            violations.append(f"{node.name}: {policies}")
+
+    assert violations == []
+
+
 def test_daily_agent_registry_stays_fixture_free() -> None:
     registry_path = (
         BUSINESS_ROOT
@@ -329,6 +355,22 @@ def _imported_symbol_violations(root: Path, *, forbidden_names: tuple[str, ...])
                         f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: {alias.name}"
                     )
     return violations
+
+
+def _keyword_attribute_values(node: ast.AST, *, keyword_name: str) -> list[str]:
+    values: list[str] = []
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        for keyword in child.keywords:
+            if keyword.arg != keyword_name:
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Attribute):
+                values.append(value.attr)
+            else:
+                values.append(ast.unparse(value))
+    return values
 
 
 def _matching_forbidden(
