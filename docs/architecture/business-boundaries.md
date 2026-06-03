@@ -85,6 +85,8 @@ source fetch error 的运行期策略由 `SourceErrorRuntimeMetadata` 投影，`
 
 source artifact 发布侧同样不得对 `source_errors` 做 duck typing。`SourceArtifactWriter` 的公开入口可以接收历史 dict payload，但必须先通过 `normalize_source_errors()` 归一化为 `SourceError`；artifact id、request/response artifact ref 关联、redaction payload 构建只消费正式字段。这样 legacy dict 兼容停留在 artifact boundary，artifact 业务逻辑不再通过 `dict.get("error_type")` 或 `getattr()` 猜测错误结构。
 
+source fetch result artifact 输入由 `business.layers.signal.source_artifact_inputs.SourceFetchResultArtifactInput` 投影。`SourceArtifactWriter` 可以接收历史 mapping payload，但 fetch result artifact id、response headers artifact、status/content-type 和 response URL 只能消费该 input view 的正式字段；response headers 从 metadata 的兼容读取必须停留在 input view 中，writer 主体不得继续保留 `_metadata_value()` / `_optional_value()` 这类通用 duck-typing helper。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

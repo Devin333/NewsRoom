@@ -9,6 +9,10 @@ from framework.shared.json import to_jsonable as _to_json_safe
 from business.foundation.models.source import SourceError
 from business.foundation.models.source_error_normalization import normalize_source_errors
 from business.layers.signal.artifact_refs import SignalArtifactRef
+from business.layers.signal.source_artifact_inputs import (
+    SourceFetchResultArtifactInput,
+    source_fetch_result_artifact_inputs,
+)
 from framework.artifacts import ArtifactManager
 
 
@@ -188,9 +192,9 @@ class SourceArtifactWriter:
                 )
             )
 
-        for fetch_result in source_fetch_results or []:
-            source_id = _string_value(fetch_result, "source_id", default="unknown-source")
-            object_id = _string_value(fetch_result, "request_id", default=_stable_id(fetch_result))
+        for fetch_result in source_fetch_result_artifact_inputs(source_fetch_results):
+            source_id = fetch_result.source_id
+            object_id = fetch_result.request_id
             response_headers_entry, response_headers_ref = self._write_response_headers_artifact(
                 run_id,
                 fetch_result=fetch_result,
@@ -198,7 +202,7 @@ class SourceArtifactWriter:
                 object_id=object_id,
             )
             path = f"sources/fetch_results/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-            fetch_result_payload = _redact(_to_json_safe(fetch_result))
+            fetch_result_payload = _redact(_to_json_safe(fetch_result.payload))
             response_headers_ref_payload = _ref_payload(response_headers_ref)
             if isinstance(fetch_result_payload, dict) and response_headers_ref_payload is not None:
                 fetch_result_payload["response_headers_ref"] = response_headers_ref_payload
@@ -374,11 +378,11 @@ class SourceArtifactWriter:
         self,
         run_id: str,
         *,
-        fetch_result: Any,
+        fetch_result: SourceFetchResultArtifactInput,
         source_id: str,
         object_id: str,
     ) -> tuple[dict[str, Any] | None, SignalArtifactRef | None]:
-        response_headers = _response_headers(fetch_result)
+        response_headers = fetch_result.response_headers
         if not response_headers:
             return None, None
         path = f"sources/response_headers/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
@@ -389,9 +393,9 @@ class SourceArtifactWriter:
                 "artifact_type": "source_response_headers",
                 "source_id": source_id,
                 "request_id": object_id,
-                "status_code": _optional_int_value(fetch_result, "status_code"),
-                "content_type": _optional_value(fetch_result, "content_type"),
-                "response_url": _redact(_metadata_value(fetch_result, "response_url")),
+                "status_code": fetch_result.status_code,
+                "content_type": fetch_result.content_type,
+                "response_url": _redact(fetch_result.response_url),
                 "headers": _redact(response_headers),
             },
         )
@@ -409,8 +413,8 @@ class SourceArtifactWriter:
             object_id=object_id,
             artifact_path=artifact_path,
         )
-        entry["status_code"] = _optional_int_value(fetch_result, "status_code")
-        entry["content_type"] = _optional_value(fetch_result, "content_type")
+        entry["status_code"] = fetch_result.status_code
+        entry["content_type"] = fetch_result.content_type
         return entry, artifact_ref
 
 
@@ -613,39 +617,6 @@ def _resolve_error_ref(
     if len(source_refs) == 1:
         return source_refs[0]
     return None
-
-
-def _metadata_value(value: Any, name: str) -> Any:
-    if isinstance(value, dict):
-        metadata = value.get("metadata")
-    else:
-        metadata = getattr(value, "metadata", None)
-    if not isinstance(metadata, dict):
-        return None
-    return metadata.get(name)
-
-
-def _response_headers(fetch_result: Any) -> dict[str, Any]:
-    value = _metadata_value(fetch_result, "response_headers")
-    if isinstance(value, dict):
-        return value
-    fetch_response = _metadata_value(fetch_result, "fetch_response")
-    if isinstance(fetch_response, dict) and isinstance(fetch_response.get("headers"), dict):
-        return dict(fetch_response["headers"])
-    return {}
-
-
-def _optional_value(value: Any, name: str) -> Any:
-    if isinstance(value, dict):
-        return value.get(name)
-    return getattr(value, name, None)
-
-
-def _optional_int_value(value: Any, name: str) -> int | None:
-    candidate = _optional_value(value, name)
-    if candidate is None:
-        return None
-    return int(candidate)
 
 
 def _optional_string(value: Any) -> str | None:
