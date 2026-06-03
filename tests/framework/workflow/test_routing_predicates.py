@@ -4,6 +4,7 @@ from business.boards.cross_board.workflows.daily_intelligence.routing_predicates
     build_daily_intelligence_routing_predicate_registry,
 )
 from framework.specs import EdgeCondition, EdgeSpec, StepSpec, WorkflowSpec
+from framework.workflow import DataBuffer
 from framework.workflow.routing import RoutingEngine
 from framework.workflow.runtime.result import StepOutcome
 
@@ -81,6 +82,84 @@ def test_business_predicates_route_verifier_rewrite_status() -> None:
     ).decide(workflow, workflow.step_by_id("verify"), outcome)
 
     assert decision.target_step_id == "feedback"
+
+
+def test_business_predicates_route_dotted_quality_gate_metrics_from_outcome() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="wf",
+        name="Workflow",
+        version="1",
+        start_step_id="quality",
+        steps=[StepSpec("quality"), StepSpec("publish")],
+        edges=[
+            EdgeSpec("pass", "quality", "publish", condition=EdgeCondition.VALIDATION_PASS),
+        ],
+    )
+    outcome = StepOutcome.success(
+        "quality",
+        {"quality.gate_metrics": {"decision": "pass"}},
+    )
+
+    decision = RoutingEngine(
+        predicate_registry=build_daily_intelligence_routing_predicate_registry()
+    ).decide(workflow, workflow.step_by_id("quality"), outcome)
+
+    assert decision.target_step_id == "publish"
+
+
+def test_business_predicates_route_dotted_report_quality_summary_from_buffer() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="wf",
+        name="Workflow",
+        version="1",
+        start_step_id="quality",
+        steps=[StepSpec("quality"), StepSpec("rewrite")],
+        edges=[
+            EdgeSpec(
+                "retry",
+                "quality",
+                "rewrite",
+                condition=EdgeCondition.VALIDATION_RETRY_REQUIRED,
+            ),
+        ],
+    )
+    buffer = DataBuffer({"quality.report_summary": {"decision": "rewrite_required"}})
+
+    decision = RoutingEngine(
+        predicate_registry=build_daily_intelligence_routing_predicate_registry()
+    ).decide(
+        workflow,
+        workflow.step_by_id("quality"),
+        StepOutcome.success("quality", {}),
+        buffer=buffer,
+    )
+
+    assert decision.target_step_id == "rewrite"
+
+
+def test_business_predicates_keep_buffer_blocked_priority_with_dotted_keys() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="wf",
+        name="Workflow",
+        version="1",
+        start_step_id="quality",
+        steps=[StepSpec("quality"), StepSpec("publish"), StepSpec("blocked")],
+        edges=[
+            EdgeSpec("blocked", "quality", "blocked", condition=EdgeCondition.VALIDATION_BLOCKED),
+            EdgeSpec("pass", "quality", "publish", condition=EdgeCondition.VALIDATION_PASS),
+        ],
+    )
+    buffer = DataBuffer({"quality.report_summary": {"decision": "blocked"}})
+    outcome = StepOutcome.success(
+        "quality",
+        {"quality.gate_metrics": {"decision": "pass"}},
+    )
+
+    decision = RoutingEngine(
+        predicate_registry=build_daily_intelligence_routing_predicate_registry()
+    ).decide(workflow, workflow.step_by_id("quality"), outcome, buffer=buffer)
+
+    assert decision.target_step_id == "blocked"
 
 
 def test_business_predicates_route_agent_feedback_retry() -> None:

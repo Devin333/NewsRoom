@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    namespaced_first_key_candidates,
+)
+from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
+    daily_output_value,
+)
 from framework.workflow.routing import RoutingPredicateContext, RoutingPredicateRegistry
 from framework.workflow.routing.predicates import lookup, lookup_buffer
 
@@ -60,23 +66,35 @@ def _validation_decision(context: RoutingPredicateContext) -> str | None:
 
 def _validation_sources(context: RoutingPredicateContext) -> tuple[object, ...]:
     return (
-        context.outcome.outputs.get("agent_feedback_route"),
+        _daily_outcome_value(context, "agent_feedback_route"),
         context.outcome.outputs.get("validation_metrics"),
         context.outcome.outputs.get("validation_result"),
-        context.outcome.outputs.get("quality_gate_metrics"),
-        context.outcome.outputs.get("verification_result"),
-        context.outcome.outputs.get("citation_check_result"),
-        context.outcome.outputs.get("editor_review"),
-        context.outcome.outputs.get("report_quality_summary"),
-        lookup_buffer(context.buffer, "agent_feedback_route"),
         lookup_buffer(context.buffer, "validation_metrics"),
         lookup_buffer(context.buffer, "validation_result"),
-        lookup_buffer(context.buffer, "quality_gate_metrics"),
-        lookup_buffer(context.buffer, "verification_result"),
-        lookup_buffer(context.buffer, "citation_check_result"),
-        lookup_buffer(context.buffer, "editor_review"),
-        lookup_buffer(context.buffer, "report_quality_summary"),
+        _daily_outcome_value(context, "quality_gate_metrics"),
+        _daily_outcome_value(context, "verification_result"),
+        _daily_outcome_value(context, "citation_check_result"),
+        _daily_outcome_value(context, "editor_review"),
+        _daily_outcome_value(context, "report_quality_summary"),
+        _daily_buffer_value(context, "agent_feedback_route"),
+        _daily_buffer_value(context, "quality_gate_metrics"),
+        _daily_buffer_value(context, "verification_result"),
+        _daily_buffer_value(context, "citation_check_result"),
+        _daily_buffer_value(context, "editor_review"),
+        _daily_buffer_value(context, "report_quality_summary"),
     )
+
+
+def _daily_outcome_value(context: RoutingPredicateContext, key: str) -> object:
+    return daily_output_value(context.outcome.outputs, key)
+
+
+def _daily_buffer_value(context: RoutingPredicateContext, key: str) -> object:
+    for candidate_key in namespaced_first_key_candidates(key):
+        value = lookup_buffer(context.buffer, candidate_key)
+        if value is not None:
+            return value
+    return None
 
 
 def _validation_decision_from_source(source: object) -> str | None:
