@@ -20,8 +20,9 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
 from business.boards.cross_board.workflows.daily_intelligence.quality_artifact_projection import (
     quality_manifest_fields,
 )
-from business.boards.cross_board.workflows.daily_intelligence.source_recollection_artifact_projection import (
-    source_recollection_manifest_summary,
+from business.boards.cross_board.workflows.daily_intelligence.source_diagnostic_artifact_projection import (
+    project_daily_source_diagnostic_artifacts,
+    source_diagnostic_manifest_fields,
 )
 from business.layers.signal.source_artifact_publication import (
     SOURCE_ARTIFACT_INDEX_KEY,
@@ -182,53 +183,18 @@ class DailyIntelligenceArtifactPublisher:
         return refs
 
     def _publish_source_diagnostics(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
-        refs = _write_json_artifacts_from_output(
-            context,
-            {
-                "raw_items": "raw_items.json",
-                "source_errors": "source_errors.json",
-                "skipped_sources": "skipped_sources.json",
-                "failed_sources": "failed_sources.json",
-                "source_fetch_requests": "source_fetch_requests.json",
-                "source_fetch_results": "source_fetch_results.json",
-                "source_health_updates": "source_health_updates.json",
-                "source_health_report": "source_health_report.json",
-                "source_duplicate_groups": "source_duplicate_groups.json",
-                "source_events": "source_events.json",
-                "source_pipeline_metrics": "source_pipeline_metrics.json",
-                "source_connector_dispatch_report": "source_connector_dispatch_report.json",
-                "source_error_policy_report": "source_error_policy_report.json",
-                "source_fallback_report": "source_fallback_report.json",
-                "source_selection_report": "source_selection_report.json",
-                "source_coverage_report": "source_coverage_report.json",
-                "source_quality_scores": "source_quality_scores.json",
-                "source_quality_summary_report": "source_quality_summary_report.json",
-                "source_ranking_scores": "source_ranking_scores.json",
-                "source_freshness_report": "source_freshness_report.json",
-                "source_traceability_report": "source_traceability_report.json",
-                "source_governance_report": "source_governance_report.json",
-                "source_recollection_profile": "source_recollection/profile.json",
-                "source_recollection_execution_plan": "source_recollection/execution_plan.json",
-                "source_recollection_execution_report": "source_recollection/execution_report.json",
-                "source_recollection_quality_assessment": (
-                    "source_recollection/quality_assessment.json"
-                ),
-            },
-        )
+        refs: list[ArtifactRef] = []
+        for artifact in project_daily_source_diagnostic_artifacts(context.output):
+            refs.append(
+                _write_json_artifact(
+                    context,
+                    artifact.artifact_key,
+                    artifact.relative_path,
+                    artifact.payload,
+                )
+            )
         output = context.output
-        if _output_contains(output, "source_events"):
-            context.manifest["source_event_count"] = len(_output_value(output, "source_events"))
-        if _output_contains(output, "source_quality_scores"):
-            context.manifest["source_quality_score_count"] = len(
-                _output_value(output, "source_quality_scores")
-            )
-        if _output_contains(output, "source_ranking_scores"):
-            context.manifest["source_ranking_score_count"] = len(
-                _output_value(output, "source_ranking_scores")
-            )
-        source_recollection = source_recollection_manifest_summary(output)
-        if source_recollection is not None:
-            context.manifest["source_recollection"] = source_recollection
+        context.manifest.update(source_diagnostic_manifest_fields(output))
         source_artifacts = SourceArtifactPublicationService(
             context.artifact_manager
         ).publish(

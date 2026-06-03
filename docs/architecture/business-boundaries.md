@@ -97,6 +97,8 @@ source item、raw content 和 parsed-items index 的具体写入职责由 `_Sour
 
 source artifact 发布到 workflow manifest 的业务投影由 `SourceArtifactPublicationService` 承载。daily workflow artifact publisher 只负责从 workflow output 读取已声明 key、注册已有 `source_artifacts/index.json` artifact ref，并把 service 返回的 `manifest_summary` 写入 manifest；item/error/fetch 计数、可选 response headers / parsed-items 计数和 total count 的汇总规则不得散落在 workflow publisher 中。
 
+source diagnostics artifact 列表和 source manifest count 投影由 `source_diagnostic_artifact_projection.py` 承载，统一消费 `sources.*` / legacy source output，并合并 `source_recollection_artifact_projection.py` 返回的补源摘要。artifact publisher 只负责写 projection 返回的 diagnostics JSON artifact、调用 `SourceArtifactPublicationService` 写 source artifact index，并合并 service/projection manifest fields；不得在 publisher 中维护 source event、quality score、ranking score 计数规则。
+
 evidence artifact 列表与 `evidence_source_map.json` fallback 投影由 `evidence_artifact_projection.py` 承载，统一消费 `evidence_bundle` / `evidence.bundle`、显式 `evidence_source_map` / `evidence.source_map` 以及 evidence 评分、候选 claim、verified findings 输出。artifact publisher 只负责写 projection 返回的 JSON artifact，不再从 bundle 结构反推 source map 或维护 evidence artifact 列表。
 
 agentic daily workflow 的 artifact 投影由 `agentic_artifact_projection.py` 承载，包括 agent loop artifact 列表、LLM 调用 artifact 脱敏、agent feedback manifest 摘要和 `agentic_summary` payload。artifact publisher 只负责判断 agentic workflow、写 JSON artifact，并把 projection 返回的 manifest fields 合并进 manifest；不得在 publisher 中重新维护 agent 列表、loop suffix 表、feedback 计数或 agent summary 规则。
