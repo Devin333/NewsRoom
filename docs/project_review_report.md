@@ -703,7 +703,7 @@ Daily agentic workflow 通过 `daily_workflow_runtime_policy()` 声明全局 tim
 2. 继续收敛 artifact-facing projection 中的 legacy fallback，但保持 artifact key、manifest key 和历史 consumer 行为稳定。
 3. quality gate 的 block / rewrite / memory conflict / human review route 已有跨 run 聚合入口，后续可接入持久化 run inspection 或 dashboard。
 4. 继续减少 metadata 作为隐式数据通道的历史兼容面，优先新增正式 input view 或 domain model。
-5. 对 source connector metadata fallback 做分批下线计划，保留 `SourceConnectorRuntimeOptions` 作为唯一业务读取口。
+5. source connector metadata 读取已由架构测试固定在 `SourceConnectorRuntimeOptions` / metadata view 边界，后续只需要对历史 fallback key 做分批下线计划。
 
 ---
 
@@ -735,7 +735,8 @@ Daily agentic workflow 通过 `daily_workflow_runtime_policy()` 声明全局 tim
 
 - [ ] 对 daily output 的 artifact-facing projection 继续做 legacy fallback 消费面审计。
 - [x] 为 quality observability 增加跨 run 聚合入口，沉淀 block / rewrite / human review / memory conflict 指标。
-- [ ] 为 source connector metadata fallback 制定下线顺序，并用架构测试禁止新增直接 metadata 读取。
+- [x] 用架构测试禁止 source connector 运行路径新增直接 metadata 读取。
+- [ ] 为 source connector metadata fallback 制定历史 key 下线顺序。
 
 ---
 

@@ -320,6 +320,26 @@ def test_source_error_consumers_use_normalized_error_models() -> None:
     assert _source_error_duck_typing_violations(consumer_paths) == []
 
 
+def test_daily_source_connector_metadata_reads_stay_in_runtime_options_view() -> None:
+    daily_root = BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence"
+    consumer_paths = (
+        daily_root / "source_collection.py",
+        daily_root / "source_dispatcher.py",
+        daily_root / "source_fetch_records.py",
+        daily_root / "source_recollection_executor.py",
+    )
+    allowed_paths = {
+        daily_root / "source_connector_options.py",
+    }
+
+    violations = _connector_metadata_access_violations(
+        consumer_paths,
+        allowed_paths=allowed_paths,
+    )
+
+    assert violations == []
+
+
 def _forbidden_imports(root: Path, *, forbidden_prefixes: tuple[str, ...]) -> list[str]:
     violations: list[str] = []
     for path in root.rglob("*.py"):
@@ -416,6 +436,66 @@ def _source_error_duck_typing_violations(paths: tuple[Path, ...]) -> list[str]:
             if _is_getattr_on_source_error(node, fields=forbidden_fields):
                 violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: getattr")
     return violations
+
+
+def _connector_metadata_access_violations(
+    paths: tuple[Path, ...],
+    *,
+    allowed_paths: set[Path],
+) -> list[str]:
+    connector_fields = (
+        "query",
+        "repository",
+        "github_mode",
+        "mode",
+        "discussion_category",
+        "story_list",
+        "subreddit",
+        "listing",
+        "time_range",
+        "time",
+        "tagged",
+        "tag",
+        "site",
+        "records",
+        "token_env",
+        "connector_name",
+    )
+    violations: list[str] = []
+    for path in paths:
+        if path in allowed_paths:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if _is_connector_metadata_get(node, fields=connector_fields):
+                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: metadata.get")
+            if _is_connector_metadata_subscript(node, fields=connector_fields):
+                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: metadata[]")
+    return violations
+
+
+def _is_connector_metadata_get(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if not isinstance(node.func, ast.Attribute) or node.func.attr != "get":
+        return False
+    if not _is_metadata_access_target(node.func.value):
+        return False
+    return bool(node.args) and _constant_value(node.args[0]) in fields
+
+
+def _is_connector_metadata_subscript(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
+    if not isinstance(node, ast.Subscript):
+        return False
+    if not _is_metadata_access_target(node.value):
+        return False
+    return _constant_value(node.slice) in fields
+
+
+def _is_metadata_access_target(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id == "metadata"
+    return isinstance(node, ast.Attribute) and node.attr == "metadata"
 
 
 def _is_mapping_get_on_source_error(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
