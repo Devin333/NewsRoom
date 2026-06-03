@@ -49,7 +49,7 @@ def daily_output_contains(output: Mapping[str, Any], key: str) -> bool:
 def project_daily_output_for_legacy_consumers(
     output: Mapping[str, Any],
     *,
-    keys: Iterable[str] | None = None,
+    keys: Iterable[str],
 ) -> dict[str, Any]:
     projected = dict(output)
     for legacy_key in _legacy_projection_keys(keys):

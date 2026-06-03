@@ -50,13 +50,21 @@ def test_project_daily_output_for_legacy_consumers_returns_projected_copy() -> N
         "unmapped": "kept",
     }
 
-    projected = project_daily_output_for_legacy_consumers(output)
+    projected = project_daily_output_for_legacy_consumers(
+        output,
+        keys=["report.final", "quality.result"],
+    )
 
     assert projected is not output
     assert "final_report" not in output
     assert projected["final_report"] == {"title": "namespaced"}
     assert projected["quality_result"] == {"decision": "pass"}
     assert projected["unmapped"] == "kept"
+
+
+def test_project_daily_output_for_legacy_consumers_requires_explicit_alias_scope() -> None:
+    with pytest.raises(TypeError):
+        project_daily_output_for_legacy_consumers({"report.final": {"title": "Daily"}})
 
 
 def test_project_daily_output_for_persistence_projects_only_record_input_keys() -> None:
