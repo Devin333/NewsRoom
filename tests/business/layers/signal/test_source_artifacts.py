@@ -287,7 +287,7 @@ def test_source_artifact_writer_uses_projected_source_item_id_for_parsed_items(t
     assert parsed_items_payload["items"][0]["item_artifact_ref"] == item_entry["artifact_ref"]
 
 
-def test_source_artifact_writer_normalizes_legacy_error_payloads(tmp_path) -> None:
+def test_source_artifact_writer_normalizes_serialized_error_payloads(tmp_path) -> None:
     manager = ArtifactManager(tmp_path)
     manager.start_run("source-run")
     writer = SourceArtifactWriter(manager)

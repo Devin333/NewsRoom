@@ -36,7 +36,7 @@ def test_source_item_artifact_input_projects_formal_raw_source_item() -> None:
     assert artifact_input.parse_artifact_ref == {"artifact_id": "parse-ref"}
 
 
-def test_source_item_artifact_input_accepts_legacy_mapping_payload() -> None:
+def test_source_item_artifact_input_accepts_serialized_item_payload() -> None:
     [artifact_input] = source_item_artifact_inputs(
         [
             {
@@ -75,7 +75,7 @@ def test_source_fetch_request_artifact_input_projects_formal_request() -> None:
     assert artifact_input.source_id == "feed"
 
 
-def test_source_fetch_request_artifact_input_accepts_legacy_mapping_payload() -> None:
+def test_source_fetch_request_artifact_input_accepts_serialized_request_payload() -> None:
     [artifact_input] = source_fetch_request_artifact_inputs(
         [
             {
@@ -144,7 +144,7 @@ def test_source_fetch_result_artifact_input_projects_formal_nested_metadata() ->
     assert artifact_input.response_headers == {"Content-Type": "application/rss+xml"}
 
 
-def test_source_fetch_result_artifact_input_accepts_legacy_mapping_payload() -> None:
+def test_source_fetch_result_artifact_input_accepts_serialized_result_payload() -> None:
     [artifact_input] = source_fetch_result_artifact_inputs(
         [
             {

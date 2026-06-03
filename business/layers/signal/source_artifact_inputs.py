@@ -25,7 +25,7 @@ class SourceItemArtifactInput:
     parse_artifact_ref: Any = None
 
     @classmethod
-    def from_value(cls, value: RawSourceItem | dict[str, Any]) -> "SourceItemArtifactInput":
+    def from_value(cls, value: Any) -> "SourceItemArtifactInput":
         if isinstance(value, RawSourceItem):
             return cls(
                 source_item_id=value.source_item_id,
@@ -54,7 +54,7 @@ class SourceFetchRequestArtifactInput:
     payload: Any
 
     @classmethod
-    def from_value(cls, value: SourceFetchRequest | dict[str, Any]) -> "SourceFetchRequestArtifactInput":
+    def from_value(cls, value: Any) -> "SourceFetchRequestArtifactInput":
         if isinstance(value, SourceFetchRequest):
             return cls(
                 request_id=value.request_id,
@@ -81,7 +81,7 @@ class SourceFetchResultArtifactInput:
     response_headers: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_value(cls, value: SourceFetchResult | dict[str, Any]) -> "SourceFetchResultArtifactInput":
+    def from_value(cls, value: Any) -> "SourceFetchResultArtifactInput":
         if isinstance(value, SourceFetchResult):
             metadata = _SourceFetchResultArtifactMetadataView.from_metadata(value.metadata)
             return cls(
