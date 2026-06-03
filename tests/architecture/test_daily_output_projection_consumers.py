@@ -89,3 +89,36 @@ def test_legacy_daily_output_projection_helpers_stay_out_of_runtime_consumers() 
                     violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {name}")
 
     assert violations == []
+
+
+def test_generic_daily_output_accessors_stay_inside_projection_boundary() -> None:
+    roots = (
+        PROJECT_ROOT / "business",
+        PROJECT_ROOT / "interfaces",
+        PROJECT_ROOT / "infrastructure",
+        PROJECT_ROOT / "framework",
+    )
+    allowed_paths = {
+        (
+            PROJECT_ROOT
+            / "business"
+            / "boards"
+            / "cross_board"
+            / "workflows"
+            / "daily_intelligence"
+            / "output_projection.py"
+        ),
+    }
+    forbidden_calls = ("daily_output_value(", "daily_output_contains(")
+    violations: list[str] = []
+
+    for root in roots:
+        for path in root.rglob("*.py"):
+            if path in allowed_paths:
+                continue
+            source = path.read_text(encoding="utf-8")
+            for call in forbidden_calls:
+                if call in source:
+                    violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {call}")
+
+    assert violations == []
