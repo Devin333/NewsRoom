@@ -195,6 +195,15 @@ def test_business_boards_use_policy_experiment_application_api() -> None:
     assert [*call_violations, *import_violations] == []
 
 
+def test_productized_artifact_publisher_delegates_legacy_override_projection() -> None:
+    publisher_path = BUSINESS_ROOT / "boards" / "_artifact_publisher.py"
+    source = publisher_path.read_text(encoding="utf-8")
+    imported_modules = _imports_for_file(publisher_path)
+
+    assert "business.boards.productized.artifact_payloads" in imported_modules
+    assert "applied_overrides" not in source
+
+
 def test_daily_agent_registry_stays_fixture_free() -> None:
     registry_path = (
         BUSINESS_ROOT

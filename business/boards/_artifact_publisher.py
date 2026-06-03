@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
@@ -10,24 +9,11 @@ from typing import Any
 from framework.artifacts.models import ArtifactRef
 from framework.workflow import ArtifactPublishContext, ArtifactPublishPhase, register_manifest_artifact_once
 
-
-BOARD_ARTIFACTS: dict[str, str] = {
-    "board_output": "board_output.json",
-    "cards": "cards.json",
-    "detail_pages": "detail_pages.json",
-    "insights": "insights.json",
-    "quality_summary": "quality_summary.json",
-    "subscription_payload": "subscription_payload.json",
-    "feedback_events": "feedback_events.json",
-    "learning_signals": "learning_signals.json",
-    "improvement_recommendations": "improvement_recommendations.json",
-    "improvement_proposals": "improvement_proposals.json",
-    "policy_experiment_application_context": "policy_experiment_application_context.json",
-    "applied_policy_experiments": "applied_policy_experiments.json",
-    "skipped_policy_experiments": "skipped_policy_experiments.json",
-    "applied_overrides": "applied_overrides.json",
-    "improvement_measurement": "improvement_measurement.json",
-}
+from business.boards.productized.artifact_payloads import (
+    BOARD_ARTIFACTS,
+    MISSING_PRODUCTIZED_ARTIFACT_PAYLOAD,
+    productized_artifact_payload,
+)
 
 
 class BoardArtifactPublisher:
@@ -47,25 +33,14 @@ class BoardArtifactPublisher:
         metadata = _artifact_metadata(context, self.board_type)
         context.manifest["business_productization"] = metadata
         for key, relative_path in BOARD_ARTIFACTS.items():
-            payload = _artifact_payload(context.output, key)
-            if payload is _MISSING:
+            payload = productized_artifact_payload(context.output, key)
+            if payload is MISSING_PRODUCTIZED_ARTIFACT_PAYLOAD:
                 continue
             refs.append(_write_json_artifact(context, key, relative_path, payload, metadata))
         summary = context.output.get("summary_md")
         if isinstance(summary, str):
             refs.append(_write_text_artifact(context, "summary", "summary.md", summary, metadata))
         return refs
-
-
-_MISSING = object()
-
-
-def _artifact_payload(output: Mapping[str, Any], key: str) -> Any:
-    if key in output:
-        return output[key]
-    if key == "applied_overrides" and "applied_policy_experiments" in output:
-        return output["applied_policy_experiments"]
-    return _MISSING
 
 
 def _write_json_artifact(
