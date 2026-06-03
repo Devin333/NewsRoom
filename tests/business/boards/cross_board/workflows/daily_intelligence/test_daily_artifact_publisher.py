@@ -422,6 +422,59 @@ def test_daily_artifact_publisher_reads_namespaced_source_diagnostics(tmp_path) 
     assert (run_dir / "source_recollection" / "execution_report.json").exists()
 
 
+def test_daily_artifact_publisher_prefers_namespaced_source_artifact_inputs(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manifest = {"artifacts": {}}
+    context = _context(
+        manager,
+        manifest=manifest,
+        output={
+            "raw_items": [
+                {
+                    "source_id": "legacy",
+                    "source_item_id": "legacy-item",
+                    "title": "Legacy",
+                    "url": "https://example.com/legacy",
+                    "raw_content": "legacy raw",
+                }
+            ],
+            "sources.raw_items": [
+                {
+                    "source_id": "feed",
+                    "source_item_id": "item-1",
+                    "title": "Namespaced",
+                    "url": "https://example.com/item",
+                    "raw_content": "namespaced raw",
+                }
+            ],
+            "source_fetch_requests": [{"request_id": "legacy-req", "source_id": "legacy"}],
+            "sources.fetch_requests": [{"request_id": "req-1", "source_id": "feed"}],
+            "source_fetch_results": [
+                {"request_id": "legacy-req", "source_id": "legacy", "success": False}
+            ],
+            "sources.fetch_results": [
+                {"request_id": "req-1", "source_id": "feed", "success": True}
+            ],
+            "source_errors": [{"source_id": "legacy", "error_type": "legacy"}],
+            "sources.errors": [],
+        },
+    )
+
+    DailyIntelligenceArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    source_index = json.loads(
+        (run_dir / "source_artifacts" / "index.json").read_text(encoding="utf-8")
+    )
+
+    assert source_index["item_count"] == 1
+    assert source_index["fetch_request_count"] == 1
+    assert source_index["fetch_result_count"] == 1
+    assert source_index["error_count"] == 0
+    assert manifest["source_artifacts"]["item_count"] == 1
+
+
 def test_daily_artifact_publisher_writes_agent_feedback_artifacts(tmp_path) -> None:
     manager = ArtifactManager(tmp_path)
     manager.start_run("run-1")

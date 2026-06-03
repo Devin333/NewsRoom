@@ -14,10 +14,9 @@ from business.boards.cross_board.workflows.daily_intelligence.evidence_artifact_
     project_daily_evidence_artifacts,
 )
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    daily_output_contains as _output_contains,
-    daily_output_value as _output_value,
     project_daily_output_for_quality_artifacts,
     project_daily_output_for_report_artifacts,
+    project_daily_output_for_source_diagnostic_artifacts,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_artifact_projection import (
     quality_manifest_fields,
@@ -196,16 +195,16 @@ class DailyIntelligenceArtifactPublisher:
                     artifact.payload,
                 )
             )
-        output = context.output
-        context.manifest.update(source_diagnostic_manifest_fields(output))
+        source_output = project_daily_output_for_source_diagnostic_artifacts(context.output)
+        context.manifest.update(source_diagnostic_manifest_fields(source_output))
         source_artifacts = SourceArtifactPublicationService(
             context.artifact_manager
         ).publish(
             context.run_id,
-            raw_items=_output_value(output, "raw_items"),
-            source_fetch_requests=_output_value(output, "source_fetch_requests"),
-            source_fetch_results=_output_value(output, "source_fetch_results"),
-            source_errors=_output_value(output, "source_errors"),
+            raw_items=source_output.get("raw_items"),
+            source_fetch_requests=source_output.get("source_fetch_requests"),
+            source_fetch_results=source_output.get("source_fetch_results"),
+            source_errors=source_output.get("source_errors"),
         )
         if source_artifacts:
             refs.append(
