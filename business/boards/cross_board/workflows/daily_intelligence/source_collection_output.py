@@ -19,6 +19,10 @@ from business.layers.signal.source_processing import (
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     with_namespaced_aliases,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_error_metadata import (
+    SourceErrorMetadataInput,
+    source_error_metadata,
+)
 
 
 def build_source_collection_output(
@@ -79,14 +83,19 @@ def record_all_sources_failed(
         error_type="all_sources_failed",
         error_message="all enabled sources failed or returned no valid items",
         retryable=False,
-        metadata={
-            "retryable": False,
-            "source_health_affecting": False,
-            "workflow_blocking": True,
-            "sources_total": source_pipeline_metrics.sources_total,
-            "sources_failed": source_pipeline_metrics.sources_failed,
-            "sources_skipped": source_pipeline_metrics.sources_skipped,
-        },
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase="fetch",
+                retryable=False,
+                source_health_affecting=False,
+                workflow_blocking=True,
+                extra={
+                    "sources_total": source_pipeline_metrics.sources_total,
+                    "sources_failed": source_pipeline_metrics.sources_failed,
+                    "sources_skipped": source_pipeline_metrics.sources_skipped,
+                },
+            )
+        ),
     )
     source_errors.append(all_sources_error)
     failed_sources.append(all_sources_error.to_dict())

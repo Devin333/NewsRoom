@@ -27,6 +27,10 @@ from business.boards.cross_board.workflows.daily_intelligence.steps import (
     require_sources,
 )
 from business.boards.cross_board.workflows.daily_intelligence import source_processing
+from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
+    SOURCE_ERROR_RUNTIME_METADATA_KEY,
+)
+from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
 from business.boards.cross_board.workflows.daily_intelligence.workflow_runtime_policy import (
     DAILY_WORKFLOW_TIMEOUT_SECONDS,
 )
@@ -322,7 +326,9 @@ def test_deduplicate_sources_retains_normalized_items_when_dedup_fails(monkeypat
 
     assert output["deduplicated_items"] == normalized_items
     assert output["source_duplicate_groups"] == []
-    assert any(error.metadata["phase"] == "dedup" for error in output["source_errors"])
+    [dedup_error] = [error for error in output["source_errors"] if error.metadata["phase"] == "dedup"]
+    assert dedup_error.metadata[SOURCE_ERROR_RUNTIME_METADATA_KEY]["phase"] == "dedup"
+    assert dedup_error.metadata[SOURCE_ERROR_POLICY_METADATA_KEY]["workflow_blocking"] is False
     assert any(event.event_type == "source_dedup_failed" for event in output["source_events"])
     assert output["source_pipeline_metrics"].deduplicated_items_count == len(normalized_items)
 
@@ -361,7 +367,9 @@ def test_rank_sources_wraps_deduplicated_items_when_ranker_fails(monkeypatch) ->
     assert [item.item for item in output["ranked_items"]] == deduplicated_items
     assert output["ranked_items"][0].rank_reason == "ranking_failed_fallback"
     assert output["ranked_items"][0].metadata["ranking_fallback"] is True
-    assert any(error.metadata["phase"] == "rank" for error in output["source_errors"])
+    [ranking_error] = [error for error in output["source_errors"] if error.metadata["phase"] == "rank"]
+    assert ranking_error.metadata[SOURCE_ERROR_RUNTIME_METADATA_KEY]["phase"] == "rank"
+    assert ranking_error.metadata[SOURCE_ERROR_POLICY_METADATA_KEY]["workflow_blocking"] is False
     assert any(event.event_type == "source_ranking_failed" for event in output["source_events"])
     assert output["source_pipeline_metrics"].ranked_items_count == len(deduplicated_items)
 

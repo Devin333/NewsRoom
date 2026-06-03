@@ -26,6 +26,10 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
     with_namespaced_aliases,
 )
 from business.foundation.models.source_error_normalization import normalize_source_errors
+from business.boards.cross_board.workflows.daily_intelligence.source_error_metadata import (
+    SourceErrorMetadataInput,
+    source_error_metadata,
+)
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     append_buffer_items,
     read_buffer_value,
@@ -212,14 +216,17 @@ def _processing_source_error(raw_item: Any, exc: Exception, *, phase: str) -> So
         error_message=str(exc),
         url=getattr(raw_item, "url", None),
         retryable=classification.retryable,
-        metadata={
-            "phase": phase,
-            "source_item_id": getattr(raw_item, "source_item_id", None),
-            "retryable": classification.retryable,
-            "source_health_affecting": classification.source_health_affecting,
-            "workflow_blocking": classification.workflow_blocking,
-            "original_exception_type": type(exc).__name__,
-        },
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase=phase,
+                source_item_id=getattr(raw_item, "source_item_id", None),
+                retryable=classification.retryable,
+                source_health_affecting=classification.source_health_affecting,
+                workflow_blocking=classification.workflow_blocking,
+                operator_action_required=classification.operator_action_required,
+                original_exception_type=type(exc).__name__,
+            )
+        ),
     )
 
 
@@ -231,13 +238,16 @@ def _pipeline_processing_error(exc: Exception, *, phase: str) -> SourceError:
         error_type=classification.error_type,
         error_message=str(exc),
         retryable=classification.retryable,
-        metadata={
-            "phase": phase,
-            "retryable": classification.retryable,
-            "source_health_affecting": classification.source_health_affecting,
-            "workflow_blocking": classification.workflow_blocking,
-            "original_exception_type": type(exc).__name__,
-        },
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase=phase,
+                retryable=classification.retryable,
+                source_health_affecting=classification.source_health_affecting,
+                workflow_blocking=classification.workflow_blocking,
+                operator_action_required=classification.operator_action_required,
+                original_exception_type=type(exc).__name__,
+            )
+        ),
     )
 
 

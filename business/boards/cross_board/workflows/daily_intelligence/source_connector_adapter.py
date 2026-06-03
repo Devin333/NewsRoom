@@ -9,6 +9,10 @@ from typing import Any
 from business.foundation.models.source import SourceDefinition, SourceError, SourceFetchRequest, SourceFetchResult
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
+from business.boards.cross_board.workflows.daily_intelligence.source_error_metadata import (
+    SourceErrorMetadataInput,
+    source_error_metadata,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import SourceFetchContext
 from business.foundation.models.source_error_normalization import normalize_source_errors
 
@@ -330,12 +334,15 @@ def _registered_connector_error(source: SourceDefinition, exc: Exception) -> Sou
         error_message=str(exc),
         url=source.url,
         retryable=classification.retryable,
-        metadata={
-            "phase": "fetch",
-            "retryable": classification.retryable,
-            "source_health_affecting": classification.source_health_affecting,
-            "workflow_blocking": classification.workflow_blocking,
-            "registered_connector": True,
-            "original_exception_type": type(exc).__name__,
-        },
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase="fetch",
+                retryable=classification.retryable,
+                source_health_affecting=classification.source_health_affecting,
+                workflow_blocking=classification.workflow_blocking,
+                operator_action_required=classification.operator_action_required,
+                original_exception_type=type(exc).__name__,
+                extra={"registered_connector": True},
+            )
+        ),
     )
