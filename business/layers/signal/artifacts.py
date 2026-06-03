@@ -74,31 +74,39 @@ class SourceArtifactWriter:
             )
         )
 
+        return _SourceArtifactIndexWriter(self._artifact_manager).write_index(
+            run_id,
+            entries=entries,
+        )
+
+
+class _SourceArtifactIndexWriter:
+    def __init__(self, artifact_manager: ArtifactManager) -> None:
+        self._artifact_manager = artifact_manager
+
+    def write_index(
+        self,
+        run_id: str,
+        *,
+        entries: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
         if not entries:
             return None
-
         source_artifacts = {
             "entries": entries,
-            "item_count": sum(1 for entry in entries if entry["artifact_type"] == "source_item"),
-            "error_count": sum(1 for entry in entries if entry["artifact_type"] == "source_error"),
-            "raw_content_count": sum(
-                1 for entry in entries if entry["artifact_type"] == "source_raw_content"
-            ),
-            "fetch_request_count": sum(
-                1 for entry in entries if entry["artifact_type"] == "source_fetch_request"
-            ),
-            "fetch_result_count": sum(
-                1 for entry in entries if entry["artifact_type"] == "source_fetch_result"
-            ),
-            "parsed_items_count": sum(
-                1 for entry in entries if entry["artifact_type"] == "source_parsed_items"
-            ),
-            "response_headers_count": sum(
-                1 for entry in entries if entry["artifact_type"] == "source_response_headers"
-            ),
+            "item_count": self._count(entries, "source_item"),
+            "error_count": self._count(entries, "source_error"),
+            "raw_content_count": self._count(entries, "source_raw_content"),
+            "fetch_request_count": self._count(entries, "source_fetch_request"),
+            "fetch_result_count": self._count(entries, "source_fetch_result"),
+            "parsed_items_count": self._count(entries, "source_parsed_items"),
+            "response_headers_count": self._count(entries, "source_response_headers"),
         }
         self._artifact_manager.write_json(run_id, "source_artifacts/index.json", source_artifacts)
         return source_artifacts
+
+    def _count(self, entries: list[dict[str, Any]], artifact_type: str) -> int:
+        return sum(1 for entry in entries if entry["artifact_type"] == artifact_type)
 
 
 class _SourceItemArtifactWriter:
