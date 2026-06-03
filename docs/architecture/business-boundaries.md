@@ -181,7 +181,7 @@ writer/editor 若需要草稿或重写辅助，应调用 `daily.section_draft` �
 Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不应由 `finalize_report` 反向猜测。
 
 - verifier/editor 对 writer、human review 或 publication gate 的反馈先归一化为 `agent_feedback_events`。
-- analyst source recollection 输入必须写入 `DailyAgentFeedbackEvent.evidence_gaps`、`source_recollection_requests` 和 `missing_information` 正式字段；旧 `event.metadata` 只作为历史 payload 投影入口。`DailySourceRecollectionService` 只读取这些正式字段，不再从 feedback event metadata 反推补源 profile 输入。
+- analyst source recollection 输入必须写入 `DailyAgentFeedbackEvent.evidence_gaps`、`source_recollection_requests` 和 `missing_information` 正式字段；新建反馈事件不得再把这些字段双写进 `event.metadata`。旧 `event.metadata` 只作为历史 payload 投影入口。`DailySourceRecollectionService` 只读取这些正式字段，不再从 feedback event metadata 反推补源 profile 输入。
 - 聚合指标写入 `agent_feedback_summary`，供 final report、blocked report、quality result 和 artifact manifest 使用。
 - `DailyAgentFeedbackPolicyService` 将 feedback events 转换为 `policy_recommendations`，作为后续 rewrite / human review / block routing 的正式策略输入。
 - `DailyAgentFeedbackRoutingService` 消费 `agent_feedback_summary` 和上一轮 `agent_feedback_loop_state`，生成新的 loop state 与 `agent_feedback_route`；对 verifier 阶段发现的问题最多触发一轮 bounded writer rewrite，第二次仍要求 rewrite 时进入 finalize/quality policy 路径，不允许无限 agent 循环。

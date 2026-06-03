@@ -266,6 +266,9 @@ def test_collect_agent_feedback_routes_analyst_evidence_gap_to_planner() -> None
         {"query": "model launch timing official announcement"}
     ]
     assert events[0].missing_information == ["official launch date confirmation"]
+    assert "evidence_gaps" not in events[0].metadata
+    assert "source_recollection_requests" not in events[0].metadata
+    assert "missing_information" not in events[0].metadata
     assert summary.source_recollect_request_count == 1
     assert summary.policy_recommendations[0].recommended_action == "source_recollect"
     assert summary.policy_recommendations[0].target_agent_id == "daily.source_recollect"

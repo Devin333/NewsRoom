@@ -126,11 +126,6 @@ class DailyAgentFeedbackCollector:
                 evidence_gaps=evidence_gaps,
                 source_recollection_requests=recollection_requests,
                 missing_information=_string_list(missing_information),
-                metadata={
-                    "evidence_gaps": evidence_gaps,
-                    "source_recollection_requests": recollection_requests,
-                    "missing_information": missing_information,
-                },
             )
         )
 
@@ -297,7 +292,7 @@ def _feedback_event(
     severity: str,
     requested_action: str,
     reason: str,
-    metadata: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
     evidence_gaps: list[Any] | None = None,
     source_recollection_requests: list[Any] | None = None,
     missing_information: list[str] | None = None,
@@ -313,7 +308,11 @@ def _feedback_event(
         evidence_gaps=list(evidence_gaps or []),
         source_recollection_requests=list(source_recollection_requests or []),
         missing_information=list(missing_information or []),
-        metadata={key: value for key, value in metadata.items() if value not in (None, [], {})},
+        metadata={
+            key: value
+            for key, value in dict(metadata or {}).items()
+            if value not in (None, [], {})
+        },
     )
 
 
