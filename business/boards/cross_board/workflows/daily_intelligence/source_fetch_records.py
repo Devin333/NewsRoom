@@ -335,12 +335,11 @@ def with_error_request_id(errors: list[SourceError], request_id: str) -> list[So
 
 def error_metadata_bool(error: SourceError, key: str, *, default: bool) -> bool:
     runtime_metadata = SourceErrorRuntimeMetadata.from_error(error)
-    if key == "retryable" and error.retryable is not None:
+    if key == "retryable":
         return runtime_metadata.retryable
     if key == "source_health_affecting":
         return runtime_metadata.source_health_affecting
-    value = error.metadata.get(key, default)
-    return _bool_value(value, default=default)
+    return default
 
 
 def error_phase(error: SourceError) -> str | None:

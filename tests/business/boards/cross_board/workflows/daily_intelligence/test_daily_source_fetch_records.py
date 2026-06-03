@@ -99,6 +99,32 @@ def test_source_error_runtime_metadata_projects_legacy_error_metadata() -> None:
     assert error_phase(error) == "parse"
 
 
+def test_source_error_runtime_metadata_uses_retryable_metadata_when_formal_value_missing() -> None:
+    error = SourceError(
+        source_id="source-1",
+        error_type="fetch_timeout",
+        error_message="Timed out.",
+        retryable=None,
+        metadata={"retryable": False},
+    )
+
+    runtime_metadata = SourceErrorRuntimeMetadata.from_error(error)
+
+    assert runtime_metadata.retryable is False
+    assert error_metadata_bool(error, "retryable", default=True) is False
+
+
+def test_source_error_metadata_bool_ignores_unknown_metadata_keys() -> None:
+    error = SourceError(
+        source_id="source-1",
+        error_type="fetch_timeout",
+        error_message="Timed out.",
+        metadata={"unknown_policy_flag": False},
+    )
+
+    assert error_metadata_bool(error, "unknown_policy_flag", default=True) is True
+
+
 def _source() -> SourceDefinition:
     return SourceDefinition(
         source_id="source-1",
