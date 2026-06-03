@@ -216,6 +216,7 @@ def apply_resume_metadata_to_manifest(
         "resume_human_decision",
         "resume_human_review_request_id",
         "resume_current_step_ids",
+        "resume_target_step_id",
         "checkpoint_schema_version",
         "checkpoint_checksum",
         "checkpoint_migrations",

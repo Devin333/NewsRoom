@@ -238,6 +238,7 @@ class WorkflowExecutor:
         run_id: str | None = None,
         buffer_updates: dict[str, Any] | None = None,
         resume_metadata: dict[str, Any] | None = None,
+        target_step_id: str | None = None,
     ) -> WorkflowResult:
         envelope = envelope_from_checkpoint(checkpoint)
         public_resume_metadata = dict(resume_metadata or {})
@@ -254,12 +255,19 @@ class WorkflowExecutor:
             if resume_metadata is not None
             else {"partial_artifact_recovery": recovery_report.to_dict()}
         )
-        mode = ResumeMode.WITH_PATCH if buffer_updates else ResumeMode.EXACT
+        mode = (
+            ResumeMode.FROM_STEP
+            if target_step_id
+            else ResumeMode.WITH_PATCH
+            if buffer_updates
+            else ResumeMode.EXACT
+        )
         resume_request = WorkflowResumeRequest(
             mode=mode,
             checkpoint=envelope,
             run_id=run_id,
             patch=dict(buffer_updates or {}),
+            target_step_id=target_step_id,
             strict=True,
             metadata=actual_resume_metadata,
         )

@@ -205,6 +205,7 @@ class WorkflowRunner:
         run_id: str | None = None,
         buffer_updates: dict[str, Any] | None = None,
         resume_metadata: dict[str, Any] | None = None,
+        target_step_id: str | None = None,
     ) -> RunResult:
         executor = WorkflowExecutor(
             function_step_runner=None,
@@ -223,6 +224,7 @@ class WorkflowRunner:
             run_id=run_id,
             buffer_updates=buffer_updates,
             resume_metadata=resume_metadata,
+            target_step_id=target_step_id,
         )
         self._persist_storage_indexes(result)
         return RunResult.from_workflow_result(result)
@@ -244,13 +246,15 @@ class WorkflowRunner:
         checkpoint = self._checkpoint_store.get_latest_checkpoint(approval_run_id)
         if checkpoint is None:
             raise ValueError(f"checkpoint not found for approval run id: {approval_run_id}")
+        resume_metadata = dict(context.get("resume_metadata") or {})
         return self.resume_from_checkpoint(
             workflow,
             checkpoint,
             profile=profile,
             run_id=run_id,
             buffer_updates=dict(context.get("buffer_updates") or {}),
-            resume_metadata=dict(context.get("resume_metadata") or {}),
+            resume_metadata=resume_metadata,
+            target_step_id=_approval_context_target_step_id(resume_metadata),
         )
 
     def cancel_run(
@@ -824,6 +828,14 @@ def _approval_context_run_id(context: dict[str, Any]) -> str | None:
         if value:
             return str(value)
     return None
+
+
+def _approval_context_target_step_id(resume_metadata: dict[str, Any]) -> str | None:
+    target_step_id = _nested_value(resume_metadata, "resume_next_step_id")
+    if not target_step_id:
+        return None
+    target_step_id = str(target_step_id)
+    return target_step_id
 
 
 def _nested_value(value: Any, key: str) -> Any:

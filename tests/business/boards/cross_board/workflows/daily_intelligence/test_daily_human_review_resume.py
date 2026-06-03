@@ -117,4 +117,5 @@ def test_daily_human_review_resume_context_skips_route_patch_for_unsupported_wor
             "approval_id": "approval-4",
         }
     }
+    assert "resume_next_step_id" not in context["resume_metadata"]
     assert "allowed_patch_keys" not in context["resume_metadata"]

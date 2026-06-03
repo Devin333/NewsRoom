@@ -212,12 +212,24 @@ class WorkflowResumePlanner:
         elif request.mode == ResumeMode.FROM_STEP:
             target_step_id = str(request.target_step_id)
             _ensure_workflow_step(workflow, target_step_id)
+            if request.patch:
+                self._apply_patch(
+                    workflow=workflow,
+                    checkpoint=checkpoint,
+                    buffer_values=buffer_values,
+                    patch=request.patch,
+                    metadata=request.metadata,
+                )
+                resume_metadata["resume_patch_keys"] = sorted(
+                    str(key) for key in request.patch
+                )
             current_step_ids = [target_step_id]
             initial_path, step_results = _truncate_resume_state(
                 target_step_id=target_step_id,
                 path=initial_path,
                 step_results=step_results,
             )
+            resume_metadata["resume_target_step_id"] = target_step_id
         elif request.mode == ResumeMode.AFTER_HUMAN_REVIEW:
             decision = coerce_human_review_resume_decision(request.human_decision)
             decision_payload = decision.to_dict()

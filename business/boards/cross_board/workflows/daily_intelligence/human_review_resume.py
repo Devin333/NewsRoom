@@ -114,8 +114,9 @@ def enrich_daily_approval_resume_context(
     context["buffer_updates"] = buffer_updates
     resume_metadata = dict(context.get("resume_metadata") or {})
     resume_metadata["human_review_resume_route"] = route_payload
-    resume_metadata["resume_next_step_id"] = route.next_step_id
     if route_updates:
+        if _workflow_step_declared(route.next_step_id, workflow_step_ids):
+            resume_metadata["resume_next_step_id"] = route.next_step_id
         resume_metadata["allowed_patch_keys"] = _merged_patch_keys(
             resume_metadata.get("allowed_patch_keys"),
             route_updates.keys(),
@@ -197,6 +198,11 @@ def _merged_patch_keys(
         patch_keys = {str(current)}
     patch_keys.update(str(key) for key in route_keys)
     return sorted(patch_keys)
+
+
+def _workflow_step_declared(step_id: str, workflow_step_ids: Iterable[str]) -> bool:
+    declared_step_ids = tuple(str(item) for item in workflow_step_ids)
+    return not declared_step_ids or step_id in declared_step_ids
 
 
 def _next_step_id(route: str, step_ids: tuple[str, ...]) -> str:
