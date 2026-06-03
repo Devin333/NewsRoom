@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone as _tz
 from typing import Any
 
-from framework import RunResult
 from infrastructure.storage.records import (
     ClaimRecord,
     EvidenceItemRecord,
@@ -15,40 +14,50 @@ from infrastructure.storage.persistence.records import (
     RunPersistenceBatch,
     WorkflowRunRecord,
 )
+from infrastructure.storage.persistence.record_inputs import (
+    RunPersistenceInput,
+    run_persistence_input_from_result,
+)
 
 UTC = _tz.utc
 
 
-def workflow_run_record_from_result(result: RunResult, *, profile: str) -> WorkflowRunRecord:
+def workflow_run_record_from_input(input_model: RunPersistenceInput) -> WorkflowRunRecord:
     return WorkflowRunRecord(
-        run_id=result.run_id,
-        workflow_id=result.workflow_id,
-        workflow_version=result.workflow_version,
-        status=result.status.value,
-        profile=profile,
-        artifact_dir=result.artifact_dir,
-        manifest_path=result.manifest_path,
-        events_path=result.events_path,
-        error=result.error,
-        metrics=_metrics_from_output(result.output),
+        run_id=input_model.run_id,
+        workflow_id=input_model.workflow_id,
+        workflow_version=input_model.workflow_version,
+        status=input_model.status,
+        profile=input_model.profile,
+        artifact_dir=input_model.artifact_dir,
+        manifest_path=input_model.manifest_path,
+        events_path=input_model.events_path,
+        error=input_model.error,
+        metrics=_metrics_from_input(input_model),
     )
 
 
-def report_record_from_result(result: RunResult) -> ReportRecord | None:
-    final_report = result.output.get("final_report")
-    blocked_report = result.output.get("blocked_report")
-    quality_summary = result.output.get("report_quality_summary")
+def workflow_run_record_from_result(result: Any, *, profile: str) -> WorkflowRunRecord:
+    return workflow_run_record_from_input(
+        run_persistence_input_from_result(result, profile=profile)
+    )
+
+
+def report_record_from_input(input_model: RunPersistenceInput) -> ReportRecord | None:
+    final_report = input_model.final_report
+    blocked_report = input_model.blocked_report
+    quality_summary = input_model.report_quality_summary
     if final_report is None and blocked_report is None:
         return None
 
     report_payload = _to_dict(final_report or blocked_report)
     quality_payload = _to_dict(quality_summary)
-    quality_result = _to_dict(result.output.get("quality_result"))
-    citation_check = _to_dict(result.output.get("citation_check_result"))
-    support_matrix = _to_dict(result.output.get("support_matrix"))
+    quality_result = _to_dict(input_model.quality_result)
+    citation_check = _to_dict(input_model.citation_check_result)
+    support_matrix = _to_dict(input_model.support_matrix)
     quality_trace = {
         "decision": quality_result.get("decision") or quality_payload.get("decision"),
-        "route": quality_result.get("route") or result.output.get("quality_route"),
+        "route": quality_result.get("route") or input_model.quality_route,
         "citation_failure_categories": quality_result.get("metadata", {}).get(
             "citation_failure_categories", []
         ),
@@ -75,34 +84,44 @@ def report_record_from_result(result: RunResult) -> ReportRecord | None:
     title = report_payload.get("title")
     status = "final" if final_report is not None else "blocked"
     quality_score = quality_payload.get("quality_score") if quality_payload else None
-    citation_coverage_score = _citation_coverage_score(result.output)
+    citation_coverage_score = _citation_coverage_score(input_model)
     return ReportRecord(
-        report_id=f"{result.run_id}:{status}",
-        run_id=result.run_id,
+        report_id=f"{input_model.run_id}:{status}",
+        run_id=input_model.run_id,
         status=status,
         title=title,
         report_json=report_payload,
-        report_markdown=result.output.get("report_markdown"),
+        report_markdown=input_model.report_markdown,
         quality_score=quality_score,
         citation_coverage_score=citation_coverage_score,
-        manifest_path=result.manifest_path,
+        manifest_path=input_model.manifest_path,
     )
 
 
-def run_persistence_batch_from_result(result: RunResult, *, profile: str) -> RunPersistenceBatch:
+def report_record_from_result(result: Any) -> ReportRecord | None:
+    return report_record_from_input(run_persistence_input_from_result(result))
+
+
+def run_persistence_batch_from_input(input_model: RunPersistenceInput) -> RunPersistenceBatch:
     return RunPersistenceBatch(
-        workflow_run=workflow_run_record_from_result(result, profile=profile),
-        report=report_record_from_result(result),
-        source_items=source_item_records_from_result(result),
-        evidence_items=evidence_item_records_from_result(result),
-        claims=claim_records_from_result(result),
-        quality_result=quality_result_record_from_result(result),
+        workflow_run=workflow_run_record_from_input(input_model),
+        report=report_record_from_input(input_model),
+        source_items=source_item_records_from_input(input_model),
+        evidence_items=evidence_item_records_from_input(input_model),
+        claims=claim_records_from_input(input_model),
+        quality_result=quality_result_record_from_input(input_model),
     )
 
 
-def source_item_records_from_result(result: RunResult) -> list[SourceItemRecord]:
+def run_persistence_batch_from_result(result: Any, *, profile: str) -> RunPersistenceBatch:
+    return run_persistence_batch_from_input(
+        run_persistence_input_from_result(result, profile=profile)
+    )
+
+
+def source_item_records_from_input(input_model: RunPersistenceInput) -> list[SourceItemRecord]:
     records = []
-    for raw_item in result.output.get("raw_items", []) or []:
+    for raw_item in input_model.raw_items:
         payload = _object_payload(raw_item)
         source_item_id = str(payload.get("source_item_id") or "")
         if not source_item_id:
@@ -111,7 +130,7 @@ def source_item_records_from_result(result: RunResult) -> list[SourceItemRecord]
         records.append(
             SourceItemRecord(
                 source_item_id=source_item_id,
-                run_id=result.run_id,
+                run_id=input_model.run_id,
                 source_id=str(payload.get("source_id") or ""),
                 title=str(payload.get("title") or ""),
                 url=str(payload.get("url") or ""),
@@ -129,8 +148,12 @@ def source_item_records_from_result(result: RunResult) -> list[SourceItemRecord]
     return records
 
 
-def evidence_item_records_from_result(result: RunResult) -> list[EvidenceItemRecord]:
-    bundle = _object_payload(result.output.get("evidence_bundle"))
+def source_item_records_from_result(result: Any) -> list[SourceItemRecord]:
+    return source_item_records_from_input(run_persistence_input_from_result(result))
+
+
+def evidence_item_records_from_input(input_model: RunPersistenceInput) -> list[EvidenceItemRecord]:
+    bundle = _object_payload(input_model.evidence_bundle)
     records = []
     for item in bundle.get("items") or []:
         payload = _object_payload(item)
@@ -145,7 +168,7 @@ def evidence_item_records_from_result(result: RunResult) -> list[EvidenceItemRec
         records.append(
             EvidenceItemRecord(
                 evidence_id=evidence_id,
-                run_id=result.run_id,
+                run_id=input_model.run_id,
                 claim=str(payload.get("title") or ""),
                 summary=str(payload.get("summary") or ""),
                 source_urls=[str(payload.get("source_url") or "")],
@@ -160,8 +183,12 @@ def evidence_item_records_from_result(result: RunResult) -> list[EvidenceItemRec
     return records
 
 
-def claim_records_from_result(result: RunResult) -> list[ClaimRecord]:
-    findings = _object_payload(result.output.get("verified_findings"))
+def evidence_item_records_from_result(result: Any) -> list[EvidenceItemRecord]:
+    return evidence_item_records_from_input(run_persistence_input_from_result(result))
+
+
+def claim_records_from_input(input_model: RunPersistenceInput) -> list[ClaimRecord]:
+    findings = _object_payload(input_model.verified_findings)
     records = []
     for status, key in [
         ("accepted", "accepted_claims"),
@@ -176,7 +203,7 @@ def claim_records_from_result(result: RunResult) -> list[ClaimRecord]:
             records.append(
                 ClaimRecord(
                     claim_id=claim_id,
-                    run_id=result.run_id,
+                    run_id=input_model.run_id,
                     status=str(payload.get("status") or status),
                     text=str(payload.get("claim") or payload.get("text") or ""),
                     confidence=(
@@ -196,11 +223,15 @@ def claim_records_from_result(result: RunResult) -> list[ClaimRecord]:
     return records
 
 
-def quality_result_record_from_result(result: RunResult) -> QualityResultRecord | None:
-    quality_result = _to_dict(result.output.get("quality_result"))
-    quality_summary = _to_dict(result.output.get("report_quality_summary"))
-    editor_review = _to_dict(result.output.get("editor_review"))
-    citation_check = _to_dict(result.output.get("citation_check_result"))
+def claim_records_from_result(result: Any) -> list[ClaimRecord]:
+    return claim_records_from_input(run_persistence_input_from_result(result))
+
+
+def quality_result_record_from_input(input_model: RunPersistenceInput) -> QualityResultRecord | None:
+    quality_result = _to_dict(input_model.quality_result)
+    quality_summary = _to_dict(input_model.report_quality_summary)
+    editor_review = _to_dict(input_model.editor_review)
+    citation_check = _to_dict(input_model.citation_check_result)
     if not quality_result and not quality_summary and not editor_review and not citation_check:
         return None
     decision = str(
@@ -210,8 +241,8 @@ def quality_result_record_from_result(result: RunResult) -> QualityResultRecord 
         or "unknown"
     )
     return QualityResultRecord(
-        quality_result_id=f"{result.run_id}:quality",
-        run_id=result.run_id,
+        quality_result_id=f"{input_model.run_id}:quality",
+        run_id=input_model.run_id,
         decision=decision,
         passed=bool(quality_result.get("passed")) if quality_result else decision == "pass",
         quality_score=_optional_float(
@@ -246,24 +277,29 @@ def quality_result_record_from_result(result: RunResult) -> QualityResultRecord 
     )
 
 
-def _metrics_from_output(output: dict[str, Any]) -> dict[str, Any]:
+def quality_result_record_from_result(result: Any) -> QualityResultRecord | None:
+    return quality_result_record_from_input(run_persistence_input_from_result(result))
+
+
+def _metrics_from_input(input_model: RunPersistenceInput) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
-    for key in [
-        "source_pipeline_metrics",
-        "agent_loop_metrics",
-        "report_quality_summary",
-        "quality_gate_metrics",
-    ]:
-        if key in output:
-            metrics[key] = _to_dict(output[key])
+    values = {
+        "source_pipeline_metrics": input_model.source_pipeline_metrics,
+        "agent_loop_metrics": input_model.agent_loop_metrics,
+        "report_quality_summary": input_model.report_quality_summary,
+        "quality_gate_metrics": input_model.quality_gate_metrics,
+    }
+    for key, value in values.items():
+        if value is not None:
+            metrics[key] = _to_dict(value)
     return metrics
 
 
-def _citation_coverage_score(output: dict[str, Any]) -> float | None:
-    quality_gate_metrics = _to_dict(output.get("quality_gate_metrics"))
+def _citation_coverage_score(input_model: RunPersistenceInput) -> float | None:
+    quality_gate_metrics = _to_dict(input_model.quality_gate_metrics)
     if "citation_coverage_score" in quality_gate_metrics:
         return quality_gate_metrics["citation_coverage_score"]
-    citation_check = _to_dict(output.get("citation_check_result"))
+    citation_check = _to_dict(input_model.citation_check_result)
     return citation_check.get("citation_coverage_score")
 
 
@@ -319,11 +355,20 @@ def _first_not_none(*values: Any) -> Any:
 
 
 __all__ = [
+    "RunPersistenceInput",
     "claim_records_from_result",
+    "claim_records_from_input",
     "evidence_item_records_from_result",
+    "evidence_item_records_from_input",
     "quality_result_record_from_result",
+    "quality_result_record_from_input",
     "report_record_from_result",
+    "report_record_from_input",
     "run_persistence_batch_from_result",
+    "run_persistence_batch_from_input",
+    "run_persistence_input_from_result",
     "source_item_records_from_result",
+    "source_item_records_from_input",
     "workflow_run_record_from_result",
+    "workflow_run_record_from_input",
 ]

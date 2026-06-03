@@ -20,13 +20,16 @@ from infrastructure.storage.repository import (
     LocalJsonPersistenceAdapter,
     ReportRecord,
     RunPersistenceBatch,
+    RunPersistenceInput,
     WorkflowRunRecord,
     claim_records_from_result,
     evidence_item_records_from_result,
     persist_run_result,
     quality_result_record_from_result,
     report_record_from_result,
+    run_persistence_batch_from_input,
     run_persistence_batch_from_result,
+    run_persistence_input_from_result,
     source_item_records_from_result,
     workflow_run_record_from_result,
 )
@@ -359,8 +362,14 @@ def test_record_builders_extract_report_and_quality_records_from_projected_daily
         manifest_path="runs/run-projected/manifest.json",
     )
 
-    batch = run_persistence_batch_from_result(result, profile="live-offline")
+    input_model = run_persistence_input_from_result(result, profile="live-offline")
+    batch = run_persistence_batch_from_input(input_model)
 
+    assert isinstance(input_model, RunPersistenceInput)
+    assert input_model.run_id == "run-projected"
+    assert input_model.profile == "live-offline"
+    assert input_model.final_report is result.output["final_report"]
+    assert input_model.quality_gate_metrics is result.output["quality_gate_metrics"]
     assert batch.report is not None
     assert batch.quality_result is not None
     assert batch.report.report_id == "run-projected:final"

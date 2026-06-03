@@ -16,12 +16,23 @@ from infrastructure.storage.records import (
 from infrastructure.storage.persistence.local_json_adapter import LocalJsonPersistenceAdapter
 from infrastructure.storage.persistence.record_builders import (
     claim_records_from_result,
+    claim_records_from_input,
     evidence_item_records_from_result,
+    evidence_item_records_from_input,
     quality_result_record_from_result,
+    quality_result_record_from_input,
     report_record_from_result,
+    report_record_from_input,
     run_persistence_batch_from_result,
+    run_persistence_batch_from_input,
     source_item_records_from_result,
+    source_item_records_from_input,
     workflow_run_record_from_result,
+    workflow_run_record_from_input,
+)
+from infrastructure.storage.persistence.record_inputs import (
+    RunPersistenceInput,
+    run_persistence_input_from_result,
 )
 from infrastructure.storage.persistence.records import (
     ReportRecord,
@@ -93,7 +104,8 @@ def persist_run_result(
 ) -> None:
     if migrate:
         repository.migrate()
-    batch = run_persistence_batch_from_result(result, profile=profile)
+    input_model = run_persistence_input_from_result(result, profile=profile)
+    batch = run_persistence_batch_from_input(input_model)
     save_batch = getattr(repository, "save_run_records", None)
     if save_batch is not None:
         save_batch(batch)
