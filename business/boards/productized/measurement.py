@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from business.boards.productized.measurement_legacy import legacy_deduplication_result_from_board_result
 from business.foundation.feedback.measurement import ImprovementMeasurement, ImprovementMeasurementBuilder
 
 
@@ -41,7 +42,7 @@ class ProductizedImprovementMeasurementInput:
     ) -> "ProductizedImprovementMeasurementInput":
         deduplication_result = _deduplication_result_from_productized_run(productized_run)
         if deduplication_result is None:
-            deduplication_result = _legacy_deduplication_result_from_board_result(board_run_result) or {}
+            deduplication_result = legacy_deduplication_result_from_board_result(board_run_result) or {}
         return cls(
             quality_summary=quality_summary,
             cards=cards,
@@ -209,7 +210,7 @@ def deduplication_result_for_measurement(
     formal = _deduplication_result_from_productized_run(productized_run)
     if formal is not None:
         return formal
-    return _legacy_deduplication_result_from_board_result(board_run_result) or {}
+    return legacy_deduplication_result_from_board_result(board_run_result) or {}
 
 
 def deduplication_result_from_productized_run(productized_run: Any | None) -> dict[str, Any]:
@@ -225,20 +226,6 @@ def _deduplication_result_from_productized_run(productized_run: Any | None) -> d
     else:
         value = getattr(productized_run, "deduplication_result", None)
     return dict(value) if isinstance(value, dict) else None
-
-
-def _legacy_deduplication_result_from_board_result(result: Any) -> dict[str, Any] | None:
-    metadata = getattr(result, "metadata", {}) or {}
-    if not isinstance(metadata, dict):
-        return None
-    productized_state = metadata.get("productized_run_state")
-    if (
-        isinstance(productized_state, dict)
-        and isinstance(productized_state.get("deduplication_result"), dict)
-    ):
-        return dict(productized_state["deduplication_result"])
-    dedupe = metadata.get("deduplication_result")
-    return dict(dedupe) if isinstance(dedupe, dict) else None
 
 
 __all__ = [
