@@ -17,6 +17,22 @@ from business.foundation.models.quality_loop import (
 )
 
 
+class BoardIntelligenceSummary(PrimitiveModel):
+    schema_version: str = "business.board.run.board_intelligence.v1"
+    focus: str
+    feature_weights: dict[str, float] = Field(default_factory=dict)
+    policy_profile_id: str | None = None
+    policy_profile_version: str | None = None
+
+    def legacy_fields(self) -> dict[str, Any]:
+        return {
+            "focus": self.focus,
+            "feature_weights": dict(self.feature_weights),
+            "policy_profile_id": self.policy_profile_id,
+            "policy_profile_version": self.policy_profile_version,
+        }
+
+
 class BoardRunPipelineSnapshot(PrimitiveModel):
     schema_version: str = "business.board.run.pipeline_snapshot.v1"
     extraction_count: int = 0
@@ -40,6 +56,7 @@ class BoardRunResult(PrimitiveModel):
     insights: list[Insight] = Field(default_factory=list)
     reports: list[Report] = Field(default_factory=list)
     board_output: dict[str, Any] = Field(default_factory=dict)
+    board_intelligence: BoardIntelligenceSummary | None = None
     report_payloads: list[dict[str, Any]] = Field(default_factory=list)
     pipeline_snapshot: BoardRunPipelineSnapshot | None = None
     policy_snapshot: BusinessPolicySnapshot | None = None
@@ -53,4 +70,4 @@ class BoardRunResult(PrimitiveModel):
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
-__all__ = ["BoardRunPipelineSnapshot", "BoardRunResult"]
+__all__ = ["BoardIntelligenceSummary", "BoardRunPipelineSnapshot", "BoardRunResult"]

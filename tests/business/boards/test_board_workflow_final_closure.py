@@ -28,7 +28,9 @@ def test_board_workflow_final_trace_and_closure_fields(workflow_cls, board_type:
     assert result.trace.evidence_count >= 1
     assert result.trace.policy_profile_ids
     assert result.trace.guard_status in {"pass", "warning", "block", "unchecked"}
-    assert result.metadata["board_focus"] == focus
+    assert result.trace.board_focus == focus
+    assert result.result.board_intelligence is not None
+    assert result.result.board_intelligence.focus == focus
     assert result.result.artifact_refs
     assert result.result.evidence_refs
     assert result.result.trace_ref is not None
@@ -44,7 +46,7 @@ def test_four_workflows_keep_distinct_focus_and_ranking_features() -> None:
         CommunityPulseWorkflow().run(_sample_raw_items()),
     ]
 
-    focuses = {result.metadata["board_focus"] for result in results}
+    focuses = {result.trace.board_focus for result in results}
     feature_focuses = {result.result.cards[0].ranking_features["board_focus"] for result in results}
 
     assert focuses == {

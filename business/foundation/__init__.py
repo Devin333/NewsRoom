@@ -19,6 +19,7 @@ from business.foundation.contracts import (
 from business.foundation.models import (
     Badge,
     BoardCard,
+    BoardIntelligenceSummary,
     BoardRunPipelineSnapshot,
     BoardRunResult,
     BusinessFeedbackEvent,
@@ -156,6 +157,7 @@ __all__ = [
     "Badge",
     "BasePolicy",
     "BoardCard",
+    "BoardIntelligenceSummary",
     "BoardRunPipelineSnapshot",
     "BoardRunResult",
     "BoardContext",

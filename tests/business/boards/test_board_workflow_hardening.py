@@ -30,7 +30,7 @@ def test_board_workflow_runs_with_trace_and_result(workflow_cls, board_type: Boa
     assert workflow_result.trace.policy_profile_ids
     assert workflow_result.trace.quality_status in {"passed", "warning", "failed", "unchecked"}
     assert "raw_payload" not in workflow_result.result.to_dict()
-    assert workflow_result.metadata["board_focus"]
+    assert workflow_result.trace.board_focus
     assert workflow_result.metadata["stages"] == [
         "resolve_context",
         "select_signals",
@@ -50,7 +50,7 @@ def test_four_board_workflows_have_distinct_focus_metadata() -> None:
         CommunityPulseWorkflow().run(_sample_raw_items()),
     ]
 
-    focuses = {result.metadata["board_focus"] for result in results}
+    focuses = {result.trace.board_focus for result in results}
 
     assert focuses == {
         "product_adoption_news",
@@ -58,7 +58,7 @@ def test_four_board_workflows_have_distinct_focus_metadata() -> None:
         "research_method_radar",
         "community_discussion_pulse",
     }
-    assert {result.trace.metadata["board_focus"] for result in results} == focuses
+    assert {result.metadata["board_focus"] for result in results} == focuses
 
 
 def _sample_raw_items() -> list[dict[str, object]]:

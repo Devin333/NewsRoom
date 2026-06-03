@@ -27,6 +27,7 @@ ServiceT = TypeVar("ServiceT", bound=BoardServiceBase)
 class BoardWorkflowTrace(PrimitiveModel):
     board_type: BoardType
     run_id: str
+    board_focus: str
     input_count: int
     selected_signal_count: int
     extraction_count: int
@@ -268,6 +269,7 @@ class BoardWorkflowBase(Generic[ServiceT]):
         return BoardWorkflowTrace(
             board_type=self.board_type,
             run_id=result.run_id,
+            board_focus=self.board_focus or _board_focus(result),
             input_count=input_count,
             selected_signal_count=selected_signal_count,
             extraction_count=extraction_count,
@@ -309,24 +311,20 @@ class BoardWorkflowBase(Generic[ServiceT]):
         ids: list[str] = []
         if result.policy_snapshot is not None:
             ids.extend(profile.profile_id for profile in result.policy_snapshot.profiles)
-        board_intelligence = result.metadata.get("board_intelligence")
-        if isinstance(board_intelligence, dict):
-            policy_profile_id = board_intelligence.get("policy_profile_id")
-            if policy_profile_id:
-                ids.append(str(policy_profile_id))
+        if result.board_intelligence is not None and result.board_intelligence.policy_profile_id:
+            ids.append(str(result.board_intelligence.policy_profile_id))
         for card in result.cards:
-            policy_profile_id = card.metadata.get("policy_profile_id") or card.ranking_features.get("policy_profile_id")
+            policy_profile_id = card.ranking_features.get("policy_profile_id")
             if policy_profile_id:
                 ids.append(str(policy_profile_id))
         return _dedupe_text(ids)
 
 
 def _board_focus(result: BoardRunResult) -> str:
-    board_intelligence = result.metadata.get("board_intelligence")
-    if isinstance(board_intelligence, dict) and board_intelligence.get("focus"):
-        return str(board_intelligence["focus"])
+    if result.board_intelligence is not None and result.board_intelligence.focus:
+        return str(result.board_intelligence.focus)
     if result.cards:
-        focus = result.cards[0].metadata.get("board_focus") or result.cards[0].ranking_features.get("board_focus")
+        focus = result.cards[0].ranking_features.get("board_focus")
         if focus:
             return str(focus)
     return result.board_type.value

@@ -64,6 +64,9 @@ def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
 
     result = service.build_board_run_result([sample_signal("ai_news")])
 
+    assert result.board_intelligence is not None
+    assert result.board_intelligence.focus == "product_adoption_news"
+    assert result.board_intelligence.policy_profile_id
     assert result.board_output["metadata"]["board_type"] == BoardType.AI_NEWS.value
     assert result.pipeline_snapshot is not None
     assert result.pipeline_snapshot.schema_version == "business.board.run.pipeline_snapshot.v1"
@@ -73,6 +76,7 @@ def test_board_run_result_uses_reference_and_pipeline_snapshots() -> None:
     assert result.pipeline_snapshot.processed_relations == result.metadata["processed_relations"]
     assert result.metadata["pipeline_snapshot"] == result.pipeline_snapshot.to_dict()
     assert result.metadata["board_output"] == result.board_output
+    assert result.metadata["board_intelligence"]["focus"] == result.board_intelligence.focus
 
 
 def test_pipeline_run_carries_formal_snapshot_before_result_metadata() -> None:

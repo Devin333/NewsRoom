@@ -37,6 +37,8 @@ def test_four_boards_emit_distinct_ranking_features_and_reasons() -> None:
     }
     assert len(reasons) == 4
     for result in results.values():
+        assert result.board_intelligence is not None
+        assert result.board_intelligence.focus in focuses
         assert result.quality_summary is not None
         assert result.cards[0].ranking_features["policy_profile_id"]
         assert "raw_payload" not in result.to_dict()

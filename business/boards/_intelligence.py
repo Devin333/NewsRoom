@@ -7,6 +7,7 @@ from typing import Any
 from business.foundation import (
     Badge,
     BoardCard,
+    BoardIntelligenceSummary,
     BoardRunResult,
     BoardType,
     BusinessFeedbackEvent,
@@ -49,18 +50,20 @@ def enhance_board_run_result(
     quality_summary = _quality_summary(cards, profile=profile, base=result.quality_summary)
     feedback = list(result.feedback_candidates)
     feedback.extend(_feedback_from_quality(quality_summary, result, policy))
+    board_intelligence = BoardIntelligenceSummary(
+        focus=profile.focus,
+        feature_weights=dict(profile.feature_weights),
+        policy_profile_id=policy.profile_id,
+        policy_profile_version=policy.version,
+    )
     metadata = {
         **dict(result.metadata),
-        "board_intelligence": {
-            "focus": profile.focus,
-            "feature_weights": dict(profile.feature_weights),
-            "policy_profile_id": policy.profile_id,
-            "policy_profile_version": policy.version,
-        },
+        "board_intelligence": board_intelligence.model_dump(mode="json"),
     }
     return result.model_copy(
         update={
             "cards": cards,
+            "board_intelligence": board_intelligence,
             "quality_summary": quality_summary,
             "feedback_candidates": feedback,
             "metadata": metadata,

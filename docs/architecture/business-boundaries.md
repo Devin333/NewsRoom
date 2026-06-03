@@ -195,6 +195,7 @@ Agent 间反馈不应隐藏在各 agent output 的自由形态字段里，也不
 - board-specific policy hook；
 - 旧调用方兼容方法；
 - 对 `BoardServiceRuntime` 装配结果的兼容属性暴露。
+- `BoardWorkflowTrace.board_focus` 是 workflow 结果的正式焦点字段；`BoardWorkflowResult.metadata["board_focus"]` 仅作历史兼容投影，不应作为新代码的内部状态入口。
 
 通用服务装配已移动到 `business/boards/application/service_runtime.py`。
 selection、quality、references 等领域规则位于 `business/boards/domain/`。
@@ -222,6 +223,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 本轮新增的正式字段：
 
 - `BoardRunResult.board_output`：显式承载 board output payload。
+- `BoardRunResult.board_intelligence`：显式承载 board focus、policy profile 和 feature weight 的正式运行态摘要。
 - `BoardRunResult.pipeline_snapshot`：显式承载 pipeline snapshot，类型为 `BoardRunPipelineSnapshot`。
 - `BoardRunResult.report_payloads`：显式承载从 board output 提取的 report payload。
 - `BoardRunResult.metadata["board_output"]`：仅作为历史兼容字段保留。
