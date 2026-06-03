@@ -29,6 +29,11 @@ from business.layers.signal.source_processing import (
     rank_items,
     score_source_item,
 )
+from business.layers.signal.source_processing.fallback import (
+    SourceErrorFallbackInput,
+    SourceItemFallbackInput,
+    SourceSelectionFallbackInput,
+)
 from business.layers.signal.source_processing.governance import SourceGovernancePolicy
 from business.layers.signal.source_processing.normalize import canonicalize_url, normalize_text
 
@@ -249,6 +254,64 @@ def test_build_source_fallback_report_summarizes_selection_item_and_error_fallba
         "official_blog_failed_stage",
     ]
     assert report.rows[1]["feed_error_types"] == ["fetch_connection_error"]
+
+
+def test_source_fallback_inputs_project_legacy_and_typed_values() -> None:
+    raw_item = _raw_item(
+        "Official fallback",
+        "https://example.com/fallback",
+        metadata={
+            "official_blog_fetch_mode": "html_fallback",
+            "official_blog_fallback": {
+                "from": "feed",
+                "to": "html",
+                "feed_error_types": ["fetch_connection_error"],
+            },
+        },
+    )
+    error = SourceError(
+        source_id="official",
+        error_type="parse_error",
+        error_message="parse failed",
+        retryable=False,
+        metadata={"official_blog_fallback_stage": "html"},
+    )
+
+    selection = SourceSelectionFallbackInput.from_value(
+        {
+            "fallback_used": True,
+            "fallback_reason": "no_topic_match",
+            "selected_source_ids": ["official"],
+        }
+    )
+    [item] = SourceItemFallbackInput.from_values([raw_item])
+    [error_input] = SourceErrorFallbackInput.from_values([error])
+
+    assert selection.fallback_used is True
+    assert selection.fallback_reason == "no_topic_match"
+    assert selection.selected_source_ids == ("official",)
+    assert item.source_id == "source"
+    assert item.has_official_blog_fallback is True
+    assert item.fetch_mode == "html_fallback"
+    assert item.feed_error_types == ("fetch_connection_error",)
+    assert error_input.source_id == "official"
+    assert error_input.official_blog_fallback_stage == "html"
+    assert error_input.retryable is False
+
+
+def test_source_fallback_item_input_requires_structured_fallback_payload() -> None:
+    [item] = SourceItemFallbackInput.from_values(
+        [
+            _raw_item(
+                "Unstructured fallback",
+                "https://example.com/fallback",
+                metadata={"official_blog_fallback": "yes"},
+            )
+        ]
+    )
+
+    assert item.has_official_blog_fallback is False
+    assert item.feed_error_types == ()
 
 
 def test_build_source_fallback_report_normalizes_source_error_mappings() -> None:
