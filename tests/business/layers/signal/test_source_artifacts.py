@@ -257,3 +257,60 @@ def test_source_artifact_writer_redacts_url_userinfo_and_basic_auth(tmp_path) ->
     assert headers_payload["response_url"] == (
         "https://[REDACTED]@example.com/feed?token=%5BREDACTED%5D"
     )
+
+
+def test_source_artifact_writer_normalizes_legacy_error_payloads(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("source-run")
+    writer = SourceArtifactWriter(manager)
+
+    index = writer.write_source_artifacts(
+        "source-run",
+        source_fetch_requests=[
+            SourceFetchRequest(
+                request_id="fetch-legacy",
+                source_id="feed",
+                source_type="rss",
+                url="https://example.com/feed",
+            )
+        ],
+        source_fetch_results=[
+            SourceFetchResult(
+                request_id="fetch-legacy",
+                source_id="feed",
+                success=False,
+                error_type="fetch_timeout",
+                error_message="timeout",
+            )
+        ],
+        source_errors=[
+            {
+                "source_id": "feed",
+                "source_name": "Feed",
+                "error_type": "fetch_timeout",
+                "error_message": "timeout",
+                "metadata": {"request_id": "fetch-legacy"},
+            }
+        ],
+    )
+
+    assert index is not None
+    run_dir = tmp_path / "source-run"
+    error_entry = next(entry for entry in index["entries"] if entry["artifact_type"] == "source_error")
+    request_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_fetch_request"
+    )
+    response_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_fetch_result"
+    )
+    error_payload = json.loads((run_dir / error_entry["path"]).read_text())
+
+    assert error_payload["error"]["source_id"] == "feed"
+    assert error_payload["error"]["source_name"] == "Feed"
+    assert error_payload["error"]["error_type"] == "fetch_timeout"
+    assert error_payload["error"]["retryable"] is True
+    assert error_entry["request_id"] == "fetch-legacy"
+    assert error_entry["request_ref"] == request_entry["artifact_ref"]
+    assert error_entry["response_ref"] == response_entry["artifact_ref"]
+    assert error_payload["error"]["request_ref"] == request_entry["artifact_ref"]
+    assert error_payload["error"]["response_ref"] == response_entry["artifact_ref"]

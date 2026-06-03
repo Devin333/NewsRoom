@@ -6,6 +6,8 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from framework.shared.json import to_jsonable as _to_json_safe
+from business.foundation.models.source import SourceError
+from business.foundation.models.source_error_normalization import normalize_source_errors
 from business.layers.signal.artifact_refs import SignalArtifactRef
 from framework.artifacts import ArtifactManager
 
@@ -237,11 +239,14 @@ class SourceArtifactWriter:
             if response_headers_entry is not None:
                 entries.append(response_headers_entry)
 
-        for index, source_error in enumerate(source_errors or [], start=1):
-            source_id = _string_value(source_error, "source_id", default="unknown-source")
+        for index, source_error in enumerate(
+            normalize_source_errors(source_errors, context="source artifact errors"),
+            start=1,
+        ):
+            source_id = source_error.source_id
             object_id = _source_error_id(source_error, index)
             path = f"sources/errors/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-            request_id = _optional_string(_metadata_value(source_error, "request_id"))
+            request_id = _optional_string(source_error.metadata.get("request_id"))
             request_ref = _resolve_error_ref(
                 source_error,
                 "request_ref",
@@ -409,9 +414,9 @@ class SourceArtifactWriter:
         return entry, artifact_ref
 
 
-def _source_error_id(source_error: Any, index: int) -> str:
-    source_id = _string_value(source_error, "source_id", default="unknown-source")
-    error_type = _string_value(source_error, "error_type", default="source_error")
+def _source_error_id(source_error: SourceError, index: int) -> str:
+    source_id = source_error.source_id
+    error_type = source_error.error_type
     digest = _stable_id(source_error)[:12]
     return f"{index:04d}_{source_id}_{error_type}_{digest}"
 
@@ -589,7 +594,7 @@ def _remember_ref(
 
 
 def _resolve_error_ref(
-    source_error: Any,
+    source_error: SourceError,
     field_name: str,
     *,
     request_id: str | None,
@@ -597,7 +602,7 @@ def _resolve_error_ref(
     refs_by_request_id: dict[str, SignalArtifactRef],
     refs_by_source_id: dict[str, list[SignalArtifactRef]],
 ) -> Any:
-    existing_ref = _existing_artifact_ref(source_error, field_name)
+    existing_ref = getattr(source_error, field_name)
     if existing_ref is not None:
         return existing_ref
     if request_id:

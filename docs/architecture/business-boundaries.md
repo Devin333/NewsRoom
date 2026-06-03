@@ -83,6 +83,8 @@ source 处理链路的正式中间模型是：
 
 source fetch error 的运行期策略由 `SourceErrorRuntimeMetadata` 投影，`DailySourceCollector` 和 `DailySourceRecollectionExecutor` 只消费 `retryable`、`source_health_affecting` 和 `phase` 的正式 view；旧 `SourceError.metadata` 只作为兼容输入。
 
+source artifact 发布侧同样不得对 `source_errors` 做 duck typing。`SourceArtifactWriter` 的公开入口可以接收历史 dict payload，但必须先通过 `normalize_source_errors()` 归一化为 `SourceError`；artifact id、request/response artifact ref 关联、redaction payload 构建只消费正式字段。这样 legacy dict 兼容停留在 artifact boundary，artifact 业务逻辑不再通过 `dict.get("error_type")` 或 `getattr()` 猜测错误结构。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。
