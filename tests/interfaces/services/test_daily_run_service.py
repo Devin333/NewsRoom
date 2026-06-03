@@ -109,6 +109,26 @@ def test_daily_run_service_board_attachment_ignores_legacy_only_daily_outputs(tm
     assert "cross_board_output" not in result.output
 
 
+def test_daily_run_service_persistence_input_ignores_legacy_only_daily_outputs(tmp_path) -> None:
+    persistence = _CapturingPersistence()
+    service = DailyRunApplicationService(
+        artifact_root=tmp_path,
+        persistence_service=persistence,
+        runner_cls_resolver=lambda profile: lambda artifact_root: _LegacyOnlyRunner(),
+    )
+
+    service.run_daily(
+        profile="live-offline",
+        topic="AI",
+        source_limit=1,
+        run_id="run-1",
+    )
+
+    assert persistence.persisted_input.final_report is None
+    assert persistence.persisted_input.evidence_bundle is None
+    assert persistence.persisted_input.quality_result is None
+
+
 def test_daily_run_service_falls_back_to_projected_result_when_input_writer_is_unconfigured(
     tmp_path,
 ) -> None:
@@ -131,6 +151,26 @@ def test_daily_run_service_falls_back_to_projected_result_when_input_writer_is_u
         "sections": [],
     }
     assert persistence.persisted_output["evidence_bundle"] == {"items": []}
+
+
+def test_daily_run_service_persistence_result_fallback_ignores_legacy_only_daily_outputs(
+    tmp_path,
+) -> None:
+    persistence = _InputMethodWithoutWriterPersistence()
+    service = DailyRunApplicationService(
+        artifact_root=tmp_path,
+        persistence_service=persistence,
+        runner_cls_resolver=lambda profile: lambda artifact_root: _LegacyOnlyRunner(),
+    )
+
+    service.run_daily(
+        profile="live-offline",
+        topic="AI",
+        source_limit=1,
+        run_id="run-1",
+    )
+
+    assert persistence.persisted_output == {}
 
 
 class _Persistence:

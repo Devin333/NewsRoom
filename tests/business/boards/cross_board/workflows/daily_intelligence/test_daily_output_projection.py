@@ -65,7 +65,7 @@ def test_project_daily_output_for_persistence_projects_only_record_input_keys() 
     assert "unmapped_runtime_state" not in projected
 
 
-def test_persistence_output_projection_keeps_legacy_fallback_explicit() -> None:
+def test_persistence_output_projection_requires_namespaced_daily_outputs() -> None:
     output = {
         "final_report": {"title": "legacy"},
         "quality_result": {"decision": "pass"},
@@ -74,10 +74,7 @@ def test_persistence_output_projection_keeps_legacy_fallback_explicit() -> None:
 
     projected = project_daily_output_for_persistence(output)
 
-    assert projected == {
-        "final_report": {"title": "legacy"},
-        "quality_result": {"decision": "pass"},
-    }
+    assert projected == {}
 
 
 def test_project_daily_output_for_board_attachment_projects_board_input_keys() -> None:
