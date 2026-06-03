@@ -408,6 +408,7 @@ def test_daily_evidence_and_quality_gate_steps_produce_final_report() -> None:
         "editor_gate_passed",
         "quality_gate_bypassed_non_social_media",
     ]
+    assert buffer.read("quality_events")[0].metadata["evidence_items_count"] == evidence_bundle.item_count
     assert buffer.read("quality.events") == buffer.read("quality_events")
 
 

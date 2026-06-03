@@ -11,6 +11,9 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     read_buffer_value,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_evidence import (
+    SourceGateEvidenceBundleView,
+)
 
 
 def build_evidence(buffer: StepScopedDataBufferView) -> dict[str, Any]:
@@ -29,7 +32,7 @@ def build_evidence(buffer: StepScopedDataBufferView) -> dict[str, Any]:
         "quality_events": [
             quality_event(
                 "evidence_build_succeeded",
-                evidence_items_count=len(bundle.items),
+                evidence_items_count=SourceGateEvidenceBundleView.from_bundle(bundle).item_count,
                 evidence_scores_count=len(build_result.evidence_scores),
                 candidate_claims_count=len(build_result.candidate_claims),
             ),

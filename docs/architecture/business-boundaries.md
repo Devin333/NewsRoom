@@ -174,7 +174,7 @@ quality gate 的单次运行观测指标由 `quality_observability.py` 构建，
 
 non-social-media bypass 判定统一由 `quality_gate_policy.assess_non_social_media_bypass()` 返回，quality gate 和 report finalization 只能消费该 assessment，不应各自重新判断或拼接 bypass 事件字段。
 
-social-media evidence gate 的输入投影由 `source_gate_evidence.py` 承载：evidence item 的 `source_type`、`category` 和 `source_url` 先归一化为 `SourceGateEvidenceItemView`，bundle 计数通过 `SourceGateEvidenceBundleView.item_count` 暴露给 bypass assessment、quality evaluation events、quality gate metrics 和 report quality metrics。`source_gate_policy.py`、`quality_gate_policy.py`、`quality_evaluation.py`、`quality_result_builder.py` 和 `report_quality_outputs.py` 只消费该 view 做规则判定与事件/指标 metadata 构建；metadata 读取仅保留在该投影边界内，不能散落进 quality gate policy、usecase 或 workflow step。
+social-media evidence gate 的输入投影由 `source_gate_evidence.py` 承载：evidence item 的 `source_type`、`category` 和 `source_url` 先归一化为 `SourceGateEvidenceItemView`，bundle 计数通过 `SourceGateEvidenceBundleView.item_count` 暴露给 evidence build events、bypass assessment、quality evaluation events、quality gate metrics 和 report quality metrics。`evidence_step.py`、`source_gate_policy.py`、`quality_gate_policy.py`、`quality_evaluation.py`、`quality_result_builder.py` 和 `report_quality_outputs.py` 只消费该 view 做规则判定与事件/指标 metadata 构建；metadata 读取仅保留在该投影边界内，不能散落进 quality gate policy、usecase 或 workflow step。
 
 ## Report Finalization 边界
 
