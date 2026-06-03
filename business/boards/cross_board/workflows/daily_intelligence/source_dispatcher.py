@@ -257,6 +257,7 @@ class SourceDispatcher:
             _infra_source(source),
             subreddit=connector_options.subreddit,
             listing=connector_options.listing,
+            time_range=connector_options.time_range,
             limit=limit,
         ))
 

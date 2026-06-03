@@ -127,7 +127,7 @@ def test_connector_options_project_community_tag() -> None:
 def test_connector_options_project_reddit_runtime_options() -> None:
     source = _source(
         source_type=SourceType.REDDIT,
-        metadata={"subreddit": "MachineLearning", "listing": "new"},
+        metadata={"subreddit": "MachineLearning", "listing": "top", "time_range": "week"},
     )
 
     options = SourceConnectorRuntimeOptions.from_source(
@@ -136,7 +136,41 @@ def test_connector_options_project_reddit_runtime_options() -> None:
     )
 
     assert options.subreddit == "MachineLearning"
-    assert options.listing == "new"
+    assert options.listing == "top"
+    assert options.time_range == "week"
+
+
+def test_connector_options_project_legacy_reddit_time_key() -> None:
+    source = _source(
+        source_type=SourceType.REDDIT,
+        metadata={"subreddit": "MachineLearning", "listing": "top", "time": "month"},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "ignored"},
+    )
+
+    assert options.time_range == "month"
+
+
+def test_connector_options_project_reddit_time_range_before_legacy_time() -> None:
+    source = _source(
+        source_type=SourceType.REDDIT,
+        metadata={
+            "subreddit": "MachineLearning",
+            "listing": "top",
+            "time_range": "week",
+            "time": "month",
+        },
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "ignored"},
+    )
+
+    assert options.time_range == "week"
 
 
 def test_connector_options_project_hackernews_story_list() -> None:

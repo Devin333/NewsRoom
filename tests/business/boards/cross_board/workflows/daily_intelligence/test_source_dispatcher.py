@@ -14,7 +14,7 @@ def test_source_dispatcher_passes_reddit_runtime_options() -> None:
         name="Reddit MachineLearning",
         source_type=SourceType.REDDIT,
         url="https://www.reddit.com",
-        metadata={"subreddit": "MachineLearning", "listing": "new"},
+        metadata={"subreddit": "MachineLearning", "listing": "top", "time_range": "week"},
     )
     connector = _RecordingRedditConnector()
 
@@ -41,7 +41,8 @@ def test_source_dispatcher_passes_reddit_runtime_options() -> None:
         {
             "source_id": "reddit",
             "subreddit": "MachineLearning",
-            "listing": "new",
+            "listing": "top",
+            "time_range": "week",
             "limit": 1,
         }
     ]
@@ -271,12 +272,13 @@ class _RecordingRedditConnector:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def fetch(self, source, *, subreddit, listing, limit):
+    def fetch(self, source, *, subreddit, listing, time_range, limit):
         self.calls.append(
             {
                 "source_id": source.source_id,
                 "subreddit": subreddit,
                 "listing": listing,
+                "time_range": time_range,
                 "limit": limit,
             }
         )

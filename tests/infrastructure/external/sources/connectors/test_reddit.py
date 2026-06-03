@@ -108,6 +108,56 @@ def test_reddit_connector_fetch_accepts_explicit_runtime_options() -> None:
     )
 
 
+def test_reddit_connector_fetch_accepts_explicit_time_range() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return REDDIT_LISTING
+
+    items, errors = RedditConnector(fetch_text=fetch_text).fetch(
+        _source(metadata={}),
+        subreddit="MachineLearning",
+        listing="top",
+        time_range="week",
+        limit=1,
+    )
+
+    assert errors == []
+    assert len(items) == 1
+    assert captured["url"] == build_reddit_listing_url(
+        REDDIT_BASE_URL,
+        "MachineLearning",
+        "top",
+        limit=1,
+        time_range="week",
+    )
+
+
+def test_reddit_connector_prefers_explicit_time_range_over_legacy_metadata() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return REDDIT_LISTING
+
+    items, errors = RedditConnector(fetch_text=fetch_text).fetch(
+        _source(metadata={"subreddit": "MachineLearning", "listing": "top", "time": "month"}),
+        time_range="day",
+        limit=1,
+    )
+
+    assert errors == []
+    assert len(items) == 1
+    assert captured["url"] == build_reddit_listing_url(
+        REDDIT_BASE_URL,
+        "MachineLearning",
+        "top",
+        limit=1,
+        time_range="day",
+    )
+
+
 def test_reddit_connector_returns_invalid_subreddit_error() -> None:
     items, errors = RedditConnector(fetch_text=lambda url: REDDIT_LISTING).fetch(
         _source(subreddit=""),

@@ -17,6 +17,7 @@ class SourceConnectorRuntimeOptions(PrimitiveModel):
     story_list: str | None = None
     subreddit: str | None = None
     listing: str | None = None
+    time_range: str | None = None
     tag: str | None = None
     site: str | None = None
 
@@ -41,6 +42,7 @@ class SourceConnectorRuntimeOptions(PrimitiveModel):
             story_list=_optional_text(metadata.get("story_list")),
             subreddit=_optional_text(metadata.get("subreddit")),
             listing=_optional_text(metadata.get("listing")),
+            time_range=_connector_time_range(source_type, metadata=metadata),
             tag=_connector_tag(source_type, metadata=metadata),
             site=_optional_text(metadata.get("site")),
         )
@@ -68,6 +70,12 @@ def _connector_github_mode(source_type: SourceType, *, metadata: dict[str, Any])
     if source_type != SourceType.GITHUB:
         return None
     return _optional_text(metadata.get("github_mode")) or _optional_text(metadata.get("mode"))
+
+
+def _connector_time_range(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:
+    if source_type != SourceType.REDDIT:
+        return None
+    return _optional_text(metadata.get("time_range")) or _optional_text(metadata.get("time"))
 
 
 def _optional_text(value: Any) -> str | None:

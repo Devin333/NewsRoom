@@ -61,6 +61,7 @@ class RedditConnector:
         *,
         subreddit: str | None = None,
         listing: str | None = None,
+        time_range: str | None = None,
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
@@ -68,13 +69,13 @@ class RedditConnector:
         try:
             actual_subreddit = _subreddit_from_source(source, subreddit=subreddit)
             actual_listing = _listing_from_source(source, listing=listing)
-            time_range = _time_range_from_source(source)
+            actual_time_range = _time_range_from_source(source, time_range=time_range)
             listing_url = build_reddit_listing_url(
                 source.url or REDDIT_BASE_URL,
                 actual_subreddit,
                 actual_listing,
                 limit=limit or 10,
-                time_range=time_range,
+                time_range=actual_time_range,
             )
             rate_limit = self._rate_limiter.reserve(
                 listing_url,
@@ -286,11 +287,13 @@ def _legacy_reddit_option(source: SourceDefinition, key: str) -> str | None:
     return _optional_text(source.metadata.get(key))
 
 
-def _time_range_from_source(source: SourceDefinition) -> str | None:
-    value = source.metadata.get("time") or source.metadata.get("time_range")
-    if value is None:
-        return None
-    return _ensure_time_range(str(value))
+def _time_range_from_source(source: SourceDefinition, *, time_range: str | None) -> str | None:
+    if time_range and time_range.strip():
+        return _ensure_time_range(time_range)
+    legacy_time_range = _legacy_reddit_option(source, "time_range") or _legacy_reddit_option(source, "time")
+    if legacy_time_range:
+        return _ensure_time_range(legacy_time_range)
+    return None
 
 
 def _ensure_subreddit(value: str) -> str:
