@@ -47,6 +47,17 @@ def test_with_namespaced_aliases_adds_agent_loop_telemetry_aliases() -> None:
     assert outputs["agent.planner.loop.llm_call_artifacts"] == []
 
 
+def test_with_namespaced_aliases_adds_test_agent_loop_telemetry_aliases() -> None:
+    metrics = {"llm_calls": 1}
+    outputs = with_namespaced_aliases({"agent_loop_metrics": metrics})
+
+    assert outputs["loop.metrics"] is metrics
+    assert namespaced_first_key_candidates("agent_loop_metrics") == [
+        "loop.metrics",
+        "agent_loop_metrics",
+    ]
+
+
 def test_with_namespaced_aliases_adds_agent_payload_aliases() -> None:
     research_plan = {"topic": "AI policy"}
     analysis_result = {"findings": []}

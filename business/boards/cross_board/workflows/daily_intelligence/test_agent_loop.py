@@ -35,10 +35,15 @@ def build_test_agent_loop_workflow() -> WorkflowSpec:
                 write_keys=[
                     "analysis_result",
                     "agent_loop_result",
+                    "loop.result",
                     "agent_loop_events",
+                    "loop.events",
                     "agent_loop_metrics",
+                    "loop.metrics",
                     "agent_loop_diagnostics",
+                    "loop.diagnostics",
                     "agent_loop_trace",
+                    "loop.trace",
                 ],
                 required_output_keys=[
                     "analysis_result",
@@ -48,6 +53,15 @@ def build_test_agent_loop_workflow() -> WorkflowSpec:
                     "agent_loop_diagnostics",
                     "agent_loop_trace",
                 ],
+                metadata={
+                    "output_aliases": {
+                        "agent_loop_result": "loop.result",
+                        "agent_loop_events": "loop.events",
+                        "agent_loop_metrics": "loop.metrics",
+                        "agent_loop_diagnostics": "loop.diagnostics",
+                        "agent_loop_trace": "loop.trace",
+                    }
+                },
             )
         ],
         metadata={"profile": PROFILE, "product_path": False},

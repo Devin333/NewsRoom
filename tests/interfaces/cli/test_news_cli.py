@@ -97,6 +97,48 @@ def test_news_cli_run_test_agent_loop_human_output(tmp_path, capsys) -> None:
     assert "tool_calls=1" in captured.out
 
 
+def test_news_cli_run_test_agent_loop_human_output_uses_namespaced_metrics(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    class FakeRunResult:
+        run_id = "cli-agent-loop-namespaced"
+        status = WorkflowStatus.SUCCEEDED
+        output = {"loop.metrics": {"llm_calls": 5, "tool_calls": 2}}
+        artifact_dir = str(tmp_path / "cli-agent-loop-namespaced")
+        manifest_path = str(tmp_path / "cli-agent-loop-namespaced" / "manifest.json")
+        events_path = str(tmp_path / "cli-agent-loop-namespaced" / "events.jsonl")
+
+    class FakeRunApplicationService:
+        def __init__(self, artifact_root):
+            self.artifact_root = artifact_root
+
+        def run_test_agent_loop(self, **kwargs):
+            assert self.artifact_root == str(tmp_path)
+            assert kwargs["run_id"] == "cli-agent-loop-namespaced"
+            return FakeRunResult()
+
+    monkeypatch.setattr(dev_commands, "RunApplicationService", FakeRunApplicationService)
+
+    exit_code = main(
+        [
+            "dev",
+            "run-test-agent-loop",
+            "--artifact-root",
+            str(tmp_path),
+            "--run-id",
+            "cli-agent-loop-namespaced",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "llm_calls=5" in captured.out
+    assert "tool_calls=2" in captured.out
+
+
 def test_news_cli_run_daily_live_offline_json_output(tmp_path, capsys) -> None:
     exit_code = main(
         [
