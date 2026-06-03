@@ -5,6 +5,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_fetch_recor
     SourceFetchResultMetadata,
     error_metadata_bool,
     error_phase,
+    response_metadata_from_observations,
     skipped_source_fetch_result,
     source_fetch_result,
 )
@@ -73,6 +74,44 @@ def test_source_fetch_result_metadata_prefers_formal_zero_counts() -> None:
 
     assert payload.item_count == 0
     assert payload.error_count == 0
+
+
+def test_response_metadata_from_observations_projects_mapping_metadata() -> None:
+    metadata = response_metadata_from_observations(
+        items=[
+            {
+                "source_item_id": "raw-1",
+                "metadata": {
+                    "fetch_response": {
+                        "status_code": "200",
+                        "content_type": "application/rss+xml",
+                        "url": "https://example.com/feed.xml",
+                        "headers": {"Content-Type": "application/rss+xml"},
+                    }
+                },
+            }
+        ]
+    )
+
+    assert metadata == {
+        "status_code": 200,
+        "content_type": "application/rss+xml",
+        "url": "https://example.com/feed.xml",
+        "headers": {"Content-Type": "application/rss+xml"},
+    }
+
+
+def test_source_fetch_result_counts_mapping_raw_content_bytes() -> None:
+    result = source_fetch_result(
+        _source(),
+        request_id="fetch-1",
+        success=True,
+        latency_ms=12,
+        items=[{"source_item_id": "raw-1", "raw_content": "hello"}],
+        errors=[],
+    )
+
+    assert result.content_bytes == 5
 
 
 def test_source_error_runtime_metadata_projects_legacy_error_metadata() -> None:

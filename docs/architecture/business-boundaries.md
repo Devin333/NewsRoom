@@ -81,7 +81,7 @@ source 处理链路的正式中间模型是：
 
 `business.layers.signal.signal_projection.SourceSignalProjectionService` 负责把 `RawSourceItem` 投影为业务 `Signal`，包括 `SourceRef`、canonical URL、metrics、tags 和 raw confidence。`SignalPipeline` 只编排 raw -> normalized -> deduplicated -> ranked -> signal 的流程，并传入处理阶段与追加 metrics；不得在 pipeline 主体里重新拼装 source projection 字段。normalized/ranked 阶段必须通过 `SourceSignalProjectionInput.source_reliability` 和 `ranking_signals` 显式传递质量输入，metadata 只允许作为 raw/legacy 输入兜底。
 
-source fetch error 的运行期策略由 `SourceErrorRuntimeMetadata` 投影，`DailySourceCollector` 和 `DailySourceRecollectionExecutor` 只消费 `retryable`、`source_health_affecting` 和 `phase` 的正式 view；旧 `SourceError.metadata` 只作为兼容输入。
+source fetch result / error 的运行期观测由正式 view 投影：`SourceFetchResultMetadata` 承载 result metadata，source fetch observation view 集中读取 raw item / error 的 metadata 与 raw content，`SourceErrorRuntimeMetadata` 投影错误运行期策略。`DailySourceCollector` 和 `DailySourceRecollectionExecutor` 只消费 `retryable`、`source_health_affecting` 和 `phase` 的正式 view；旧 raw item / `SourceError.metadata` 只作为兼容输入。
 
 source artifact 发布侧同样不得对 `source_errors` 做 duck typing。`SourceArtifactWriter` 的公开入口可以接收历史 dict payload，但必须先通过 `SourceErrorArtifactInput` 归一化为正式 error artifact 输入；legacy dict 到 `SourceError` 的转换、artifact id 生成、历史 `metadata["request_id"]` 读取和 request/response ref 投影都停留在 input view。error writer 只消费 `source_id`、`error_id`、`request_id`、`request_ref`、`response_ref` 和正式 `SourceError` payload，不再通过 `dict.get("error_type")`、`getattr()` 或直接读取 metadata 猜测错误结构。
 

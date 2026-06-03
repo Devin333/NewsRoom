@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any
 
@@ -149,9 +149,8 @@ def response_metadata_from_observations(
     items: list[Any] | None = None,
     errors: list[Any] | None = None,
 ) -> dict[str, Any] | None:
-    for value in list(items or []) + list(errors or []):
-        metadata = _object_metadata(value)
-        response_metadata = metadata.get(FETCH_RESPONSE_METADATA_KEY)
+    for observation in _source_fetch_observation_views(items=items, errors=errors):
+        response_metadata = observation.metadata.get(FETCH_RESPONSE_METADATA_KEY)
         if isinstance(response_metadata, dict):
             return {
                 "status_code": _optional_int(response_metadata.get("status_code")),
@@ -361,8 +360,8 @@ def _fetch_policy_metadata(fetch_policy: SourceFetchPolicy) -> dict[str, Any]:
 def _raw_content_bytes(items: list[Any]) -> int | None:
     total = 0
     found = False
-    for item in items:
-        raw_content = getattr(item, "raw_content", None)
+    for item in _source_fetch_observation_views(items=items):
+        raw_content = item.raw_content
         if raw_content is None:
             continue
         found = True
@@ -370,12 +369,37 @@ def _raw_content_bytes(items: list[Any]) -> int | None:
     return total if found else None
 
 
-def _object_metadata(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        metadata = value.get("metadata")
-    else:
-        metadata = getattr(value, "metadata", None)
-    return metadata if isinstance(metadata, dict) else {}
+@dataclass(frozen=True)
+class _SourceFetchObservationView:
+    metadata: dict[str, Any]
+    raw_content: Any = None
+
+    @classmethod
+    def from_value(cls, value: Any) -> "_SourceFetchObservationView":
+        if isinstance(value, dict):
+            return cls(
+                metadata=_metadata_dict(value.get("metadata")),
+                raw_content=value.get("raw_content"),
+            )
+        return cls(
+            metadata=_metadata_dict(getattr(value, "metadata", None)),
+            raw_content=getattr(value, "raw_content", None),
+        )
+
+
+def _source_fetch_observation_views(
+    *,
+    items: list[Any] | None = None,
+    errors: list[Any] | None = None,
+) -> list[_SourceFetchObservationView]:
+    return [
+        _SourceFetchObservationView.from_value(value)
+        for value in [*list(items or []), *list(errors or [])]
+    ]
+
+
+def _metadata_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _string_dict(value: Any) -> dict[str, str]:
