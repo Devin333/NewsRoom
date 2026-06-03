@@ -119,6 +119,31 @@ def test_source_fetch_result_artifact_input_projects_formal_result_metadata() ->
     assert artifact_input.response_headers == {"Content-Type": "application/rss+xml"}
 
 
+def test_source_fetch_result_artifact_input_projects_formal_nested_metadata() -> None:
+    [artifact_input] = source_fetch_result_artifact_inputs(
+        [
+            SourceFetchResult(
+                request_id="fetch-1",
+                source_id="feed",
+                success=True,
+                status_code=200,
+                content_type="application/rss+xml",
+                metadata={
+                    "response_url": "https://legacy.example.com/feed",
+                    "response_headers": {"Content-Type": "text/plain"},
+                    "source_fetch_result_metadata": {
+                        "response_url": "https://formal.example.com/feed",
+                        "response_headers": {"Content-Type": "application/rss+xml"},
+                    },
+                },
+            )
+        ]
+    )
+
+    assert artifact_input.response_url == "https://formal.example.com/feed"
+    assert artifact_input.response_headers == {"Content-Type": "application/rss+xml"}
+
+
 def test_source_fetch_result_artifact_input_accepts_legacy_mapping_payload() -> None:
     [artifact_input] = source_fetch_result_artifact_inputs(
         [
@@ -143,6 +168,35 @@ def test_source_fetch_result_artifact_input_accepts_legacy_mapping_payload() -> 
     assert artifact_input.status_code == 200
     assert artifact_input.content_type == "application/rss+xml"
     assert artifact_input.response_url is None
+    assert artifact_input.response_headers == {"Content-Type": "application/rss+xml"}
+
+
+def test_source_fetch_result_artifact_input_accepts_formal_nested_mapping_payload() -> None:
+    [artifact_input] = source_fetch_result_artifact_inputs(
+        [
+            {
+                "request_id": "fetch-formal",
+                "source_id": "feed",
+                "success": True,
+                "status_code": "200",
+                "content_type": "application/rss+xml",
+                "metadata": {
+                    "fetch_response": {
+                        "headers": {"Content-Type": "text/plain"},
+                    },
+                    "source_fetch_result_metadata": {
+                        "response_url": "https://formal.example.com/feed",
+                        "fetch_response": {
+                            "headers": {"Content-Type": "application/rss+xml"},
+                        },
+                    },
+                },
+            }
+        ]
+    )
+
+    assert artifact_input.request_id == "fetch-formal"
+    assert artifact_input.response_url == "https://formal.example.com/feed"
     assert artifact_input.response_headers == {"Content-Type": "application/rss+xml"}
 
 
@@ -172,6 +226,27 @@ def test_source_error_artifact_input_projects_formal_error_metadata() -> None:
     assert artifact_input.request_id == "fetch-1"
     assert artifact_input.request_ref == {"artifact_id": "request-ref"}
     assert artifact_input.response_ref == {"artifact_id": "response-ref"}
+
+
+def test_source_error_artifact_input_projects_formal_runtime_metadata() -> None:
+    [artifact_input] = source_error_artifact_inputs(
+        [
+            SourceError(
+                source_id="feed",
+                source_name="Feed",
+                error_type="fetch_timeout",
+                error_message="timeout",
+                request_ref={"artifact_id": "request-ref"},
+                metadata={
+                    "request_id": "legacy-fetch",
+                    "source_error_runtime_metadata": {"request_id": "formal-fetch"},
+                },
+            )
+        ]
+    )
+
+    assert artifact_input.request_id == "formal-fetch"
+    assert artifact_input.request_ref == {"artifact_id": "request-ref"}
 
 
 def test_source_error_artifact_input_accepts_legacy_mapping_payload() -> None:
