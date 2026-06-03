@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     agent_loop_output_aliases,
+    canonicalize_namespaced_input_aliases,
     with_namespaced_aliases,
     with_namespaced_primary_read_keys,
     with_namespaced_read_keys,
@@ -59,6 +60,25 @@ def test_with_namespaced_aliases_adds_agent_payload_aliases() -> None:
     assert outputs["agent.planner.notes"] == {"mode": "offline"}
     assert outputs["agent.analyst.analysis_result"] is analysis_result
     assert outputs["agent.analyst.notes"] == {"mode": "offline"}
+
+
+def test_canonicalize_namespaced_input_aliases_prefers_namespaced_values() -> None:
+    inputs = canonicalize_namespaced_input_aliases(
+        {
+            "evidence_bundle": "legacy-bundle",
+            "evidence.bundle": "namespaced-bundle",
+            "quality.verification_result": {"status": "pass"},
+            "sources.errors": [],
+            "unmapped": "kept",
+        }
+    )
+
+    assert inputs == {
+        "evidence_bundle": "namespaced-bundle",
+        "verification_result": {"status": "pass"},
+        "source_errors": [],
+        "unmapped": "kept",
+    }
 
 
 def test_with_namespaced_write_keys_declares_aliases_after_legacy_keys() -> None:

@@ -130,6 +130,19 @@ def with_namespaced_aliases(
     return values
 
 
+def canonicalize_namespaced_input_aliases(
+    inputs: dict[str, Any],
+    aliases: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    alias_map = aliases or DAILY_BUFFER_ALIASES
+    values = dict(inputs)
+    for legacy_key, namespaced_key in alias_map.items():
+        if namespaced_key in values:
+            values[legacy_key] = values[namespaced_key]
+            values.pop(namespaced_key, None)
+    return values
+
+
 def with_namespaced_write_keys(keys: list[str]) -> list[str]:
     values = list(keys)
     for legacy_key in keys:

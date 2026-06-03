@@ -19,7 +19,7 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_output_budge
     DAILY_AGENT_OUTPUT_BUDGET,
 )
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
-    DAILY_BUFFER_ALIASES,
+    canonicalize_namespaced_input_aliases,
     with_namespaced_aliases,
 )
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE
@@ -61,12 +61,7 @@ class DailyAgentInputCanonicalizingRunner:
 
 
 def canonicalize_daily_agent_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
-    values = dict(inputs)
-    for legacy_key, namespaced_key in DAILY_BUFFER_ALIASES.items():
-        if namespaced_key in values:
-            values[legacy_key] = values[namespaced_key]
-            values.pop(namespaced_key, None)
-    return values
+    return canonicalize_namespaced_input_aliases(inputs)
 
 
 def normalize_daily_agent_output(

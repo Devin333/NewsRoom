@@ -12,3 +12,19 @@ def test_run_inspection_uses_dedicated_daily_output_projection() -> None:
 
     assert "project_daily_output_for_run_inspection" in service_source
     assert "project_daily_output_for_legacy_consumers" not in service_source
+
+
+def test_agent_loop_input_canonicalizer_uses_alias_projection_helper() -> None:
+    integration_path = (
+        PROJECT_ROOT
+        / "business"
+        / "boards"
+        / "cross_board"
+        / "workflows"
+        / "daily_intelligence"
+        / "agent_loop_integration.py"
+    )
+    integration_source = integration_path.read_text(encoding="utf-8")
+
+    assert "canonicalize_namespaced_input_aliases" in integration_source
+    assert "DAILY_BUFFER_ALIASES" not in integration_source
