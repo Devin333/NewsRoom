@@ -4,11 +4,11 @@ from business.foundation.feedback import (
     ImprovementApplier,
     ImprovementProposal,
     LEGACY_POLICY_EXPERIMENT_CHANGE_TYPES,
-    SUPPORTED_OVERRIDE_TYPES,
     PolicyExperimentProfile,
     PolicyExperimentApplicationContext,
     is_legacy_policy_experiment_change_type,
 )
+from business.foundation.feedback.override_policy import SUPPORTED_OVERRIDE_TYPES
 
 
 def test_improvement_applier_only_applies_approved_supported_proposals() -> None:

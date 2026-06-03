@@ -204,6 +204,17 @@ def test_business_foundation_root_does_not_export_legacy_override_names() -> Non
     assert "PolicyExperimentApplicationContext" in source
 
 
+def test_feedback_root_does_not_export_legacy_override_names() -> None:
+    feedback_init = BUSINESS_ROOT / "foundation" / "feedback" / "__init__.py"
+    source = feedback_init.read_text(encoding="utf-8")
+
+    assert "BoardImprovementContext" not in source
+    assert "ImprovementOverride" not in source
+    assert "LegacyPolicyExperimentPatch" not in source
+    assert "SUPPORTED_OVERRIDE_TYPES" not in source
+    assert "PolicyExperimentApplicationContext" in source
+
+
 def test_productized_artifact_publisher_delegates_legacy_override_projection() -> None:
     publisher_path = BUSINESS_ROOT / "boards" / "_artifact_publisher.py"
     source = publisher_path.read_text(encoding="utf-8")
