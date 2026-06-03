@@ -1308,23 +1308,27 @@ def _repository_from_source(
         return repository
     if isinstance(repository, str) and repository.strip():
         return GithubRepository.parse(repository)
-    metadata_repository = source.metadata.get("repository")
-    if isinstance(metadata_repository, str) and metadata_repository.strip():
-        return GithubRepository.parse(metadata_repository)
+    legacy_repository = _legacy_github_option(source, "repository")
+    if legacy_repository:
+        return GithubRepository.parse(legacy_repository)
     raise ValueError("github repository must use owner/repo format")
 
 
 def _github_mode(source: SourceDefinition, *, mode: str | None = None) -> str:
     return (
         _optional_text(mode)
-        or _optional_text(source.metadata.get("github_mode"))
-        or _optional_text(source.metadata.get("mode"))
+        or _legacy_github_option(source, "github_mode")
+        or _legacy_github_option(source, "mode")
         or "releases"
     ).casefold()
 
 
 def _legacy_github_query(source: SourceDefinition) -> str | None:
-    return _optional_text(source.metadata.get("query"))
+    return _legacy_github_option(source, "query")
+
+
+def _legacy_github_option(source: SourceDefinition, key: str) -> str | None:
+    return _optional_text(source.metadata.get(key))
 
 
 def _source_error(

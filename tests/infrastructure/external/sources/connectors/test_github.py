@@ -296,6 +296,34 @@ def test_github_connector_fetches_repository_search_items_for_trending_mode() ->
     assert items[0].metadata["stargazers_count"] == 123
 
 
+def test_github_connector_fetch_accepts_explicit_repository_search_options() -> None:
+    source = SourceDefinition(
+        source_id="github-explicit-search",
+        name="GitHub Explicit Search",
+        source_type="github",
+        url=GITHUB_API_URL,
+        reliability="medium",
+        metadata={},
+    )
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return GITHUB_SEARCH
+
+    items, errors = GithubConnector(fetch_text=fetch_text).fetch(
+        source,
+        mode="repository_search",
+        query="topic:ai",
+        limit=1,
+    )
+
+    assert errors == []
+    assert "search/repositories" in captured["url"]
+    assert "q=topic%3Aai" in captured["url"]
+    assert items[0].metadata["github_surface"] == "repository_search"
+
+
 def test_github_connector_fetch_accepts_explicit_mode() -> None:
     source = SourceDefinition(
         source_id="github-explicit-mode",

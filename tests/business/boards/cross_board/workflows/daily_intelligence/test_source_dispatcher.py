@@ -123,6 +123,46 @@ def test_source_dispatcher_passes_hackernews_runtime_options() -> None:
     ]
 
 
+def test_source_dispatcher_passes_github_runtime_options() -> None:
+    source = SourceDefinition(
+        source_id="github",
+        name="GitHub",
+        source_type=SourceType.GITHUB,
+        url="https://api.github.com",
+        metadata={"repository": "owner/repo", "mode": "commits"},
+    )
+    connector = _RecordingGithubConnector()
+
+    items, errors, result = _dispatcher(source, github_connector=connector).fetch_source(
+        source,
+        request={"topic": "AI policy"},
+        fetch_request=SourceFetchRequest(
+            request_id="source-fetch-1",
+            source_id=source.source_id,
+            source_type=source.source_type,
+        ),
+        profile="live",
+        limit=1,
+        connector_options=SourceConnectorRuntimeOptions.from_source(
+            source,
+            request={"topic": "AI policy"},
+        ),
+    )
+
+    assert items == []
+    assert errors == []
+    assert result is None
+    assert connector.calls == [
+        {
+            "source_id": "github",
+            "repository": "owner/repo",
+            "query": "AI policy",
+            "mode": "commits",
+            "limit": 1,
+        }
+    ]
+
+
 def test_source_dispatcher_passes_devto_runtime_options() -> None:
     source = SourceDefinition(
         source_id="devto",
@@ -205,6 +245,7 @@ def _dispatcher(
     *,
     arxiv_connector=None,
     devto_connector=None,
+    github_connector=None,
     hackernews_connector=None,
     reddit_connector=None,
     stackoverflow_connector=None,
@@ -216,7 +257,7 @@ def _dispatcher(
         html_connector=unused_connector,
         manual_connector=unused_connector,
         arxiv_connector=arxiv_connector or unused_connector,
-        github_connector=unused_connector,
+        github_connector=github_connector or unused_connector,
         hackernews_connector=hackernews_connector or unused_connector,
         reddit_connector=reddit_connector or unused_connector,
         lobsters_connector=unused_connector,
@@ -266,6 +307,23 @@ class _RecordingHackerNewsConnector:
             {
                 "source_id": source.source_id,
                 "story_list": story_list,
+                "limit": limit,
+            }
+        )
+        return [], []
+
+
+class _RecordingGithubConnector:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def fetch(self, source, *, repository, query, mode, limit):
+        self.calls.append(
+            {
+                "source_id": source.source_id,
+                "repository": repository,
+                "query": query,
+                "mode": mode,
                 "limit": limit,
             }
         )
