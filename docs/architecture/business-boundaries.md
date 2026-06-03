@@ -99,6 +99,8 @@ source artifact 发布到 workflow manifest 的业务投影由 `SourceArtifactPu
 
 agentic daily workflow 的 artifact 投影由 `agentic_artifact_projection.py` 承载，包括 agent loop artifact 列表、LLM 调用 artifact 脱敏、agent feedback manifest 摘要和 `agentic_summary` payload。artifact publisher 只负责判断 agentic workflow、写 JSON artifact，并把 projection 返回的 manifest fields 合并进 manifest；不得在 publisher 中重新维护 agent 列表、loop suffix 表、feedback 计数或 agent summary 规则。
 
+source recollection 的 manifest 摘要由 `source_recollection_artifact_projection.py` 承载，只消费 `source_recollection_execution_report` / `sources.recollection_execution_report` 和 `source_recollection_quality_assessment` / `sources.recollection_quality_assessment` 的正式字段。artifact publisher 只负责写对应 JSON artifact，并把投影后的 `source_recollection` summary 写入 manifest；不得从 `source_events`、raw item metadata 或 ad hoc dict 分支反推补源质量。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

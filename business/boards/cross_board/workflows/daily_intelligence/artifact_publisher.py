@@ -14,6 +14,9 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     daily_output_contains as _output_contains,
     daily_output_value as _output_value,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection_artifact_projection import (
+    source_recollection_manifest_summary,
+)
 from business.layers.signal.source_artifact_publication import (
     SOURCE_ARTIFACT_INDEX_KEY,
     SOURCE_ARTIFACT_INDEX_PATH,
@@ -250,7 +253,9 @@ class DailyIntelligenceArtifactPublisher:
             context.manifest["source_ranking_score_count"] = len(
                 _output_value(output, "source_ranking_scores")
             )
-        _update_source_recollection_manifest_fields(context.manifest, output)
+        source_recollection = source_recollection_manifest_summary(output)
+        if source_recollection is not None:
+            context.manifest["source_recollection"] = source_recollection
         source_artifacts = SourceArtifactPublicationService(
             context.artifact_manager
         ).publish(
@@ -398,38 +403,6 @@ def _update_quality_manifest_fields(manifest: dict[str, Any], output: dict[str, 
     decision = _field_value(quality_result, "decision")
     if decision is not None:
         manifest["quality_decision"] = decision
-
-
-def _update_source_recollection_manifest_fields(
-    manifest: dict[str, Any],
-    output: dict[str, Any],
-) -> None:
-    report = _output_value(output, "source_recollection_execution_report")
-    if report is None:
-        return
-    manifest["source_recollection"] = {
-        "plan_id": _field_value(report, "plan_id"),
-        "status": _field_value(report, "status"),
-        "task_count": _int_value(_field_value(report, "task_count")),
-        "raw_item_count": _int_value(_field_value(report, "raw_item_count")),
-        "error_count": _int_value(_field_value(report, "error_count")),
-        "fetch_request_count": _int_value(_field_value(report, "fetch_request_count")),
-        "fetch_result_count": _int_value(_field_value(report, "fetch_result_count")),
-        "artifact": "source_recollection/execution_report.json",
-    }
-    if _output_contains(output, "source_recollection_profile"):
-        manifest["source_recollection"]["profile_artifact"] = "source_recollection/profile.json"
-    if _output_contains(output, "source_recollection_execution_plan"):
-        manifest["source_recollection"]["plan_artifact"] = "source_recollection/execution_plan.json"
-    assessment = _output_value(output, "source_recollection_quality_assessment")
-    if assessment is not None:
-        manifest["source_recollection"]["quality"] = {
-            "decision": _field_value(assessment, "decision"),
-            "severity": _field_value(assessment, "severity"),
-            "route": _field_value(assessment, "route"),
-            "recommended_action": _field_value(assessment, "recommended_action"),
-            "artifact": "source_recollection/quality_assessment.json",
-        }
 
 
 def _evidence_source_map(evidence_bundle: Any) -> dict[str, list[str]] | None:
