@@ -392,6 +392,65 @@ def test_build_source_error_policy_report_normalizes_source_error_mappings() -> 
     assert report.rows[0]["source_name"] == "Feed"
 
 
+def test_build_source_error_policy_report_projects_formal_policy_metadata() -> None:
+    report = build_source_error_policy_report(
+        [
+            SourceError(
+                source_id="feed",
+                error_type="fetch_timeout",
+                error_message="timeout",
+                retryable=True,
+                metadata={
+                    "source_error_policy": {
+                        "source_health_affecting": "false",
+                        "workflow_blocking": "true",
+                        "operator_action_required": "true",
+                    },
+                },
+            )
+        ]
+    )
+
+    assert report.total_error_count == 1
+    assert report.retryable_error_count == 1
+    assert report.health_affecting_error_count == 0
+    assert report.workflow_blocking_error_count == 1
+    assert report.operator_action_required_count == 1
+    assert report.rows[0]["source_health_affecting"] is False
+    assert report.rows[0]["workflow_blocking"] is True
+    assert report.rows[0]["operator_action_required"] is True
+
+
+def test_build_source_error_policy_report_prefers_formal_policy_metadata_over_legacy() -> None:
+    report = build_source_error_policy_report(
+        [
+            SourceError(
+                source_id="feed",
+                error_type="fetch_timeout",
+                error_message="timeout",
+                retryable=True,
+                metadata={
+                    "source_health_affecting": True,
+                    "workflow_blocking": False,
+                    "operator_action_required": False,
+                    "source_error_policy": {
+                        "source_health_affecting": False,
+                        "workflow_blocking": True,
+                        "operator_action_required": True,
+                    },
+                },
+            )
+        ]
+    )
+
+    assert report.health_affecting_error_count == 0
+    assert report.workflow_blocking_error_count == 1
+    assert report.operator_action_required_count == 1
+    assert report.rows[0]["source_health_affecting"] is False
+    assert report.rows[0]["workflow_blocking"] is True
+    assert report.rows[0]["operator_action_required"] is True
+
+
 def test_build_source_health_report_summarizes_statuses() -> None:
     now = datetime(2026, 5, 11, tzinfo=UTC)
     report = build_source_health_report(
