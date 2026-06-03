@@ -137,6 +137,53 @@ def test_feedback_event_projects_legacy_source_recollection_metadata() -> None:
     assert event.missing_information == ["official launch date confirmation"]
 
 
+def test_profile_uses_feedback_event_projection_for_legacy_recollection_metadata() -> None:
+    profile = DailySourceRecollectionService().build_profile(
+        events=[
+            DailyAgentFeedbackEvent(
+                feedback_id="daily-agent-feedback-1",
+                source_agent_id="daily.analyst",
+                target_agent_id=SOURCE_RECOLLECT_TARGET,
+                feedback_type="source_recollection_request",
+                severity="warning",
+                requested_action="source_recollect",
+                reason="Need launch timing confirmation.",
+                metadata={
+                    "evidence_gaps": [
+                        {"reason": "Need a second independent source for launch timing."}
+                    ],
+                    "source_recollection_requests": [
+                        {"query": "model launch timing official announcement"}
+                    ],
+                    "missing_information": ["official launch date confirmation"],
+                },
+            )
+        ],
+        summary=DailyAgentFeedbackSummary(event_count=1, source_recollect_request_count=1),
+        route={
+            "decision": "source_recollect_required",
+            "policy_target_id": SOURCE_RECOLLECT_TARGET,
+            "source_recollect_round": 1,
+            "max_source_recollect_rounds": 1,
+        },
+        loop_state={},
+    )
+
+    assert profile is not None
+    assert profile.evidence_gaps == [
+        {"reason": "Need a second independent source for launch timing."}
+    ]
+    assert profile.source_recollection_requests == [
+        {"query": "model launch timing official announcement"}
+    ]
+    assert profile.missing_information == ["official launch date confirmation"]
+    assert profile.queries == [
+        "model launch timing official announcement",
+        "Need a second independent source for launch timing.",
+        "official launch date confirmation",
+    ]
+
+
 def test_build_profile_ignores_non_source_recollect_route() -> None:
     profile = DailySourceRecollectionService().build_profile(
         events=[
