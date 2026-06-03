@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from time import perf_counter
 from typing import Any
 
@@ -39,7 +38,6 @@ from business.boards.cross_board.workflows.daily_intelligence.source_recollectio
     DailySourceRecollectionExecutionReportService,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection_execution import (
-    DailySourceRecollectionExecutionTask,
     DailySourceRecollectionExecutionTaskResult,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_processing import (
@@ -47,6 +45,10 @@ from business.boards.cross_board.workflows.daily_intelligence.source_processing 
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection_quality import (
     DailySourceRecollectionQualityService,
+)
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection_runtime import (
+    DailySourceRecollectionArtifactProjector,
+    SourceRecollectionTaskItemTracker,
 )
 from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_access import (
     read_buffer_value,
@@ -64,6 +66,7 @@ class DailySourceRecollectionExecutor:
         source_health_manager: BasicSourceHealthManager,
         execution_report_service: DailySourceRecollectionExecutionReportService | None = None,
         source_recollection_quality_service: DailySourceRecollectionQualityService | None = None,
+        artifact_projector: DailySourceRecollectionArtifactProjector | None = None,
     ) -> None:
         self.source_registry = source_registry
         self.source_dispatcher = source_dispatcher
@@ -74,6 +77,7 @@ class DailySourceRecollectionExecutor:
         self.source_recollection_quality_service = (
             source_recollection_quality_service or DailySourceRecollectionQualityService()
         )
+        self.artifact_projector = artifact_projector or DailySourceRecollectionArtifactProjector()
 
     def recollect_sources(
         self,
@@ -137,6 +141,11 @@ class DailySourceRecollectionExecutor:
             events=event_recorder,
             health_updates=source_health_updates,
         )
+        task_item_tracker = SourceRecollectionTaskItemTracker.from_existing_items(
+            plan=plan,
+            items=raw_items,
+            artifact_projector=self.artifact_projector,
+        )
         limit_per_task = _limit_per_task(request)
         selected_sources_by_id = {}
         matched_source_count = 0
@@ -154,7 +163,7 @@ class DailySourceRecollectionExecutor:
             matched_source_count += selection_report.matched_source_count
             for source in selected_sources:
                 selected_sources_by_id.setdefault(source.source_id, source)
-            remaining = max(0, limit_per_task - _task_item_count(raw_items, task))
+            remaining = max(0, limit_per_task - task_item_tracker.item_count(task))
             for source in selected_sources:
                 if remaining <= 0:
                     break
@@ -168,15 +177,18 @@ class DailySourceRecollectionExecutor:
                     fetch_policy=self.source_dispatcher.fetch_policy_for_source(source),
                     connector_name=self.source_dispatcher.connector_name_for_source(source),
                 )
-                fetch_request = _with_recollection_metadata(fetch_request, plan, task)
+                fetch_request = self.artifact_projector.with_fetch_request(fetch_request, plan, task)
                 source_fetch_requests.append(fetch_request)
                 task_fetch_request_ids.append(request_id)
                 metrics.record_source_seen(source.source_type, source.reliability)
                 skip_decision = health_flow.decide_fetch(source)
                 if skip_decision.should_skip:
                     skip_reason = skip_decision.reason or "skipped"
-                    skip_metadata = dict(skip_decision.metadata or {})
-                    skip_metadata.update(_recollection_metadata(plan, task))
+                    skip_metadata = self.artifact_projector.skipped_source_metadata(
+                        dict(skip_decision.metadata or {}),
+                        plan,
+                        task,
+                    )
                     skipped_sources.append(skip_metadata)
                     fetch_result = skipped_source_fetch_result(
                         source,
@@ -201,7 +213,11 @@ class DailySourceRecollectionExecutor:
                     limit=remaining,
                 )
                 errors = with_error_request_id(errors, request_id)
-                items = [_with_recollection_item_metadata(item, plan, task) for item in items]
+                items = [
+                    self.artifact_projector.with_raw_item(item, plan, task)
+                    for item in items
+                ]
+                task_item_tracker.record_items(task, items)
                 fetch_latency_ms = elapsed_ms(latency_start)
                 fetch_result = final_source_fetch_result(
                     source=source,
@@ -218,7 +234,7 @@ class DailySourceRecollectionExecutor:
                 task_error_count += len(errors)
                 metrics.record_fetch_latency(fetch_latency_ms)
                 raw_items.extend(items)
-                remaining = max(0, limit_per_task - _task_item_count(raw_items, task))
+                remaining = max(0, limit_per_task - task_item_tracker.item_count(task))
                 if items:
                     metrics.sources_fetched += 1
                     metrics.record_source_fetched(
@@ -343,60 +359,6 @@ def _execution_plan(value: Any) -> DailySourceRecollectionExecutionPlan | None:
     if isinstance(value, dict):
         return DailySourceRecollectionExecutionPlan.model_validate(value)
     return None
-
-
-def _with_recollection_metadata(
-    fetch_request: SourceFetchRequest,
-    plan: DailySourceRecollectionExecutionPlan,
-    task: DailySourceRecollectionExecutionTask,
-) -> SourceFetchRequest:
-    metadata = dict(fetch_request.metadata)
-    metadata.update(_recollection_metadata(plan, task))
-    return replace(fetch_request, metadata=metadata)
-
-
-def _with_recollection_item_metadata(
-    item: Any,
-    plan: DailySourceRecollectionExecutionPlan,
-    task: DailySourceRecollectionExecutionTask,
-) -> Any:
-    metadata = dict(getattr(item, "metadata", {}) or {})
-    metadata.update(_recollection_metadata(plan, task))
-    if hasattr(item, "__dataclass_fields__"):
-        return replace(item, metadata=metadata)
-    if isinstance(item, dict):
-        return {**item, "metadata": metadata}
-    return item
-
-
-def _recollection_metadata(
-    plan: DailySourceRecollectionExecutionPlan,
-    task: DailySourceRecollectionExecutionTask,
-) -> dict[str, Any]:
-    return {
-        "source_recollection_plan_id": plan.plan_id,
-        "source_recollection_profile_id": plan.profile_id,
-        "source_recollection_task_id": task.task_id,
-        "source_recollection_query": task.query,
-    }
-
-
-def _task_item_count(raw_items: list[Any], task: DailySourceRecollectionExecutionTask) -> int:
-    return sum(
-        1
-        for item in raw_items
-        if _item_metadata(item).get("source_recollection_task_id") == task.task_id
-    )
-
-
-def _item_metadata(item: Any) -> dict[str, Any]:
-    metadata = getattr(item, "metadata", None)
-    if isinstance(metadata, dict):
-        return metadata
-    if isinstance(item, dict):
-        metadata = item.get("metadata")
-        return metadata if isinstance(metadata, dict) else {}
-    return {}
 
 
 def _limit_per_task(request: dict[str, Any]) -> int:

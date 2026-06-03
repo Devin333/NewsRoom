@@ -22,6 +22,10 @@ from business.boards.cross_board.workflows.daily_intelligence.source_recollectio
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection_executor import (
     DailySourceRecollectionExecutor,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_recollection_runtime import (
+    DailySourceRecollectionArtifactProjector,
+    SourceRecollectionTaskItemTracker,
+)
 
 
 def test_recollect_sources_fetches_sources_from_execution_plan() -> None:
@@ -136,6 +140,40 @@ def test_recollect_sources_fetches_sources_from_execution_plan() -> None:
     assert assessment.failed_thresholds == []
 
 
+def test_recollection_task_item_tracker_counts_without_runtime_metadata_dependency() -> None:
+    plan = _recollection_plan()
+    task = plan.tasks[0]
+    projector = DailySourceRecollectionArtifactProjector()
+    tracker = SourceRecollectionTaskItemTracker.from_existing_items(
+        plan=plan,
+        items=[],
+        artifact_projector=projector,
+    )
+    item = RawSourceItem(
+        source_item_id="official-blog-item-1",
+        source_id="official-blog",
+        source_name="Official Blog",
+        source_type=SourceType.MANUAL,
+        title="Model launch timing confirmed",
+        url="https://example.com/blog/model-launch",
+        fetched_at=datetime.now(timezone.utc),
+        summary="The official blog confirmed the model launch date.",
+    )
+
+    tracker.record_items(task, [item])
+
+    assert tracker.item_count(task) == 1
+    assert item.metadata == {}
+
+    annotated = projector.with_raw_item(item, plan, task)
+    legacy_tracker = SourceRecollectionTaskItemTracker.from_existing_items(
+        plan=plan,
+        items=[annotated],
+        artifact_projector=projector,
+    )
+    assert legacy_tracker.item_count(task) == 1
+
+
 def test_recollect_sources_outputs_skipped_execution_report_without_plan() -> None:
     source = SourceDefinition(
         source_id="official-blog",
@@ -193,6 +231,34 @@ def test_recollect_sources_outputs_skipped_execution_report_without_plan() -> No
     assert assessment.route == "continue_without_recollection"
     assert assessment.issues == ["missing_or_empty_execution_plan"]
     assert output["source_events"][-1].event_type == "source_recollection_skipped"
+
+
+def _recollection_plan() -> DailySourceRecollectionExecutionPlan:
+    return DailySourceRecollectionExecutionPlan(
+        plan_id="daily-source-recollect-1-execution-plan",
+        profile_id="daily-source-recollect-1",
+        status="ready",
+        reason="Need launch timing confirmation.",
+        source_recollect_round=1,
+        max_source_recollect_rounds=1,
+        tasks=[
+            DailySourceRecollectionExecutionTask(
+                task_id="daily-source-recollect-1-task-01",
+                query="model launch timing official announcement",
+                reason="Need launch timing confirmation.",
+                source_feedback_ids=["daily-agent-feedback-1"],
+                recommendation_ids=[
+                    "daily-agent-feedback-policy-source-recollect:daily.source_recollect"
+                ],
+            )
+        ],
+        task_count=1,
+        query_count=1,
+        source_feedback_ids=["daily-agent-feedback-1"],
+        recommendation_ids=[
+            "daily-agent-feedback-policy-source-recollect:daily.source_recollect"
+        ],
+    )
 
 
 def _dispatcher(registry: SourceRegistry) -> SourceDispatcher:
