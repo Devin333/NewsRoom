@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from business.foundation.feedback import ImprovementProposal, SelfImprovementReportBuilder
+from business.foundation.feedback import (
+    ImprovementProposal,
+    PolicyExperimentProfile,
+    SelfImprovementReportBuilder,
+)
 
 
 def test_self_improvement_report_builder_summarizes_high_risk_proposals() -> None:
@@ -11,10 +15,19 @@ def test_self_improvement_report_builder_summarizes_high_risk_proposals() -> Non
         change_type="policy_experiment",
         target_type="policy_threshold",
         target_id="threshold",
-        proposed_patch={},
+        policy_experiment_parameters={"severity": "error"},
         risk_level="high",
         requires_approval=True,
         status="proposed",
+        experiment_profile=PolicyExperimentProfile(
+            profile_id="profile-1",
+            board_type="ai_news",
+            target_type="policy_threshold",
+            target_id="threshold",
+            parameters={"severity": "error"},
+            rationale="Quality threshold needs review.",
+            suggested_action="run a policy threshold experiment",
+        ),
     )
 
     report = SelfImprovementReportBuilder().build(
@@ -29,6 +42,27 @@ def test_self_improvement_report_builder_summarizes_high_risk_proposals() -> Non
     assert report.risks == ["proposal-1:high"]
     assert report.next_actions == ["review proposed improvements"]
     assert report.proposals[0]["proposal_id"] == "proposal-1"
+    assert report.policy_experiment_profiles == [
+        {
+            "profile_id": "profile-1",
+            "board_type": "ai_news",
+            "target_type": "policy_threshold",
+            "target_id": "threshold",
+            "parameters": {"severity": "error"},
+            "rationale": "Quality threshold needs review.",
+            "suggested_action": "run a policy threshold experiment",
+            "measurement_metrics": [
+                "quality_score",
+                "card_count",
+                "evidence_coverage",
+                "duplicate_rate",
+                "empty_output",
+                "subscription_match",
+            ],
+            "created_at": report.policy_experiment_profiles[0]["created_at"],
+        }
+    ]
+    assert report.policy_experiment_profile_ids == ["profile-1"]
     assert report.applied_policy_experiments == [{"proposal_id": "proposal-1"}]
     assert report.applied_overrides == report.applied_policy_experiments
     assert report.measurement == {"quality_score_delta": 0.2}

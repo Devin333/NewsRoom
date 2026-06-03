@@ -10,6 +10,8 @@ class SelfImprovementReport:
     learning_signals: list[dict[str, Any]] = field(default_factory=list)
     recommendations: list[dict[str, Any]] = field(default_factory=list)
     proposals: list[dict[str, Any]] = field(default_factory=list)
+    policy_experiment_profiles: list[dict[str, Any]] = field(default_factory=list)
+    policy_experiment_profile_ids: list[str] = field(default_factory=list)
     applied_policy_experiments: list[dict[str, Any]] = field(default_factory=list)
     applied_overrides: list[dict[str, Any]] = field(default_factory=list)
     measurement: dict[str, Any] = field(default_factory=dict)

@@ -242,6 +242,7 @@ improvement 主流程是：
 `feedback -> learning signal -> recommendation -> policy experiment profile -> applied policy experiment -> measurement`
 
 `ImprovementProposalBuilder` 将 recommendation 转换为 `policy_experiment` proposal 和 `PolicyExperimentProfile`。
+新 proposal 使用 `policy_experiment_parameters` 作为正式参数字段；`proposed_patch` 只作为历史兼容读取入口，不再由新代码生成。
 `ImprovementApplier` 返回 `PolicyExperimentApplicationContext`，主字段为：
 
 - `applied_policy_experiments`
@@ -251,6 +252,7 @@ improvement 主流程是：
 
 `applied_overrides` 和 `skipped_overrides` 只作为历史兼容属性保留，内容等同于 policy experiment 结果。
 旧 `proposed_patch` 字段只用于读取历史持久化数据；新 proposal 不再生成 patch payload。
+`SelfImprovementReport` 和 productized improvement 输出会显式投影 `policy_experiment_profiles` / `policy_experiment_profile_ids`，作为比 `applied_overrides` 更正式的策略实验视图。
 
 Weekly intelligence 的 improvement 逻辑由 `business/boards/cross_board/weekly_improvement.py` 承载：
 

@@ -22,6 +22,10 @@ class ImprovementProposalBuilder:
 
 def proposal_for_recommendation(recommendation: ImprovementRecommendation) -> ImprovementProposal:
     target_type = policy_experiment_target_type(recommendation.target_type)
+    experiment_profile = experiment_profile_for_recommendation(
+        recommendation,
+        target_type=target_type,
+    )
     return ImprovementProposal(
         proposal_id=stable_proposal_id(recommendation, target_type=target_type),
         recommendation_id=recommendation.recommendation_id,
@@ -29,14 +33,11 @@ def proposal_for_recommendation(recommendation: ImprovementRecommendation) -> Im
         change_type="policy_experiment",
         target_type=target_type,
         target_id=recommendation.target_id,
-        proposed_patch={},
+        policy_experiment_parameters=experiment_profile.parameters,
         risk_level=risk_level_for_severity(recommendation.severity),
         requires_approval=True,
         status="proposed",
-        experiment_profile=experiment_profile_for_recommendation(
-            recommendation,
-            target_type=target_type,
-        ),
+        experiment_profile=experiment_profile,
     )
 
 

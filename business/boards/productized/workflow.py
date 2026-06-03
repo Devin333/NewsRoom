@@ -112,7 +112,17 @@ _WRITE_KEYS = {
     "build_quality_summary": ["quality_summary", "evidence_checking", "skill_traces", "productized_run"],
     "build_subscription_payload": ["subscription_payload"],
     "build_feedback_events": ["feedback_events", "learning_signals"],
-    "build_improvement_recommendations": ["improvement_recommendations", "improvement_proposals", "applied_policy_experiments", "skipped_policy_experiments", "applied_overrides", "improvement_measurement", "self_improvement_report"],
+    "build_improvement_recommendations": [
+        "improvement_recommendations",
+        "improvement_proposals",
+        "policy_experiment_profiles",
+        "policy_experiment_profile_ids",
+        "applied_policy_experiments",
+        "skipped_policy_experiments",
+        "applied_overrides",
+        "improvement_measurement",
+        "self_improvement_report",
+    ],
     "publish_board_artifacts": ["artifact_metadata"],
 }
 

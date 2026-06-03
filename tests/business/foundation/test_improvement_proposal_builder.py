@@ -21,7 +21,6 @@ def test_proposal_builder_converts_recommendation_to_policy_experiment_profile()
 
     assert proposal.change_type == "policy_experiment"
     assert proposal.target_type == "ranking_weight"
-    assert proposal.proposed_patch == {}
     assert proposal.risk_level == "high"
     assert proposal.experiment_profile is not None
     assert proposal.experiment_profile.target_type == "ranking_weight"
@@ -34,6 +33,7 @@ def test_proposal_builder_converts_recommendation_to_policy_experiment_profile()
         "evidence_count": 1,
     }
     assert proposal.to_dict()["policy_experiment_parameters"] == proposal.policy_experiment_parameters
+    assert "proposed_patch" not in proposal.to_dict()
 
 
 def test_risk_level_for_severity_maps_review_priority() -> None:

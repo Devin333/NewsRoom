@@ -32,12 +32,53 @@ def test_productized_improvement_workflow_service_builds_outputs_from_request() 
 
     assert result["improvement_recommendations"] is not None
     assert result["improvement_proposals"] is not None
+    assert result["policy_experiment_profiles"] == []
+    assert result["policy_experiment_profile_ids"] == []
     assert result["applied_policy_experiments"] == []
     assert result["skipped_policy_experiments"] == []
     assert result["applied_overrides"] == []
     assert result["improvement_measurement"]["card_count_delta"] == 1
     assert result["self_improvement_report"]["applied_policy_experiments"] == []
     assert result["self_improvement_report"]["next_actions"] == ["continue monitoring"]
+
+
+def test_productized_improvement_workflow_exports_policy_experiment_profiles() -> None:
+    service = ProductizedImprovementWorkflowService(
+        improvement_service=BoardImprovementService(),
+        board_type=BoardType.AI_NEWS,
+    )
+
+    result = service.build_outputs(
+        request={"run_id": "improvement-run"},
+        board_run_result=StubBoardRunResult(),
+        quality_summary={"score": 0.72},
+        cards=[{"card_id": "card-1", "evidence_refs": [{"source_id": "source-1"}]}],
+        feedback_events=[],
+        learning_signals=[
+            {
+                "signal_id": "learning-1",
+                "signal_type": "top_cards_have_evidence",
+                "board_type": "ai_news",
+                "target_layer": "board",
+                "description": "Top cards need stronger evidence.",
+                "frequency": 1,
+                "severity_score": 0.8,
+                "related_feedback_ids": ["feedback-1"],
+            }
+        ],
+        subscription_payload={"targets": [{"topic": "Agent Memory"}]},
+    )
+
+    assert result["policy_experiment_profiles"]
+    assert result["policy_experiment_profile_ids"] == [
+        result["policy_experiment_profiles"][0]["profile_id"]
+    ]
+    assert result["improvement_proposals"][0]["change_type"] == "policy_experiment"
+    assert "proposed_patch" not in result["improvement_proposals"][0]
+    assert (
+        result["self_improvement_report"]["policy_experiment_profiles"]
+        == result["policy_experiment_profiles"]
+    )
 
 
 def test_productized_improvement_workflow_uses_formal_run_state_measurement() -> None:

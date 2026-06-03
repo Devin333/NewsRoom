@@ -53,8 +53,11 @@ def test_proposal_restores_legacy_parameters_from_formal_field() -> None:
         }
     )
 
-    assert proposal.proposed_patch == {"weight": 1.4}
     assert proposal.policy_experiment_parameters == {"weight": 1.4}
+    assert proposal.proposed_patch == {"weight": 1.4}
+    serialized = proposal.to_dict()
+    assert serialized["policy_experiment_parameters"] == {"weight": 1.4}
+    assert "proposed_patch" not in serialized
 
 
 def _proposal(proposal_id: str) -> ImprovementProposal:
@@ -65,7 +68,7 @@ def _proposal(proposal_id: str) -> ImprovementProposal:
         change_type="ranking_weight_override",
         target_type="ranking_weight_override",
         target_id="freshness",
-        proposed_patch={"weight": 1.2},
+        policy_experiment_parameters={"weight": 1.2},
         risk_level="medium",
         requires_approval=True,
         status="proposed",

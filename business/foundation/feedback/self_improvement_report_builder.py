@@ -22,11 +22,14 @@ class SelfImprovementReportBuilder:
             applied_overrides=applied_overrides,
         )
         compatibility_overrides = list(applied_overrides) if applied_overrides is not None else list(policy_experiments)
+        policy_experiment_profiles = policy_experiment_profiles_from_proposals(proposals)
         return SelfImprovementReport(
             feedback_events=[_to_dict(event) for event in feedback_events],
             learning_signals=[_to_dict(signal) for signal in learning_signals],
             recommendations=[_to_dict(recommendation) for recommendation in recommendations],
             proposals=[_to_dict(proposal) for proposal in proposals],
+            policy_experiment_profiles=policy_experiment_profiles,
+            policy_experiment_profile_ids=policy_experiment_profile_ids(policy_experiment_profiles),
             applied_policy_experiments=policy_experiments,
             applied_overrides=compatibility_overrides,
             measurement=_to_dict(measurement),
@@ -47,6 +50,24 @@ def risk_notes_from_proposals(proposals: list[Any]) -> list[str]:
 
 def next_actions_for_proposals(proposals: list[Any]) -> list[str]:
     return ["review proposed improvements"] if proposals else ["continue monitoring"]
+
+
+def policy_experiment_profiles_from_proposals(proposals: list[Any]) -> list[dict[str, Any]]:
+    profiles: list[dict[str, Any]] = []
+    for proposal in proposals:
+        payload = _to_dict(proposal)
+        profile = payload.get("experiment_profile")
+        if isinstance(profile, dict):
+            profiles.append(dict(profile))
+    return profiles
+
+
+def policy_experiment_profile_ids(profiles: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(profile["profile_id"])
+        for profile in profiles
+        if profile.get("profile_id")
+    ]
 
 
 def _resolved_policy_experiments(
@@ -76,5 +97,7 @@ def _to_dict(value: Any) -> dict[str, Any]:
 __all__ = [
     "SelfImprovementReportBuilder",
     "next_actions_for_proposals",
+    "policy_experiment_profile_ids",
+    "policy_experiment_profiles_from_proposals",
     "risk_notes_from_proposals",
 ]

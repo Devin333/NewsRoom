@@ -41,7 +41,7 @@ def _proposal(proposal_id: str, *, board_type: str) -> ImprovementProposal:
         change_type="policy_experiment",
         target_type="policy_threshold",
         target_id="threshold",
-        proposed_patch={},
+        policy_experiment_parameters={},
         risk_level="medium",
         requires_approval=True,
         status="proposed",

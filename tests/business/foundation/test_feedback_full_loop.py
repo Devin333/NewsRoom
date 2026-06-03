@@ -34,7 +34,9 @@ def test_feedback_full_loop_reaches_approved_override_and_measurement() -> None:
     assert feedback and learning and recommendations and proposals
     assert proposals[0].change_type == "policy_experiment"
     assert proposals[0].experiment_profile is not None
-    assert proposals[0].proposed_patch == {}
+    assert proposals[0].policy_experiment_parameters == proposals[0].experiment_profile.parameters
+    assert proposals[0].proposed_patch == proposals[0].policy_experiment_parameters
+    assert "proposed_patch" not in proposals[0].to_dict()
     assert service.apply_approved_policy_experiments(run_id="before", board_type="ai_news").applied_policy_experiments == []
     assert service.apply_approved_overrides(run_id="before", board_type="ai_news").applied_overrides == []
 
@@ -58,3 +60,4 @@ def test_feedback_full_loop_reaches_approved_override_and_measurement() -> None:
     assert measurement.quality_score_delta == 0.35
     assert report.applied_policy_experiments == context.applied_policy_experiments
     assert report.applied_overrides
+    assert report.policy_experiment_profiles[0]["profile_id"] == proposals[0].experiment_profile.profile_id

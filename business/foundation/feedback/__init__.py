@@ -17,6 +17,7 @@ from business.foundation.feedback.override_policy import (
     is_legacy_policy_experiment_change_type,
 )
 from business.foundation.feedback.policy_experiment import AppliedPolicyExperiment, PolicyExperimentApplicationContext, PolicyExperimentProfile
+from business.foundation.feedback.policy_experiment_recommendation import PolicyExperimentRecommendation
 from business.foundation.feedback.proposal_builder import ImprovementProposalBuilder
 from business.foundation.feedback.proposal_store import InMemoryImprovementProposalStore, LocalJsonImprovementProposalStore
 from business.foundation.feedback.recommendation_builder import (
@@ -57,6 +58,7 @@ __all__ = [
     "LearningSignalRecommendationBuilder",
     "LocalJsonImprovementProposalStore",
     "PolicyExperimentProfile",
+    "PolicyExperimentRecommendation",
     "PolicyExperimentApplicationContext",
     "QualitySummaryRecommendationBuilder",
     "RuntimeQualityClosure",

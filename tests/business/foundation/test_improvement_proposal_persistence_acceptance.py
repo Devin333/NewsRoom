@@ -37,7 +37,7 @@ def _proposal(proposal_id: str) -> ImprovementProposal:
         change_type="ranking_weight_override",
         target_type="ranking_weight_override",
         target_id="freshness",
-        proposed_patch={"weight": 1.1},
+        policy_experiment_parameters={"weight": 1.1},
         risk_level="medium",
         requires_approval=True,
         status="proposed",

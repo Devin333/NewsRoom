@@ -16,7 +16,7 @@ def test_approved_proposal_is_applied_on_next_board_run(tmp_path) -> None:
             change_type="ranking_weight_override",
             target_type="ranking_weight_override",
             target_id="freshness",
-            proposed_patch={"weight": 1.2},
+            policy_experiment_parameters={"weight": 1.2},
             risk_level="medium",
             requires_approval=True,
             status="proposed",
@@ -31,4 +31,5 @@ def test_approved_proposal_is_applied_on_next_board_run(tmp_path) -> None:
 
     applied = result.output["applied_overrides"]
     assert applied and applied[0]["proposal_id"] == "approved-ranking"
+    assert result.output["applied_policy_experiments"] == applied
     assert result.output["improvement_measurement"]

@@ -5,23 +5,16 @@ from hashlib import sha1
 from typing import Any
 
 from business.foundation.feedback.improvement_recommendation import ImprovementRecommendation
-from business.foundation.feedback.policy_experiment import PolicyExperimentProfile
+from business.foundation.feedback.policy_experiment_recommendation import (
+    PolicyExperimentRecommendation,
+)
 from business.foundation.feedback.proposal_builder import experiment_profile_for_recommendation
 
 
 WEEKLY_INTELLIGENCE_BOARD_TYPE = "weekly_intelligence"
 
 
-@dataclass(frozen=True)
-class WeeklyPolicyExperimentRecommendation:
-    recommendation: ImprovementRecommendation
-    experiment_profile: PolicyExperimentProfile
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "recommendation": self.recommendation.to_dict(),
-            "policy_experiment_profile": self.experiment_profile.to_dict(),
-        }
+WeeklyPolicyExperimentRecommendation = PolicyExperimentRecommendation
 
 
 @dataclass(frozen=True)
