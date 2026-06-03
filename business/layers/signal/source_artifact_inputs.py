@@ -1,9 +1,43 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import Any
 
-from business.foundation.models.source import SourceFetchResult
+from business.foundation.models.source import RawSourceItem, SourceFetchResult
+from framework.shared.json import to_jsonable as _to_json_safe
+
+
+@dataclass(frozen=True)
+class SourceItemArtifactInput:
+    source_item_id: str
+    source_id: str
+    payload: Any
+    raw_content: Any = None
+    raw_artifact_ref: Any = None
+    parse_artifact_ref: Any = None
+
+    @classmethod
+    def from_value(cls, value: RawSourceItem | dict[str, Any]) -> "SourceItemArtifactInput":
+        if isinstance(value, RawSourceItem):
+            return cls(
+                source_item_id=value.source_item_id,
+                source_id=value.source_id,
+                payload=value,
+                raw_content=value.raw_content,
+                raw_artifact_ref=value.raw_artifact_ref,
+                parse_artifact_ref=value.parse_artifact_ref,
+            )
+        if isinstance(value, dict):
+            return cls(
+                source_item_id=_optional_text(value.get("source_item_id")) or _stable_id(value),
+                source_id=_optional_text(value.get("source_id")) or "unknown-source",
+                payload=value,
+                raw_content=value.get("raw_content"),
+                raw_artifact_ref=value.get("raw_artifact_ref"),
+                parse_artifact_ref=value.get("parse_artifact_ref"),
+            )
+        raise TypeError("source item artifacts must be RawSourceItem or mapping values")
 
 
 @dataclass(frozen=True)
@@ -45,6 +79,10 @@ def source_fetch_result_artifact_inputs(values: Any) -> list[SourceFetchResultAr
     return [SourceFetchResultArtifactInput.from_value(value) for value in list(values or [])]
 
 
+def source_item_artifact_inputs(values: Any) -> list[SourceItemArtifactInput]:
+    return [SourceItemArtifactInput.from_value(value) for value in list(values or [])]
+
+
 def _metadata(value: dict[str, Any]) -> dict[str, Any]:
     metadata = value.get("metadata")
     return dict(metadata) if isinstance(metadata, dict) else {}
@@ -80,4 +118,14 @@ def _optional_int(value: Any) -> int | None:
     return int(value)
 
 
-__all__ = ["SourceFetchResultArtifactInput", "source_fetch_result_artifact_inputs"]
+def _stable_id(value: Any) -> str:
+    payload = repr(_to_json_safe(value)).encode("utf-8", errors="replace")
+    return sha256(payload).hexdigest()
+
+
+__all__ = [
+    "SourceFetchResultArtifactInput",
+    "SourceItemArtifactInput",
+    "source_fetch_result_artifact_inputs",
+    "source_item_artifact_inputs",
+]

@@ -11,7 +11,9 @@ from business.foundation.models.source_error_normalization import normalize_sour
 from business.layers.signal.artifact_refs import SignalArtifactRef
 from business.layers.signal.source_artifact_inputs import (
     SourceFetchResultArtifactInput,
+    SourceItemArtifactInput,
     source_fetch_result_artifact_inputs,
+    source_item_artifact_inputs,
 )
 from framework.artifacts import ArtifactManager
 
@@ -53,18 +55,18 @@ class SourceArtifactWriter:
         response_refs_by_source_id: dict[str, list[SignalArtifactRef]] = {}
         parsed_items_by_source: dict[str, list[dict[str, Any]]] = {}
 
-        for raw_item in raw_items or []:
-            source_id = _string_value(raw_item, "source_id", default="unknown-source")
-            object_id = _string_value(raw_item, "source_item_id", default=_stable_id(raw_item))
+        for raw_item in source_item_artifact_inputs(raw_items):
+            source_id = raw_item.source_id
+            object_id = raw_item.source_item_id
             raw_content_entry, raw_content_ref = self._write_raw_content_artifact(
                 run_id,
                 raw_item=raw_item,
                 source_id=source_id,
                 object_id=object_id,
             )
-            existing_raw_ref = _existing_artifact_ref(raw_item, "raw_artifact_ref")
+            existing_raw_ref = raw_item.raw_artifact_ref
             raw_ref = raw_content_ref or existing_raw_ref
-            existing_parse_ref = _existing_artifact_ref(raw_item, "parse_artifact_ref")
+            existing_parse_ref = raw_item.parse_artifact_ref
             path = f"sources/items/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
             parse_ref_payload = existing_parse_ref or _planned_artifact_ref(
                 run_id=run_id,
@@ -342,11 +344,11 @@ class SourceArtifactWriter:
         self,
         run_id: str,
         *,
-        raw_item: Any,
+        raw_item: SourceItemArtifactInput,
         source_id: str,
         object_id: str,
     ) -> tuple[dict[str, Any] | None, SignalArtifactRef | None]:
-        raw_content = _raw_content(raw_item)
+        raw_content = raw_item.raw_content
         if raw_content is None:
             return None, None
         path = f"sources/{_path_segment(source_id)}/{_path_segment(object_id)}/raw_content.bin"
@@ -459,14 +461,14 @@ def _artifact_id(artifact_type: str, source_id: str, object_id: str) -> str:
 
 
 def _source_item_payload(
-    raw_item: Any,
+    raw_item: SourceItemArtifactInput,
     *,
     source_id: str,
     object_id: str,
     raw_artifact_ref: Any,
     parse_artifact_ref: Any,
 ) -> Any:
-    payload = _redact(_to_json_safe(raw_item))
+    payload = _redact(_to_json_safe(raw_item.payload))
     if not isinstance(payload, dict):
         return payload
     raw_ref_payload = _to_json_safe(raw_artifact_ref) if raw_artifact_ref is not None else None
@@ -647,8 +649,8 @@ def _string_value(value: Any, name: str, *, default: str) -> str:
     return str(candidate)
 
 
-def _raw_content_fingerprint(raw_item: Any) -> dict[str, Any]:
-    raw_content = _raw_content(raw_item)
+def _raw_content_fingerprint(raw_item: SourceItemArtifactInput) -> dict[str, Any]:
+    raw_content = raw_item.raw_content
     if raw_content is None:
         return {}
     raw_bytes = str(raw_content).encode("utf-8")
@@ -656,18 +658,6 @@ def _raw_content_fingerprint(raw_item: Any) -> dict[str, Any]:
         "raw_content_bytes": len(raw_bytes),
         "raw_content_sha256": sha256(raw_bytes).hexdigest(),
     }
-
-
-def _raw_content(raw_item: Any) -> Any:
-    if isinstance(raw_item, dict):
-        return raw_item.get("raw_content")
-    return getattr(raw_item, "raw_content", None)
-
-
-def _existing_artifact_ref(value: Any, name: str) -> Any:
-    if isinstance(value, dict):
-        return value.get(name)
-    return getattr(value, name, None)
 
 
 def _path_segment(value: str) -> str:

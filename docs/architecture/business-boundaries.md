@@ -87,6 +87,8 @@ source artifact 发布侧同样不得对 `source_errors` 做 duck typing。`Sour
 
 source fetch result artifact 输入由 `business.layers.signal.source_artifact_inputs.SourceFetchResultArtifactInput` 投影。`SourceArtifactWriter` 可以接收历史 mapping payload，但 fetch result artifact id、response headers artifact、status/content-type 和 response URL 只能消费该 input view 的正式字段；response headers 从 metadata 的兼容读取必须停留在 input view 中，writer 主体不得继续保留 `_metadata_value()` / `_optional_value()` 这类通用 duck-typing helper。
 
+source item artifact 输入由同一模块的 `SourceItemArtifactInput` 投影。raw item 的 `source_id`、`source_item_id`、raw content、raw/parse artifact ref 和 legacy mapping fallback 都属于 input view 的职责；`SourceArtifactWriter` 只消费该 view 的正式字段来写 raw content、source item 和 parsed-items index，不再在发布编排主体里通过 `_raw_content()` / `_existing_artifact_ref()` 或 `dict.get("source_item_id")` 猜测 raw item 结构。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。
