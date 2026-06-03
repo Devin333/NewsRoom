@@ -11,7 +11,17 @@ def normalize_source_errors(
     *,
     context: str = "source_errors",
 ) -> list[SourceError]:
-    return [_normalize_source_error(value, context=context) for value in list(values or [])]
+    if values is None:
+        return []
+    if isinstance(values, SourceError | Mapping):
+        raise TypeError(f"{context} must be a sequence of SourceError or mapping values")
+    try:
+        error_values = list(values)
+    except TypeError as exc:
+        raise TypeError(
+            f"{context} must be a sequence of SourceError or mapping values"
+        ) from exc
+    return [_normalize_source_error(value, context=context) for value in error_values]
 
 
 def _normalize_source_error(value: Any, *, context: str) -> SourceError:

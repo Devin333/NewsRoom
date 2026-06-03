@@ -21,6 +21,7 @@ from business.foundation.models.source import (
     SourceHealth,
     SourceType,
 )
+from business.foundation.models.source_error_normalization import normalize_source_errors
 
 
 def test_source_definition_normalizes_enums() -> None:
@@ -232,6 +233,41 @@ def test_source_error_defaults_retryable_when_policy_metadata_is_absent() -> Non
 
     assert error.retryable is True
     assert error.to_dict()["retryable"] is True
+
+
+def test_normalize_source_errors_round_trips_serialized_source_errors() -> None:
+    original = SourceError(
+        source_id="rss-source",
+        source_name="RSS Source",
+        error_type="fetch_timeout",
+        error_message="timed out",
+        url="https://example.com/feed.xml",
+        retryable=True,
+        request_ref={"artifact_id": "request-ref"},
+        response_ref={"artifact_id": "response-ref"},
+        metadata={"source_health_affecting": True, "workflow_blocking": False},
+    )
+
+    restored = normalize_source_errors([original.to_dict()])[0]
+
+    assert restored.source_id == "rss-source"
+    assert restored.source_name == "RSS Source"
+    assert restored.error_type == "fetch_timeout"
+    assert restored.error_message == "timed out"
+    assert restored.url == "https://example.com/feed.xml"
+    assert restored.retryable is True
+    assert restored.request_ref == {"artifact_id": "request-ref"}
+    assert restored.response_ref == {"artifact_id": "response-ref"}
+    assert restored.metadata["source_health_affecting"] is True
+    assert restored.metadata["workflow_blocking"] is False
+
+
+def test_normalize_source_errors_rejects_non_sequence_payload() -> None:
+    with pytest.raises(TypeError, match="source_errors must be a sequence"):
+        normalize_source_errors({"source_id": "rss-source"})
+
+    with pytest.raises(TypeError, match="source_errors entries must be SourceError"):
+        normalize_source_errors(["not-an-error"])
 
 
 def test_source_health_serializes_window_metrics() -> None:
