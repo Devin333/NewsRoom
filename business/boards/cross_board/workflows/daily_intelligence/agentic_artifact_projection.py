@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    daily_output_contains,
-    daily_output_value,
+    project_daily_output_for_agentic_artifacts,
 )
 
 
@@ -79,6 +78,7 @@ def project_daily_agentic_artifacts(
     workflow_version: str,
     output: Mapping[str, Any],
 ) -> DailyAgenticArtifactProjection:
+    agentic_output = project_daily_output_for_agentic_artifacts(output)
     artifacts: list[DailyAgenticArtifact] = []
     manifest_fields: dict[str, Any] = {
         "agentic": True,
@@ -86,11 +86,11 @@ def project_daily_agentic_artifacts(
         "agent_steps": [agent.step_id for agent in DAILY_AGENT_ARTIFACT_SPECS],
     }
 
-    artifacts.extend(_agent_loop_artifacts(output))
-    artifacts.extend(_agent_feedback_artifacts(output))
+    artifacts.extend(_agent_loop_artifacts(agentic_output))
+    artifacts.extend(_agent_feedback_artifacts(agentic_output))
 
-    feedback_summary = _dict_value(daily_output_value(output, "agent_feedback_summary"))
-    feedback_events = _list_value(daily_output_value(output, "agent_feedback_events"))
+    feedback_summary = _dict_value(agentic_output.get("agent_feedback_summary"))
+    feedback_events = _list_value(agentic_output.get("agent_feedback_events"))
     if feedback_summary or feedback_events:
         manifest_fields["agent_feedback"] = {
             "event_count": len(feedback_events),
@@ -102,7 +102,7 @@ def project_daily_agentic_artifacts(
         run_id=run_id,
         workflow_id=workflow_id,
         workflow_version=workflow_version,
-        output=output,
+        output=agentic_output,
     )
     artifacts.append(
         DailyAgenticArtifact(
@@ -128,7 +128,7 @@ def _agent_loop_artifacts(output: Mapping[str, Any]) -> list[DailyAgenticArtifac
     for agent in DAILY_AGENT_ARTIFACT_SPECS:
         for artifact_spec in DAILY_AGENT_LOOP_ARTIFACT_SPECS:
             output_key = f"{agent.label}_{artifact_spec.output_suffix}"
-            if not daily_output_contains(output, output_key):
+            if output_key not in output:
                 continue
             artifact_key = f"{agent.label}_{artifact_spec.output_suffix}"
             artifacts.append(
@@ -137,7 +137,7 @@ def _agent_loop_artifacts(output: Mapping[str, Any]) -> list[DailyAgenticArtifac
                     relative_path=f"agentic/{artifact_key}.json",
                     payload=_agentic_artifact_payload(
                         artifact_spec.artifact_name,
-                        daily_output_value(output, output_key),
+                        output[output_key],
                     ),
                 )
             )
@@ -150,12 +150,12 @@ def _agent_feedback_artifacts(output: Mapping[str, Any]) -> list[DailyAgenticArt
         "agent_feedback_events": "agentic/agent_feedback_events.json",
         "agent_feedback_summary": "agentic/agent_feedback_summary.json",
     }.items():
-        if daily_output_contains(output, artifact_key):
+        if artifact_key in output:
             artifacts.append(
                 DailyAgenticArtifact(
                     artifact_key=artifact_key,
                     relative_path=relative_path,
-                    payload=daily_output_value(output, artifact_key),
+                    payload=output[artifact_key],
                 )
             )
     return artifacts
@@ -171,10 +171,13 @@ def _agentic_summary(
     agents = []
     for agent in DAILY_AGENT_ARTIFACT_SPECS:
         label = agent.label
-        result = _dict_value(daily_output_value(output, f"{label}_agent_loop_result"))
-        metrics = _dict_value(daily_output_value(output, f"{label}_agent_loop_metrics"))
-        diagnostics = _dict_value(daily_output_value(output, f"{label}_agent_loop_diagnostics"))
-        trace = _dict_value(daily_output_value(output, f"{label}_agent_loop_trace"))
+        diagnostics_key = f"{label}_agent_loop_diagnostics"
+        trace_key = f"{label}_agent_loop_trace"
+        llm_artifacts_key = f"{label}_llm_call_artifacts"
+        result = _dict_value(output.get(f"{label}_agent_loop_result"))
+        metrics = _dict_value(output.get(f"{label}_agent_loop_metrics"))
+        diagnostics = _dict_value(output.get(diagnostics_key))
+        trace = _dict_value(output.get(trace_key))
         summary = _dict_value(trace.get("summary"))
         agents.append(
             {
@@ -189,21 +192,17 @@ def _agentic_summary(
                     or summary.get("stop_reason")
                     or diagnostics.get("stop_reason")
                 ),
-                "diagnostics_present": (
-                    daily_output_value(output, f"{label}_agent_loop_diagnostics") is not None
-                ),
-                "trace_present": daily_output_value(output, f"{label}_agent_loop_trace") is not None,
-                "llm_artifact_count": len(
-                    _list_value(daily_output_value(output, f"{label}_llm_call_artifacts"))
-                ),
+                "diagnostics_present": diagnostics_key in output,
+                "trace_present": trace_key in output,
+                "llm_artifact_count": len(_list_value(output.get(llm_artifacts_key))),
             }
         )
 
-    editor_review = _dict_value(daily_output_value(output, "editor_review"))
-    quality_result = _dict_value(daily_output_value(output, "quality_result"))
-    quality_summary = _dict_value(daily_output_value(output, "report_quality_summary"))
-    feedback_summary = _dict_value(daily_output_value(output, "agent_feedback_summary"))
-    feedback_events = _list_value(daily_output_value(output, "agent_feedback_events"))
+    editor_review = _dict_value(output.get("editor_review"))
+    quality_result = _dict_value(output.get("quality_result"))
+    quality_summary = _dict_value(output.get("report_quality_summary"))
+    feedback_summary = _dict_value(output.get("agent_feedback_summary"))
+    feedback_events = _list_value(output.get("agent_feedback_events"))
     final_decision = (
         editor_review.get("decision")
         or quality_result.get("decision")

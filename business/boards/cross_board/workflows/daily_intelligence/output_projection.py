@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    AGENT_LOOP_LABELS,
     DAILY_BUFFER_ALIASES,
     legacy_key_for,
     namespaced_first_key_candidates,
@@ -156,6 +157,15 @@ def project_daily_output_for_source_diagnostic_artifacts(
     return _project_daily_output_for_keys(
         output,
         DAILY_SOURCE_DIAGNOSTIC_ARTIFACT_OUTPUT_KEYS,
+        include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+    )
+
+
+def project_daily_output_for_agentic_artifacts(output: Mapping[str, Any]) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_AGENTIC_ARTIFACT_OUTPUT_KEYS,
         include_original=False,
         read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
     )
@@ -353,6 +363,27 @@ DAILY_SOURCE_DIAGNOSTIC_ARTIFACT_OUTPUT_KEYS = (
     *DAILY_SOURCE_RECOLLECTION_ARTIFACT_OUTPUT_KEYS,
 )
 
+DAILY_AGENTIC_ARTIFACT_LOOP_OUTPUT_SUFFIXES = (
+    "agent_loop_result",
+    "agent_loop_metrics",
+    "agent_loop_diagnostics",
+    "agent_loop_trace",
+    "llm_call_artifacts",
+)
+
+DAILY_AGENTIC_ARTIFACT_OUTPUT_KEYS = (
+    "agent_feedback_events",
+    "agent_feedback_summary",
+    "editor_review",
+    "quality_result",
+    "report_quality_summary",
+    *(
+        f"{label}_{suffix}"
+        for label in AGENT_LOOP_LABELS
+        for suffix in DAILY_AGENTIC_ARTIFACT_LOOP_OUTPUT_SUFFIXES
+    ),
+)
+
 DAILY_PUBLIC_OUTPUT_ALIAS_KEYS = (
     "final_report",
     "blocked_report",
@@ -376,6 +407,8 @@ DAILY_BOARD_ATTACHMENT_RESULT_KEYS = (
 
 __all__ = [
     "DAILY_AGENT_VALIDATION_OUTPUT_KEYS",
+    "DAILY_AGENTIC_ARTIFACT_LOOP_OUTPUT_SUFFIXES",
+    "DAILY_AGENTIC_ARTIFACT_OUTPUT_KEYS",
     "DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS",
     "DAILY_BOARD_ATTACHMENT_RESULT_KEYS",
     "DAILY_MEMORY_INGESTION_OUTPUT_KEYS",
@@ -394,6 +427,7 @@ __all__ = [
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",
     "project_daily_output_for_agent_validation",
+    "project_daily_output_for_agentic_artifacts",
     "project_daily_output_for_board_attachment",
     "project_daily_output_for_evidence_artifacts",
     "project_daily_output_for_interface_metadata",

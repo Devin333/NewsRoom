@@ -7,6 +7,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     daily_output_value,
     ensure_legacy_daily_output_aliases,
     project_daily_output_for_agent_validation,
+    project_daily_output_for_agentic_artifacts,
     project_daily_output_for_board_attachment,
     project_daily_output_for_evidence_artifacts,
     project_daily_output_for_interface_metadata,
@@ -304,6 +305,25 @@ def test_project_daily_output_for_source_diagnostic_artifacts_keeps_legacy_fallb
     assert projected == {
         "source_events": [{"event_type": "namespaced"}],
         "source_quality_scores": [{"source_id": "feed"}],
+    }
+
+
+def test_project_daily_output_for_agentic_artifacts_keeps_legacy_fallback() -> None:
+    output = {
+        "planner_agent_loop_result": {"status": "legacy"},
+        "agent.planner.loop.result": {"status": "accepted"},
+        "agent_feedback_summary": {"highest_severity": "legacy"},
+        "agent.feedback.summary": {"highest_severity": "warning"},
+        "quality.result": {"decision": "rewrite_required"},
+        "source_events": [{"event_type": "not agentic"}],
+    }
+
+    projected = project_daily_output_for_agentic_artifacts(output)
+
+    assert projected == {
+        "planner_agent_loop_result": {"status": "accepted"},
+        "agent_feedback_summary": {"highest_severity": "warning"},
+        "quality_result": {"decision": "rewrite_required"},
     }
 
 

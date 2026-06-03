@@ -112,3 +112,26 @@ def test_agentic_artifact_projection_handles_legacy_loop_keys() -> None:
     assert "planner_agent_loop_result" in artifacts
     assert artifacts["agentic_summary"].payload["final_decision"] == "blocked"
     assert artifacts["agentic_summary"].payload["agents"][0]["status"] == "failed"
+
+
+def test_agentic_artifact_projection_prefers_namespaced_values_over_legacy() -> None:
+    projection = project_daily_agentic_artifacts(
+        run_id="run-1",
+        workflow_id="daily-intelligence-agentic",
+        workflow_version="1.0",
+        output={
+            "planner_agent_loop_result": {"status": "legacy", "success": False},
+            "agent.planner.loop.result": {"status": "accepted", "success": True},
+            "agent_feedback_summary": {"highest_severity": "legacy"},
+            "agent.feedback.summary": {"highest_severity": "warning"},
+            "quality_result": {"decision": "legacy"},
+            "quality.result": {"decision": "rewrite_required", "quality_score": 0.8},
+        },
+    )
+
+    artifacts = {artifact.artifact_key: artifact for artifact in projection.artifacts}
+
+    assert artifacts["planner_agent_loop_result"].payload["status"] == "accepted"
+    assert projection.manifest_fields["agent_feedback"]["highest_severity"] == "warning"
+    assert artifacts["agentic_summary"].payload["final_decision"] == "rewrite_required"
+    assert artifacts["agentic_summary"].payload["quality_score"] == 0.8
