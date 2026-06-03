@@ -2,7 +2,31 @@ from __future__ import annotations
 
 from typing import Any
 
+from framework.shared.json import to_jsonable as to_json_safe
 from infrastructure.storage.lineage.evidence import quality_lineage_summary
+
+
+def project_manifest_output_preview(
+    output: dict[str, Any],
+    *,
+    business_output: dict[str, Any],
+    artifacts: dict[str, Any],
+) -> dict[str, Any]:
+    preview: dict[str, Any] = {}
+    for key, value in output.items():
+        if len(preview) >= 12:
+            break
+        preview[str(key)] = _preview_value(value)
+    quality_trace = project_quality_trace_preview(business_output)
+    if quality_trace:
+        preview["quality_trace"] = quality_trace
+    llm_trace = project_llm_trace_preview(output)
+    if llm_trace:
+        preview["llm_trace"] = llm_trace
+    partial_artifacts = project_partial_artifacts_preview(artifacts)
+    if partial_artifacts and "partial_artifacts" not in preview:
+        preview["partial_artifacts"] = partial_artifacts
+    return preview
 
 
 def project_quality_trace_preview(output: dict[str, Any]) -> dict[str, Any]:
@@ -73,13 +97,66 @@ def project_quality_lineage_preview(output: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def project_llm_trace_preview(output: dict[str, Any]) -> dict[str, Any]:
+    raw_llm_route_manifest = output.get("llm_route_manifest")
+    raw_llm_router_events = output.get("llm_router_events")
+    llm_route_manifest: dict[str, Any] = (
+        dict(raw_llm_route_manifest) if isinstance(raw_llm_route_manifest, dict) else {}
+    )
+    llm_router_events: list[Any] = (
+        list(raw_llm_router_events) if isinstance(raw_llm_router_events, list) else []
+    )
+    if not (llm_route_manifest or llm_router_events):
+        return {}
+    raw_llm_metrics = llm_route_manifest.get("metrics")
+    llm_metrics = (
+        dict(raw_llm_metrics)
+        if isinstance(raw_llm_metrics, dict)
+        else {}
+    )
+    return {
+        "selected_deployment_id": llm_route_manifest.get("selected_deployment_id"),
+        "fallback_used": llm_route_manifest.get("fallback_used"),
+        "fallback_count": llm_route_manifest.get("fallback_count"),
+        "provider_error_count": llm_metrics.get("provider_error_count"),
+        "cooldown_skip_count": llm_metrics.get("cooldown_skip_count"),
+        "router_event_count": len(llm_router_events),
+        "budget_check": llm_route_manifest.get("budget_check"),
+        "global_budget_check": llm_route_manifest.get("global_budget_check"),
+    }
+
+
+def project_partial_artifacts_preview(artifacts: dict[str, Any]) -> dict[str, Any]:
+    if not artifacts:
+        return {}
+    return {
+        "artifact_keys": sorted(str(key) for key in artifacts)[:20],
+        "required_artifact_keys": [
+            key for key in ("request", "events", "step_results", "manifest") if key in artifacts
+        ],
+    }
+
+
 def _dict_list(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [dict(item) for item in value if isinstance(item, dict)]
 
 
+def _preview_value(value: Any) -> Any:
+    safe = to_json_safe(value)
+    if isinstance(safe, dict):
+        return {"type": "object", "keys": sorted(str(key) for key in safe)[:12]}
+    if isinstance(safe, list):
+        return {"type": "array", "count": len(safe)}
+    text = str(safe)
+    return text[:240] + ("..." if len(text) > 240 else "")
+
+
 __all__ = [
+    "project_llm_trace_preview",
+    "project_manifest_output_preview",
+    "project_partial_artifacts_preview",
     "project_quality_lineage_preview",
     "project_quality_trace_preview",
 ]

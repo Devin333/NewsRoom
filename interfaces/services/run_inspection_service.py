@@ -19,7 +19,7 @@ from framework.workflow.inspection import (
     resolve_run_dir,
 )
 from framework.workflow.runtime.manifest import normalize_legacy_run_manifest
-from interfaces.services.run_inspection_projection import project_quality_trace_preview
+from interfaces.services.run_inspection_projection import project_manifest_output_preview
 
 
 @dataclass(frozen=True)
@@ -447,50 +447,14 @@ def _manifest_report_id(manifest: dict[str, Any]) -> str | None:
 
 def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
     output = manifest.get("output")
-    preview: dict[str, Any] = {}
-    if isinstance(output, dict):
-        business_output = _manifest_business_output(manifest)
-        for key, value in output.items():
-            if len(preview) >= 12:
-                break
-            preview[str(key)] = _preview_value(value)
-        quality_trace = project_quality_trace_preview(business_output)
-        if quality_trace:
-            preview["quality_trace"] = quality_trace
-        raw_llm_route_manifest = output.get("llm_route_manifest")
-        raw_llm_router_events = output.get("llm_router_events")
-        llm_route_manifest: dict[str, Any] = (
-            dict(raw_llm_route_manifest) if isinstance(raw_llm_route_manifest, dict) else {}
-        )
-        llm_router_events: list[Any] = (
-            list(raw_llm_router_events) if isinstance(raw_llm_router_events, list) else []
-        )
-        if llm_route_manifest or llm_router_events:
-            raw_llm_metrics = llm_route_manifest.get("metrics")
-            llm_metrics = (
-                dict(raw_llm_metrics)
-                if isinstance(raw_llm_metrics, dict)
-                else {}
-            )
-            preview["llm_trace"] = {
-                "selected_deployment_id": llm_route_manifest.get("selected_deployment_id"),
-                "fallback_used": llm_route_manifest.get("fallback_used"),
-                "fallback_count": llm_route_manifest.get("fallback_count"),
-                "provider_error_count": llm_metrics.get("provider_error_count"),
-                "cooldown_skip_count": llm_metrics.get("cooldown_skip_count"),
-                "router_event_count": len(llm_router_events),
-                "budget_check": llm_route_manifest.get("budget_check"),
-                "global_budget_check": llm_route_manifest.get("global_budget_check"),
-            }
     artifacts = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else {}
-    if artifacts and "partial_artifacts" not in preview:
-        preview["partial_artifacts"] = {
-            "artifact_keys": sorted(str(key) for key in artifacts)[:20],
-            "required_artifact_keys": [
-                key for key in ("request", "events", "step_results", "manifest") if key in artifacts
-            ],
-        }
-    return preview
+    if isinstance(output, dict):
+        return project_manifest_output_preview(
+            output,
+            business_output=_manifest_business_output(manifest),
+            artifacts=artifacts,
+        )
+    return project_manifest_output_preview({}, business_output={}, artifacts=artifacts)
 
 
 def _manifest_business_output(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -566,13 +530,3 @@ def _step_view(
         ),
         "raw": to_json_safe(data),
     }
-
-
-def _preview_value(value: Any) -> Any:
-    safe = to_json_safe(value)
-    if isinstance(safe, dict):
-        return {"type": "object", "keys": sorted(str(key) for key in safe)[:12]}
-    if isinstance(safe, list):
-        return {"type": "array", "count": len(safe)}
-    text = str(safe)
-    return text[:240] + ("..." if len(text) > 240 else "")
