@@ -12,6 +12,9 @@ from business.layers.analysis.quality import (
 from business.boards.cross_board.workflows.daily_intelligence.quality_observability import (
     quality_gate_observability_metrics,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_evidence import (
+    SourceGateEvidenceBundleView,
+)
 
 
 def human_review_request(
@@ -58,7 +61,7 @@ def quality_gate_metrics(
     blocked = review.decision != EditorDecision.PASS
     rewrite_required = review.decision == EditorDecision.REWRITE_REQUIRED
     return QualityGateMetrics(
-        evidence_items_count=len(evidence_bundle.items),
+        evidence_items_count=SourceGateEvidenceBundleView.from_bundle(evidence_bundle).item_count,
         unsupported_urls_count=len(citation_check.unknown_urls) + len(citation_check.unsupported_urls),
         missing_section_sources_count=len(citation_check.missing_section_sources),
         unsupported_sections_count=len(support_matrix.unsupported_sections),

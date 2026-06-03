@@ -13,6 +13,9 @@ from business.layers.analysis.quality import (
     SupportMatrixBuilder,
 )
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_evidence import (
+    SourceGateEvidenceBundleView,
+)
 
 
 def evaluate_report_quality(
@@ -27,7 +30,7 @@ def evaluate_report_quality(
     quality_events.append(
         quality_event(
             "citation_check_started",
-            evidence_items_count=len(evidence_bundle.items),
+            evidence_items_count=SourceGateEvidenceBundleView.from_bundle(evidence_bundle).item_count,
             rewrite_attempt=rewrite_attempts,
         )
     )
