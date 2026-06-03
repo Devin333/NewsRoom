@@ -271,8 +271,12 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
         "editor_review",
         "sources.recollection_quality_assessment",
         "source_recollection_quality_assessment",
+        "quality.human_review_resume_route",
+        "human_review_resume_route",
     ]
     assert "quality.result" in steps["finalize_report"].write_keys
+    assert "human_review_resume_route" in steps["finalize_report"].write_keys
+    assert "quality.human_review_resume_route" in steps["finalize_report"].write_keys
 
 
 def test_agentic_daily_workflow_reuses_source_evidence_steps() -> None:

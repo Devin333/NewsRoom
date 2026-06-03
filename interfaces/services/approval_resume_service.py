@@ -73,6 +73,17 @@ class ApprovalResumeApplicationService:
             approval_service or ApprovalApplicationService()
         ).build_resume_context(approval_id, decision_key=decision_key)
         is_daily = resolved.workflow.workflow_id.startswith("daily-intelligence")
+        context_payload = context.to_dict()
+        if is_daily:
+            from business.boards.cross_board.workflows.daily_intelligence.human_review_resume import (
+                enrich_daily_approval_resume_context,
+            )
+
+            context_payload = enrich_daily_approval_resume_context(
+                context_payload,
+                workflow_step_ids=[step.step_id for step in resolved.workflow.steps],
+                workflow_buffer_keys=_workflow_buffer_keys(resolved.workflow.steps),
+            )
         runner = self.workflow_runner_cls(
             artifact_root=self.artifact_root,
             function_registry=resolved.registry,
@@ -85,12 +96,12 @@ class ApprovalResumeApplicationService:
         )
         run_result = runner.resume_from_approval_context(
             resolved.workflow,
-            context,
+            context_payload,
             profile=resolved.profile,
             run_id=run_id,
         )
         return ApprovalWorkflowResumeResult(
-            approval_context=context.to_dict(),
+            approval_context=context_payload,
             run_result=run_result,
         )
 
@@ -109,6 +120,17 @@ def build_default_approval_resume_service(*, artifact_root: str | Path) -> Appro
         artifact_ref_extractors=daily_artifact_ref_extractors(),
         lineage_extractors=daily_lineage_extractors(),
     )
+
+
+def _workflow_buffer_keys(steps) -> list[str]:
+    keys: list[str] = []
+    for step in steps:
+        keys.extend(str(key) for key in step.read_keys)
+        keys.extend(str(key) for key in step.write_keys)
+        optional_read_keys = step.metadata.get("optional_read_keys")
+        if isinstance(optional_read_keys, list):
+            keys.extend(str(key) for key in optional_read_keys)
+    return keys
 
 
 __all__ = [

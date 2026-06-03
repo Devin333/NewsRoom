@@ -155,7 +155,10 @@ def test_finalize_report_reads_namespaced_report_quality_evidence_and_feedback_k
                 "agent.feedback.summary",
                 "sources.recollection_quality_assessment",
             ],
-            optional_read_keys=["quality.editor_review"],
+            optional_read_keys=[
+                "quality.editor_review",
+                "quality.human_review_resume_route",
+            ],
             write_keys=[],
         )
     )
@@ -203,6 +206,63 @@ def test_finalize_report_routes_insufficient_source_recollection_quality_to_huma
         event.event_type == "finalize_report_source_recollection_quality_policy_applied"
         for event in output["quality_events"]
     )
+    assert "final_report" not in output
+
+
+def test_finalize_report_publishes_after_human_review_approval() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_editor_review(
+                "human_review",
+                reasons=["borderline high-risk topic"],
+            ),
+            human_review_resume_route={
+                "decision": "approved",
+                "route": "final",
+                "quality_route": "final",
+                "next_step_id": "finalize_report",
+                "publication_allowed": True,
+                "reason": "editor approved publication",
+                "approval_id": "approval-1",
+            },
+            social_evidence=True,
+        )
+    )
+
+    assert output["quality_result"]["passed"] is True
+    assert output["quality_result"]["route"] == "final"
+    assert output["human_review_resume_route"]["approval_id"] == "approval-1"
+    assert output["quality.human_review_resume_route"] == output["human_review_resume_route"]
+    assert output["final_report"].metadata["quality_score"] == 0.92
+    assert "human_review_request" not in output
+    assert "blocked_report" not in output
+    assert any(
+        event.event_type == "finalize_report_published_after_human_review"
+        for event in output["quality_events"]
+    )
+
+
+def test_finalize_report_blocks_after_human_review_rejection() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review=_editor_review("pass"),
+            human_review_resume_route={
+                "decision": "rejected",
+                "route": "blocked",
+                "quality_route": "blocked",
+                "next_step_id": "finalize_report",
+                "publication_allowed": False,
+                "reason": "reviewer rejected publication",
+                "approval_id": "approval-2",
+            },
+        )
+    )
+
+    assert output["quality_result"]["passed"] is False
+    assert output["quality_result"]["route"] == "blocked"
+    assert output["quality_gate_metrics"]["human_review_required"] is False
+    assert output["human_review_resume_route"]["decision"] == "rejected"
+    assert output["blocked_report"].reasons[-1] == "reviewer rejected publication"
     assert "final_report" not in output
 
 
@@ -523,6 +583,7 @@ def _buffer(
     agent_feedback_events: list[dict] | None = None,
     agent_feedback_summary: dict | None = None,
     source_recollection_quality_assessment: dict | None = None,
+    human_review_resume_route: dict | None = None,
     social_evidence: bool = False,
 ) -> DataBuffer:
     values = {
@@ -562,6 +623,8 @@ def _buffer(
         values["source_recollection_quality_assessment"] = (
             source_recollection_quality_assessment
         )
+    if human_review_resume_route is not None:
+        values["human_review_resume_route"] = human_review_resume_route
     return DataBuffer(values).scope(
         read_keys=[
             "request",
@@ -577,6 +640,7 @@ def _buffer(
             "agent_feedback_events",
             "agent_feedback_summary",
             "source_recollection_quality_assessment",
+            "human_review_resume_route",
         ],
         optional_read_keys=["edited_report_draft"],
         write_keys=[],

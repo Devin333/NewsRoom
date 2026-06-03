@@ -319,6 +319,7 @@ def _finalize_report_step() -> StepSpec:
             "quality_route",
             "rewrite_instructions",
             "human_review_request",
+            "human_review_resume_route",
             "final_report",
             "report_markdown",
             "blocked_report",
@@ -329,6 +330,7 @@ def _finalize_report_step() -> StepSpec:
                 "edited_report_draft",
                 "editor_review",
                 "source_recollection_quality_assessment",
+                "human_review_resume_route",
             ])
         },
     )

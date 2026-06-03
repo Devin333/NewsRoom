@@ -92,13 +92,13 @@ daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key
 
 - source 相关输出使用 `sources.*`，例如 `sources.errors`、`sources.events`、`sources.ranked_items`；补源闭环使用 `sources.recollection_profile`、`sources.recollection_execution_plan`、`sources.recollection_execution_report` 和 `sources.recollection_quality_assessment`。
 - evidence 相关输出使用 `evidence.*`，例如 `evidence.bundle`、`evidence.verified_findings`。
-- quality 相关输出使用 `quality.*`，例如 `quality.events`、`quality.result`。
+- quality 相关输出使用 `quality.*`，例如 `quality.events`、`quality.result`、`quality.human_review_resume_route`。
 - report 相关输出使用 `report.*`，例如 `report.draft`、`report.final`。
 - agent feedback 输出使用 `agent.feedback.*`。
 
 旧 key 仍是现有公开兼容面；新代码应优先声明并消费命名空间 key。后续迁移完成前，禁止在单个 step 中临时发明未登记的 dotted key。
 
-`finalize_report` 已进入命名空间优先读取阶段：workflow spec 通过 `with_namespaced_primary_read_keys()` 先声明 `report.*`、`quality.*`、`evidence.*`、`agent.feedback.*` 和 `sources.recollection_quality_assessment`，再保留旧 key 作为兼容入口；workflow adapter 仍通过统一 buffer access helper 读取，不直接关心 legacy / namespaced 分支。
+`finalize_report` 已进入命名空间优先读取阶段：workflow spec 通过 `with_namespaced_primary_read_keys()` 先声明 `report.*`、`quality.*`、`evidence.*`、`agent.feedback.*` 和 `sources.recollection_quality_assessment`，再保留旧 key 作为兼容入口；workflow adapter 仍通过统一 buffer access helper 读取，不直接关心 legacy / namespaced 分支。人工审核恢复也通过正式 `human_review_resume_route` / `quality.human_review_resume_route` 传递，finalization usecase 只消费该 route，不从 approval metadata 反推发布、阻断或重写决策。
 
 source/evidence 主链路也已进入命名空间优先读取阶段：`require_sources`、`normalize_sources`、`deduplicate_sources`、`rank_sources` 和 `build_evidence` 的 workflow spec 先声明 `sources.*` / `evidence.*` 输入，再保留旧 key 作为兼容入口。对应业务函数仍通过 `workflow_buffer_access.read_buffer_value()` 读取 canonical 业务 key，由 helper 负责 namespaced-first fallback；step 不应自行写 legacy / namespaced 分支判断。
 
@@ -155,6 +155,8 @@ non-social-media bypass 判定统一由 `quality_gate_policy.assess_non_social_m
 agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只负责读取 `request`、draft、quality、evidence 和 agent feedback buffer key，并组装 `DailyReportFinalizationInput`。
 
 最终报告发布、blocked / human review 路由、rewrite 结果校验、quality result、artifact refs、agent feedback metadata 和补源质量策略投影由 `report_finalization.py` 的 `finalize_daily_report()` 承载。该 usecase 不依赖 `framework.workflow`，因此可以脱离 `DataBuffer` 单独测试。
+
+人工审核后的恢复决策由 `human_review_resume.py` 投影为 `DailyHumanReviewResumeRoute`：approve 映射到 `final`，reject 映射到 `blocked`，modify / modified / modifications 映射到 `rewrite`，并在 workflow 声明可消费 route key 时写入 `buffer_updates`、`resume_metadata` 和命名空间 quality key。`ApprovalResumeApplicationService` 只负责在 daily workflow resume 前调用该业务投影；framework runner 仍只接收普通 approval context，不理解 daily 专属 route 规则。
 
 报告草稿输入归一化、claim grounding 归一化、以及草稿引用来源是否落在 evidence bundle 内的边界检查由 `report_draft_normalization.py` 承载。`report_finalization.py` 只消费归一化后的 draft 和明确的 source-boundary 结果，不再内联这些输入清洗 helper。
 

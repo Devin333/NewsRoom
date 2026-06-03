@@ -36,6 +36,10 @@ def finalize_report(buffer: StepScopedDataBufferView) -> dict[str, Any]:
                 buffer,
                 "source_recollection_quality_assessment",
             ),
+            human_review_resume_route=read_optional_buffer_value(
+                buffer,
+                "human_review_resume_route",
+            ),
         )
     )
 

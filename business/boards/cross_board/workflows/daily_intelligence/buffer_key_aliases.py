@@ -57,6 +57,7 @@ QUALITY_BUFFER_ALIASES = {
     "rewrite_instructions": "quality.rewrite_instructions",
     "rewritten_report_draft": "quality.rewritten_report_draft",
     "human_review_request": "quality.human_review_request",
+    "human_review_resume_route": "quality.human_review_resume_route",
     "memory_quality_result": "memory.quality_result",
 }
 
