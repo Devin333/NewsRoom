@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from business.boards.cross_board.workflows.daily_intelligence.rewrite_evidence_view import (
+    RewriteEvidenceLookupView,
+)
 from business.layers.relation.evidence import EvidenceBundle
 
 
@@ -19,11 +22,13 @@ def rewrite_report_draft(
             for section in sections
             if (rewritten := _remove_unsupported_claims(section, unsupported_claims)) is not None
         ]
-    evidence_by_url = {item.source_url: item for item in evidence_bundle.items}
+    evidence_lookup = RewriteEvidenceLookupView.from_bundle(evidence_bundle)
     for section in sections:
         sources = section.get("sources") or section.get("source_urls") or []
         if not sources:
-            matched_urls = _matching_source_urls(str(section.get("content", "")), evidence_by_url)
+            matched_urls = evidence_lookup.matching_source_urls(
+                str(section.get("content", ""))
+            )
             if matched_urls:
                 section["sources"] = matched_urls
         section["claim_grounding"] = _filtered_claim_grounding(
@@ -80,14 +85,6 @@ def _remove_unsupported_claims(
     return updated
 
 
-def _matching_source_urls(content: str, evidence_by_url: dict[str, Any]) -> list[str]:
-    matches = []
-    for url, item in evidence_by_url.items():
-        if _token_overlap(content, f"{item.title} {item.summary}") >= 0.25:
-            matches.append(url)
-    return sorted(matches)
-
-
 def _filtered_claim_grounding(
     section: dict[str, Any],
     claim_grounding: list[dict[str, Any]],
@@ -102,23 +99,3 @@ def _filtered_claim_grounding(
             continue
         filtered.append(dict(grounded_claim))
     return filtered
-
-
-def _token_overlap(left: str, right: str) -> float:
-    import re
-
-    left_tokens = {
-        token
-        for token in re.findall(r"[a-z0-9]+", left.casefold())
-        if len(token) > 2
-    }
-    if not left_tokens:
-        return 0.0
-    right_tokens = {
-        token
-        for token in re.findall(r"[a-z0-9]+", right.casefold())
-        if len(token) > 2
-    }
-    if not right_tokens:
-        return 0.0
-    return len(left_tokens & right_tokens) / len(left_tokens)
