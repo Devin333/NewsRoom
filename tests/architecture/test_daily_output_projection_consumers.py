@@ -53,3 +53,39 @@ def test_daily_alias_reverse_lookup_stays_in_buffer_alias_module() -> None:
     assert "namespaced_first_key_candidates" in buffer_access_source
     assert "legacy_key_for" in output_projection_source
     assert "DAILY_BUFFER_ALIASES" not in output_projection_source
+
+
+def test_legacy_daily_output_projection_helpers_stay_out_of_runtime_consumers() -> None:
+    roots = (
+        PROJECT_ROOT / "business",
+        PROJECT_ROOT / "interfaces",
+        PROJECT_ROOT / "infrastructure",
+        PROJECT_ROOT / "framework",
+    )
+    allowed_paths = {
+        (
+            PROJECT_ROOT
+            / "business"
+            / "boards"
+            / "cross_board"
+            / "workflows"
+            / "daily_intelligence"
+            / "output_projection.py"
+        ),
+    }
+    forbidden_names = (
+        "project_daily_output_for_legacy_consumers",
+        "ensure_legacy_daily_output_aliases",
+    )
+    violations: list[str] = []
+
+    for root in roots:
+        for path in root.rglob("*.py"):
+            if path in allowed_paths:
+                continue
+            source = path.read_text(encoding="utf-8")
+            for name in forbidden_names:
+                if name in source:
+                    violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {name}")
+
+    assert violations == []
