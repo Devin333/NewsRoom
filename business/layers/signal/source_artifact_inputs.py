@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any
 
-from business.foundation.models.source import RawSourceItem, SourceFetchRequest, SourceFetchResult
+from business.foundation.models.source import RawSourceItem, SourceError, SourceFetchRequest, SourceFetchResult
+from business.foundation.models.source_error_normalization import normalize_source_errors
 from framework.shared.json import to_jsonable as _to_json_safe
 
 
@@ -98,6 +99,37 @@ class SourceFetchResultArtifactInput:
         raise TypeError("source fetch result artifacts must be SourceFetchResult or mapping values")
 
 
+@dataclass(frozen=True)
+class SourceErrorArtifactInput:
+    source_id: str
+    error_id: str
+    payload: SourceError
+    request_id: str | None = None
+    request_ref: Any = None
+    response_ref: Any = None
+
+    @classmethod
+    def from_error(cls, value: SourceError, *, index: int) -> "SourceErrorArtifactInput":
+        return cls(
+            source_id=value.source_id,
+            error_id=_source_error_id(value, index),
+            payload=value,
+            request_id=_optional_text(value.metadata.get("request_id")),
+            request_ref=value.request_ref,
+            response_ref=value.response_ref,
+        )
+
+
+def source_error_artifact_inputs(values: Any) -> list[SourceErrorArtifactInput]:
+    return [
+        SourceErrorArtifactInput.from_error(source_error, index=index)
+        for index, source_error in enumerate(
+            normalize_source_errors(values, context="source artifact errors"),
+            start=1,
+        )
+    ]
+
+
 def source_fetch_result_artifact_inputs(values: Any) -> list[SourceFetchResultArtifactInput]:
     return [SourceFetchResultArtifactInput.from_value(value) for value in list(values or [])]
 
@@ -150,10 +182,17 @@ def _stable_id(value: Any) -> str:
     return sha256(payload).hexdigest()
 
 
+def _source_error_id(source_error: SourceError, index: int) -> str:
+    digest = _stable_id(source_error)[:12]
+    return f"{index:04d}_{source_error.source_id}_{source_error.error_type}_{digest}"
+
+
 __all__ = [
+    "SourceErrorArtifactInput",
     "SourceFetchRequestArtifactInput",
     "SourceFetchResultArtifactInput",
     "SourceItemArtifactInput",
+    "source_error_artifact_inputs",
     "source_fetch_request_artifact_inputs",
     "source_fetch_result_artifact_inputs",
     "source_item_artifact_inputs",

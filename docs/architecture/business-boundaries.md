@@ -83,7 +83,7 @@ source 处理链路的正式中间模型是：
 
 source fetch error 的运行期策略由 `SourceErrorRuntimeMetadata` 投影，`DailySourceCollector` 和 `DailySourceRecollectionExecutor` 只消费 `retryable`、`source_health_affecting` 和 `phase` 的正式 view；旧 `SourceError.metadata` 只作为兼容输入。
 
-source artifact 发布侧同样不得对 `source_errors` 做 duck typing。`SourceArtifactWriter` 的公开入口可以接收历史 dict payload，但必须先通过 `normalize_source_errors()` 归一化为 `SourceError`；artifact id、request/response artifact ref 关联、redaction payload 构建只消费正式字段。这样 legacy dict 兼容停留在 artifact boundary，artifact 业务逻辑不再通过 `dict.get("error_type")` 或 `getattr()` 猜测错误结构。
+source artifact 发布侧同样不得对 `source_errors` 做 duck typing。`SourceArtifactWriter` 的公开入口可以接收历史 dict payload，但必须先通过 `SourceErrorArtifactInput` 归一化为正式 error artifact 输入；legacy dict 到 `SourceError` 的转换、artifact id 生成、历史 `metadata["request_id"]` 读取和 request/response ref 投影都停留在 input view。error writer 只消费 `source_id`、`error_id`、`request_id`、`request_ref`、`response_ref` 和正式 `SourceError` payload，不再通过 `dict.get("error_type")`、`getattr()` 或直接读取 metadata 猜测错误结构。
 
 source fetch request/result artifact 输入由 `business.layers.signal.source_artifact_inputs.SourceFetchRequestArtifactInput` / `SourceFetchResultArtifactInput` 投影。`SourceArtifactWriter` 可以接收历史 mapping payload，但 fetch request/result artifact id、response headers artifact、status/content-type 和 response URL 只能消费这些 input view 的正式字段；request id fallback、source id fallback 和 response headers 从 metadata 的兼容读取必须停留在 input view 中，writer 主体不得继续保留 `_string_value()`、`_metadata_value()` 或 `_optional_value()` 这类通用 duck-typing helper。
 

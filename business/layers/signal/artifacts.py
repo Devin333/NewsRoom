@@ -7,12 +7,12 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from framework.shared.json import to_jsonable as _to_json_safe
-from business.foundation.models.source import SourceError
-from business.foundation.models.source_error_normalization import normalize_source_errors
 from business.layers.signal.artifact_refs import SignalArtifactRef
 from business.layers.signal.source_artifact_inputs import (
+    SourceErrorArtifactInput,
     SourceFetchResultArtifactInput,
     SourceItemArtifactInput,
+    source_error_artifact_inputs,
     source_fetch_request_artifact_inputs,
     source_fetch_result_artifact_inputs,
     source_item_artifact_inputs,
@@ -486,15 +486,11 @@ class _SourceErrorArtifactWriter:
         fetch_artifacts: _SourceFetchArtifacts,
     ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
-        for index, source_error in enumerate(
-            normalize_source_errors(source_errors, context="source artifact errors"),
-            start=1,
-        ):
+        for source_error in source_error_artifact_inputs(source_errors):
             entries.append(
                 self._write_source_error_artifact(
                     run_id,
                     source_error=source_error,
-                    index=index,
                     fetch_artifacts=fetch_artifacts,
                 )
             )
@@ -504,14 +500,13 @@ class _SourceErrorArtifactWriter:
         self,
         run_id: str,
         *,
-        source_error: SourceError,
-        index: int,
+        source_error: SourceErrorArtifactInput,
         fetch_artifacts: _SourceFetchArtifacts,
     ) -> dict[str, Any]:
         source_id = source_error.source_id
-        object_id = _source_error_id(source_error, index)
+        object_id = source_error.error_id
         path = f"sources/errors/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-        request_id = _optional_string(source_error.metadata.get("request_id"))
+        request_id = source_error.request_id
         request_ref_payload, response_ref_payload = self._resolve_error_ref_payloads(
             source_error,
             request_id=request_id,
@@ -550,7 +545,7 @@ class _SourceErrorArtifactWriter:
 
     def _resolve_error_ref_payloads(
         self,
-        source_error: SourceError,
+        source_error: SourceErrorArtifactInput,
         *,
         request_id: str | None,
         source_id: str,
@@ -576,14 +571,14 @@ class _SourceErrorArtifactWriter:
 
     def _source_error_payload(
         self,
-        source_error: SourceError,
+        source_error: SourceErrorArtifactInput,
         *,
         source_id: str,
         object_id: str,
         request_ref_payload: Any,
         response_ref_payload: Any,
     ) -> dict[str, Any]:
-        error_payload = _redact(_to_json_safe(source_error))
+        error_payload = _redact(_to_json_safe(source_error.payload))
         if isinstance(error_payload, dict):
             if request_ref_payload is not None:
                 error_payload["request_ref"] = request_ref_payload
@@ -600,13 +595,6 @@ class _SourceErrorArtifactWriter:
         if response_ref_payload is not None:
             payload["response_ref"] = response_ref_payload
         return payload
-
-
-def _source_error_id(source_error: SourceError, index: int) -> str:
-    source_id = source_error.source_id
-    error_type = source_error.error_type
-    digest = _stable_payload_id(source_error)[:12]
-    return f"{index:04d}_{source_id}_{error_type}_{digest}"
 
 
 def _artifact_ref(
@@ -782,7 +770,7 @@ def _remember_ref(
 
 
 def _resolve_error_ref(
-    source_error: SourceError,
+    source_error: SourceErrorArtifactInput,
     field_name: str,
     *,
     request_id: str | None,
