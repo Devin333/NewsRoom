@@ -25,15 +25,13 @@ def test_build_profile_from_source_recollect_recommendation() -> None:
                 severity="warning",
                 requested_action="source_recollect",
                 reason="Need launch timing confirmation.",
-                metadata={
-                    "evidence_gaps": [
-                        {"reason": "Need a second independent source for launch timing."}
-                    ],
-                    "source_recollection_requests": [
-                        {"query": "model launch timing official announcement"}
-                    ],
-                    "missing_information": ["official launch date confirmation"],
-                },
+                evidence_gaps=[
+                    {"reason": "Need a second independent source for launch timing."}
+                ],
+                source_recollection_requests=[
+                    {"query": "model launch timing official announcement"}
+                ],
+                missing_information=["official launch date confirmation"],
             )
         ],
         summary=DailyAgentFeedbackSummary(
@@ -108,6 +106,35 @@ def test_build_profile_from_source_recollect_recommendation() -> None:
     assert plan.recommendation_ids == [
         "daily-agent-feedback-policy-source-recollect:daily.source_recollect"
     ]
+
+
+def test_feedback_event_projects_legacy_source_recollection_metadata() -> None:
+    event = DailyAgentFeedbackEvent(
+        feedback_id="daily-agent-feedback-1",
+        source_agent_id="daily.analyst",
+        target_agent_id=SOURCE_RECOLLECT_TARGET,
+        feedback_type="source_recollection_request",
+        severity="warning",
+        requested_action="source_recollect",
+        reason="Need launch timing confirmation.",
+        metadata={
+            "evidence_gaps": [
+                {"reason": "Need a second independent source for launch timing."}
+            ],
+            "source_recollection_requests": [
+                {"query": "model launch timing official announcement"}
+            ],
+            "missing_information": ["official launch date confirmation"],
+        },
+    )
+
+    assert event.evidence_gaps == [
+        {"reason": "Need a second independent source for launch timing."}
+    ]
+    assert event.source_recollection_requests == [
+        {"query": "model launch timing official announcement"}
+    ]
+    assert event.missing_information == ["official launch date confirmation"]
 
 
 def test_build_profile_ignores_non_source_recollect_route() -> None:

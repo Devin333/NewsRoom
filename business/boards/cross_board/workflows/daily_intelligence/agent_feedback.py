@@ -123,6 +123,9 @@ class DailyAgentFeedbackCollector:
                     _feedback_item_texts(missing_information),
                     default="analyst requested source recollection",
                 ),
+                evidence_gaps=evidence_gaps,
+                source_recollection_requests=recollection_requests,
+                missing_information=_string_list(missing_information),
                 metadata={
                     "evidence_gaps": evidence_gaps,
                     "source_recollection_requests": recollection_requests,
@@ -295,6 +298,9 @@ def _feedback_event(
     requested_action: str,
     reason: str,
     metadata: dict[str, Any],
+    evidence_gaps: list[Any] | None = None,
+    source_recollection_requests: list[Any] | None = None,
+    missing_information: list[str] | None = None,
 ) -> DailyAgentFeedbackEvent:
     return DailyAgentFeedbackEvent(
         feedback_id="pending",
@@ -304,6 +310,9 @@ def _feedback_event(
         severity=severity,
         requested_action=requested_action,
         reason=reason,
+        evidence_gaps=list(evidence_gaps or []),
+        source_recollection_requests=list(source_recollection_requests or []),
+        missing_information=list(missing_information or []),
         metadata={key: value for key, value in metadata.items() if value not in (None, [], {})},
     )
 

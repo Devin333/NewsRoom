@@ -60,13 +60,13 @@ class DailySourceRecollectionService:
         recommendations = _source_recollect_recommendations(summary)
         if not recollect_events and not recommendations:
             return None
-        evidence_gaps = _metadata_items(recollect_events, "evidence_gaps")
-        recollection_requests = _metadata_items(
+        evidence_gaps = _event_items(recollect_events, "evidence_gaps")
+        recollection_requests = _event_items(
             recollect_events,
             "source_recollection_requests",
         )
         missing_information = _string_items(
-            _metadata_items(recollect_events, "missing_information")
+            _event_items(recollect_events, "missing_information")
         )
         queries = _dedupe_text(
             [
@@ -122,12 +122,16 @@ def _source_recollect_recommendations(
     ]
 
 
-def _metadata_items(
+def _event_items(
     events: list[DailyAgentFeedbackEvent],
     key: str,
 ) -> list[Any]:
     items: list[Any] = []
     for event in events:
+        values = _list_value(getattr(event, key, None))
+        if values:
+            items.extend(values)
+            continue
         items.extend(_list_value(event.metadata.get(key)))
     return items
 
