@@ -50,9 +50,9 @@ def test_productized_improvement_workflow_service_builds_outputs_from_request() 
                 "subscription_match",
             ],
         },
-        "applied_overrides": [],
-        "skipped_overrides": [],
     }
+    assert "applied_overrides" not in result["policy_experiment_application_context"]
+    assert "skipped_overrides" not in result["policy_experiment_application_context"]
     assert result["applied_policy_experiments"] == []
     assert result["skipped_policy_experiments"] == []
     assert result["applied_overrides"] == []

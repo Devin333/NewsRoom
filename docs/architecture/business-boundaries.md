@@ -269,7 +269,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `ProductizedBoardOutputBundleBuilder` 不再把完整 `ProductizedRunState` 合并进 `BoardRunResult.metadata`；运行态通过 `ProductizedBoardOutputBundle.run_state` 和 workflow `productized_run` key 传递。
 - `ProductizedBoardOutputBundle.report_summary` 是 report-writing skill 输出摘要的正式投影，并通过 workflow `report_summary` key 传给订阅用例；旧 `board_output.metadata.report.summary` 只作兼容兜底。
 - `ProductizedRunStateMetadataProjector` 负责把 run state 投影成 artifact-facing 或历史兼容 metadata；`ProductizedRunState` 本身只作为正式运行态模型，旧 metadata 方法仅作薄兼容入口。
-- `ProductizedSignalPreparationService` 和 `ProductizedImprovementWorkflowService` 负责 policy experiment application 输出协调，并通过 `policy_experiment_application_context` 正式承载 `run_id`、`board_type`、applied/skipped policy experiments、proposal ids 和 measurement plan；旧 `improvement_context` 只作为 prepare step / run state 的兼容别名保留。productized artifacts 以 `policy_experiment_application_context.json`、`applied_policy_experiments.json` 和 `skipped_policy_experiments.json` 作为正式策略实验产物，`applied_overrides` / `applied_overrides.json` 只保留为旧消费者兼容视图。
+- `ProductizedSignalPreparationService` 和 `ProductizedImprovementWorkflowService` 负责 policy experiment application 输出协调，并通过 `policy_experiment_application_context` 正式承载 `run_id`、`board_type`、applied/skipped policy experiments、proposal ids 和 measurement plan；该正式 context 使用 `PolicyExperimentApplicationContext.to_application_dict()`，不包含 legacy override 字段。旧 `improvement_context` 只作为 prepare step / run state 的兼容别名保留。productized artifacts 以 `policy_experiment_application_context.json`、`applied_policy_experiments.json` 和 `skipped_policy_experiments.json` 作为正式策略实验产物，`applied_overrides` / `applied_overrides.json` 只保留为旧消费者兼容视图。
 - `ProductizedImprovementMeasurementService` 负责 measurement snapshot 和 delta 计算，主算法消费 `ProductizedImprovementMeasurementInput`，其中 `deduplication_result` 是正式字段；productized workflow 必须优先调用 `measure_productized()`，旧 `board_run_result.metadata` 读取只保留在 `measurement_legacy.py` / compatibility constructor 中。
 
 跨 step 的运行态中间结果使用 `ProductizedRunState`。`metadata` 只保留对外 artifact 和历史兼容字段。
@@ -313,6 +313,7 @@ improvement 主流程是：
 - `measurement_plan`
 
 `applied_overrides` 和 `skipped_overrides` 只作为历史兼容属性保留，内容等同于 policy experiment 结果。
+`PolicyExperimentApplicationContext.to_application_dict()` 是正式 application payload，不包含 legacy override 字段；`to_dict()` 只作为历史兼容序列化保留。
 旧 `proposed_patch` 字段只用于读取历史持久化数据；新 proposal 不再生成 patch payload。
 `SelfImprovementReport` 和 productized improvement 输出会显式投影 `policy_experiment_profiles` / `policy_experiment_profile_ids`，作为比 `applied_overrides` 更正式的策略实验视图。新内部消费者必须读取 `policy_experiment_application_context` 或 `applied_policy_experiments`，不得把 `applied_overrides` 作为主输入。
 `SelfImprovementReportBuilder` 和 `BoardImprovementService.build_report()` 优先消费完整 `policy_experiment_application_context`，再兼容单独的 `applied_policy_experiments` / `applied_overrides` 参数；新代码应传递 application context，避免把应用结果拆成零散字段继续下传。`applied_overrides` 报告字段始终镜像解析后的 policy experiment 结果，不再允许旧 override payload 覆盖正式结果。

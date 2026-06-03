@@ -32,6 +32,8 @@ def test_productized_signal_preparation_service_builds_formal_run_state() -> Non
     assert result["productized_run"].run_id == "prep-run"
     assert result["productized_run"].source_reliability_results == result["source_reliability_results"]
     assert result["policy_experiment_application_context"]["run_id"] == "prep-run"
+    assert "applied_overrides" not in result["policy_experiment_application_context"]
+    assert "skipped_overrides" not in result["policy_experiment_application_context"]
     assert (
         result["productized_run"].improvement_context
         == result["policy_experiment_application_context"]

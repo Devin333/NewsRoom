@@ -100,8 +100,11 @@ class PolicyExperimentApplicationContext:
     def skipped_overrides(self) -> list[dict[str, Any]]:
         return self.skipped_policy_experiments
 
+    def to_application_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
+        payload = self.to_application_dict()
         payload["applied_overrides"] = list(self.applied_policy_experiments)
         payload["skipped_overrides"] = list(self.skipped_policy_experiments)
         return payload

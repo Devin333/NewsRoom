@@ -48,6 +48,8 @@ def test_improvement_applier_only_applies_approved_supported_proposals() -> None
     assert context.skipped_policy_experiments == context.skipped_overrides
     assert context.skipped_overrides[0]["proposal_id"] == "proposed"
     assert context.measurement_plan["compare_metrics"]
+    assert "applied_overrides" not in context.to_application_dict()
+    assert "skipped_overrides" not in context.to_application_dict()
     assert context.to_dict()["applied_overrides"] == context.applied_policy_experiments
 
 

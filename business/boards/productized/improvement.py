@@ -115,7 +115,7 @@ class ProductizedImprovementWorkflowService:
             measurement=measurement,
         )
         report_payload = report.to_dict()
-        policy_experiment_application_context = improvement_context.to_dict()
+        policy_experiment_application_context = improvement_context.to_application_dict()
         return {
             "improvement_recommendations": [item.to_dict() for item in recommendations],
             "improvement_proposals": [item.to_dict() for item in proposals],

@@ -52,7 +52,7 @@ class ProductizedSignalPreparationService:
             run_id=run_id,
             board_type=self.board_type.value,
         )
-        policy_experiment_application_context = improvement_context.to_dict()
+        policy_experiment_application_context = improvement_context.to_application_dict()
         run_state = ProductizedRunState.from_request(
             request=request,
             board_type=self.board_type,
