@@ -41,6 +41,7 @@ from interfaces.env import load_root_env
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
+from interfaces.services.daily_interface_projection import project_run_output_for_interface
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
@@ -342,7 +343,7 @@ def _mcp_service_factory(
 
 def _run_response_from_payload(payload: dict[str, Any]) -> RunResponse:
     run_status = str(payload.get("status") or "")
-    output = payload.get("output")
+    output = project_run_output_for_interface(payload)
     return RunResponse(
         run_id=payload.get("run_id"),
         status=_interface_status(run_status),

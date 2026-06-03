@@ -81,6 +81,49 @@ def test_generic_run_api_sync_daily_returns_runtime_status_fields() -> None:
     assert payload["data"]["interface"]["run_status"] == "blocked"
 
 
+def test_generic_run_api_sync_daily_projects_namespaced_report_status() -> None:
+    run_service = _FakeRunService(
+        RunResult(
+            run_id="run-sync",
+            workflow_id=LEGACY_DAILY_WORKFLOW_ID,
+            workflow_version="1.0",
+            status=WorkflowStatus.BLOCKED,
+            output={
+                "report.blocked": {"title": "Blocked", "reasons": ["quality"]},
+                "report.markdown": "# Blocked\n",
+            },
+            error={"error_type": "QualityGateBlocked", "message": "quality gate blocked"},
+        )
+    )
+    worker = _FakeWorkerService()
+    client = TestClient(
+        create_app(
+            run_service_factory=lambda: run_service,
+            worker_service_factory=lambda: worker,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/runs",
+        json={
+            "workflow_id": "daily",
+            "topic": "AI policy",
+            "source_limit": 2,
+            "run_id": "run-sync",
+            "async_run": False,
+        },
+    )
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["data"]["report_status"] == "blocked"
+    assert payload["data"]["report_id"] == "run-sync:blocked"
+    assert payload["data"]["interface"]["report_status"] == "blocked"
+    assert "report.blocked" in payload["data"]["output"]
+    assert "blocked_report" not in payload["data"]["output"]
+
+
 def test_generic_run_api_weekly_uses_run_service_and_status_contract() -> None:
     run_service = _FakeRunService(
         weekly_result=RunResult(
