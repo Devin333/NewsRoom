@@ -266,6 +266,12 @@ def test_normalize_source_errors_rejects_non_sequence_payload() -> None:
     with pytest.raises(TypeError, match="source_errors must be a sequence"):
         normalize_source_errors({"source_id": "rss-source"})
 
+    with pytest.raises(TypeError, match="source_errors must be a sequence"):
+        normalize_source_errors("fetch_timeout")
+
+    with pytest.raises(TypeError, match="source_errors must be a sequence"):
+        normalize_source_errors(b"fetch_timeout")
+
     with pytest.raises(TypeError, match="source_errors entries must be SourceError"):
         normalize_source_errors(["not-an-error"])
 

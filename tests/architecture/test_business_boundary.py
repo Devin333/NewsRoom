@@ -307,6 +307,19 @@ def test_board_radar_tools_do_not_import_legacy_source_modules() -> None:
     assert violations == []
 
 
+def test_source_error_consumers_use_normalized_error_models() -> None:
+    consumer_paths = (
+        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "report_writer.py",
+        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_processing.py",
+        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_recollection_executor.py",
+        BUSINESS_ROOT / "layers" / "signal" / "artifacts.py",
+        BUSINESS_ROOT / "layers" / "signal" / "source_artifact_inputs.py",
+        *(BUSINESS_ROOT / "layers" / "signal" / "source_processing").glob("*.py"),
+    )
+
+    assert _source_error_duck_typing_violations(consumer_paths) == []
+
+
 def _forbidden_imports(root: Path, *, forbidden_prefixes: tuple[str, ...]) -> list[str]:
     violations: list[str] = []
     for path in root.rglob("*.py"):
@@ -382,6 +395,57 @@ def _matching_forbidden(
         for imported in imported_modules
         if any(imported == prefix or imported.startswith(f"{prefix}.") for prefix in forbidden_prefixes)
     ]
+
+
+def _source_error_duck_typing_violations(paths: tuple[Path, ...]) -> list[str]:
+    violations: list[str] = []
+    forbidden_fields = (
+        "source_id",
+        "source_name",
+        "error_type",
+        "error_message",
+        "retryable",
+        "request_ref",
+        "response_ref",
+    )
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if _is_mapping_get_on_source_error(node, fields=forbidden_fields):
+                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: get")
+            if _is_getattr_on_source_error(node, fields=forbidden_fields):
+                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: getattr")
+    return violations
+
+
+def _is_mapping_get_on_source_error(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if not isinstance(node.func, ast.Attribute) or node.func.attr != "get":
+        return False
+    if not _is_source_error_name(node.func.value):
+        return False
+    return bool(node.args) and _constant_value(node.args[0]) in fields
+
+
+def _is_getattr_on_source_error(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    if not isinstance(node.func, ast.Name) or node.func.id != "getattr":
+        return False
+    if len(node.args) < 2 or not _is_source_error_name(node.args[0]):
+        return False
+    return _constant_value(node.args[1]) in fields
+
+
+def _is_source_error_name(node: ast.AST) -> bool:
+    return isinstance(node, ast.Name) and node.id in {"error", "source_error"}
+
+
+def _constant_value(node: ast.AST) -> object:
+    if isinstance(node, ast.Constant):
+        return node.value
+    return None
 
 
 def _imported_modules(tree: ast.AST) -> list[str]:

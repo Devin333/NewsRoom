@@ -13,7 +13,7 @@ def normalize_source_errors(
 ) -> list[SourceError]:
     if values is None:
         return []
-    if isinstance(values, SourceError | Mapping):
+    if isinstance(values, SourceError | Mapping) or isinstance(values, (str, bytes, bytearray)):
         raise TypeError(f"{context} must be a sequence of SourceError or mapping values")
     try:
         error_values = list(values)

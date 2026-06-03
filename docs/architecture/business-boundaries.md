@@ -89,6 +89,8 @@ registered connector 返回的外部 fetch result 对象必须先投影为 sourc
 
 source artifact 发布侧同样不得对 `source_errors` 做 duck typing。`SourceArtifactWriter` 的公开入口可以接收历史 dict payload，但必须先通过 `SourceErrorArtifactInput` 归一化为正式 error artifact 输入；legacy dict 到 `SourceError` 的转换、artifact id 生成、历史 `metadata["request_id"]` 读取和 request/response ref 投影都停留在 input view。error writer 只消费 `source_id`、`error_id`、`request_id`、`request_ref`、`response_ref` 和正式 `SourceError` payload，不再通过 `dict.get("error_type")`、`getattr()` 或直接读取 metadata 猜测错误结构。
 
+`normalize_source_errors()` 是 `source_errors` 的唯一结构归一化入口：它拒绝顶层 mapping、字符串、bytes 和非结构化条目，只接受 `SourceError` 或完整序列化 mapping 序列。coverage、fallback、error policy、report writer、source recollection 和 artifact input 必须先归一化再消费正式字段，不能在各自模块里重新做 dict/object 混合读取。
+
 source fetch request/result artifact 输入由 `business.layers.signal.source_artifact_inputs.SourceFetchRequestArtifactInput` / `SourceFetchResultArtifactInput` 投影。`SourceArtifactWriter` 可以接收历史 mapping payload，但 fetch request/result artifact id、response headers artifact、status/content-type 和 response URL 只能消费这些 input view 的正式字段；request id fallback、source id fallback 和 response headers 从 metadata 的兼容读取必须停留在 input view 中，writer 主体不得继续保留 `_string_value()`、`_metadata_value()` 或 `_optional_value()` 这类通用 duck-typing helper。
 
 source item artifact 输入由同一模块的 `SourceItemArtifactInput` 投影。raw item 的 `source_id`、`source_item_id`、raw content、raw/parse artifact ref 和 legacy mapping fallback 都属于 input view 的职责；`SourceArtifactWriter` 只消费该 view 的正式字段来写 raw content、source item 和 parsed-items index，不再在发布编排主体里通过 `_raw_content()` / `_existing_artifact_ref()`、`dict.get("source_item_id")` 或 artifact ref metadata 猜测 raw item 结构。
