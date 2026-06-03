@@ -182,6 +182,15 @@ def test_productized_workflow_steps_delegate_business_logic_to_productized_servi
     assert "business.foundation.subscription" not in imported_modules
 
 
+def test_business_boards_use_policy_experiment_application_api() -> None:
+    violations = _attribute_calls(
+        BUSINESS_ROOT / "boards",
+        forbidden_names=("apply_approved_overrides",),
+    )
+
+    assert violations == []
+
+
 def test_daily_agent_registry_stays_fixture_free() -> None:
     registry_path = (
         BUSINESS_ROOT
@@ -260,6 +269,18 @@ def _function_defs_for_file(path: Path) -> list[str]:
         for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
+
+
+def _attribute_calls(root: Path, *, forbidden_names: tuple[str, ...]) -> list[str]:
+    violations: list[str] = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in forbidden_names:
+                violations.append(
+                    f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: {node.attr}"
+                )
+    return violations
 
 
 def _matching_forbidden(

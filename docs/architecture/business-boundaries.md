@@ -315,6 +315,7 @@ improvement 主流程是：
 `applied_overrides` 和 `skipped_overrides` 只作为历史兼容属性保留，内容等同于 policy experiment 结果。
 旧 `proposed_patch` 字段只用于读取历史持久化数据；新 proposal 不再生成 patch payload。
 `SelfImprovementReport` 和 productized improvement 输出会显式投影 `policy_experiment_profiles` / `policy_experiment_profile_ids`，作为比 `applied_overrides` 更正式的策略实验视图。新内部消费者必须读取 `policy_experiment_application_context` 或 `applied_policy_experiments`，不得把 `applied_overrides` 作为主输入。
+`apply_approved_overrides()` 只作为历史兼容 API 保留；`business/boards` 新代码必须调用 `apply_approved_policy_experiments()` 或更具体的 policy profile/application 入口。
 
 Weekly intelligence 的 improvement 逻辑由 `business/boards/cross_board/weekly_improvement.py` 承载：
 
