@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from business.foundation.models.source import RawSourceItem, SourceError, SourceFetchRequest, SourceFetchResult
 from business.layers.signal.source_artifact_inputs import (
     source_error_artifact_inputs,
@@ -52,6 +54,11 @@ def test_source_item_artifact_input_accepts_legacy_mapping_payload() -> None:
     assert artifact_input.parse_artifact_ref is None
 
 
+def test_source_item_artifact_inputs_reject_single_mapping_payload() -> None:
+    with pytest.raises(TypeError, match="source item artifacts must be a sequence"):
+        source_item_artifact_inputs({"source_id": "feed", "source_item_id": "item-1"})
+
+
 def test_source_fetch_request_artifact_input_projects_formal_request() -> None:
     [artifact_input] = source_fetch_request_artifact_inputs(
         [
@@ -80,6 +87,11 @@ def test_source_fetch_request_artifact_input_accepts_legacy_mapping_payload() ->
 
     assert artifact_input.request_id
     assert artifact_input.source_id == "unknown-source"
+
+
+def test_source_fetch_request_artifact_inputs_reject_single_mapping_payload() -> None:
+    with pytest.raises(TypeError, match="source fetch request artifacts must be a sequence"):
+        source_fetch_request_artifact_inputs({"request_id": "fetch-1", "source_id": "feed"})
 
 
 def test_source_fetch_result_artifact_input_projects_formal_result_metadata() -> None:
@@ -134,6 +146,11 @@ def test_source_fetch_result_artifact_input_accepts_legacy_mapping_payload() -> 
     assert artifact_input.response_headers == {"Content-Type": "application/rss+xml"}
 
 
+def test_source_fetch_result_artifact_inputs_reject_single_mapping_payload() -> None:
+    with pytest.raises(TypeError, match="source fetch result artifacts must be a sequence"):
+        source_fetch_result_artifact_inputs({"request_id": "fetch-1", "source_id": "feed"})
+
+
 def test_source_error_artifact_input_projects_formal_error_metadata() -> None:
     [artifact_input] = source_error_artifact_inputs(
         [
@@ -178,3 +195,14 @@ def test_source_error_artifact_input_accepts_legacy_mapping_payload() -> None:
     assert artifact_input.request_id == "fetch-legacy"
     assert artifact_input.request_ref == {"artifact_id": "request-ref"}
     assert artifact_input.response_ref is None
+
+
+def test_source_error_artifact_inputs_reject_single_mapping_payload() -> None:
+    with pytest.raises(TypeError, match="source artifact errors must be a sequence"):
+        source_error_artifact_inputs(
+            {
+                "source_id": "feed",
+                "error_type": "fetch_timeout",
+                "error_message": "timeout",
+            }
+        )

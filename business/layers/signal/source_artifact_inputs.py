@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any
@@ -124,22 +125,45 @@ def source_error_artifact_inputs(values: Any) -> list[SourceErrorArtifactInput]:
     return [
         SourceErrorArtifactInput.from_error(source_error, index=index)
         for index, source_error in enumerate(
-            normalize_source_errors(values, context="source artifact errors"),
+            normalize_source_errors(
+                _sequence_values(values, context="source artifact errors"),
+                context="source artifact errors",
+            ),
             start=1,
         )
     ]
 
 
 def source_fetch_result_artifact_inputs(values: Any) -> list[SourceFetchResultArtifactInput]:
-    return [SourceFetchResultArtifactInput.from_value(value) for value in list(values or [])]
+    return [
+        SourceFetchResultArtifactInput.from_value(value)
+        for value in _sequence_values(values, context="source fetch result artifacts")
+    ]
 
 
 def source_fetch_request_artifact_inputs(values: Any) -> list[SourceFetchRequestArtifactInput]:
-    return [SourceFetchRequestArtifactInput.from_value(value) for value in list(values or [])]
+    return [
+        SourceFetchRequestArtifactInput.from_value(value)
+        for value in _sequence_values(values, context="source fetch request artifacts")
+    ]
 
 
 def source_item_artifact_inputs(values: Any) -> list[SourceItemArtifactInput]:
-    return [SourceItemArtifactInput.from_value(value) for value in list(values or [])]
+    return [
+        SourceItemArtifactInput.from_value(value)
+        for value in _sequence_values(values, context="source item artifacts")
+    ]
+
+
+def _sequence_values(values: Any, *, context: str) -> list[Any]:
+    if values is None:
+        return []
+    if isinstance(values, Mapping) or isinstance(values, (str, bytes, bytearray)):
+        raise TypeError(f"{context} must be a sequence")
+    try:
+        return list(values)
+    except TypeError as exc:
+        raise TypeError(f"{context} must be a sequence") from exc
 
 
 def _metadata(value: dict[str, Any]) -> dict[str, Any]:
