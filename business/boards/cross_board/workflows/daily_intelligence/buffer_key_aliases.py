@@ -38,6 +38,7 @@ SOURCE_BUFFER_ALIASES = {
 
 EVIDENCE_BUFFER_ALIASES = {
     "evidence_bundle": "evidence.bundle",
+    "evidence_source_map": "evidence.source_map",
     "evidence_scores": "evidence.scores",
     "candidate_claims": "evidence.candidate_claims",
     "verified_findings": "evidence.verified_findings",

@@ -10,6 +10,9 @@ from business.boards.cross_board.workflows.daily_intelligence.artifact_sections 
 from business.boards.cross_board.workflows.daily_intelligence.agentic_artifact_projection import (
     project_daily_agentic_artifacts,
 )
+from business.boards.cross_board.workflows.daily_intelligence.evidence_artifact_projection import (
+    project_daily_evidence_artifacts,
+)
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
     daily_output_contains as _output_contains,
     daily_output_value as _output_value,
@@ -56,48 +59,15 @@ class DailyIntelligenceArtifactPublisher:
 
     def _publish_evidence_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
         refs: list[ArtifactRef] = []
-        output = context.output
-        if _output_contains(output, "evidence_bundle"):
-            evidence_bundle = _output_value(output, "evidence_bundle")
+        for artifact in project_daily_evidence_artifacts(context.output):
             refs.append(
                 _write_json_artifact(
                     context,
-                    "evidence_bundle",
-                    "evidence_bundle.json",
-                    evidence_bundle,
+                    artifact.artifact_key,
+                    artifact.relative_path,
+                    artifact.payload,
                 )
             )
-            source_map = _output_value(output, "evidence_source_map")
-            if source_map is None:
-                source_map = _evidence_source_map(evidence_bundle)
-            if source_map is not None:
-                refs.append(
-                    _write_json_artifact(
-                        context,
-                        "evidence_source_map",
-                        "evidence_source_map.json",
-                        source_map,
-                    )
-                )
-        elif _output_contains(output, "evidence_source_map"):
-            refs.append(
-                _write_json_artifact(
-                    context,
-                    "evidence_source_map",
-                    "evidence_source_map.json",
-                    _output_value(output, "evidence_source_map"),
-                )
-            )
-        refs.extend(
-            _write_json_artifacts_from_output(
-                context,
-                {
-                    "evidence_scores": "evidence_scores.json",
-                    "candidate_claims": "candidate_claims.json",
-                    "verified_findings": "verified_findings.json",
-                },
-            )
-        )
         return refs
 
     def _publish_quality_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
@@ -386,16 +356,6 @@ def _artifact_ref(
             "phase": context.phase.value,
         },
     )
-
-
-def _evidence_source_map(evidence_bundle: Any) -> dict[str, list[str]] | None:
-    if isinstance(evidence_bundle, dict):
-        source_map = evidence_bundle.get("source_map")
-    else:
-        source_map = getattr(evidence_bundle, "source_map", None)
-    if source_map is None:
-        return None
-    return {str(key): list(value) for key, value in source_map.items()}
 
 
 def _field_value(value: Any, field_name: str) -> Any:

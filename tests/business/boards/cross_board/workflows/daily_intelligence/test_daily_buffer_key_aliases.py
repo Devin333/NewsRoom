@@ -98,6 +98,8 @@ def test_canonicalize_namespaced_input_aliases_prefers_namespaced_values() -> No
 def test_namespaced_alias_lookup_helpers_project_registered_keys() -> None:
     assert namespaced_key_for("evidence_bundle") == "evidence.bundle"
     assert legacy_key_for("evidence.bundle") == "evidence_bundle"
+    assert namespaced_key_for("evidence_source_map") == "evidence.source_map"
+    assert legacy_key_for("evidence.source_map") == "evidence_source_map"
     assert legacy_key_for("evidence_bundle") == "evidence_bundle"
     assert legacy_key_for("unmapped") is None
 
