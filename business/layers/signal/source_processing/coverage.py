@@ -3,14 +3,14 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from business.foundation.models.source import SourceCoverageReport, SourceError, SourcePipelineMetrics
+from business.foundation.models.source import SourceCoverageReport, SourcePipelineMetrics
 from business.foundation.models.source_error_normalization import normalize_source_errors
 
 
 def build_source_coverage_report(
     metrics: SourcePipelineMetrics,
     *,
-    source_errors: Iterable[SourceError | Mapping[str, Any]] = (),
+    source_errors: Iterable[Any] = (),
     skipped_sources: Iterable[Mapping[str, Any]] = (),
     failed_sources: Iterable[Mapping[str, Any]] = (),
 ) -> SourceCoverageReport:

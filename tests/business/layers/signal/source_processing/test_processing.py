@@ -160,7 +160,7 @@ def test_build_source_coverage_report_marks_no_source_run_empty() -> None:
     assert report.partial_reasons == ["no_raw_items", "source_failures", "source_errors"]
 
 
-def test_build_source_coverage_report_normalizes_source_error_mappings() -> None:
+def test_build_source_coverage_report_accepts_serialized_source_errors() -> None:
     report = build_source_coverage_report(
         SourcePipelineMetrics(sources_total=1, sources_failed=1, raw_items_count=0),
         source_errors=[

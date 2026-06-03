@@ -184,7 +184,7 @@ def test_require_sources_fails_with_source_error_summary() -> None:
         require_sources(buffer.scope(read_keys=["raw_items", "source_errors"], write_keys=[]))
 
 
-def test_require_sources_normalizes_source_error_mappings_for_summary() -> None:
+def test_require_sources_accepts_serialized_source_errors_for_summary() -> None:
     buffer = DataBuffer(
         {
             "raw_items": [],
