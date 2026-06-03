@@ -114,6 +114,7 @@ def test_run_inspection_projects_namespaced_daily_output_for_quality_preview(tmp
             "path": [],
             "steps": {},
             "output": {
+                "quality_result": {"decision": "legacy", "route": "legacy"},
                 "quality.result": {
                     "decision": "blocked",
                     "route": "human_review",
@@ -131,6 +132,8 @@ def test_run_inspection_projects_namespaced_daily_output_for_quality_preview(tmp
                     "rejected_claims": [],
                     "uncertain_claims": [],
                 },
+                "sources.ranked_items": [{"title": "ranked"}],
+                "agent.feedback.summary": {"event_count": 1},
             },
         },
     )

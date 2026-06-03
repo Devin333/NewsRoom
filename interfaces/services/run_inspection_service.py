@@ -6,7 +6,7 @@ from typing import Any
 
 from business.boards.cross_board.profiles import is_daily_workflow_id
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    project_daily_output_for_legacy_consumers,
+    project_daily_output_for_run_inspection,
 )
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.workflow.inspection import (
@@ -526,7 +526,7 @@ def _manifest_business_output(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(output, dict):
         return {}
     if is_daily_workflow_id(str(manifest.get("workflow_id") or "")):
-        return project_daily_output_for_legacy_consumers(output)
+        return project_daily_output_for_run_inspection(output)
     return dict(output)
 
 

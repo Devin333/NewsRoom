@@ -114,12 +114,13 @@ daily run service、persistence、memory ingestion 和 board output attachment �
 - `project_daily_output_for_persistence()`：只为落库 record 输入投影 persistence 所需 canonical key，不补齐无关 legacy 字段。
 - `project_daily_output_for_board_attachment()`：只为 board attachment 投影 signals/source/evidence 输入 key；board 产出的 `board_outputs` 和 `cross_board_output` 再作为正式结果字段合并回 run output。
 - `project_daily_output_for_memory_ingestion()`：只为 memory ingestion 投影 report、evidence、quality decision 和 request/topic 所需 canonical key，不把 source ranking、agent feedback 或其它 daily runtime 字段带入 memory 消费面。
+- `project_daily_output_for_run_inspection()`：只为 run inspection 的 quality preview / lineage 投影 report、quality、citation、support matrix、candidate claims 和 verified findings 所需 canonical key，不把整份 runtime output 当作业务视图。
 - `ensure_legacy_daily_output_aliases()`：只在公开 `RunResult.output` 需要保持历史兼容字段时原地补齐 legacy key，不作为下游服务调用的前置条件。
 - `project_daily_output_for_legacy_consumers()`：仅作为历史兼容 helper 保留；新增服务消费面必须优先定义专用 projection，避免 consumer 直接理解 daily alias 表或接收整份 runtime output。
 
 interfaces 可以调用这些 business projection helper，但不得在接口服务里复制 `DAILY_BUFFER_ALIASES` 或手写 `report.final -> final_report` 这类映射。memory 和 board 通用服务继续消费 canonical legacy 字段；daily workflow 的命名空间迁移规则只留在 daily workflow business 边界内。
 
-run inspection 读取 manifest output 构建 quality preview / lineage 时，也必须先判断 workflow 是否属于 daily family，再调用同一 projection helper 生成业务消费视图。inspection 可以保留原始 output key 作为调试预览，但质量决策、route、citation check、support matrix、candidate claims、verified findings 和 report id 只能从投影后的业务视图读取；接口层不得重新实现 daily key fallback。
+run inspection 读取 manifest output 构建 quality preview / lineage 时，也必须先判断 workflow 是否属于 daily family，再调用 `project_daily_output_for_run_inspection()` 生成业务消费视图。inspection 可以保留原始 output key 作为调试预览，但质量决策、route、citation check、support matrix、candidate claims、verified findings 和 report id 只能从投影后的业务视图读取；接口层不得重新实现 daily key fallback，也不得调用泛化 legacy consumer projection。
 
 report quality API 不应在接口层猜测 `report_json` 或 repository quality record 的历史形状。`business.layers.output.report_quality_projection` 负责从 `quality_trace`、旧 `quality` / `quality_gate` / `editor_review` / `quality_metrics` 字段，以及 `QualityResultRecord.payload` 中投影正式质量视图；`ReportApplicationService` 只负责读取 repository 记录、调用 projection，并把 lineage summary 组合到响应里。后续如果质量记录模型继续演进，应扩展该业务 projection 或正式 record model，不要在接口服务里新增结构分支。
 

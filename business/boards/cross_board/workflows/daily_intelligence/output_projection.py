@@ -58,6 +58,14 @@ def project_daily_output_for_memory_ingestion(output: Mapping[str, Any]) -> dict
     )
 
 
+def project_daily_output_for_run_inspection(output: Mapping[str, Any]) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_RUN_INSPECTION_OUTPUT_KEYS,
+        include_original=False,
+    )
+
+
 def ensure_legacy_daily_output_aliases(
     output: MutableMapping[str, Any],
     *,
@@ -153,6 +161,19 @@ DAILY_MEMORY_INGESTION_OUTPUT_KEYS = (
     "review_result",
 )
 
+DAILY_RUN_INSPECTION_OUTPUT_KEYS = (
+    "run_id",
+    "report_id",
+    "final_report",
+    "blocked_report",
+    "quality_result",
+    "quality_route",
+    "citation_check_result",
+    "support_matrix",
+    "candidate_claims",
+    "verified_findings",
+)
+
 DAILY_BOARD_ATTACHMENT_RESULT_KEYS = (
     "board_outputs",
     "cross_board_output",
@@ -164,6 +185,7 @@ __all__ = [
     "DAILY_BOARD_ATTACHMENT_RESULT_KEYS",
     "DAILY_MEMORY_INGESTION_OUTPUT_KEYS",
     "DAILY_PERSISTENCE_OUTPUT_KEYS",
+    "DAILY_RUN_INSPECTION_OUTPUT_KEYS",
     "daily_output_contains",
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",
@@ -171,4 +193,5 @@ __all__ = [
     "project_daily_output_for_memory_ingestion",
     "project_daily_output_for_persistence",
     "project_daily_output_for_legacy_consumers",
+    "project_daily_output_for_run_inspection",
 ]

@@ -8,6 +8,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     project_daily_output_for_memory_ingestion,
     project_daily_output_for_persistence,
     project_daily_output_for_legacy_consumers,
+    project_daily_output_for_run_inspection,
 )
 
 
@@ -92,6 +93,32 @@ def test_project_daily_output_for_memory_ingestion_projects_only_memory_inputs()
         "final_report": {"title": "namespaced"},
         "evidence_bundle": {"items": []},
         "quality_result": {"decision": "pass"},
+    }
+
+
+def test_project_daily_output_for_run_inspection_projects_only_quality_preview_inputs() -> None:
+    output = {
+        "run_id": "run-1",
+        "report.final": {"report_id": "run-1:final"},
+        "quality.result": {"decision": "blocked", "route": "human_review"},
+        "quality.citation_check_result": {"unsupported_claims": ["claim-1"]},
+        "quality.support_matrix": {"unsupported_sections": ["Summary"]},
+        "evidence.candidate_claims": [{"claim_id": "claim-1"}],
+        "evidence.verified_findings": {"accepted_claims": [{"claim_id": "claim-1"}]},
+        "sources.ranked_items": [{"title": "ranked"}],
+        "agent.feedback.summary": {"event_count": 1},
+    }
+
+    projected = project_daily_output_for_run_inspection(output)
+
+    assert projected == {
+        "run_id": "run-1",
+        "final_report": {"report_id": "run-1:final"},
+        "quality_result": {"decision": "blocked", "route": "human_review"},
+        "citation_check_result": {"unsupported_claims": ["claim-1"]},
+        "support_matrix": {"unsupported_sections": ["Summary"]},
+        "candidate_claims": [{"claim_id": "claim-1"}],
+        "verified_findings": {"accepted_claims": [{"claim_id": "claim-1"}]},
     }
 
 
