@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import re
 from hashlib import sha256
 from typing import Any
@@ -50,101 +51,15 @@ class SourceArtifactWriter:
         source_errors: list[Any] | None = None,
     ) -> dict[str, Any] | None:
         entries: list[dict[str, Any]] = []
-        request_refs_by_request_id: dict[str, SignalArtifactRef] = {}
-        request_refs_by_source_id: dict[str, list[SignalArtifactRef]] = {}
-        response_refs_by_request_id: dict[str, SignalArtifactRef] = {}
-        response_refs_by_source_id: dict[str, list[SignalArtifactRef]] = {}
 
         entries.extend(_SourceItemArtifactWriter(self._artifact_manager).write_source_items(run_id, raw_items=raw_items))
 
-        for fetch_request in source_fetch_request_artifact_inputs(source_fetch_requests):
-            source_id = fetch_request.source_id
-            object_id = fetch_request.request_id
-            path = f"sources/fetch_requests/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-            artifact_path = self._artifact_manager.write_json(
-                run_id,
-                path,
-                {
-                    "artifact_type": "source_fetch_request",
-                    "source_id": source_id,
-                    "request_id": object_id,
-                    "fetch_request": _redact(_to_json_safe(fetch_request.payload)),
-                },
-            )
-            artifact_ref = _artifact_ref(
-                run_id=run_id,
-                artifact_type="source_fetch_request",
-                source_id=source_id,
-                object_id=object_id,
-                path=path,
-                artifact_path=artifact_path,
-            )
-            _remember_ref(
-                request_refs_by_request_id,
-                request_refs_by_source_id,
-                artifact_ref=artifact_ref,
-                source_id=source_id,
-                request_id=object_id,
-            )
-            entries.append(
-                _entry_from_ref(
-                    artifact_ref=artifact_ref,
-                    source_id=source_id,
-                    object_id=object_id,
-                    artifact_path=artifact_path,
-                )
-            )
-
-        for fetch_result in source_fetch_result_artifact_inputs(source_fetch_results):
-            source_id = fetch_result.source_id
-            object_id = fetch_result.request_id
-            response_headers_entry, response_headers_ref = self._write_response_headers_artifact(
-                run_id,
-                fetch_result=fetch_result,
-                source_id=source_id,
-                object_id=object_id,
-            )
-            path = f"sources/fetch_results/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-            fetch_result_payload = _redact(_to_json_safe(fetch_result.payload))
-            response_headers_ref_payload = _ref_payload(response_headers_ref)
-            if isinstance(fetch_result_payload, dict) and response_headers_ref_payload is not None:
-                fetch_result_payload["response_headers_ref"] = response_headers_ref_payload
-            artifact_path = self._artifact_manager.write_json(
-                run_id,
-                path,
-                {
-                    "artifact_type": "source_fetch_result",
-                    "source_id": source_id,
-                    "request_id": object_id,
-                    "fetch_result": fetch_result_payload,
-                    "response_headers_ref": response_headers_ref_payload,
-                },
-            )
-            artifact_ref = _artifact_ref(
-                run_id=run_id,
-                artifact_type="source_fetch_result",
-                source_id=source_id,
-                object_id=object_id,
-                path=path,
-                artifact_path=artifact_path,
-            )
-            _remember_ref(
-                response_refs_by_request_id,
-                response_refs_by_source_id,
-                artifact_ref=artifact_ref,
-                source_id=source_id,
-                request_id=object_id,
-            )
-            entries.append(
-                _entry_from_ref(
-                    artifact_ref=artifact_ref,
-                    source_id=source_id,
-                    object_id=object_id,
-                    artifact_path=artifact_path,
-                )
-            )
-            if response_headers_entry is not None:
-                entries.append(response_headers_entry)
+        fetch_artifacts = _SourceFetchArtifactWriter(self._artifact_manager).write_fetch_artifacts(
+            run_id,
+            source_fetch_requests=source_fetch_requests,
+            source_fetch_results=source_fetch_results,
+        )
+        entries.extend(fetch_artifacts.entries)
 
         for index, source_error in enumerate(
             normalize_source_errors(source_errors, context="source artifact errors"),
@@ -159,16 +74,16 @@ class SourceArtifactWriter:
                 "request_ref",
                 request_id=request_id,
                 source_id=source_id,
-                refs_by_request_id=request_refs_by_request_id,
-                refs_by_source_id=request_refs_by_source_id,
+                refs_by_request_id=fetch_artifacts.request_refs_by_request_id,
+                refs_by_source_id=fetch_artifacts.request_refs_by_source_id,
             )
             response_ref = _resolve_error_ref(
                 source_error,
                 "response_ref",
                 request_id=request_id,
                 source_id=source_id,
-                refs_by_request_id=response_refs_by_request_id,
-                refs_by_source_id=response_refs_by_source_id,
+                refs_by_request_id=fetch_artifacts.response_refs_by_request_id,
+                refs_by_source_id=fetch_artifacts.response_refs_by_source_id,
             )
             error_payload = _redact(_to_json_safe(source_error))
             request_ref_payload = _ref_payload(request_ref)
@@ -240,50 +155,6 @@ class SourceArtifactWriter:
         }
         self._artifact_manager.write_json(run_id, "source_artifacts/index.json", source_artifacts)
         return source_artifacts
-
-    def _write_response_headers_artifact(
-        self,
-        run_id: str,
-        *,
-        fetch_result: SourceFetchResultArtifactInput,
-        source_id: str,
-        object_id: str,
-    ) -> tuple[dict[str, Any] | None, SignalArtifactRef | None]:
-        response_headers = fetch_result.response_headers
-        if not response_headers:
-            return None, None
-        path = f"sources/response_headers/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-        artifact_path = self._artifact_manager.write_json(
-            run_id,
-            path,
-            {
-                "artifact_type": "source_response_headers",
-                "source_id": source_id,
-                "request_id": object_id,
-                "status_code": fetch_result.status_code,
-                "content_type": fetch_result.content_type,
-                "response_url": _redact(fetch_result.response_url),
-                "headers": _redact(response_headers),
-            },
-        )
-        artifact_ref = _artifact_ref(
-            run_id=run_id,
-            artifact_type="source_response_headers",
-            source_id=source_id,
-            object_id=object_id,
-            path=path,
-            artifact_path=artifact_path,
-        )
-        entry = _entry_from_ref(
-            artifact_ref=artifact_ref,
-            source_id=source_id,
-            object_id=object_id,
-            artifact_path=artifact_path,
-        )
-        entry["status_code"] = fetch_result.status_code
-        entry["content_type"] = fetch_result.content_type
-        return entry, artifact_ref
-
 
 class _SourceItemArtifactWriter:
     def __init__(self, artifact_manager: ArtifactManager) -> None:
@@ -467,6 +338,187 @@ class _SourceItemArtifactWriter:
             parsed_item["item_artifact_ref"] for parsed_item in parsed_items
         ]
         return entry
+
+
+@dataclass(frozen=True)
+class _SourceFetchArtifacts:
+    entries: list[dict[str, Any]] = field(default_factory=list)
+    request_refs_by_request_id: dict[str, SignalArtifactRef] = field(default_factory=dict)
+    request_refs_by_source_id: dict[str, list[SignalArtifactRef]] = field(default_factory=dict)
+    response_refs_by_request_id: dict[str, SignalArtifactRef] = field(default_factory=dict)
+    response_refs_by_source_id: dict[str, list[SignalArtifactRef]] = field(default_factory=dict)
+
+
+class _SourceFetchArtifactWriter:
+    def __init__(self, artifact_manager: ArtifactManager) -> None:
+        self._artifact_manager = artifact_manager
+
+    def write_fetch_artifacts(
+        self,
+        run_id: str,
+        *,
+        source_fetch_requests: list[Any] | None = None,
+        source_fetch_results: list[Any] | None = None,
+    ) -> _SourceFetchArtifacts:
+        artifacts = _SourceFetchArtifacts()
+
+        for fetch_request in source_fetch_request_artifact_inputs(source_fetch_requests):
+            artifact_ref, entry = self._write_fetch_request_artifact(
+                run_id,
+                fetch_request=fetch_request,
+            )
+            _remember_ref(
+                artifacts.request_refs_by_request_id,
+                artifacts.request_refs_by_source_id,
+                artifact_ref=artifact_ref,
+                source_id=fetch_request.source_id,
+                request_id=fetch_request.request_id,
+            )
+            artifacts.entries.append(entry)
+
+        for fetch_result in source_fetch_result_artifact_inputs(source_fetch_results):
+            artifact_ref, entry, response_headers_entry = self._write_fetch_result_artifact(
+                run_id,
+                fetch_result=fetch_result,
+            )
+            _remember_ref(
+                artifacts.response_refs_by_request_id,
+                artifacts.response_refs_by_source_id,
+                artifact_ref=artifact_ref,
+                source_id=fetch_result.source_id,
+                request_id=fetch_result.request_id,
+            )
+            artifacts.entries.append(entry)
+            if response_headers_entry is not None:
+                artifacts.entries.append(response_headers_entry)
+
+        return artifacts
+
+    def _write_fetch_request_artifact(
+        self,
+        run_id: str,
+        *,
+        fetch_request: Any,
+    ) -> tuple[SignalArtifactRef, dict[str, Any]]:
+        source_id = fetch_request.source_id
+        object_id = fetch_request.request_id
+        path = f"sources/fetch_requests/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+        artifact_path = self._artifact_manager.write_json(
+            run_id,
+            path,
+            {
+                "artifact_type": "source_fetch_request",
+                "source_id": source_id,
+                "request_id": object_id,
+                "fetch_request": _redact(_to_json_safe(fetch_request.payload)),
+            },
+        )
+        artifact_ref = _artifact_ref(
+            run_id=run_id,
+            artifact_type="source_fetch_request",
+            source_id=source_id,
+            object_id=object_id,
+            path=path,
+            artifact_path=artifact_path,
+        )
+        return artifact_ref, _entry_from_ref(
+            artifact_ref=artifact_ref,
+            source_id=source_id,
+            object_id=object_id,
+            artifact_path=artifact_path,
+        )
+
+    def _write_fetch_result_artifact(
+        self,
+        run_id: str,
+        *,
+        fetch_result: SourceFetchResultArtifactInput,
+    ) -> tuple[SignalArtifactRef, dict[str, Any], dict[str, Any] | None]:
+        source_id = fetch_result.source_id
+        object_id = fetch_result.request_id
+        response_headers_entry, response_headers_ref = self._write_response_headers_artifact(
+            run_id,
+            fetch_result=fetch_result,
+            source_id=source_id,
+            object_id=object_id,
+        )
+        path = f"sources/fetch_results/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+        fetch_result_payload = _redact(_to_json_safe(fetch_result.payload))
+        response_headers_ref_payload = _ref_payload(response_headers_ref)
+        if isinstance(fetch_result_payload, dict) and response_headers_ref_payload is not None:
+            fetch_result_payload["response_headers_ref"] = response_headers_ref_payload
+        artifact_path = self._artifact_manager.write_json(
+            run_id,
+            path,
+            {
+                "artifact_type": "source_fetch_result",
+                "source_id": source_id,
+                "request_id": object_id,
+                "fetch_result": fetch_result_payload,
+                "response_headers_ref": response_headers_ref_payload,
+            },
+        )
+        artifact_ref = _artifact_ref(
+            run_id=run_id,
+            artifact_type="source_fetch_result",
+            source_id=source_id,
+            object_id=object_id,
+            path=path,
+            artifact_path=artifact_path,
+        )
+        return (
+            artifact_ref,
+            _entry_from_ref(
+                artifact_ref=artifact_ref,
+                source_id=source_id,
+                object_id=object_id,
+                artifact_path=artifact_path,
+            ),
+            response_headers_entry,
+        )
+
+    def _write_response_headers_artifact(
+        self,
+        run_id: str,
+        *,
+        fetch_result: SourceFetchResultArtifactInput,
+        source_id: str,
+        object_id: str,
+    ) -> tuple[dict[str, Any] | None, SignalArtifactRef | None]:
+        response_headers = fetch_result.response_headers
+        if not response_headers:
+            return None, None
+        path = f"sources/response_headers/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+        artifact_path = self._artifact_manager.write_json(
+            run_id,
+            path,
+            {
+                "artifact_type": "source_response_headers",
+                "source_id": source_id,
+                "request_id": object_id,
+                "status_code": fetch_result.status_code,
+                "content_type": fetch_result.content_type,
+                "response_url": _redact(fetch_result.response_url),
+                "headers": _redact(response_headers),
+            },
+        )
+        artifact_ref = _artifact_ref(
+            run_id=run_id,
+            artifact_type="source_response_headers",
+            source_id=source_id,
+            object_id=object_id,
+            path=path,
+            artifact_path=artifact_path,
+        )
+        entry = _entry_from_ref(
+            artifact_ref=artifact_ref,
+            source_id=source_id,
+            object_id=object_id,
+            artifact_path=artifact_path,
+        )
+        entry["status_code"] = fetch_result.status_code
+        entry["content_type"] = fetch_result.content_type
+        return entry, artifact_ref
 
 
 def _source_error_id(source_error: SourceError, index: int) -> str:
