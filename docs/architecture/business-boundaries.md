@@ -188,6 +188,8 @@ agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只�
 
 报告草稿生成阶段的 evidence 输入由 `report_evidence_view.py` 投影：writer 只消费 `ReportEvidenceDraftView.lead`、`source_urls`、`item_count` 和 `payload` 来构建 deterministic draft、source notes 与 LLM prompt，不直接在多处读取 `evidence_bundle.items` 或手工拼 evidence payload。
 
+agentic writer 输出归一化阶段的 evidence lookup 由 `grounded_writer_evidence_view.py` 投影：`grounded_writer.py` 只消费按 evidence id 选择后的 `GroundedWriterEvidenceSelection` 来组装 grounded sections，不直接扫描 bundle items 或重复 source URL 聚合规则。
+
 质量重写阶段的 evidence 匹配由 `rewrite_evidence_view.py` 投影：`quality_rewrite.py` 只消费 `RewriteEvidenceLookupView.matching_source_urls()` 补齐缺失来源，不直接扫描 `evidence_bundle.items` 或内联 token matching 规则。
 
 finalization 阶段的 report quality summary、quality gate metrics、quality result 和 human review request 由 `report_quality_outputs.py` 构建。`FinalReport`、`BlockedReport`、markdown、命名空间 alias、agent feedback metadata 和补源质量摘要投影由 `report_finalization_outputs.py` 构建。`report_finalization.py` 负责选择发布/阻断/重写/人工审核路线，并把这些输出 builder 组合进最终返回值。
