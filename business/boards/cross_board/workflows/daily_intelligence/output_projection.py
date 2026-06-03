@@ -6,7 +6,6 @@ from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     AGENT_LOOP_LABELS,
-    DAILY_BUFFER_ALIASES,
     legacy_key_for,
     namespaced_first_key_candidates,
     namespaced_key_for,
@@ -227,10 +226,7 @@ def _output_key_candidates(
     return namespaced_first_key_candidates(key)
 
 
-def _legacy_projection_keys(keys: Iterable[str] | None) -> list[str]:
-    if keys is None:
-        return list(DAILY_BUFFER_ALIASES)
-
+def _legacy_projection_keys(keys: Iterable[str]) -> list[str]:
     result: list[str] = []
     for key in keys:
         legacy_key = legacy_key_for(key)

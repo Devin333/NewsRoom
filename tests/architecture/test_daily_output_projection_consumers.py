@@ -52,3 +52,4 @@ def test_daily_alias_reverse_lookup_stays_in_buffer_alias_module() -> None:
     assert "_DAILY_OUTPUT_LEGACY_ALIASES" not in output_projection_source
     assert "namespaced_first_key_candidates" in buffer_access_source
     assert "legacy_key_for" in output_projection_source
+    assert "DAILY_BUFFER_ALIASES" not in output_projection_source
