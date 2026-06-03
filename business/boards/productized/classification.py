@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.boards._service import BoardServiceBase
+from business.boards.productized.ports import ProductizedSignalSelectionPort
 from business.foundation import AnalysisContext
 
 
 class ProductizedSignalClassificationService:
-    def __init__(self, *, board_service: BoardServiceBase) -> None:
-        self.board_service = board_service
+    def __init__(
+        self,
+        *,
+        selector: ProductizedSignalSelectionPort | None = None,
+        board_service: ProductizedSignalSelectionPort | None = None,
+    ) -> None:
+        resolved_selector = selector or board_service
+        if resolved_selector is None:
+            raise ValueError("selector or board_service is required")
+        self.selector = resolved_selector
 
     def classify(
         self,
@@ -16,7 +24,7 @@ class ProductizedSignalClassificationService:
         context: AnalysisContext,
         prepared_signals: list[Any],
     ) -> dict[str, Any]:
-        return {"board_signals": self.board_service.select_signals(prepared_signals, context=context)}
+        return {"board_signals": self.selector.select_signals(prepared_signals, context=context)}
 
 
 __all__ = ["ProductizedSignalClassificationService"]

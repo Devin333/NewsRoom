@@ -22,6 +22,13 @@ from business.boards.productized.output import (
     ProductizedBoardOutputService,
     ProductizedReportWritingService,
 )
+from business.boards.productized.ports import (
+    ProductizedBoardPorts,
+    ProductizedBoardRunResultPort,
+    ProductizedBoardServicePort,
+    ProductizedSignalSelectionPort,
+    productized_board_ports_from_service,
+)
 from business.boards.productized.preparation import ProductizedSignalPreparationService
 from business.boards.productized.quality import ProductizedQualityService, ProductizedQualitySummaryService
 from business.boards.productized.ranking import ProductizedRankingService
@@ -36,6 +43,9 @@ __all__ = [
     "ProductizedBoardOutputBundle",
     "ProductizedBoardOutputBundleBuilder",
     "ProductizedBoardOutputService",
+    "ProductizedBoardPorts",
+    "ProductizedBoardRunResultPort",
+    "ProductizedBoardServicePort",
     "ProductizedBoardSteps",
     "ProductizedBoardUseCases",
     "ProductizedDeduplicationService",
@@ -54,6 +64,7 @@ __all__ = [
     "ProductizedRunStateMetadataProjector",
     "ProductizedRunState",
     "ProductizedSignalClassificationService",
+    "ProductizedSignalSelectionPort",
     "ProductizedSignalPreparationService",
     "ProductizedSubscriptionService",
     "ProductizedTrendAnalysisService",
@@ -61,5 +72,6 @@ __all__ = [
     "PRODUCTIZED_BOARD_STEPS",
     "analysis_context_from_request",
     "build_productized_board_workflow",
+    "productized_board_ports_from_service",
     "run_id_from_request",
 ]

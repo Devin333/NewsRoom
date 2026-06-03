@@ -4,7 +4,7 @@ from typing import Any
 
 from business.boards._feedback import BoardFeedbackService
 from business.boards._improvement import BoardImprovementService
-from business.boards._service import BoardServiceBase
+from business.boards.productized.ports import ProductizedBoardServicePort
 from business.boards.productized.usecases import ProductizedBoardUseCases
 from business.foundation import BoardType
 from business.foundation.skills import BusinessSkillRuntime
@@ -15,7 +15,7 @@ class ProductizedBoardSteps:
         self,
         *,
         board_type: BoardType,
-        board_service: BoardServiceBase,
+        board_service: ProductizedBoardServicePort,
         skill_runtime: BusinessSkillRuntime,
         feedback_service: BoardFeedbackService,
         improvement_service: BoardImprovementService,

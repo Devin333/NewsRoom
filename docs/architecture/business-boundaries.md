@@ -204,6 +204,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 
 `ProductizedBoardUseCases` 是工作流应用入口，负责协调专用服务，不承载具体业务算法。
 
+- `ProductizedBoardPorts` 是 productized 用例消费 board 门面的正式端口投影，只暴露 signal selection、board run result 构建和 board name；classification / output 等专用服务不得保存或继续下传完整 `BoardServiceBase`。
 - `ProductizedEvidenceService` 委托 `BoardEvidenceAssemblyService` 生成 evidence refs/items，并把正式中间结果写入 `ProductizedRunState`。
 - `ProductizedRankingService` 委托 `BoardSignalRankingService` 排序 signals，并返回正式 `ranked_signals` step 输出。
 - `ProductizedBoardOutputBundleBuilder` 负责 artifact-facing metadata 合并，并生成 `ProductizedBoardOutputBundle`。

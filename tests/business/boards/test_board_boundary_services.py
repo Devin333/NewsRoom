@@ -13,6 +13,7 @@ from business.boards.productized import (
     ProductizedBoardOutputBundleBuilder,
     ProductizedBoardOutputService,
     ProductizedReportWritingService,
+    ProductizedSignalClassificationService,
     ProductizedRunStateMetadataProjector,
 )
 from business.boards.productized.models import ProductizedBoardOutputBundle, ProductizedRunState
@@ -250,6 +251,82 @@ def test_productized_board_output_service_exposes_decomposed_services() -> None:
 
     assert isinstance(service.report_writing_service, ProductizedReportWritingService)
     assert isinstance(service.bundle_builder, ProductizedBoardOutputBundleBuilder)
+    assert "board_service" not in service.__dict__
+
+
+def test_productized_classification_service_uses_selection_port() -> None:
+    class StubSelector:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def select_signals(self, signals, *, context):
+            self.calls.append({"signals": signals, "context": context})
+            return [signals[0]]
+
+    selector = StubSelector()
+    context = AnalysisContext(board_type=BoardType.AI_NEWS)
+    service = ProductizedSignalClassificationService(selector=selector)
+
+    result = service.classify(context=context, prepared_signals=["signal-1", "signal-2"])
+
+    assert result == {"board_signals": ["signal-1"]}
+    assert selector.calls == [{"signals": ["signal-1", "signal-2"], "context": context}]
+
+
+def test_productized_output_service_uses_run_result_port_and_board_name() -> None:
+    class StubReportResult:
+        output = {"markdown_report": "# Stub\n"}
+
+        def to_dict(self):
+            return {"skill_name": "report-writing", "status": "success"}
+
+    class StubReportWriter:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def write(self, *, request, board_name, cards, productized_run):
+            self.calls.append(
+                {
+                    "request": request,
+                    "board_name": board_name,
+                    "cards": cards,
+                    "productized_run": productized_run,
+                }
+            )
+            return StubReportResult()
+
+    class StubRunResultBuilder:
+        def __init__(self, result) -> None:
+            self.result = result
+            self.calls = []
+
+        def build_board_run_result(self, signals, *, context=None):
+            self.calls.append({"signals": signals, "context": context})
+            return self.result
+
+    board_service = AINewsBoardService()
+    run_result = board_service.build_board_run_result([sample_signal("ai_news")])
+    run_result_builder = StubRunResultBuilder(run_result)
+    report_writer = StubReportWriter()
+    run_state = ProductizedRunState(board_type=BoardType.AI_NEWS, run_id="port-run")
+    context = AnalysisContext(board_type=BoardType.AI_NEWS)
+    service = ProductizedBoardOutputService(
+        skill_runtime=BusinessSkillRuntime(),
+        run_result_builder=run_result_builder,
+        board_name="Port Board",
+        report_writing_service=report_writer,
+    )
+
+    bundle = service.build(
+        request={"run_id": "port-run"},
+        context=context,
+        ranked_signals=["ranked-signal"],
+        productized_run=run_state,
+    )
+
+    assert bundle.summary_md == "# Stub\n"
+    assert run_result_builder.calls == [{"signals": ["ranked-signal"], "context": context}]
+    assert report_writer.calls[0]["board_name"] == "Port Board"
 
 
 def test_productized_domain_services_are_exposed_at_board_domain_boundary() -> None:

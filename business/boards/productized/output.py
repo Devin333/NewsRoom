@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from business.boards._service import BoardServiceBase
 from business.boards.productized.metadata import ProductizedRunStateMetadataProjector
 from business.boards.productized.models import ProductizedBoardOutputBundle, ProductizedRunState
 from business.boards.productized.payloads import card_report_item, summary_markdown
+from business.boards.productized.ports import (
+    ProductizedBoardRunResultPort,
+    ProductizedBoardServicePort,
+    productized_board_ports_from_service,
+)
 from business.foundation import AnalysisContext
 from business.foundation.skills import BusinessSkillRuntime
 
@@ -14,12 +18,21 @@ class ProductizedBoardOutputService:
     def __init__(
         self,
         *,
-        board_service: BoardServiceBase,
         skill_runtime: BusinessSkillRuntime,
+        board_service: ProductizedBoardServicePort | None = None,
+        run_result_builder: ProductizedBoardRunResultPort | None = None,
+        board_name: str | None = None,
         report_writing_service: "ProductizedReportWritingService" | None = None,
         bundle_builder: "ProductizedBoardOutputBundleBuilder" | None = None,
     ) -> None:
-        self.board_service = board_service
+        if board_service is not None:
+            ports = productized_board_ports_from_service(board_service)
+            run_result_builder = run_result_builder or ports.run_result_builder
+            board_name = board_name or ports.board_name
+        if run_result_builder is None or board_name is None:
+            raise ValueError("run_result_builder and board_name are required")
+        self.run_result_builder = run_result_builder
+        self.board_name = board_name
         self.report_writing_service = report_writing_service or ProductizedReportWritingService(
             skill_runtime=skill_runtime,
         )
@@ -33,10 +46,10 @@ class ProductizedBoardOutputService:
         ranked_signals: list[Any],
         productized_run: ProductizedRunState,
     ) -> ProductizedBoardOutputBundle:
-        result = self.board_service.build_board_run_result(ranked_signals, context=context)
+        result = self.run_result_builder.build_board_run_result(ranked_signals, context=context)
         report_result = self.report_writing_service.write(
             request=request,
-            board_name=self.board_service.board_definition.name,
+            board_name=self.board_name,
             cards=result.cards,
             productized_run=productized_run,
         )

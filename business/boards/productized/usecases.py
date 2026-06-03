@@ -4,7 +4,6 @@ from typing import Any
 
 from business.boards._feedback import BoardFeedbackService
 from business.boards._improvement import BoardImprovementService
-from business.boards._service import BoardServiceBase
 from business.boards.productized.artifacts import ProductizedArtifactMetadataService
 from business.boards.productized.classification import ProductizedSignalClassificationService
 from business.boards.productized.context import analysis_context_from_request, run_id_from_request
@@ -15,6 +14,7 @@ from business.boards.productized.feedback import ProductizedFeedbackLearningServ
 from business.boards.productized.improvement import ProductizedImprovementWorkflowService
 from business.boards.productized.models import ProductizedRunState
 from business.boards.productized.output import ProductizedBoardOutputService
+from business.boards.productized.ports import ProductizedBoardServicePort, productized_board_ports_from_service
 from business.boards.productized.preparation import ProductizedSignalPreparationService
 from business.boards.productized.quality import ProductizedQualitySummaryService
 from business.boards.productized.ranking import ProductizedRankingService
@@ -29,13 +29,14 @@ class ProductizedBoardUseCases:
         self,
         *,
         board_type: BoardType,
-        board_service: BoardServiceBase,
+        board_service: ProductizedBoardServicePort,
         skill_runtime: BusinessSkillRuntime,
         feedback_service: BoardFeedbackService,
         improvement_service: BoardImprovementService,
     ) -> None:
+        board_ports = productized_board_ports_from_service(board_service)
         self.classification_service = ProductizedSignalClassificationService(
-            board_service=board_service,
+            selector=board_ports.selector,
         )
         self.signal_preparation_service = ProductizedSignalPreparationService(
             board_type=board_type,
@@ -68,8 +69,9 @@ class ProductizedBoardUseCases:
             board_type=board_type,
         )
         self.output_service = ProductizedBoardOutputService(
-            board_service=board_service,
             skill_runtime=skill_runtime,
+            run_result_builder=board_ports.run_result_builder,
+            board_name=board_ports.board_name,
         )
         self.subscription_service = ProductizedSubscriptionService(
             board_type=board_type,
