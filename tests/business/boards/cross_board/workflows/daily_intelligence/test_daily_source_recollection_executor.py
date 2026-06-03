@@ -174,6 +174,43 @@ def test_recollection_task_item_tracker_counts_without_runtime_metadata_dependen
     assert legacy_tracker.item_count(task) == 1
 
 
+def test_recollection_artifact_projector_projects_mapping_items_through_item_view() -> None:
+    plan = _recollection_plan()
+    task = plan.tasks[0]
+    projector = DailySourceRecollectionArtifactProjector()
+    item = {
+        "source_item_id": "mapping-item-1",
+        "source_id": "official-blog",
+        "metadata": {"existing": "value"},
+    }
+
+    annotated = projector.with_raw_item(item, plan, task)
+    tracker = SourceRecollectionTaskItemTracker.from_existing_items(
+        plan=plan,
+        items=[annotated],
+        artifact_projector=projector,
+    )
+
+    assert annotated["metadata"]["existing"] == "value"
+    assert annotated["metadata"]["source_recollection_task_id"] == task.task_id
+    assert tracker.item_count(task) == 1
+
+
+def test_recollection_task_item_tracker_uses_stable_fallback_for_items_without_id() -> None:
+    plan = _recollection_plan()
+    task = plan.tasks[0]
+    tracker = SourceRecollectionTaskItemTracker.from_existing_items(
+        plan=plan,
+        items=[],
+        artifact_projector=DailySourceRecollectionArtifactProjector(),
+    )
+
+    tracker.record_items(task, [{"source_id": "official-blog", "metadata": {}}])
+    tracker.record_items(task, [{"source_id": "official-blog", "metadata": {}}])
+
+    assert tracker.item_count(task) == 2
+
+
 def test_recollect_sources_outputs_skipped_execution_report_without_plan() -> None:
     source = SourceDefinition(
         source_id="official-blog",
