@@ -29,6 +29,9 @@ from business.boards.cross_board.workflows.daily_intelligence.workflow_buffer_ac
 )
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE, PROFILE_LIVE_OFFLINE
 from business.foundation.models.source_error_normalization import normalize_source_errors
+from business.boards.cross_board.workflows.daily_intelligence.report_evidence_view import (
+    ReportEvidenceDraftView,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -118,7 +121,8 @@ class ReportWriter:
 
 
 def _deterministic_report(topic: str, evidence_bundle: EvidenceBundle) -> dict[str, Any]:
-    lead = evidence_bundle.items[0]
+    evidence_view = ReportEvidenceDraftView.from_bundle(evidence_bundle)
+    lead = evidence_view.lead
     return {
         "title": f"Daily Intelligence: {topic}",
         "sections": [
@@ -129,8 +133,8 @@ def _deterministic_report(topic: str, evidence_bundle: EvidenceBundle) -> dict[s
             },
             {
                 "title": "Source Notes",
-                "content": f"Built from {len(evidence_bundle.items)} evidence item(s).",
-                "sources": sorted(evidence_bundle.source_urls),
+                "content": f"Built from {evidence_view.item_count} evidence item(s).",
+                "sources": list(evidence_view.source_urls),
             },
         ],
     }
@@ -145,7 +149,7 @@ def _with_source_notes(
     if not _needs_source_notes(source_errors, source_metrics):
         return report_draft
     sections = [dict(section) for section in report_draft.get("sections", [])]
-    source_urls = sorted(evidence_bundle.source_urls)
+    source_urls = list(ReportEvidenceDraftView.from_bundle(evidence_bundle).source_urls)
     if not source_urls:
         return report_draft
     error_types = sorted(
@@ -194,7 +198,7 @@ def _report_request(
     memory_context: IntelligenceMemoryContext | None = None,
     historian_result: HistorianContextResult | None = None,
 ) -> LLMRequest:
-    evidence_payload = [item.to_dict() for item in evidence_bundle.items]
+    evidence_payload = ReportEvidenceDraftView.from_bundle(evidence_bundle).payload
     memory_prompt = memory_context.to_prompt_context(limit=5) if memory_context is not None else ""
     user = (
         "Create a concise daily intelligence report as JSON with keys title and sections. "

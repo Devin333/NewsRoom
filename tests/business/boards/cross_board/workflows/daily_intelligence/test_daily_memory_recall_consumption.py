@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_LIVE_OFFLINE
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_step import quality_gate
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_outputs import (
@@ -92,6 +94,21 @@ def test_report_writer_normalizes_source_errors_before_source_notes() -> None:
         section for section in output["report_draft"]["sections"] if section["title"] == "Source Notes"
     )
     assert "Observed source error types: fetch_timeout." in source_notes["content"]
+
+
+def test_report_writer_uses_report_evidence_view_for_source_note_count() -> None:
+    output = ReportWriter().draft_report(
+        _writer_buffer(evidence_bundle=_DraftEvidenceBundle()).scope(
+            read_keys=["request", "evidence_bundle", "source_errors", "source_pipeline_metrics"],
+            write_keys=[],
+        ),
+        PROFILE_LIVE_OFFLINE,
+    )
+
+    source_notes = next(
+        section for section in output["report_draft"]["sections"] if section["title"] == "Source Notes"
+    )
+    assert "Built from 2 evidence item(s)." in source_notes["content"]
 
 
 def test_report_writer_reads_namespaced_source_and_evidence_keys() -> None:
@@ -612,15 +629,43 @@ class _QualityMemoryRepository:
         return []
 
 
+@dataclass(frozen=True)
+class _DraftEvidenceBundle:
+    bundle_id: str = "draft-bundle"
+    item_count: int = 2
+    items: list[dict] | None = None
+    source_urls: set[str] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "items",
+            self.items
+            or [
+                {
+                    "title": "Draft Lead",
+                    "summary": "Draft summary.",
+                    "source_url": "https://example.com/draft",
+                }
+            ],
+        )
+        object.__setattr__(
+            self,
+            "source_urls",
+            self.source_urls or {"https://example.com/draft"},
+        )
+
+
 def _writer_buffer(
     *,
+    evidence_bundle: object | None = None,
     source_errors: list | None = None,
     source_pipeline_metrics: SourcePipelineMetrics | None = None,
 ) -> DataBuffer:
     return DataBuffer(
         {
             "request": {"topic": "AI policy"},
-            "evidence_bundle": _evidence_bundle(),
+            "evidence_bundle": evidence_bundle or _evidence_bundle(),
             "source_errors": source_errors or [],
             "source_pipeline_metrics": source_pipeline_metrics
             or SourcePipelineMetrics(sources_total=1, sources_fetched=1),
