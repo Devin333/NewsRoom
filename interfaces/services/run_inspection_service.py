@@ -19,7 +19,7 @@ from framework.workflow.inspection import (
     resolve_run_dir,
 )
 from framework.workflow.runtime.manifest import normalize_legacy_run_manifest
-from infrastructure.storage.lineage.evidence import quality_lineage_summary
+from interfaces.services.run_inspection_projection import project_quality_trace_preview
 
 
 @dataclass(frozen=True)
@@ -454,37 +454,9 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
             if len(preview) >= 12:
                 break
             preview[str(key)] = _preview_value(value)
-        raw_quality_result = business_output.get("quality_result")
-        raw_citation_check = business_output.get("citation_check_result")
-        raw_support_matrix = business_output.get("support_matrix")
-        quality_result: dict[str, Any] = (
-            dict(raw_quality_result) if isinstance(raw_quality_result, dict) else {}
-        )
-        citation_check: dict[str, Any] = (
-            dict(raw_citation_check) if isinstance(raw_citation_check, dict) else {}
-        )
-        support_matrix: dict[str, Any] = (
-            dict(raw_support_matrix) if isinstance(raw_support_matrix, dict) else {}
-        )
-        quality_lineage = _quality_lineage_preview(business_output)
-        if quality_result or citation_check or support_matrix or quality_lineage:
-            raw_quality_metadata = quality_result.get("metadata")
-            quality_metadata = (
-                dict(raw_quality_metadata)
-                if isinstance(raw_quality_metadata, dict)
-                else {}
-            )
-            preview["quality_trace"] = {
-                "decision": quality_result.get("decision"),
-                "route": quality_result.get("route") or business_output.get("quality_route"),
-                "citation_failure_categories": quality_metadata.get(
-                    "citation_failure_categories", []
-                ),
-                "unsupported_claims": citation_check.get("unsupported_claims", []),
-                "rejected_claim_usage": citation_check.get("rejected_claim_usage", []),
-                "unsupported_sections": support_matrix.get("unsupported_sections", []),
-                "quality_lineage": quality_lineage,
-            }
+        quality_trace = project_quality_trace_preview(business_output)
+        if quality_trace:
+            preview["quality_trace"] = quality_trace
         raw_llm_route_manifest = output.get("llm_route_manifest")
         raw_llm_router_events = output.get("llm_router_events")
         llm_route_manifest: dict[str, Any] = (
@@ -528,39 +500,6 @@ def _manifest_business_output(manifest: dict[str, Any]) -> dict[str, Any]:
     if is_daily_workflow_id(str(manifest.get("workflow_id") or "")):
         return project_daily_output_for_run_inspection(output)
     return dict(output)
-
-
-def _quality_lineage_preview(output: dict[str, Any]) -> dict[str, Any]:
-    raw_candidate_claims = output.get("candidate_claims")
-    candidate_claims = _dict_list(raw_candidate_claims)
-    raw_verified_findings = output.get("verified_findings")
-    verified_findings: dict[str, Any] = (
-        dict(raw_verified_findings) if isinstance(raw_verified_findings, dict) else {}
-    )
-    claims = [
-        *_dict_list(verified_findings.get("accepted_claims")),
-        *_dict_list(verified_findings.get("rejected_claims")),
-        *_dict_list(verified_findings.get("uncertain_claims")),
-    ]
-    raw_final_report = output.get("final_report")
-    raw_blocked_report = output.get("blocked_report")
-    report = (
-        dict(raw_final_report)
-        if isinstance(raw_final_report, dict)
-        else dict(raw_blocked_report)
-        if isinstance(raw_blocked_report, dict)
-        else {}
-    )
-    raw_quality_result = output.get("quality_result")
-    quality_results = [dict(raw_quality_result)] if isinstance(raw_quality_result, dict) else []
-    if not (claims or candidate_claims or report or quality_results):
-        return {}
-    return quality_lineage_summary(
-        run_id=str(output.get("run_id") or ""),
-        report_id=str(output.get("report_id") or report.get("report_id") or output.get("run_id") or ""),
-        claims=claims or candidate_claims,
-        quality_results=quality_results,
-    )
 
 
 def _manifest_error(manifest: dict[str, Any]) -> dict[str, Any] | None:
@@ -627,12 +566,6 @@ def _step_view(
         ),
         "raw": to_json_safe(data),
     }
-
-
-def _dict_list(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, dict)]
 
 
 def _preview_value(value: Any) -> Any:
