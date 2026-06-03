@@ -103,6 +103,15 @@ def project_daily_output_for_run_inspection(output: Mapping[str, Any]) -> dict[s
     )
 
 
+def project_daily_output_for_interface_metadata(output: Mapping[str, Any]) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_INTERFACE_METADATA_OUTPUT_KEYS,
+        include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_ONLY,
+    )
+
+
 def apply_daily_public_output_aliases(
     output: MutableMapping[str, Any],
 ) -> MutableMapping[str, Any]:
@@ -239,6 +248,10 @@ DAILY_RUN_INSPECTION_OUTPUT_KEYS = (
     "verified_findings",
 )
 
+DAILY_INTERFACE_METADATA_OUTPUT_KEYS = (
+    "agent_loop_metrics",
+)
+
 DAILY_PUBLIC_OUTPUT_ALIAS_KEYS = (
     "final_report",
     "blocked_report",
@@ -267,6 +280,7 @@ __all__ = [
     "DAILY_PERSISTENCE_OUTPUT_KEYS",
     "DAILY_PUBLIC_OUTPUT_ALIAS_KEYS",
     "DAILY_RUN_INSPECTION_OUTPUT_KEYS",
+    "DAILY_INTERFACE_METADATA_OUTPUT_KEYS",
     "DailyOutputProjectionReadPolicy",
     "apply_daily_board_attachment_result",
     "apply_daily_public_output_aliases",
@@ -274,6 +288,7 @@ __all__ = [
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",
     "project_daily_output_for_board_attachment",
+    "project_daily_output_for_interface_metadata",
     "project_daily_output_for_memory_ingestion",
     "project_daily_output_for_persistence",
     "project_daily_output_for_legacy_consumers",

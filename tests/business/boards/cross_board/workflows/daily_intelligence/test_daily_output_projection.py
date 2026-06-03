@@ -7,6 +7,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     daily_output_value,
     ensure_legacy_daily_output_aliases,
     project_daily_output_for_board_attachment,
+    project_daily_output_for_interface_metadata,
     project_daily_output_for_memory_ingestion,
     project_daily_output_for_persistence,
     project_daily_output_for_legacy_consumers,
@@ -200,6 +201,25 @@ def test_run_inspection_projection_requires_namespaced_daily_outputs() -> None:
     projected = project_daily_output_for_run_inspection(output)
 
     assert projected == {"run_id": "run-1"}
+
+
+def test_project_daily_output_for_interface_metadata_reads_namespaced_agent_metrics() -> None:
+    output = {
+        "agent_loop_metrics": {"llm_calls": 1},
+        "loop.metrics": {"llm_calls": 2, "tool_calls": 1},
+    }
+
+    projected = project_daily_output_for_interface_metadata(output)
+
+    assert projected == {"agent_loop_metrics": {"llm_calls": 2, "tool_calls": 1}}
+
+
+def test_interface_metadata_projection_requires_namespaced_daily_outputs() -> None:
+    output = {"agent_loop_metrics": {"llm_calls": 1}}
+
+    projected = project_daily_output_for_interface_metadata(output)
+
+    assert projected == {}
 
 
 def test_ensure_legacy_daily_output_aliases_mutates_output_for_service_consumers() -> None:

@@ -5,8 +5,8 @@ from typing import Any
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
     apply_daily_board_attachment_result,
     apply_daily_public_output_aliases,
-    daily_output_value,
     project_daily_output_for_board_attachment,
+    project_daily_output_for_interface_metadata,
     project_daily_output_for_memory_ingestion,
     project_daily_output_for_persistence,
     project_daily_output_for_run_inspection,
@@ -43,7 +43,7 @@ def apply_daily_run_public_output_aliases(output: dict[str, Any]) -> dict[str, A
 def project_daily_run_agent_loop_metrics(output: Any) -> dict[str, Any]:
     if not isinstance(output, dict):
         return {}
-    metrics = daily_output_value(output, "agent_loop_metrics", default={})
+    metrics = project_daily_output_for_interface_metadata(output).get("agent_loop_metrics", {})
     return dict(metrics) if isinstance(metrics, dict) else {}
 
 
