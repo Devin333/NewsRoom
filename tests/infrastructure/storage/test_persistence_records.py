@@ -483,7 +483,10 @@ def test_local_json_persistence_adapter_preserves_record_when_write_fails(
         handle.write('{"partial":')
         raise RuntimeError("simulated write failure")
 
-    monkeypatch.setattr("infrastructure.storage.repository.json.dump", fail_after_partial_write)
+    monkeypatch.setattr(
+        "infrastructure.storage.persistence.local_json_adapter.json.dump",
+        fail_after_partial_write,
+    )
 
     with pytest.raises(RuntimeError, match="simulated write failure"):
         repository.save_workflow_run(
