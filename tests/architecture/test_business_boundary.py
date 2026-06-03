@@ -195,6 +195,15 @@ def test_business_boards_use_policy_experiment_application_api() -> None:
     assert [*call_violations, *import_violations] == []
 
 
+def test_business_foundation_root_does_not_export_legacy_override_names() -> None:
+    foundation_init = BUSINESS_ROOT / "foundation" / "__init__.py"
+    source = foundation_init.read_text(encoding="utf-8")
+
+    assert "BoardImprovementContext" not in source
+    assert "ImprovementOverride" not in source
+    assert "PolicyExperimentApplicationContext" in source
+
+
 def test_productized_artifact_publisher_delegates_legacy_override_projection() -> None:
     publisher_path = BUSINESS_ROOT / "boards" / "_artifact_publisher.py"
     source = publisher_path.read_text(encoding="utf-8")

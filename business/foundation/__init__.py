@@ -55,12 +55,10 @@ from business.foundation.models import (
 from business.foundation.evidence import BusinessEvidenceRef, BusinessRunManifestRef, BusinessTraceRef
 from business.foundation.feedback import (
     AppliedPolicyExperiment,
-    BoardImprovementContext,
     ImprovementApplicationService,
     ImprovementApplier,
     ImprovementMeasurement,
     ImprovementMeasurementBuilder,
-    ImprovementOverride,
     ImprovementProposal,
     ImprovementRecommendation,
     ImprovementRecommendationBuilder,
@@ -163,7 +161,6 @@ __all__ = [
     "BoardRunResult",
     "BoardContext",
     "BoardDefinition",
-    "BoardImprovementContext",
     "BoardRegistry",
     "BoardService",
     "BoardType",
@@ -217,7 +214,6 @@ __all__ = [
     "ImprovementApplier",
     "ImprovementMeasurement",
     "ImprovementMeasurementBuilder",
-    "ImprovementOverride",
     "ImprovementProposal",
     "ImprovementRecommendation",
     "ImprovementRecommendationBuilder",
