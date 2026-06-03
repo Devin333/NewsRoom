@@ -214,6 +214,7 @@ class _SourceItemArtifactWriter:
         entry.update(_raw_content_fingerprint(raw_item))
         return entry, _parsed_item_entry(
             item_payload,
+            source_item_id=object_id,
             item_artifact_ref=artifact_ref,
             raw_artifact_ref=raw_artifact_ref,
         )
@@ -662,6 +663,7 @@ def _source_item_payload(
 def _parsed_item_entry(
     item_payload: Any,
     *,
+    source_item_id: str,
     item_artifact_ref: SignalArtifactRef,
     raw_artifact_ref: Any,
 ) -> dict[str, Any]:
@@ -677,11 +679,7 @@ def _parsed_item_entry(
         if raw_ref_payload is not None:
             lineage["raw_artifact_ref"] = raw_ref_payload
     return {
-        "source_item_id": str(
-            summary.get("source_item_id")
-            or item_artifact_ref.metadata.get("object_id")
-            or item_artifact_ref.artifact_id
-        ),
+        "source_item_id": source_item_id,
         "item_artifact_ref": item_ref_payload,
         "raw_artifact_ref": raw_ref_payload,
         "item": summary,

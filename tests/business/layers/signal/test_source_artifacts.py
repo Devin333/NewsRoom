@@ -259,6 +259,34 @@ def test_source_artifact_writer_redacts_url_userinfo_and_basic_auth(tmp_path) ->
     )
 
 
+def test_source_artifact_writer_uses_projected_source_item_id_for_parsed_items(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("source-run")
+    writer = SourceArtifactWriter(manager)
+
+    index = writer.write_source_artifacts(
+        "source-run",
+        raw_items=[
+            {
+                "source_id": "feed",
+                "title": "Legacy item without id",
+                "url": "https://example.com/item",
+            }
+        ],
+    )
+
+    assert index is not None
+    run_dir = tmp_path / "source-run"
+    item_entry = next(entry for entry in index["entries"] if entry["artifact_type"] == "source_item")
+    parsed_items_entry = next(
+        entry for entry in index["entries"] if entry["artifact_type"] == "source_parsed_items"
+    )
+    parsed_items_payload = json.loads((run_dir / parsed_items_entry["path"]).read_text())
+
+    assert parsed_items_payload["items"][0]["source_item_id"] == item_entry["object_id"]
+    assert parsed_items_payload["items"][0]["item_artifact_ref"] == item_entry["artifact_ref"]
+
+
 def test_source_artifact_writer_normalizes_legacy_error_payloads(tmp_path) -> None:
     manager = ArtifactManager(tmp_path)
     manager.start_run("source-run")
