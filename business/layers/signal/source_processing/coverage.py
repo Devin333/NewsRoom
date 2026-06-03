@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from business.foundation.models.source import SourceCoverageReport, SourceError, SourcePipelineMetrics
+from business.foundation.models.source_error_normalization import normalize_source_errors
 
 
 def build_source_coverage_report(
@@ -13,11 +14,15 @@ def build_source_coverage_report(
     skipped_sources: Iterable[Mapping[str, Any]] = (),
     failed_sources: Iterable[Mapping[str, Any]] = (),
 ) -> SourceCoverageReport:
+    normalized_source_errors = normalize_source_errors(
+        source_errors,
+        context="source coverage errors",
+    )
     selected_count = metrics.sources_total
     outcome_count = metrics.sources_fetched + metrics.sources_failed + metrics.sources_skipped
     attempted_count = min(selected_count, outcome_count)
     unattempted_count = max(0, selected_count - attempted_count)
-    error_count = sum(1 for _ in source_errors)
+    error_count = len(normalized_source_errors)
     skipped_source_ids = _source_ids(skipped_sources)
     failed_source_ids = _source_ids(failed_sources, exclude={"source_pipeline"})
     partial_reasons = _partial_reasons(

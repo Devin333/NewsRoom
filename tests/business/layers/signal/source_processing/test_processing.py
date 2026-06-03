@@ -1,6 +1,8 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from business.foundation.models.source import (
     RawSourceItem,
     SourceError,
@@ -156,6 +158,30 @@ def test_build_source_coverage_report_marks_no_source_run_empty() -> None:
     assert report.failed_source_ids == []
     assert report.fetch_success_ratio == 0.0
     assert report.partial_reasons == ["no_raw_items", "source_failures", "source_errors"]
+
+
+def test_build_source_coverage_report_normalizes_source_error_mappings() -> None:
+    report = build_source_coverage_report(
+        SourcePipelineMetrics(sources_total=1, sources_failed=1, raw_items_count=0),
+        source_errors=[
+            {
+                "source_id": "feed",
+                "error_type": "fetch_timeout",
+                "error_message": "timeout",
+            }
+        ],
+    )
+
+    assert report.error_count == 1
+    assert "source_errors" in report.partial_reasons
+
+
+def test_build_source_coverage_report_rejects_unstructured_source_errors() -> None:
+    with pytest.raises(TypeError, match="source coverage errors entries must be SourceError"):
+        build_source_coverage_report(
+            SourcePipelineMetrics(sources_total=1),
+            source_errors=["fetch_timeout"],
+        )
 
 
 def test_build_source_connector_dispatch_report_joins_requests_and_results() -> None:
