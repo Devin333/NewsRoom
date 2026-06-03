@@ -249,7 +249,7 @@ def test_source_error_artifact_input_projects_formal_runtime_metadata() -> None:
     assert artifact_input.request_ref == {"artifact_id": "request-ref"}
 
 
-def test_source_error_artifact_input_accepts_legacy_mapping_payload() -> None:
+def test_source_error_artifact_input_accepts_serialized_source_error_payload() -> None:
     [artifact_input] = source_error_artifact_inputs(
         [
             {
@@ -281,3 +281,8 @@ def test_source_error_artifact_inputs_reject_single_mapping_payload() -> None:
                 "error_message": "timeout",
             }
         )
+
+
+def test_source_error_artifact_inputs_reject_unstructured_source_errors() -> None:
+    with pytest.raises(TypeError, match="source artifact errors entries must be SourceError"):
+        source_error_artifact_inputs(["fetch_timeout"])

@@ -130,15 +130,13 @@ class SourceErrorArtifactInput:
 
 
 def source_error_artifact_inputs(values: Any) -> list[SourceErrorArtifactInput]:
+    source_errors = normalize_source_errors(
+        _sequence_values(values, context="source artifact errors"),
+        context="source artifact errors",
+    )
     return [
         SourceErrorArtifactInput.from_error(source_error, index=index)
-        for index, source_error in enumerate(
-            normalize_source_errors(
-                _sequence_values(values, context="source artifact errors"),
-                context="source artifact errors",
-            ),
-            start=1,
-        )
+        for index, source_error in enumerate(source_errors, start=1)
     ]
 
 
