@@ -4,7 +4,9 @@ from framework.specs import EdgeCondition, StepType
 from framework.workflow import FunctionStepRegistry, WorkflowCompiler
 from framework.workflow.runners.step_runner import build_default_step_runner_registry
 from framework.workflow.runtime.timeout import workflow_timeout_budget
-from business.boards.cross_board.workflows.daily_intelligence import build_agentic_daily_intelligence_workflow
+from business.boards.cross_board.workflows.daily_intelligence import (
+    build_agentic_daily_intelligence_workflow,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agent_registry import (
     PROFILE_AGENTIC_OFFLINE,
     build_daily_agent_registry,
@@ -12,7 +14,9 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_registry imp
 from business.boards.cross_board.workflows.daily_intelligence.agent_runner_factory import (
     build_profiled_daily_agent_runner,
 )
-from business.boards.cross_board.workflows.daily_intelligence.agent_tools import build_daily_agent_tool_registry
+from business.boards.cross_board.workflows.daily_intelligence.agent_tools import (
+    build_daily_agent_tool_registry,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
     ANALYST_AGENT_ID,
     EDITOR_AGENT_ID,
@@ -40,7 +44,10 @@ def test_agentic_daily_workflow_declares_global_timeout_budget() -> None:
     workflow = build_agentic_daily_intelligence_workflow(PROFILE_AGENTIC_OFFLINE)
     budget = workflow_timeout_budget(workflow, started_monotonic=10.0)
 
-    assert workflow.policies.timeout_policy.timeout_seconds == DAILY_WORKFLOW_TIMEOUT_SECONDS
+    assert (
+        workflow.policies.timeout_policy.timeout_seconds
+        == DAILY_WORKFLOW_TIMEOUT_SECONDS
+    )
     assert budget is not None
     assert budget.timeout_seconds == DAILY_WORKFLOW_TIMEOUT_SECONDS
     assert budget.policy_source == "policies.timeout_policy.timeout_seconds"
@@ -62,24 +69,26 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
         "sources.pipeline_metrics",
         "source_pipeline_metrics",
     ]
-    assert "agent_feedback_summary" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "agent.feedback.summary" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "agent_feedback_route" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "agent.feedback.route" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "source_recollection_profile" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "sources.recollection_profile" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "source_recollection_execution_plan" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "sources.recollection_execution_plan" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "source_recollection_execution_report" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "sources.recollection_execution_report" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "source_recollection_quality_assessment" in steps["planner_agent"].metadata["optional_read_keys"]
-    assert "sources.recollection_quality_assessment" in steps["planner_agent"].metadata["optional_read_keys"]
+    planner_optional_reads = steps["planner_agent"].metadata["optional_read_keys"]
+    assert "agent_feedback_summary" in planner_optional_reads
+    assert "agent.feedback.summary" in planner_optional_reads
+    assert "agent_feedback_route" in planner_optional_reads
+    assert "agent.feedback.route" in planner_optional_reads
+    assert "source_recollection_profile" in planner_optional_reads
+    assert "sources.recollection_profile" in planner_optional_reads
+    assert "source_recollection_execution_plan" in planner_optional_reads
+    assert "sources.recollection_execution_plan" in planner_optional_reads
+    assert "source_recollection_execution_report" in planner_optional_reads
+    assert "sources.recollection_execution_report" in planner_optional_reads
+    assert "source_recollection_quality_assessment" in planner_optional_reads
+    assert "sources.recollection_quality_assessment" in planner_optional_reads
 
     assert steps["analyst_agent"].step_type == StepType.AGENT_LOOP
     assert steps["analyst_agent"].metadata["agent_id"] == ANALYST_AGENT_ID
     assert steps["analyst_agent"].implementation == ANALYST_AGENT_ID
     assert steps["analyst_agent"].read_keys == [
         "request",
+        "agent.planner.research_plan",
         "research_plan",
         "evidence.bundle",
         "evidence_bundle",
@@ -88,13 +97,17 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
         "sources.pipeline_metrics",
         "source_pipeline_metrics",
     ]
+    assert "agent.planner.research_plan" in steps["planner_agent"].write_keys
+    assert "agent.planner.notes" in steps["planner_agent"].write_keys
 
     assert steps["writer_agent"].step_type == StepType.AGENT_LOOP
     assert steps["writer_agent"].metadata["agent_id"] == WRITER_AGENT_ID
     assert steps["writer_agent"].implementation == WRITER_AGENT_ID
     assert steps["writer_agent"].read_keys == [
         "request",
+        "agent.planner.research_plan",
         "research_plan",
+        "agent.analyst.analysis_result",
         "analysis_result",
         "evidence.verified_findings",
         "verified_findings",
@@ -106,6 +119,9 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
         "source_pipeline_metrics",
     ]
     assert "report.draft" in steps["writer_agent"].write_keys
+    assert "agent.writer.notes" in steps["writer_agent"].write_keys
+    assert "agent.analyst.analysis_result" in steps["analyst_agent"].write_keys
+    assert "agent.analyst.notes" in steps["analyst_agent"].write_keys
     assert steps["writer_agent"].metadata["optional_read_keys"] == [
         "quality.citation_check_result",
         "citation_check_result",
@@ -139,6 +155,7 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert "quality.verification_result" in steps["verifier_agent"].write_keys
     assert "quality.citation_check_result" in steps["verifier_agent"].write_keys
     assert "quality.support_matrix" in steps["verifier_agent"].write_keys
+    assert "agent.verifier.notes" in steps["verifier_agent"].write_keys
 
     assert steps["editor_agent"].step_type == StepType.AGENT_LOOP
     assert steps["editor_agent"].metadata["agent_id"] == EDITOR_AGENT_ID
@@ -157,11 +174,13 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     ]
     assert "quality.editor_review" in steps["editor_agent"].write_keys
     assert "report.edited_draft" in steps["editor_agent"].write_keys
+    assert "agent.editor.notes" in steps["editor_agent"].write_keys
 
     assert steps["collect_agent_feedback"].step_type == StepType.FUNCTION
     assert steps["collect_agent_feedback"].implementation == "daily.collect_agent_feedback"
     assert steps["collect_agent_feedback"].required_output_keys == ["agent_feedback_summary"]
     assert steps["collect_agent_feedback"].read_keys == [
+        "agent.analyst.analysis_result",
         "analysis_result",
         "quality.verification_result",
         "verification_result",
@@ -218,7 +237,10 @@ def test_agentic_daily_workflow_declares_agent_steps() -> None:
     assert "source_recollection_execution_report" in steps["recollect_sources"].required_output_keys
     assert "source_recollection_quality_assessment" in steps["recollect_sources"].write_keys
     assert "sources.recollection_quality_assessment" in steps["recollect_sources"].write_keys
-    assert "source_recollection_quality_assessment" in steps["recollect_sources"].required_output_keys
+    assert (
+        "source_recollection_quality_assessment"
+        in steps["recollect_sources"].required_output_keys
+    )
     assert steps["finalize_report"].read_keys == [
         "request",
         "report.draft",
@@ -302,8 +324,14 @@ def test_agentic_daily_workflow_declares_bounded_feedback_routes() -> None:
     assert edges["feedback-to-finalize"].condition_expr == (
         "outcome.outputs.agent_feedback_route.next_step_id == 'finalize_report'"
     )
-    assert edges["feedback-recollect-to-sources"].priority < edges["feedback-retry-to-writer"].priority
-    assert edges["feedback-retry-to-writer"].priority < edges["feedback-to-finalize"].priority
+    assert (
+        edges["feedback-recollect-to-sources"].priority
+        < edges["feedback-retry-to-writer"].priority
+    )
+    assert (
+        edges["feedback-retry-to-writer"].priority
+        < edges["feedback-to-finalize"].priority
+    )
 
 
 def test_agentic_daily_workflow_compile_passes_with_runner_registry() -> None:
@@ -349,7 +377,9 @@ def _step_runner_registry():
     )
 
 
-def _step_signatures(steps) -> list[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]]:
+def _step_signatures(
+    steps,
+) -> list[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]]:
     return [
         (
             step.step_id,

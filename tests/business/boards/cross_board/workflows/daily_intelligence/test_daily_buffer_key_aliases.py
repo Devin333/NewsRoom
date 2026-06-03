@@ -43,6 +43,24 @@ def test_with_namespaced_aliases_adds_agent_loop_telemetry_aliases() -> None:
     assert outputs["agent.planner.loop.llm_call_artifacts"] == []
 
 
+def test_with_namespaced_aliases_adds_agent_payload_aliases() -> None:
+    research_plan = {"topic": "AI policy"}
+    analysis_result = {"findings": []}
+    outputs = with_namespaced_aliases(
+        {
+            "research_plan": research_plan,
+            "planner_notes": {"mode": "offline"},
+            "analysis_result": analysis_result,
+            "analyst_notes": {"mode": "offline"},
+        }
+    )
+
+    assert outputs["agent.planner.research_plan"] is research_plan
+    assert outputs["agent.planner.notes"] == {"mode": "offline"}
+    assert outputs["agent.analyst.analysis_result"] is analysis_result
+    assert outputs["agent.analyst.notes"] == {"mode": "offline"}
+
+
 def test_with_namespaced_write_keys_declares_aliases_after_legacy_keys() -> None:
     keys = with_namespaced_write_keys(
         ["source_errors", "quality_events", "verification_result", "unmapped"]
@@ -74,14 +92,16 @@ def test_agent_loop_output_aliases_returns_single_agent_telemetry_map() -> None:
 
 def test_with_namespaced_read_keys_declares_aliases_after_legacy_keys() -> None:
     keys = with_namespaced_read_keys(
-        ["report_draft", "evidence_bundle", "quality_events", "unmapped"]
+        ["research_plan", "report_draft", "evidence_bundle", "quality_events", "unmapped"]
     )
 
     assert keys == [
+        "research_plan",
         "report_draft",
         "evidence_bundle",
         "quality_events",
         "unmapped",
+        "agent.planner.research_plan",
         "report.draft",
         "evidence.bundle",
         "quality.events",
@@ -90,10 +110,12 @@ def test_with_namespaced_read_keys_declares_aliases_after_legacy_keys() -> None:
 
 def test_with_namespaced_primary_read_keys_declares_aliases_before_legacy_keys() -> None:
     keys = with_namespaced_primary_read_keys(
-        ["report_draft", "evidence_bundle", "quality_events", "unmapped"]
+        ["research_plan", "report_draft", "evidence_bundle", "quality_events", "unmapped"]
     )
 
     assert keys == [
+        "agent.planner.research_plan",
+        "research_plan",
         "report.draft",
         "report_draft",
         "evidence.bundle",

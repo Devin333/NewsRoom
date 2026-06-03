@@ -80,6 +80,16 @@ AGENT_BUFFER_ALIASES = {
     "agent_feedback_loop_state": "agent.feedback.loop_state",
 }
 
+AGENT_PAYLOAD_BUFFER_ALIASES = {
+    "research_plan": "agent.planner.research_plan",
+    "planner_notes": "agent.planner.notes",
+    "analysis_result": "agent.analyst.analysis_result",
+    "analyst_notes": "agent.analyst.notes",
+    "writer_notes": "agent.writer.notes",
+    "verifier_notes": "agent.verifier.notes",
+    "editor_notes": "agent.editor.notes",
+}
+
 AGENT_LOOP_LABELS = ("planner", "analyst", "writer", "verifier", "editor")
 AGENT_LOOP_TELEMETRY_SUFFIX_ALIASES = {
     "agent_loop_result": "loop.result",
@@ -102,6 +112,7 @@ DAILY_BUFFER_ALIASES = {
     **MEMORY_BUFFER_ALIASES,
     **REPORT_BUFFER_ALIASES,
     **AGENT_BUFFER_ALIASES,
+    **AGENT_PAYLOAD_BUFFER_ALIASES,
     **AGENT_LOOP_TELEMETRY_BUFFER_ALIASES,
 }
 

@@ -36,7 +36,12 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
     assert result.status == WorkflowStatus.SUCCEEDED
     assert result.workflow_id == "daily-intelligence-agentic"
     assert result.output["research_plan"]["topic"] == "AI policy"
+    assert result.output["agent.planner.research_plan"]["topic"] == "AI policy"
     assert result.output["analysis_result"]["findings"][0]["id"] == "finding-1"
+    assert (
+        result.output["agent.analyst.analysis_result"]["findings"][0]["id"]
+        == "finding-1"
+    )
     assert result.output["report_draft"]["title"] == "Daily Intelligence: AI policy"
     assert (
         result.output["report_draft"]["sections"][0]["claim_grounding"][0]["claim_id"]
