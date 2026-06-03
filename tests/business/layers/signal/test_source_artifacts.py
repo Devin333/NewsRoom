@@ -1,6 +1,8 @@
 import json
 from hashlib import sha256
 
+import pytest
+
 from business.layers.signal.artifacts import SourceArtifactWriter
 from framework.artifacts import ArtifactManager
 from business.foundation.models.source import SourceError, SourceFetchRequest, SourceFetchResult
@@ -342,6 +344,15 @@ def test_source_artifact_writer_normalizes_serialized_error_payloads(tmp_path) -
     assert error_entry["response_ref"] == response_entry["artifact_ref"]
     assert error_payload["error"]["request_ref"] == request_entry["artifact_ref"]
     assert error_payload["error"]["response_ref"] == response_entry["artifact_ref"]
+
+
+def test_source_artifact_writer_rejects_unstructured_source_errors_at_input_boundary(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("source-run")
+    writer = SourceArtifactWriter(manager)
+
+    with pytest.raises(TypeError, match="source artifact errors entries must be SourceError"):
+        writer.write_source_artifacts("source-run", source_errors=["fetch_timeout"])
 
 
 def test_source_error_artifact_writer_prefers_explicit_error_refs(tmp_path) -> None:

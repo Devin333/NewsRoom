@@ -10,6 +10,7 @@ from framework.shared.json import to_jsonable as _to_json_safe
 from business.layers.signal.artifact_refs import SignalArtifactRef
 from business.layers.signal.source_artifact_inputs import (
     SourceErrorArtifactInput,
+    SourceFetchRequestArtifactInput,
     SourceFetchResultArtifactInput,
     SourceItemArtifactInput,
     source_error_artifact_inputs,
@@ -50,26 +51,32 @@ class SourceArtifactWriter:
         source_fetch_results: list[Any] | None = None,
         source_errors: list[Any] | None = None,
     ) -> dict[str, Any] | None:
+        artifact_input = _SourceArtifactWriteInput.from_values(
+            raw_items=raw_items,
+            source_fetch_requests=source_fetch_requests,
+            source_fetch_results=source_fetch_results,
+            source_errors=source_errors,
+        )
         entries: list[dict[str, Any]] = []
 
         entries.extend(
             _SourceItemArtifactWriter(self._artifact_manager).write_source_items(
                 run_id,
-                raw_items=raw_items,
+                raw_items=artifact_input.source_items,
             )
         )
 
         fetch_artifacts = _SourceFetchArtifactWriter(self._artifact_manager).write_fetch_artifacts(
             run_id,
-            source_fetch_requests=source_fetch_requests,
-            source_fetch_results=source_fetch_results,
+            source_fetch_requests=artifact_input.fetch_requests,
+            source_fetch_results=artifact_input.fetch_results,
         )
         entries.extend(fetch_artifacts.entries)
 
         entries.extend(
             _SourceErrorArtifactWriter(self._artifact_manager).write_error_artifacts(
                 run_id,
-                source_errors=source_errors,
+                source_errors=artifact_input.source_errors,
                 fetch_artifacts=fetch_artifacts,
             )
         )
@@ -77,6 +84,30 @@ class SourceArtifactWriter:
         return _SourceArtifactIndexWriter(self._artifact_manager).write_index(
             run_id,
             entries=entries,
+        )
+
+
+@dataclass(frozen=True)
+class _SourceArtifactWriteInput:
+    source_items: list[SourceItemArtifactInput] = field(default_factory=list)
+    fetch_requests: list[SourceFetchRequestArtifactInput] = field(default_factory=list)
+    fetch_results: list[SourceFetchResultArtifactInput] = field(default_factory=list)
+    source_errors: list[SourceErrorArtifactInput] = field(default_factory=list)
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        raw_items: Any = None,
+        source_fetch_requests: Any = None,
+        source_fetch_results: Any = None,
+        source_errors: Any = None,
+    ) -> "_SourceArtifactWriteInput":
+        return cls(
+            source_items=source_item_artifact_inputs(raw_items),
+            fetch_requests=source_fetch_request_artifact_inputs(source_fetch_requests),
+            fetch_results=source_fetch_result_artifact_inputs(source_fetch_results),
+            source_errors=source_error_artifact_inputs(source_errors),
         )
 
 
@@ -117,12 +148,12 @@ class _SourceItemArtifactWriter:
         self,
         run_id: str,
         *,
-        raw_items: list[Any] | None = None,
+        raw_items: list[SourceItemArtifactInput],
     ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
         parsed_items_by_source: dict[str, list[dict[str, Any]]] = {}
 
-        for raw_item in source_item_artifact_inputs(raw_items):
+        for raw_item in raw_items:
             source_id = raw_item.source_id
             object_id = raw_item.source_item_id
             raw_content_entry, raw_content_ref = self._write_raw_content_artifact(
@@ -311,12 +342,12 @@ class _SourceFetchArtifactWriter:
         self,
         run_id: str,
         *,
-        source_fetch_requests: list[Any] | None = None,
-        source_fetch_results: list[Any] | None = None,
+        source_fetch_requests: list[SourceFetchRequestArtifactInput],
+        source_fetch_results: list[SourceFetchResultArtifactInput],
     ) -> _SourceFetchArtifacts:
         artifacts = _SourceFetchArtifacts()
 
-        for fetch_request in source_fetch_request_artifact_inputs(source_fetch_requests):
+        for fetch_request in source_fetch_requests:
             artifact_ref, entry = self._write_fetch_request_artifact(
                 run_id,
                 fetch_request=fetch_request,
@@ -330,7 +361,7 @@ class _SourceFetchArtifactWriter:
             )
             artifacts.entries.append(entry)
 
-        for fetch_result in source_fetch_result_artifact_inputs(source_fetch_results):
+        for fetch_result in source_fetch_results:
             artifact_ref, entry, response_headers_entry = self._write_fetch_result_artifact(
                 run_id,
                 fetch_result=fetch_result,
@@ -352,7 +383,7 @@ class _SourceFetchArtifactWriter:
         self,
         run_id: str,
         *,
-        fetch_request: Any,
+        fetch_request: SourceFetchRequestArtifactInput,
     ) -> tuple[SignalArtifactRef, dict[str, Any]]:
         source_id = fetch_request.source_id
         object_id = fetch_request.request_id
@@ -483,11 +514,11 @@ class _SourceErrorArtifactWriter:
         self,
         run_id: str,
         *,
-        source_errors: list[Any] | None = None,
+        source_errors: list[SourceErrorArtifactInput],
         fetch_artifacts: _SourceFetchArtifacts,
     ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
-        for source_error in source_error_artifact_inputs(source_errors):
+        for source_error in source_errors:
             entries.append(
                 self._write_source_error_artifact(
                     run_id,
