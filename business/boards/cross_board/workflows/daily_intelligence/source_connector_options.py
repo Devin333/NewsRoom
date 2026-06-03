@@ -22,6 +22,7 @@ class SourceConnectorRuntimeOptions(PrimitiveModel):
     manual_records: ManualSourceRecords | None = None
     repository: str | None = None
     github_mode: str | None = None
+    github_discussion_category: str | None = None
     story_list: str | None = None
     subreddit: str | None = None
     listing: str | None = None
@@ -48,6 +49,7 @@ class SourceConnectorRuntimeOptions(PrimitiveModel):
             manual_records=_connector_manual_records(source_type, metadata=metadata),
             repository=_optional_text(metadata.get("repository")),
             github_mode=_connector_github_mode(source_type, metadata=metadata),
+            github_discussion_category=_connector_github_discussion_category(source_type, metadata=metadata),
             story_list=_optional_text(metadata.get("story_list")),
             subreddit=_optional_text(metadata.get("subreddit")),
             listing=_optional_text(metadata.get("listing")),
@@ -88,6 +90,12 @@ def _connector_github_mode(source_type: SourceType, *, metadata: dict[str, Any])
     if source_type != SourceType.GITHUB:
         return None
     return _optional_text(metadata.get("github_mode")) or _optional_text(metadata.get("mode"))
+
+
+def _connector_github_discussion_category(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:
+    if source_type != SourceType.GITHUB:
+        return None
+    return _optional_text(metadata.get("discussion_category"))
 
 
 def _connector_time_range(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:

@@ -1445,6 +1445,7 @@ def test_daily_intelligence_runner_dispatches_github_mode_metadata(tmp_path) -> 
             "query": "AI policy",
             "limit": 1,
             "mode": "commits",
+            "discussion_category": None,
         }
     ]
 
@@ -2030,7 +2031,7 @@ class _FakeGithubModeConnector:
     def __init__(self) -> None:
         self.calls = []
 
-    def fetch(self, source, *, repository, query, mode, limit):
+    def fetch(self, source, *, repository, query, mode, discussion_category, limit):
         self.calls.append(
             {
                 "source_id": source.source_id,
@@ -2038,6 +2039,7 @@ class _FakeGithubModeConnector:
                 "query": query,
                 "limit": limit,
                 "mode": mode,
+                "discussion_category": discussion_category,
             }
         )
         return [

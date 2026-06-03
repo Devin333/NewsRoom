@@ -174,7 +174,7 @@ def test_source_dispatcher_passes_github_runtime_options() -> None:
         name="GitHub",
         source_type=SourceType.GITHUB,
         url="https://api.github.com",
-        metadata={"repository": "owner/repo", "mode": "commits"},
+        metadata={"repository": "owner/repo", "mode": "commits", "discussion_category": "Ideas"},
     )
     connector = _RecordingGithubConnector()
 
@@ -203,6 +203,7 @@ def test_source_dispatcher_passes_github_runtime_options() -> None:
             "repository": "owner/repo",
             "query": "AI policy",
             "mode": "commits",
+            "discussion_category": "Ideas",
             "limit": 1,
         }
     ]
@@ -379,13 +380,14 @@ class _RecordingGithubConnector:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def fetch(self, source, *, repository, query, mode, limit):
+    def fetch(self, source, *, repository, query, mode, discussion_category, limit):
         self.calls.append(
             {
                 "source_id": source.source_id,
                 "repository": repository,
                 "query": query,
                 "mode": mode,
+                "discussion_category": discussion_category,
                 "limit": limit,
             }
         )

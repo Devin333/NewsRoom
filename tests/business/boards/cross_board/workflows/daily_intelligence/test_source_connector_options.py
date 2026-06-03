@@ -95,6 +95,20 @@ def test_connector_options_project_github_mode_before_legacy_mode() -> None:
     assert options.github_mode == "issues"
 
 
+def test_connector_options_project_github_discussion_category() -> None:
+    source = _source(
+        source_type=SourceType.GITHUB,
+        metadata={"repository": "owner/repo", "discussion_category": "Ideas"},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "AI policy"},
+    )
+
+    assert options.github_discussion_category == "Ideas"
+
+
 def test_connector_options_project_stackoverflow_tagged_before_tag() -> None:
     source = _source(
         source_type=SourceType.STACKOVERFLOW,

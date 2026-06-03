@@ -233,6 +233,7 @@ class SourceDispatcher:
             repository=connector_options.repository,
             query=connector_options.query,
             mode=connector_options.github_mode,
+            discussion_category=connector_options.github_discussion_category,
             limit=limit,
         ))
 
