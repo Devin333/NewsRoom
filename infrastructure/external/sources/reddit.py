@@ -262,9 +262,9 @@ def _raw_item_from_child(
 def _subreddit_from_source(source: SourceDefinition, *, subreddit: str | None) -> str:
     if subreddit and subreddit.strip():
         return _ensure_subreddit(subreddit.strip())
-    metadata_subreddit = source.metadata.get("subreddit")
-    if isinstance(metadata_subreddit, str) and metadata_subreddit.strip():
-        return _ensure_subreddit(metadata_subreddit.strip())
+    legacy_subreddit = _legacy_reddit_option(source, "subreddit")
+    if legacy_subreddit:
+        return _ensure_subreddit(legacy_subreddit)
     parsed = urlsplit(source.url)
     parts = [part for part in parsed.path.split("/") if part]
     for index, part in enumerate(parts):
@@ -276,10 +276,14 @@ def _subreddit_from_source(source: SourceDefinition, *, subreddit: str | None) -
 def _listing_from_source(source: SourceDefinition, *, listing: str | None) -> str:
     if listing and listing.strip():
         return _ensure_listing(listing.strip())
-    metadata_listing = source.metadata.get("listing")
-    if isinstance(metadata_listing, str) and metadata_listing.strip():
-        return _ensure_listing(metadata_listing.strip())
+    legacy_listing = _legacy_reddit_option(source, "listing")
+    if legacy_listing:
+        return _ensure_listing(legacy_listing)
     return "hot"
+
+
+def _legacy_reddit_option(source: SourceDefinition, key: str) -> str | None:
+    return _optional_text(source.metadata.get(key))
 
 
 def _time_range_from_source(source: SourceDefinition) -> str | None:

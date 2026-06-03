@@ -84,6 +84,30 @@ def test_reddit_connector_fetch_builds_listing_url() -> None:
     )
 
 
+def test_reddit_connector_fetch_accepts_explicit_runtime_options() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return REDDIT_LISTING
+
+    items, errors = RedditConnector(fetch_text=fetch_text).fetch(
+        _source(metadata={}),
+        subreddit="MachineLearning",
+        listing="new",
+        limit=1,
+    )
+
+    assert errors == []
+    assert len(items) == 1
+    assert captured["url"] == build_reddit_listing_url(
+        REDDIT_BASE_URL,
+        "MachineLearning",
+        "new",
+        limit=1,
+    )
+
+
 def test_reddit_connector_returns_invalid_subreddit_error() -> None:
     items, errors = RedditConnector(fetch_text=lambda url: REDDIT_LISTING).fetch(
         _source(subreddit=""),
@@ -137,7 +161,13 @@ def test_reddit_connector_default_fetch_rejects_unsupported_content_type(monkeyp
     assert errors[0].metadata["content_type"] == "text/html"
 
 
-def _source(*, subreddit: str = "MachineLearning", respect_robots: bool = True) -> SourceDefinition:
+def _source(
+    *,
+    subreddit: str = "MachineLearning",
+    respect_robots: bool = True,
+    metadata: dict[str, object] | None = None,
+) -> SourceDefinition:
+    source_metadata = metadata if metadata is not None else {"subreddit": subreddit, "listing": "new"}
     return SourceDefinition(
         source_id="reddit",
         name="Reddit MachineLearning",
@@ -148,5 +178,5 @@ def _source(*, subreddit: str = "MachineLearning", respect_robots: bool = True) 
         respect_robots=respect_robots,
         topics=["ai", "machine learning"],
         language="en",
-        metadata={"subreddit": subreddit, "listing": "new"},
+        metadata=source_metadata,
     )

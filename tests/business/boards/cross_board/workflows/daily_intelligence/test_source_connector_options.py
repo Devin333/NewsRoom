@@ -82,6 +82,21 @@ def test_connector_options_project_stackoverflow_tagged_before_tag() -> None:
     assert options.site == "stackoverflow"
 
 
+def test_connector_options_project_reddit_runtime_options() -> None:
+    source = _source(
+        source_type=SourceType.REDDIT,
+        metadata={"subreddit": "MachineLearning", "listing": "new"},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "ignored"},
+    )
+
+    assert options.subreddit == "MachineLearning"
+    assert options.listing == "new"
+
+
 def test_source_fetch_request_consumes_connector_options_for_arxiv_query() -> None:
     source = _source(
         source_type=SourceType.ARXIV,
