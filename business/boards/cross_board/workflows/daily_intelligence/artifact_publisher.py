@@ -7,8 +7,9 @@ from typing import Any
 from business.boards.cross_board.workflows.daily_intelligence.artifact_sections import (
     publish_daily_artifact_sections,
 )
-from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
-    DAILY_BUFFER_ALIASES,
+from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
+    daily_output_contains as _output_contains,
+    daily_output_value as _output_value,
 )
 from business.layers.signal.artifacts import SourceArtifactWriter
 from framework.workflow.runtime.artifact_publishers import (
@@ -374,18 +375,6 @@ def _write_json_artifacts_from_output(
                 )
             )
     return refs
-
-
-def _output_value(output: dict[str, Any], key: str, default: Any = None) -> Any:
-    namespaced_key = DAILY_BUFFER_ALIASES.get(key)
-    if namespaced_key is not None and namespaced_key in output:
-        return output[namespaced_key]
-    return output.get(key, default)
-
-
-def _output_contains(output: dict[str, Any], key: str) -> bool:
-    namespaced_key = DAILY_BUFFER_ALIASES.get(key)
-    return (namespaced_key is not None and namespaced_key in output) or key in output
 
 
 def _write_json_artifact(
