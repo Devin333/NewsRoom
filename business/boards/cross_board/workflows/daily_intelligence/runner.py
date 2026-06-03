@@ -40,6 +40,9 @@ from business.boards.cross_board.workflows.daily_intelligence.registry import bu
 from business.boards.cross_board.workflows.daily_intelligence.routing_predicates import (
     build_daily_intelligence_routing_predicate_registry,
 )
+from business.boards.cross_board.workflows.daily_intelligence.memory_repository_input import (
+    quality_memory_repository_from_recall_service,
+)
 from business.layers.signal.source_config import (
     build_default_source_fetch_policy,
     build_default_source_registry,
@@ -179,8 +182,8 @@ class DailyIntelligenceRunner:
             profile=profile,
             collect_sources=self.source_collector.collect_sources,
             draft_report=self.report_writer.draft_report,
-            memory_query_repository=(
-                self.recall_service.repository if self.recall_service is not None else None
+            memory_query_repository=quality_memory_repository_from_recall_service(
+                self.recall_service
             ),
         )
 

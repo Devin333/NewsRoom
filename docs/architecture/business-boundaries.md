@@ -168,6 +168,8 @@ daily intelligence 的 `quality_gate_step.py` 是 workflow adapter，只负责�
 
 memory context、historian context 和 memory quality result 的组合由 `quality_gate_context.py` 的 `DailyQualityGateContextService` 发起，并委托 `quality_context_projection.py` 的 `DailyQualityContextProjectionService` 构建。显式 `historian_context` 优先；从 report 或 memory metadata 读取 historian 只作为旧数据兼容入口，不能散落在 quality gate usecase 中。
 
+quality gate 的 memory repository 输入由 `memory_repository_input.py` 投影：runner 只调用 `quality_memory_repository_from_recall_service()`，不直接读取 recall service 的 repository 字段；`quality_gate_step.py` 仍只消费注入 repository 或 buffer 中声明的 `memory_query_repository`。
+
 质量评估、rewrite 尝试、non-social-media bypass 和 human review 路由由 `quality_gate_evaluation.py` 的 `DailyQualityGateEvaluationService` 承载。critical memory issue 判定收敛到 `memory_quality.py` 的 `has_critical_memory_quality_issue()`，避免在 usecase 或 step 中重新扫描 memory quality payload。
 
 quality gate 的单次运行观测指标由 `quality_observability.py` 构建，输出可聚合的 count/rate 字段（例如 block、rewrite、human review、memory conflict）。workflow step 不维护历史窗口；窗口聚合应由 artifact/storage/monitoring 层消费这些正式指标完成。
