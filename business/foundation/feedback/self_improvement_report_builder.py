@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from business.foundation.feedback.policy_experiment import PolicyExperimentApplicationContext
 from business.foundation.feedback.self_improvement_report import SelfImprovementReport
 
 
@@ -14,10 +15,12 @@ class SelfImprovementReportBuilder:
         recommendations: list[Any],
         proposals: list[Any],
         measurement: Any,
+        policy_experiment_application_context: PolicyExperimentApplicationContext | dict[str, Any] | None = None,
         applied_policy_experiments: list[dict[str, Any]] | None = None,
         applied_overrides: list[dict[str, Any]] | None = None,
     ) -> SelfImprovementReport:
         policy_experiments = _resolved_policy_experiments(
+            policy_experiment_application_context=policy_experiment_application_context,
             applied_policy_experiments=applied_policy_experiments,
             applied_overrides=applied_overrides,
         )
@@ -72,12 +75,29 @@ def policy_experiment_profile_ids(profiles: list[dict[str, Any]]) -> list[str]:
 
 def _resolved_policy_experiments(
     *,
+    policy_experiment_application_context: PolicyExperimentApplicationContext | dict[str, Any] | None,
     applied_policy_experiments: list[dict[str, Any]] | None,
     applied_overrides: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
+    context_experiments = _policy_experiments_from_application_context(policy_experiment_application_context)
+    if context_experiments is not None:
+        return context_experiments
     if applied_policy_experiments is not None:
         return [dict(item) for item in applied_policy_experiments]
     return [dict(item) for item in (applied_overrides or [])]
+
+
+def _policy_experiments_from_application_context(
+    context: PolicyExperimentApplicationContext | dict[str, Any] | None,
+) -> list[dict[str, Any]] | None:
+    if context is None:
+        return None
+    if isinstance(context, PolicyExperimentApplicationContext):
+        return [dict(item) for item in context.applied_policy_experiments]
+    payload = _to_dict(context)
+    if "applied_policy_experiments" not in payload:
+        return None
+    return [dict(item) for item in (payload.get("applied_policy_experiments") or [])]
 
 
 def _to_dict(value: Any) -> dict[str, Any]:

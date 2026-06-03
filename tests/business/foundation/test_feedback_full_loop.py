@@ -4,7 +4,7 @@ from business.boards._improvement import BoardImprovementService
 from business.foundation import BusinessFeedbackEvent, BusinessQualityCheck, quality_snapshot_from_checks
 
 
-def test_feedback_full_loop_reaches_approved_override_and_measurement() -> None:
+def test_feedback_full_loop_reaches_approved_policy_experiment_and_measurement() -> None:
     quality = quality_snapshot_from_checks(
         [
             BusinessQualityCheck.create(
@@ -38,7 +38,6 @@ def test_feedback_full_loop_reaches_approved_override_and_measurement() -> None:
     assert proposals[0].proposed_patch == proposals[0].policy_experiment_parameters
     assert "proposed_patch" not in proposals[0].to_dict()
     assert service.apply_approved_policy_experiments(run_id="before", board_type="ai_news").applied_policy_experiments == []
-    assert service.apply_approved_overrides(run_id="before", board_type="ai_news").applied_overrides == []
 
     service.proposal_store.approve(proposals[0].proposal_id)
     context = service.apply_approved_policy_experiments(run_id="after", board_type="ai_news")
@@ -51,13 +50,13 @@ def test_feedback_full_loop_reaches_approved_override_and_measurement() -> None:
         learning_signals=learning,
         recommendations=recommendations,
         proposals=proposals,
-        applied_overrides=context.applied_overrides,
+        policy_experiment_application_context=context,
         measurement=measurement,
     )
 
-    assert context.applied_overrides
-    assert context.applied_overrides[0]["profile_id"] == proposals[0].experiment_profile.profile_id
+    assert context.applied_policy_experiments
+    assert context.applied_policy_experiments[0]["profile_id"] == proposals[0].experiment_profile.profile_id
     assert measurement.quality_score_delta == 0.35
     assert report.applied_policy_experiments == context.applied_policy_experiments
-    assert report.applied_overrides
+    assert report.applied_overrides == report.applied_policy_experiments
     assert report.policy_experiment_profiles[0]["profile_id"] == proposals[0].experiment_profile.profile_id

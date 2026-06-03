@@ -77,6 +77,7 @@ class BoardImprovementService:
         recommendations: list[ImprovementRecommendation],
         proposals: list[ImprovementProposal],
         measurement: Any,
+        policy_experiment_application_context: PolicyExperimentApplicationContext | dict[str, Any] | None = None,
         applied_policy_experiments: list[dict[str, Any]] | None = None,
         applied_overrides: list[dict[str, Any]] | None = None,
     ) -> SelfImprovementReport:
@@ -85,6 +86,7 @@ class BoardImprovementService:
             learning_signals=learning_signals,
             recommendations=recommendations,
             proposals=proposals,
+            policy_experiment_application_context=policy_experiment_application_context,
             applied_policy_experiments=applied_policy_experiments,
             applied_overrides=applied_overrides,
             measurement=measurement,

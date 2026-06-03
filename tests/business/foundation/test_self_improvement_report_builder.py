@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from business.foundation.feedback import (
     ImprovementProposal,
+    PolicyExperimentApplicationContext,
     PolicyExperimentProfile,
     SelfImprovementReportBuilder,
 )
@@ -35,7 +36,7 @@ def test_self_improvement_report_builder_summarizes_high_risk_proposals() -> Non
         learning_signals=[{"signal_id": "signal-1"}],
         recommendations=[{"recommendation_id": "rec-1"}],
         proposals=[proposal],
-        applied_overrides=[{"proposal_id": "proposal-1"}],
+        applied_policy_experiments=[{"proposal_id": "proposal-1"}],
         measurement={"quality_score_delta": 0.2},
     )
 
@@ -74,7 +75,6 @@ def test_self_improvement_report_builder_uses_monitoring_action_without_proposal
         learning_signals=[],
         recommendations=[],
         proposals=[],
-        applied_overrides=[],
         measurement=None,
     )
 
@@ -94,4 +94,25 @@ def test_self_improvement_report_builder_prefers_policy_experiment_field() -> No
     )
 
     assert report.applied_policy_experiments == [{"proposal_id": "proposal-1", "profile_id": "profile-1"}]
+    assert report.applied_overrides == report.applied_policy_experiments
+
+
+def test_self_improvement_report_builder_uses_policy_experiment_application_context() -> None:
+    context = PolicyExperimentApplicationContext(
+        run_id="run-1",
+        board_type="ai_news",
+        applied_policy_experiments=[{"proposal_id": "proposal-1", "profile_id": "profile-1"}],
+        skipped_policy_experiments=[{"proposal_id": "proposal-2", "reason": "not_approved"}],
+    )
+
+    report = SelfImprovementReportBuilder().build(
+        feedback_events=[],
+        learning_signals=[],
+        recommendations=[],
+        proposals=[],
+        policy_experiment_application_context=context,
+        measurement={},
+    )
+
+    assert report.applied_policy_experiments == context.applied_policy_experiments
     assert report.applied_overrides == report.applied_policy_experiments

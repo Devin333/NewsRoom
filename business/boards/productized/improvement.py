@@ -111,7 +111,7 @@ class ProductizedImprovementWorkflowService:
             learning_signals=parsed_learning,
             recommendations=recommendations,
             proposals=proposals,
-            applied_policy_experiments=improvement_context.applied_policy_experiments,
+            policy_experiment_application_context=improvement_context,
             measurement=measurement,
         )
         report_payload = report.to_dict()
