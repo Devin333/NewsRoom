@@ -69,17 +69,16 @@ class SourceFetchResultMetadata(PrimitiveModel):
 
     @classmethod
     def from_result_metadata(cls, metadata: dict[str, Any]) -> "SourceFetchResultMetadata":
-        formal = metadata.get("source_fetch_result_metadata")
-        payload = dict(formal) if isinstance(formal, dict) else {}
+        view = _SourceFetchResultMetadataView.from_metadata(metadata)
         return cls(
-            source_type=str(payload.get("source_type") or metadata.get("source_type") or "unknown"),
-            url=payload.get("url") or metadata.get("url"),
-            item_count=int(_metadata_value(payload, metadata, "item_count", default=0)),
-            error_count=int(_metadata_value(payload, metadata, "error_count", default=0)),
-            response_url=payload.get("response_url") or metadata.get("response_url"),
-            response_headers=dict(payload.get("response_headers") or metadata.get("response_headers") or {}),
-            fetch_response=payload.get("fetch_response") or metadata.get("fetch_response"),
-            skip=payload.get("skip") or metadata.get("skip"),
+            source_type=view.source_type,
+            url=view.url,
+            item_count=view.item_count,
+            error_count=view.error_count,
+            response_url=view.response_url,
+            response_headers=view.response_headers,
+            fetch_response=view.fetch_response,
+            skip=view.skip,
         )
 
     def with_counts(self, *, item_count: int, error_count: int) -> "SourceFetchResultMetadata":
@@ -142,6 +141,58 @@ def _metadata_value(
     if key in legacy:
         return legacy[key]
     return default
+
+
+@dataclass(frozen=True)
+class _SourceFetchResultMetadataView:
+    formal: dict[str, Any]
+    legacy: dict[str, Any]
+
+    @classmethod
+    def from_metadata(cls, metadata: dict[str, Any]) -> "_SourceFetchResultMetadataView":
+        legacy = _metadata_dict(metadata)
+        return cls(
+            formal=_metadata_dict(legacy.get("source_fetch_result_metadata")),
+            legacy=legacy,
+        )
+
+    @property
+    def source_type(self) -> str:
+        return str(self._truthy("source_type", default="unknown"))
+
+    @property
+    def url(self) -> str | None:
+        return self._truthy("url")
+
+    @property
+    def item_count(self) -> int:
+        return int(self._present("item_count", default=0))
+
+    @property
+    def error_count(self) -> int:
+        return int(self._present("error_count", default=0))
+
+    @property
+    def response_url(self) -> str | None:
+        return self._truthy("response_url")
+
+    @property
+    def response_headers(self) -> dict[str, Any]:
+        return dict(self._truthy("response_headers", default={}) or {})
+
+    @property
+    def fetch_response(self) -> dict[str, Any] | None:
+        return self._truthy("fetch_response")
+
+    @property
+    def skip(self) -> dict[str, Any] | None:
+        return self._truthy("skip")
+
+    def _present(self, key: str, *, default: Any) -> Any:
+        return _metadata_value(self.formal, self.legacy, key, default=default)
+
+    def _truthy(self, key: str, default: Any = None) -> Any:
+        return self.formal.get(key) or self.legacy.get(key) or default
 
 
 def response_metadata_from_observations(

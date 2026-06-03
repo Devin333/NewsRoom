@@ -50,12 +50,28 @@ def test_source_fetch_result_metadata_can_restore_from_legacy_metadata() -> None
             "url": "https://example.com/feed.xml",
             "item_count": 2,
             "error_count": 1,
+            "response_url": "https://example.com/final.xml",
+            "response_headers": {"Content-Type": "application/rss+xml"},
+            "fetch_response": {
+                "status_code": 200,
+                "content_type": "application/rss+xml",
+                "url": "https://example.com/final.xml",
+                "headers": {"Content-Type": "application/rss+xml"},
+            },
             "skip": {"reason": "disabled"},
         }
     )
 
     assert payload.schema_version == "business.cross_board.daily_source_fetch.metadata.v1"
     assert payload.item_count == 2
+    assert payload.response_url == "https://example.com/final.xml"
+    assert payload.response_headers == {"Content-Type": "application/rss+xml"}
+    assert payload.fetch_response == {
+        "status_code": 200,
+        "content_type": "application/rss+xml",
+        "url": "https://example.com/final.xml",
+        "headers": {"Content-Type": "application/rss+xml"},
+    }
     assert payload.skip == {"reason": "disabled"}
 
 
@@ -74,6 +90,25 @@ def test_source_fetch_result_metadata_prefers_formal_zero_counts() -> None:
 
     assert payload.item_count == 0
     assert payload.error_count == 0
+
+
+def test_source_fetch_result_metadata_prefers_formal_payload_over_legacy_fields() -> None:
+    payload = SourceFetchResultMetadata.from_result_metadata(
+        {
+            "source_type": "rss",
+            "url": "https://legacy.example.com/feed.xml",
+            "response_url": "https://legacy.example.com/final.xml",
+            "source_fetch_result_metadata": {
+                "source_type": "arxiv",
+                "url": "https://formal.example.com/feed.xml",
+                "response_url": "https://formal.example.com/final.xml",
+            },
+        }
+    )
+
+    assert payload.source_type == "arxiv"
+    assert payload.url == "https://formal.example.com/feed.xml"
+    assert payload.response_url == "https://formal.example.com/final.xml"
 
 
 def test_response_metadata_from_observations_projects_mapping_metadata() -> None:
