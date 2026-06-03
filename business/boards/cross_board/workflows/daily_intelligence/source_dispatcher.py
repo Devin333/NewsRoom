@@ -46,6 +46,10 @@ from business.boards.cross_board.workflows.daily_intelligence.source_connector_p
     DailyRedditSourceConnector,
     DailyStackOverflowSourceConnector,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_error_metadata import (
+    SourceErrorMetadataInput,
+    source_error_metadata,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_official_blog import fetch_official_blog
 
 
@@ -344,11 +348,14 @@ class SourceDispatcher:
                     error_message=f"unsupported source type: {_source_type(source).value}",
                     url=source.url,
                     retryable=False,
-                    metadata={
-                        "retryable": False,
-                        "source_health_affecting": False,
-                        "workflow_blocking": False,
-                    },
+                    metadata=source_error_metadata(
+                        SourceErrorMetadataInput(
+                            phase="fetch",
+                            retryable=False,
+                            source_health_affecting=False,
+                            workflow_blocking=False,
+                        )
+                    ),
                 )
             ],
             None,
@@ -445,14 +452,18 @@ def _source_domain_allowlist_error(
         ),
         url=source.url,
         retryable=False,
-        metadata={
-            "phase": "fetch",
-            "retryable": False,
-            "source_health_affecting": False,
-            "workflow_blocking": False,
-            "domain": host,
-            "allowed_domains": list(allowed_domains),
-        },
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase="fetch",
+                retryable=False,
+                source_health_affecting=False,
+                workflow_blocking=False,
+                extra={
+                    "domain": host,
+                    "allowed_domains": list(allowed_domains),
+                },
+            )
+        ),
     )
 
 

@@ -4,6 +4,8 @@ from business.boards.cross_board.workflows.daily_intelligence.source_connector_o
     SourceConnectorRuntimeOptions,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
+from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
+from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
 from business.foundation.models.source import SourceDefinition, SourceFetchRequest, SourceType
 from business.foundation.registry.source_registry import SourceRegistry
 
@@ -286,11 +288,99 @@ def test_source_dispatcher_passes_stackoverflow_runtime_options() -> None:
     ]
 
 
+def test_source_dispatcher_returns_formal_metadata_for_domain_allowlist_error() -> None:
+    source = SourceDefinition(
+        source_id="blocked-feed",
+        name="Blocked Feed",
+        source_type=SourceType.RSS,
+        url="https://blocked.example/feed.xml",
+    )
+
+    items, errors, result = _dispatcher(
+        source,
+        feed_connector=_PolicyConnector(allowed_domains=("trusted.example",)),
+    ).fetch_source(
+        source,
+        request={"topic": "AI policy"},
+        fetch_request=SourceFetchRequest(
+            request_id="source-fetch-1",
+            source_id=source.source_id,
+            source_type=source.source_type,
+        ),
+        profile="live",
+        limit=1,
+    )
+
+    assert items == []
+    assert result is None
+    assert len(errors) == 1
+    error = errors[0]
+    assert error.error_type == "source_domain_not_allowed"
+    assert error.metadata["phase"] == "fetch"
+    assert error.metadata["retryable"] is False
+    assert error.metadata["source_health_affecting"] is False
+    assert error.metadata["workflow_blocking"] is False
+    assert error.metadata["domain"] == "blocked.example"
+    assert error.metadata["allowed_domains"] == ["trusted.example"]
+    assert error.metadata[SOURCE_ERROR_RUNTIME_METADATA_KEY] == {
+        "phase": "fetch",
+        "retryable": False,
+        "source_health_affecting": False,
+    }
+    assert error.metadata[SOURCE_ERROR_POLICY_METADATA_KEY] == {
+        "source_health_affecting": False,
+        "workflow_blocking": False,
+        "operator_action_required": False,
+    }
+
+
+def test_source_dispatcher_returns_formal_metadata_for_unsupported_source_type() -> None:
+    source = SourceDefinition(
+        source_id="paper-index",
+        name="Paper Index",
+        source_type=SourceType.PAPER_INDEX,
+        url="https://papers.example/index",
+    )
+
+    items, errors, result = _dispatcher(source).fetch_source(
+        source,
+        request={"topic": "AI policy"},
+        fetch_request=SourceFetchRequest(
+            request_id="source-fetch-1",
+            source_id=source.source_id,
+            source_type=source.source_type,
+        ),
+        profile="live",
+        limit=1,
+    )
+
+    assert items == []
+    assert result is None
+    assert len(errors) == 1
+    error = errors[0]
+    assert error.error_type == "unsupported_source_type"
+    assert error.metadata["phase"] == "fetch"
+    assert error.metadata["retryable"] is False
+    assert error.metadata["source_health_affecting"] is False
+    assert error.metadata["workflow_blocking"] is False
+    assert error.metadata[SOURCE_ERROR_RUNTIME_METADATA_KEY] == {
+        "phase": "fetch",
+        "retryable": False,
+        "source_health_affecting": False,
+    }
+    assert error.metadata[SOURCE_ERROR_POLICY_METADATA_KEY] == {
+        "source_health_affecting": False,
+        "workflow_blocking": False,
+        "operator_action_required": False,
+    }
+
+
 def _dispatcher(
     source: SourceDefinition,
     *,
     arxiv_connector=None,
     devto_connector=None,
+    feed_connector=None,
     github_connector=None,
     hackernews_connector=None,
     manual_connector=None,
@@ -300,7 +390,7 @@ def _dispatcher(
     unused_connector = _UnusedConnector()
     return SourceDispatcher(
         source_registry=SourceRegistry([source]),
-        feed_connector=unused_connector,
+        feed_connector=feed_connector or unused_connector,
         html_connector=unused_connector,
         manual_connector=manual_connector or unused_connector,
         arxiv_connector=arxiv_connector or unused_connector,
@@ -423,6 +513,27 @@ class _RecordingStackOverflowConnector:
             }
         )
         return [], []
+
+
+class _PolicyConnector:
+    def __init__(self, *, allowed_domains) -> None:
+        self.fetch_policy = _FetchPolicy(allowed_domains=allowed_domains)
+
+    def fetch(self, *args, **kwargs):
+        raise AssertionError("disallowed source should be rejected before connector fetch")
+
+
+class _FetchPolicy:
+    def __init__(self, *, allowed_domains) -> None:
+        self.timeout_seconds = 15.0
+        self.max_bytes = 1_000_000
+        self.max_redirects = 3
+        self.user_agent = "news-intelligence-system"
+        self.respect_robots = True
+        self.rate_limit_per_domain_per_minute = None
+        self.allowed_domains = allowed_domains
+        self.retry_times = 2
+        self.retry_on_status_codes = (429, 500, 502, 503, 504)
 
 
 class _UnusedConnector:
