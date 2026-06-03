@@ -30,6 +30,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_recollectio
 )
 from business.boards.cross_board.workflows.daily_intelligence.report_finalization_outputs import (
     build_blocked_report_outputs,
+    build_invalid_editor_review_decision,
     build_invalid_report_draft,
     build_invalid_report_draft_decision,
     build_publish_report_outputs,
@@ -67,6 +68,10 @@ _DECISION_ALIASES = {
 }
 
 
+class EditorDecisionNormalizationError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class DailyReportFinalizationInput:
     request: Any
@@ -89,7 +94,6 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
     """Assemble agentic Daily report outputs without depending on workflow state."""
 
     request = payload.request
-    editor_decision = normalize_editor_decision(payload.editor_review)
     verification_result = _to_plain_dict(payload.verification_result)
     citation_check_result = _to_plain_dict(payload.citation_check_result)
     support_matrix = _to_plain_dict(payload.support_matrix)
@@ -114,6 +118,32 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
             report_draft=build_invalid_report_draft(request, reason=str(exc)),
             evidence_bundle=evidence_bundle,
             editor_decision=build_invalid_report_draft_decision(str(exc)),
+            verification_result=verification_result,
+            citation_check_result=citation_check_result,
+            support_matrix=support_matrix,
+            verified_findings=verified_findings,
+            quality_events=quality_events,
+            agent_feedback=agent_feedback,
+            source_recollection_quality=source_recollection_quality,
+            route=BLOCKED_ROUTE,
+            rewrite_attempts=0,
+            human_review_required=False,
+        )
+
+    try:
+        editor_decision = normalize_editor_decision(payload.editor_review)
+    except EditorDecisionNormalizationError as exc:
+        quality_events.append(
+            quality_event(
+                "finalize_report_invalid_editor_review",
+                reason=str(exc),
+            )
+        )
+        return build_blocked_report_outputs(
+            request=request,
+            report_draft=report_draft,
+            evidence_bundle=evidence_bundle,
+            editor_decision=build_invalid_editor_review_decision(str(exc)),
             verification_result=verification_result,
             citation_check_result=citation_check_result,
             support_matrix=support_matrix,
@@ -669,5 +699,7 @@ def _normalize_decision(value: Any) -> str:
     decision = _DECISION_ALIASES.get(normalized)
     if decision is None:
         allowed = ", ".join(sorted(set(_DECISION_ALIASES.values())))
-        raise ValueError(f"unsupported editor decision: {value!r}; expected one of {allowed}")
+        raise EditorDecisionNormalizationError(
+            f"unsupported editor decision: {value!r}; expected one of {allowed}"
+        )
     return decision

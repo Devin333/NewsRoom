@@ -217,6 +217,8 @@ agentic writer 输出归一化阶段的 evidence lookup 由 `grounded_writer_evi
 
 finalization 阶段的 report quality summary、quality gate metrics、quality result 和 human review request 由 `report_quality_outputs.py` 构建。`FinalReport`、`BlockedReport`、markdown、命名空间 alias、agent feedback metadata 和补源质量摘要投影由 `report_finalization_outputs.py` 构建。`report_finalization.py` 负责选择发布/阻断/重写/人工审核路线，并把这些输出 builder 组合进最终返回值。
 
+finalization 输入归一化失败属于业务质量结果，不应冒泡为 system error。无效 report draft 和无效 editor review decision 必须由 `report_finalization.py` 转换为 blocked report、quality result、quality gate metrics 和 `finalize_report_invalid_*` 事件。
+
 后续新增 finalization 规则时，应优先扩展 `DailyReportFinalizationInput` 或拆分 report finalization 子服务，不要把业务决策重新写回 workflow step。
 
 ## Daily Agent Tool 边界

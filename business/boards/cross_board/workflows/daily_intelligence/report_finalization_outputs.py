@@ -199,6 +199,16 @@ def build_invalid_report_draft_decision(reason: str) -> dict[str, Any]:
     }
 
 
+def build_invalid_editor_review_decision(reason: str) -> dict[str, Any]:
+    return {
+        "decision": "blocked",
+        "quality_score": 0.0,
+        "reasons": [f"invalid editor review decision: {reason}"],
+        "rewrite_instructions": [],
+        "raw": {},
+    }
+
+
 def request_title(request: Any) -> str:
     topic = _field_value(request, "topic")
     if topic:

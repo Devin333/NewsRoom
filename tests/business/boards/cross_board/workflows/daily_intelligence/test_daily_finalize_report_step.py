@@ -434,6 +434,31 @@ def test_finalize_report_invalid_report_draft_blocks_without_system_error() -> N
     assert "final_report" not in output
 
 
+def test_finalize_report_invalid_editor_review_blocks_without_system_error() -> None:
+    output = finalize_report(
+        _buffer(
+            editor_review={
+                "decision": "ship_it",
+                "quality_score": 0.5,
+                "reasons": ["unsupported decision value"],
+                "rewrite_instructions": [],
+            },
+            social_evidence=True,
+        )
+    )
+
+    assert output["quality_result"]["passed"] is False
+    assert output["quality_result"]["route"] == "blocked"
+    assert output["quality_gate_metrics"]["blocked"] is True
+    assert output["blocked_report"].metadata["quality_route"] == "blocked"
+    assert any(
+        "invalid editor review decision" in reason
+        for reason in output["blocked_report"].reasons
+    )
+    assert output["quality_events"][0].event_type == "finalize_report_invalid_editor_review"
+    assert "final_report" not in output
+
+
 def test_finalize_report_rewrite_required_with_invalid_edited_draft_blocks() -> None:
     output = finalize_report(
         _buffer(
