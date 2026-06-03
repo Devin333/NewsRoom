@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_adapter import (
     fetch_with_registered_connector,
 )
+from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
+from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
 from business.foundation.models.source import (
     SourceDefinition,
     SourceFetchRequest,
@@ -54,6 +56,51 @@ def test_registered_protocol_connector_projects_external_fetch_result() -> None:
     assert connector.parsed_fetch_result is fetch_result
 
 
+def test_registered_protocol_connector_projects_formal_fetch_error_metadata() -> None:
+    source = SourceDefinition(
+        source_id="feed",
+        name="Feed",
+        source_type=SourceType.RSS,
+        url="https://example.com/feed.xml",
+    )
+    registry = SourceRegistry([source], connectors={SourceType.RSS: _FailedFetchResultConnector()})
+    fetch_request = SourceFetchRequest(
+        request_id="fetch-1",
+        source_id=source.source_id,
+        source_type=source.source_type,
+        url=source.url,
+    )
+
+    items, errors, fetch_result = fetch_with_registered_connector(
+        registry,
+        source,
+        request={"topic": "AI policy"},
+        fetch_request=fetch_request,
+        profile="live",
+    )
+
+    assert items == []
+    assert fetch_result is not None
+    assert fetch_result.success is False
+    assert len(errors) == 1
+    error = errors[0]
+    assert error.error_type == "fetch_timeout"
+    assert error.metadata["phase"] == "fetch"
+    assert error.metadata["request_id"] == "fetch-1"
+    assert error.metadata["connector_name"] == "_FailedFetchResultConnector"
+    assert error.metadata[SOURCE_ERROR_RUNTIME_METADATA_KEY] == {
+        "phase": "fetch",
+        "retryable": True,
+        "source_health_affecting": True,
+        "request_id": "fetch-1",
+    }
+    assert error.metadata[SOURCE_ERROR_POLICY_METADATA_KEY] == {
+        "source_health_affecting": True,
+        "workflow_blocking": False,
+        "operator_action_required": False,
+    }
+
+
 @dataclass(frozen=True)
 class _ExternalFetchResult:
     request_id: str
@@ -88,4 +135,18 @@ class _ExternalFetchResultConnector:
 
     def parse(self, source, fetch_result, context):
         self.parsed_fetch_result = fetch_result
+        return []
+
+
+class _FailedFetchResultConnector:
+    def fetch(self, source, request, context):
+        return SourceFetchResult(
+            request_id=request.request_id,
+            source_id=source.source_id,
+            success=False,
+            error_type="fetch_timeout",
+            error_message="upstream timed out",
+        )
+
+    def parse(self, source, fetch_result, context):
         return []

@@ -168,11 +168,19 @@ def _connector_errors(
             error_type=fetch_result.error_type,
             error_message=fetch_result.error_message or fetch_result.error_type,
             url=source.url,
-            metadata={
-                "phase": "fetch",
-                "request_id": fetch_request.request_id,
-                "connector_name": connector.display_name,
-            },
+            metadata=source_error_metadata(
+                SourceErrorMetadataInput(
+                    phase="fetch",
+                    retryable=True,
+                    source_health_affecting=True,
+                    workflow_blocking=False,
+                    request_id=fetch_request.request_id,
+                    extra={
+                        "request_id": fetch_request.request_id,
+                        "connector_name": connector.display_name,
+                    },
+                )
+            ),
         )
     ]
 
