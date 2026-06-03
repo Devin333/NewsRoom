@@ -26,13 +26,16 @@ from business.boards.cross_board.workflows.daily_intelligence.source_connector_o
 from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 from business.boards.cross_board.workflows.daily_intelligence.source_event_recorder import SourceEventRecorder
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
-    SourceErrorRuntimeMetadata,
     elapsed_ms,
     final_source_fetch_result,
     skipped_source_fetch_result,
     source_fetch_request,
     source_fetch_request_id,
     with_error_request_id,
+)
+from business.boards.cross_board.workflows.daily_intelligence.source_error_handling import (
+    SourceFetchErrorHandlingContext,
+    SourceFetchErrorHandlingService,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_health_flow import SourceHealthFlow
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection_execution import (
@@ -138,6 +141,7 @@ class DailySourceRecollectionExecutor:
         source_health_updates = list(previous_health_updates)
         source_events = list(previous_source_events)
         event_recorder = SourceEventRecorder(source_events)
+        error_handling_service = SourceFetchErrorHandlingService()
         health_flow = SourceHealthFlow(
             health_manager=self.source_health_manager,
             events=event_recorder,
@@ -275,29 +279,17 @@ class DailySourceRecollectionExecutor:
                             error_type=errors[0].error_type,
                             error_count=len(errors),
                             fetch_latency_ms=fetch_latency_ms,
-                    )
-                    for error in errors:
-                        error_runtime_metadata = SourceErrorRuntimeMetadata.from_error(error)
-                        event_recorder.fetch_failed(
-                            source,
-                            error=error,
-                            retryable=error_runtime_metadata.retryable,
-                            source_health_affecting=error_runtime_metadata.source_health_affecting,
-                            fetch_latency_ms=fetch_latency_ms,
                         )
-                        if error_runtime_metadata.phase == "parse":
-                            event_recorder.parse_failed(
-                                source,
-                                error=error,
-                                retryable=error_runtime_metadata.retryable,
-                            )
-                        metrics.record_error(error)
-                        if error_runtime_metadata.source_health_affecting:
-                            health_flow.record_failure(
-                                source,
-                                error,
-                                fetch_latency_ms=fetch_latency_ms,
-                            )
+                    error_handling_service.handle_errors(
+                        errors,
+                        SourceFetchErrorHandlingContext(
+                            source=source,
+                            fetch_latency_ms=fetch_latency_ms,
+                            event_recorder=event_recorder,
+                            health_flow=health_flow,
+                            metrics=metrics,
+                        ),
+                    )
             task_results.append(
                 DailySourceRecollectionExecutionTaskResult(
                     task_id=task.task_id,
