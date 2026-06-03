@@ -101,6 +101,8 @@ agentic daily workflow 的 artifact 投影由 `agentic_artifact_projection.py` �
 
 source recollection 的 manifest 摘要由 `source_recollection_artifact_projection.py` 承载，只消费 `source_recollection_execution_report` / `sources.recollection_execution_report` 和 `source_recollection_quality_assessment` / `sources.recollection_quality_assessment` 的正式字段。artifact publisher 只负责写对应 JSON artifact，并把投影后的 `source_recollection` summary 写入 manifest；不得从 `source_events`、raw item metadata 或 ad hoc dict 分支反推补源质量。
 
+quality manifest 摘要由 `quality_artifact_projection.py` 承载，只消费 `report_quality_summary` / `quality.report_summary`、`quality_events` / `quality.events`、`quality_result` / `quality.result` 和显式 `quality_route` / `quality.route`。artifact publisher 只负责写 quality JSON artifact，并把投影后的 manifest fields 合并进 manifest；不得在 publisher 中重新维护质量分数、事件计数、路由或决策规则。
+
 ## Workflow Buffer Collection 规则
 
 workflow step 从 buffer 读取 list/tuple 类型集合时，应把读取值视为借用值，不能原地修改。

@@ -14,6 +14,9 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     daily_output_contains as _output_contains,
     daily_output_value as _output_value,
 )
+from business.boards.cross_board.workflows.daily_intelligence.quality_artifact_projection import (
+    quality_manifest_fields,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection_artifact_projection import (
     source_recollection_manifest_summary,
 )
@@ -148,7 +151,7 @@ class DailyIntelligenceArtifactPublisher:
                 },
             )
         )
-        _update_quality_manifest_fields(context.manifest, output)
+        context.manifest.update(quality_manifest_fields(output))
         return refs
 
     def _publish_agentic_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
@@ -385,26 +388,6 @@ def _artifact_ref(
     )
 
 
-def _update_quality_manifest_fields(manifest: dict[str, Any], output: dict[str, Any]) -> None:
-    if _output_contains(output, "report_quality_summary"):
-        summary = _output_value(output, "report_quality_summary")
-        if hasattr(summary, "quality_score"):
-            manifest["quality_score"] = summary.quality_score
-        elif isinstance(summary, dict):
-            manifest["quality_score"] = summary.get("quality_score")
-    if _output_contains(output, "quality_events"):
-        manifest["quality_event_count"] = len(_output_value(output, "quality_events"))
-    quality_result = _output_value(output, "quality_result")
-    route = _field_value(quality_result, "route")
-    if route is None:
-        route = _output_value(output, "quality_route")
-    if route is not None:
-        manifest["quality_route"] = route
-    decision = _field_value(quality_result, "decision")
-    if decision is not None:
-        manifest["quality_decision"] = decision
-
-
 def _evidence_source_map(evidence_bundle: Any) -> dict[str, list[str]] | None:
     if isinstance(evidence_bundle, dict):
         source_map = evidence_bundle.get("source_map")
@@ -421,13 +404,6 @@ def _field_value(value: Any, field_name: str) -> Any:
     if isinstance(value, dict):
         return value.get(field_name)
     return None
-
-
-def _int_value(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _is_daily_workflow_id(workflow_id: str) -> bool:
