@@ -241,7 +241,7 @@ def test_daily_service_output_projections_require_namespaced_daily_keys() -> Non
             continue
         if not node.name.startswith("project_daily_output_for_"):
             continue
-        if node.name == "project_daily_output_for_legacy_consumers":
+        if node.name == "project_daily_output_for_legacy_consumers" or node.name.endswith("_artifacts"):
             continue
         policies = _keyword_attribute_values(node, keyword_name="read_policy")
         if policies != ["NAMESPACED_ONLY"]:

@@ -121,6 +121,15 @@ def project_daily_output_for_agent_validation(output: Mapping[str, Any]) -> dict
     )
 
 
+def project_daily_output_for_quality_artifacts(output: Mapping[str, Any]) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_QUALITY_ARTIFACT_OUTPUT_KEYS,
+        include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+    )
+
+
 def apply_daily_public_output_aliases(
     output: MutableMapping[str, Any],
 ) -> MutableMapping[str, Any]:
@@ -265,6 +274,13 @@ DAILY_AGENT_VALIDATION_OUTPUT_KEYS = (
     "final_report",
 )
 
+DAILY_QUALITY_ARTIFACT_OUTPUT_KEYS = (
+    "report_quality_summary",
+    "quality_events",
+    "quality_result",
+    "quality_route",
+)
+
 DAILY_PUBLIC_OUTPUT_ALIAS_KEYS = (
     "final_report",
     "blocked_report",
@@ -295,6 +311,7 @@ __all__ = [
     "DAILY_PUBLIC_OUTPUT_ALIAS_KEYS",
     "DAILY_RUN_INSPECTION_OUTPUT_KEYS",
     "DAILY_INTERFACE_METADATA_OUTPUT_KEYS",
+    "DAILY_QUALITY_ARTIFACT_OUTPUT_KEYS",
     "DailyOutputProjectionReadPolicy",
     "apply_daily_board_attachment_result",
     "apply_daily_public_output_aliases",
@@ -307,5 +324,6 @@ __all__ = [
     "project_daily_output_for_memory_ingestion",
     "project_daily_output_for_persistence",
     "project_daily_output_for_legacy_consumers",
+    "project_daily_output_for_quality_artifacts",
     "project_daily_output_for_run_inspection",
 ]

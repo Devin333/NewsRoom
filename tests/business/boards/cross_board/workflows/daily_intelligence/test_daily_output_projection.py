@@ -12,6 +12,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     project_daily_output_for_memory_ingestion,
     project_daily_output_for_persistence,
     project_daily_output_for_legacy_consumers,
+    project_daily_output_for_quality_artifacts,
     project_daily_output_for_run_inspection,
 )
 
@@ -240,6 +241,21 @@ def test_agent_validation_projection_requires_namespaced_daily_outputs() -> None
     projected = project_daily_output_for_agent_validation(output)
 
     assert projected == {}
+
+
+def test_project_daily_output_for_quality_artifacts_keeps_legacy_fallback() -> None:
+    output = {
+        "quality_result": {"decision": "legacy"},
+        "quality.result": {"decision": "pass"},
+        "quality_route": "human_review",
+    }
+
+    projected = project_daily_output_for_quality_artifacts(output)
+
+    assert projected == {
+        "quality_result": {"decision": "pass"},
+        "quality_route": "human_review",
+    }
 
 
 def test_ensure_legacy_daily_output_aliases_mutates_output_for_service_consumers() -> None:

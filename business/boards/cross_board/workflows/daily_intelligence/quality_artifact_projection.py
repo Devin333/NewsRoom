@@ -4,28 +4,28 @@ from collections.abc import Mapping
 from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    daily_output_contains,
-    daily_output_value,
+    project_daily_output_for_quality_artifacts,
 )
 
 
 def quality_manifest_fields(output: Mapping[str, Any]) -> dict[str, Any]:
     fields: dict[str, Any] = {}
+    quality_output = project_daily_output_for_quality_artifacts(output)
 
-    if daily_output_contains(output, "report_quality_summary"):
-        summary = daily_output_value(output, "report_quality_summary")
+    if "report_quality_summary" in quality_output:
+        summary = quality_output["report_quality_summary"]
         if hasattr(summary, "quality_score"):
             fields["quality_score"] = summary.quality_score
         elif isinstance(summary, Mapping):
             fields["quality_score"] = summary.get("quality_score")
 
-    if daily_output_contains(output, "quality_events"):
-        fields["quality_event_count"] = len(daily_output_value(output, "quality_events"))
+    if "quality_events" in quality_output:
+        fields["quality_event_count"] = len(quality_output["quality_events"])
 
-    quality_result = daily_output_value(output, "quality_result")
+    quality_result = quality_output.get("quality_result")
     route = _field_value(quality_result, "route")
     if route is None:
-        route = daily_output_value(output, "quality_route")
+        route = quality_output.get("quality_route")
     if route is not None:
         fields["quality_route"] = route
 

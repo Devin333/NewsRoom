@@ -35,7 +35,7 @@ def test_quality_manifest_fields_projects_namespaced_quality_outputs() -> None:
     }
 
 
-def test_quality_manifest_fields_uses_legacy_route_fallback() -> None:
+def test_quality_manifest_fields_uses_quality_artifact_projection_fallback() -> None:
     fields = quality_manifest_fields(
         {
             "quality_result": {"decision": "blocked"},
