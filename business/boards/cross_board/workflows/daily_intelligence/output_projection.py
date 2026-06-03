@@ -201,7 +201,7 @@ def apply_daily_public_output_aliases(
 def ensure_legacy_daily_output_aliases(
     output: MutableMapping[str, Any],
     *,
-    keys: Iterable[str] | None = None,
+    keys: Iterable[str],
 ) -> MutableMapping[str, Any]:
     for legacy_key in _legacy_projection_keys(keys):
         if daily_output_contains(output, legacy_key):
