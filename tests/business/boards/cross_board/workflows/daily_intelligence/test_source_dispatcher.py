@@ -47,7 +47,50 @@ def test_source_dispatcher_passes_reddit_runtime_options() -> None:
     ]
 
 
-def _dispatcher(source: SourceDefinition, *, reddit_connector) -> SourceDispatcher:
+def test_source_dispatcher_passes_hackernews_runtime_options() -> None:
+    source = SourceDefinition(
+        source_id="hackernews",
+        name="Hacker News",
+        source_type=SourceType.HACKERNEWS,
+        url="https://hacker-news.firebaseio.com/v0",
+        metadata={"story_list": "newstories"},
+    )
+    connector = _RecordingHackerNewsConnector()
+
+    items, errors, result = _dispatcher(source, hackernews_connector=connector).fetch_source(
+        source,
+        request={"topic": "AI policy"},
+        fetch_request=SourceFetchRequest(
+            request_id="source-fetch-1",
+            source_id=source.source_id,
+            source_type=source.source_type,
+        ),
+        profile="live",
+        limit=1,
+        connector_options=SourceConnectorRuntimeOptions.from_source(
+            source,
+            request={"topic": "AI policy"},
+        ),
+    )
+
+    assert items == []
+    assert errors == []
+    assert result is None
+    assert connector.calls == [
+        {
+            "source_id": "hackernews",
+            "story_list": "newstories",
+            "limit": 1,
+        }
+    ]
+
+
+def _dispatcher(
+    source: SourceDefinition,
+    *,
+    hackernews_connector=None,
+    reddit_connector=None,
+) -> SourceDispatcher:
     unused_connector = _UnusedConnector()
     return SourceDispatcher(
         source_registry=SourceRegistry([source]),
@@ -56,8 +99,8 @@ def _dispatcher(source: SourceDefinition, *, reddit_connector) -> SourceDispatch
         manual_connector=unused_connector,
         arxiv_connector=unused_connector,
         github_connector=unused_connector,
-        hackernews_connector=unused_connector,
-        reddit_connector=reddit_connector,
+        hackernews_connector=hackernews_connector or unused_connector,
+        reddit_connector=reddit_connector or unused_connector,
         lobsters_connector=unused_connector,
         stackoverflow_connector=unused_connector,
         devto_connector=unused_connector,
@@ -75,6 +118,21 @@ class _RecordingRedditConnector:
                 "source_id": source.source_id,
                 "subreddit": subreddit,
                 "listing": listing,
+                "limit": limit,
+            }
+        )
+        return [], []
+
+
+class _RecordingHackerNewsConnector:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def fetch(self, source, *, story_list, limit):
+        self.calls.append(
+            {
+                "source_id": source.source_id,
+                "story_list": story_list,
                 "limit": limit,
             }
         )

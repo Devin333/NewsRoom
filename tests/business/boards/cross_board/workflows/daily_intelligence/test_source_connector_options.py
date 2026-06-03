@@ -97,6 +97,20 @@ def test_connector_options_project_reddit_runtime_options() -> None:
     assert options.listing == "new"
 
 
+def test_connector_options_project_hackernews_story_list() -> None:
+    source = _source(
+        source_type=SourceType.HACKERNEWS,
+        metadata={"story_list": "newstories"},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "ignored"},
+    )
+
+    assert options.story_list == "newstories"
+
+
 def test_source_fetch_request_consumes_connector_options_for_arxiv_query() -> None:
     source = _source(
         source_type=SourceType.ARXIV,

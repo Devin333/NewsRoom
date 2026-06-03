@@ -65,6 +65,29 @@ def test_hackernews_connector_fetches_story_list_and_items() -> None:
     ]
 
 
+def test_hackernews_connector_fetch_accepts_explicit_runtime_options() -> None:
+    captured = []
+
+    def fetch_text(url: str) -> str:
+        captured.append(url)
+        if url.endswith("/newstories.json"):
+            return "[123]"
+        return HACKERNEWS_ITEM
+
+    items, errors = HackerNewsConnector(fetch_text=fetch_text).fetch(
+        _source(metadata={}),
+        story_list="newstories",
+        limit=1,
+    )
+
+    assert errors == []
+    assert len(items) == 1
+    assert captured == [
+        build_hackernews_story_list_url(HACKERNEWS_API_URL, "newstories"),
+        build_hackernews_item_url(HACKERNEWS_API_URL, 123),
+    ]
+
+
 def test_hackernews_connector_returns_invalid_story_list_error() -> None:
     items, errors = HackerNewsConnector(fetch_text=lambda url: "[123]").fetch(
         _source(story_list="badstories"),
@@ -118,7 +141,13 @@ def test_hackernews_connector_default_fetch_rejects_unsupported_content_type(mon
     assert errors[0].metadata["content_type"] == "text/html"
 
 
-def _source(*, story_list: str = "topstories", respect_robots: bool = True) -> SourceDefinition:
+def _source(
+    *,
+    story_list: str = "topstories",
+    respect_robots: bool = True,
+    metadata: dict[str, object] | None = None,
+) -> SourceDefinition:
+    source_metadata = metadata if metadata is not None else {"story_list": story_list}
     return SourceDefinition(
         source_id="hackernews",
         name="Hacker News",
@@ -129,5 +158,5 @@ def _source(*, story_list: str = "topstories", respect_robots: bool = True) -> S
         respect_robots=respect_robots,
         topics=["ai", "technology"],
         language="en",
-        metadata={"story_list": story_list},
+        metadata=source_metadata,
     )

@@ -253,10 +253,14 @@ def parse_hackernews_story_ids(content: str, *, limit: int | None = None) -> lis
 def _story_list_from_source(source: SourceDefinition, *, story_list: str | None) -> str:
     if story_list and story_list.strip():
         return _ensure_story_list(story_list.strip())
-    metadata_story_list = source.metadata.get("story_list")
-    if isinstance(metadata_story_list, str) and metadata_story_list.strip():
-        return _ensure_story_list(metadata_story_list.strip())
+    legacy_story_list = _legacy_hackernews_option(source, "story_list")
+    if legacy_story_list:
+        return _ensure_story_list(legacy_story_list)
     return "topstories"
+
+
+def _legacy_hackernews_option(source: SourceDefinition, key: str) -> str | None:
+    return _optional_text(source.metadata.get(key))
 
 
 def _ensure_story_list(story_list: str) -> str:
