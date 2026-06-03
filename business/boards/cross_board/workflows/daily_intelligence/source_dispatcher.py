@@ -30,6 +30,9 @@ from business.boards.cross_board.workflows.daily_intelligence.source_connector_a
     registered_connector_for_source,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_names import source_connector_name
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_options import (
+    SourceConnectorRuntimeOptions,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_ports import (
     DailyArxivSourceConnector,
     DailyDevToSourceConnector,
@@ -47,7 +50,14 @@ from business.boards.cross_board.workflows.daily_intelligence.source_official_bl
 
 
 FetchHandler = Callable[
-    [SourceDefinition, dict[str, Any], SourceFetchRequest, str, int],
+    [
+        SourceDefinition,
+        dict[str, Any],
+        SourceFetchRequest,
+        str,
+        int,
+        SourceConnectorRuntimeOptions,
+    ],
     tuple[list[Any], list[SourceError], SourceFetchResult | None],
 ]
 
@@ -111,6 +121,7 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions | None = None,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         fetch_policy = self.fetch_policy_for_source(source)
         allowlist_error = _source_domain_allowlist_error(source, fetch_policy)
@@ -129,7 +140,8 @@ class SourceDispatcher:
 
         handler = self._fetch_handlers.get(_source_type(source))
         if handler is not None:
-            return handler(source, request, fetch_request, profile, limit)
+            options = connector_options or SourceConnectorRuntimeOptions.from_source(source, request=request)
+            return handler(source, request, fetch_request, profile, limit, options)
 
         return self._unsupported_source_type(source)
 
@@ -140,6 +152,7 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         return _connector_result(self.feed_connector.fetch(_infra_source(source), limit=limit))
 
@@ -150,6 +163,7 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         items, errors = fetch_official_blog(
             feed_connector=self.feed_connector,
@@ -166,6 +180,7 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         return _connector_result(self.html_connector.fetch(_infra_source(source), limit=limit))
 
@@ -176,6 +191,7 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
         return _connector_result(self.manual_connector.fetch(_infra_source(source), limit=limit))
 
@@ -186,9 +202,15 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        query = str(source.metadata.get("query") or request["topic"])
-        return _connector_result(self.arxiv_connector.fetch(_infra_source(source), query=query, limit=limit))
+        return _connector_result(
+            self.arxiv_connector.fetch(
+                _infra_source(source),
+                query=connector_options.query,
+                limit=limit,
+            )
+        )
 
     def _fetch_github(
         self,
@@ -197,13 +219,12 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        repository = source.metadata.get("repository")
-        query = source.metadata.get("query") or request.get("topic")
         return _connector_result(self.github_connector.fetch(
             _infra_source(source),
-            repository=str(repository) if repository is not None else None,
-            query=str(query) if query is not None else None,
+            repository=connector_options.repository,
+            query=connector_options.query,
             limit=limit,
         ))
 
@@ -214,11 +235,11 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        story_list = source.metadata.get("story_list")
         return _connector_result(self.hackernews_connector.fetch(
             _infra_source(source),
-            story_list=str(story_list) if story_list is not None else None,
+            story_list=connector_options.story_list,
             limit=limit,
         ))
 
@@ -229,13 +250,12 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        subreddit = source.metadata.get("subreddit")
-        listing = source.metadata.get("listing")
         return _connector_result(self.reddit_connector.fetch(
             _infra_source(source),
-            subreddit=str(subreddit) if subreddit is not None else None,
-            listing=str(listing) if listing is not None else None,
+            subreddit=connector_options.subreddit,
+            listing=connector_options.listing,
             limit=limit,
         ))
 
@@ -246,11 +266,11 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        tag = source.metadata.get("tag")
         return _connector_result(self.lobsters_connector.fetch(
             _infra_source(source),
-            tag=str(tag) if tag is not None else None,
+            tag=connector_options.tag,
             limit=limit,
         ))
 
@@ -261,13 +281,12 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        tag = source.metadata.get("tagged") or source.metadata.get("tag")
-        site = source.metadata.get("site")
         return _connector_result(self.stackoverflow_connector.fetch(
             _infra_source(source),
-            tag=str(tag) if tag is not None else None,
-            site=str(site) if site is not None else None,
+            tag=connector_options.tag,
+            site=connector_options.site,
             limit=limit,
         ))
 
@@ -278,11 +297,11 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        tag = source.metadata.get("tag")
         return _connector_result(self.devto_connector.fetch(
             _infra_source(source),
-            tag=str(tag) if tag is not None else None,
+            tag=connector_options.tag,
             limit=limit,
         ))
 
@@ -293,11 +312,11 @@ class SourceDispatcher:
         fetch_request: SourceFetchRequest,
         profile: str,
         limit: int,
+        connector_options: SourceConnectorRuntimeOptions,
     ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-        tag = source.metadata.get("tag")
         return _connector_result(self.medium_connector.fetch(
             _infra_source(source),
-            tag=str(tag) if tag is not None else None,
+            tag=connector_options.tag,
             limit=limit,
         ))
 

@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+from typing import Any
+
+from business.foundation import PrimitiveModel
+from business.foundation.models.source import SourceDefinition, SourceType
+
+
+class SourceConnectorRuntimeOptions(PrimitiveModel):
+    schema_version: str = "business.cross_board.daily_source_connector.options.v1"
+    source_id: str
+    source_type: SourceType
+    request_topic: str | None = None
+    query: str | None = None
+    repository: str | None = None
+    story_list: str | None = None
+    subreddit: str | None = None
+    listing: str | None = None
+    tag: str | None = None
+    site: str | None = None
+
+    @classmethod
+    def from_source(
+        cls,
+        source: SourceDefinition,
+        *,
+        request: dict[str, Any],
+    ) -> "SourceConnectorRuntimeOptions":
+        metadata = dict(source.metadata or {})
+        request_topic = _optional_text(request.get("topic"))
+        source_type = SourceType(source.source_type)
+        query = _connector_query(source_type, metadata=metadata, request_topic=request_topic)
+        return cls(
+            source_id=source.source_id,
+            source_type=source_type,
+            request_topic=request_topic,
+            query=query,
+            repository=_optional_text(metadata.get("repository")),
+            story_list=_optional_text(metadata.get("story_list")),
+            subreddit=_optional_text(metadata.get("subreddit")),
+            listing=_optional_text(metadata.get("listing")),
+            tag=_connector_tag(source_type, metadata=metadata),
+            site=_optional_text(metadata.get("site")),
+        )
+
+
+def _connector_query(
+    source_type: SourceType,
+    *,
+    metadata: dict[str, Any],
+    request_topic: str | None,
+) -> str | None:
+    metadata_query = _optional_text(metadata.get("query"))
+    if source_type in {SourceType.ARXIV, SourceType.GITHUB}:
+        return metadata_query or request_topic
+    return metadata_query
+
+
+def _connector_tag(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:
+    if source_type == SourceType.STACKOVERFLOW:
+        return _optional_text(metadata.get("tagged")) or _optional_text(metadata.get("tag"))
+    return _optional_text(metadata.get("tag"))
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+__all__ = ["SourceConnectorRuntimeOptions"]

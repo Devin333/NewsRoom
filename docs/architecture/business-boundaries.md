@@ -57,6 +57,8 @@ fetch policy 的 `allowed_domains` 是 live source URL 的边界。加载 source
 
 daily intelligence runtime 直接从 `business.layers.signal.source_config` 加载默认 source registry 和 fetch policy；`daily_intelligence/source_config.py` 只保留 `ensure_live_source_registry()` 这类 workflow-local live gate，不再作为默认配置 loader 的 legacy adapter。
 
+daily source connector 的运行参数由 `SourceConnectorRuntimeOptions` 统一投影：`query`、`repository`、`story_list`、`subreddit`、`listing`、`tag` 和 `site` 等 dispatcher 消费的 connector-specific 字段只允许在该边界从 `SourceDefinition.metadata` / request topic 读取。`DailySourceCollector` 和 `DailySourceRecollectionExecutor` 创建该 options view 后传给 fetch request 构造与 `SourceDispatcher`；dispatcher 的 `_fetch_*` handler 只消费正式 options 字段，不再散落读取 legacy metadata key。
+
 ## Source Processing 边界
 
 `business.layers.signal.source_processing` 承载 source 归一化、去重、质量评分、排序、freshness、traceability 和 governance 报告构建。daily workflow step 只负责 buffer read/write、错误兜底和调用这些 layer service，不直接重新实现评分、追踪或报告规则。
@@ -240,6 +242,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `ProductizedBoardOutputBundle.report_summary` / `report_summary` buffer key：承载报告摘要，订阅服务必须优先消费该正式字段，不得从 board output metadata 反推摘要。
 - `DailySourceRecollectionExecutionReport`：承载补源执行 task 状态、selected sources、fetch request/result、raw item 与 error 计数，并通过 `source_recollection_execution_report` / `sources.recollection_execution_report` 传递。
 - `DailySourceRecollectionQualityAssessment`：承载补源质量阈值、decision、route 和 recommended_action，并通过 `source_recollection_quality_assessment` / `sources.recollection_quality_assessment` 传递。
+- `SourceConnectorRuntimeOptions`：承载 daily source connector 运行参数，集中投影 connector-specific legacy metadata 与 request topic；source collection / recollection / dispatcher / fetch request 只消费该正式 view。
 
 新代码应优先读取正式字段，例如 `BoardRunResult.board_output` 和 `productized_run`，不要从 `metadata` 反向推断内部状态。
 `BoardRunApplicationResult` 是 board run 组装阶段的正式 application result model；

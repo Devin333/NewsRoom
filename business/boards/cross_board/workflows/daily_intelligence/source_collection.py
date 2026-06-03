@@ -21,6 +21,9 @@ from business.boards.cross_board.workflows.daily_intelligence.source_collection_
 from business.boards.cross_board.workflows.daily_intelligence.source_config import ensure_live_source_registry
 from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 from business.boards.cross_board.workflows.daily_intelligence.source_event_recorder import SourceEventRecorder
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_options import (
+    SourceConnectorRuntimeOptions,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
     SourceErrorRuntimeMetadata,
     elapsed_ms,
@@ -85,6 +88,7 @@ class DailySourceCollector:
             if remaining == 0:
                 break
             request_id = source_fetch_request_id(source_fetch_requests, source)
+            connector_options = SourceConnectorRuntimeOptions.from_source(source, request=request)
             fetch_request = source_fetch_request(
                 source,
                 request_id=request_id,
@@ -93,6 +97,7 @@ class DailySourceCollector:
                 profile=profile,
                 fetch_policy=self.source_dispatcher.fetch_policy_for_source(source),
                 connector_name=self.source_dispatcher.connector_name_for_source(source),
+                connector_options=connector_options,
             )
             source_fetch_requests.append(fetch_request)
             skip_decision = health_flow.decide_fetch(source)
@@ -121,6 +126,7 @@ class DailySourceCollector:
                 fetch_request=fetch_request,
                 profile=profile,
                 limit=remaining,
+                connector_options=connector_options,
             )
             errors = with_error_request_id(errors, request_id)
             fetch_latency_ms = elapsed_ms(latency_start)

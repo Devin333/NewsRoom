@@ -20,6 +20,9 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
 from business.boards.cross_board.workflows.daily_intelligence.source_collection_output import (
     build_source_collection_output,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_options import (
+    SourceConnectorRuntimeOptions,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_dispatcher import SourceDispatcher
 from business.boards.cross_board.workflows.daily_intelligence.source_event_recorder import SourceEventRecorder
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
@@ -167,14 +170,20 @@ class DailySourceRecollectionExecutor:
                 if remaining <= 0:
                     break
                 request_id = source_fetch_request_id(source_fetch_requests, source)
+                recollection_request = {**request, "topic": task.query}
+                connector_options = SourceConnectorRuntimeOptions.from_source(
+                    source,
+                    request=recollection_request,
+                )
                 fetch_request = source_fetch_request(
                     source,
                     request_id=request_id,
-                    request={**request, "topic": task.query},
+                    request=recollection_request,
                     limit=remaining,
                     profile=profile,
                     fetch_policy=self.source_dispatcher.fetch_policy_for_source(source),
                     connector_name=self.source_dispatcher.connector_name_for_source(source),
+                    connector_options=connector_options,
                 )
                 fetch_request = self.artifact_projector.with_fetch_request(fetch_request, plan, task)
                 source_fetch_requests.append(fetch_request)
@@ -206,10 +215,11 @@ class DailySourceRecollectionExecutor:
                 latency_start = perf_counter()
                 items, errors, connector_fetch_result = self.source_dispatcher.fetch_source(
                     source,
-                    request={**request, "topic": task.query},
+                    request=recollection_request,
                     fetch_request=fetch_request,
                     profile=profile,
                     limit=remaining,
+                    connector_options=connector_options,
                 )
                 errors = with_error_request_id(errors, request_id)
                 items = [

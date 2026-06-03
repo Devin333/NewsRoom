@@ -16,6 +16,9 @@ from business.foundation.models.source import (
     SourceReliability,
     SourceType,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_connector_options import (
+    SourceConnectorRuntimeOptions,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_names import source_connector_name
 
 
@@ -168,11 +171,13 @@ def source_fetch_request(
     profile: str,
     fetch_policy: SourceFetchPolicy | None = None,
     connector_name: str | None = None,
+    connector_options: SourceConnectorRuntimeOptions | None = None,
 ) -> SourceFetchRequest:
     query = None
     source_type = SourceType(source.source_type)
     if source_type == SourceType.ARXIV:
-        query = str(source.metadata.get("query") or request.get("topic") or "")
+        options = connector_options or SourceConnectorRuntimeOptions.from_source(source, request=request)
+        query = options.query or ""
     user_agent = fetch_policy.user_agent if fetch_policy is not None else source.user_agent
     return SourceFetchRequest(
         request_id=request_id,
