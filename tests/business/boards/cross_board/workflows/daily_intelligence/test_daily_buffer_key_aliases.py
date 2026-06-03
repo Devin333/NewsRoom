@@ -3,6 +3,9 @@ from __future__ import annotations
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     agent_loop_output_aliases,
     canonicalize_namespaced_input_aliases,
+    legacy_key_for,
+    namespaced_first_key_candidates,
+    namespaced_key_for,
     with_namespaced_aliases,
     with_namespaced_primary_read_keys,
     with_namespaced_read_keys,
@@ -79,6 +82,23 @@ def test_canonicalize_namespaced_input_aliases_prefers_namespaced_values() -> No
         "source_errors": [],
         "unmapped": "kept",
     }
+
+
+def test_namespaced_alias_lookup_helpers_project_registered_keys() -> None:
+    assert namespaced_key_for("evidence_bundle") == "evidence.bundle"
+    assert legacy_key_for("evidence.bundle") == "evidence_bundle"
+    assert legacy_key_for("evidence_bundle") == "evidence_bundle"
+    assert legacy_key_for("unmapped") is None
+
+    assert namespaced_first_key_candidates("evidence_bundle") == [
+        "evidence.bundle",
+        "evidence_bundle",
+    ]
+    assert namespaced_first_key_candidates("evidence.bundle") == [
+        "evidence.bundle",
+        "evidence_bundle",
+    ]
+    assert namespaced_first_key_candidates("unmapped") == ["unmapped"]
 
 
 def test_with_namespaced_write_keys_declares_aliases_after_legacy_keys() -> None:

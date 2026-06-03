@@ -6,6 +6,9 @@ from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
     DAILY_BUFFER_ALIASES,
+    legacy_key_for,
+    namespaced_first_key_candidates,
+    namespaced_key_for,
 )
 
 
@@ -116,18 +119,17 @@ def _output_key_candidates(
     *,
     read_policy: DailyOutputProjectionReadPolicy,
 ) -> list[str]:
-    namespaced_key = DAILY_BUFFER_ALIASES.get(key)
+    namespaced_key = namespaced_key_for(key)
     if namespaced_key is not None:
         if read_policy == DailyOutputProjectionReadPolicy.NAMESPACED_ONLY:
             return [namespaced_key]
-        return [namespaced_key, key]
+        return namespaced_first_key_candidates(key)
 
-    legacy_key = _DAILY_OUTPUT_LEGACY_ALIASES.get(key)
+    legacy_key = legacy_key_for(key)
     if legacy_key is not None:
         if read_policy == DailyOutputProjectionReadPolicy.NAMESPACED_ONLY:
             return [key]
-        return [key, legacy_key]
-    return [key]
+    return namespaced_first_key_candidates(key)
 
 
 def _legacy_projection_keys(keys: Iterable[str] | None) -> list[str]:
@@ -136,7 +138,7 @@ def _legacy_projection_keys(keys: Iterable[str] | None) -> list[str]:
 
     result: list[str] = []
     for key in keys:
-        legacy_key = key if key in DAILY_BUFFER_ALIASES else _DAILY_OUTPUT_LEGACY_ALIASES.get(key)
+        legacy_key = legacy_key_for(key)
         if legacy_key is not None and legacy_key not in result:
             result.append(legacy_key)
     return result
@@ -176,15 +178,7 @@ def _daily_output_value(
 
 
 def _canonical_projection_key(key: str) -> str:
-    if key in DAILY_BUFFER_ALIASES:
-        return key
-    return _DAILY_OUTPUT_LEGACY_ALIASES.get(key, key)
-
-
-_DAILY_OUTPUT_LEGACY_ALIASES = {
-    namespaced_key: legacy_key
-    for legacy_key, namespaced_key in DAILY_BUFFER_ALIASES.items()
-}
+    return legacy_key_for(key) or key
 
 DAILY_PERSISTENCE_OUTPUT_KEYS = (
     "source_pipeline_metrics",

@@ -116,6 +116,8 @@ daily intelligence workflow 进入兼容迁移期：业务函数继续写旧 key
 
 旧 key 仍是现有公开兼容面；新代码应优先声明并消费命名空间 key。后续迁移完成前，禁止在单个 step 中临时发明未登记的 dotted key。
 
+legacy / namespaced 的候选 key、反向 legacy lookup 和输入 canonicalization 统一由 `buffer_key_aliases` 暴露；`workflow_buffer_access`、`output_projection` 和 agent loop integration 只能调用这些 helper，不应各自维护 reverse alias 表。
+
 `finalize_report` 已进入命名空间优先读取阶段：workflow spec 通过 `with_namespaced_primary_read_keys()` 先声明 `report.*`、`quality.*`、`evidence.*`、`agent.feedback.*` 和 `sources.recollection_quality_assessment`，再保留旧 key 作为兼容入口；workflow adapter 仍通过统一 buffer access helper 读取，不直接关心 legacy / namespaced 分支。人工审核恢复也通过正式 `human_review_resume_route` / `quality.human_review_resume_route` 传递，finalization usecase 只消费该 route，不从 approval metadata 反推发布、阻断或重写决策。
 
 source/evidence 主链路也已进入命名空间优先读取阶段：`require_sources`、`normalize_sources`、`deduplicate_sources`、`rank_sources` 和 `build_evidence` 的 workflow spec 先声明 `sources.*` / `evidence.*` 输入，再保留旧 key 作为兼容入口。对应业务函数仍通过 `workflow_buffer_access.read_buffer_value()` 读取 canonical 业务 key，由 helper 负责 namespaced-first fallback；step 不应自行写 legacy / namespaced 分支判断。

@@ -4,7 +4,7 @@ from typing import Any
 
 from framework.workflow import DataBufferReadPermissionError, StepScopedDataBufferView
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
-    DAILY_BUFFER_ALIASES,
+    namespaced_first_key_candidates,
 )
 
 
@@ -73,17 +73,4 @@ def append_buffer_items(buffer: StepScopedDataBufferView, key: str, *items: Any)
 
 
 def _read_key_candidates(key: str) -> list[str]:
-    namespaced_key = DAILY_BUFFER_ALIASES.get(key)
-    if namespaced_key is not None:
-        return [namespaced_key, key]
-
-    legacy_key = _DAILY_BUFFER_LEGACY_ALIASES.get(key)
-    if legacy_key is not None:
-        return [key, legacy_key]
-    return [key]
-
-
-_DAILY_BUFFER_LEGACY_ALIASES = {
-    namespaced_key: legacy_key
-    for legacy_key, namespaced_key in DAILY_BUFFER_ALIASES.items()
-}
+    return namespaced_first_key_candidates(key)

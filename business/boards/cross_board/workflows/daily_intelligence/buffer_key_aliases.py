@@ -143,6 +143,31 @@ def canonicalize_namespaced_input_aliases(
     return values
 
 
+def namespaced_key_for(key: str, aliases: dict[str, str] | None = None) -> str | None:
+    return (aliases or DAILY_BUFFER_ALIASES).get(key)
+
+
+def legacy_key_for(key: str, aliases: dict[str, str] | None = None) -> str | None:
+    alias_map = aliases or DAILY_BUFFER_ALIASES
+    if key in alias_map:
+        return key
+    return _legacy_aliases(alias_map).get(key)
+
+
+def namespaced_first_key_candidates(
+    key: str,
+    aliases: dict[str, str] | None = None,
+) -> list[str]:
+    alias_map = aliases or DAILY_BUFFER_ALIASES
+    namespaced_key = alias_map.get(key)
+    if namespaced_key is not None:
+        return [namespaced_key, key]
+    legacy_key = _legacy_aliases(alias_map).get(key)
+    if legacy_key is not None:
+        return [key, legacy_key]
+    return [key]
+
+
 def with_namespaced_write_keys(keys: list[str]) -> list[str]:
     values = list(keys)
     for legacy_key in keys:
@@ -173,4 +198,11 @@ def agent_loop_output_aliases(label: str) -> dict[str, str]:
         legacy_key: namespaced_key
         for legacy_key, namespaced_key in AGENT_LOOP_TELEMETRY_BUFFER_ALIASES.items()
         if legacy_key.startswith(prefix)
+    }
+
+
+def _legacy_aliases(alias_map: dict[str, str]) -> dict[str, str]:
+    return {
+        namespaced_key: legacy_key
+        for legacy_key, namespaced_key in alias_map.items()
     }
