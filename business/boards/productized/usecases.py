@@ -174,12 +174,14 @@ class ProductizedBoardUseCases:
         board_run_result: Any,
         board_output: dict[str, Any],
         quality_summary: dict[str, Any],
+        report_summary: str | None = None,
     ) -> dict[str, Any]:
         return self.subscription_service.build(
             request=request,
             board_run_result=board_run_result,
             board_output=board_output,
             quality_summary=quality_summary,
+            report_summary=report_summary,
         )
 
     def build_feedback_events(self, *, board_run_result: Any) -> dict[str, Any]:

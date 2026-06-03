@@ -212,6 +212,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `ProductizedRankingService` 委托 `BoardSignalRankingService` 排序 signals，并返回正式 `ranked_signals` step 输出。
 - `ProductizedBoardOutputBundleBuilder` 负责 artifact-facing metadata 合并，并生成 `ProductizedBoardOutputBundle`。
 - `ProductizedBoardOutputBundleBuilder` 不再把完整 `ProductizedRunState` 合并进 `BoardRunResult.metadata`；运行态通过 `ProductizedBoardOutputBundle.run_state` 和 workflow `productized_run` key 传递。
+- `ProductizedBoardOutputBundle.report_summary` 是 report-writing skill 输出摘要的正式投影，并通过 workflow `report_summary` key 传给订阅用例；旧 `board_output.metadata.report.summary` 只作兼容兜底。
 - `ProductizedRunStateMetadataProjector` 负责把 run state 投影成 artifact-facing 或历史兼容 metadata；`ProductizedRunState` 本身只作为正式运行态模型，旧 metadata 方法仅作薄兼容入口。
 - `ProductizedImprovementWorkflowService` 负责 recommendation、proposal、policy experiment application 和 report 输出协调。
 - `ProductizedImprovementMeasurementService` 负责 measurement snapshot 和 delta 计算，主算法消费 `ProductizedImprovementMeasurementInput`，其中 `deduplication_result` 是正式字段；productized workflow 必须优先调用 `measure_productized()`，旧 `board_run_result.metadata` 读取只保留在 legacy adapter / compatibility constructor 中。
@@ -230,6 +231,7 @@ selection、quality、references 等领域规则位于 `business/boards/domain/`
 - `BoardRunResult.report_payloads`：显式承载从 board output 提取的 report payload。
 - `BoardRunResult.metadata["board_output"]`：仅作为历史兼容字段保留。
 - `ProductizedRunState`：承载 skill traces、extracted entities、evidence refs/items、deduplication result、trend analysis 和 improvement context。
+- `ProductizedBoardOutputBundle.report_summary` / `report_summary` buffer key：承载报告摘要，订阅服务必须优先消费该正式字段，不得从 board output metadata 反推摘要。
 - `DailySourceRecollectionExecutionReport`：承载补源执行 task 状态、selected sources、fetch request/result、raw item 与 error 计数，并通过 `source_recollection_execution_report` / `sources.recollection_execution_report` 传递。
 - `DailySourceRecollectionQualityAssessment`：承载补源质量阈值、decision、route 和 recommended_action，并通过 `source_recollection_quality_assessment` / `sources.recollection_quality_assessment` 传递。
 

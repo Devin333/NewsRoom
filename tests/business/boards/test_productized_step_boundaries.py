@@ -30,5 +30,6 @@ def test_productized_workflow_declares_only_step_read_keys() -> None:
         "board_run_result",
         "board_output",
         "quality_summary",
+        "report_summary",
     ]
     assert read_keys_by_step["build_feedback_events"] == ["board_run_result"]

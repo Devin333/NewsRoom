@@ -101,6 +101,7 @@ class ProductizedBoardOutputBundleBuilder:
             cards=[card.to_dict() for card in result.cards],
             detail_pages=[page.to_dict() for page in result.detail_pages],
             insights=[insight.to_dict() for insight in result.insights],
+            report_summary=report_summary_payload(report_result.output),
             summary_md=report_result.output.get("markdown_report", summary_markdown(result)),
             skill_traces=skill_traces,
             run_state=run_state,
@@ -116,9 +117,29 @@ def board_output_payload(result: Any, run_state: ProductizedRunState) -> dict[st
     return board_output
 
 
+def report_summary_payload(report_output: dict[str, Any]) -> str:
+    summary = report_output.get("summary") if isinstance(report_output, dict) else None
+    if summary is not None and str(summary).strip():
+        return str(summary).strip()
+    markdown = report_output.get("markdown_report") if isinstance(report_output, dict) else None
+    return _summary_from_markdown(markdown)
+
+
+def _summary_from_markdown(markdown: Any) -> str:
+    if markdown is None:
+        return ""
+    for block in str(markdown).split("\n\n"):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        content_lines = [line for line in lines if not line.startswith("#")]
+        if content_lines:
+            return " ".join(content_lines).strip()
+    return ""
+
+
 __all__ = [
     "ProductizedBoardOutputBundleBuilder",
     "ProductizedBoardOutputService",
     "ProductizedReportWritingService",
     "board_output_payload",
+    "report_summary_payload",
 ]

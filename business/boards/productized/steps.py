@@ -105,6 +105,7 @@ class ProductizedBoardSteps:
             board_run_result=buffer.read("board_run_result"),
             board_output=buffer.read("board_output"),
             quality_summary=buffer.read("quality_summary"),
+            report_summary=buffer.read("report_summary"),
         )
 
     def build_feedback_events(self, buffer: Any) -> dict[str, Any]:

@@ -62,6 +62,7 @@ class ProductizedBoardOutputBundle:
     cards: list[dict[str, Any]]
     detail_pages: list[dict[str, Any]]
     insights: list[dict[str, Any]]
+    report_summary: str
     summary_md: str
     skill_traces: list[dict[str, Any]]
     run_state: ProductizedRunState
@@ -73,6 +74,7 @@ class ProductizedBoardOutputBundle:
             "cards": self.cards,
             "detail_pages": self.detail_pages,
             "insights": self.insights,
+            "report_summary": self.report_summary,
             "summary_md": self.summary_md,
             "skill_traces": self.skill_traces,
             "productized_run": self.run_state,

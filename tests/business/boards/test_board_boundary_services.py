@@ -235,6 +235,7 @@ def test_productized_board_output_bundle_keeps_step_outputs_explicit() -> None:
         cards=[{"card_id": "card-1"}],
         detail_pages=[],
         insights=[],
+        report_summary="Summary",
         summary_md="# Summary\n",
         skill_traces=[{"skill": "report-writing"}],
         run_state=state,
@@ -244,6 +245,7 @@ def test_productized_board_output_bundle_keeps_step_outputs_explicit() -> None:
 
     assert outputs["board_run_result"] is run_result
     assert outputs["productized_run"] is state
+    assert outputs["report_summary"] == "Summary"
     assert outputs["skill_traces"] == [{"skill": "report-writing"}]
 
 
@@ -279,7 +281,7 @@ def test_productized_classification_service_uses_selection_port() -> None:
 
 def test_productized_output_service_uses_run_result_port_and_board_name() -> None:
     class StubReportResult:
-        output = {"markdown_report": "# Stub\n"}
+        output = {"markdown_report": "# Stub\n", "summary": "Stub summary."}
 
         def to_dict(self):
             return {"skill_name": "report-writing", "status": "success"}
@@ -329,6 +331,7 @@ def test_productized_output_service_uses_run_result_port_and_board_name() -> Non
     )
 
     assert bundle.summary_md == "# Stub\n"
+    assert bundle.report_summary == "Stub summary."
     assert run_result_builder.calls == [{"signals": ["ranked-signal"], "context": context}]
     assert report_writer.calls[0]["board_name"] == "Port Board"
 
@@ -355,7 +358,7 @@ def test_productized_board_output_bundle_builder_centralizes_metadata_merge() ->
     )
     report_result = BusinessSkillResult(
         skill_name="report-writing",
-        output={"markdown_report": "# Report\n"},
+        output={"markdown_report": "# Report\n", "summary": "Report summary."},
         status="success",
     )
 
@@ -366,6 +369,7 @@ def test_productized_board_output_bundle_builder_centralizes_metadata_merge() ->
     )
 
     assert bundle.summary_md == "# Report\n"
+    assert bundle.report_summary == "Report summary."
     assert bundle.skill_traces[-1]["skill_name"] == "report-writing"
     assert "productized_run_state" not in bundle.board_run_result.metadata
     assert bundle.board_output["metadata"]["productized_run_state"]["run_id"] == "output-run"

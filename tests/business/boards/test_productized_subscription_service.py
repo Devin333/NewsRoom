@@ -33,6 +33,20 @@ def test_productized_subscription_service_builds_payload_and_delivery_plan() -> 
     assert payload["delivery_plan"]["priority"] == "high"
 
 
+def test_productized_subscription_service_prefers_formal_report_summary() -> None:
+    service = ProductizedSubscriptionService(board_type=BoardType.AI_NEWS)
+
+    result = service.build(
+        request={"run_id": "subscription-run", "topic": "Agent Memory"},
+        board_run_result=StubBoardRunResult(),
+        board_output={"metadata": {"report": {"summary": "Legacy metadata summary."}}},
+        quality_summary={"score": 0.91},
+        report_summary="Formal report summary.",
+    )
+
+    assert result["subscription_payload"]["summary"] == "Formal report summary."
+
+
 def test_productized_subscription_service_uses_board_summary_fallback() -> None:
     service = ProductizedSubscriptionService(board_type=BoardType.PROJECT_RADAR)
 
