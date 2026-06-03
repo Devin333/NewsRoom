@@ -24,6 +24,7 @@ def fetch_with_registered_connector(
     connector = registered_connector_for_source(source_registry, source)
     if connector is None:
         return None
+    connector_view = _RegisteredConnectorView.from_connector(connector)
     context = SourceFetchContext(
         profile=profile,
         topic=str(request.get("topic") or ""),
@@ -33,15 +34,15 @@ def fetch_with_registered_connector(
         },
     )
     try:
-        if _is_protocol_connector(connector):
+        if connector_view.is_protocol:
             return _invoke_protocol_connector(
-                connector,
+                connector_view,
                 source=source,
                 fetch_request=fetch_request,
                 context=context,
             )
         return _invoke_sync_connector(
-            connector,
+            connector_view,
             source=source,
             fetch_request=fetch_request,
             context=context,
@@ -58,23 +59,11 @@ def registered_connector_for_source(source_registry: SourceRegistry, source: Sou
 
 
 def connector_display_name(connector: Any) -> str:
-    wrapped_connector = getattr(connector, "connector", None)
-    if wrapped_connector is not None:
-        return type(wrapped_connector).__name__
-    return type(connector).__name__
-
-
-def _is_protocol_connector(connector: Any) -> bool:
-    fetch = getattr(connector, "fetch", None)
-    parse = getattr(connector, "parse", None)
-    if not callable(fetch) or not callable(parse):
-        return False
-    parameters = _callable_parameters(fetch)
-    return "request" in parameters and "context" in parameters
+    return _RegisteredConnectorView.from_connector(connector).display_name
 
 
 def _invoke_protocol_connector(
-    connector: Any,
+    connector: "_RegisteredConnectorView",
     *,
     source: SourceDefinition,
     fetch_request: SourceFetchRequest,
@@ -95,21 +84,19 @@ def _invoke_protocol_connector(
 
 
 def _invoke_sync_connector(
-    connector: Any,
+    connector: "_RegisteredConnectorView",
     *,
     source: SourceDefinition,
     fetch_request: SourceFetchRequest,
     context: SourceFetchContext,
 ) -> tuple[list[Any], list[SourceError], SourceFetchResult | None]:
-    fetch = getattr(connector, "fetch", None)
-    if not callable(fetch):
+    if connector.fetch is None:
         raise TypeError("registered source connector must expose a fetch method")
-    kwargs = _registered_fetch_kwargs(fetch, fetch_request=fetch_request, context=context)
-    result = _run_maybe_awaitable(fetch(source, **kwargs))
+    kwargs = _registered_fetch_kwargs(connector.fetch, fetch_request=fetch_request, context=context)
+    result = _run_maybe_awaitable(connector.fetch(source, **kwargs))
     fetch_result = _coerce_source_fetch_result_or_none(result)
     if fetch_result is not None:
-        parse = getattr(connector, "parse", None)
-        if not callable(parse):
+        if connector.parse is None:
             errors = _connector_errors(
                 connector,
                 source=source,
@@ -117,7 +104,7 @@ def _invoke_sync_connector(
                 fetch_result=fetch_result,
             )
             return [], errors, fetch_result
-        parsed_items = _run_maybe_awaitable(parse(source, fetch_result, context))
+        parsed_items = _run_maybe_awaitable(connector.parse(source, fetch_result, context))
         items = list(parsed_items or [])
         errors = _connector_errors(
             connector,
@@ -156,15 +143,14 @@ def _registered_fetch_kwargs(
 
 
 def _connector_errors(
-    connector: Any,
+    connector: "_RegisteredConnectorView",
     *,
     source: SourceDefinition,
     fetch_request: SourceFetchRequest,
     fetch_result: SourceFetchResult,
 ) -> list[SourceError]:
-    errors_for = getattr(connector, "errors_for", None)
-    if callable(errors_for):
-        errors = _run_maybe_awaitable(errors_for(fetch_request.request_id))
+    if connector.errors_for is not None:
+        errors = _run_maybe_awaitable(connector.errors_for(fetch_request.request_id))
         return normalize_source_errors(
             errors or [],
             context="registered source connector errors",
@@ -181,7 +167,7 @@ def _connector_errors(
             metadata={
                 "phase": "fetch",
                 "request_id": fetch_request.request_id,
-                "connector_name": connector_display_name(connector),
+                "connector_name": connector.display_name,
             },
         )
     ]
@@ -208,6 +194,46 @@ def _callable_parameters(value: Any) -> set[str]:
         return set(inspect.signature(value).parameters)
     except (TypeError, ValueError):
         return set()
+
+
+@dataclass(frozen=True)
+class _RegisteredConnectorView:
+    connector: Any
+    display_name: str
+    fetch: Any | None = None
+    parse: Any | None = None
+    errors_for: Any | None = None
+
+    @classmethod
+    def from_connector(cls, connector: Any) -> "_RegisteredConnectorView":
+        fetch = _callable_attr(connector, "fetch")
+        parse = _callable_attr(connector, "parse")
+        return cls(
+            connector=connector,
+            display_name=_connector_display_name(connector),
+            fetch=fetch,
+            parse=parse,
+            errors_for=_callable_attr(connector, "errors_for"),
+        )
+
+    @property
+    def is_protocol(self) -> bool:
+        if self.fetch is None or self.parse is None:
+            return False
+        parameters = _callable_parameters(self.fetch)
+        return "request" in parameters and "context" in parameters
+
+
+def _callable_attr(value: Any, name: str) -> Any | None:
+    candidate = getattr(value, name, None)
+    return candidate if callable(candidate) else None
+
+
+def _connector_display_name(connector: Any) -> str:
+    wrapped_connector = getattr(connector, "connector", None)
+    if wrapped_connector is not None:
+        return type(wrapped_connector).__name__
+    return type(connector).__name__
 
 
 def _coerce_source_fetch_result_or_none(value: Any) -> SourceFetchResult | None:
