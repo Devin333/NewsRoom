@@ -225,6 +225,7 @@ class SourceDispatcher:
             _infra_source(source),
             repository=connector_options.repository,
             query=connector_options.query,
+            mode=connector_options.github_mode,
             limit=limit,
         ))
 

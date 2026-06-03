@@ -248,35 +248,36 @@ class GithubConnector:
         *,
         repository: str | GithubRepository | None = None,
         query: str | None = None,
+        mode: str | None = None,
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
-        mode = _github_mode(source)
-        if mode == "releases":
+        resolved_mode = _github_mode(source, mode=mode)
+        if resolved_mode == "releases":
             return self.fetch_releases(source, repository=repository, limit=limit)
-        if mode == "commits":
+        if resolved_mode == "commits":
             return self.fetch_commits(source, repository=repository, limit=limit)
-        if mode == "issues":
+        if resolved_mode == "issues":
             return self.fetch_issues(source, repository=repository, limit=limit)
-        if mode in {"pull_requests", "pulls"}:
+        if resolved_mode in {"pull_requests", "pulls"}:
             return self.fetch_pull_requests(source, repository=repository, limit=limit)
-        if mode in {"security_advisories", "advisories"}:
+        if resolved_mode in {"security_advisories", "advisories"}:
             return self.fetch_security_advisories(source, repository=repository, limit=limit)
-        if mode in {"discussions", "discussion"}:
+        if resolved_mode in {"discussions", "discussion"}:
             return self.fetch_discussions(source, repository=repository, limit=limit)
-        if mode in {"repository_search", "trending", "stars"}:
-            search_query = query or source.metadata.get("query")
+        if resolved_mode in {"repository_search", "trending", "stars"}:
+            search_query = query or _legacy_github_query(source)
             return self.fetch_repository_search_items(
                 source,
                 query=str(search_query or ""),
                 limit=limit,
-                sort="stars" if mode in {"trending", "stars"} else None,
-                order="desc" if mode in {"trending", "stars"} else None,
+                sort="stars" if resolved_mode in {"trending", "stars"} else None,
+                order="desc" if resolved_mode in {"trending", "stars"} else None,
             )
         return [], [
             _source_error(
                 source,
                 "invalid_source_config",
-                f"unsupported github collection mode: {mode}",
+                f"unsupported github collection mode: {resolved_mode}",
                 metadata={
                     "phase": "fetch",
                     "retryable": False,
@@ -1313,8 +1314,17 @@ def _repository_from_source(
     raise ValueError("github repository must use owner/repo format")
 
 
-def _github_mode(source: SourceDefinition) -> str:
-    return str(source.metadata.get("github_mode") or source.metadata.get("mode") or "releases").strip().casefold()
+def _github_mode(source: SourceDefinition, *, mode: str | None = None) -> str:
+    return (
+        _optional_text(mode)
+        or _optional_text(source.metadata.get("github_mode"))
+        or _optional_text(source.metadata.get("mode"))
+        or "releases"
+    ).casefold()
+
+
+def _legacy_github_query(source: SourceDefinition) -> str | None:
+    return _optional_text(source.metadata.get("query"))
 
 
 def _source_error(

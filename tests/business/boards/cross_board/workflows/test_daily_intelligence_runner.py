@@ -2030,14 +2030,14 @@ class _FakeGithubModeConnector:
     def __init__(self) -> None:
         self.calls = []
 
-    def fetch(self, source, *, repository, query, limit):
+    def fetch(self, source, *, repository, query, mode, limit):
         self.calls.append(
             {
                 "source_id": source.source_id,
                 "repository": repository,
                 "query": query,
                 "limit": limit,
-                "mode": source.metadata.get("mode"),
+                "mode": mode,
             }
         )
         return [

@@ -13,6 +13,7 @@ class SourceConnectorRuntimeOptions(PrimitiveModel):
     request_topic: str | None = None
     query: str | None = None
     repository: str | None = None
+    github_mode: str | None = None
     story_list: str | None = None
     subreddit: str | None = None
     listing: str | None = None
@@ -36,6 +37,7 @@ class SourceConnectorRuntimeOptions(PrimitiveModel):
             request_topic=request_topic,
             query=query,
             repository=_optional_text(metadata.get("repository")),
+            github_mode=_connector_github_mode(source_type, metadata=metadata),
             story_list=_optional_text(metadata.get("story_list")),
             subreddit=_optional_text(metadata.get("subreddit")),
             listing=_optional_text(metadata.get("listing")),
@@ -60,6 +62,12 @@ def _connector_tag(source_type: SourceType, *, metadata: dict[str, Any]) -> str 
     if source_type == SourceType.STACKOVERFLOW:
         return _optional_text(metadata.get("tagged")) or _optional_text(metadata.get("tag"))
     return _optional_text(metadata.get("tag"))
+
+
+def _connector_github_mode(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:
+    if source_type != SourceType.GITHUB:
+        return None
+    return _optional_text(metadata.get("github_mode")) or _optional_text(metadata.get("mode"))
 
 
 def _optional_text(value: Any) -> str | None:

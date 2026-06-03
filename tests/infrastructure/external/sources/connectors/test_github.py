@@ -296,6 +296,33 @@ def test_github_connector_fetches_repository_search_items_for_trending_mode() ->
     assert items[0].metadata["stargazers_count"] == 123
 
 
+def test_github_connector_fetch_accepts_explicit_mode() -> None:
+    source = SourceDefinition(
+        source_id="github-explicit-mode",
+        name="GitHub Explicit Mode",
+        source_type="github",
+        url=GITHUB_API_URL,
+        reliability="high",
+        metadata={},
+    )
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return GITHUB_COMMITS
+
+    items, errors = GithubConnector(fetch_text=fetch_text).fetch(
+        source,
+        repository="owner/repo",
+        mode="commits",
+        limit=1,
+    )
+
+    assert errors == []
+    assert captured["url"] == f"{GITHUB_API_URL}/repos/owner/repo/commits?per_page=1"
+    assert items[0].metadata["github_surface"] == "commits"
+
+
 def test_github_connector_fetches_repository_metadata_without_search() -> None:
     captured = {}
 

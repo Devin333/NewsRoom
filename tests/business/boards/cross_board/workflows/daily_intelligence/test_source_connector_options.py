@@ -39,6 +39,34 @@ def test_connector_options_project_github_repository_and_topic_query() -> None:
     assert options.query == "AI policy"
 
 
+def test_connector_options_project_github_mode_as_runtime_option() -> None:
+    source = _source(
+        source_type=SourceType.GITHUB,
+        metadata={"repository": "owner/repo", "github_mode": "commits"},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "AI policy"},
+    )
+
+    assert options.github_mode == "commits"
+
+
+def test_connector_options_project_legacy_github_mode_key() -> None:
+    source = _source(
+        source_type=SourceType.GITHUB,
+        metadata={"repository": "owner/repo", "mode": "pull_requests"},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "AI policy"},
+    )
+
+    assert options.github_mode == "pull_requests"
+
+
 def test_connector_options_project_stackoverflow_tagged_before_tag() -> None:
     source = _source(
         source_type=SourceType.STACKOVERFLOW,
