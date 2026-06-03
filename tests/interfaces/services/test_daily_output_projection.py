@@ -3,8 +3,10 @@ from __future__ import annotations
 from interfaces.services.daily_output_projection import (
     apply_daily_run_board_attachment_result,
     apply_daily_run_public_output_aliases,
+    project_daily_run_agent_loop_metrics,
     project_daily_run_output_for_board_attachment,
     project_daily_run_output_for_memory_ingestion,
+    project_daily_run_output_for_persistence,
     project_daily_run_output_for_run_inspection,
 )
 
@@ -24,6 +26,37 @@ def test_project_daily_run_output_for_memory_ingestion_reads_namespaced_only_out
         "quality_result": {"decision": "pass"},
     }
     assert "final_report" not in output
+
+
+def test_project_daily_run_output_for_persistence_reads_record_input_keys() -> None:
+    output = {
+        "sources.pipeline_metrics": {"raw_items_count": 2},
+        "loop.metrics": {"llm_calls": 3},
+        "quality.report_summary": {"score": 0.9},
+        "quality.gate_metrics": {"attempts": 1},
+        "report.final": {"title": "Daily"},
+        "quality.result": {"decision": "pass"},
+        "quality.route": "published",
+        "sources.raw_items": [{"title": "Raw"}],
+        "evidence.bundle": {"items": []},
+        "evidence.verified_findings": {"accepted_claims": []},
+        "final_report": {"title": "legacy"},
+    }
+
+    projected = project_daily_run_output_for_persistence(output)
+
+    assert projected == {
+        "source_pipeline_metrics": {"raw_items_count": 2},
+        "agent_loop_metrics": {"llm_calls": 3},
+        "report_quality_summary": {"score": 0.9},
+        "quality_gate_metrics": {"attempts": 1},
+        "final_report": {"title": "Daily"},
+        "quality_result": {"decision": "pass"},
+        "quality_route": "published",
+        "raw_items": [{"title": "Raw"}],
+        "evidence_bundle": {"items": []},
+        "verified_findings": {"accepted_claims": []},
+    }
 
 
 def test_project_daily_run_output_for_board_attachment_reads_namespaced_only_output() -> None:
@@ -68,6 +101,17 @@ def test_project_daily_run_output_for_run_inspection_reads_quality_preview_keys(
         "candidate_claims": [{"claim_id": "claim-1"}],
         "verified_findings": {"accepted_claims": [{"claim_id": "claim-1"}]},
     }
+
+
+def test_project_daily_run_agent_loop_metrics_prefers_namespaced_metric_alias() -> None:
+    output = {
+        "agent_loop_metrics": {"llm_calls": 1},
+        "loop.metrics": {"llm_calls": 2, "tool_calls": 1},
+    }
+
+    metrics = project_daily_run_agent_loop_metrics(output)
+
+    assert metrics == {"llm_calls": 2, "tool_calls": 1}
 
 
 def test_apply_daily_run_board_attachment_result_merges_formal_result_keys() -> None:
