@@ -37,16 +37,18 @@ def project_daily_output_for_legacy_consumers(
 
 
 def project_daily_output_for_persistence(output: Mapping[str, Any]) -> dict[str, Any]:
-    return project_daily_output_for_legacy_consumers(
+    return _project_daily_output_for_keys(
         output,
-        keys=DAILY_PERSISTENCE_OUTPUT_KEYS,
+        DAILY_PERSISTENCE_OUTPUT_KEYS,
+        include_original=False,
     )
 
 
 def project_daily_output_for_board_attachment(output: Mapping[str, Any]) -> dict[str, Any]:
-    return project_daily_output_for_legacy_consumers(
+    return _project_daily_output_for_keys(
         output,
-        keys=DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS,
+        DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS,
+        include_original=False,
     )
 
 

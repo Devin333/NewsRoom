@@ -52,6 +52,7 @@ def test_project_daily_output_for_persistence_projects_only_record_input_keys() 
         "quality.result": {"decision": "pass"},
         "sources.raw_items": [{"title": "raw"}],
         "sources.ranked_items": [{"title": "ranked"}],
+        "unmapped_runtime_state": {"hidden": True},
     }
 
     projected = project_daily_output_for_persistence(output)
@@ -59,7 +60,9 @@ def test_project_daily_output_for_persistence_projects_only_record_input_keys() 
     assert projected["final_report"] == {"title": "namespaced"}
     assert projected["quality_result"] == {"decision": "pass"}
     assert projected["raw_items"] == [{"title": "raw"}]
+    assert "sources.ranked_items" not in projected
     assert "ranked_items" not in projected
+    assert "unmapped_runtime_state" not in projected
 
 
 def test_project_daily_output_for_board_attachment_projects_board_input_keys() -> None:
@@ -67,13 +70,16 @@ def test_project_daily_output_for_board_attachment_projects_board_input_keys() -
         "sources.ranked_items": [{"title": "ranked"}],
         "evidence.bundle": {"items": []},
         "quality.result": {"decision": "pass"},
+        "unmapped_runtime_state": {"hidden": True},
     }
 
     projected = project_daily_output_for_board_attachment(output)
 
     assert projected["ranked_items"] == [{"title": "ranked"}]
     assert projected["evidence_bundle"] == {"items": []}
+    assert "quality.result" not in projected
     assert "quality_result" not in projected
+    assert "unmapped_runtime_state" not in projected
 
 
 def test_project_daily_output_for_memory_ingestion_projects_only_memory_inputs() -> None:
