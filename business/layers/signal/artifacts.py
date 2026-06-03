@@ -54,108 +54,8 @@ class SourceArtifactWriter:
         request_refs_by_source_id: dict[str, list[SignalArtifactRef]] = {}
         response_refs_by_request_id: dict[str, SignalArtifactRef] = {}
         response_refs_by_source_id: dict[str, list[SignalArtifactRef]] = {}
-        parsed_items_by_source: dict[str, list[dict[str, Any]]] = {}
 
-        for raw_item in source_item_artifact_inputs(raw_items):
-            source_id = raw_item.source_id
-            object_id = raw_item.source_item_id
-            raw_content_entry, raw_content_ref = self._write_raw_content_artifact(
-                run_id,
-                raw_item=raw_item,
-                source_id=source_id,
-                object_id=object_id,
-            )
-            existing_raw_ref = raw_item.raw_artifact_ref
-            raw_ref = raw_content_ref or existing_raw_ref
-            existing_parse_ref = raw_item.parse_artifact_ref
-            path = f"sources/items/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-            parse_ref_payload = existing_parse_ref or _planned_artifact_ref(
-                run_id=run_id,
-                artifact_type="source_item",
-                source_id=source_id,
-                object_id=object_id,
-                path=path,
-                content_type="application/json",
-            )
-            item_payload = _source_item_payload(
-                raw_item,
-                source_id=source_id,
-                object_id=object_id,
-                raw_artifact_ref=raw_ref,
-                parse_artifact_ref=parse_ref_payload,
-            )
-            artifact_path = self._artifact_manager.write_json(
-                run_id,
-                path,
-                {
-                    "artifact_type": "source_item",
-                    "source_id": source_id,
-                    "source_item_id": object_id,
-                    "item": item_payload,
-                    "raw_artifact_ref": _to_json_safe(raw_ref) if raw_ref is not None else None,
-                    "parse_artifact_ref": _to_json_safe(parse_ref_payload),
-                },
-            )
-            artifact_ref = _artifact_ref(
-                run_id=run_id,
-                artifact_type="source_item",
-                source_id=source_id,
-                object_id=object_id,
-                path=path,
-                artifact_path=artifact_path,
-            )
-            entry = _entry_from_ref(
-                artifact_ref=artifact_ref,
-                source_id=source_id,
-                object_id=object_id,
-                artifact_path=artifact_path,
-            )
-            if raw_ref is not None:
-                entry["raw_artifact_ref"] = _to_json_safe(raw_ref)
-            entry["parse_artifact_ref"] = artifact_ref.to_dict()
-            entry.update(_raw_content_fingerprint(raw_item))
-            entries.append(entry)
-            parsed_items_by_source.setdefault(source_id, []).append(
-                _parsed_item_entry(
-                    item_payload,
-                    item_artifact_ref=artifact_ref,
-                    raw_artifact_ref=raw_ref,
-                )
-            )
-            if raw_content_entry is not None:
-                entries.append(raw_content_entry)
-
-        for source_id, parsed_items in sorted(parsed_items_by_source.items()):
-            path = f"sources/{_path_segment(source_id)}/parsed_items.json"
-            artifact_path = self._artifact_manager.write_json(
-                run_id,
-                path,
-                {
-                    "artifact_type": "source_parsed_items",
-                    "source_id": source_id,
-                    "item_count": len(parsed_items),
-                    "items": parsed_items,
-                },
-            )
-            artifact_ref = _artifact_ref(
-                run_id=run_id,
-                artifact_type="source_parsed_items",
-                source_id=source_id,
-                object_id="parsed_items",
-                path=path,
-                artifact_path=artifact_path,
-            )
-            entry = _entry_from_ref(
-                artifact_ref=artifact_ref,
-                source_id=source_id,
-                object_id="parsed_items",
-                artifact_path=artifact_path,
-            )
-            entry["item_count"] = len(parsed_items)
-            entry["item_artifact_refs"] = [
-                parsed_item["item_artifact_ref"] for parsed_item in parsed_items
-            ]
-            entries.append(entry)
+        entries.extend(_SourceItemArtifactWriter(self._artifact_manager).write_source_items(run_id, raw_items=raw_items))
 
         for fetch_request in source_fetch_request_artifact_inputs(source_fetch_requests):
             source_id = fetch_request.source_id
@@ -341,42 +241,6 @@ class SourceArtifactWriter:
         self._artifact_manager.write_json(run_id, "source_artifacts/index.json", source_artifacts)
         return source_artifacts
 
-    def _write_raw_content_artifact(
-        self,
-        run_id: str,
-        *,
-        raw_item: SourceItemArtifactInput,
-        source_id: str,
-        object_id: str,
-    ) -> tuple[dict[str, Any] | None, SignalArtifactRef | None]:
-        raw_content = raw_item.raw_content
-        if raw_content is None:
-            return None, None
-        path = f"sources/{_path_segment(source_id)}/{_path_segment(object_id)}/raw_content.bin"
-        redacted_content = _redact_string(str(raw_content)).encode("utf-8")
-        artifact_path = self._artifact_manager.write_bytes(
-            run_id,
-            path,
-            redacted_content,
-        )
-        artifact_ref = _artifact_ref(
-            run_id=run_id,
-            artifact_type="source_raw_content",
-            source_id=source_id,
-            object_id=object_id,
-            path=path,
-            artifact_path=artifact_path,
-            content_type="application/octet-stream",
-        )
-        entry = _entry_from_ref(
-            artifact_ref=artifact_ref,
-            source_id=source_id,
-            object_id=object_id,
-            artifact_path=artifact_path,
-        )
-        entry.update(_raw_content_fingerprint(raw_item))
-        return entry, artifact_ref
-
     def _write_response_headers_artifact(
         self,
         run_id: str,
@@ -419,6 +283,190 @@ class SourceArtifactWriter:
         entry["status_code"] = fetch_result.status_code
         entry["content_type"] = fetch_result.content_type
         return entry, artifact_ref
+
+
+class _SourceItemArtifactWriter:
+    def __init__(self, artifact_manager: ArtifactManager) -> None:
+        self._artifact_manager = artifact_manager
+
+    def write_source_items(
+        self,
+        run_id: str,
+        *,
+        raw_items: list[Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        parsed_items_by_source: dict[str, list[dict[str, Any]]] = {}
+
+        for raw_item in source_item_artifact_inputs(raw_items):
+            source_id = raw_item.source_id
+            object_id = raw_item.source_item_id
+            raw_content_entry, raw_content_ref = self._write_raw_content_artifact(
+                run_id,
+                raw_item=raw_item,
+                source_id=source_id,
+                object_id=object_id,
+            )
+            raw_ref = raw_content_ref or raw_item.raw_artifact_ref
+            parse_ref_payload = raw_item.parse_artifact_ref or _planned_artifact_ref(
+                run_id=run_id,
+                artifact_type="source_item",
+                source_id=source_id,
+                object_id=object_id,
+                path=f"sources/items/{_path_segment(source_id)}/{_path_segment(object_id)}.json",
+                content_type="application/json",
+            )
+            item_entry, parsed_item = self._write_source_item_artifact(
+                run_id,
+                raw_item=raw_item,
+                source_id=source_id,
+                object_id=object_id,
+                raw_artifact_ref=raw_ref,
+                parse_artifact_ref=parse_ref_payload,
+            )
+            entries.append(item_entry)
+            parsed_items_by_source.setdefault(source_id, []).append(parsed_item)
+            if raw_content_entry is not None:
+                entries.append(raw_content_entry)
+
+        for source_id, parsed_items in sorted(parsed_items_by_source.items()):
+            entries.append(
+                self._write_parsed_items_artifact(
+                    run_id,
+                    source_id=source_id,
+                    parsed_items=parsed_items,
+                )
+            )
+
+        return entries
+
+    def _write_source_item_artifact(
+        self,
+        run_id: str,
+        *,
+        raw_item: SourceItemArtifactInput,
+        source_id: str,
+        object_id: str,
+        raw_artifact_ref: Any,
+        parse_artifact_ref: Any,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        path = f"sources/items/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+        item_payload = _source_item_payload(
+            raw_item,
+            source_id=source_id,
+            object_id=object_id,
+            raw_artifact_ref=raw_artifact_ref,
+            parse_artifact_ref=parse_artifact_ref,
+        )
+        artifact_path = self._artifact_manager.write_json(
+            run_id,
+            path,
+            {
+                "artifact_type": "source_item",
+                "source_id": source_id,
+                "source_item_id": object_id,
+                "item": item_payload,
+                "raw_artifact_ref": _to_json_safe(raw_artifact_ref) if raw_artifact_ref is not None else None,
+                "parse_artifact_ref": _to_json_safe(parse_artifact_ref),
+            },
+        )
+        artifact_ref = _artifact_ref(
+            run_id=run_id,
+            artifact_type="source_item",
+            source_id=source_id,
+            object_id=object_id,
+            path=path,
+            artifact_path=artifact_path,
+        )
+        entry = _entry_from_ref(
+            artifact_ref=artifact_ref,
+            source_id=source_id,
+            object_id=object_id,
+            artifact_path=artifact_path,
+        )
+        if raw_artifact_ref is not None:
+            entry["raw_artifact_ref"] = _to_json_safe(raw_artifact_ref)
+        entry["parse_artifact_ref"] = artifact_ref.to_dict()
+        entry.update(_raw_content_fingerprint(raw_item))
+        return entry, _parsed_item_entry(
+            item_payload,
+            item_artifact_ref=artifact_ref,
+            raw_artifact_ref=raw_artifact_ref,
+        )
+
+    def _write_raw_content_artifact(
+        self,
+        run_id: str,
+        *,
+        raw_item: SourceItemArtifactInput,
+        source_id: str,
+        object_id: str,
+    ) -> tuple[dict[str, Any] | None, SignalArtifactRef | None]:
+        raw_content = raw_item.raw_content
+        if raw_content is None:
+            return None, None
+        path = f"sources/{_path_segment(source_id)}/{_path_segment(object_id)}/raw_content.bin"
+        redacted_content = _redact_string(str(raw_content)).encode("utf-8")
+        artifact_path = self._artifact_manager.write_bytes(
+            run_id,
+            path,
+            redacted_content,
+        )
+        artifact_ref = _artifact_ref(
+            run_id=run_id,
+            artifact_type="source_raw_content",
+            source_id=source_id,
+            object_id=object_id,
+            path=path,
+            artifact_path=artifact_path,
+            content_type="application/octet-stream",
+        )
+        entry = _entry_from_ref(
+            artifact_ref=artifact_ref,
+            source_id=source_id,
+            object_id=object_id,
+            artifact_path=artifact_path,
+        )
+        entry.update(_raw_content_fingerprint(raw_item))
+        return entry, artifact_ref
+
+    def _write_parsed_items_artifact(
+        self,
+        run_id: str,
+        *,
+        source_id: str,
+        parsed_items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        path = f"sources/{_path_segment(source_id)}/parsed_items.json"
+        artifact_path = self._artifact_manager.write_json(
+            run_id,
+            path,
+            {
+                "artifact_type": "source_parsed_items",
+                "source_id": source_id,
+                "item_count": len(parsed_items),
+                "items": parsed_items,
+            },
+        )
+        artifact_ref = _artifact_ref(
+            run_id=run_id,
+            artifact_type="source_parsed_items",
+            source_id=source_id,
+            object_id="parsed_items",
+            path=path,
+            artifact_path=artifact_path,
+        )
+        entry = _entry_from_ref(
+            artifact_ref=artifact_ref,
+            source_id=source_id,
+            object_id="parsed_items",
+            artifact_path=artifact_path,
+        )
+        entry["item_count"] = len(parsed_items)
+        entry["item_artifact_refs"] = [
+            parsed_item["item_artifact_ref"] for parsed_item in parsed_items
+        ]
+        return entry
 
 
 def _source_error_id(source_error: SourceError, index: int) -> str:
