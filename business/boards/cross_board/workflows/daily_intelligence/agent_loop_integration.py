@@ -9,10 +9,12 @@ from framework.agent import (
     OutputJudge,
     OutputValidationResult,
 )
-from business.foundation.models.source import Lineage
-from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
+from business.layers.relation.evidence.models import VerifiedFindings
 from business.layers.analysis.quality.citation_checker import CitationChecker
 from business.boards.cross_board.workflows.daily_intelligence.grounded_writer import normalize_daily_writer_output
+from business.boards.cross_board.workflows.daily_intelligence.agent_evidence_input_view import (
+    DailyAgentEvidenceInputView,
+)
 from business.boards.cross_board.workflows.daily_intelligence.agent_output_budget import (
     DAILY_AGENT_OUTPUT_BUDGET,
 )
@@ -110,15 +112,15 @@ class DailyEvidenceOutputValidator:
         agent: AgentSpec,
         inputs: dict[str, Any],
     ) -> list[str]:
-        evidence_bundle = _evidence_bundle_from_inputs(inputs)
-        if evidence_bundle is None:
+        evidence_view = DailyAgentEvidenceInputView.from_inputs(inputs)
+        if evidence_view is None:
             return []
         report = _report_from_output(output, agent.output_key)
         if report is None:
             return []
         result = CitationChecker().check(
             report,
-            evidence_bundle,
+            evidence_view.evidence_bundle,
             _verified_findings_from_inputs(inputs),
         )
         unsupported_claims = _stable_unsupported_claims(
@@ -138,7 +140,10 @@ class DailyEvidenceOutputValidator:
         output: Any,
         inputs: dict[str, Any],
     ) -> list[str]:
-        allowed_ids = _allowed_evidence_ids_from_inputs(inputs)
+        evidence_view = DailyAgentEvidenceInputView.from_inputs(inputs)
+        if evidence_view is None:
+            return []
+        allowed_ids = evidence_view.allowed_evidence_ids
         if not allowed_ids:
             return []
         referenced_ids = _collect_evidence_ids(output)
@@ -146,25 +151,6 @@ class DailyEvidenceOutputValidator:
             f"evidence id outside boundary: {evidence_id}"
             for evidence_id in sorted(referenced_ids - allowed_ids)
         ]
-
-
-def _evidence_bundle_from_inputs(inputs: dict[str, Any]) -> EvidenceBundle | None:
-    for key in ("evidence_bundle", "bundle"):
-        if key in inputs:
-            return _coerce_evidence_bundle(inputs[key])
-    request = inputs.get("request")
-    if isinstance(request, dict):
-        for key in ("evidence_bundle", "bundle"):
-            if key in request:
-                return _coerce_evidence_bundle(request[key])
-    return None
-
-
-def _allowed_evidence_ids_from_inputs(inputs: dict[str, Any]) -> set[str]:
-    bundle = _evidence_bundle_from_inputs(inputs)
-    if bundle is None:
-        return set()
-    return {item.evidence_id for item in bundle.items if item.evidence_id}
 
 
 def _collect_evidence_ids(value: Any, *, max_depth: int = 50) -> set[str]:
@@ -211,50 +197,6 @@ def _verified_findings_from_inputs(inputs: dict[str, Any]) -> VerifiedFindings |
     return None
 
 
-def _coerce_evidence_bundle(value: Any) -> EvidenceBundle | None:
-    if isinstance(value, EvidenceBundle):
-        return value
-    if not isinstance(value, dict):
-        return None
-    raw_items = value.get("items")
-    if not isinstance(raw_items, list):
-        return None
-    items = []
-    for item in raw_items:
-        if isinstance(item, EvidenceItem):
-            items.append(item)
-        elif isinstance(item, dict):
-            items.append(
-                EvidenceItem(
-                    evidence_id=str(item.get("evidence_id") or ""),
-                    source_url=str(item.get("source_url") or ""),
-                    source_urls=[str(url) for url in item.get("source_urls", []) if url],
-                    title=str(item.get("title") or ""),
-                    summary=str(item.get("summary") or item.get("title") or ""),
-                    confidence=_float(item.get("confidence"), default=0.0),
-                    source_id=str(item.get("source_id") or ""),
-                    source_item_id=_optional_str(item.get("source_item_id")),
-                    source_item_ids=[str(value) for value in item.get("source_item_ids", []) if value],
-                    source_reliability=_optional_str(item.get("source_reliability")),
-                    publishable=bool(item.get("publishable", True)),
-                    evidence_type=str(item.get("evidence_type") or "other"),
-                    lineage=_lineage_from_payload(item.get("lineage")),
-                    metadata=dict(item.get("metadata") or {}),
-                )
-            )
-    return EvidenceBundle(
-        bundle_id=str(value.get("bundle_id") or "agent_input"),
-        items=items,
-        source_map={
-            str(key): [str(source_item) for source_item in source_items]
-            for key, source_items in dict(value.get("source_map") or {}).items()
-        },
-        missing_information=[str(item) for item in value.get("missing_information", [])],
-        coverage_notes=[str(item) for item in value.get("coverage_notes", [])],
-        metadata=dict(value.get("metadata") or {}),
-    )
-
-
 def _report_from_output(output: dict[str, Any], output_key: str) -> dict[str, Any] | None:
     candidates = [
         output.get(output_key),
@@ -293,31 +235,6 @@ def _has_report_section_fields(section: dict[str, Any]) -> bool:
             "claim_grounding",
         )
     )
-
-
-def _float(value: Any, *, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _lineage_from_payload(value: Any) -> Lineage | None:
-    if isinstance(value, Lineage):
-        return value
-    if isinstance(value, dict):
-        try:
-            return Lineage.from_dict(value)
-        except Exception:
-            return None
-    return None
 
 
 def _stable_unsupported_claims(report: dict[str, Any], claims: list[str]) -> list[str]:
