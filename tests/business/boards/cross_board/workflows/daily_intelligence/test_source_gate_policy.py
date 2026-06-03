@@ -7,6 +7,9 @@ from business.boards.cross_board.workflows.daily_intelligence.source_gate_policy
     contains_social_media_evidence,
     is_social_media_evidence,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_evidence import (
+    SourceGateEvidenceBundleView,
+)
 
 
 @dataclass(frozen=True)
@@ -53,3 +56,17 @@ def test_non_social_evidence_does_not_match_social_gate() -> None:
 
     assert is_social_media_evidence(item) is False
     assert contains_social_media_evidence(_EvidenceBundle(items=[item])) is False
+
+
+def test_source_gate_evidence_bundle_view_exposes_item_count() -> None:
+    bundle = SourceGateEvidenceBundleView.from_bundle(
+        _EvidenceBundle(
+            items=[
+                _EvidenceItem(source_url="https://example.com/one"),
+                _EvidenceItem(source_url="https://example.com/two"),
+            ]
+        )
+    )
+
+    assert bundle.item_count == 2
+    assert SourceGateEvidenceBundleView.from_bundle(bundle) is bundle

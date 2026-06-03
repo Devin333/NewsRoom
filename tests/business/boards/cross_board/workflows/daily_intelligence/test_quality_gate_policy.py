@@ -7,6 +7,9 @@ from business.boards.cross_board.workflows.daily_intelligence.quality_gate_polic
     should_bypass_strict_quality_gate,
     strict_quality_gate_required,
 )
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_evidence import (
+    SourceGateEvidenceBundleView,
+)
 from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem
 
 
@@ -49,6 +52,15 @@ def test_non_social_pass_decision_does_not_emit_bypass() -> None:
     assert assessment.should_bypass is False
     assert assessment.strict_gate_required is False
     assert assessment.event_metadata["bypass_reason"] is None
+
+
+def test_bypass_assessment_consumes_source_gate_evidence_view() -> None:
+    evidence_bundle = SourceGateEvidenceBundleView.from_bundle(_evidence_bundle(source_type="rss"))
+
+    assessment = assess_non_social_media_bypass(evidence_bundle, "blocked")
+
+    assert assessment.should_bypass is True
+    assert assessment.event_metadata["evidence_items_count"] == evidence_bundle.item_count
 
 
 def _evidence_bundle(*, source_type: str) -> EvidenceBundle:

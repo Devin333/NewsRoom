@@ -10,12 +10,18 @@ class SourceGateEvidenceBundleView:
 
     @classmethod
     def from_bundle(cls, evidence_bundle: Any) -> "SourceGateEvidenceBundleView":
+        if isinstance(evidence_bundle, cls):
+            return evidence_bundle
         return cls(
             items=tuple(
                 SourceGateEvidenceItemView.from_item(item)
                 for item in getattr(evidence_bundle, "items", []) or []
             )
         )
+
+    @property
+    def item_count(self) -> int:
+        return len(self.items)
 
 
 @dataclass(frozen=True)
@@ -26,6 +32,8 @@ class SourceGateEvidenceItemView:
 
     @classmethod
     def from_item(cls, item: Any) -> "SourceGateEvidenceItemView":
+        if isinstance(item, cls):
+            return item
         metadata = dict(getattr(item, "metadata", {}) or {})
         return cls(
             source_type=str(metadata.get("source_type") or "").strip().casefold(),

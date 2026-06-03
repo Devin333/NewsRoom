@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from business.layers.analysis.quality import EditorDecision, EditorReview
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_evidence import (
+    SourceGateEvidenceBundleView,
+)
 from business.boards.cross_board.workflows.daily_intelligence.source_gate_policy import (
     contains_social_media_evidence,
 )
@@ -91,7 +94,7 @@ def _decision_value(decision: Any) -> str:
 
 
 def _evidence_items_count(evidence_bundle: Any) -> int:
-    return len(getattr(evidence_bundle, "items", []) or [])
+    return SourceGateEvidenceBundleView.from_bundle(evidence_bundle).item_count
 
 
 __all__ = [
