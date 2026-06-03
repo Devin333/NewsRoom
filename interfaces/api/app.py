@@ -41,7 +41,7 @@ from interfaces.env import load_root_env
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
-from interfaces.services.daily_interface_projection import project_run_output_for_interface
+from interfaces.services.run_report_projection import project_run_report_for_interface
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
@@ -343,13 +343,13 @@ def _mcp_service_factory(
 
 def _run_response_from_payload(payload: dict[str, Any]) -> RunResponse:
     run_status = str(payload.get("status") or "")
-    output = project_run_output_for_interface(payload)
+    report_projection = project_run_report_for_interface(payload)
     return RunResponse(
         run_id=payload.get("run_id"),
         status=_interface_status(run_status),
         run_status=run_status or None,
-        report_status=_report_status_from_run_output(output),
-        report_id=_report_id_from_run_output(output, run_id=payload.get("run_id")),
+        report_status=report_projection.report_status,
+        report_id=report_projection.report_id,
         manifest_ref=_manifest_ref_from_payload(payload),
         artifact_refs=_artifact_refs_from_payload(payload),
         diagnostics=_diagnostics_from_payload(payload),
@@ -370,35 +370,6 @@ def _interface_status(run_status: str) -> RunStatus:
     if normalized in {"running", "created", "pending"}:
         return "running"
     return "accepted"
-
-
-def _report_id_from_run_output(output: Any, *, run_id: str | None = None) -> str | None:
-    if not isinstance(output, dict):
-        return None
-    for key in ("report_id", "final_report_id"):
-        value = output.get(key)
-        if value:
-            return str(value)
-    report_status = _report_status_from_run_output(output)
-    if run_id and report_status in {"final", "blocked"}:
-        return f"{run_id}:{report_status}"
-    return None
-
-
-def _report_status_from_run_output(output: Any) -> str | None:
-    if not isinstance(output, dict):
-        return None
-    value = output.get("report_status")
-    if value:
-        return str(value)
-    report = output.get("report")
-    if isinstance(report, dict) and report.get("status"):
-        return str(report["status"])
-    if output.get("final_report") is not None:
-        return "final"
-    if output.get("blocked_report") is not None:
-        return "blocked"
-    return None
 
 
 def _manifest_ref_from_payload(payload: dict[str, Any]) -> ArtifactRef | None:
