@@ -48,6 +48,22 @@ def test_social_media_evidence_matches_known_domain_fallback() -> None:
     assert is_social_media_evidence(item) is True
 
 
+def test_social_media_evidence_view_projects_mapping_items() -> None:
+    bundle = SourceGateEvidenceBundleView.from_bundle(
+        {
+            "items": [
+                {
+                    "source_url": "https://example.com/post",
+                    "metadata": {"category": "developer-community"},
+                }
+            ]
+        }
+    )
+
+    assert bundle.item_count == 1
+    assert is_social_media_evidence(bundle.items[0]) is True
+
+
 def test_non_social_evidence_does_not_match_social_gate() -> None:
     item = _EvidenceItem(
         source_url="https://example.com/feed",

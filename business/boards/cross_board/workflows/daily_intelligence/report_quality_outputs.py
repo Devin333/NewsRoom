@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_evidence import (
+    SourceGateEvidenceBundleView,
+)
 from business.boards.cross_board.workflows.daily_intelligence.quality_observability import (
     quality_gate_observability_metrics,
 )
@@ -222,13 +225,7 @@ def _route_history(
 
 
 def _evidence_item_count(evidence_bundle: Any) -> int:
-    item_count = _field_value(evidence_bundle, "item_count")
-    if item_count is not None:
-        try:
-            return int(item_count)
-        except (TypeError, ValueError):
-            return 0
-    return len(_list_value(_field_value(evidence_bundle, "items", default=[])))
+    return SourceGateEvidenceBundleView.from_bundle(evidence_bundle).item_count
 
 
 def _collection_count(value: Any, field_name: str) -> int:

@@ -49,6 +49,7 @@ def test_report_quality_outputs_project_route_metrics_and_feedback_metadata() ->
 
     assert metrics["rewrite_rate"] == 1.0
     assert metrics["block_rate"] == 0.0
+    assert metrics["evidence_items_count"] == 1
     assert metrics["accepted_claims_count"] == 1
     assert metrics["citation_failure_categories"] == ["missing_citation"]
     assert quality_result["route_history"] == ["rewrite"]
@@ -81,3 +82,51 @@ def test_build_human_review_request_uses_fallback_title_and_quality_refs() -> No
     assert review_request["metadata"]["remediation"] == [
         "human reviewer must approve, reject, or request rewrite"
     ]
+
+
+def test_report_quality_metrics_consume_source_gate_evidence_item_count() -> None:
+    metrics = build_report_quality_gate_metrics(
+        evidence_bundle={
+            "item_count": "3",
+            "items": [{"evidence_id": "ev-1"}],
+        },
+        verified_findings={},
+        editor_decision={
+            "decision": "pass",
+            "quality_score": 0.9,
+            "reasons": [],
+            "rewrite_instructions": [],
+        },
+        verification_result={},
+        citation_check_result={},
+        support_matrix={},
+        route="final",
+        rewrite_attempts=0,
+        human_review_required=False,
+    )
+
+    assert metrics["evidence_items_count"] == 3
+
+
+def test_report_quality_metrics_keep_invalid_declared_item_count_compatibility() -> None:
+    metrics = build_report_quality_gate_metrics(
+        evidence_bundle={
+            "item_count": "not-a-number",
+            "items": [{"evidence_id": "ev-1"}],
+        },
+        verified_findings={},
+        editor_decision={
+            "decision": "pass",
+            "quality_score": 0.9,
+            "reasons": [],
+            "rewrite_instructions": [],
+        },
+        verification_result={},
+        citation_check_result={},
+        support_matrix={},
+        route="final",
+        rewrite_attempts=0,
+        human_review_required=False,
+    )
+
+    assert metrics["evidence_items_count"] == 0
