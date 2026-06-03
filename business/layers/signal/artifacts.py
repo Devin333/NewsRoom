@@ -552,16 +552,14 @@ class _SourceErrorArtifactWriter:
         fetch_artifacts: _SourceFetchArtifacts,
     ) -> tuple[Any, Any]:
         request_ref = _resolve_error_ref(
-            source_error,
-            "request_ref",
+            existing_ref=source_error.request_ref,
             request_id=request_id,
             source_id=source_id,
             refs_by_request_id=fetch_artifacts.request_refs_by_request_id,
             refs_by_source_id=fetch_artifacts.request_refs_by_source_id,
         )
         response_ref = _resolve_error_ref(
-            source_error,
-            "response_ref",
+            existing_ref=source_error.response_ref,
             request_id=request_id,
             source_id=source_id,
             refs_by_request_id=fetch_artifacts.response_refs_by_request_id,
@@ -770,15 +768,13 @@ def _remember_ref(
 
 
 def _resolve_error_ref(
-    source_error: SourceErrorArtifactInput,
-    field_name: str,
     *,
+    existing_ref: Any,
     request_id: str | None,
     source_id: str,
     refs_by_request_id: dict[str, SignalArtifactRef],
     refs_by_source_id: dict[str, list[SignalArtifactRef]],
 ) -> Any:
-    existing_ref = getattr(source_error, field_name)
     if existing_ref is not None:
         return existing_ref
     if request_id:
@@ -791,22 +787,10 @@ def _resolve_error_ref(
     return None
 
 
-def _optional_string(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
 def _ref_payload(value: Any) -> Any:
     if value is None:
         return None
     return _redact(_to_json_safe(value))
-
-
-def _stable_payload_id(value: Any) -> str:
-    payload = repr(_to_json_safe(value)).encode("utf-8", errors="replace")
-    return sha256(payload).hexdigest()
 
 
 def _raw_content_fingerprint(raw_item: SourceItemArtifactInput) -> dict[str, Any]:

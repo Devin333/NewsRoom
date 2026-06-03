@@ -314,3 +314,53 @@ def test_source_artifact_writer_normalizes_legacy_error_payloads(tmp_path) -> No
     assert error_entry["response_ref"] == response_entry["artifact_ref"]
     assert error_payload["error"]["request_ref"] == request_entry["artifact_ref"]
     assert error_payload["error"]["response_ref"] == response_entry["artifact_ref"]
+
+
+def test_source_error_artifact_writer_prefers_explicit_error_refs(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("source-run")
+    writer = SourceArtifactWriter(manager)
+    explicit_request_ref = {"artifact_id": "explicit-request-ref", "artifact_type": "source_fetch_request"}
+    explicit_response_ref = {"artifact_id": "explicit-response-ref", "artifact_type": "source_fetch_result"}
+
+    index = writer.write_source_artifacts(
+        "source-run",
+        source_fetch_requests=[
+            SourceFetchRequest(
+                request_id="fetch-1",
+                source_id="feed",
+                source_type="rss",
+                url="https://example.com/feed",
+            )
+        ],
+        source_fetch_results=[
+            SourceFetchResult(
+                request_id="fetch-1",
+                source_id="feed",
+                success=False,
+                error_type="fetch_timeout",
+                error_message="timeout",
+            )
+        ],
+        source_errors=[
+            SourceError(
+                source_id="feed",
+                source_name="Feed",
+                error_type="fetch_timeout",
+                error_message="timeout",
+                request_ref=explicit_request_ref,
+                response_ref=explicit_response_ref,
+                metadata={"request_id": "fetch-1"},
+            )
+        ],
+    )
+
+    assert index is not None
+    run_dir = tmp_path / "source-run"
+    error_entry = next(entry for entry in index["entries"] if entry["artifact_type"] == "source_error")
+    error_payload = json.loads((run_dir / error_entry["path"]).read_text())
+
+    assert error_entry["request_ref"] == explicit_request_ref
+    assert error_entry["response_ref"] == explicit_response_ref
+    assert error_payload["error"]["request_ref"] == explicit_request_ref
+    assert error_payload["error"]["response_ref"] == explicit_response_ref
