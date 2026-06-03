@@ -12,6 +12,7 @@ from business.layers.signal.artifact_refs import SignalArtifactRef
 from business.layers.signal.source_artifact_inputs import (
     SourceFetchResultArtifactInput,
     SourceItemArtifactInput,
+    source_fetch_request_artifact_inputs,
     source_fetch_result_artifact_inputs,
     source_item_artifact_inputs,
 )
@@ -156,9 +157,9 @@ class SourceArtifactWriter:
             ]
             entries.append(entry)
 
-        for fetch_request in source_fetch_requests or []:
-            source_id = _string_value(fetch_request, "source_id", default="unknown-source")
-            object_id = _string_value(fetch_request, "request_id", default=_stable_id(fetch_request))
+        for fetch_request in source_fetch_request_artifact_inputs(source_fetch_requests):
+            source_id = fetch_request.source_id
+            object_id = fetch_request.request_id
             path = f"sources/fetch_requests/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
             artifact_path = self._artifact_manager.write_json(
                 run_id,
@@ -167,7 +168,7 @@ class SourceArtifactWriter:
                     "artifact_type": "source_fetch_request",
                     "source_id": source_id,
                     "request_id": object_id,
-                    "fetch_request": _redact(_to_json_safe(fetch_request)),
+                    "fetch_request": _redact(_to_json_safe(fetch_request.payload)),
                 },
             )
             artifact_ref = _artifact_ref(
@@ -423,7 +424,7 @@ class SourceArtifactWriter:
 def _source_error_id(source_error: SourceError, index: int) -> str:
     source_id = source_error.source_id
     error_type = source_error.error_type
-    digest = _stable_id(source_error)[:12]
+    digest = _stable_payload_id(source_error)[:12]
     return f"{index:04d}_{source_id}_{error_type}_{digest}"
 
 
@@ -634,19 +635,9 @@ def _ref_payload(value: Any) -> Any:
     return _redact(_to_json_safe(value))
 
 
-def _stable_id(value: Any) -> str:
+def _stable_payload_id(value: Any) -> str:
     payload = repr(_to_json_safe(value)).encode("utf-8", errors="replace")
     return sha256(payload).hexdigest()
-
-
-def _string_value(value: Any, name: str, *, default: str) -> str:
-    if isinstance(value, dict):
-        candidate = value.get(name)
-    else:
-        candidate = getattr(value, name, None)
-    if candidate is None or str(candidate) == "":
-        return default
-    return str(candidate)
 
 
 def _raw_content_fingerprint(raw_item: SourceItemArtifactInput) -> dict[str, Any]:

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any
 
-from business.foundation.models.source import RawSourceItem, SourceFetchResult
+from business.foundation.models.source import RawSourceItem, SourceFetchRequest, SourceFetchResult
 from framework.shared.json import to_jsonable as _to_json_safe
 
 
@@ -38,6 +38,29 @@ class SourceItemArtifactInput:
                 parse_artifact_ref=value.get("parse_artifact_ref"),
             )
         raise TypeError("source item artifacts must be RawSourceItem or mapping values")
+
+
+@dataclass(frozen=True)
+class SourceFetchRequestArtifactInput:
+    request_id: str
+    source_id: str
+    payload: Any
+
+    @classmethod
+    def from_value(cls, value: SourceFetchRequest | dict[str, Any]) -> "SourceFetchRequestArtifactInput":
+        if isinstance(value, SourceFetchRequest):
+            return cls(
+                request_id=value.request_id,
+                source_id=value.source_id,
+                payload=value,
+            )
+        if isinstance(value, dict):
+            return cls(
+                request_id=_optional_text(value.get("request_id")) or _stable_id(value),
+                source_id=_optional_text(value.get("source_id")) or "unknown-source",
+                payload=value,
+            )
+        raise TypeError("source fetch request artifacts must be SourceFetchRequest or mapping values")
 
 
 @dataclass(frozen=True)
@@ -77,6 +100,10 @@ class SourceFetchResultArtifactInput:
 
 def source_fetch_result_artifact_inputs(values: Any) -> list[SourceFetchResultArtifactInput]:
     return [SourceFetchResultArtifactInput.from_value(value) for value in list(values or [])]
+
+
+def source_fetch_request_artifact_inputs(values: Any) -> list[SourceFetchRequestArtifactInput]:
+    return [SourceFetchRequestArtifactInput.from_value(value) for value in list(values or [])]
 
 
 def source_item_artifact_inputs(values: Any) -> list[SourceItemArtifactInput]:
@@ -124,8 +151,10 @@ def _stable_id(value: Any) -> str:
 
 
 __all__ = [
+    "SourceFetchRequestArtifactInput",
     "SourceFetchResultArtifactInput",
     "SourceItemArtifactInput",
+    "source_fetch_request_artifact_inputs",
     "source_fetch_result_artifact_inputs",
     "source_item_artifact_inputs",
 ]
