@@ -150,6 +150,17 @@ def project_daily_output_for_source_recollection_artifacts(
     )
 
 
+def project_daily_output_for_source_diagnostic_artifacts(
+    output: Mapping[str, Any],
+) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_SOURCE_DIAGNOSTIC_ARTIFACT_OUTPUT_KEYS,
+        include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+    )
+
+
 def apply_daily_public_output_aliases(
     output: MutableMapping[str, Any],
 ) -> MutableMapping[str, Any]:
@@ -316,6 +327,32 @@ DAILY_SOURCE_RECOLLECTION_ARTIFACT_OUTPUT_KEYS = (
     "source_recollection_quality_assessment",
 )
 
+DAILY_SOURCE_DIAGNOSTIC_ARTIFACT_OUTPUT_KEYS = (
+    "raw_items",
+    "source_errors",
+    "skipped_sources",
+    "failed_sources",
+    "source_fetch_requests",
+    "source_fetch_results",
+    "source_health_updates",
+    "source_health_report",
+    "source_duplicate_groups",
+    "source_events",
+    "source_pipeline_metrics",
+    "source_connector_dispatch_report",
+    "source_error_policy_report",
+    "source_fallback_report",
+    "source_selection_report",
+    "source_coverage_report",
+    "source_quality_scores",
+    "source_quality_summary_report",
+    "source_ranking_scores",
+    "source_freshness_report",
+    "source_traceability_report",
+    "source_governance_report",
+    *DAILY_SOURCE_RECOLLECTION_ARTIFACT_OUTPUT_KEYS,
+)
+
 DAILY_PUBLIC_OUTPUT_ALIAS_KEYS = (
     "final_report",
     "blocked_report",
@@ -348,6 +385,7 @@ __all__ = [
     "DAILY_INTERFACE_METADATA_OUTPUT_KEYS",
     "DAILY_EVIDENCE_ARTIFACT_OUTPUT_KEYS",
     "DAILY_QUALITY_ARTIFACT_OUTPUT_KEYS",
+    "DAILY_SOURCE_DIAGNOSTIC_ARTIFACT_OUTPUT_KEYS",
     "DAILY_SOURCE_RECOLLECTION_ARTIFACT_OUTPUT_KEYS",
     "DailyOutputProjectionReadPolicy",
     "apply_daily_board_attachment_result",
@@ -364,5 +402,6 @@ __all__ = [
     "project_daily_output_for_legacy_consumers",
     "project_daily_output_for_quality_artifacts",
     "project_daily_output_for_run_inspection",
+    "project_daily_output_for_source_diagnostic_artifacts",
     "project_daily_output_for_source_recollection_artifacts",
 ]

@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    daily_output_contains,
-    daily_output_value,
+    project_daily_output_for_source_diagnostic_artifacts,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_recollection_artifact_projection import (
     source_recollection_manifest_summary,
@@ -55,33 +54,35 @@ SOURCE_DIAGNOSTIC_ARTIFACT_PATHS = {
 def project_daily_source_diagnostic_artifacts(
     output: Mapping[str, Any],
 ) -> list[DailySourceDiagnosticArtifact]:
+    source_output = project_daily_output_for_source_diagnostic_artifacts(output)
     artifacts: list[DailySourceDiagnosticArtifact] = []
     for artifact_key, relative_path in SOURCE_DIAGNOSTIC_ARTIFACT_PATHS.items():
-        if daily_output_contains(output, artifact_key):
+        if artifact_key in source_output:
             artifacts.append(
                 DailySourceDiagnosticArtifact(
                     artifact_key=artifact_key,
                     relative_path=relative_path,
-                    payload=daily_output_value(output, artifact_key),
+                    payload=source_output[artifact_key],
                 )
             )
     return artifacts
 
 
 def source_diagnostic_manifest_fields(output: Mapping[str, Any]) -> dict[str, Any]:
+    source_output = project_daily_output_for_source_diagnostic_artifacts(output)
     fields: dict[str, Any] = {}
-    if daily_output_contains(output, "source_events"):
-        fields["source_event_count"] = len(daily_output_value(output, "source_events"))
-    if daily_output_contains(output, "source_quality_scores"):
+    if "source_events" in source_output:
+        fields["source_event_count"] = len(source_output["source_events"])
+    if "source_quality_scores" in source_output:
         fields["source_quality_score_count"] = len(
-            daily_output_value(output, "source_quality_scores")
+            source_output["source_quality_scores"]
         )
-    if daily_output_contains(output, "source_ranking_scores"):
+    if "source_ranking_scores" in source_output:
         fields["source_ranking_score_count"] = len(
-            daily_output_value(output, "source_ranking_scores")
+            source_output["source_ranking_scores"]
         )
 
-    source_recollection = source_recollection_manifest_summary(output)
+    source_recollection = source_recollection_manifest_summary(source_output)
     if source_recollection is not None:
         fields["source_recollection"] = source_recollection
     return fields

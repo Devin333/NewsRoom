@@ -83,3 +83,16 @@ def test_source_diagnostic_manifest_fields_project_counts_and_recollection() -> 
 
 def test_source_diagnostic_manifest_fields_skip_absent_outputs() -> None:
     assert source_diagnostic_manifest_fields({}) == {}
+
+
+def test_source_diagnostic_artifacts_prefer_namespaced_values_over_legacy() -> None:
+    artifacts = project_daily_source_diagnostic_artifacts(
+        {
+            "source_events": [{"event_type": "legacy"}],
+            "sources.events": [{"event_type": "namespaced"}],
+        }
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0].artifact_key == "source_events"
+    assert artifacts[0].payload == [{"event_type": "namespaced"}]
