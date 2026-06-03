@@ -69,6 +69,14 @@ LEGACY_INTERFACE_ENTRYPOINTS = {
     "interfaces/services/worker_service.py",
 }
 
+DAILY_BUSINESS_PROJECTION_INTERFACE_BOUNDARIES = {
+    "interfaces/services/daily_approval_resume_projection.py",
+    "interfaces/services/daily_interface_projection.py",
+    "interfaces/services/daily_persistence_projection.py",
+    "interfaces/services/daily_run_service.py",
+    "interfaces/services/run_inspection_service.py",
+}
+
 
 def test_framework_has_no_business_or_interface_imports() -> None:
     violations = _forbidden_imports(
@@ -105,7 +113,8 @@ def test_new_board_interfaces_do_not_bypass_board_services() -> None:
     violations = _forbidden_imports(
         INTERFACES_ROOT,
         forbidden_prefixes=INTERFACE_FORBIDDEN_FLOW_PREFIXES,
-        allowed_relative_paths=LEGACY_INTERFACE_ENTRYPOINTS,
+        allowed_relative_paths=LEGACY_INTERFACE_ENTRYPOINTS
+        | DAILY_BUSINESS_PROJECTION_INTERFACE_BOUNDARIES,
     )
 
     assert violations == []
@@ -190,7 +199,7 @@ def test_cross_board_daily_quality_gate_uses_output_builder_boundary() -> None:
         in imports
     )
     assert (
-        "business.boards.cross_board.workflows.daily_intelligence.quality_context_projection"
+        "business.boards.cross_board.workflows.daily_intelligence.quality_gate_context"
         in imports
     )
     assert (
@@ -252,6 +261,33 @@ def test_interface_daily_profile_enums_come_from_cross_board_business_layer() ->
     assert "business.boards.cross_board.profiles" in _imports_for_file(
         INTERFACES_ROOT / "services" / "daily_run_service.py"
     )
+
+
+def test_api_app_uses_run_report_projection_boundary() -> None:
+    app_path = INTERFACES_ROOT / "api" / "app.py"
+    imports = _imports_for_file(app_path)
+    text = app_path.read_text(encoding="utf-8")
+
+    assert "interfaces.services.run_report_projection" in imports
+    assert "interfaces.services.daily_interface_projection" not in imports
+    assert "project_run_output_for_interface" not in text
+    assert '"final_report"' not in text
+    assert '"blocked_report"' not in text
+    assert '"report.final"' not in text
+    assert '"report.blocked"' not in text
+
+
+def test_daily_output_projection_is_confined_to_interface_boundaries() -> None:
+    violations = _forbidden_imports(
+        INTERFACES_ROOT,
+        forbidden_prefixes=(
+            "business.boards.cross_board.workflows.daily_intelligence.output_projection",
+            "business.boards.cross_board.workflows.daily_intelligence.human_review_resume",
+        ),
+        allowed_relative_paths=DAILY_BUSINESS_PROJECTION_INTERFACE_BOUNDARIES,
+    )
+
+    assert violations == []
 
 
 def test_diagnostic_service_uses_infrastructure_source_adapters() -> None:

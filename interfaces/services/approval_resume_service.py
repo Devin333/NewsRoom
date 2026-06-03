@@ -6,6 +6,9 @@ from typing import Callable
 
 from framework import RunResult, WorkflowRunner
 from interfaces.services.approval_service import ApprovalApplicationService
+from interfaces.services.daily_approval_resume_projection import (
+    project_daily_approval_resume_context,
+)
 from interfaces.services.run_resolution_service import RunResolutionApplicationService
 from infrastructure.storage.checkpoint import LocalJsonCheckpointStore
 
@@ -75,11 +78,7 @@ class ApprovalResumeApplicationService:
         is_daily = resolved.workflow.workflow_id.startswith("daily-intelligence")
         context_payload = context.to_dict()
         if is_daily:
-            from business.boards.cross_board.workflows.daily_intelligence.human_review_resume import (
-                enrich_daily_approval_resume_context,
-            )
-
-            context_payload = enrich_daily_approval_resume_context(
+            context_payload = project_daily_approval_resume_context(
                 context_payload,
                 workflow_step_ids=[step.step_id for step in resolved.workflow.steps],
                 workflow_buffer_keys=_workflow_buffer_keys(resolved.workflow.steps),

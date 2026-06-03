@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 
-from business.boards.cross_board.workflows.daily_intelligence.output_projection import daily_output_value
 from framework.specs import WorkflowStatus
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
+from interfaces.services.daily_interface_projection import (
+    project_daily_agent_loop_metrics_for_interface,
+)
 from interfaces.services.run_service import RunApplicationService
 
 
@@ -74,7 +76,7 @@ def run_test_no_llm(args: argparse.Namespace) -> int:
 def run_test_agent_loop(args: argparse.Namespace) -> int:
     service = RunApplicationService(artifact_root=args.artifact_root)
     result = service.run_test_agent_loop(topic=args.topic, run_id=args.run_id)
-    metrics = daily_output_value(result.output, "agent_loop_metrics", default={})
+    metrics = project_daily_agent_loop_metrics_for_interface(result.output)
 
     if args.json:
         print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
