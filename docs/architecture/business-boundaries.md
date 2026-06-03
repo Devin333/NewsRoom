@@ -116,6 +116,8 @@ daily run service、persistence、memory ingestion 和 board output attachment �
 
 interfaces 可以调用这些 business projection helper，但不得在接口服务里复制 `DAILY_BUFFER_ALIASES` 或手写 `report.final -> final_report` 这类映射。memory 和 board 通用服务继续消费 canonical legacy 字段；daily workflow 的命名空间迁移规则只留在 daily workflow business 边界内。
 
+run inspection 读取 manifest output 构建 quality preview / lineage 时，也必须先判断 workflow 是否属于 daily family，再调用同一 projection helper 生成业务消费视图。inspection 可以保留原始 output key 作为调试预览，但质量决策、route、citation check、support matrix、candidate claims、verified findings 和 report id 只能从投影后的业务视图读取；接口层不得重新实现 daily key fallback。
+
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
 
 ## Quality Gate 边界

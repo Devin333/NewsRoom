@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from business.boards.cross_board.profiles import is_daily_workflow_id
+from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
+    project_daily_output_for_legacy_consumers,
+)
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.workflow.inspection import (
     WorkflowArtifactContentRecord,
@@ -445,13 +449,14 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
     output = manifest.get("output")
     preview: dict[str, Any] = {}
     if isinstance(output, dict):
+        business_output = _manifest_business_output(manifest)
         for key, value in output.items():
             if len(preview) >= 12:
                 break
             preview[str(key)] = _preview_value(value)
-        raw_quality_result = output.get("quality_result")
-        raw_citation_check = output.get("citation_check_result")
-        raw_support_matrix = output.get("support_matrix")
+        raw_quality_result = business_output.get("quality_result")
+        raw_citation_check = business_output.get("citation_check_result")
+        raw_support_matrix = business_output.get("support_matrix")
         quality_result: dict[str, Any] = (
             dict(raw_quality_result) if isinstance(raw_quality_result, dict) else {}
         )
@@ -461,7 +466,7 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
         support_matrix: dict[str, Any] = (
             dict(raw_support_matrix) if isinstance(raw_support_matrix, dict) else {}
         )
-        quality_lineage = _quality_lineage_preview(output)
+        quality_lineage = _quality_lineage_preview(business_output)
         if quality_result or citation_check or support_matrix or quality_lineage:
             raw_quality_metadata = quality_result.get("metadata")
             quality_metadata = (
@@ -471,7 +476,7 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
             )
             preview["quality_trace"] = {
                 "decision": quality_result.get("decision"),
-                "route": quality_result.get("route") or output.get("quality_route"),
+                "route": quality_result.get("route") or business_output.get("quality_route"),
                 "citation_failure_categories": quality_metadata.get(
                     "citation_failure_categories", []
                 ),
@@ -514,6 +519,15 @@ def _manifest_output_preview(manifest: dict[str, Any]) -> dict[str, Any]:
             ],
         }
     return preview
+
+
+def _manifest_business_output(manifest: dict[str, Any]) -> dict[str, Any]:
+    output = manifest.get("output")
+    if not isinstance(output, dict):
+        return {}
+    if is_daily_workflow_id(str(manifest.get("workflow_id") or "")):
+        return project_daily_output_for_legacy_consumers(output)
+    return dict(output)
 
 
 def _quality_lineage_preview(output: dict[str, Any]) -> dict[str, Any]:

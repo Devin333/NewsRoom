@@ -100,6 +100,53 @@ def test_run_inspection_get_run_reads_manifest(tmp_path) -> None:
     assert result.to_dict()["output_preview"]["quality_trace"]["quality_lineage"]["claim_count"] == 1
 
 
+def test_run_inspection_projects_namespaced_daily_output_for_quality_preview(tmp_path) -> None:
+    _write_manifest(
+        tmp_path,
+        "run-1",
+        {
+            "run_id": "run-1",
+            "status": "succeeded",
+            "workflow_id": "daily-intelligence-agentic",
+            "workflow_version": "1.0",
+            "profile": "test",
+            "started_at": "2026-05-11T00:00:00Z",
+            "path": [],
+            "steps": {},
+            "output": {
+                "quality.result": {
+                    "decision": "blocked",
+                    "route": "human_review",
+                    "metadata": {"citation_failure_categories": ["unsupported_claims"]},
+                },
+                "quality.citation_check_result": {
+                    "unsupported_claims": ["claim-1"],
+                    "rejected_claim_usage": [],
+                },
+                "quality.support_matrix": {"unsupported_sections": ["Summary"]},
+                "report.final": {"report_id": "run-1:final", "title": "Daily"},
+                "evidence.candidate_claims": [{"claim_id": "claim-1"}],
+                "evidence.verified_findings": {
+                    "accepted_claims": [{"claim_id": "claim-1"}],
+                    "rejected_claims": [],
+                    "uncertain_claims": [],
+                },
+            },
+        },
+    )
+
+    result = RunInspectionService(tmp_path).get_run("run-1")
+
+    quality_trace = result.to_dict()["output_preview"]["quality_trace"]
+    assert quality_trace["decision"] == "blocked"
+    assert quality_trace["route"] == "human_review"
+    assert quality_trace["citation_failure_categories"] == ["unsupported_claims"]
+    assert quality_trace["unsupported_claims"] == ["claim-1"]
+    assert quality_trace["unsupported_sections"] == ["Summary"]
+    assert quality_trace["quality_lineage"]["claim_count"] == 1
+    assert quality_trace["quality_lineage"]["report_id"] == "run-1:final"
+
+
 def test_run_inspection_reads_events_jsonl(tmp_path) -> None:
     _write_run_with_events(
         tmp_path,
