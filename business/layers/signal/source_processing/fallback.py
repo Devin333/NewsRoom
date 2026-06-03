@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,7 +11,7 @@ from business.foundation.models.source_error_normalization import normalize_sour
 def build_source_fallback_report(
     *,
     raw_items: list[Any],
-    source_errors: list[SourceError | dict[str, Any]],
+    source_errors: Iterable[Any],
     source_selection_report: Any | None = None,
 ) -> SourceFallbackReport:
     rows: list[dict[str, Any]] = []
@@ -44,8 +45,9 @@ def build_source_fallback_report(
             }
         )
 
+    error_fallback_inputs = SourceErrorFallbackInput.from_values(source_errors)
     error_fallback_count = 0
-    for error in SourceErrorFallbackInput.from_values(source_errors):
+    for error in error_fallback_inputs:
         if not error.official_blog_fallback_stage:
             continue
         error_fallback_count += 1
@@ -130,8 +132,12 @@ class SourceErrorFallbackInput:
     official_blog_fallback_stage: str | None = None
 
     @classmethod
-    def from_values(cls, values: list[SourceError | dict[str, Any]]) -> list["SourceErrorFallbackInput"]:
-        return [cls.from_error(error) for error in normalize_source_errors(values)]
+    def from_values(cls, values: Iterable[Any]) -> list["SourceErrorFallbackInput"]:
+        source_errors = normalize_source_errors(
+            values,
+            context="source fallback errors",
+        )
+        return [cls.from_error(error) for error in source_errors]
 
     @classmethod
     def from_error(cls, error: SourceError) -> "SourceErrorFallbackInput":

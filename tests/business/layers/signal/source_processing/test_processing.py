@@ -340,7 +340,7 @@ def test_source_fallback_item_input_requires_structured_fallback_payload() -> No
     assert item.feed_error_types == ()
 
 
-def test_build_source_fallback_report_normalizes_source_error_mappings() -> None:
+def test_build_source_fallback_report_accepts_serialized_source_errors() -> None:
     report = build_source_fallback_report(
         raw_items=[],
         source_errors=[
@@ -357,6 +357,11 @@ def test_build_source_fallback_report_normalizes_source_error_mappings() -> None
     assert report.error_fallback_count == 1
     assert report.rows[0]["source_id"] == "official"
     assert report.rows[0]["metadata"]["retryable"] is False
+
+
+def test_build_source_fallback_report_rejects_unstructured_source_errors() -> None:
+    with pytest.raises(TypeError, match="source fallback errors entries must be SourceError"):
+        build_source_fallback_report(raw_items=[], source_errors=["parse_error"])
 
 
 def test_build_source_error_policy_report_counts_policy_fields() -> None:
