@@ -137,6 +137,48 @@ def test_daily_artifact_publisher_reads_namespaced_report_and_quality_output(tmp
     assert manifest["quality_decision"] == "pass"
 
 
+def test_daily_artifact_publisher_prefers_namespaced_quality_artifacts(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manifest = {"artifacts": {}}
+    output = {
+        "citation_check_result": {
+            "unsupported_claims": ["legacy claim"],
+            "rejected_claim_usage": [],
+        },
+        "quality.citation_check_result": {
+            "unsupported_claims": ["namespaced claim"],
+            "rejected_claim_usage": [],
+        },
+        "quality.result": {"decision": "blocked", "route": "human_review"},
+        "quality.gate_metrics": {"blocked": True},
+    }
+    context = _context(
+        manager,
+        manifest=manifest,
+        output=output,
+    )
+
+    DailyIntelligenceArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    citation_check = json.loads(
+        (run_dir / "citation_check_result.json").read_text(encoding="utf-8")
+    )
+    unsupported_claims = json.loads(
+        (run_dir / "unsupported_claims.json").read_text(encoding="utf-8")
+    )
+    quality_gate_metrics = json.loads(
+        (run_dir / "quality_gate_metrics.json").read_text(encoding="utf-8")
+    )
+
+    assert citation_check["unsupported_claims"] == ["namespaced claim"]
+    assert unsupported_claims == ["namespaced claim"]
+    assert quality_gate_metrics == {"blocked": True}
+    assert manifest["quality_decision"] == "blocked"
+    assert manifest["quality_route"] == "human_review"
+
+
 def test_daily_artifact_publisher_prefers_namespaced_report_artifacts(tmp_path) -> None:
     manager = ArtifactManager(tmp_path)
     manager.start_run("run-1")

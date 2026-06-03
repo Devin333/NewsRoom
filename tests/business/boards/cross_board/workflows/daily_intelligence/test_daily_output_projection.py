@@ -253,11 +253,16 @@ def test_project_daily_output_for_quality_artifacts_keeps_legacy_fallback() -> N
         "quality_result": {"decision": "legacy"},
         "quality.result": {"decision": "pass"},
         "quality_route": "human_review",
+        "citation_check_result": {"unsupported_claims": ["legacy"]},
+        "quality.citation_check_result": {"unsupported_claims": ["namespaced"]},
+        "quality.gate_metrics": {"blocked": False},
     }
 
     projected = project_daily_output_for_quality_artifacts(output)
 
     assert projected == {
+        "citation_check_result": {"unsupported_claims": ["namespaced"]},
+        "quality_gate_metrics": {"blocked": False},
         "quality_result": {"decision": "pass"},
         "quality_route": "human_review",
     }

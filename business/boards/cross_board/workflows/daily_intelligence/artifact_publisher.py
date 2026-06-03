@@ -16,6 +16,7 @@ from business.boards.cross_board.workflows.daily_intelligence.evidence_artifact_
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
     daily_output_contains as _output_contains,
     daily_output_value as _output_value,
+    project_daily_output_for_quality_artifacts,
     project_daily_output_for_report_artifacts,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_artifact_projection import (
@@ -74,9 +75,9 @@ class DailyIntelligenceArtifactPublisher:
 
     def _publish_quality_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
         refs: list[ArtifactRef] = []
-        output = context.output
-        if _output_contains(output, "citation_check_result"):
-            citation_check = _output_value(output, "citation_check_result")
+        quality_output = project_daily_output_for_quality_artifacts(context.output)
+        if "citation_check_result" in quality_output:
+            citation_check = quality_output["citation_check_result"]
             refs.append(
                 _write_json_artifact(
                     context,
@@ -109,6 +110,7 @@ class DailyIntelligenceArtifactPublisher:
         refs.extend(
             _write_json_artifacts_from_output(
                 context,
+                quality_output,
                 {
                     "editor_review": "editor_review.json",
                     "support_matrix": "support_matrix.json",
@@ -123,7 +125,7 @@ class DailyIntelligenceArtifactPublisher:
                 },
             )
         )
-        context.manifest.update(quality_manifest_fields(output))
+        context.manifest.update(quality_manifest_fields(quality_output))
         return refs
 
     def _publish_agentic_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
@@ -224,17 +226,18 @@ def build_daily_intelligence_artifact_publishers() -> list[DailyIntelligenceArti
 
 def _write_json_artifacts_from_output(
     context: ArtifactPublishContext,
+    output: dict[str, Any],
     artifacts: dict[str, str],
 ) -> list[ArtifactRef]:
     refs: list[ArtifactRef] = []
     for artifact_key, relative_path in artifacts.items():
-        if _output_contains(context.output, artifact_key):
+        if artifact_key in output:
             refs.append(
                 _write_json_artifact(
                     context,
                     artifact_key,
                     relative_path,
-                    _output_value(context.output, artifact_key),
+                    output[artifact_key],
                 )
             )
     return refs

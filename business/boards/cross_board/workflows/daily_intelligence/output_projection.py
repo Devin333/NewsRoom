@@ -325,10 +325,18 @@ DAILY_AGENT_VALIDATION_OUTPUT_KEYS = (
 )
 
 DAILY_QUALITY_ARTIFACT_OUTPUT_KEYS = (
+    "citation_check_result",
+    "editor_review",
+    "support_matrix",
     "report_quality_summary",
     "quality_events",
+    "quality_gate_metrics",
     "quality_result",
     "quality_route",
+    "rewrite_policy",
+    "rewrite_instructions",
+    "rewritten_report_draft",
+    "human_review_request",
 )
 
 DAILY_EVIDENCE_ARTIFACT_OUTPUT_KEYS = (
