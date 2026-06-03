@@ -21,6 +21,9 @@ BOARD_ARTIFACTS: dict[str, str] = {
     "learning_signals": "learning_signals.json",
     "improvement_recommendations": "improvement_recommendations.json",
     "improvement_proposals": "improvement_proposals.json",
+    "policy_experiment_application_context": "policy_experiment_application_context.json",
+    "applied_policy_experiments": "applied_policy_experiments.json",
+    "skipped_policy_experiments": "skipped_policy_experiments.json",
     "applied_overrides": "applied_overrides.json",
     "improvement_measurement": "improvement_measurement.json",
 }

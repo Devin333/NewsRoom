@@ -32,6 +32,9 @@ REQUIRED_ARTIFACTS = (
     "learning_signals.json",
     "improvement_recommendations.json",
     "improvement_proposals.json",
+    "policy_experiment_application_context.json",
+    "applied_policy_experiments.json",
+    "skipped_policy_experiments.json",
     "applied_overrides.json",
     "improvement_measurement.json",
     "summary.md",
@@ -78,6 +81,21 @@ def test_productized_board_artifact_schema_acceptance(board_type: str, tmp_path)
     proposals = _json(run_dir / "improvement_proposals.json")
     assert isinstance(proposals, list)
     assert all(proposal.get("status") for proposal in proposals)
+
+    policy_context = _json(run_dir / "policy_experiment_application_context.json")
+    assert policy_context["run_id"] == run_id
+    assert policy_context["board_type"] == board_type
+    assert isinstance(policy_context["applied_policy_experiments"], list)
+    assert isinstance(policy_context["skipped_policy_experiments"], list)
+    assert _json(run_dir / "applied_policy_experiments.json") == policy_context[
+        "applied_policy_experiments"
+    ]
+    assert _json(run_dir / "skipped_policy_experiments.json") == policy_context[
+        "skipped_policy_experiments"
+    ]
+    assert _json(run_dir / "applied_overrides.json") == policy_context[
+        "applied_policy_experiments"
+    ]
 
     assert (run_dir / "summary.md").read_text(encoding="utf-8").strip()
 
