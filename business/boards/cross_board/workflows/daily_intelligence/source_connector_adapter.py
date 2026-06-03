@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from business.foundation.models.source import SourceDefinition, SourceError, SourceFetchRequest, SourceFetchResult
@@ -212,7 +213,7 @@ def _callable_parameters(value: Any) -> set[str]:
 def _coerce_source_fetch_result_or_none(value: Any) -> SourceFetchResult | None:
     if isinstance(value, SourceFetchResult):
         return value
-    if all(hasattr(value, field_name) for field_name in ("request_id", "source_id", "success")):
+    if _SourceFetchResultView.can_project(value):
         return _coerce_source_fetch_result(value)
     return None
 
@@ -220,27 +221,78 @@ def _coerce_source_fetch_result_or_none(value: Any) -> SourceFetchResult | None:
 def _coerce_source_fetch_result(value: Any) -> SourceFetchResult:
     if isinstance(value, SourceFetchResult):
         return value
-    if not all(hasattr(value, field_name) for field_name in ("request_id", "source_id", "success")):
+    view = _SourceFetchResultView.from_value(value)
+    if view is None:
         raise TypeError("registered source connector fetch must return SourceFetchResult")
     kwargs: dict[str, Any] = {
-        "request_id": str(getattr(value, "request_id")),
-        "source_id": str(getattr(value, "source_id")),
-        "success": bool(getattr(value, "success")),
-        "status_code": getattr(value, "status_code", None),
-        "content_type": getattr(value, "content_type", None),
-        "content_bytes": getattr(value, "content_bytes", None),
-        "latency_ms": getattr(value, "latency_ms", None),
-        "raw_artifact_ref": getattr(value, "raw_artifact_ref", None),
-        "error_type": getattr(value, "error_type", None),
-        "error_message": getattr(value, "error_message", None),
-        "skipped": bool(getattr(value, "skipped", False)),
-        "skip_reason": getattr(value, "skip_reason", None),
-        "metadata": dict(getattr(value, "metadata", {}) or {}),
+        "request_id": view.request_id,
+        "source_id": view.source_id,
+        "success": view.success,
+        "status_code": view.status_code,
+        "content_type": view.content_type,
+        "content_bytes": view.content_bytes,
+        "latency_ms": view.latency_ms,
+        "raw_artifact_ref": view.raw_artifact_ref,
+        "error_type": view.error_type,
+        "error_message": view.error_message,
+        "skipped": view.skipped,
+        "skip_reason": view.skip_reason,
+        "metadata": dict(view.metadata),
     }
-    fetched_at = getattr(value, "fetched_at", None)
-    if fetched_at is not None:
-        kwargs["fetched_at"] = fetched_at
+    if view.fetched_at is not None:
+        kwargs["fetched_at"] = view.fetched_at
     return SourceFetchResult(**kwargs)
+
+
+@dataclass(frozen=True)
+class _SourceFetchResultView:
+    request_id: str
+    source_id: str
+    success: bool
+    status_code: int | None = None
+    content_type: str | None = None
+    content_bytes: int | None = None
+    latency_ms: float | None = None
+    raw_artifact_ref: Any = None
+    error_type: str | None = None
+    error_message: str | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
+    fetched_at: Any = None
+    metadata: dict[str, Any] | None = None
+
+    @classmethod
+    def can_project(cls, value: Any) -> bool:
+        return cls.from_value(value) is not None
+
+    @classmethod
+    def from_value(cls, value: Any) -> "_SourceFetchResultView | None":
+        if not _has_fields(value, ("request_id", "source_id", "success")):
+            return None
+        return cls(
+            request_id=str(getattr(value, "request_id")),
+            source_id=str(getattr(value, "source_id")),
+            success=bool(getattr(value, "success")),
+            status_code=getattr(value, "status_code", None),
+            content_type=getattr(value, "content_type", None),
+            content_bytes=getattr(value, "content_bytes", None),
+            latency_ms=getattr(value, "latency_ms", None),
+            raw_artifact_ref=getattr(value, "raw_artifact_ref", None),
+            error_type=getattr(value, "error_type", None),
+            error_message=getattr(value, "error_message", None),
+            skipped=bool(getattr(value, "skipped", False)),
+            skip_reason=getattr(value, "skip_reason", None),
+            fetched_at=getattr(value, "fetched_at", None),
+            metadata=_metadata_dict(getattr(value, "metadata", None)),
+        )
+
+
+def _has_fields(value: Any, field_names: tuple[str, ...]) -> bool:
+    return all(hasattr(value, field_name) for field_name in field_names)
+
+
+def _metadata_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _registered_connector_error(source: SourceDefinition, exc: Exception) -> SourceError:
