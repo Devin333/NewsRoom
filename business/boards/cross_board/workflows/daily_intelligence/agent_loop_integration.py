@@ -22,6 +22,9 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
     canonicalize_namespaced_input_aliases,
     with_namespaced_aliases,
 )
+from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
+    daily_output_value,
+)
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE
 
 
@@ -195,7 +198,7 @@ def _verified_findings_from_inputs(inputs: dict[str, Any]) -> VerifiedFindings |
 def _report_from_output(output: dict[str, Any], output_key: str) -> dict[str, Any] | None:
     candidates = [
         output.get(output_key),
-        output.get("final_report"),
+        daily_output_value(output, "final_report"),
         output.get("report"),
     ]
     for candidate in candidates:

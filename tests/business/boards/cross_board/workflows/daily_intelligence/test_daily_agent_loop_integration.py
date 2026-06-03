@@ -185,6 +185,34 @@ def test_daily_judge_retries_editor_claim_outside_evidence_boundary() -> None:
     ]
 
 
+def test_daily_judge_reads_namespaced_final_report_output() -> None:
+    verdict = build_daily_output_judge().judge(
+        agent=_writer(output_key="report_draft"),
+        action=AgentAction(
+            action_type="final_output",
+            output={
+                "report.final": {
+                    "title": "Daily Brief",
+                    "sections": [
+                        {
+                            "title": "Unsupported",
+                            "content": "The vendor acquired a rival.",
+                            "sources": ["https://example.com/model"],
+                        }
+                    ],
+                }
+            },
+        ),
+        called_tools=[],
+        inputs={"evidence_bundle": _bundle()},
+    )
+
+    assert verdict.decision == JudgeDecision.RETRY
+    assert verdict.validation_errors == [
+        "unsupported claim outside evidence: Unsupported: The vendor acquired a rival."
+    ]
+
+
 def test_daily_judge_schema_pass_does_not_replace_quality_gate_for_citation_coverage() -> None:
     verdict = build_daily_output_judge().judge(
         agent=_writer(),
