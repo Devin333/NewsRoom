@@ -250,6 +250,40 @@ def test_daily_service_output_projections_require_namespaced_daily_keys() -> Non
     assert violations == []
 
 
+def test_daily_output_legacy_fallback_stays_artifact_facing_or_explicit_legacy_only() -> None:
+    projection_path = (
+        BUSINESS_ROOT
+        / "boards"
+        / "cross_board"
+        / "workflows"
+        / "daily_intelligence"
+        / "output_projection.py"
+    )
+    tree = ast.parse(projection_path.read_text(encoding="utf-8"), filename=str(projection_path))
+    allowed_functions = {
+        "daily_output_contains",
+        "daily_output_value",
+        "ensure_legacy_daily_output_aliases",
+        "project_daily_output_for_agentic_artifacts",
+        "project_daily_output_for_evidence_artifacts",
+        "project_daily_output_for_legacy_consumers",
+        "project_daily_output_for_quality_artifacts",
+        "project_daily_output_for_report_artifacts",
+        "project_daily_output_for_source_diagnostic_artifacts",
+        "project_daily_output_for_source_recollection_artifacts",
+    }
+    violations: list[str] = []
+
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        policies = _keyword_attribute_values(node, keyword_name="read_policy")
+        if "NAMESPACED_WITH_LEGACY_FALLBACK" in policies and node.name not in allowed_functions:
+            violations.append(f"{node.name}: {policies}")
+
+    assert violations == []
+
+
 def test_daily_agent_registry_stays_fixture_free() -> None:
     registry_path = (
         BUSINESS_ROOT
