@@ -130,6 +130,15 @@ def project_daily_output_for_quality_artifacts(output: Mapping[str, Any]) -> dic
     )
 
 
+def project_daily_output_for_evidence_artifacts(output: Mapping[str, Any]) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_EVIDENCE_ARTIFACT_OUTPUT_KEYS,
+        include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+    )
+
+
 def apply_daily_public_output_aliases(
     output: MutableMapping[str, Any],
 ) -> MutableMapping[str, Any]:
@@ -281,6 +290,14 @@ DAILY_QUALITY_ARTIFACT_OUTPUT_KEYS = (
     "quality_route",
 )
 
+DAILY_EVIDENCE_ARTIFACT_OUTPUT_KEYS = (
+    "evidence_bundle",
+    "evidence_source_map",
+    "evidence_scores",
+    "candidate_claims",
+    "verified_findings",
+)
+
 DAILY_PUBLIC_OUTPUT_ALIAS_KEYS = (
     "final_report",
     "blocked_report",
@@ -311,6 +328,7 @@ __all__ = [
     "DAILY_PUBLIC_OUTPUT_ALIAS_KEYS",
     "DAILY_RUN_INSPECTION_OUTPUT_KEYS",
     "DAILY_INTERFACE_METADATA_OUTPUT_KEYS",
+    "DAILY_EVIDENCE_ARTIFACT_OUTPUT_KEYS",
     "DAILY_QUALITY_ARTIFACT_OUTPUT_KEYS",
     "DailyOutputProjectionReadPolicy",
     "apply_daily_board_attachment_result",
@@ -320,6 +338,7 @@ __all__ = [
     "ensure_legacy_daily_output_aliases",
     "project_daily_output_for_agent_validation",
     "project_daily_output_for_board_attachment",
+    "project_daily_output_for_evidence_artifacts",
     "project_daily_output_for_interface_metadata",
     "project_daily_output_for_memory_ingestion",
     "project_daily_output_for_persistence",

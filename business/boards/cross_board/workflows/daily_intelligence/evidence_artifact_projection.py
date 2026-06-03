@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    daily_output_contains,
-    daily_output_value,
+    project_daily_output_for_evidence_artifacts,
 )
 
 
@@ -20,10 +19,11 @@ class DailyEvidenceArtifact:
 def project_daily_evidence_artifacts(
     output: Mapping[str, Any],
 ) -> list[DailyEvidenceArtifact]:
+    evidence_output = project_daily_output_for_evidence_artifacts(output)
     artifacts: list[DailyEvidenceArtifact] = []
 
-    if daily_output_contains(output, "evidence_bundle"):
-        evidence_bundle = daily_output_value(output, "evidence_bundle")
+    if "evidence_bundle" in evidence_output:
+        evidence_bundle = evidence_output["evidence_bundle"]
         artifacts.append(
             DailyEvidenceArtifact(
                 artifact_key="evidence_bundle",
@@ -32,7 +32,7 @@ def project_daily_evidence_artifacts(
             )
         )
 
-        source_map = daily_output_value(output, "evidence_source_map")
+        source_map = evidence_output.get("evidence_source_map")
         if source_map is None:
             source_map = evidence_source_map_from_bundle(evidence_bundle)
         if source_map is not None:
@@ -43,12 +43,12 @@ def project_daily_evidence_artifacts(
                     payload=source_map,
                 )
             )
-    elif daily_output_contains(output, "evidence_source_map"):
+    elif "evidence_source_map" in evidence_output:
         artifacts.append(
             DailyEvidenceArtifact(
                 artifact_key="evidence_source_map",
                 relative_path="evidence_source_map.json",
-                payload=daily_output_value(output, "evidence_source_map"),
+                payload=evidence_output["evidence_source_map"],
             )
         )
 
@@ -57,12 +57,12 @@ def project_daily_evidence_artifacts(
         "candidate_claims": "candidate_claims.json",
         "verified_findings": "verified_findings.json",
     }.items():
-        if daily_output_contains(output, artifact_key):
+        if artifact_key in evidence_output:
             artifacts.append(
                 DailyEvidenceArtifact(
                     artifact_key=artifact_key,
                     relative_path=relative_path,
-                    payload=daily_output_value(output, artifact_key),
+                    payload=evidence_output[artifact_key],
                 )
             )
 
