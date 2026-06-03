@@ -112,6 +112,15 @@ def project_daily_output_for_interface_metadata(output: Mapping[str, Any]) -> di
     )
 
 
+def project_daily_output_for_agent_validation(output: Mapping[str, Any]) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_AGENT_VALIDATION_OUTPUT_KEYS,
+        include_original=False,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_ONLY,
+    )
+
+
 def apply_daily_public_output_aliases(
     output: MutableMapping[str, Any],
 ) -> MutableMapping[str, Any]:
@@ -252,6 +261,10 @@ DAILY_INTERFACE_METADATA_OUTPUT_KEYS = (
     "agent_loop_metrics",
 )
 
+DAILY_AGENT_VALIDATION_OUTPUT_KEYS = (
+    "final_report",
+)
+
 DAILY_PUBLIC_OUTPUT_ALIAS_KEYS = (
     "final_report",
     "blocked_report",
@@ -274,6 +287,7 @@ DAILY_BOARD_ATTACHMENT_RESULT_KEYS = (
 
 
 __all__ = [
+    "DAILY_AGENT_VALIDATION_OUTPUT_KEYS",
     "DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS",
     "DAILY_BOARD_ATTACHMENT_RESULT_KEYS",
     "DAILY_MEMORY_INGESTION_OUTPUT_KEYS",
@@ -287,6 +301,7 @@ __all__ = [
     "daily_output_contains",
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",
+    "project_daily_output_for_agent_validation",
     "project_daily_output_for_board_attachment",
     "project_daily_output_for_interface_metadata",
     "project_daily_output_for_memory_ingestion",

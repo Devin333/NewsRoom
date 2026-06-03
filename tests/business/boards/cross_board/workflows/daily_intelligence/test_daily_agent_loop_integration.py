@@ -213,6 +213,31 @@ def test_daily_judge_reads_namespaced_final_report_output() -> None:
     ]
 
 
+def test_daily_judge_ignores_legacy_only_final_report_output() -> None:
+    verdict = build_daily_output_judge().judge(
+        agent=_writer(output_key="report_draft"),
+        action=AgentAction(
+            action_type="final_output",
+            output={
+                "final_report": {
+                    "title": "Daily Brief",
+                    "sections": [
+                        {
+                            "title": "Unsupported",
+                            "content": "The vendor acquired a rival.",
+                            "sources": ["https://example.com/model"],
+                        }
+                    ],
+                }
+            },
+        ),
+        called_tools=[],
+        inputs={"evidence_bundle": _bundle()},
+    )
+
+    assert verdict.validation_errors == []
+
+
 def test_daily_judge_schema_pass_does_not_replace_quality_gate_for_citation_coverage() -> None:
     verdict = build_daily_output_judge().judge(
         agent=_writer(),

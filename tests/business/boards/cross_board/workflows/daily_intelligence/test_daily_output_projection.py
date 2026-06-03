@@ -6,6 +6,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     daily_output_contains,
     daily_output_value,
     ensure_legacy_daily_output_aliases,
+    project_daily_output_for_agent_validation,
     project_daily_output_for_board_attachment,
     project_daily_output_for_interface_metadata,
     project_daily_output_for_memory_ingestion,
@@ -218,6 +219,25 @@ def test_interface_metadata_projection_requires_namespaced_daily_outputs() -> No
     output = {"agent_loop_metrics": {"llm_calls": 1}}
 
     projected = project_daily_output_for_interface_metadata(output)
+
+    assert projected == {}
+
+
+def test_project_daily_output_for_agent_validation_reads_namespaced_final_report() -> None:
+    output = {
+        "final_report": {"title": "legacy"},
+        "report.final": {"title": "Daily", "sections": []},
+    }
+
+    projected = project_daily_output_for_agent_validation(output)
+
+    assert projected == {"final_report": {"title": "Daily", "sections": []}}
+
+
+def test_agent_validation_projection_requires_namespaced_daily_outputs() -> None:
+    output = {"final_report": {"title": "legacy", "sections": []}}
+
+    projected = project_daily_output_for_agent_validation(output)
 
     assert projected == {}
 
