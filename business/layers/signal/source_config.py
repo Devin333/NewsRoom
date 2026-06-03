@@ -112,10 +112,13 @@ _FETCH_POLICY_FIELDS = {
 _TOP_LEVEL_FIELDS = {"fetch", "sources", *_PRD_SOURCE_SECTIONS}
 
 
-def load_source_definitions(path: str | Path) -> list[SourceDefinition]:
+def load_source_definitions(path: str | Path, *, validate: bool = True) -> list[SourceDefinition]:
     config_path = Path(path)
     payload = _load_payload(config_path)
-    return _source_definitions_from_payload(payload)
+    definitions = _source_definitions_from_payload(payload)
+    if validate:
+        _validate_source_definitions(definitions)
+    return definitions
 
 
 def _source_definitions_from_payload(payload: Any) -> list[SourceDefinition]:
@@ -136,13 +139,7 @@ def load_source_registry(path: str | Path, *, validate: bool = True) -> SourceRe
     registry = SourceRegistry(definitions)
     if validate:
         _validate_source_url_allowlist(definitions, allowed_domains=fetch_policy.allowed_domains)
-        validation = registry.validate()
-        if not validation.is_valid:
-            issues = "; ".join(
-                f"{issue.source_id}.{issue.field}: {issue.message}"
-                for issue in validation.errors
-            )
-            raise SourceConfigError(f"source config validation failed: {issues}")
+        _validate_source_definitions(definitions)
     return registry
 
 
@@ -425,6 +422,16 @@ def _validate_source_url_allowlist(
         )
     if issues:
         raise SourceConfigError(f"source config validation failed: {'; '.join(issues)}")
+
+
+def _validate_source_definitions(definitions: list[SourceDefinition]) -> None:
+    validation = SourceRegistry(definitions).validate()
+    if not validation.is_valid:
+        issues = "; ".join(
+            f"{issue.source_id}.{issue.field}: {issue.message}"
+            for issue in validation.errors
+        )
+        raise SourceConfigError(f"source config validation failed: {issues}")
 
 
 def _host_matches_allowed_domain(host: str, allowed_domains: tuple[str, ...]) -> bool:

@@ -152,6 +152,55 @@ listing = "new"
     assert definitions[0].metadata["subreddit"] == "MachineLearning"
 
 
+def test_load_source_definitions_validates_sources_by_default(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_id": "bad",
+                        "name": "Bad",
+                        "source_type": "rss",
+                        "url": "fixture://bad",
+                        "topics": ["ai"],
+                        "metadata": {"headers": {"api_key": "hidden"}},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError, match="bad.url"):
+        load_source_definitions(config_path)
+
+
+def test_load_source_definitions_can_skip_validation_for_parse_only_callers(tmp_path) -> None:
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "source_id": "fixture-source",
+                        "name": "Fixture Source",
+                        "source_type": "rss",
+                        "url": "fixture://feed",
+                        "topics": ["ai"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    definitions = load_source_definitions(config_path, validate=False)
+
+    assert definitions[0].source_id == "fixture-source"
+    assert definitions[0].url == "fixture://feed"
+
+
 def test_load_source_registry_rejects_invalid_validated_config(tmp_path) -> None:
     config_path = tmp_path / "sources.json"
     config_path.write_text(
