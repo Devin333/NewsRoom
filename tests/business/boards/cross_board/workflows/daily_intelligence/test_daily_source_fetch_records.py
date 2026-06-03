@@ -136,6 +136,24 @@ def test_response_metadata_from_observations_projects_mapping_metadata() -> None
     }
 
 
+def test_response_metadata_from_observations_preserves_empty_mapping_projection() -> None:
+    metadata = response_metadata_from_observations(
+        items=[
+            {
+                "source_item_id": "raw-1",
+                "metadata": {"fetch_response": {}},
+            }
+        ]
+    )
+
+    assert metadata == {
+        "status_code": None,
+        "content_type": None,
+        "url": None,
+        "headers": {},
+    }
+
+
 def test_source_fetch_result_counts_mapping_raw_content_bytes() -> None:
     result = source_fetch_result(
         _source(),
@@ -171,6 +189,49 @@ def test_source_error_runtime_metadata_projects_legacy_error_metadata() -> None:
     assert error_metadata_bool(error, "retryable", default=True) is False
     assert error_metadata_bool(error, "source_health_affecting", default=True) is False
     assert error_phase(error) == "parse"
+
+
+def test_source_error_runtime_metadata_projects_formal_runtime_metadata() -> None:
+    error = SourceError(
+        source_id="source-1",
+        error_type="parse_error",
+        error_message="Could not parse feed.",
+        retryable=False,
+        metadata={
+            "source_error_runtime_metadata": {
+                "source_health_affecting": False,
+                "phase": "parse",
+                "request_id": "fetch-1",
+            },
+        },
+    )
+
+    runtime_metadata = SourceErrorRuntimeMetadata.from_error(error)
+
+    assert runtime_metadata.retryable is False
+    assert runtime_metadata.source_health_affecting is False
+    assert runtime_metadata.phase == "parse"
+    assert runtime_metadata.request_id == "fetch-1"
+    assert error_metadata_bool(error, "source_health_affecting", default=True) is False
+    assert error_phase(error) == "parse"
+
+
+def test_source_error_runtime_metadata_prefers_error_retryable_field() -> None:
+    error = SourceError(
+        source_id="source-1",
+        error_type="fetch_timeout",
+        error_message="Timed out.",
+        retryable=False,
+        metadata={
+            "retryable": True,
+            "source_error_runtime_metadata": {"retryable": True},
+        },
+    )
+
+    runtime_metadata = SourceErrorRuntimeMetadata.from_error(error)
+
+    assert runtime_metadata.retryable is False
+    assert error_metadata_bool(error, "retryable", default=True) is False
 
 
 def test_source_error_runtime_metadata_uses_retryable_metadata_when_formal_value_missing() -> None:

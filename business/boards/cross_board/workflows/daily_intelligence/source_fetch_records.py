@@ -23,6 +23,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_connector_n
 
 
 FETCH_RESPONSE_METADATA_KEY = "fetch_response"
+SOURCE_ERROR_RUNTIME_METADATA_KEY = "source_error_runtime_metadata"
 
 
 def elapsed_ms(start: float) -> float:
@@ -113,19 +114,12 @@ class SourceErrorRuntimeMetadata(PrimitiveModel):
 
     @classmethod
     def from_error(cls, error: SourceError) -> "SourceErrorRuntimeMetadata":
-        metadata = dict(error.metadata or {})
+        view = _SourceErrorRuntimeMetadataView.from_error(error)
         return cls(
-            retryable=(
-                bool(error.retryable)
-                if error.retryable is not None
-                else _bool_value(metadata.get("retryable"), default=True)
-            ),
-            source_health_affecting=_bool_value(
-                metadata.get("source_health_affecting"),
-                default=True,
-            ),
-            phase=_optional_text(metadata.get("phase")),
-            request_id=_optional_text(metadata.get("request_id")),
+            retryable=view.retryable,
+            source_health_affecting=view.source_health_affecting,
+            phase=view.phase,
+            request_id=view.request_id,
         )
 
 
@@ -195,20 +189,57 @@ class _SourceFetchResultMetadataView:
         return self.formal.get(key) or self.legacy.get(key) or default
 
 
+@dataclass(frozen=True)
+class _SourceErrorRuntimeMetadataView:
+    retryable_value: bool | None
+    formal: dict[str, Any]
+    legacy: dict[str, Any]
+
+    @classmethod
+    def from_error(cls, error: SourceError) -> "_SourceErrorRuntimeMetadataView":
+        legacy = _metadata_dict(error.metadata)
+        return cls(
+            retryable_value=error.retryable,
+            formal=_metadata_dict(legacy.get(SOURCE_ERROR_RUNTIME_METADATA_KEY)),
+            legacy=legacy,
+        )
+
+    @property
+    def retryable(self) -> bool:
+        if self.retryable_value is not None:
+            return bool(self.retryable_value)
+        return _bool_value(self._present("retryable", default=True), default=True)
+
+    @property
+    def source_health_affecting(self) -> bool:
+        return _bool_value(self._present("source_health_affecting", default=True), default=True)
+
+    @property
+    def phase(self) -> str | None:
+        return _optional_text(self._truthy("phase"))
+
+    @property
+    def request_id(self) -> str | None:
+        return _optional_text(self._truthy("request_id"))
+
+    def _present(self, key: str, *, default: Any) -> Any:
+        return _metadata_value(self.formal, self.legacy, key, default=default)
+
+    def _truthy(self, key: str, default: Any = None) -> Any:
+        return self.formal.get(key) or self.legacy.get(key) or default
+
+
 def response_metadata_from_observations(
     *,
     items: list[Any] | None = None,
     errors: list[Any] | None = None,
 ) -> dict[str, Any] | None:
     for observation in _source_fetch_observation_views(items=items, errors=errors):
-        response_metadata = observation.metadata.get(FETCH_RESPONSE_METADATA_KEY)
-        if isinstance(response_metadata, dict):
-            return {
-                "status_code": _optional_int(response_metadata.get("status_code")),
-                "content_type": _optional_text(response_metadata.get("content_type")),
-                "url": _optional_text(response_metadata.get("url")),
-                "headers": _string_dict(response_metadata.get("headers")),
-            }
+        response_metadata = _SourceFetchResponseMetadataView.from_observation(
+            observation,
+        ).to_response_metadata()
+        if response_metadata is not None:
+            return response_metadata
     return None
 
 
@@ -436,6 +467,30 @@ class _SourceFetchObservationView:
             metadata=_metadata_dict(getattr(value, "metadata", None)),
             raw_content=getattr(value, "raw_content", None),
         )
+
+
+@dataclass(frozen=True)
+class _SourceFetchResponseMetadataView:
+    metadata: dict[str, Any]
+
+    @classmethod
+    def from_observation(
+        cls,
+        observation: _SourceFetchObservationView,
+    ) -> "_SourceFetchResponseMetadataView":
+        return cls(metadata=observation.metadata)
+
+    def to_response_metadata(self) -> dict[str, Any] | None:
+        raw_response_metadata = self.metadata.get(FETCH_RESPONSE_METADATA_KEY)
+        if not isinstance(raw_response_metadata, dict):
+            return None
+        response_metadata = dict(raw_response_metadata)
+        return {
+            "status_code": _optional_int(response_metadata.get("status_code")),
+            "content_type": _optional_text(response_metadata.get("content_type")),
+            "url": _optional_text(response_metadata.get("url")),
+            "headers": _string_dict(response_metadata.get("headers")),
+        }
 
 
 def _source_fetch_observation_views(
