@@ -42,6 +42,7 @@ from infrastructure.external.sources.fetch_policy import (
 from infrastructure.external.sources.github import (
     GITHUB_API_URL,
     GithubConnector,
+    GithubConnectorRuntimeOptions,
     GithubRepository,
     GithubRepositoryMetadata,
     GithubRepositorySearchResult,
@@ -83,6 +84,7 @@ __all__ = [
     "FeedConnector",
     "GITHUB_API_URL",
     "GithubConnector",
+    "GithubConnectorRuntimeOptions",
     "GithubRepository",
     "GithubRepositoryMetadata",
     "GithubRepositorySearchResult",

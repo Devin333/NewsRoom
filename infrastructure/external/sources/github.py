@@ -94,6 +94,32 @@ class GithubRepository:
 
 
 @dataclass(frozen=True)
+class GithubConnectorRuntimeOptions:
+    discussion_category: str | None = None
+    token_env: str = "GITHUB_TOKEN"
+
+    @classmethod
+    def from_source(
+        cls,
+        source: SourceDefinition,
+        *,
+        discussion_category: str | None = None,
+        token_env: str | None = None,
+    ) -> GithubConnectorRuntimeOptions:
+        return cls(
+            discussion_category=(
+                _optional_text(discussion_category)
+                or _legacy_github_option(source, "discussion_category")
+            ),
+            token_env=(
+                _optional_text(token_env)
+                or _legacy_github_option(source, "token_env")
+                or "GITHUB_TOKEN"
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class GithubRepositorySearchResult:
     repository_id: int | None
     full_name: str
@@ -249,8 +275,15 @@ class GithubConnector:
         repository: str | GithubRepository | None = None,
         query: str | None = None,
         mode: str | None = None,
+        discussion_category: str | None = None,
+        token_env: str | None = None,
         limit: int | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
+        options = GithubConnectorRuntimeOptions.from_source(
+            source,
+            discussion_category=discussion_category,
+            token_env=token_env,
+        )
         resolved_mode = _github_mode(source, mode=mode)
         if resolved_mode == "releases":
             return self.fetch_releases(source, repository=repository, limit=limit)
@@ -263,7 +296,13 @@ class GithubConnector:
         if resolved_mode in {"security_advisories", "advisories"}:
             return self.fetch_security_advisories(source, repository=repository, limit=limit)
         if resolved_mode in {"discussions", "discussion"}:
-            return self.fetch_discussions(source, repository=repository, limit=limit)
+            return self.fetch_discussions(
+                source,
+                repository=repository,
+                limit=limit,
+                discussion_category=options.discussion_category,
+                token_env=options.token_env,
+            )
         if resolved_mode in {"repository_search", "trending", "stars"}:
             search_query = query or _legacy_github_query(source)
             return self.fetch_repository_search_items(
@@ -438,10 +477,17 @@ class GithubConnector:
         repository: str | GithubRepository | None = None,
         limit: int | None = None,
         category: str | None = None,
+        discussion_category: str | None = None,
+        token_env: str | None = None,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
         self._last_response_metadata = None
         try:
+            options = GithubConnectorRuntimeOptions.from_source(
+                source,
+                discussion_category=discussion_category or category,
+                token_env=token_env,
+            )
             repo = _repository_from_source(source, repository=repository)
             endpoint = build_github_graphql_url(source.url or GITHUB_API_URL)
             rate_limit = self._rate_limiter.reserve(
@@ -464,6 +510,7 @@ class GithubConnector:
                         "variables": variables,
                     },
                     policy,
+                    options=options,
                 ),
                 policy,
             )
@@ -491,7 +538,7 @@ class GithubConnector:
                 payload,
                 repository=repo,
                 limit=limit,
-                category=category or _optional_text(source.metadata.get("discussion_category")),
+                category=options.discussion_category,
             )
         except Exception as exc:
             error = _exception_source_error(source, exc, phase="parse")
@@ -781,10 +828,12 @@ class GithubConnector:
         url: str,
         payload: dict[str, Any],
         policy: SourceFetchPolicy,
+        *,
+        options: GithubConnectorRuntimeOptions,
     ) -> str:
         if self._fetch_graphql is not None:
             return self._fetch_graphql(url, payload)
-        token_env = str(source.metadata.get("token_env") or "GITHUB_TOKEN")
+        token_env = options.token_env
         token = os.getenv(token_env)
         if not token:
             raise ValueError(f"github discussions require token env {token_env}")

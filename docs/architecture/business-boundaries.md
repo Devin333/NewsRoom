@@ -59,6 +59,8 @@ daily intelligence runtime 直接从 `business.layers.signal.source_config` 加�
 
 daily source connector 的运行参数由 `SourceConnectorRuntimeOptions` 统一投影：`query`、`manual_records`、`repository`、`github_mode`、`story_list`、`subreddit`、`listing`、`time_range`、`tag` 和 `site` 等 dispatcher 消费的 connector-specific 字段只允许在该边界从 `SourceDefinition.metadata` / request topic 读取。`DailySourceCollector` 和 `DailySourceRecollectionExecutor` 创建该 options view 后传给 fetch request 构造与 `SourceDispatcher`；dispatcher 的 `_fetch_*` handler 只消费正式 options 字段，不再散落读取 legacy metadata key。Manual curated records 通过 `ManualSourceRecords` / `manual_records` 显式传给 connector；arXiv search query 通过 `query` 显式传给 connector；GitHub repository/query/collection mode 通过 `repository`、`query` 和 `github_mode` 显式传给 connector；Hacker News story list 通过 `story_list` 显式传给 connector；Reddit subreddit/listing/time range 通过 `subreddit` / `listing` / `time_range` 显式传给 connector；community source 的 tag/site 通过 `tag` / `site` 显式传给 connector；外部 connector 对这些 metadata key 的读取只保留为历史调用兜底。
 
+GitHub connector 内部的 discussion category 和 GraphQL token env 属于 connector-level 运行选项，由 infrastructure 层 `GithubConnectorRuntimeOptions` 承载；显式参数优先，`SourceDefinition.metadata["discussion_category"]` / `metadata["token_env"]` 只作为历史 source 配置兜底。daily business dispatcher 不应理解 token env 这类鉴权细节。
+
 source connector dispatch 观测使用 `SourceFetchRequest.connector_name` 作为正式字段；`metadata["connector_name"]` 只作为 artifact/legacy 兼容投影保留。`build_source_connector_dispatch_report()` 必须优先消费正式字段，只有读取历史 payload 时才回退到 metadata。
 
 ## Source Processing 边界

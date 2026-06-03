@@ -400,6 +400,31 @@ def test_github_connector_fetches_discussions_with_graphql_fetcher() -> None:
     assert items[0].metadata["comment_count"] == 3
 
 
+def test_github_connector_fetch_discussions_prefers_explicit_category_over_legacy_metadata() -> None:
+    source = SourceDefinition(
+        source_id="github-discussions",
+        name="GitHub Discussions",
+        source_type="github",
+        url=GITHUB_API_URL,
+        reliability="high",
+        metadata={
+            "mode": "discussions",
+            "repository": "owner/repo",
+            "discussion_category": "Announcements",
+        },
+    )
+
+    items, errors = GithubConnector(fetch_graphql=lambda url, payload: GITHUB_DISCUSSIONS).fetch(
+        source,
+        discussion_category="Ideas",
+        limit=1,
+    )
+
+    assert errors == []
+    assert len(items) == 1
+    assert items[0].tags == ["discussion", "Ideas"]
+
+
 def test_github_discussions_default_fetch_requires_auth_token(monkeypatch) -> None:
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     source = SourceDefinition(
@@ -416,6 +441,29 @@ def test_github_discussions_default_fetch_requires_auth_token(monkeypatch) -> No
     assert items == []
     assert errors[0].error_type == "invalid_source_config"
     assert errors[0].metadata["operator_action_required"] is True
+
+
+def test_github_discussions_default_fetch_uses_explicit_token_env(monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("NEWSROOM_GITHUB_TOKEN", raising=False)
+    source = SourceDefinition(
+        source_id="github-discussions",
+        name="GitHub Discussions",
+        source_type="github",
+        url=GITHUB_API_URL,
+        reliability="high",
+        metadata={"mode": "discussions", "repository": "owner/repo", "token_env": "GITHUB_TOKEN"},
+    )
+
+    items, errors = GithubConnector().fetch(
+        source,
+        token_env="NEWSROOM_GITHUB_TOKEN",
+        limit=1,
+    )
+
+    assert items == []
+    assert errors[0].error_type == "invalid_source_config"
+    assert "NEWSROOM_GITHUB_TOKEN" in errors[0].error_message
 
 
 def test_github_connector_returns_empty_release_error() -> None:
