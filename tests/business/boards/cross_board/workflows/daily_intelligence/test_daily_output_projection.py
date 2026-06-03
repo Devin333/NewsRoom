@@ -65,7 +65,7 @@ def test_project_daily_output_for_persistence_projects_only_record_input_keys() 
     assert "unmapped_runtime_state" not in projected
 
 
-def test_dedicated_daily_output_projection_keeps_legacy_fallback_explicit() -> None:
+def test_persistence_output_projection_keeps_legacy_fallback_explicit() -> None:
     output = {
         "final_report": {"title": "legacy"},
         "quality_result": {"decision": "pass"},
@@ -115,6 +115,19 @@ def test_project_daily_output_for_memory_ingestion_projects_only_memory_inputs()
         "evidence_bundle": {"items": []},
         "quality_result": {"decision": "pass"},
     }
+
+
+def test_memory_ingestion_projection_requires_namespaced_daily_outputs() -> None:
+    output = {
+        "request": {"topic": "AI"},
+        "final_report": {"title": "legacy"},
+        "evidence_bundle": {"items": []},
+        "quality_result": {"decision": "pass"},
+    }
+
+    projected = project_daily_output_for_memory_ingestion(output)
+
+    assert projected == {"request": {"topic": "AI"}}
 
 
 def test_project_daily_output_for_run_inspection_projects_only_quality_preview_inputs() -> None:

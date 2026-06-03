@@ -77,7 +77,7 @@ def project_daily_output_for_memory_ingestion(output: Mapping[str, Any]) -> dict
         output,
         DAILY_MEMORY_INGESTION_OUTPUT_KEYS,
         include_original=False,
-        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_WITH_LEGACY_FALLBACK,
+        read_policy=DailyOutputProjectionReadPolicy.NAMESPACED_ONLY,
     )
 
 

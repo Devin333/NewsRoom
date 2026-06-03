@@ -66,6 +66,27 @@ def test_daily_run_service_projects_namespaced_output_for_service_consumers(tmp_
     assert result.output["cross_board_output"] == {"board_type": "cross_board"}
 
 
+def test_daily_run_service_memory_ingestion_ignores_legacy_only_daily_outputs(tmp_path) -> None:
+    memory = _CapturingMemory()
+    service = DailyRunApplicationService(
+        artifact_root=tmp_path,
+        persistence_service=_CapturingPersistence(),
+        memory_ingestion_service=memory,
+        runner_cls_resolver=lambda profile: lambda artifact_root: _LegacyOnlyRunner(),
+    )
+
+    result = service.run_daily(
+        profile="live-offline",
+        topic="AI",
+        source_limit=1,
+        run_id="run-1",
+    )
+
+    assert memory.output == {}
+    assert result.output["final_report"] == {"title": "Legacy report", "sections": []}
+    assert result.output["memory_ingestion_result"]["documents_indexed"] == 1
+
+
 def test_daily_run_service_falls_back_to_projected_result_when_input_writer_is_unconfigured(
     tmp_path,
 ) -> None:
@@ -129,6 +150,21 @@ class _NamespacedRunner:
                 "evidence.bundle": {"items": []},
                 "quality.result": {"decision": "pass", "route": "final"},
                 "sources.ranked_items": [{"title": "Namespaced item"}],
+            },
+        )
+
+
+class _LegacyOnlyRunner:
+    def run(self, *, profile, topic, source_limit, run_id=None):
+        return RunResult(
+            run_id=run_id or "generated",
+            workflow_id="daily",
+            workflow_version="1",
+            status=WorkflowStatus.SUCCEEDED,
+            output={
+                "final_report": {"title": "Legacy report", "sections": []},
+                "evidence_bundle": {"items": []},
+                "quality_result": {"decision": "pass", "route": "final"},
             },
         )
 
