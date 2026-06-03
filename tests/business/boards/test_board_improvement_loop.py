@@ -29,7 +29,9 @@ def test_approved_proposal_is_applied_on_next_board_run(tmp_path) -> None:
         improvement_service=improvement_service,
     ).run(signals=[sample_signal("ai_news")], topic="Agent Memory", run_id="approved-next-run")
 
-    applied = result.output["applied_overrides"]
+    policy_context = result.output["policy_experiment_application_context"]
+    applied = result.output["applied_policy_experiments"]
     assert applied and applied[0]["proposal_id"] == "approved-ranking"
-    assert result.output["applied_policy_experiments"] == applied
+    assert policy_context["applied_policy_experiments"] == applied
+    assert result.output["applied_overrides"] == applied
     assert result.output["improvement_measurement"]
