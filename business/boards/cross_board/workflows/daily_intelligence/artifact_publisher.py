@@ -4,6 +4,12 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from business.boards.cross_board.workflows.daily_intelligence.artifact_sections import (
+    publish_daily_artifact_sections,
+)
+from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    DAILY_BUFFER_ALIASES,
+)
 from business.layers.signal.artifacts import SourceArtifactWriter
 from framework.workflow.runtime.artifact_publishers import (
     ArtifactPublishContext,
@@ -11,9 +17,6 @@ from framework.workflow.runtime.artifact_publishers import (
     register_manifest_artifact_once,
 )
 from infrastructure.storage.artifacts import ArtifactRef
-from business.boards.cross_board.workflows.daily_intelligence.artifact_sections import (
-    publish_daily_artifact_sections,
-)
 
 
 AGENTIC_WORKFLOW_IDS = {"daily-intelligence-agentic"}
@@ -74,11 +77,19 @@ class DailyIntelligenceArtifactPublisher:
     def _publish_evidence_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
         refs: list[ArtifactRef] = []
         output = context.output
-        if "evidence_bundle" in output:
-            refs.append(_write_json_artifact(context, "evidence_bundle", "evidence_bundle.json", output["evidence_bundle"]))
-            source_map = output.get("evidence_source_map")
+        if _output_contains(output, "evidence_bundle"):
+            evidence_bundle = _output_value(output, "evidence_bundle")
+            refs.append(
+                _write_json_artifact(
+                    context,
+                    "evidence_bundle",
+                    "evidence_bundle.json",
+                    evidence_bundle,
+                )
+            )
+            source_map = _output_value(output, "evidence_source_map")
             if source_map is None:
-                source_map = _evidence_source_map(output["evidence_bundle"])
+                source_map = _evidence_source_map(evidence_bundle)
             if source_map is not None:
                 refs.append(
                     _write_json_artifact(
@@ -88,13 +99,13 @@ class DailyIntelligenceArtifactPublisher:
                         source_map,
                     )
                 )
-        elif "evidence_source_map" in output:
+        elif _output_contains(output, "evidence_source_map"):
             refs.append(
                 _write_json_artifact(
                     context,
                     "evidence_source_map",
                     "evidence_source_map.json",
-                    output["evidence_source_map"],
+                    _output_value(output, "evidence_source_map"),
                 )
             )
         refs.extend(
@@ -112,8 +123,8 @@ class DailyIntelligenceArtifactPublisher:
     def _publish_quality_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
         refs: list[ArtifactRef] = []
         output = context.output
-        if "citation_check_result" in output:
-            citation_check = output["citation_check_result"]
+        if _output_contains(output, "citation_check_result"):
+            citation_check = _output_value(output, "citation_check_result")
             refs.append(
                 _write_json_artifact(
                     context,
@@ -177,7 +188,7 @@ class DailyIntelligenceArtifactPublisher:
             label = agent["label"]
             for artifact_name, suffix in AGENT_LOOP_ARTIFACT_SUFFIXES.items():
                 output_key = f"{label}_{suffix}"
-                if output_key not in output:
+                if not _output_contains(output, output_key):
                     continue
                 artifact_key = f"{label}_{suffix}"
                 relative_path = f"agentic/{artifact_key}.json"
@@ -186,7 +197,10 @@ class DailyIntelligenceArtifactPublisher:
                         context,
                         artifact_key,
                         relative_path,
-                        _agentic_artifact_payload(artifact_name, output[output_key]),
+                        _agentic_artifact_payload(
+                            artifact_name,
+                            _output_value(output, output_key),
+                        ),
                     )
                 )
 
@@ -199,8 +213,8 @@ class DailyIntelligenceArtifactPublisher:
                 },
             )
         )
-        feedback_summary = _dict_value(output.get("agent_feedback_summary"))
-        feedback_events = _list_value(output.get("agent_feedback_events"))
+        feedback_summary = _dict_value(_output_value(output, "agent_feedback_summary"))
+        feedback_events = _list_value(_output_value(output, "agent_feedback_events"))
         if feedback_summary or feedback_events:
             context.manifest["agent_feedback"] = {
                 "event_count": len(feedback_events),
@@ -209,7 +223,14 @@ class DailyIntelligenceArtifactPublisher:
             }
 
         summary = _agentic_summary(context)
-        refs.append(_write_json_artifact(context, "agentic_summary", "agentic_summary.json", summary))
+        refs.append(
+            _write_json_artifact(
+                context,
+                "agentic_summary",
+                "agentic_summary.json",
+                summary,
+            )
+        )
         context.manifest["agentic_summary"] = {
             "agent_count": summary["agent_count"],
             "final_decision": summary.get("final_decision"),
@@ -221,25 +242,33 @@ class DailyIntelligenceArtifactPublisher:
     def _publish_report_artifacts(self, context: ArtifactPublishContext) -> list[ArtifactRef]:
         refs: list[ArtifactRef] = []
         output = context.output
-        if "final_report" in output:
-            refs.append(_write_json_artifact(context, "report_json", "report.json", output["final_report"]))
-        if isinstance(output.get("report_markdown"), str):
+        if _output_contains(output, "final_report"):
+            refs.append(
+                _write_json_artifact(
+                    context,
+                    "report_json",
+                    "report.json",
+                    _output_value(output, "final_report"),
+                )
+            )
+        report_markdown = _output_value(output, "report_markdown")
+        if isinstance(report_markdown, str):
             refs.append(
                 _write_text_artifact(
                     context,
                     "report_markdown",
                     "report.md",
-                    output["report_markdown"],
+                    report_markdown,
                     content_type="text/markdown",
                 )
             )
-        if "blocked_report" in output:
+        if _output_contains(output, "blocked_report"):
             refs.append(
                 _write_json_artifact(
                     context,
                     "blocked_report",
                     "blocked_report.json",
-                    output["blocked_report"],
+                    _output_value(output, "blocked_report"),
                 )
             )
         return refs
@@ -273,23 +302,29 @@ class DailyIntelligenceArtifactPublisher:
                 "source_recollection_profile": "source_recollection/profile.json",
                 "source_recollection_execution_plan": "source_recollection/execution_plan.json",
                 "source_recollection_execution_report": "source_recollection/execution_report.json",
-                "source_recollection_quality_assessment": "source_recollection/quality_assessment.json",
+                "source_recollection_quality_assessment": (
+                    "source_recollection/quality_assessment.json"
+                ),
             },
         )
         output = context.output
-        if "source_events" in output:
-            context.manifest["source_event_count"] = len(output["source_events"])
-        if "source_quality_scores" in output:
-            context.manifest["source_quality_score_count"] = len(output["source_quality_scores"])
-        if "source_ranking_scores" in output:
-            context.manifest["source_ranking_score_count"] = len(output["source_ranking_scores"])
+        if _output_contains(output, "source_events"):
+            context.manifest["source_event_count"] = len(_output_value(output, "source_events"))
+        if _output_contains(output, "source_quality_scores"):
+            context.manifest["source_quality_score_count"] = len(
+                _output_value(output, "source_quality_scores")
+            )
+        if _output_contains(output, "source_ranking_scores"):
+            context.manifest["source_ranking_score_count"] = len(
+                _output_value(output, "source_ranking_scores")
+            )
         _update_source_recollection_manifest_fields(context.manifest, output)
         source_artifacts = SourceArtifactWriter(context.artifact_manager).write_source_artifacts(
             context.run_id,
-            raw_items=output.get("raw_items"),
-            source_fetch_requests=output.get("source_fetch_requests"),
-            source_fetch_results=output.get("source_fetch_results"),
-            source_errors=output.get("source_errors"),
+            raw_items=_output_value(output, "raw_items"),
+            source_fetch_requests=_output_value(output, "source_fetch_requests"),
+            source_fetch_results=_output_value(output, "source_fetch_results"),
+            source_errors=_output_value(output, "source_errors"),
         )
         if source_artifacts:
             refs.append(
@@ -329,16 +364,28 @@ def _write_json_artifacts_from_output(
 ) -> list[ArtifactRef]:
     refs: list[ArtifactRef] = []
     for artifact_key, relative_path in artifacts.items():
-        if artifact_key in context.output:
+        if _output_contains(context.output, artifact_key):
             refs.append(
                 _write_json_artifact(
                     context,
                     artifact_key,
                     relative_path,
-                    context.output[artifact_key],
+                    _output_value(context.output, artifact_key),
                 )
             )
     return refs
+
+
+def _output_value(output: dict[str, Any], key: str, default: Any = None) -> Any:
+    namespaced_key = DAILY_BUFFER_ALIASES.get(key)
+    if namespaced_key is not None and namespaced_key in output:
+        return output[namespaced_key]
+    return output.get(key, default)
+
+
+def _output_contains(output: dict[str, Any], key: str) -> bool:
+    namespaced_key = DAILY_BUFFER_ALIASES.get(key)
+    return (namespaced_key is not None and namespaced_key in output) or key in output
 
 
 def _write_json_artifact(
@@ -427,18 +474,18 @@ def _artifact_ref(
 
 
 def _update_quality_manifest_fields(manifest: dict[str, Any], output: dict[str, Any]) -> None:
-    if "report_quality_summary" in output:
-        summary = output["report_quality_summary"]
+    if _output_contains(output, "report_quality_summary"):
+        summary = _output_value(output, "report_quality_summary")
         if hasattr(summary, "quality_score"):
             manifest["quality_score"] = summary.quality_score
         elif isinstance(summary, dict):
             manifest["quality_score"] = summary.get("quality_score")
-    if "quality_events" in output:
-        manifest["quality_event_count"] = len(output["quality_events"])
-    quality_result = output.get("quality_result")
+    if _output_contains(output, "quality_events"):
+        manifest["quality_event_count"] = len(_output_value(output, "quality_events"))
+    quality_result = _output_value(output, "quality_result")
     route = _field_value(quality_result, "route")
     if route is None:
-        route = output.get("quality_route")
+        route = _output_value(output, "quality_route")
     if route is not None:
         manifest["quality_route"] = route
     decision = _field_value(quality_result, "decision")
@@ -450,7 +497,7 @@ def _update_source_recollection_manifest_fields(
     manifest: dict[str, Any],
     output: dict[str, Any],
 ) -> None:
-    report = output.get("source_recollection_execution_report")
+    report = _output_value(output, "source_recollection_execution_report")
     if report is None:
         return
     manifest["source_recollection"] = {
@@ -463,11 +510,11 @@ def _update_source_recollection_manifest_fields(
         "fetch_result_count": _int_value(_field_value(report, "fetch_result_count")),
         "artifact": "source_recollection/execution_report.json",
     }
-    if "source_recollection_profile" in output:
+    if _output_contains(output, "source_recollection_profile"):
         manifest["source_recollection"]["profile_artifact"] = "source_recollection/profile.json"
-    if "source_recollection_execution_plan" in output:
+    if _output_contains(output, "source_recollection_execution_plan"):
         manifest["source_recollection"]["plan_artifact"] = "source_recollection/execution_plan.json"
-    assessment = output.get("source_recollection_quality_assessment")
+    assessment = _output_value(output, "source_recollection_quality_assessment")
     if assessment is not None:
         manifest["source_recollection"]["quality"] = {
             "decision": _field_value(assessment, "decision"),
@@ -483,10 +530,10 @@ def _agentic_summary(context: ArtifactPublishContext) -> dict[str, Any]:
     agents = []
     for agent in DAILY_AGENT_STEPS:
         label = agent["label"]
-        result = _dict_value(output.get(f"{label}_agent_loop_result"))
-        metrics = _dict_value(output.get(f"{label}_agent_loop_metrics"))
-        diagnostics = _dict_value(output.get(f"{label}_agent_loop_diagnostics"))
-        trace = _dict_value(output.get(f"{label}_agent_loop_trace"))
+        result = _dict_value(_output_value(output, f"{label}_agent_loop_result"))
+        metrics = _dict_value(_output_value(output, f"{label}_agent_loop_metrics"))
+        diagnostics = _dict_value(_output_value(output, f"{label}_agent_loop_diagnostics"))
+        trace = _dict_value(_output_value(output, f"{label}_agent_loop_trace"))
         summary = _dict_value(trace.get("summary"))
         agents.append(
             {
@@ -501,17 +548,22 @@ def _agentic_summary(context: ArtifactPublishContext) -> dict[str, Any]:
                     or summary.get("stop_reason")
                     or diagnostics.get("stop_reason")
                 ),
-                "diagnostics_present": output.get(f"{label}_agent_loop_diagnostics") is not None,
-                "trace_present": output.get(f"{label}_agent_loop_trace") is not None,
-                "llm_artifact_count": len(_list_value(output.get(f"{label}_llm_call_artifacts"))),
+                "diagnostics_present": (
+                    _output_value(output, f"{label}_agent_loop_diagnostics")
+                    is not None
+                ),
+                "trace_present": _output_value(output, f"{label}_agent_loop_trace") is not None,
+                "llm_artifact_count": len(
+                    _list_value(_output_value(output, f"{label}_llm_call_artifacts"))
+                ),
             }
         )
 
-    editor_review = _dict_value(output.get("editor_review"))
-    quality_result = _dict_value(output.get("quality_result"))
-    quality_summary = _dict_value(output.get("report_quality_summary"))
-    feedback_summary = _dict_value(output.get("agent_feedback_summary"))
-    feedback_events = _list_value(output.get("agent_feedback_events"))
+    editor_review = _dict_value(_output_value(output, "editor_review"))
+    quality_result = _dict_value(_output_value(output, "quality_result"))
+    quality_summary = _dict_value(_output_value(output, "report_quality_summary"))
+    feedback_summary = _dict_value(_output_value(output, "agent_feedback_summary"))
+    feedback_events = _list_value(_output_value(output, "agent_feedback_events"))
     final_decision = (
         editor_review.get("decision")
         or quality_result.get("decision")

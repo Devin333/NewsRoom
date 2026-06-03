@@ -25,7 +25,7 @@
 仍建议继续推进的长期方向：
 
 - Agent 间反馈闭环目前已有 `DailyAgentFeedbackRoutingService` 承载 bounded writer rewrite / source recollect 路由，以及 analyst evidence gap -> `daily.source_recollect` recommendation -> `DailySourceRecollectionProfile` -> `DailySourceRecollectionExecutionPlan` -> `DailySourceRecollectionExecutor` -> `DailySourceRecollectionExecutionReport` -> `DailySourceRecollectionQualityAssessment` -> finalization human review policy -> source/evidence pipeline -> planner 的正式补源闭环；补源 profile/plan/report/quality assessment 已进入 artifact 观测，且 assessment 已接入 strict quality gate 下的发布/人工审核策略。下一轮应继续把人工审核后的决策结果回写为可恢复的 workflow route，或推进 dotted key 从兼容双写到正式消费。
-- source/model 配置、workflow buffer、business layer boundary 已有基础 guard；`finalize_report`、source/evidence 主链路、函数型 feedback/recollect step 和 agent loop step 已改为命名空间优先声明/消费。`DailyAgentInputCanonicalizingRunner` 在 business 层把 dotted key 投影回 agent spec 期待的 canonical 输入，避免 framework runner 承载 daily alias 规则。后续应继续减少 legacy key 双写面。
+- source/model 配置、workflow buffer、business layer boundary 已有基础 guard；`finalize_report`、source/evidence 主链路、函数型 feedback/recollect step、agent loop step 和 artifact publisher 已改为命名空间优先声明/消费。`DailyAgentInputCanonicalizingRunner` 在 business 层把 dotted key 投影回 agent spec 期待的 canonical 输入，避免 framework runner 承载 daily alias 规则；artifact publisher 优先消费 dotted output，但继续保持 artifact key/path 稳定。后续应继续减少 legacy key 双写面。
 - `docs/prd1.md` 已标记为历史审查快照，并指向本文作为当前权威闭环状态；后续不要把它作为当前任务入口或完成状态依据。
 
 ## 1. 主要问题总览

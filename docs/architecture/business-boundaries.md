@@ -106,6 +106,8 @@ source/evidence 主链路也已进入命名空间优先读取阶段：`require_s
 
 Agent loop step 也使用命名空间优先读取，但 agent 本身仍消费 canonical 业务输入。`DailyAgentInputCanonicalizingRunner` 在 business 层把 `sources.*`、`evidence.*`、`quality.*`、`report.*` 和 `agent.feedback.*` 输入投影回 agent spec 期待的 canonical key，并让命名空间值覆盖 legacy 值；framework `AgentLoopStepRunner` 只负责按 spec 读取 buffer 和调用 runner，不承载 daily 专属 alias 解析。daily agent output normalizer 负责把旧业务输出 key 投影成命名空间 alias，agentic workflow spec 必须在对应 agent step 的 `write_keys` 中声明这些 alias。
 
+artifact publisher 也进入命名空间优先输出读取阶段：发布器通过集中 output lookup helper 优先消费 `sources.*`、`evidence.*`、`quality.*`、`report.*` 和 `agent.feedback.*`，legacy key 只作为兼容兜底；对外 artifact key、manifest key 和文件路径继续保持现有稳定命名，例如 `quality_result.json`、`source_recollection/execution_report.json` 和 `agentic/agent_feedback_summary.json`。
+
 `source_errors` / `sources.errors` 可以在兼容入口接收 legacy dict payload，但业务逻辑消费前必须通过 `business.foundation.models.source_error_normalization.normalize_source_errors()` 归一化为 `SourceError`，不得在业务分支里继续使用 `hasattr()` / `dict.get()` duck typing。daily 旧导入路径只作为兼容 re-export 保留。
 
 ## Quality Gate 边界

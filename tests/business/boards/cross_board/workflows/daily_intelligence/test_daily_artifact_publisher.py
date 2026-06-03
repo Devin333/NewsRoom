@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import json
 
+from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import (
+    DailyIntelligenceArtifactPublisher,
+)
+from business.boards.cross_board.workflows.daily_intelligence.profiles import (
+    LEGACY_DAILY_WORKFLOW_ID,
+)
+from business.boards.cross_board.workflows.daily_intelligence.spec_agentic import (
+    AGENTIC_WORKFLOW_ID,
+)
 from framework.artifacts import ArtifactManager
 from framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
 from framework.workflow import ArtifactPublishContext, ArtifactPublishPhase
-from business.boards.cross_board.workflows.daily_intelligence.artifact_publisher import DailyIntelligenceArtifactPublisher
-from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
-from business.boards.cross_board.workflows.daily_intelligence.spec_agentic import AGENTIC_WORKFLOW_ID
 
 
 def test_daily_artifact_publisher_writes_report_and_quality_manifest(tmp_path) -> None:
@@ -64,6 +70,64 @@ def test_daily_artifact_publisher_writes_report_and_quality_manifest(tmp_path) -
         == "Daily Intelligence"
     )
     assert (run_dir / "report.md").read_text(encoding="utf-8") == "# Daily Intelligence"
+    assert manifest["artifacts"]["evidence_bundle"] == "evidence_bundle.json"
+    assert manifest["artifacts"]["citation_check_result"] == "citation_check_result.json"
+    assert manifest["artifacts"]["quality_result"] == "quality_result.json"
+    assert manifest["artifacts"]["report_json"] == "report.json"
+    assert manifest["artifacts"]["report_markdown"] == "report.md"
+    assert manifest["quality_route"] == "final"
+    assert manifest["quality_decision"] == "pass"
+
+
+def test_daily_artifact_publisher_reads_namespaced_report_and_quality_output(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manifest = {"artifacts": {}}
+    output = {
+        "evidence.bundle": {
+            "bundle_id": "bundle-1",
+            "source_map": {"ev-1": ["https://example.com/source"]},
+            "items": [
+                {
+                    "evidence_id": "ev-1",
+                    "title": "Source item",
+                    "source_url": "https://example.com/source",
+                }
+            ],
+        },
+        "quality.citation_check_result": {
+            "passed": True,
+            "unsupported_claims": [],
+            "rejected_claim_usage": [],
+            "failure_categories": [],
+            "section_results": [],
+        },
+        "quality.result": {"decision": "pass", "route": "final"},
+        "report.final": {"title": "Daily Intelligence", "sections": []},
+        "report.markdown": "# Daily Intelligence",
+    }
+    context = _context(
+        manager,
+        manifest=manifest,
+        output=output,
+    )
+
+    refs = DailyIntelligenceArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    assert {ref.artifact_id for ref in refs} >= {
+        "evidence_bundle",
+        "evidence_source_map",
+        "citation_check_result",
+        "quality_result",
+        "report_json",
+        "report_markdown",
+    }
+    assert (run_dir / "evidence_bundle.json").exists()
+    assert (run_dir / "citation_check_result.json").exists()
+    assert (run_dir / "quality_result.json").exists()
+    assert (run_dir / "report.json").exists()
+    assert (run_dir / "report.md").exists()
     assert manifest["artifacts"]["evidence_bundle"] == "evidence_bundle.json"
     assert manifest["artifacts"]["citation_check_result"] == "citation_check_result.json"
     assert manifest["artifacts"]["quality_result"] == "quality_result.json"
@@ -154,7 +218,10 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
     run_dir = tmp_path / "run-1"
     assert manifest["artifacts"]["raw_items"] == "raw_items.json"
     assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
-    assert manifest["artifacts"]["source_recollection_profile"] == "source_recollection/profile.json"
+    assert (
+        manifest["artifacts"]["source_recollection_profile"]
+        == "source_recollection/profile.json"
+    )
     assert (
         manifest["artifacts"]["source_recollection_execution_plan"]
         == "source_recollection/execution_plan.json"
@@ -205,6 +272,88 @@ def test_daily_artifact_publisher_writes_source_diagnostics(tmp_path) -> None:
     assert assessment["route"] == "continue_source_pipeline"
 
 
+def test_daily_artifact_publisher_reads_namespaced_source_diagnostics(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manifest = {"artifacts": {}}
+    context = _context(
+        manager,
+        manifest=manifest,
+        output={
+            "sources.raw_items": [
+                {
+                    "source_id": "feed",
+                    "source_item_id": "item-1",
+                    "title": "Item",
+                    "url": "https://example.com/item",
+                    "raw_content": "raw",
+                }
+            ],
+            "sources.errors": [],
+            "sources.fetch_requests": [{"request_id": "req-1", "source_id": "feed"}],
+            "sources.fetch_results": [
+                {"request_id": "req-1", "source_id": "feed", "success": True}
+            ],
+            "sources.events": [{"event_type": "source_fetch_succeeded"}],
+            "sources.pipeline_metrics": {"raw_items_count": 1},
+            "sources.recollection_profile": {"profile_id": "profile-1", "query_count": 1},
+            "sources.recollection_execution_plan": {
+                "plan_id": "plan-1",
+                "profile_id": "profile-1",
+                "task_count": 1,
+            },
+            "sources.recollection_execution_report": {
+                "plan_id": "plan-1",
+                "profile_id": "profile-1",
+                "status": "succeeded",
+                "task_count": 1,
+                "raw_item_count": 1,
+                "error_count": 0,
+                "fetch_request_count": 1,
+                "fetch_result_count": 1,
+                "tasks": [],
+            },
+            "sources.recollection_quality_assessment": {
+                "plan_id": "plan-1",
+                "profile_id": "profile-1",
+                "decision": "pass",
+                "severity": "info",
+                "route": "continue_source_pipeline",
+                "recommended_action": "continue_source_pipeline",
+                "failed_thresholds": [],
+                "issues": [],
+            },
+        },
+    )
+
+    DailyIntelligenceArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    assert manifest["artifacts"]["raw_items"] == "raw_items.json"
+    assert manifest["artifacts"]["source_errors"] == "source_errors.json"
+    assert manifest["artifacts"]["source_fetch_requests"] == "source_fetch_requests.json"
+    assert manifest["artifacts"]["source_fetch_results"] == "source_fetch_results.json"
+    assert manifest["artifacts"]["source_pipeline_metrics"] == "source_pipeline_metrics.json"
+    assert (
+        manifest["artifacts"]["source_recollection_profile"]
+        == "source_recollection/profile.json"
+    )
+    assert (
+        manifest["artifacts"]["source_recollection_execution_report"]
+        == "source_recollection/execution_report.json"
+    )
+    assert manifest["artifacts"]["source_artifacts"] == "source_artifacts/index.json"
+    assert manifest["source_event_count"] == 1
+    assert manifest["source_recollection"]["status"] == "succeeded"
+    assert (
+        manifest["source_recollection"]["quality"]["route"]
+        == "continue_source_pipeline"
+    )
+    assert manifest["source_artifacts"]["item_count"] == 1
+    assert (run_dir / "source_artifacts" / "index.json").exists()
+    assert (run_dir / "source_recollection" / "execution_report.json").exists()
+
+
 def test_daily_artifact_publisher_writes_agent_feedback_artifacts(tmp_path) -> None:
     manager = ArtifactManager(tmp_path)
     manager.start_run("run-1")
@@ -232,13 +381,63 @@ def test_daily_artifact_publisher_writes_agent_feedback_artifacts(tmp_path) -> N
     DailyIntelligenceArtifactPublisher().publish(context)
 
     run_dir = tmp_path / "run-1"
-    summary = json.loads((run_dir / "agentic" / "agent_feedback_summary.json").read_text(encoding="utf-8"))
-    agentic_summary = json.loads((run_dir / "agentic_summary.json").read_text(encoding="utf-8"))
+    summary = json.loads(
+        (run_dir / "agentic" / "agent_feedback_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    agentic_summary = json.loads(
+        (run_dir / "agentic_summary.json").read_text(encoding="utf-8")
+    )
 
     assert manifest["artifacts"]["agent_feedback_events"] == "agentic/agent_feedback_events.json"
     assert manifest["artifacts"]["agent_feedback_summary"] == "agentic/agent_feedback_summary.json"
     assert manifest["agent_feedback"]["event_count"] == 1
     assert summary["highest_severity"] == "warning"
+    assert agentic_summary["feedback_event_count"] == 1
+
+
+def test_daily_artifact_publisher_reads_namespaced_agent_feedback_artifacts(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manifest = {"artifacts": {}}
+    context = _context(
+        manager,
+        manifest=manifest,
+        workflow_id=AGENTIC_WORKFLOW_ID,
+        output={
+            "agent.feedback.events": [
+                {
+                    "feedback_id": "feedback-1",
+                    "requested_action": "rewrite",
+                }
+            ],
+            "agent.feedback.summary": {
+                "event_count": 1,
+                "rewrite_request_count": 1,
+                "highest_severity": "warning",
+            },
+            "quality.result": {"decision": "rewrite_required", "route": "rewrite"},
+        },
+    )
+
+    DailyIntelligenceArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    summary = json.loads(
+        (run_dir / "agentic" / "agent_feedback_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    agentic_summary = json.loads(
+        (run_dir / "agentic_summary.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["artifacts"]["agent_feedback_events"] == "agentic/agent_feedback_events.json"
+    assert manifest["artifacts"]["agent_feedback_summary"] == "agentic/agent_feedback_summary.json"
+    assert manifest["agent_feedback"]["event_count"] == 1
+    assert summary["highest_severity"] == "warning"
+    assert agentic_summary["final_decision"] == "rewrite_required"
     assert agentic_summary["feedback_event_count"] == 1
 
 
