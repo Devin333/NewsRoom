@@ -52,6 +52,7 @@ class ProductizedSignalPreparationService:
             run_id=run_id,
             board_type=self.board_type.value,
         )
+        policy_experiment_application_context = improvement_context.to_dict()
         run_state = ProductizedRunState.from_request(
             request=request,
             board_type=self.board_type,
@@ -59,7 +60,7 @@ class ProductizedSignalPreparationService:
         ).with_updates(
             skill_traces=skill_traces,
             source_reliability_results=reliability_results,
-            improvement_context=improvement_context.to_dict(),
+            improvement_context=policy_experiment_application_context,
         )
         return {
             "context": context,
@@ -67,7 +68,8 @@ class ProductizedSignalPreparationService:
             "prepared_signals": pipeline_result.signals,
             "source_reliability_results": reliability_results,
             "skill_traces": skill_traces,
-            "improvement_context": improvement_context.to_dict(),
+            "policy_experiment_application_context": policy_experiment_application_context,
+            "improvement_context": policy_experiment_application_context,
             "productized_run": run_state,
         }
 

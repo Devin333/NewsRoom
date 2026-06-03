@@ -101,7 +101,16 @@ _READ_KEYS = {
 
 
 _WRITE_KEYS = {
-    "prepare_signals": ["context", "raw_signals", "prepared_signals", "source_reliability_results", "skill_traces", "improvement_context", "productized_run"],
+    "prepare_signals": [
+        "context",
+        "raw_signals",
+        "prepared_signals",
+        "source_reliability_results",
+        "skill_traces",
+        "policy_experiment_application_context",
+        "improvement_context",
+        "productized_run",
+    ],
     "classify_board_signals": ["board_signals"],
     "extract_entities": ["extracted_entities", "skill_traces", "productized_run"],
     "build_evidence": ["evidence_refs", "evidence_items", "productized_run"],
