@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from business.boards.cross_board.workflows.daily_intelligence.source_gate_evidence import (
+    SourceGateEvidenceBundleView,
+    SourceGateEvidenceItemView,
+)
 from business.layers.signal.source_processing.governance import COMMUNITY_CATEGORIES, COMMUNITY_SOURCE_TYPES
 
 
@@ -16,26 +20,23 @@ SOCIAL_MEDIA_DOMAINS = (
 
 
 def contains_social_media_evidence(evidence_bundle: Any) -> bool:
-    for item in getattr(evidence_bundle, "items", []) or []:
+    for item in SourceGateEvidenceBundleView.from_bundle(evidence_bundle).items:
         if is_social_media_evidence(item):
             return True
     return False
 
 
 def is_social_media_evidence(item: Any) -> bool:
-    metadata = dict(getattr(item, "metadata", {}) or {})
-    source_type = str(metadata.get("source_type") or "").strip().casefold()
-    category = _normalize_category(metadata.get("category"))
-    if source_type in COMMUNITY_SOURCE_TYPES or category in COMMUNITY_CATEGORIES:
+    item_view = _source_gate_item_view(item)
+    if item_view.source_type in COMMUNITY_SOURCE_TYPES or item_view.category in COMMUNITY_CATEGORIES:
         return True
-    source_url = str(getattr(item, "source_url", "") or "").casefold()
-    return any(domain in source_url for domain in SOCIAL_MEDIA_DOMAINS)
+    return any(domain in item_view.source_url for domain in SOCIAL_MEDIA_DOMAINS)
 
 
-def _normalize_category(value: Any) -> str | None:
-    if value is None:
-        return None
-    return " ".join(str(value).casefold().replace("-", " ").replace("_", " ").split()).replace(" ", "_")
+def _source_gate_item_view(item: Any) -> SourceGateEvidenceItemView:
+    if isinstance(item, SourceGateEvidenceItemView):
+        return item
+    return SourceGateEvidenceItemView.from_item(item)
 
 
 __all__ = ["contains_social_media_evidence", "is_social_media_evidence"]

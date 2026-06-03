@@ -174,6 +174,8 @@ quality gate 的单次运行观测指标由 `quality_observability.py` 构建，
 
 non-social-media bypass 判定统一由 `quality_gate_policy.assess_non_social_media_bypass()` 返回，quality gate 和 report finalization 只能消费该 assessment，不应各自重新判断或拼接 bypass 事件字段。
 
+social-media evidence gate 的输入投影由 `source_gate_evidence.py` 承载：evidence item 的 `source_type`、`category` 和 `source_url` 先归一化为 `SourceGateEvidenceItemView`，`source_gate_policy.py` 只消费该 view 做规则判定。metadata 读取仅保留在该投影边界内，不能散落进 quality gate policy、usecase 或 workflow step。
+
 ## Report Finalization 边界
 
 agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只负责读取 `request`、draft、quality、evidence 和 agent feedback buffer key，并组装 `DailyReportFinalizationInput`。
