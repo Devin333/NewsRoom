@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+from interfaces.services.daily_output_projection import (
+    apply_daily_run_board_attachment_result,
+    apply_daily_run_public_output_aliases,
+    project_daily_run_output_for_board_attachment,
+    project_daily_run_output_for_memory_ingestion,
+)
+
+
+def test_project_daily_run_output_for_memory_ingestion_reads_namespaced_only_output() -> None:
+    output = {
+        "report.final": {"title": "Namespaced report"},
+        "evidence.bundle": {"items": []},
+        "quality.result": {"decision": "pass"},
+    }
+
+    projected = project_daily_run_output_for_memory_ingestion(output)
+
+    assert projected == {
+        "final_report": {"title": "Namespaced report"},
+        "evidence_bundle": {"items": []},
+        "quality_result": {"decision": "pass"},
+    }
+    assert "final_report" not in output
+
+
+def test_project_daily_run_output_for_board_attachment_reads_namespaced_only_output() -> None:
+    output = {
+        "sources.ranked_items": [{"title": "Ranked"}],
+        "sources.normalized_items": [{"title": "Normalized"}],
+        "sources.raw_items": [{"title": "Raw"}],
+        "evidence.bundle": {"items": []},
+    }
+
+    projected = project_daily_run_output_for_board_attachment(output)
+
+    assert projected == {
+        "ranked_items": [{"title": "Ranked"}],
+        "normalized_items": [{"title": "Normalized"}],
+        "raw_items": [{"title": "Raw"}],
+        "evidence_bundle": {"items": []},
+    }
+
+
+def test_apply_daily_run_board_attachment_result_merges_formal_result_keys() -> None:
+    output = {"report.final": {"title": "Daily"}}
+    board_output = {
+        "board_outputs": {"ai_news": {"cards": []}},
+        "cross_board_output": {"summary": "ok"},
+        "ignored": "value",
+    }
+
+    result = apply_daily_run_board_attachment_result(output, board_output)
+
+    assert result is output
+    assert output["board_outputs"] == {"ai_news": {"cards": []}}
+    assert output["cross_board_output"] == {"summary": "ok"}
+    assert "ignored" not in output
+
+
+def test_apply_daily_run_public_output_aliases_adds_legacy_public_aliases() -> None:
+    output = {"report.final": {"title": "Daily"}}
+
+    result = apply_daily_run_public_output_aliases(output)
+
+    assert result is output
+    assert output["final_report"] == {"title": "Daily"}

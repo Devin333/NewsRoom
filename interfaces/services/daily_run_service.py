@@ -15,17 +15,17 @@ from business.boards.cross_board.profiles import (
     PROFILE_LIVE_OFFLINE,
     daily_agentic_enabled,
 )
-from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
-    apply_daily_board_attachment_result,
-    apply_daily_public_output_aliases,
-    project_daily_output_for_board_attachment,
-    project_daily_output_for_memory_ingestion,
-)
 from business.layers.memory.ingestion import MemoryIngestionService
 from framework import RunResult
 from framework.specs import WorkflowStatus
 
 from interfaces.services.board_service import BoardApplicationService
+from interfaces.services.daily_output_projection import (
+    apply_daily_run_board_attachment_result,
+    apply_daily_run_public_output_aliases,
+    project_daily_run_output_for_board_attachment,
+    project_daily_run_output_for_memory_ingestion,
+)
 from interfaces.services.daily_persistence_projection import (
     daily_run_persistence_input_from_result,
     project_daily_run_output_for_persistence,
@@ -155,7 +155,7 @@ class DailyRunApplicationService:
 
     def _prepare_daily_output_for_service_consumers(self, result: RunResult) -> None:
         if isinstance(result.output, dict):
-            apply_daily_public_output_aliases(result.output)
+            apply_daily_run_public_output_aliases(result.output)
 
     def _index_memory_if_configured(self, result: RunResult, *, topic: str) -> None:
         memory_service = self.memory_ingestion_service
@@ -163,7 +163,7 @@ class DailyRunApplicationService:
             memory_service = self.memory_ingestion_service_factory()
         if memory_service is None:
             return
-        output = project_daily_output_for_memory_ingestion(result.output)
+        output = project_daily_run_output_for_memory_ingestion(result.output)
         ingestion_result = memory_service.ingest_run_output(
             output,
             run_id=result.run_id,
@@ -179,12 +179,12 @@ class DailyRunApplicationService:
             return
         if self.board_service_factory is None:
             return
-        board_output = project_daily_output_for_board_attachment(result.output)
+        board_output = project_daily_run_output_for_board_attachment(result.output)
         try:
             self.board_service_factory().attach_run_board_outputs(board_output, topic=topic)
         except (TypeError, ValueError):
             return
-        apply_daily_board_attachment_result(result.output, board_output)
+        apply_daily_run_board_attachment_result(result.output, board_output)
 
 
 def resolve_daily_runner_cls(profile: str):
