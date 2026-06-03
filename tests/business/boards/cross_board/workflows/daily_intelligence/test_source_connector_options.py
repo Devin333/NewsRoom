@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_options import (
+    SourceConnectorMetadataView,
     SourceConnectorRuntimeOptions,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
@@ -22,6 +23,36 @@ def test_connector_options_project_arxiv_query_from_metadata_before_request_topi
 
     assert options.source_type == SourceType.ARXIV
     assert options.query == "cat:cs.AI"
+
+
+def test_connector_metadata_view_projects_formal_keys_before_legacy_fallbacks() -> None:
+    source = _source(
+        source_type=SourceType.GITHUB,
+        metadata={
+            "query": "repo query",
+            "repository": "owner/repo",
+            "github_mode": "issues",
+            "mode": "commits",
+            "discussion_category": "Ideas",
+            "time_range": "week",
+            "time": "month",
+            "tagged": "python",
+            "tag": "ai",
+            "records": [{"title": "Manual"}],
+        },
+    )
+
+    view = SourceConnectorMetadataView.from_source(source)
+
+    assert view.query == "repo query"
+    assert view.repository == "owner/repo"
+    assert view.github_mode == "issues"
+    assert view.github_discussion_category == "Ideas"
+    assert view.reddit_time_range == "week"
+    assert view.stackoverflow_tag == "python"
+    assert view.tag == "ai"
+    assert view.manual_records is not None
+    assert view.manual_records.records == [{"title": "Manual"}]
 
 
 def test_connector_options_project_arxiv_query_from_request_topic() -> None:

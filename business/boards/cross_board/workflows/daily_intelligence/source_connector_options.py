@@ -37,7 +37,7 @@ class SourceConnectorRuntimeOptions(PrimitiveModel):
         *,
         request: dict[str, Any],
     ) -> "SourceConnectorRuntimeOptions":
-        metadata = dict(source.metadata or {})
+        metadata = SourceConnectorMetadataView.from_source(source)
         request_topic = _optional_text(request.get("topic"))
         source_type = SourceType(source.source_type)
         query = _connector_query(source_type, metadata=metadata, request_topic=request_topic)
@@ -47,61 +47,143 @@ class SourceConnectorRuntimeOptions(PrimitiveModel):
             request_topic=request_topic,
             query=query,
             manual_records=_connector_manual_records(source_type, metadata=metadata),
-            repository=_optional_text(metadata.get("repository")),
+            repository=metadata.repository,
             github_mode=_connector_github_mode(source_type, metadata=metadata),
-            github_discussion_category=_connector_github_discussion_category(source_type, metadata=metadata),
-            story_list=_optional_text(metadata.get("story_list")),
-            subreddit=_optional_text(metadata.get("subreddit")),
-            listing=_optional_text(metadata.get("listing")),
+            github_discussion_category=_connector_github_discussion_category(
+                source_type,
+                metadata=metadata,
+            ),
+            story_list=metadata.story_list,
+            subreddit=metadata.subreddit,
+            listing=metadata.listing,
             time_range=_connector_time_range(source_type, metadata=metadata),
             tag=_connector_tag(source_type, metadata=metadata),
-            site=_optional_text(metadata.get("site")),
+            site=metadata.site,
         )
+
+
+class SourceConnectorMetadataView(PrimitiveModel):
+    schema_version: str = "business.cross_board.daily_source_connector.metadata_view.v1"
+    values: dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def from_source(cls, source: SourceDefinition) -> "SourceConnectorMetadataView":
+        return cls(values=dict(source.metadata or {}))
+
+    @property
+    def query(self) -> str | None:
+        return self.text("query")
+
+    @property
+    def repository(self) -> str | None:
+        return self.text("repository")
+
+    @property
+    def github_mode(self) -> str | None:
+        return self.text("github_mode") or self.text("mode")
+
+    @property
+    def github_discussion_category(self) -> str | None:
+        return self.text("discussion_category")
+
+    @property
+    def story_list(self) -> str | None:
+        return self.text("story_list")
+
+    @property
+    def subreddit(self) -> str | None:
+        return self.text("subreddit")
+
+    @property
+    def listing(self) -> str | None:
+        return self.text("listing")
+
+    @property
+    def reddit_time_range(self) -> str | None:
+        return self.text("time_range") or self.text("time")
+
+    @property
+    def tag(self) -> str | None:
+        return self.text("tag")
+
+    @property
+    def stackoverflow_tag(self) -> str | None:
+        return self.text("tagged") or self.text("tag")
+
+    @property
+    def site(self) -> str | None:
+        return self.text("site")
+
+    @property
+    def manual_records(self) -> ManualSourceRecords | None:
+        records = self.values.get("records")
+        if not isinstance(records, list):
+            return None
+        return ManualSourceRecords(records=list(records))
+
+    def text(self, key: str) -> str | None:
+        return _optional_text(self.values.get(key))
 
 
 def _connector_query(
     source_type: SourceType,
     *,
-    metadata: dict[str, Any],
+    metadata: SourceConnectorMetadataView,
     request_topic: str | None,
 ) -> str | None:
-    metadata_query = _optional_text(metadata.get("query"))
     if source_type in {SourceType.ARXIV, SourceType.GITHUB}:
-        return metadata_query or request_topic
-    return metadata_query
+        return metadata.query or request_topic
+    return metadata.query
 
 
-def _connector_manual_records(source_type: SourceType, *, metadata: dict[str, Any]) -> ManualSourceRecords | None:
-    if source_type != SourceType.MANUAL or "records" not in metadata:
+def _connector_manual_records(
+    source_type: SourceType,
+    *,
+    metadata: SourceConnectorMetadataView,
+) -> ManualSourceRecords | None:
+    if source_type != SourceType.MANUAL:
         return None
-    records = metadata.get("records")
-    if not isinstance(records, list):
-        return None
-    return ManualSourceRecords(records=list(records))
+    return metadata.manual_records
 
 
-def _connector_tag(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:
+def _connector_tag(
+    source_type: SourceType,
+    *,
+    metadata: SourceConnectorMetadataView,
+) -> str | None:
     if source_type == SourceType.STACKOVERFLOW:
-        return _optional_text(metadata.get("tagged")) or _optional_text(metadata.get("tag"))
-    return _optional_text(metadata.get("tag"))
+        return metadata.stackoverflow_tag
+    return metadata.tag
 
 
-def _connector_github_mode(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:
+def _connector_github_mode(
+    source_type: SourceType,
+    *,
+    metadata: SourceConnectorMetadataView,
+) -> str | None:
     if source_type != SourceType.GITHUB:
         return None
-    return _optional_text(metadata.get("github_mode")) or _optional_text(metadata.get("mode"))
+    return metadata.github_mode
 
 
-def _connector_github_discussion_category(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:
+def _connector_github_discussion_category(
+    source_type: SourceType,
+    *,
+    metadata: SourceConnectorMetadataView,
+) -> str | None:
     if source_type != SourceType.GITHUB:
         return None
-    return _optional_text(metadata.get("discussion_category"))
+    return metadata.github_discussion_category
 
 
-def _connector_time_range(source_type: SourceType, *, metadata: dict[str, Any]) -> str | None:
+def _connector_time_range(
+    source_type: SourceType,
+    *,
+    metadata: SourceConnectorMetadataView,
+) -> str | None:
     if source_type != SourceType.REDDIT:
         return None
-    return _optional_text(metadata.get("time_range")) or _optional_text(metadata.get("time"))
+    return metadata.reddit_time_range
 
 
 def _optional_text(value: Any) -> str | None:
@@ -111,4 +193,8 @@ def _optional_text(value: Any) -> str | None:
     return text or None
 
 
-__all__ = ["ManualSourceRecords", "SourceConnectorRuntimeOptions"]
+__all__ = [
+    "ManualSourceRecords",
+    "SourceConnectorMetadataView",
+    "SourceConnectorRuntimeOptions",
+]
