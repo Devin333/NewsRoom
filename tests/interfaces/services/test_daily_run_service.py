@@ -55,6 +55,11 @@ def test_daily_run_service_projects_namespaced_output_for_service_consumers(tmp_
     assert persistence.persisted_input.evidence_bundle == {"items": []}
     assert memory.output["final_report"] == result.output["final_report"]
     assert memory.output["quality_result"] == result.output["quality_result"]
+    assert memory.output == {
+        "final_report": result.output["final_report"],
+        "evidence_bundle": {"items": []},
+        "quality_result": result.output["quality_result"],
+    }
     assert board.output["ranked_items"] == [{"title": "Namespaced item"}]
     assert result.output["ranked_items"] == [{"title": "Namespaced item"}]
     assert result.output["board_outputs"] == {"ai_news": {"cards": []}}

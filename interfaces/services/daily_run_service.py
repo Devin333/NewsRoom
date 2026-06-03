@@ -19,7 +19,7 @@ from business.boards.cross_board.workflows.daily_intelligence.output_projection 
     DAILY_BOARD_ATTACHMENT_RESULT_KEYS,
     ensure_legacy_daily_output_aliases,
     project_daily_output_for_board_attachment,
-    project_daily_output_for_legacy_consumers,
+    project_daily_output_for_memory_ingestion,
 )
 from business.layers.memory.ingestion import MemoryIngestionService
 from framework import RunResult
@@ -163,7 +163,7 @@ class DailyRunApplicationService:
             memory_service = self.memory_ingestion_service_factory()
         if memory_service is None:
             return
-        output = project_daily_output_for_legacy_consumers(result.output)
+        output = project_daily_output_for_memory_ingestion(result.output)
         ingestion_result = memory_service.ingest_run_output(
             output,
             run_id=result.run_id,

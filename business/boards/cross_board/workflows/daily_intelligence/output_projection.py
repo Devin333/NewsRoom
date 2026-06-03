@@ -50,6 +50,14 @@ def project_daily_output_for_board_attachment(output: Mapping[str, Any]) -> dict
     )
 
 
+def project_daily_output_for_memory_ingestion(output: Mapping[str, Any]) -> dict[str, Any]:
+    return _project_daily_output_for_keys(
+        output,
+        DAILY_MEMORY_INGESTION_OUTPUT_KEYS,
+        include_original=False,
+    )
+
+
 def ensure_legacy_daily_output_aliases(
     output: MutableMapping[str, Any],
     *,
@@ -84,6 +92,25 @@ def _legacy_projection_keys(keys: Iterable[str] | None) -> list[str]:
     return result
 
 
+def _project_daily_output_for_keys(
+    output: Mapping[str, Any],
+    keys: Iterable[str],
+    *,
+    include_original: bool,
+) -> dict[str, Any]:
+    projected = dict(output) if include_original else {}
+    for key in keys:
+        if daily_output_contains(output, key):
+            projected[_canonical_projection_key(key)] = daily_output_value(output, key)
+    return projected
+
+
+def _canonical_projection_key(key: str) -> str:
+    if key in DAILY_BUFFER_ALIASES:
+        return key
+    return _DAILY_OUTPUT_LEGACY_ALIASES.get(key, key)
+
+
 _DAILY_OUTPUT_LEGACY_ALIASES = {
     namespaced_key: legacy_key
     for legacy_key, namespaced_key in DAILY_BUFFER_ALIASES.items()
@@ -115,6 +142,17 @@ DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS = (
     "evidence_bundle",
 )
 
+DAILY_MEMORY_INGESTION_OUTPUT_KEYS = (
+    "request",
+    "final_report",
+    "blocked_report",
+    "evidence_bundle",
+    "evidence_items",
+    "quality_result",
+    "verification_result",
+    "review_result",
+)
+
 DAILY_BOARD_ATTACHMENT_RESULT_KEYS = (
     "board_outputs",
     "cross_board_output",
@@ -124,11 +162,13 @@ DAILY_BOARD_ATTACHMENT_RESULT_KEYS = (
 __all__ = [
     "DAILY_BOARD_ATTACHMENT_OUTPUT_KEYS",
     "DAILY_BOARD_ATTACHMENT_RESULT_KEYS",
+    "DAILY_MEMORY_INGESTION_OUTPUT_KEYS",
     "DAILY_PERSISTENCE_OUTPUT_KEYS",
     "daily_output_contains",
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",
     "project_daily_output_for_board_attachment",
+    "project_daily_output_for_memory_ingestion",
     "project_daily_output_for_persistence",
     "project_daily_output_for_legacy_consumers",
 ]
