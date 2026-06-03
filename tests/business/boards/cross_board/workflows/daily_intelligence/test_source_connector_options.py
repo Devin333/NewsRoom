@@ -98,7 +98,7 @@ def test_connector_options_project_github_mode_as_runtime_option() -> None:
     assert options.github_mode == "commits"
 
 
-def test_connector_options_project_legacy_github_mode_key() -> None:
+def test_connector_options_ignore_legacy_github_mode_key() -> None:
     source = _source(
         source_type=SourceType.GITHUB,
         metadata={"repository": "owner/repo", "mode": "pull_requests"},
@@ -109,10 +109,10 @@ def test_connector_options_project_legacy_github_mode_key() -> None:
         request={"topic": "AI policy"},
     )
 
-    assert options.github_mode == "pull_requests"
+    assert options.github_mode is None
 
 
-def test_connector_options_project_github_mode_before_legacy_mode() -> None:
+def test_connector_options_project_formal_github_mode_while_ignoring_legacy_mode() -> None:
     source = _source(
         source_type=SourceType.GITHUB,
         metadata={"repository": "owner/repo", "github_mode": "issues", "mode": "commits"},

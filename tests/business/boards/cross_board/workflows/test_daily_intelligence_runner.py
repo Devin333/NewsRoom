@@ -1424,7 +1424,7 @@ def test_daily_intelligence_runner_dispatches_github_mode_metadata(tmp_path) -> 
                 url=GITHUB_API_URL,
                 reliability="high",
                 topics=["AI"],
-                metadata={"repository": "owner/repo", "mode": "commits"},
+                metadata={"repository": "owner/repo", "github_mode": "commits"},
             )
         ]
     )

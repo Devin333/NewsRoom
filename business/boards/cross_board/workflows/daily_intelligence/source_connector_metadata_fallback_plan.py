@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 
@@ -10,6 +11,7 @@ class SourceConnectorMetadataFallbackPhase:
     legacy_keys: tuple[str, ...]
     formal_fields: tuple[str, ...]
     exit_criteria: tuple[str, ...]
+    completed: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -18,6 +20,7 @@ class SourceConnectorMetadataFallbackPhase:
             "legacy_keys": list(self.legacy_keys),
             "formal_fields": list(self.formal_fields),
             "exit_criteria": list(self.exit_criteria),
+            "completed": self.completed,
         }
 
 
@@ -35,6 +38,7 @@ def source_connector_metadata_fallback_deprecation_plan() -> tuple[
                 "All GitHub sources use metadata.github_mode instead of metadata.mode.",
                 "Source connector option tests no longer require legacy GitHub mode fallback.",
             ),
+            completed=True,
         ),
         SourceConnectorMetadataFallbackPhase(
             phase_id="phase-2-reddit-time",
@@ -69,9 +73,34 @@ def source_connector_metadata_fallback_deprecation_plan() -> tuple[
     )
 
 
+def active_source_connector_metadata_fallback_phases() -> tuple[
+    SourceConnectorMetadataFallbackPhase,
+    ...
+]:
+    return tuple(
+        phase
+        for phase in source_connector_metadata_fallback_deprecation_plan()
+        if not phase.completed
+    )
+
+
+def completed_source_connector_metadata_fallback_legacy_keys() -> tuple[str, ...]:
+    return _unique_legacy_keys(
+        phase
+        for phase in source_connector_metadata_fallback_deprecation_plan()
+        if phase.completed
+    )
+
+
 def source_connector_metadata_fallback_legacy_keys() -> tuple[str, ...]:
+    return _unique_legacy_keys(active_source_connector_metadata_fallback_phases())
+
+
+def _unique_legacy_keys(
+    phases: Iterable[SourceConnectorMetadataFallbackPhase],
+) -> tuple[str, ...]:
     keys: list[str] = []
-    for phase in source_connector_metadata_fallback_deprecation_plan():
+    for phase in phases:
         for key in phase.legacy_keys:
             if key not in keys:
                 keys.append(key)
@@ -80,6 +109,8 @@ def source_connector_metadata_fallback_legacy_keys() -> tuple[str, ...]:
 
 __all__ = [
     "SourceConnectorMetadataFallbackPhase",
+    "active_source_connector_metadata_fallback_phases",
+    "completed_source_connector_metadata_fallback_legacy_keys",
     "source_connector_metadata_fallback_deprecation_plan",
     "source_connector_metadata_fallback_legacy_keys",
 ]

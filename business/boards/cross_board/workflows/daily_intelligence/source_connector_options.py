@@ -80,7 +80,7 @@ class SourceConnectorMetadataView(PrimitiveModel):
 
     @property
     def github_mode(self) -> str | None:
-        return self.text("github_mode") or self.text("mode")
+        return self.text("github_mode")
 
     @property
     def github_discussion_category(self) -> str | None:

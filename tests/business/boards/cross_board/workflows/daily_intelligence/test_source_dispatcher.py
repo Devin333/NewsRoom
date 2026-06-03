@@ -176,7 +176,11 @@ def test_source_dispatcher_passes_github_runtime_options() -> None:
         name="GitHub",
         source_type=SourceType.GITHUB,
         url="https://api.github.com",
-        metadata={"repository": "owner/repo", "mode": "commits", "discussion_category": "Ideas"},
+        metadata={
+            "repository": "owner/repo",
+            "github_mode": "commits",
+            "discussion_category": "Ideas",
+        },
     )
     connector = _RecordingGithubConnector()
 

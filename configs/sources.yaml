@@ -266,7 +266,7 @@ github_lists:
     metadata:
       group: open_source
       priority: p0
-      mode: trending
+      github_mode: trending
       query: "topic:artificial-intelligence OR topic:llm OR topic:agents"
       signal_kind: repository_trend
       dedup_strategy: repository_name
@@ -285,7 +285,7 @@ github_lists:
     metadata:
       group: agent_framework
       priority: p0
-      mode: releases
+      github_mode: releases
       repository: langchain-ai/langchain
       signal_kind: framework_release
       dedup_strategy: canonical_url
@@ -304,7 +304,7 @@ github_lists:
     metadata:
       group: agent_framework
       priority: p0
-      mode: releases
+      github_mode: releases
       repository: run-llama/llama_index
       signal_kind: framework_release
       dedup_strategy: canonical_url
@@ -323,7 +323,7 @@ github_lists:
     metadata:
       group: agent_framework
       priority: p0
-      mode: releases
+      github_mode: releases
       repository: crewAIInc/crewAI
       signal_kind: framework_release
       dedup_strategy: canonical_url
@@ -342,7 +342,7 @@ github_lists:
     metadata:
       group: agent_framework
       priority: p0
-      mode: discussions
+      github_mode: discussions
       repository: microsoft/autogen
       signal_kind: framework_discussion
       dedup_strategy: canonical_url
@@ -361,7 +361,7 @@ github_lists:
     metadata:
       group: open_source
       priority: p0
-      mode: releases
+      github_mode: releases
       repository: huggingface/transformers
       signal_kind: release
       dedup_strategy: canonical_url
