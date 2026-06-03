@@ -17,6 +17,7 @@ from business.boards.cross_board.workflows.daily_intelligence.agent_feedback_fin
 )
 from business.boards.cross_board.workflows.daily_intelligence.evidence_step import quality_event
 from business.boards.cross_board.workflows.daily_intelligence.human_review_resume import (
+    HumanReviewResumeRouteNormalizationError,
     normalize_daily_human_review_resume_route,
 )
 from business.boards.cross_board.workflows.daily_intelligence.quality_gate_policy import (
@@ -31,6 +32,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_recollectio
 from business.boards.cross_board.workflows.daily_intelligence.report_finalization_outputs import (
     build_blocked_report_outputs,
     build_invalid_editor_review_decision,
+    build_invalid_human_review_resume_route_decision,
     build_invalid_report_draft,
     build_invalid_report_draft_decision,
     build_publish_report_outputs,
@@ -156,9 +158,33 @@ def finalize_daily_report(payload: DailyReportFinalizationInput) -> dict[str, An
             human_review_required=False,
         )
 
-    human_review_resume_route = normalize_daily_human_review_resume_route(
-        payload.human_review_resume_route
-    )
+    try:
+        human_review_resume_route = normalize_daily_human_review_resume_route(
+            payload.human_review_resume_route
+        )
+    except HumanReviewResumeRouteNormalizationError as exc:
+        quality_events.append(
+            quality_event(
+                "finalize_report_invalid_human_review_resume_route",
+                reason=str(exc),
+            )
+        )
+        return build_blocked_report_outputs(
+            request=request,
+            report_draft=report_draft,
+            evidence_bundle=evidence_bundle,
+            editor_decision=build_invalid_human_review_resume_route_decision(str(exc)),
+            verification_result=verification_result,
+            citation_check_result=citation_check_result,
+            support_matrix=support_matrix,
+            verified_findings=verified_findings,
+            quality_events=quality_events,
+            agent_feedback=agent_feedback,
+            source_recollection_quality=source_recollection_quality,
+            route=BLOCKED_ROUTE,
+            rewrite_attempts=0,
+            human_review_required=False,
+        )
     if human_review_resume_route is not None:
         return _finalize_after_human_review_resume(
             payload=payload,

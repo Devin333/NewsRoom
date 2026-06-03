@@ -205,7 +205,7 @@ agentic daily workflow 的 `finalize_report_step.py` 是 workflow adapter，只�
 
 最终报告发布、blocked / human review 路由、rewrite 结果校验、quality result、artifact refs、agent feedback metadata 和补源质量策略投影由 `report_finalization.py` 的 `finalize_daily_report()` 承载。该 usecase 不依赖 `framework.workflow`，因此可以脱离 `DataBuffer` 单独测试。
 
-人工审核后的恢复决策由 `human_review_resume.py` 投影为 `DailyHumanReviewResumeRoute`：approve 映射到 `final`，reject 映射到 `blocked`，modify / modified / modifications 映射到 `rewrite`，并在 workflow 声明可消费 route key 时写入 `buffer_updates`、`resume_metadata` 和命名空间 quality key。`ApprovalResumeApplicationService` 只负责在 daily workflow resume 前调用该业务投影；framework runner 只理解通用 `resume_next_step_id`，通过 `ResumeMode.FROM_STEP` 恢复到声明过的目标 step，不理解 daily 专属 route 规则。approve / reject 通常回到 `finalize_report`，rewrite 可以回到 `writer_agent` 重新生成后续草稿、校验和反馈链路。
+人工审核后的恢复决策由 `human_review_resume.py` 投影为 `DailyHumanReviewResumeRoute`：approve 映射到 `final`，reject 映射到 `blocked`，modify / modified / modifications 映射到 `rewrite`，并在 workflow 声明可消费 route key 时写入 `buffer_updates`、`resume_metadata` 和命名空间 quality key。`ApprovalResumeApplicationService` 只负责在 daily workflow resume 前调用该业务投影；framework runner 只理解通用 `resume_next_step_id`，通过 `ResumeMode.FROM_STEP` 恢复到声明过的目标 step，不理解 daily 专属 route 规则。approve / reject 通常回到 `finalize_report`，rewrite 可以回到 `writer_agent` 重新生成后续草稿、校验和反馈链路。`finalize_daily_report()` 只接受归一化后的 `final` / `blocked` / `rewrite` route；如果已存在的 `human_review_resume_route` payload 无法归一化，必须转成 blocked output 和 `finalize_report_invalid_human_review_resume_route` quality event，不能静默忽略后继续发布路径。
 
 报告草稿输入归一化、claim grounding 归一化、以及草稿引用来源是否落在 evidence bundle 内的边界检查由 `report_draft_normalization.py` 承载。`report_finalization.py` 只消费归一化后的 draft 和明确的 source-boundary 结果，不再内联这些输入清洗 helper。
 

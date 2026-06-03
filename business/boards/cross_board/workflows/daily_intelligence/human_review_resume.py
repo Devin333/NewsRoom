@@ -12,6 +12,11 @@ from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases
 FINALIZE_STEP_ID = "finalize_report"
 WRITER_STEP_ID = "writer_agent"
 DRAFT_STEP_ID = "draft_report"
+_VALID_RESUME_ROUTES = {"final", "blocked", "rewrite"}
+
+
+class HumanReviewResumeRouteNormalizationError(ValueError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -132,22 +137,28 @@ def normalize_daily_human_review_resume_route(value: Any) -> dict[str, Any] | No
     if isinstance(value, DailyHumanReviewResumeRoute):
         return value.to_dict()
     if not isinstance(value, Mapping):
-        return None
-    route = _text(value.get("route") or value.get("quality_route"))
+        raise HumanReviewResumeRouteNormalizationError(
+            "human review resume route must be a mapping"
+        )
+    raw_route = _text(value.get("route"))
+    raw_quality_route = _text(value.get("quality_route"))
     decision = _text(value.get("decision"))
-    if route not in {"final", "blocked", "rewrite"}:
-        if decision == "approved":
-            route = "final"
-        elif decision == "rejected":
-            route = "blocked"
-        elif decision == "needs_changes":
-            route = "rewrite"
-        else:
-            return None
+    if raw_route and raw_route not in _VALID_RESUME_ROUTES:
+        raise HumanReviewResumeRouteNormalizationError(
+            f"unknown human review resume route: {raw_route}"
+        )
+    if raw_quality_route and raw_quality_route not in _VALID_RESUME_ROUTES:
+        raise HumanReviewResumeRouteNormalizationError(
+            f"unknown human review quality route: {raw_quality_route}"
+        )
+    route = raw_route or raw_quality_route
+    if not route:
+        route = _route_from_decision(decision)
+    quality_route = raw_quality_route or route
     return {
         "decision": decision or _decision_for_route(route),
         "route": route,
-        "quality_route": _text(value.get("quality_route")) or route,
+        "quality_route": quality_route,
         "next_step_id": _text(value.get("next_step_id")) or _next_step_id(route, ()),
         "publication_allowed": bool(value.get("publication_allowed", route == "final")),
         "rewrite_required": bool(value.get("rewrite_required", route == "rewrite")),
@@ -224,6 +235,18 @@ def _decision_for_route(route: str) -> str:
     return "approved"
 
 
+def _route_from_decision(decision: str) -> str:
+    if decision == "approved":
+        return "final"
+    if decision == "rejected":
+        return "blocked"
+    if decision == "needs_changes":
+        return "rewrite"
+    raise HumanReviewResumeRouteNormalizationError(
+        f"unknown human review resume route decision: {decision or '<missing>'}"
+    )
+
+
 def _dict_value(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
@@ -239,6 +262,7 @@ def _optional_text(value: Any) -> str | None:
 
 __all__ = [
     "DailyHumanReviewResumeRoute",
+    "HumanReviewResumeRouteNormalizationError",
     "build_daily_human_review_resume_route",
     "enrich_daily_approval_resume_context",
     "normalize_daily_human_review_resume_route",

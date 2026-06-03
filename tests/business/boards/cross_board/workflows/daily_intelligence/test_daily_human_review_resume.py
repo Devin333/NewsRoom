@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
 from business.boards.cross_board.workflows.daily_intelligence.human_review_resume import (
+    HumanReviewResumeRouteNormalizationError,
     build_daily_human_review_resume_route,
     enrich_daily_approval_resume_context,
+    normalize_daily_human_review_resume_route,
 )
 
 
@@ -119,3 +123,16 @@ def test_daily_human_review_resume_context_skips_route_patch_for_unsupported_wor
     }
     assert "resume_next_step_id" not in context["resume_metadata"]
     assert "allowed_patch_keys" not in context["resume_metadata"]
+
+
+def test_daily_human_review_resume_route_rejects_unknown_route() -> None:
+    with pytest.raises(HumanReviewResumeRouteNormalizationError) as exc_info:
+        normalize_daily_human_review_resume_route(
+            {
+                "decision": "approved",
+                "route": "ship",
+                "quality_route": "ship",
+            }
+        )
+
+    assert "unknown human review resume route: ship" in str(exc_info.value)
