@@ -103,6 +103,15 @@ def project_daily_output_for_run_inspection(output: Mapping[str, Any]) -> dict[s
     )
 
 
+def apply_daily_public_output_aliases(
+    output: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
+    return ensure_legacy_daily_output_aliases(
+        output,
+        keys=DAILY_PUBLIC_OUTPUT_ALIAS_KEYS,
+    )
+
+
 def ensure_legacy_daily_output_aliases(
     output: MutableMapping[str, Any],
     *,
@@ -230,6 +239,21 @@ DAILY_RUN_INSPECTION_OUTPUT_KEYS = (
     "verified_findings",
 )
 
+DAILY_PUBLIC_OUTPUT_ALIAS_KEYS = (
+    "final_report",
+    "blocked_report",
+    "report_markdown",
+    "quality_result",
+    "quality_route",
+    "citation_check_result",
+    "support_matrix",
+    "candidate_claims",
+    "verified_findings",
+    "ranked_items",
+    "raw_items",
+    "evidence_bundle",
+)
+
 DAILY_BOARD_ATTACHMENT_RESULT_KEYS = (
     "board_outputs",
     "cross_board_output",
@@ -241,9 +265,11 @@ __all__ = [
     "DAILY_BOARD_ATTACHMENT_RESULT_KEYS",
     "DAILY_MEMORY_INGESTION_OUTPUT_KEYS",
     "DAILY_PERSISTENCE_OUTPUT_KEYS",
+    "DAILY_PUBLIC_OUTPUT_ALIAS_KEYS",
     "DAILY_RUN_INSPECTION_OUTPUT_KEYS",
     "DailyOutputProjectionReadPolicy",
     "apply_daily_board_attachment_result",
+    "apply_daily_public_output_aliases",
     "daily_output_contains",
     "daily_output_value",
     "ensure_legacy_daily_output_aliases",

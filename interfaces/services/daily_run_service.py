@@ -17,7 +17,7 @@ from business.boards.cross_board.profiles import (
 )
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
     apply_daily_board_attachment_result,
-    ensure_legacy_daily_output_aliases,
+    apply_daily_public_output_aliases,
     project_daily_output_for_board_attachment,
     project_daily_output_for_memory_ingestion,
 )
@@ -155,7 +155,7 @@ class DailyRunApplicationService:
 
     def _prepare_daily_output_for_service_consumers(self, result: RunResult) -> None:
         if isinstance(result.output, dict):
-            ensure_legacy_daily_output_aliases(result.output)
+            apply_daily_public_output_aliases(result.output)
 
     def _index_memory_if_configured(self, result: RunResult, *, topic: str) -> None:
         memory_service = self.memory_ingestion_service

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from business.boards.cross_board.workflows.daily_intelligence.output_projection import (
     apply_daily_board_attachment_result,
+    apply_daily_public_output_aliases,
     daily_output_contains,
     daily_output_value,
     ensure_legacy_daily_output_aliases,
@@ -211,3 +212,24 @@ def test_ensure_legacy_daily_output_aliases_mutates_output_for_service_consumers
 
     assert result is output
     assert output["ranked_items"] == [{"title": "namespaced"}]
+
+
+def test_apply_daily_public_output_aliases_exposes_only_public_compatibility_keys() -> None:
+    output = {
+        "report.final": {"title": "namespaced"},
+        "quality.result": {"decision": "pass"},
+        "sources.ranked_items": [{"title": "ranked"}],
+        "agent.feedback.summary": {"event_count": 1},
+        "agent.writer.loop.metrics": {"llm_calls": 3},
+        "sources.pipeline_metrics": {"raw_items_count": 1},
+    }
+
+    result = apply_daily_public_output_aliases(output)
+
+    assert result is output
+    assert output["final_report"] == {"title": "namespaced"}
+    assert output["quality_result"] == {"decision": "pass"}
+    assert output["ranked_items"] == [{"title": "ranked"}]
+    assert "agent_feedback_summary" not in output
+    assert "writer_agent_loop_metrics" not in output
+    assert "source_pipeline_metrics" not in output

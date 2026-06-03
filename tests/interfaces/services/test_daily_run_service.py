@@ -66,6 +66,27 @@ def test_daily_run_service_projects_namespaced_output_for_service_consumers(tmp_
     assert result.output["cross_board_output"] == {"board_type": "cross_board"}
 
 
+def test_daily_run_service_does_not_expose_internal_daily_aliases(tmp_path) -> None:
+    service = DailyRunApplicationService(
+        artifact_root=tmp_path,
+        persistence_service=_CapturingPersistence(),
+        runner_cls_resolver=lambda profile: lambda artifact_root: _NamespacedRunner(),
+    )
+
+    result = service.run_daily(
+        profile="live-offline",
+        topic="AI",
+        source_limit=1,
+        run_id="run-1",
+    )
+
+    assert result.output["final_report"] == {"title": "Namespaced report", "sections": []}
+    assert result.output["quality_result"] == {"decision": "pass", "route": "final"}
+    assert "agent_feedback_summary" not in result.output
+    assert "writer_agent_loop_metrics" not in result.output
+    assert "source_pipeline_metrics" not in result.output
+
+
 def test_daily_run_service_memory_ingestion_ignores_legacy_only_daily_outputs(tmp_path) -> None:
     memory = _CapturingMemory()
     service = DailyRunApplicationService(
@@ -212,6 +233,9 @@ class _NamespacedRunner:
                 "evidence.bundle": {"items": []},
                 "quality.result": {"decision": "pass", "route": "final"},
                 "sources.ranked_items": [{"title": "Namespaced item"}],
+                "agent.feedback.summary": {"event_count": 1},
+                "agent.writer.loop.metrics": {"llm_calls": 3},
+                "sources.pipeline_metrics": {"raw_items_count": 1},
             },
         )
 
