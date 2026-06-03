@@ -52,7 +52,12 @@ class SourceArtifactWriter:
     ) -> dict[str, Any] | None:
         entries: list[dict[str, Any]] = []
 
-        entries.extend(_SourceItemArtifactWriter(self._artifact_manager).write_source_items(run_id, raw_items=raw_items))
+        entries.extend(
+            _SourceItemArtifactWriter(self._artifact_manager).write_source_items(
+                run_id,
+                raw_items=raw_items,
+            )
+        )
 
         fetch_artifacts = _SourceFetchArtifactWriter(self._artifact_manager).write_fetch_artifacts(
             run_id,
@@ -61,74 +66,13 @@ class SourceArtifactWriter:
         )
         entries.extend(fetch_artifacts.entries)
 
-        for index, source_error in enumerate(
-            normalize_source_errors(source_errors, context="source artifact errors"),
-            start=1,
-        ):
-            source_id = source_error.source_id
-            object_id = _source_error_id(source_error, index)
-            path = f"sources/errors/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
-            request_id = _optional_string(source_error.metadata.get("request_id"))
-            request_ref = _resolve_error_ref(
-                source_error,
-                "request_ref",
-                request_id=request_id,
-                source_id=source_id,
-                refs_by_request_id=fetch_artifacts.request_refs_by_request_id,
-                refs_by_source_id=fetch_artifacts.request_refs_by_source_id,
-            )
-            response_ref = _resolve_error_ref(
-                source_error,
-                "response_ref",
-                request_id=request_id,
-                source_id=source_id,
-                refs_by_request_id=fetch_artifacts.response_refs_by_request_id,
-                refs_by_source_id=fetch_artifacts.response_refs_by_source_id,
-            )
-            error_payload = _redact(_to_json_safe(source_error))
-            request_ref_payload = _ref_payload(request_ref)
-            response_ref_payload = _ref_payload(response_ref)
-            if isinstance(error_payload, dict):
-                if request_ref_payload is not None:
-                    error_payload["request_ref"] = request_ref_payload
-                if response_ref_payload is not None:
-                    error_payload["response_ref"] = response_ref_payload
-            payload = {
-                "artifact_type": "source_error",
-                "source_id": source_id,
-                "error_id": object_id,
-                "error": error_payload,
-            }
-            if request_ref_payload is not None:
-                payload["request_ref"] = request_ref_payload
-            if response_ref_payload is not None:
-                payload["response_ref"] = response_ref_payload
-            artifact_path = self._artifact_manager.write_json(
+        entries.extend(
+            _SourceErrorArtifactWriter(self._artifact_manager).write_error_artifacts(
                 run_id,
-                path,
-                payload,
+                source_errors=source_errors,
+                fetch_artifacts=fetch_artifacts,
             )
-            artifact_ref = _artifact_ref(
-                run_id=run_id,
-                artifact_type="source_error",
-                source_id=source_id,
-                object_id=object_id,
-                path=path,
-                artifact_path=artifact_path,
-            )
-            entry = _entry_from_ref(
-                artifact_ref=artifact_ref,
-                source_id=source_id,
-                object_id=object_id,
-                artifact_path=artifact_path,
-            )
-            if request_id is not None:
-                entry["request_id"] = request_id
-            if request_ref_payload is not None:
-                entry["request_ref"] = request_ref_payload
-            if response_ref_payload is not None:
-                entry["response_ref"] = response_ref_payload
-            entries.append(entry)
+        )
 
         if not entries:
             return None
@@ -155,6 +99,7 @@ class SourceArtifactWriter:
         }
         self._artifact_manager.write_json(run_id, "source_artifacts/index.json", source_artifacts)
         return source_artifacts
+
 
 class _SourceItemArtifactWriter:
     def __init__(self, artifact_manager: ArtifactManager) -> None:
@@ -519,6 +464,134 @@ class _SourceFetchArtifactWriter:
         entry["status_code"] = fetch_result.status_code
         entry["content_type"] = fetch_result.content_type
         return entry, artifact_ref
+
+
+class _SourceErrorArtifactWriter:
+    def __init__(self, artifact_manager: ArtifactManager) -> None:
+        self._artifact_manager = artifact_manager
+
+    def write_error_artifacts(
+        self,
+        run_id: str,
+        *,
+        source_errors: list[Any] | None = None,
+        fetch_artifacts: _SourceFetchArtifacts,
+    ) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for index, source_error in enumerate(
+            normalize_source_errors(source_errors, context="source artifact errors"),
+            start=1,
+        ):
+            entries.append(
+                self._write_source_error_artifact(
+                    run_id,
+                    source_error=source_error,
+                    index=index,
+                    fetch_artifacts=fetch_artifacts,
+                )
+            )
+        return entries
+
+    def _write_source_error_artifact(
+        self,
+        run_id: str,
+        *,
+        source_error: SourceError,
+        index: int,
+        fetch_artifacts: _SourceFetchArtifacts,
+    ) -> dict[str, Any]:
+        source_id = source_error.source_id
+        object_id = _source_error_id(source_error, index)
+        path = f"sources/errors/{_path_segment(source_id)}/{_path_segment(object_id)}.json"
+        request_id = _optional_string(source_error.metadata.get("request_id"))
+        request_ref_payload, response_ref_payload = self._resolve_error_ref_payloads(
+            source_error,
+            request_id=request_id,
+            source_id=source_id,
+            fetch_artifacts=fetch_artifacts,
+        )
+        payload = self._source_error_payload(
+            source_error,
+            source_id=source_id,
+            object_id=object_id,
+            request_ref_payload=request_ref_payload,
+            response_ref_payload=response_ref_payload,
+        )
+        artifact_path = self._artifact_manager.write_json(run_id, path, payload)
+        artifact_ref = _artifact_ref(
+            run_id=run_id,
+            artifact_type="source_error",
+            source_id=source_id,
+            object_id=object_id,
+            path=path,
+            artifact_path=artifact_path,
+        )
+        entry = _entry_from_ref(
+            artifact_ref=artifact_ref,
+            source_id=source_id,
+            object_id=object_id,
+            artifact_path=artifact_path,
+        )
+        if request_id is not None:
+            entry["request_id"] = request_id
+        if request_ref_payload is not None:
+            entry["request_ref"] = request_ref_payload
+        if response_ref_payload is not None:
+            entry["response_ref"] = response_ref_payload
+        return entry
+
+    def _resolve_error_ref_payloads(
+        self,
+        source_error: SourceError,
+        *,
+        request_id: str | None,
+        source_id: str,
+        fetch_artifacts: _SourceFetchArtifacts,
+    ) -> tuple[Any, Any]:
+        request_ref = _resolve_error_ref(
+            source_error,
+            "request_ref",
+            request_id=request_id,
+            source_id=source_id,
+            refs_by_request_id=fetch_artifacts.request_refs_by_request_id,
+            refs_by_source_id=fetch_artifacts.request_refs_by_source_id,
+        )
+        response_ref = _resolve_error_ref(
+            source_error,
+            "response_ref",
+            request_id=request_id,
+            source_id=source_id,
+            refs_by_request_id=fetch_artifacts.response_refs_by_request_id,
+            refs_by_source_id=fetch_artifacts.response_refs_by_source_id,
+        )
+        return _ref_payload(request_ref), _ref_payload(response_ref)
+
+    def _source_error_payload(
+        self,
+        source_error: SourceError,
+        *,
+        source_id: str,
+        object_id: str,
+        request_ref_payload: Any,
+        response_ref_payload: Any,
+    ) -> dict[str, Any]:
+        error_payload = _redact(_to_json_safe(source_error))
+        if isinstance(error_payload, dict):
+            if request_ref_payload is not None:
+                error_payload["request_ref"] = request_ref_payload
+            if response_ref_payload is not None:
+                error_payload["response_ref"] = response_ref_payload
+        payload = {
+            "artifact_type": "source_error",
+            "source_id": source_id,
+            "error_id": object_id,
+            "error": error_payload,
+        }
+        if request_ref_payload is not None:
+            payload["request_ref"] = request_ref_payload
+        if response_ref_payload is not None:
+            payload["response_ref"] = response_ref_payload
+        return payload
 
 
 def _source_error_id(source_error: SourceError, index: int) -> str:

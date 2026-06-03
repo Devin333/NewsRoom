@@ -89,7 +89,7 @@ source fetch request/result artifact 输入由 `business.layers.signal.source_ar
 
 source item artifact 输入由同一模块的 `SourceItemArtifactInput` 投影。raw item 的 `source_id`、`source_item_id`、raw content、raw/parse artifact ref 和 legacy mapping fallback 都属于 input view 的职责；`SourceArtifactWriter` 只消费该 view 的正式字段来写 raw content、source item 和 parsed-items index，不再在发布编排主体里通过 `_raw_content()` / `_existing_artifact_ref()` 或 `dict.get("source_item_id")` 猜测 raw item 结构。
 
-source item、raw content 和 parsed-items index 的具体写入职责由 `_SourceItemArtifactWriter` 承载；fetch request/result、response headers 和 request/result artifact ref 索引由 `_SourceFetchArtifactWriter` 承载；`SourceArtifactWriter` 只负责编排 item/fetch/error 写入结果、将 fetch refs 交给 error artifact 关联，并生成 source artifact index。新增 source artifact 类型时，应优先新增对应 input view 或小型 writer，不要把 payload 解析、ref 索引和文件写入细节继续堆回 `SourceArtifactWriter.write_source_artifacts()`。
+source item、raw content 和 parsed-items index 的具体写入职责由 `_SourceItemArtifactWriter` 承载；fetch request/result、response headers 和 request/result artifact ref 索引由 `_SourceFetchArtifactWriter` 承载；source error artifact、request/response ref 关联和 redacted error payload 构建由 `_SourceErrorArtifactWriter` 承载；`SourceArtifactWriter` 只负责编排 item/fetch/error 写入结果，并生成 source artifact index。新增 source artifact 类型时，应优先新增对应 input view 或小型 writer，不要把 payload 解析、ref 索引和文件写入细节继续堆回 `SourceArtifactWriter.write_source_artifacts()`。
 
 ## Workflow Buffer Collection 规则
 
