@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from business.boards.cross_board.workflows.daily_intelligence.source_error_metadata import (
+from business.layers.signal.source_processing.error_metadata import (
+    SOURCE_ERROR_RUNTIME_METADATA_KEY,
     SourceErrorMetadataInput,
     source_error_metadata,
-)
-from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
-    SOURCE_ERROR_RUNTIME_METADATA_KEY,
 )
 from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
 

@@ -27,7 +27,7 @@ from business.boards.cross_board.workflows.daily_intelligence.steps import (
     require_sources,
 )
 from business.boards.cross_board.workflows.daily_intelligence import source_processing
-from business.boards.cross_board.workflows.daily_intelligence.source_fetch_records import (
+from business.layers.signal.source_processing.error_metadata import (
     SOURCE_ERROR_RUNTIME_METADATA_KEY,
 )
 from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY

@@ -7,11 +7,11 @@ from typing import Any
 
 from business.foundation.models.source import RawSourceItem, SourceError, SourceFetchRequest, SourceFetchResult
 from business.foundation.models.source_error_normalization import normalize_source_errors
+from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
 from framework.shared.json import to_jsonable as _to_json_safe
 
 
 FETCH_RESPONSE_METADATA_KEY = "fetch_response"
-SOURCE_ERROR_RUNTIME_METADATA_KEY = "source_error_runtime_metadata"
 SOURCE_FETCH_RESULT_METADATA_KEY = "source_fetch_result_metadata"
 
 

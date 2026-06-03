@@ -20,10 +20,10 @@ from business.boards.cross_board.workflows.daily_intelligence.source_connector_o
     SourceConnectorRuntimeOptions,
 )
 from business.boards.cross_board.workflows.daily_intelligence.source_connector_names import source_connector_name
+from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
 
 
 FETCH_RESPONSE_METADATA_KEY = "fetch_response"
-SOURCE_ERROR_RUNTIME_METADATA_KEY = "source_error_runtime_metadata"
 
 
 def elapsed_ms(start: float) -> float:

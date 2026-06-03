@@ -14,6 +14,10 @@ from business.foundation.models.source import (
     SourceError,
     SourceFetchPolicy,
 )
+from business.layers.signal.source_processing.error_metadata import (
+    SourceErrorMetadataInput,
+    source_error_metadata,
+)
 
 
 UTC = _tz.utc
@@ -147,15 +151,20 @@ def source_rate_limited_error(
         error_message=f"source fetch rate limit reached for domain: {decision.domain}",
         url=url,
         retryable=True,
-        metadata={
-            "phase": "fetch",
-            "retryable": True,
-            "source_health_affecting": False,
-            "domain": decision.domain,
-            "limit_per_minute": decision.limit_per_minute,
-            "window_seconds": decision.window_seconds,
-            "retry_after_seconds": decision.retry_after_seconds,
-        },
+        metadata=source_error_metadata(
+            SourceErrorMetadataInput(
+                phase="fetch",
+                retryable=True,
+                source_health_affecting=False,
+                workflow_blocking=False,
+                extra={
+                    "domain": decision.domain,
+                    "limit_per_minute": decision.limit_per_minute,
+                    "window_seconds": decision.window_seconds,
+                    "retry_after_seconds": decision.retry_after_seconds,
+                },
+            )
+        ),
     )
 
 
