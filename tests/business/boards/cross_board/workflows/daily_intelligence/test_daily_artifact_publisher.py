@@ -441,6 +441,88 @@ def test_daily_artifact_publisher_reads_namespaced_agent_feedback_artifacts(tmp_
     assert agentic_summary["feedback_event_count"] == 1
 
 
+def test_daily_artifact_publisher_reads_namespaced_agent_loop_artifacts(tmp_path) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manifest = {"artifacts": {}}
+    context = _context(
+        manager,
+        manifest=manifest,
+        workflow_id=AGENTIC_WORKFLOW_ID,
+        output={
+            "agent.planner.loop.result": {
+                "status": "accepted",
+                "success": True,
+                "llm_call_artifacts": [
+                    {
+                        "artifact_id": "llm-1",
+                        "iteration": 1,
+                        "request": {"prompt": "redacted"},
+                        "response": {"usage": {"input_tokens": 4}},
+                    }
+                ],
+            },
+            "agent.planner.loop.metrics": {"llm_calls": 1, "tool_calls": 0},
+            "agent.planner.loop.diagnostics": {
+                "severity": "ok",
+                "summary": "agent output accepted",
+            },
+            "agent.planner.loop.trace": {
+                "summary": {"stop_reason": "final_output_accepted"}
+            },
+            "agent.planner.loop.llm_call_artifacts": [
+                {
+                    "artifact_id": "llm-1",
+                    "iteration": 1,
+                    "request": {"prompt": "redacted"},
+                    "response": {"usage": {"input_tokens": 4}},
+                }
+            ],
+            "quality.result": {"decision": "pass", "route": "final"},
+        },
+    )
+
+    DailyIntelligenceArtifactPublisher().publish(context)
+
+    run_dir = tmp_path / "run-1"
+    loop_result = json.loads(
+        (run_dir / "agentic" / "planner_agent_loop_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    agentic_summary = json.loads(
+        (run_dir / "agentic_summary.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["artifacts"]["planner_agent_loop_result"] == (
+        "agentic/planner_agent_loop_result.json"
+    )
+    assert manifest["artifacts"]["planner_agent_loop_metrics"] == (
+        "agentic/planner_agent_loop_metrics.json"
+    )
+    assert manifest["artifacts"]["planner_agent_loop_diagnostics"] == (
+        "agentic/planner_agent_loop_diagnostics.json"
+    )
+    assert manifest["artifacts"]["planner_agent_loop_trace"] == (
+        "agentic/planner_agent_loop_trace.json"
+    )
+    assert manifest["artifacts"]["planner_llm_call_artifacts"] == (
+        "agentic/planner_llm_call_artifacts.json"
+    )
+    assert loop_result["llm_call_artifacts"][0]["redacted"] is True
+    assert "request" not in loop_result["llm_call_artifacts"][0]
+    planner_summary = next(
+        agent
+        for agent in agentic_summary["agents"]
+        if agent["step_id"] == "planner_agent"
+    )
+    assert planner_summary["status"] == "accepted"
+    assert planner_summary["llm_calls"] == 1
+    assert planner_summary["diagnostics_present"] is True
+    assert planner_summary["trace_present"] is True
+    assert planner_summary["llm_artifact_count"] == 1
+
+
 def _context(
     manager: ArtifactManager,
     *,

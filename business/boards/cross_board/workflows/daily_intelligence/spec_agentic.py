@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from framework.specs import EdgeCondition, EdgeSpec, StepSpec, StepType, WorkflowSpec
 from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_LIVE
 from business.boards.cross_board.workflows.daily_intelligence.agents import (
@@ -13,6 +15,7 @@ from business.boards.cross_board.workflows.daily_intelligence.source_evidence_st
     build_source_and_evidence_steps,
 )
 from business.boards.cross_board.workflows.daily_intelligence.buffer_key_aliases import (
+    agent_loop_output_aliases,
     with_namespaced_primary_read_keys,
     with_namespaced_write_keys,
 )
@@ -30,7 +33,10 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
         workflow_id=AGENTIC_WORKFLOW_ID,
         name="Daily Intelligence Agentic",
         version=AGENTIC_WORKFLOW_VERSION,
-        description="Daily intelligence workflow with planner, analyst, writer, verifier, and editor AgentLoop steps.",
+        description=(
+            "Daily intelligence workflow with planner, analyst, writer, verifier, "
+            "and editor AgentLoop steps."
+        ),
         start_step_id="collect_sources",
         terminal_step_ids=["finalize_report"],
         steps=[
@@ -61,7 +67,10 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 "collect_agent_feedback",
                 "recollect_sources",
                 condition=EdgeCondition.CONDITIONAL,
-                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'recollect_sources'",
+                condition_expr=(
+                    "outcome.outputs.agent_feedback_route.next_step_id "
+                    "== 'recollect_sources'"
+                ),
                 priority=-20,
             ),
             EdgeSpec("recollect-to-normalize", "recollect_sources", "normalize_sources"),
@@ -70,7 +79,10 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 "collect_agent_feedback",
                 "writer_agent",
                 condition=EdgeCondition.CONDITIONAL,
-                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'writer_agent'",
+                condition_expr=(
+                    "outcome.outputs.agent_feedback_route.next_step_id "
+                    "== 'writer_agent'"
+                ),
                 priority=-10,
             ),
             EdgeSpec(
@@ -78,14 +90,20 @@ def build_agentic_daily_intelligence_workflow(profile: str) -> WorkflowSpec:
                 "collect_agent_feedback",
                 "editor_agent",
                 condition=EdgeCondition.CONDITIONAL,
-                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'editor_agent'",
+                condition_expr=(
+                    "outcome.outputs.agent_feedback_route.next_step_id "
+                    "== 'editor_agent'"
+                ),
             ),
             EdgeSpec(
                 "feedback-to-finalize",
                 "collect_agent_feedback",
                 "finalize_report",
                 condition=EdgeCondition.CONDITIONAL,
-                condition_expr="outcome.outputs.agent_feedback_route.next_step_id == 'finalize_report'",
+                condition_expr=(
+                    "outcome.outputs.agent_feedback_route.next_step_id "
+                    "== 'finalize_report'"
+                ),
                 priority=10,
             ),
         ],
@@ -106,7 +124,7 @@ def _planner_agent_step() -> StepSpec:
             "source_errors",
             "source_pipeline_metrics",
         ]),
-        write_keys=[
+        write_keys=with_namespaced_write_keys([
             "research_plan",
             "planner_notes",
             "planner_agent_loop_result",
@@ -115,7 +133,7 @@ def _planner_agent_step() -> StepSpec:
             "planner_agent_loop_diagnostics",
             "planner_agent_loop_trace",
             "planner_llm_call_artifacts",
-        ],
+        ]),
         required_output_keys=["research_plan"],
         metadata={
             **_agent_step_metadata(
@@ -149,7 +167,7 @@ def _analyst_agent_step() -> StepSpec:
             "source_errors",
             "source_pipeline_metrics",
         ]),
-        write_keys=[
+        write_keys=with_namespaced_write_keys([
             "analysis_result",
             "analyst_notes",
             "analyst_agent_loop_result",
@@ -158,7 +176,7 @@ def _analyst_agent_step() -> StepSpec:
             "analyst_agent_loop_diagnostics",
             "analyst_agent_loop_trace",
             "analyst_llm_call_artifacts",
-        ],
+        ]),
         required_output_keys=["analysis_result"],
         metadata=_agent_step_metadata(
             ANALYST_AGENT_ID,
@@ -408,7 +426,7 @@ def _recollect_sources_step() -> StepSpec:
     )
 
 
-def _agent_step_metadata(agent_id: str, *, prefix: str) -> dict[str, str]:
+def _agent_step_metadata(agent_id: str, *, prefix: str) -> dict[str, Any]:
     return {
         "agent_id": agent_id,
         "result_key": f"{prefix}_agent_loop_result",
@@ -417,4 +435,5 @@ def _agent_step_metadata(agent_id: str, *, prefix: str) -> dict[str, str]:
         "diagnostics_key": f"{prefix}_agent_loop_diagnostics",
         "trace_key": f"{prefix}_agent_loop_trace",
         "llm_artifacts_key": f"{prefix}_llm_call_artifacts",
+        "output_aliases": agent_loop_output_aliases(prefix),
     }

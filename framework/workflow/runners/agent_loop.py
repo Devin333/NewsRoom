@@ -159,6 +159,7 @@ class AgentLoopStepRunner:
         outputs[llm_artifacts_key] = [
             artifact.to_dict() for artifact in result.llm_call_artifacts
         ]
+        outputs = _with_output_aliases(outputs, step.metadata.get("output_aliases"))
         declared_outputs = _validated_outputs(
             step,
             outputs,
@@ -284,6 +285,21 @@ def _agent_loop_input_keys(step: StepSpec) -> list[str]:
     return keys
 
 
+def _with_output_aliases(
+    outputs: dict[str, Any],
+    aliases: Any,
+) -> dict[str, Any]:
+    if not isinstance(aliases, dict):
+        return outputs
+    values = dict(outputs)
+    for source_key, alias_key in aliases.items():
+        source = str(source_key)
+        alias = str(alias_key)
+        if source in values and alias not in values:
+            values[alias] = values[source]
+    return values
+
+
 def _agent_loop_metrics_payload(result: Any) -> dict[str, Any]:
     metrics = result.metrics.to_dict()
     trajectory = [dict(item) for item in getattr(result, "trajectory", [])]
@@ -296,6 +312,7 @@ def _agent_loop_metrics_payload(result: Any) -> dict[str, Any]:
         "trace_id": getattr(result, "trace_id", None),
     }
     return metrics
+
 
 def _agent_loop_trace_events(result: Any) -> list[dict[str, Any]]:
     return [

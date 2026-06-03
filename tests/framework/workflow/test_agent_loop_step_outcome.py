@@ -26,14 +26,21 @@ def test_agent_loop_step_outcome_exposes_trajectory_summary() -> None:
             "agent_loop_max_steps_reached",
         ],
     )
-    buffer = DataBuffer({"input": "x"}).scope(step.read_keys, step.write_keys, step_id=step.step_id)
+    buffer = DataBuffer({"input": "x"}).scope(
+        step.read_keys,
+        step.write_keys,
+        step_id=step.step_id,
+    )
 
     outcome = runner.run(step, buffer)
 
     assert outcome.status.value == "succeeded"
     assert outcome.outputs["agent_loop_termination_reason"] == "final_output_accepted"
     assert outcome.outputs["agent_loop_max_steps_reached"] is False
-    assert outcome.outputs["agent_loop_trajectory"][0]["parsed_action"]["action_type"] == "final_output"
+    assert (
+        outcome.outputs["agent_loop_trajectory"][0]["parsed_action"]["action_type"]
+        == "final_output"
+    )
     assert outcome.metrics["trajectory_summary"]["iteration_count"] == 1
     assert outcome.metrics["trajectory_summary"]["termination_reason"] == "final_output_accepted"
     assert outcome.trace_events[0]["event_type"] == "agent_loop_trajectory"
@@ -77,6 +84,43 @@ def test_agent_loop_step_runner_passes_present_optional_reads() -> None:
         "required_input": "required",
         "optional_input": "optional",
     }
+
+
+def test_agent_loop_step_runner_projects_declared_output_aliases() -> None:
+    agent_runner = _FakeAgentRunner()
+    runner = AgentLoopStepRunner(
+        agent_runner=agent_runner,
+        agent_registry={"agent-1": object()},
+    )
+    runner.configure_run_context(artifact_manager=object(), run_id="run-1")
+    step = StepSpec(
+        step_id="agent_step",
+        step_type=StepType.AGENT_LOOP,
+        implementation="agent-1",
+        write_keys=[
+            "agent_loop_result",
+            "agent.loop.result",
+            "agent_loop_metrics",
+            "agent.loop.metrics",
+        ],
+        metadata={
+            "output_aliases": {
+                "agent_loop_result": "agent.loop.result",
+                "agent_loop_metrics": "agent.loop.metrics",
+            }
+        },
+    )
+    buffer = DataBuffer({"input": "x"}).scope(
+        step.read_keys,
+        step.write_keys,
+        step_id=step.step_id,
+    )
+
+    outcome = runner.run(step, buffer)
+
+    assert outcome.status.value == "succeeded"
+    assert outcome.outputs["agent.loop.result"] is outcome.outputs["agent_loop_result"]
+    assert outcome.outputs["agent.loop.metrics"] is outcome.outputs["agent_loop_metrics"]
 
 
 class _FakeAgentRunner:

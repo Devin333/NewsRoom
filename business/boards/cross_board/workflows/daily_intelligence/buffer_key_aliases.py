@@ -80,6 +80,21 @@ AGENT_BUFFER_ALIASES = {
     "agent_feedback_loop_state": "agent.feedback.loop_state",
 }
 
+AGENT_LOOP_LABELS = ("planner", "analyst", "writer", "verifier", "editor")
+AGENT_LOOP_TELEMETRY_SUFFIX_ALIASES = {
+    "agent_loop_result": "loop.result",
+    "agent_loop_events": "loop.events",
+    "agent_loop_metrics": "loop.metrics",
+    "agent_loop_diagnostics": "loop.diagnostics",
+    "agent_loop_trace": "loop.trace",
+    "llm_call_artifacts": "loop.llm_call_artifacts",
+}
+AGENT_LOOP_TELEMETRY_BUFFER_ALIASES = {
+    f"{label}_{legacy_suffix}": f"agent.{label}.{namespaced_suffix}"
+    for label in AGENT_LOOP_LABELS
+    for legacy_suffix, namespaced_suffix in AGENT_LOOP_TELEMETRY_SUFFIX_ALIASES.items()
+}
+
 DAILY_BUFFER_ALIASES = {
     **SOURCE_BUFFER_ALIASES,
     **EVIDENCE_BUFFER_ALIASES,
@@ -87,6 +102,7 @@ DAILY_BUFFER_ALIASES = {
     **MEMORY_BUFFER_ALIASES,
     **REPORT_BUFFER_ALIASES,
     **AGENT_BUFFER_ALIASES,
+    **AGENT_LOOP_TELEMETRY_BUFFER_ALIASES,
 }
 
 
@@ -124,3 +140,12 @@ def with_namespaced_primary_read_keys(keys: list[str]) -> list[str]:
         if key not in values:
             values.append(key)
     return values
+
+
+def agent_loop_output_aliases(label: str) -> dict[str, str]:
+    prefix = f"{label}_"
+    return {
+        legacy_key: namespaced_key
+        for legacy_key, namespaced_key in AGENT_LOOP_TELEMETRY_BUFFER_ALIASES.items()
+        if legacy_key.startswith(prefix)
+    }

@@ -24,6 +24,8 @@
 
 Framework code defines reusable runtime behavior only. NewsRoom business concepts such as sources, reports, boards, evidence, claims, and daily intelligence profiles belong outside `framework`.
 
+Workflow runners may support generic declaration-driven mechanics such as `StepSpec.metadata["output_aliases"]`, but alias names and business meaning belong to the business workflow spec. For example, daily intelligence may project agent loop telemetry to `agent.<label>.loop.*`; framework only copies declared keys and must not know that naming scheme.
+
 ## LLM Configuration
 
 `framework.llm` owns domain-neutral model configuration loading and schema validation. `configs/models.yaml` is validated at load time for known top-level, route, deployment, and capability fields so misspelled model config keys fail fast before any business workflow starts.

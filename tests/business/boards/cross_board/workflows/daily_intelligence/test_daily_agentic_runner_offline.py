@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from framework.specs import WorkflowStatus
-from business.boards.cross_board.workflows.daily_intelligence import AgenticDailyIntelligenceRunner
-from business.boards.cross_board.workflows.daily_intelligence.profiles import PROFILE_AGENTIC_OFFLINE
+from business.boards.cross_board.workflows.daily_intelligence import (
+    AgenticDailyIntelligenceRunner,
+)
+from business.boards.cross_board.workflows.daily_intelligence.profiles import (
+    PROFILE_AGENTIC_OFFLINE,
+)
 from business.boards.cross_board.workflows.daily_intelligence.runtime_assembly import (
     build_daily_intelligence_runtime,
 )
+from framework.specs import WorkflowStatus
 
 
 def test_agentic_daily_runner_accepts_prebuilt_runtime(tmp_path) -> None:
@@ -34,7 +38,10 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
     assert result.output["research_plan"]["topic"] == "AI policy"
     assert result.output["analysis_result"]["findings"][0]["id"] == "finding-1"
     assert result.output["report_draft"]["title"] == "Daily Intelligence: AI policy"
-    assert result.output["report_draft"]["sections"][0]["claim_grounding"][0]["claim_id"] == "claim_policy_update"
+    assert (
+        result.output["report_draft"]["sections"][0]["claim_grounding"][0]["claim_id"]
+        == "claim_policy_update"
+    )
     assert result.output["verification_result"]["status"] == "pass"
     assert result.output["verification_result"]["grounded_claims"][0]["status"] == "supported"
     assert result.output["editor_review"]["decision"] == "pass"
@@ -45,6 +52,11 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
     assert result.output["writer_agent_loop_result"]["success"] is True
     assert result.output["verifier_agent_loop_result"]["success"] is True
     assert result.output["editor_agent_loop_result"]["success"] is True
+    assert result.output["agent.planner.loop.result"]["success"] is True
+    assert result.output["agent.analyst.loop.result"]["success"] is True
+    assert result.output["agent.writer.loop.result"]["success"] is True
+    assert result.output["agent.verifier.loop.result"]["success"] is True
+    assert result.output["agent.editor.loop.result"]["success"] is True
 
     run_dir = Path(result.artifact_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -57,7 +69,13 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
     assert manifest["quality_route"] == "final"
 
     runners_by_step = {runner["step_id"]: runner for runner in manifest["runners"]}
-    for step_id in ("planner_agent", "analyst_agent", "writer_agent", "verifier_agent", "editor_agent"):
+    for step_id in (
+        "planner_agent",
+        "analyst_agent",
+        "writer_agent",
+        "verifier_agent",
+        "editor_agent",
+    ):
         assert runners_by_step[step_id]["runner_id"] == "builtin.agent_loop"
         assert runners_by_step[step_id]["step_type"] == "agent_loop"
         assert manifest["steps"][step_id]["status"] == "succeeded"
@@ -67,7 +85,13 @@ def test_agentic_daily_runner_offline_runs_full_workflow(tmp_path) -> None:
         for event in _events(run_dir / "events.jsonl")
         if event["event_type"] in {"step_started", "step_succeeded"}
     }
-    for step_id in ("planner_agent", "analyst_agent", "writer_agent", "verifier_agent", "editor_agent"):
+    for step_id in (
+        "planner_agent",
+        "analyst_agent",
+        "writer_agent",
+        "verifier_agent",
+        "editor_agent",
+    ):
         assert ("step_started", step_id) in event_pairs
         assert ("step_succeeded", step_id) in event_pairs
 
