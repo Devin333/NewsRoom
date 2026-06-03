@@ -69,6 +69,25 @@ def test_arxiv_connector_fetch_builds_query_url() -> None:
     assert "sortBy=submittedDate" in captured["url"]
 
 
+def test_arxiv_connector_fetch_accepts_explicit_runtime_query() -> None:
+    captured = {}
+
+    def fetch_text(url: str) -> str:
+        captured["url"] = url
+        return ARXIV_FIXTURE
+
+    items, errors = ArxivConnector(fetch_text=fetch_text).fetch(
+        _source(metadata={}),
+        query="cat:cs.LG",
+        limit=1,
+    )
+
+    assert errors == []
+    assert len(items) == 1
+    assert captured["url"].startswith(f"{ARXIV_API_URL}?")
+    assert "search_query=cat%3Acs.LG" in captured["url"]
+
+
 def test_arxiv_connector_returns_empty_feed_error() -> None:
     xml = """<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" />"""
 
@@ -128,7 +147,7 @@ def test_arxiv_connector_default_fetch_rejects_unsupported_content_type(monkeypa
     assert "application/atom+xml" in errors[0].metadata["supported_content_types"]
 
 
-def _source() -> SourceDefinition:
+def _source(*, metadata: dict[str, object] | None = None) -> SourceDefinition:
     return SourceDefinition(
         source_id="arxiv",
         name="arXiv",
@@ -137,4 +156,5 @@ def _source() -> SourceDefinition:
         reliability="high",
         authority_score=0.95,
         language="en",
+        metadata=metadata or {},
     )

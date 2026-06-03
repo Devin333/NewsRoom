@@ -349,10 +349,17 @@ def _raw_item_from_entry(
 def _query_from_source(source: SourceDefinition, *, query: str | None) -> str:
     if query and query.strip():
         return query.strip()
-    metadata_query = source.metadata.get("query")
-    if isinstance(metadata_query, str) and metadata_query.strip():
-        return metadata_query.strip()
+    legacy_query = _legacy_arxiv_query(source)
+    if legacy_query:
+        return legacy_query
     raise ValueError("arxiv query is required")
+
+
+def _legacy_arxiv_query(source: SourceDefinition) -> str | None:
+    query = source.metadata.get("query")
+    if isinstance(query, str) and query.strip():
+        return query.strip()
+    return None
 
 
 def _entry_url(entry: ElementTree.Element) -> str | None:

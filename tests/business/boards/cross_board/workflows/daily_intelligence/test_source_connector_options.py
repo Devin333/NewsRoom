@@ -24,6 +24,20 @@ def test_connector_options_project_arxiv_query_from_metadata_before_request_topi
     assert options.query == "cat:cs.AI"
 
 
+def test_connector_options_project_arxiv_query_from_request_topic() -> None:
+    source = _source(
+        source_type=SourceType.ARXIV,
+        metadata={},
+    )
+
+    options = SourceConnectorRuntimeOptions.from_source(
+        source,
+        request={"topic": "cat:cs.LG"},
+    )
+
+    assert options.query == "cat:cs.LG"
+
+
 def test_connector_options_project_github_repository_and_topic_query() -> None:
     source = _source(
         source_type=SourceType.GITHUB,
