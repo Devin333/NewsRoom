@@ -9,11 +9,11 @@
 
 ## 1. Stage 1 Framework Harness Contracts
 
-- [ ] 1.1 Create `framework/harness` package structure and public contract exports.
-- [ ] 1.2 Define Harness run, step, phase, policy, budget, decision, gate, and transcript models.
-- [ ] 1.3 Define Harness port protocols for LLM, tools, memory, skills, artifacts, events, workers, governance, subagents, context, and RAG.
-- [ ] 1.4 Add focused tests under `tests/framework/harness` for contract construction and import boundaries.
-- [ ] 1.5 Validate OpenSpec and run compile/tests for the changed surface.
+- [x] 1.1 Create `framework/harness` package structure and public contract exports.
+- [x] 1.2 Define Harness run, step, phase, policy, budget, decision, gate, and transcript models.
+- [x] 1.3 Define Harness port protocols for LLM, tools, memory, skills, artifacts, events, workers, governance, subagents, context, and RAG.
+- [x] 1.4 Add focused tests under `tests/framework/harness` for contract construction and import boundaries.
+- [x] 1.5 Validate OpenSpec and run compile/tests for the changed surface.
 
 ## 2. Stage 2 State Machine And Scheduler
 
