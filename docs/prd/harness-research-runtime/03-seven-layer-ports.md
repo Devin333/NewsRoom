@@ -37,12 +37,7 @@ framework/harness/rag/
 framework/harness/context/
   __init__.py
   models.py
-  assembler.py
-  budget.py
-  cache.py
-  compression.py
-  snapshot.py
-  gates.py
+  compatibility.py
   fake.py
 framework/harness/memory/
   __init__.py
@@ -203,6 +198,7 @@ metadata
 - `HarnessWorkerResult` 不应携带流程决策，但可以携带 context usage、artifact refs、memory write candidates 和 compression refs。
 - 大工具结果、大 RAG 结果、大 reader payload 只能通过 artifact refs 进入上下文。
 - 端口 fake 必须能模拟 context budget 超限、compression summary、context snapshot 和 forbidden field 输出。
+- 阶段 3 不实现完整 `ContextAssembler`、`ContextBudgetEstimator`、`ContextCompressor`、`ContextSnapshotStore` 或 context gates；这些都在阶段 3D 实现。
 
 ### MemoryPort
 

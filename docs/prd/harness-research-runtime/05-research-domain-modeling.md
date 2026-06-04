@@ -6,6 +6,16 @@
 
 阶段 5 必须结合 [05a-research-product-scenarios.md](05a-research-product-scenarios.md) 的产品场景建模。第一批重点是 Paper Card、Taxonomy、3 分钟速读、Reader Payload、Reader Repair Memory、Reading Notes；Code Repository、Benchmark、Method Graph、Agent Intelligence 先定义清晰边界和 domain models。
 
+阶段 5A 是需求澄清文档，阶段 5 是实现文档。若两者字段或范围冲突，以 5A 的产品场景为需求来源，以阶段 5 的代码落地边界为实现来源；不要在两个文档里各自发明第二套业务范围。
+
+## 真实依赖
+
+| 类型 | 内容 |
+| --- | --- |
+| 需求依赖 | 阶段 5A 的 Research 产品场景、第一批/第二批/第三批范围、确定性逻辑与 LLM candidate 边界。 |
+| 框架依赖 | 阶段 3B RAG 目标模型、阶段 3C 子 Agent 隔离、阶段 3D ContextEnvelope、阶段 4 trace refs。 |
+| 禁止提前实现 | 不在阶段 5 跑完整单篇闭环，不接后端接口，不做 UI，不接旧 paper API。 |
+
 ## 新增目录
 
 ```text

@@ -4,7 +4,15 @@
 
 在 Harness 控制平面下加入可审计、可回滚、可单测的 skills 自进化能力。目标不是让 LLM 自己修改并发布 skill，而是让 Harness 把运行经验转成候选 skill，再用确定性 gate、离线 eval、版本发布和回滚机制决定是否晋升。
 
-本阶段放在七层端口之后、Trace / Checkpoint / Replay 之前执行。原因是：skills 自进化依赖 `SkillWorkerPort`、`ArtifactPort`、`QualityGatePort` 和 event/transcript 模型，但必须先确定端口边界，避免把进化逻辑写成业务层或 LLM 自控流程。
+本阶段在阶段 3B、3C、3D 之后执行。原因是：skills 自进化会用到 `SkillWorkerPort`、`ArtifactPort`、`QualityGatePort`、RAG eval/replay 输入、SubAgent handoff 和 ContextEnvelope。阶段 4 负责 durable replay 的完整落地；本阶段只需要写入 event/transcript refs 和可回放数据结构，不实现阶段 4 的 replay runner。
+
+## 真实依赖与接口预留
+
+| 类型 | 内容 |
+| --- | --- |
+| 真实实现依赖 | 阶段 3 的端口、阶段 3B 的 RAGContextPack / eval context 输入、阶段 3C 的 SubAgent handoff、阶段 3D 的 ContextEnvelope / ContextSnapshot。 |
+| 接口预留 | 阶段 4 的 durable replay runner。阶段 3A 只写 event/transcript refs，不要求完成 replay。 |
+| 禁止提前实现 | 不在本阶段实现 Research 业务 skill，不接 UI，不发布真实生产 skill。 |
 
 ## 参考思想
 

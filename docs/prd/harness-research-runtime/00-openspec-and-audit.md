@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | OpenSpec proposal | `openspec/changes/harness-research-runtime/proposal.md` | 为什么重建、范围、非目标、风险。 |
 | OpenSpec design | `openspec/changes/harness-research-runtime/design.md` | Harness + Research 总体设计、分层、边界、删除策略。 |
-| OpenSpec tasks | `openspec/changes/harness-research-runtime/tasks.md` | 阶段 1-9 和阶段 3A 的可勾选任务。 |
+| OpenSpec tasks | `openspec/changes/harness-research-runtime/tasks.md` | 按 README 执行顺序覆盖阶段 1-9、3A、3B、3C、3D、5A、6A 的可勾选任务。 |
 | Spec delta | `openspec/changes/harness-research-runtime/specs/.../spec.md` | 至少覆盖 Harness runtime 和 Research runtime 两类需求。 |
 | 审计清单 | `docs/prd/harness-research-runtime/audit-inventory.md` | `keep / adapt / delete` 表格和理由。 |
 

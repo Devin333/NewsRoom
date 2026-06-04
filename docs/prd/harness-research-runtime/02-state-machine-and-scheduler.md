@@ -117,6 +117,8 @@ halt_on_budget_exceeded
 
 要求：
 
+- `HarnessTurnBudget` 是阶段 1 `HarnessBudget` 的运行时扩展视图，可以通过继承、组合或同一模型扩展实现；不要新增一个含义重叠、字段重复但互不转换的 budget 类。
+- 对外公共契约建议仍叫 `HarnessBudget`，内部调度器如需运行时快照可命名为 `HarnessBudgetSnapshot` 或 `HarnessTurnBudgetView`。
 - 所有 run 必须有预算，缺失时使用安全默认值。
 - 每次 PLAN、EXECUTE、VERIFY 都计入 transcript。
 - replan 次数超过 `max_replans` 时进入 `halted`。

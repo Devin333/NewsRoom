@@ -6,6 +6,15 @@
 
 本阶段仍属于框架层，不接 Research 业务实现，不做 UI，不依赖旧 paper_radar。
 
+## 真实依赖与接口预留
+
+| 类型 | 内容 |
+| --- | --- |
+| 真实实现依赖 | 阶段 3 的 worker/quality/artifact 端口，阶段 3C 的 `SubAgentContextEnvelope` 和 transcript refs。 |
+| 真实输出 | `ContextEnvelope`、`ContextSnapshot`、`ContextBudget`、`ContextCachePolicy`、`CompressionRecord`。 |
+| 接口预留 | 阶段 3B 会把 `RAGContextPack` 接入 Evidence / Memory Segment；阶段 3A 会把 skill eval、candidate 和 experience 输入接入 ContextEnvelope。 |
+| 禁止提前实现 | 不在本阶段实现 RAG session controller、skill evolution 生命周期、Research 业务上下文。 |
+
 ## 参考原则
 
 本阶段吸收这些外部架构思想，但不照搬：

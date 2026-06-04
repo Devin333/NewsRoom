@@ -56,26 +56,36 @@ max_worker_calls
 
 超过预算必须进入受控 `halted`，不能继续无限重试。每次相位转移都必须写入 transcript/event log，后续可以 replay 和复盘。
 
-## 阶段文档
+## 阶段文档与执行顺序
 
-| 阶段 | 文件 | 目标 |
-| --- | --- | --- |
-| 0 | [00-openspec-and-audit.md](00-openspec-and-audit.md) | 建立 OpenSpec change，审计现有代码和测试，形成 keep/adapt/delete 清单。 |
-| 1 | [01-framework-harness-contracts.md](01-framework-harness-contracts.md) | 新增 `framework/harness` 核心契约和包结构。 |
-| 2 | [02-state-machine-and-scheduler.md](02-state-machine-and-scheduler.md) | 实现 Harness 状态机、显式调度器、路由和重试策略。 |
-| 3 | [03-seven-layer-ports.md](03-seven-layer-ports.md) | 建立七层可替换端口和 fake implementation。 |
-| 3A | [03a-skill-evolution.md](03a-skill-evolution.md) | 在 Harness 控制下建立 skills 自进化生命周期、候选仓、eval、晋升和回滚。 |
-| 3B | [03b-bounded-agentic-rag.md](03b-bounded-agentic-rag.md) | 在 Harness 控制下建立多轮检索、读取、验证、补查和上下文组装的 Bounded Agentic RAG。 |
-| 3C | [03c-subagent-isolation.md](03c-subagent-isolation.md) | 建立通用子 Agent 隔离、显式 handoff、上下文裁剪、工具白名单、memory namespace 和独立 transcript。 |
-| 3D | [03d-context-engineering.md](03d-context-engineering.md) | 建立 6 段上下文装配、stable prefix / dynamic tail、5 级压缩链路、context snapshot 和 replay 约束。 |
-| 4 | [04-trace-checkpoint-replay.md](04-trace-checkpoint-replay.md) | 实现事件日志、trace、checkpoint 和 replay。 |
-| 5 | [05-research-domain-modeling.md](05-research-domain-modeling.md) | 新建 `business/research` 领域模型、端口、服务和 workflow spec。 |
-| 5A | [05a-research-product-scenarios.md](05a-research-product-scenarios.md) | 明确 Research 产品场景：Paper with Code、Taxonomy、Reader、Reading Notes、Code Repo、Benchmark/Method Graph、Agent Intelligence。 |
-| 6 | [06-research-single-paper-loop.md](06-research-single-paper-loop.md) | 跑通单篇论文分析闭环，使用 fake LLM，不做 UI。 |
-| 6A | [06a-reader-repair-memory.md](06a-reader-repair-memory.md) | 加入 Reader Repair Memory / Repair RAG，把 reader 构建问题沉淀为可召回修复经验。 |
-| 7 | [07-research-backend-interface.md](07-research-backend-interface.md) | 新增 Research 后端 service 和 API router，不复用旧 paper API。 |
-| 8 | [08-framework-cleanup.md](08-framework-cleanup.md) | 清理旧框架层，保留有用资产，删除无用旧控制流和业务污染。 |
-| 9 | [09-legacy-business-test-deletion.md](09-legacy-business-test-deletion.md) | 删除不服务新架构的旧业务、旧接口、旧测试和兼容逻辑。 |
+编号保留主题分组，但实际执行必须按下面的依赖顺序，不按文件名排序执行。
+
+| 执行顺序 | 阶段 | 文件 | 依赖 | 目标 |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | [00-openspec-and-audit.md](00-openspec-and-audit.md) | 无 | 建立 OpenSpec change，审计现有代码和测试，形成 keep/adapt/delete 清单。 |
+| 1 | 1 | [01-framework-harness-contracts.md](01-framework-harness-contracts.md) | 0 | 新增 `framework/harness` 核心契约和包结构。 |
+| 2 | 2 | [02-state-machine-and-scheduler.md](02-state-machine-and-scheduler.md) | 1 | 实现 Harness 状态机、显式调度器、路由和重试策略。 |
+| 3 | 3 | [03-seven-layer-ports.md](03-seven-layer-ports.md) | 1-2 | 建立七层可替换端口和 fake implementation。 |
+| 4 | 3C | [03c-subagent-isolation.md](03c-subagent-isolation.md) | 3 | 建立通用子 Agent 隔离、显式 handoff、工具白名单、memory namespace 和独立 transcript。 |
+| 5 | 3D | [03d-context-engineering.md](03d-context-engineering.md) | 3、3C | 建立 6 段上下文装配、stable prefix / dynamic tail、5 级压缩链路、context snapshot 和 replay 约束。 |
+| 6 | 3B | [03b-bounded-agentic-rag.md](03b-bounded-agentic-rag.md) | 3、3D | 在 Harness 控制下建立多轮检索、读取、验证、补查和 RAGContextPack。 |
+| 7 | 3A | [03a-skill-evolution.md](03a-skill-evolution.md) | 3、3B、3C、3D | 在 Harness 控制下建立 skills 自进化生命周期、候选仓、eval、晋升和回滚。 |
+| 8 | 4 | [04-trace-checkpoint-replay.md](04-trace-checkpoint-replay.md) | 2、3A、3B、3C、3D | 实现事件日志、trace、checkpoint 和 replay。 |
+| 9 | 5A | [05a-research-product-scenarios.md](05a-research-product-scenarios.md) | 0-4 | 明确 Research 产品场景，是阶段 5 的需求输入，不单独实现业务代码。 |
+| 10 | 5 | [05-research-domain-modeling.md](05-research-domain-modeling.md) | 5A | 新建 `business/research` 领域模型、端口、服务和 workflow spec。 |
+| 11 | 6 | [06-research-single-paper-loop.md](06-research-single-paper-loop.md) | 3B、3C、3D、4、5 | 跑通单篇论文分析闭环，使用 fake LLM，不做 UI。 |
+| 12 | 6A | [06a-reader-repair-memory.md](06a-reader-repair-memory.md) | 3A、3B、3C、3D、4、5、6 | 加入 Reader Repair Memory / Repair RAG；必须在阶段 6 验收后开始，不与阶段 6 并行。 |
+| 13 | 7 | [07-research-backend-interface.md](07-research-backend-interface.md) | 5、6 | 新增 Research 后端 service 和 API router，不复用旧 paper API。 |
+| 14 | 8 | [08-framework-cleanup.md](08-framework-cleanup.md) | 0-7 | 清理旧框架层，保留有用资产，删除无用旧控制流和业务污染。 |
+| 15 | 9 | [09-legacy-business-test-deletion.md](09-legacy-business-test-deletion.md) | 0-8 | 删除不服务新架构的旧业务、旧接口、旧测试和兼容逻辑。 |
+
+依赖解释：
+
+- 3C 先定义子 Agent 隔离和 handoff；3D 再把通用 `ContextEnvelope` 映射到子 Agent context。
+- 3D 先定义上下文装配协议；3B 再把 `RAGContextPack` 接入 Context Engineering。
+- 3A 最后做 skill evolution，因为它会消费 RAG、SubAgent、Context 和端口能力。
+- 4 是 durable trace/replay 的完整实现；3A/3B/3C/3D 只需先写事件契约和 refs，完整 replay 在阶段 4 收口。
+- 5A 是需求澄清文档，5 是实现文档；如果只复制一个阶段给 Codex，必须先复制 5A 再复制 5。
 
 ## 推荐执行方式
 
@@ -87,6 +97,8 @@ max_worker_calls
 4. 删除本阶段明确废弃的旧代码或旧测试。
 5. 运行阶段要求的检查。
 6. 提交变更。
+
+如果阶段文档引用了后续阶段的概念，除非依赖表把它列为硬依赖，否则只按“接口预留”处理，不要为了满足引用而提前实现后续阶段。
 
 ## 全局验收命令
 
@@ -137,6 +149,8 @@ tests/interfaces/research
 ```
 
 ## 全局禁止事项
+
+本节是通用规则的权威来源。各阶段文档只补充本阶段特有约束；如果阶段文档和本节措辞冲突，以本节为准，并优先修正文档而不是在代码里兼容两套规则。
 
 - 不做旧 paper_radar 兼容。
 - 不把 Research 代码写进 `business/boards/paper_radar`。

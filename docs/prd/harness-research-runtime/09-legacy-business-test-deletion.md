@@ -4,6 +4,16 @@
 
 删除不服务新 Harness + Research 的旧业务、旧接口、旧测试、旧兼容 adapter 和 legacy fallback。阶段 9 是项目收敛阶段，目标是让仓库只保留有用资产。
 
+## 审计复核规则
+
+阶段 9 执行前必须重新验证阶段 0 的 `audit-inventory.md` 和阶段 5-7 的新 Research 实现状态：
+
+- 每个旧业务、旧接口、旧测试删除候选都要重新检查当前引用。
+- 如果旧测试包含仍然有效的业务规则，必须先迁移到 `tests/business/research`、`tests/framework/harness` 或 `tests/interfaces/research`，再删除旧测试。
+- 如果旧模块仍被后端非 UI 运行路径使用，必须迁移真实能力或替换调用方，不能直接删除。
+- 如果原 audit 的 delete 结论已不准确，必须更新 `audit-inventory.md` 后再继续。
+- 不允许用删除旧测试来掩盖新实现失败；只有 OpenSpec 明确废弃的行为才能直接删除测试。
+
 ## 删除范围
 
 根据阶段 0 审计和阶段 5-7 的新 Research 实现，删除这些不再服务新架构的内容：
@@ -134,7 +144,7 @@ openspec validate harness-research-runtime --strict
 ```text
 请执行 docs/prd/harness-research-runtime/09-legacy-business-test-deletion.md。
 要求：
-1. 根据 audit-inventory.md 删除不服务新 Harness + Research 的旧业务、旧接口、旧测试和旧兼容。
+1. 先复核 audit-inventory.md 和当前引用；如果删除候选仍有真实业务规则或运行路径价值，先迁移或更新审计结论，再删除不服务新 Harness + Research 的旧业务、旧接口、旧测试和旧兼容。
 2. 旧测试中有真实业务规则的迁移到 tests/business/research 或 tests/framework/harness；只验证废弃行为的删除。
 3. 删除旧 paper_radar 后更新 import、router registration、service __init__、OpenAPI/SDK 相关引用。
 4. 添加架构测试，确保生产代码不再 import business.boards.paper_radar 或旧 paper interfaces。

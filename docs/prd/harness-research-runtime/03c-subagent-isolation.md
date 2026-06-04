@@ -6,6 +6,15 @@
 
 本阶段不实现任何具体业务角色，不出现 `Research`、`paper_radar` 或旧业务专有名词。后续 Research、Reader Repair、Benchmark 验证、Skill Evolution 都通过这个通用机制复用子 Agent 隔离。
 
+## 真实依赖与接口预留
+
+| 类型 | 内容 |
+| --- | --- |
+| 真实实现依赖 | 阶段 3 的 SubAgentWorkerPort、MemoryPort、MCPToolPort、QualityGatePort、ArtifactPort。 |
+| 真实输出 | `SubAgentSpec`、`SubAgentInvocation`、`SubAgentContextEnvelope`、`SubAgentHandoff`、独立 transcript refs。 |
+| 接口预留 | 阶段 3D 会把通用 `ContextEnvelope` 投影成 `SubAgentContextEnvelope`；阶段 3A 会复用 handoff 做 skill candidate/evaluator/promoter 隔离。 |
+| 禁止提前实现 | 不在本阶段实现 ContextAssembler、RAG session controller、skill evolution 生命周期或 Research 子 Agent。 |
+
 ## 为什么需要
 
 你项目里的旧多 Agent 代码已经出现过共享 workspace / session access policy 的雏形，说明项目确实需要多 Agent 协作。但新架构不能继续依赖旧业务定制实现，也不能把所有子 Agent 放进同一个上下文窗口。
@@ -26,7 +35,7 @@
 | 原则 | 要求 |
 | --- | --- |
 | Harness 创建子 Agent | LLM 不能自行启动、选择或路由子 Agent。 |
-| 独立上下文 | 每个子 Agent 只收到 Harness 构造的 `SubAgentContextEnvelope`。 |
+| 独立上下文 | 每个子 Agent 只收到 Harness 构造的 `SubAgentContextEnvelope`；阶段 3D 完成后可由 `ContextEnvelope` 投影生成。 |
 | 显式传参 | 子 Agent 之间只能通过 Harness-approved `SubAgentHandoff` 交换结构化 payload。 |
 | 工具白名单 | 每个子 Agent 的工具权限独立声明、独立校验。 |
 | 记忆命名空间隔离 | 每个子 Agent 只能读写 workflow 允许的 memory namespace。 |

@@ -10,6 +10,24 @@ Repair proposer 和 repair verifier 必须复用阶段 3C 子 Agent 隔离。修
 
 本阶段仍不做 UI，不接旧 paper_radar，不复用旧 reader payload adapter。
 
+## 执行前置条件
+
+阶段 6A 必须在阶段 6 验收完成后开始，不能和阶段 6 并行执行。
+
+硬依赖：
+
+```text
+阶段 3A：Skill Evolution 端口和 experience/candidate 边界
+阶段 3B：Bounded Agentic RAG
+阶段 3C：SubAgent Isolation
+阶段 3D：Context Engineering
+阶段 4：Trace / Checkpoint / Replay
+阶段 5：Research domain model
+阶段 6：Research 单篇论文闭环和 reader issue 输出
+```
+
+如果任一硬依赖尚未完成，本阶段只能更新 PRD / OpenSpec，不要实现 Reader Repair runtime。
+
 ## 核心判断
 
 Reader 修复经验是一种业务型自进化：

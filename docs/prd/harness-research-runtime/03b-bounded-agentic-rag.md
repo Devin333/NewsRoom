@@ -6,6 +6,15 @@
 
 本阶段仍然属于框架层，不接 Research 业务细节，不做 UI，不依赖旧 paper_radar。
 
+## 真实依赖与接口预留
+
+| 类型 | 内容 |
+| --- | --- |
+| 真实实现依赖 | 阶段 3 的 Retrieval / Memory / MCP / Quality / Artifact 端口，阶段 3D 的 ContextEnvelope / ContextSnapshot。 |
+| 真实输出 | `RAGContextPack`、RAG gate result、RAG transcript refs。 |
+| 接口预留 | 阶段 3A 可消费 RAG 经验做 skill evolution；阶段 5/6 可投影 ResearchRetrievalGoal。 |
+| 禁止提前实现 | 不在本阶段写 Research 业务检索策略，不实现 skill promotion，不实现阶段 4 的 replay runner。 |
+
 ## 核心定义
 
 普通 RAG 是：
@@ -47,14 +56,14 @@ framework/harness/rag/
   models.py
   session.py
   planner.py
-  context_assembler.py
+  context_pack_assembler.py
   source_verifier.py
   gates.py
   policy.py
   fake.py
 ```
 
-如果实现时发现 `planner.py`、`source_verifier.py` 或 `context_assembler.py` 更适合放在已有 `framework/harness/retrieval` 下，可以保留包边界为 `framework/harness/rag`，内部通过 adapter 调用已有 retrieval 模块。不要把多轮 RAG 控制逻辑写进 `business/research`。
+如果实现时发现 `planner.py`、`source_verifier.py` 或 `context_pack_assembler.py` 更适合放在已有 `framework/harness/retrieval` 下，可以保留包边界为 `framework/harness/rag`，内部通过 adapter 调用已有 retrieval 模块。不要把多轮 RAG 控制逻辑写进 `business/research`。
 
 ## 核心模型
 
@@ -258,7 +267,7 @@ search_corpus -> RetrievalPort
 read_source -> RetrievalPort 或 MCPToolPort
 recall_memory -> MemoryPort
 verify_source -> SourceVerifier
-assemble_context -> ContextAssembler
+assemble_context_pack -> RAGContextPackAssembler
 ```
 
 要求：
@@ -304,7 +313,7 @@ Bounded Agentic RAG 不替代阶段 3 的 RetrievalPort / MemoryPort / MCPToolPo
 Harness Scheduler
 -> RAG Session Controller
 -> RetrievalPort / MemoryPort / MCPToolPort
--> SourceVerifier / ContextAssembler
+-> SourceVerifier / RAGContextPackAssembler
 -> RAG VERIFY Gates
 -> RAGContextPack
 -> ContextAssembler
@@ -442,7 +451,7 @@ Trace 必须能解释：
 FakeRAGPlanner
 FakeRAGSessionController
 FakeSourceVerifier
-FakeContextAssembler
+FakeRAGContextPackAssembler
 FakeRAGGateSuite
 ```
 
@@ -468,7 +477,7 @@ procedural strategies
 tests/framework/harness/rag/test_rag_models.py
 tests/framework/harness/rag/test_rag_plan_gates.py
 tests/framework/harness/rag/test_rag_session_controller.py
-tests/framework/harness/rag/test_rag_context_assembler.py
+tests/framework/harness/rag/test_rag_context_pack_assembler.py
 tests/framework/harness/rag/test_rag_transcript.py
 tests/framework/harness/rag/test_fake_rag_runtime.py
 ```
@@ -519,7 +528,7 @@ openspec validate harness-research-runtime --strict
 7. max_rounds、max_replans、max_queries、max_source_reads、max_memory_hits、max_context_items、max_context_tokens、max_worker_calls 必须防止无限检索和无限补查。
 8. 每次 rag plan、execute、verify、replan、halt、context_pack_returned 都要写 transcript/event log。
 9. RAGContextPack 进入 LLM 前必须通过阶段 3D ContextAssembler，写入 ContextSnapshot，不能由 RAG 直接拼 prompt。
-10. 添加 RAG models、plan gates、session controller、context assembler、transcript、fake runtime 测试。
+10. 添加 RAG models、plan gates、session controller、context pack assembler、transcript、fake runtime 测试。
 11. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
 12. 修改完成后提交。
 全部回复和问题用中文。

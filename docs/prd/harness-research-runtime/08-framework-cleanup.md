@@ -4,6 +4,16 @@
 
 清理旧框架层。保留服务新 Harness 的通用资产；删除无用旧控制流、重复抽象、业务污染和旧 eval harness。阶段 8 不删除旧业务层主体，旧业务和旧测试在阶段 9 处理。
 
+## 审计复核规则
+
+阶段 8 执行前必须重新验证阶段 0 的 `audit-inventory.md`：
+
+- 每个 `delete` 候选都要重新用 `rg` 检查当前引用。
+- 如果阶段 1-7 的实现改变了依赖关系，必须更新 `audit-inventory.md` 的 category、reason、replacement、deletion_phase。
+- 如果原 audit 把仍有价值的通用能力误标为 delete，改为 keep 或 adapt，并补充理由。
+- 如果发现新 Harness 已经完全替代某个旧控制流，但 audit 未标记，允许补充 delete 候选。
+- 不允许因为 audit 写了 delete 就无条件删除；删除动作以执行时复核结果为准。
+
 ## 保留清单
 
 默认保留，除非审计证明无用：
@@ -157,7 +167,7 @@ openspec validate harness-research-runtime --strict
 ```text
 请执行 docs/prd/harness-research-runtime/08-framework-cleanup.md。
 要求：
-1. 根据阶段 0 audit-inventory.md 清理旧 framework。
+1. 先复核阶段 0 audit-inventory.md；如果 keep/adapt/delete 结论已过期，更新审计清单后再清理旧 framework。
 2. 保留 llm/tool/memory/skills/artifacts/events/workers/scoring/governance/shared 等可用资产。
 3. 保留 framework/skills 的 package、runtime、validation、quality 能力，作为 Harness skill evolution 的底层资产。
 4. 删除业务污染、重复抽象、旧 harness eval、被新 Harness 替代且无用的旧控制流。

@@ -4,7 +4,16 @@
 
 把 Research 从“单篇论文摘要”明确建模为研究情报业务上下文。Research 首轮业务聚焦论文，但需要覆盖 Paper with Code 展示、代码仓库情报、3 分钟速读、分类体系、阅读器、阅读笔记、方法/benchmark 图谱，以及 Agent skill/tool intelligence 的扩展边界。
 
-本阶段只做业务 PRD 和模型边界规划。实现顺序仍然以后续阶段为准：先做框架层 Harness，再做 Research 第一批闭环；UI 暂时不做。
+本阶段只做业务 PRD 和模型边界规划，是阶段 5 的需求输入，不直接创建 `business/research` 代码、不添加测试、不实现 workflow。实现顺序仍然以后续阶段为准：先做框架层 Harness，再做 Research 第一批闭环；UI 暂时不做。
+
+## 与阶段 5 的边界
+
+| 阶段 | 职责 |
+| --- | --- |
+| 阶段 5A | 澄清产品场景、业务模块边界、第一批/第二批/第三批范围、哪些能力必须确定性实现、哪些能力可由 LLM 生成 candidate。 |
+| 阶段 5 | 根据阶段 5A 落地 `business/research` 的 domain models、ports、services、workflow spec 和测试。 |
+
+阶段 5A 不重复阶段 5 的实现任务。若 5A 发现模型字段需要调整，应更新本 PRD；真正代码和测试在阶段 5 执行。
 
 ## Research 的产品定位
 
@@ -597,23 +606,11 @@ repair consolidation
 
 Code Repository / Benchmark / Method Graph / Agent Intelligence 可以先定义 domain models 和 ports，不要求第一批完整闭环。
 
-## 测试要求
+## 阶段 5 测试输入
 
-新增或补充：
+阶段 5 实现时必须把本阶段场景转成对应测试。本阶段只记录测试要求，不创建测试文件。
 
-```text
-tests/business/research/paper_card/test_paper_card_models.py
-tests/business/research/taxonomy/test_taxonomy_registry.py
-tests/business/research/taxonomy/test_taxonomy_gate.py
-tests/business/research/reader/test_reader_payload_models.py
-tests/business/research/reading_session/test_reading_note_models.py
-tests/business/research/code_repository/test_code_repo_models.py
-tests/business/research/benchmark/test_benchmark_models.py
-tests/business/research/method_graph/test_method_graph_models.py
-tests/business/research/agent_intelligence/test_agent_intelligence_models.py
-```
-
-必须覆盖：
+阶段 5 至少要覆盖：
 
 - Paper card 字段可序列化。
 - GitHub metrics 不能由 LLM fake 生成。
@@ -628,8 +625,6 @@ tests/business/research/agent_intelligence/test_agent_intelligence_models.py
 ## 验收命令
 
 ```powershell
-python -m scripts.dev compile
-python -m pytest tests/business/research -q
 openspec validate harness-research-runtime --strict
 ```
 
@@ -639,6 +634,7 @@ openspec validate harness-research-runtime --strict
 - 第一批、第二批、第三批范围清晰。
 - Paper Card / Taxonomy / Reader / Reading Session / Code Repository / Benchmark / Method Graph / Agent Intelligence 的模型边界清晰。
 - 子 Agent 隔离关系明确，并指向阶段 3C 通用机制。
+- 本阶段不创建 `business/research` 代码和测试；实现任务留给阶段 5。
 - 不接旧 paper_radar，不做 UI。
 - 完成后提交。
 
@@ -647,8 +643,8 @@ openspec validate harness-research-runtime --strict
 ```text
 请执行 docs/prd/harness-research-runtime/05a-research-product-scenarios.md。
 要求：
-1. 将 Research 业务建模为论文情报、代码仓库情报、阅读器、用户阅读记忆、方法/benchmark 图谱、agent skill/tool intelligence。
-2. 在 business/research 下预留 paper_card、taxonomy、reader、reader_repair、reading_session、code_repository、benchmark、method_graph、agent_intelligence、rag 模块边界。
+1. 将 Research 业务需求澄清为论文情报、代码仓库情报、阅读器、用户阅读记忆、方法/benchmark 图谱、agent skill/tool intelligence。
+2. 只更新 PRD / OpenSpec 需求，不创建 business/research 代码和测试。
 3. 第一批只要求 Paper Card、Taxonomy、3 分钟速读、Reader Payload、Reader Repair Memory、Reading Notes 的模型和 workflow 边界；Code Repository、Benchmark、Method Graph、Agent Intelligence 先定义 domain models 和 ports。
 4. Paper with Code 展示卡必须支持 pdf_url、code_url、github_repo、github_stars、star_growth_daily、three_minute_read、domains、areas、tasks、methods、benchmarks、reader_payload_status。
 5. GitHub stars、star growth、repo metadata 必须来自真实工具/数据源端口，不能由 LLM 编造。
@@ -658,8 +654,8 @@ openspec validate harness-research-runtime --strict
 9. Method / Benchmark Graph 必须能表达 Paper、Method、Benchmark、Dataset、Metric、Score、Baseline、SOTAClaim。
 10. Agent Skill / Tool Intelligence 只表达任务、skill、tool、benchmark、score、paper 的业务图谱，不直接发布或修改 active skill。
 11. Research 中的摘要生成/验证、分类候选/gate、reader repair proposer/verifier、benchmark extractor/verifier、code profiler/alignment verifier、reading note generator/privacy gate 必须复用阶段 3C 子 Agent 隔离。
-12. 添加对应 domain model、taxonomy、reader、reading session、code repo、benchmark、method graph、agent intelligence 测试。
-13. 运行 python -m scripts.dev compile、python -m pytest tests/business/research -q、openspec validate harness-research-runtime --strict。
+12. 把阶段 5 需要创建的 domain model、taxonomy、reader、reading session、code repo、benchmark、method graph、agent intelligence 测试要求写清楚。
+13. 运行 openspec validate harness-research-runtime --strict。
 14. 修改完成后提交。
 全部回复和问题用中文。
 ```
