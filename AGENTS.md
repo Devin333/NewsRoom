@@ -2,6 +2,13 @@
 
 This repository is the NewsRoom spec-driven news intelligence runtime.
 
+## Language and collaboration
+
+- All user-facing replies, plans, questions, summaries, and status updates must be in Chinese.
+- Questions to the user must be in Chinese. If options are offered, option labels and descriptions must also be in Chinese.
+- Code, file paths, commands, API names, class names, function names, schemas, and identifiers should remain in English.
+- When a task is large, a lead agent may coordinate multiple sub-agents in parallel, but the lead agent remains responsible for integration, verification, cleanup, and the final commit.
+
 ## Project workflow
 
 - Prefer OpenSpec for planned changes. The project keeps OpenSpec state under `openspec/`.
@@ -11,14 +18,27 @@ This repository is the NewsRoom spec-driven news intelligence runtime.
   - `$openspec-apply-change` to implement tasks from an existing change.
   - `$openspec-archive-change` to archive a completed change.
 - Validate OpenSpec changes with `openspec validate <change> --strict` when a change is involved.
+- Commit after every completed code change. Before committing, run checks appropriate to the changed surface. If checks fail, fix the root cause before committing.
 
-## Engineering guardrails
+## Implementation standard
 
-- Keep changes minimal and focused on the requested task.
-- Preserve the main runtime path: source collection -> evidence -> agent analysis -> report -> quality gate -> artifacts/storage.
+- Deliver final-quality implementations for the requested scope. Do not submit placeholder, temporary, demo-only, or "minimal pass" implementations.
+- Keep changes focused on the requested scope, but do not confuse "focused" with incomplete. The result must be production-shaped for that scope.
+- If code or tests fail, make a root-cause fix. Do not skip tests, weaken assertions, hard-code around failures, or preserve known-bad behavior for convenience.
+- Place code where the ownership is clearest. Avoid high coupling, cross-layer shortcuts, duplicated abstractions, and business logic leaking into framework modules.
+- Design for readability, extensibility, replaceability, and unit testing. Add abstractions only when they remove real complexity or establish a clear boundary.
+- Production code must use real data sources, real business models, and real runtime paths. Do not fake business behavior in production code.
+- Tests may use fake data, fake workers, fake repositories, fixtures, and in-memory stores to reduce development cost, but they must verify real business rules and architecture constraints.
+
+## Architecture guardrails
+
+- Preserve the intended runtime path unless a current OpenSpec change explicitly replaces it: source collection -> evidence -> agent analysis -> report -> quality gate -> artifacts/storage.
 - Do not route deterministic work through agents when a normal function or service is enough.
 - Interface layers should call application services rather than reaching into executors or stores directly.
 - MCP server inbound interface and ToolRuntime outbound MCP adapters are separate concerns.
+- Harness is the flow controller. LLMs are workers that generate candidate content only; they must not decide workflow routing, quality pass/fail, memory writes, tool authorization, or publication.
+- During the Harness + Research rebuild, `business/research` must not depend on legacy `business/boards/paper_radar`, `interfaces`, or `infrastructure`.
+- Keep useful legacy framework assets; delete code and tests that no longer serve the new architecture. Do not keep compatibility layers unless explicitly required by the active OpenSpec change.
 
 ## Local checks
 
