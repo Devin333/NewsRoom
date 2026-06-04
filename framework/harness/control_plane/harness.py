@@ -424,11 +424,16 @@ class HarnessControlPlane:
 
     def _call_worker(self, step_spec: HarnessStepSpec, state: HarnessState) -> HarnessWorkerResult:
         worker = self.worker_registry.get(step_spec.step_id) or self.worker_registry.get(step_spec.worker_type.value)
+        outputs = state.metadata.get("outputs", {})
+        prior_outputs = outputs if isinstance(outputs, dict) else {}
         task = {
             "run_id": state.run_spec.run_id,
             "step_id": step_spec.step_id,
             "worker_type": step_spec.worker_type.value,
-            "inputs": {key: state.run_spec.inputs.get(key) for key in step_spec.input_keys},
+            "inputs": {
+                key: prior_outputs[key] if key in prior_outputs else state.run_spec.inputs.get(key)
+                for key in step_spec.input_keys
+            },
             "metadata": step_spec.metadata,
         }
         self._record_event(

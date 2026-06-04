@@ -22,7 +22,8 @@ class PaperCardBuilder:
         github = github or {}
         merged_metadata = dict(metadata or {})
         if github:
-            merged_metadata.setdefault("github_metrics_source", github.get("metrics_source"))
+            github_metadata = github.get("metadata") if isinstance(github.get("metadata"), dict) else {}
+            merged_metadata.setdefault("github_metrics_source", github.get("metrics_source") or github_metadata.get("metrics_source"))
         return ResearchPaperCard(
             paper_id=paper.paper_id,
             title=paper.title,

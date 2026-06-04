@@ -6,7 +6,7 @@ from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.shared.json import stable_json_dumps, to_jsonable
-from framework.shared.time import format_datetime, utc_now
+from framework.shared.time import format_datetime, parse_datetime, utc_now
 
 
 @dataclass(frozen=True)
@@ -103,7 +103,7 @@ def event_log_entry_from_harness_event(event: Any, *, phase_index: int | None = 
         worker_type=event_payload.get("worker_type") if isinstance(event_payload, dict) else None,
         error=event_payload.get("error") if isinstance(event_payload, dict) else None,
         metadata=metadata,
-        timestamp=payload.get("occurred_at") or utc_now(),
+        timestamp=parse_datetime(payload.get("occurred_at")) or utc_now(),
     )
 
 

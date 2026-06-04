@@ -6,7 +6,7 @@ from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.shared.json import stable_json_dumps, to_jsonable
-from framework.shared.time import format_datetime, utc_now
+from framework.shared.time import format_datetime, parse_datetime, utc_now
 
 
 @dataclass(frozen=True)
@@ -133,7 +133,7 @@ def transcript_entry_from_event(event: Any, *, phase_index: int | None = None) -
     payload = event.to_dict() if hasattr(event, "to_dict") else dict(event)
     event_type = str(payload.get("event_type"))
     event_payload = dict(payload.get("payload", {})) if isinstance(payload.get("payload", {}), dict) else {}
-    phase = str(event_payload.get("phase", _phase_from_event_type(event_type)))
+    phase = _transcript_phase_label(event_payload.get("phase", _phase_from_event_type(event_type)))
     metadata = dict(payload.get("metadata", {}))
     metadata.update({"event_type": event_type, "event_payload": event_payload})
     if phase_index is not None:
@@ -150,7 +150,7 @@ def transcript_entry_from_event(event: Any, *, phase_index: int | None = None) -
         worker_call_ref=event_payload.get("worker_call_ref"),
         artifact_refs=tuple(event_payload.get("artifact_refs", event_payload.get("artifacts", ()))),
         metadata=metadata,
-        timestamp=payload.get("occurred_at") or utc_now(),
+        timestamp=parse_datetime(payload.get("occurred_at")) or utc_now(),
     )
 
 
@@ -168,6 +168,13 @@ def _phase_from_event_type(event_type: str) -> str:
     if "decision" in event_type:
         return "decision"
     return "event"
+
+
+def _transcript_phase_label(value: Any) -> str:
+    text = str(value).strip()
+    if text in {"plan", "execute", "verify", "replan", "halt"}:
+        return text.upper()
+    return text
 
 
 def _stable_entry_id(run_id: str, phase: str, step_id: str | None, metadata: dict[str, Any], timestamp: Any) -> str:

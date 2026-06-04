@@ -84,10 +84,10 @@
 
 ## 11. Stage 6 Research Single Paper Loop
 
-- [ ] 11.1 Implement Harness-controlled single-paper analysis workflow using Research models and fake LLM tests.
-- [ ] 11.2 Add deterministic gates for schema, evidence refs, taxonomy, score ranges, and report readiness.
-- [ ] 11.3 Persist artifacts through Harness artifact ports.
-- [ ] 11.4 Add end-to-end tests for successful, repair-routed, and halted single-paper runs.
+- [x] 11.1 Implement Harness-controlled single-paper analysis workflow using Research models and fake LLM tests.
+- [x] 11.2 Add deterministic gates for schema, evidence refs, taxonomy, score ranges, and report readiness.
+- [x] 11.3 Persist artifacts through Harness artifact ports.
+- [x] 11.4 Add end-to-end tests for successful, repair-routed, and halted single-paper runs.
 
 ## 12. Stage 6A Reader Repair Memory
 
