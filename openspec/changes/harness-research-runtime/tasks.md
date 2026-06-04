@@ -98,10 +98,10 @@
 
 ## 13. Stage 7 Research Backend Interface
 
-- [ ] 13.1 Create `interfaces/services/research_service.py` as the Research application service entry.
-- [ ] 13.2 Create `interfaces/api/routers/research.py` and register Research API routes.
-- [ ] 13.3 Ensure Research service does not reuse old `PapersApplicationService`, old paper cache payloads, or `interfaces/api/routers/papers.py`.
-- [ ] 13.4 Add service and API tests under `tests/interfaces/research`.
+- [x] 13.1 Create `interfaces/services/research_service.py` as the Research application service entry.
+- [x] 13.2 Create `interfaces/api/routers/research.py` and register Research API routes.
+- [x] 13.3 Ensure Research service does not reuse old `PapersApplicationService`, old paper cache payloads, or `interfaces/api/routers/papers.py`.
+- [x] 13.4 Add service and API tests under `tests/interfaces/research`.
 
 ## 14. Stage 8 Framework Cleanup
 

@@ -21,6 +21,7 @@ from interfaces.services.paper_reader_notes_service import PaperReaderNotesAppli
 from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
 from interfaces.services.project_service import ProjectApplicationService
+from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from interfaces.services.run_operation_service import RunOperationApplicationService
@@ -56,6 +57,7 @@ PaperReaderNotesServiceFactory = Callable[[], PaperReaderNotesApplicationService
 PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
 PaperVisualCompilerServiceFactory = Callable[[], PaperVisualCompilerApplicationService]
 ProjectServiceFactory = Callable[[], ProjectApplicationService]
+ResearchServiceFactory = Callable[[], ResearchApplicationService]
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,7 @@ class ApiServices:
     paper_user_state_service_factory: PaperUserStateServiceFactory
     paper_visual_compiler_service_factory: PaperVisualCompilerServiceFactory
     project_service_factory: ProjectServiceFactory
+    research_service_factory: ResearchServiceFactory
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,7 @@ def build_api_services(
     paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
     paper_visual_compiler_service_factory: PaperVisualCompilerServiceFactory = PaperVisualCompilerApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
+    research_service_factory: ResearchServiceFactory = ResearchApplicationService,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,
@@ -151,6 +155,7 @@ def build_api_services(
         paper_user_state_service_factory=paper_user_state_service_factory,
         paper_visual_compiler_service_factory=paper_visual_compiler_service_factory,
         project_service_factory=project_service_factory,
+        research_service_factory=research_service_factory,
     )
 
 
