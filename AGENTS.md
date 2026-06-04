@@ -37,6 +37,8 @@ This repository is the NewsRoom spec-driven news intelligence runtime.
 - Interface layers should call application services rather than reaching into executors or stores directly.
 - MCP server inbound interface and ToolRuntime outbound MCP adapters are separate concerns.
 - Harness is the flow controller. LLMs are workers that generate candidate content only; they must not decide workflow routing, quality pass/fail, memory writes, tool authorization, or publication.
+- Harness execution must follow a bounded PLAN -> EXECUTE -> VERIFY state machine. VERIFY must be performed by deterministic gates, failed gates must trigger controlled replan/retry/halt, and `max_replans`, `max_turns`, and retry budgets must prevent infinite loops.
+- Every Harness phase transition must be recorded to a durable transcript or event log so runs can be replayed and reviewed.
 - During the Harness + Research rebuild, `business/research` must not depend on legacy `business/boards/paper_radar`, `interfaces`, or `infrastructure`.
 - Keep useful legacy framework assets; delete code and tests that no longer serve the new architecture. Do not keep compatibility layers unless explicitly required by the active OpenSpec change.
 

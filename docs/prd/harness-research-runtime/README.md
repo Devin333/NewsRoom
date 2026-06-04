@@ -11,12 +11,45 @@
 | 原则 | 要求 |
 | --- | --- |
 | Harness 控制流程 | Harness 是唯一流程决策者，负责状态推进、路由、重试、质量门、审批、记忆写入和 artifact 发布。 |
+| 有界相位状态机 | 每个 step 必须按 `PLAN -> EXECUTE -> VERIFY` 推进；VERIFY 由纯函数 gate 完成，不通过只能受控 replan/retry/halt。 |
 | LLM 只做 worker | LLM 只生成候选结构化内容，不决定下一步，不直接写记忆，不直接调用高风险工具，不判定质量通过。 |
 | 业务层表达业务 | `business/research` 只表达 Research 领域模型、业务规则、用例和 workflow spec。 |
 | Research 不依赖旧代码 | 新 Research 不依赖 `business/boards/paper_radar`、旧 paper API、旧 reader payload 或旧兼容 adapter。 |
 | 保留有用资产 | 旧框架层中可复用的 LLM、Tool、Memory、Skills、Artifacts、Events、Workers、Governance 等资产保留。 |
 | 删除无用资产 | 不服务新 Harness + Research 的旧业务、旧测试、旧兼容、旧控制流、业务污染框架代码都要删除。 |
 | UI 不做 | 本轮只做框架、业务和后端接口，不修改 UI，不做前端迁移。 |
+
+## PLAN / EXECUTE / VERIFY 执行模型
+
+Harness 的每个 step 都必须拆成三个相位：
+
+| 相位 | 职责 | 禁止事项 |
+| --- | --- | --- |
+| PLAN | 由 Harness 根据 workflow spec、state、policy 和 gate 结果选择本轮执行计划。 | 不允许让 LLM 直接决定计划。 |
+| EXECUTE | 调用 LLM、Skill、Retrieval、Memory、SubAgent、MCP 或 Artifact worker 执行受控任务。 | worker 不允许写入最终流程决策。 |
+| VERIFY | 用纯函数 gate 校验 worker result、工具白名单、输出 schema、去重、分数范围、证据覆盖和预算。 | 不允许用 LLM 自评替代 gate。 |
+
+VERIFY 不通过时，Harness 只能做显式决策：
+
+```text
+replan
+retry
+route_to_repair
+wait_for_approval
+halted
+failed
+```
+
+每个 run 必须有有界预算：
+
+```text
+max_turns
+max_replans
+max_retries_per_step
+max_worker_calls
+```
+
+超过预算必须进入受控 `halted`，不能继续无限重试。每次相位转移都必须写入 transcript/event log，后续可以 replay 和复盘。
 
 ## 阶段文档
 
@@ -80,5 +113,7 @@ tests/interfaces/research
 - 不把 Research 代码写进 `business/boards/paper_radar`。
 - 不让 `business/research` import `interfaces` 或 `infrastructure`。
 - 不让 LLM 返回值控制 workflow routing。
+- 不允许没有 `max_replans`、`max_turns` 或 retry budget 的 Harness 运行循环。
+- 不允许用 LLM 自评替代纯函数 VERIFY gate。
 - 不用删除测试来掩盖失败；只有当旧行为明确废弃时才删除旧测试。
 - 不保留仅为了旧接口、旧 payload、旧 UI、旧兼容存在的 adapter。

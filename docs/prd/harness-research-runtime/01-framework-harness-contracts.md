@@ -11,6 +11,7 @@ framework/harness/
   __init__.py
   control_plane/
     __init__.py
+    phase.py
     state.py
     decision.py
     event.py
@@ -114,13 +115,48 @@ step 状态建议：
 
 ```text
 pending
+planning
+plan_verified
 running
+verifying
 retrying
+replanning
 succeeded
 failed
 skipped
 waiting_approval
+halted
 ```
+
+### HarnessPhase
+
+位置：`framework/harness/control_plane/phase.py`
+
+职责：
+
+- 明确 step 的有界相位：`PLAN`、`EXECUTE`、`VERIFY`。
+- 记录每个相位的输入引用、输出引用和 gate 结果。
+- 阻止直接从 `PLAN` 跳到 `succeeded`，也阻止 worker 绕过 `VERIFY`。
+
+建议枚举：
+
+```text
+plan
+execute
+verify
+replan
+halt
+```
+
+### HarnessBudget
+
+位置：`framework/harness/control_plane/policy.py`
+
+职责：
+
+- 定义 `max_turns`、`max_replans`、`max_retries_per_step`、`max_worker_calls`。
+- 所有 Harness run 必须有预算。
+- 超出预算时产出受控 `halted` 决策，而不是无限循环。
 
 ### HarnessDecision
 
@@ -135,14 +171,19 @@ waiting_approval
 
 ```text
 start_step
+plan_step
+execute_step
+verify_step
 complete_step
 retry_step
+replan_step
 route_to_step
 wait_for_approval
 fail_run
 complete_run
 cancel_run
 block_run
+halt_run
 ```
 
 ### HarnessEvent / HarnessTrace
@@ -173,6 +214,7 @@ framework/harness/control_plane/trace.py
 - 不包含 `next_step`。
 - 不包含 `quality_passed` 作为最终判定。
 - 不包含 `write_memory=true` 这类直接 side effect 决策。
+- 不包含绕过 VERIFY gate 的 `accept=true` 这类最终采纳决策。
 
 ### HarnessQualityVerdict
 
@@ -229,6 +271,8 @@ tests/framework/harness/test_worker_result_contract.py
 - worker result 不接受或不暴露流程决策字段。
 - workflow spec 不能没有入口 step。
 - step id 不能重复。
+- Harness budget 缺失或非法时校验失败。
+- phase 不能绕过 VERIFY 直接完成。
 
 ## 验收命令
 

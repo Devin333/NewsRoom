@@ -4,11 +4,14 @@
 
 让 Harness 运行可审计、可恢复、可回放。阶段 4 仍然使用 fake worker，不接 Research。
 
+阶段 4 必须把 `PLAN -> EXECUTE -> VERIFY` 的每次相位转移写入 durable transcript。transcript 是后续复盘和 replay 的权威记录。
+
 ## 新增或完善目录
 
 ```text
 framework/harness/control_plane/
   event_log.py
+  transcript.py
 framework/harness/runtime/
   checkpoint.py
   checkpoint_store.py
@@ -39,12 +42,54 @@ timestamp
 metadata
 ```
 
+相位事件必须额外记录：
+
+```text
+phase
+phase_index
+plan_id
+plan_key
+gate_results
+budget_snapshot
+halt_reason
+replan_reason
+```
+
 要求：
 
 - event append-only。
 - event 不存大 payload，大 payload 用 artifact ref。
 - event 可导出 dict。
 - event_id 稳定可生成，便于 replay。
+- PLAN、EXECUTE、VERIFY、REPLAN、HALT 每次转移都必须落 event。
+
+## Transcript
+
+Transcript 是面向复盘的完整运行记录，比 trace 更接近原始事实。
+
+每条 transcript entry 必须包含：
+
+```text
+run_id
+step_id
+phase
+decision
+input_refs
+output_refs
+gate_results
+budget_snapshot
+worker_call_ref
+artifact_refs
+timestamp
+```
+
+要求：
+
+- append-only。
+- 可按 run_id 导出。
+- 不存大 payload，只存 refs 和摘要。
+- replay 以 transcript/event log 为输入，不重新询问 LLM。
+- halted 必须记录触发预算和最后一个失败 gate。
 
 ## Trace Export
 
@@ -53,7 +98,10 @@ Trace 是对 event log 的可读投影。
 必须能回答：
 
 - run 为什么进入某个 step？
+- step 为什么进入 PLAN/EXECUTE/VERIFY？
 - step 为什么重试？
+- step 为什么 replan？
+- run 为什么 halted？
 - quality gate 为什么失败？
 - run 为什么成功或失败？
 - worker 产出了什么 artifact ref？
@@ -68,6 +116,9 @@ steps[]
 decisions[]
 errors[]
 artifacts[]
+phase_transitions[]
+gate_results[]
+budget_summary
 metrics
 ```
 
@@ -103,6 +154,7 @@ ReplayRunner 使用 event log 或 checkpoint + fake worker 复现状态推进。
 - 根据 event log 重建状态。
 - 根据 checkpoint 恢复后继续运行 fake workflow。
 - replay 不产生新的外部 side effect。
+- 能复盘 halted 前的全部 gate failure 和预算消耗。
 
 ## 与已有框架复用
 
@@ -127,12 +179,15 @@ tests/framework/harness/runtime/test_trace_export.py
 tests/framework/harness/runtime/test_checkpoint_store.py
 tests/framework/harness/runtime/test_replay.py
 tests/framework/harness/runtime/test_resume_from_checkpoint.py
+tests/framework/harness/runtime/test_transcript.py
 ```
 
 必须覆盖：
 
 - 每个 step 产生 event。
+- 每个 PLAN/EXECUTE/VERIFY 转移产生 transcript entry。
 - trace 能解释成功和失败。
+- trace 能解释 replan 和 halted。
 - checkpoint 可 roundtrip。
 - 从 checkpoint 恢复后继续执行。
 - replay 不调用真实 worker side effect。
@@ -149,6 +204,7 @@ openspec validate harness-research-runtime --strict
 ## 完成标准
 
 - Harness 每次运行都有 event log。
+- Harness 每次相位转移都有 transcript。
 - 可以导出 trace。
 - 可以保存和恢复 checkpoint。
 - 可以 replay fake workflow。
@@ -160,11 +216,13 @@ openspec validate harness-research-runtime --strict
 ```text
 请执行 docs/prd/harness-research-runtime/04-trace-checkpoint-replay.md。
 要求：
-1. 实现 Harness event log、trace export、checkpoint、checkpoint store、replay。
+1. 实现 Harness event log、transcript、trace export、checkpoint、checkpoint store、replay。
 2. 复用旧 framework/events 或 checkpoint 思路可以，但旧 workflow runtime 不能接管 Harness 状态。
-3. Event 不存大 payload，大内容使用 artifact ref。
-4. 添加 event、trace、checkpoint、resume、replay 测试。
-5. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
-6. 修改完成后提交。
+3. Event 和 transcript 不存大 payload，大内容使用 artifact ref。
+4. PLAN、EXECUTE、VERIFY、REPLAN、HALT 每次转移都必须落 transcript。
+5. Replay 能复盘 gate failure、replan 和 halted 原因。
+6. 添加 event、transcript、trace、checkpoint、resume、replay 测试。
+7. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
+8. 修改完成后提交。
 全部回复和问题用中文。
 ```
