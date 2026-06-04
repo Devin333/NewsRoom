@@ -77,10 +77,10 @@
 
 ## 10. Stage 5 Research Domain Modeling
 
-- [ ] 10.1 Create `business/research` package structure and domain exports.
-- [ ] 10.2 Implement Research models, value objects, ports, services, and workflow specs from stage 5A scenarios.
-- [ ] 10.3 Add import boundary tests forbidding `business/boards/paper_radar`, `interfaces`, and concrete `infrastructure` imports.
-- [ ] 10.4 Add unit tests for Research business rules and model invariants.
+- [x] 10.1 Create `business/research` package structure and domain exports.
+- [x] 10.2 Implement Research models, value objects, ports, services, and workflow specs from stage 5A scenarios.
+- [x] 10.3 Add import boundary tests forbidding `business/boards/paper_radar`, `interfaces`, and concrete `infrastructure` imports.
+- [x] 10.4 Add unit tests for Research business rules and model invariants.
 
 ## 11. Stage 6 Research Single Paper Loop
 
