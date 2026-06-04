@@ -13,7 +13,7 @@ from business.boards.paper_radar.visual_compiler.models import (
     PaperAssetManifest,
     PaperDocument,
 )
-from framework.agent.subagents import PaperReaderArtifactReviewSubAgent
+from business.boards.paper_radar.visual_compiler.artifact_reviewer import PaperReaderArtifactReviewSubAgent
 
 
 class PaperAssetGate:
@@ -98,7 +98,7 @@ class PaperAssetGate:
             errors.append(
                 _issue(
                     "artifact_review_failed",
-                    "framework artifact review subagent failed",
+                    "paper artifact review failed",
                     gate="image",
                     error=str(exc),
                 )

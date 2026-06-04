@@ -1,4 +1,10 @@
 from business.boards.paper_radar.visual_compiler.asset_gate import PaperAssetGate
+from business.boards.paper_radar.visual_compiler.artifact_reviewer import (
+    PaperArtifactReviewResult,
+    PaperArtifactReviewStatus,
+    PaperArtifactReviewTask,
+    PaperReaderArtifactReviewSubAgent,
+)
 from business.boards.paper_radar.visual_compiler.arxiv_source_provider import ArxivSourcePaperCompiler, SourceFirstPaperCompiler
 from business.boards.paper_radar.visual_compiler.base import PaperCompileDraft, PaperCompiler, PaperCompilerError
 from business.boards.paper_radar.visual_compiler.models import (
@@ -30,6 +36,9 @@ from business.boards.paper_radar.visual_compiler.source_comparison import PaperS
 __all__ = [
     "PAPER_DOCUMENT_SCHEMA_VERSION",
     "ArxivSourcePaperCompiler",
+    "PaperArtifactReviewResult",
+    "PaperArtifactReviewStatus",
+    "PaperArtifactReviewTask",
     "PaperAssetGate",
     "PaperAssetManifest",
     "PaperBlock",
@@ -46,6 +55,7 @@ __all__ = [
     "PaperLayoutProviderError",
     "PaperLayoutRegion",
     "PaperReviewReport",
+    "PaperReaderArtifactReviewSubAgent",
     "PaperSourceComparisonReport",
     "PaperVisualAsset",
     "PaperVisualCompilerRepository",

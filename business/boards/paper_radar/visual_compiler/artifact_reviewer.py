@@ -7,11 +7,11 @@ import re
 import struct
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timezone as _tz
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
-from framework.agent.subagents.executor import SubAgentResult, SubAgentStatus, SubAgentTask
 
 
 UTC = _tz.utc
@@ -33,6 +33,28 @@ _CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _EMPTY_INLINE_MARKUP_PATTERN = re.compile(r"<(?:strong|b|em|i|span)(?:\s[^>]*)?>\s*</(?:strong|b|em|i|span)>", re.IGNORECASE)
 
 
+class PaperArtifactReviewStatus(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class PaperArtifactReviewTask:
+    child_agent_id: str
+    inputs: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PaperArtifactReviewResult:
+    child_agent_id: str
+    success: bool
+    status: PaperArtifactReviewStatus
+    output: Mapping[str, Any] = field(default_factory=dict)
+    summary: str = ""
+    error: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
 class PaperReaderArtifactReviewSubAgent:
     def __init__(
         self,
@@ -51,32 +73,34 @@ class PaperReaderArtifactReviewSubAgent:
     def reviewer_id(self) -> str:
         return REVIEWER_ID
 
-    def execute(self, task: SubAgentTask) -> SubAgentResult:
+    def execute(self, task: Any) -> PaperArtifactReviewResult:
+        inputs = _mapping(getattr(task, "inputs", None)) or {}
+        child_agent_id = _text(getattr(task, "child_agent_id", None)) or "paper-artifact-reviewer"
         try:
             output = self.review(
-                document=_mapping(task.inputs.get("document")) or {},
-                manifest=_mapping(task.inputs.get("manifest")) or {},
-                paper_dir=_optional_path(task.inputs.get("paper_dir")),
-                memory_path=_optional_path(task.inputs.get("memory_path")),
+                document=_mapping(inputs.get("document")) or {},
+                manifest=_mapping(inputs.get("manifest")) or {},
+                paper_dir=_optional_path(inputs.get("paper_dir")),
+                memory_path=_optional_path(inputs.get("memory_path")),
             )
         except Exception as exc:
-            return SubAgentResult(
-                child_agent_id=task.child_agent_id,
+            return PaperArtifactReviewResult(
+                child_agent_id=child_agent_id,
                 success=False,
-                status=SubAgentStatus.FAILED,
+                status=PaperArtifactReviewStatus.FAILED,
                 error=str(exc),
                 metadata={"reviewer": self.reviewer_id},
             )
-        return SubAgentResult(
-            child_agent_id=task.child_agent_id,
+        return PaperArtifactReviewResult(
+            child_agent_id=child_agent_id,
             success=bool(output.get("passed")),
-            status=SubAgentStatus.SUCCEEDED if output.get("passed") else SubAgentStatus.FAILED,
+            status=PaperArtifactReviewStatus.SUCCEEDED if output.get("passed") else PaperArtifactReviewStatus.FAILED,
             output=dict(output),
             summary=str(output.get("summary") or ""),
             metadata={"reviewer": self.reviewer_id},
         )
 
-    def run(self, task: SubAgentTask) -> SubAgentResult:
+    def run(self, task: Any) -> PaperArtifactReviewResult:
         return self.execute(task)
 
     def review(

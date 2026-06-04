@@ -105,10 +105,10 @@
 
 ## 14. Stage 8 Framework Cleanup
 
-- [ ] 14.1 Adapt or delete obsolete framework control-flow assets according to `audit-inventory.md`.
-- [ ] 14.2 Remove paper-specific code from framework packages.
-- [ ] 14.3 Replace legacy framework tests with Harness tests where behavior moved.
-- [ ] 14.4 Run full compile, targeted tests, and OpenSpec validation.
+- [x] 14.1 Adapt or delete obsolete framework control-flow assets according to `audit-inventory.md`.
+- [x] 14.2 Remove paper-specific code from framework packages.
+- [x] 14.3 Replace legacy framework tests with Harness tests where behavior moved.
+- [x] 14.4 Run full compile, targeted tests, and OpenSpec validation.
 
 ## 15. Stage 9 Legacy Business And Test Deletion
 
