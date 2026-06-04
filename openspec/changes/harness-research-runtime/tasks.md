@@ -25,10 +25,10 @@
 
 ## 3. Stage 3 Seven-Layer Ports
 
-- [ ] 3.1 Implement fake in-memory port implementations for tests.
-- [ ] 3.2 Adapt existing `framework/llm`, `framework/tool`, `framework/memory`, `framework/skills`, `framework/artifacts`, `framework/events`, `framework/workers`, and `framework/governance` behind Harness ports.
-- [ ] 3.3 Add contract tests proving concrete infrastructure adapters are not imported by Harness contracts.
-- [ ] 3.4 Add port replacement tests using fake implementations.
+- [x] 3.1 Implement fake in-memory port implementations for tests.
+- [x] 3.2 Adapt existing `framework/llm`, `framework/tool`, `framework/memory`, `framework/skills`, `framework/artifacts`, `framework/events`, `framework/workers`, and `framework/governance` behind Harness ports.
+- [x] 3.3 Add contract tests proving concrete infrastructure adapters are not imported by Harness contracts.
+- [x] 3.4 Add port replacement tests using fake implementations.
 
 ## 4. Stage 3C Subagent Isolation
 

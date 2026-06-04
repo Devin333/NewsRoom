@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+from framework.harness.artifacts import ArtifactPort, ArtifactRef, ArtifactWriteRequest, FakeArtifactPort
+from framework.harness.context import (
+    ContextCompressionSummary,
+    ContextEnvelope,
+    ContextSnapshot,
+    FakeContextAssembler,
+    FakeContextCompressor,
+    FakeContextSnapshotStore,
+)
 from framework.harness.control_plane import (
     BudgetGate,
     DeduplicationGate,
@@ -31,6 +40,15 @@ from framework.harness.control_plane import (
     SkillEvolutionBudgetGate,
     ToolAllowlistGate,
 )
+from framework.harness.mcp import (
+    FakeMCPToolPort,
+    MCPApprovalStatus,
+    MCPPolicyDecision,
+    MCPToolDefinition,
+    MCPToolPort,
+    MCPToolRequest,
+)
+from framework.harness.memory import FakeMemoryPort, MemoryPort, MemoryWriteCandidate, MemoryWriteStatus
 from framework.harness.ports import (
     HarnessArtifactPort,
     HarnessCheckpointPort,
@@ -40,6 +58,7 @@ from framework.harness.ports import (
     HarnessLLMPort,
     HarnessMemoryPort,
     HarnessRAGPort,
+    HarnessRetrievalPort,
     HarnessSkillEvolutionPort,
     HarnessSkillPort,
     HarnessSubagentPort,
@@ -47,8 +66,18 @@ from framework.harness.ports import (
     HarnessTracePort,
     HarnessWorkerPort,
 )
-from framework.harness.quality import HarnessQualityVerdict
+from framework.harness.quality import FakeQualityGate, HarnessQualityVerdict, QualityGatePort
+from framework.harness.rag import (
+    FakeRAGPlanner,
+    FakeRAGSessionController,
+    RAGContextPack,
+    RAGEvidenceGateResult,
+    RAGSessionController,
+    RAGSessionRequest,
+)
+from framework.harness.retrieval import EvidencePack, EvidencePackCollection, FakeRetrievalPort, RetrievalPort, RetrievalRequest
 from framework.harness.runtime import HarnessCheckpoint
+from framework.harness.skills import FakeSkillEvolutionPort, FakeSkillWorker, SkillEvolutionPort, SkillWorkerPort
 from framework.harness.skills.evolution import (
     SkillCandidate,
     SkillEvaluationResult,
@@ -59,7 +88,17 @@ from framework.harness.skills.evolution import (
     SkillRollbackPlan,
     SkillVersionRef,
 )
-from framework.harness.workers import HarnessWorkerResult, HarnessWorkerStatus
+from framework.harness.workers import (
+    CallableLLMWorkerAdapter,
+    CallableSkillWorkerAdapter,
+    CallableSubAgentWorkerAdapter,
+    FakeLLMWorker,
+    FakeSubAgentWorker,
+    HarnessWorkerResult,
+    HarnessWorkerStatus,
+    LLMWorkerPort,
+    SubAgentWorkerPort,
+)
 from framework.harness.workflow import (
     HarnessRetryPolicy,
     HarnessRouteKind,
@@ -70,11 +109,36 @@ from framework.harness.workflow import (
 )
 
 __all__ = [
-    "HarnessArtifactPort",
+    "ArtifactPort",
+    "ArtifactRef",
+    "ArtifactWriteRequest",
     "BudgetGate",
+    "CallableLLMWorkerAdapter",
+    "CallableSkillWorkerAdapter",
+    "CallableSubAgentWorkerAdapter",
+    "ContextCompressionSummary",
+    "ContextEnvelope",
+    "ContextSnapshot",
     "DeduplicationGate",
     "DeterministicGate",
+    "EvidencePack",
+    "EvidencePackCollection",
+    "FakeArtifactPort",
+    "FakeContextAssembler",
+    "FakeContextCompressor",
+    "FakeContextSnapshotStore",
+    "FakeLLMWorker",
+    "FakeMCPToolPort",
+    "FakeMemoryPort",
+    "FakeQualityGate",
+    "FakeRAGPlanner",
+    "FakeRAGSessionController",
+    "FakeRetrievalPort",
+    "FakeSkillEvolutionPort",
+    "FakeSkillWorker",
+    "FakeSubAgentWorker",
     "GateContext",
+    "HarnessArtifactPort",
     "HarnessBudget",
     "HarnessBudgetSnapshot",
     "HarnessCheckpoint",
@@ -95,6 +159,7 @@ __all__ = [
     "HarnessPhaseRecord",
     "HarnessQualityVerdict",
     "HarnessRAGPort",
+    "HarnessRetrievalPort",
     "HarnessRetryPolicy",
     "HarnessRouteKind",
     "HarnessRoutingRule",
@@ -119,16 +184,35 @@ __all__ = [
     "HarnessWorkerType",
     "HarnessWorkflowSpec",
     "InMemoryHarnessEventPort",
+    "LLMWorkerPort",
+    "MCPApprovalStatus",
+    "MCPPolicyDecision",
+    "MCPToolDefinition",
+    "MCPToolPort",
+    "MCPToolRequest",
+    "MemoryPort",
+    "MemoryWriteCandidate",
+    "MemoryWriteStatus",
     "OutputSchemaGate",
+    "QualityGatePort",
+    "RAGEvidenceGateResult",
+    "RAGContextPack",
+    "RAGSessionController",
+    "RAGSessionRequest",
+    "RetrievalPort",
+    "RetrievalRequest",
     "ScoreRangeGate",
     "SkillEvolutionBudgetGate",
     "SkillCandidate",
     "SkillEvaluationResult",
     "SkillExperience",
+    "SkillEvolutionPort",
     "SkillPatchSet",
     "SkillPromotionDecision",
     "SkillRelease",
     "SkillRollbackPlan",
     "SkillVersionRef",
+    "SkillWorkerPort",
+    "SubAgentWorkerPort",
     "ToolAllowlistGate",
 ]

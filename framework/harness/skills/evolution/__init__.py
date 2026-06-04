@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from framework.harness.skills.evolution.fake import FakeSkillEvolutionPort
 from framework.harness.skills.evolution.models import (
     SkillCandidate,
     SkillCandidateStatus,
@@ -12,8 +13,10 @@ from framework.harness.skills.evolution.models import (
     SkillRollbackPlan,
     SkillVersionRef,
 )
+from framework.harness.skills.evolution.ports import SkillEvolutionPort
 
 __all__ = [
+    "FakeSkillEvolutionPort",
     "SkillCandidate",
     "SkillCandidateStatus",
     "SkillEvaluationResult",
@@ -23,5 +26,6 @@ __all__ = [
     "SkillPromotionStatus",
     "SkillRelease",
     "SkillRollbackPlan",
+    "SkillEvolutionPort",
     "SkillVersionRef",
 ]

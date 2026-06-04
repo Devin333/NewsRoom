@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 from framework.harness.control_plane.decision import HarnessDecision, HarnessDecisionType
+from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
 from framework.harness.control_plane.gates import (
     DeterministicGate,
@@ -23,10 +24,12 @@ from framework.harness.control_plane.transitions import (
     transition_run,
     transition_step,
 )
-from framework.harness.ports import HarnessEventPort
 from framework.harness.quality.verdict import HarnessQualityVerdict
 from framework.harness.workflow.step import HarnessStepSpec
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
+
+if TYPE_CHECKING:
+    from framework.harness.ports import HarnessEventPort
 
 
 WorkerCallable = Callable[[dict[str, Any]], HarnessWorkerResult]
@@ -440,7 +443,25 @@ class HarnessControlPlane:
             return HarnessWorkerResult(status=HarnessWorkerStatus.SUCCEEDED, output={})
         if callable(worker):
             return worker(task)
-        queued = self._iterable_workers.setdefault(step_spec.step_id, list(worker))
+        execute = getattr(worker, "execute", None)
+        if callable(execute):
+            return execute(task)
+        if step_spec.worker_type.value == "llm":
+            generate = getattr(worker, "generate", None)
+            if callable(generate):
+                return generate(task)
+        if step_spec.worker_type.value == "skill":
+            run_skill = getattr(worker, "run_skill", None)
+            if callable(run_skill):
+                return run_skill(str(task.get("skill_name", task["step_id"])), dict(task.get("inputs", {})), dict(task.get("context", {})))
+        if step_spec.worker_type.value == "subagent":
+            run_subagent = getattr(worker, "run_subagent", None)
+            if callable(run_subagent):
+                return run_subagent(str(task.get("subagent_id", task["step_id"])), dict(task), dict(task.get("budget", {})))
+        try:
+            queued = self._iterable_workers.setdefault(step_spec.step_id, list(worker))
+        except TypeError as exc:
+            raise HarnessValidationError("worker registry value must be callable, a Harness worker port, or result iterable") from exc
         if not queued:
             return HarnessWorkerResult(status=HarnessWorkerStatus.FAILED, error="fake worker queue is exhausted")
         return queued.pop(0)
