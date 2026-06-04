@@ -3,6 +3,7 @@ from __future__ import annotations
 from framework.harness.control_plane.decision import HarnessDecision, HarnessDecisionType
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
+from framework.harness.control_plane.event_log import HarnessEventLogEntry, InMemoryHarnessEventLog, event_log_entry_from_harness_event
 from framework.harness.control_plane.gates import (
     BudgetGate,
     DeduplicationGate,
@@ -27,6 +28,12 @@ from framework.harness.control_plane.state import (
     HarnessStepStatus,
 )
 from framework.harness.control_plane.trace import HarnessTrace
+from framework.harness.control_plane.transcript import (
+    HarnessTranscript,
+    HarnessTranscriptEntry,
+    InMemoryHarnessTranscriptStore,
+    transcript_entry_from_event,
+)
 from framework.harness.control_plane.transitions import (
     get_step_state,
     replace_step_state,
@@ -45,6 +52,7 @@ __all__ = [
     "HarnessDecision",
     "HarnessDecisionType",
     "HarnessEvent",
+    "HarnessEventLogEntry",
     "HarnessEventType",
     "HarnessGateResult",
     "HarnessPhase",
@@ -58,15 +66,21 @@ __all__ = [
     "HarnessStepState",
     "HarnessStepStatus",
     "HarnessTrace",
+    "HarnessTranscript",
+    "HarnessTranscriptEntry",
     "HarnessValidationError",
+    "InMemoryHarnessEventLog",
     "InMemoryHarnessEventPort",
+    "InMemoryHarnessTranscriptStore",
     "OutputSchemaGate",
     "ScoreRangeGate",
     "SkillEvolutionBudgetGate",
     "ToolAllowlistGate",
     "assert_step_completion_allowed",
+    "event_log_entry_from_harness_event",
     "get_step_state",
     "replace_step_state",
     "transition_run",
     "transition_step",
+    "transcript_entry_from_event",
 ]

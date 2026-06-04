@@ -64,10 +64,10 @@
 
 ## 8. Stage 4 Trace Checkpoint Replay
 
-- [ ] 8.1 Implement durable transcript and event log writers for Harness runs.
-- [ ] 8.2 Implement checkpoint creation and restoration for Harness state.
-- [ ] 8.3 Implement replay readers that expose phase, worker, gate, budget, handoff, RAG, memory intent, and artifact decision events.
-- [ ] 8.4 Add replay tests that do not call LLMs or external tools.
+- [x] 8.1 Implement durable transcript and event log writers for Harness runs.
+- [x] 8.2 Implement checkpoint creation and restoration for Harness state.
+- [x] 8.3 Implement replay readers that expose phase, worker, gate, budget, handoff, RAG, memory intent, and artifact decision events.
+- [x] 8.4 Add replay tests that do not call LLMs or external tools.
 
 ## 9. Stage 5A Research Product Scenarios
 

@@ -1,5 +1,19 @@
 from __future__ import annotations
 
-from framework.harness.runtime.checkpoint import HarnessCheckpoint
+from framework.harness.runtime.checkpoint import HarnessCheckpoint, checkpoint_checksum
+from framework.harness.runtime.checkpoint_store import InMemoryHarnessCheckpointStore
+from framework.harness.runtime.context_replay import CompressionRecordReplayReader, ContextSnapshotReplayReader
+from framework.harness.runtime.durable_state import HarnessDurableState
+from framework.harness.runtime.replay import HarnessReplayReader, HarnessReplayReport, HarnessTraceExporter
 
-__all__ = ["HarnessCheckpoint"]
+__all__ = [
+    "CompressionRecordReplayReader",
+    "ContextSnapshotReplayReader",
+    "HarnessCheckpoint",
+    "HarnessDurableState",
+    "HarnessReplayReader",
+    "HarnessReplayReport",
+    "HarnessTraceExporter",
+    "InMemoryHarnessCheckpointStore",
+    "checkpoint_checksum",
+]
