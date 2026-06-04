@@ -32,11 +32,11 @@
 
 ## 4. Stage 3C Subagent Isolation
 
-- [ ] 4.1 Define subagent identity, private history, tool allowlist, memory namespace, transcript, and handoff contracts.
-- [ ] 4.2 Implement Harness-approved handoff validation and schema gates.
-- [ ] 4.3 Adapt generic `framework/agent/subagents` pieces that are domain-neutral.
-- [ ] 4.4 Mark or remove paper-specific subagent code in the cleanup inventory for stage 8.
-- [ ] 4.5 Add tests for sibling isolation and denied unauthorized namespace/tool access.
+- [x] 4.1 Define subagent identity, private history, tool allowlist, memory namespace, transcript, and handoff contracts.
+- [x] 4.2 Implement Harness-approved handoff validation and schema gates.
+- [x] 4.3 Adapt generic `framework/agent/subagents` pieces that are domain-neutral.
+- [x] 4.4 Mark or remove paper-specific subagent code in the cleanup inventory for stage 8.
+- [x] 4.5 Add tests for sibling isolation and denied unauthorized namespace/tool access.
 
 ## 5. Stage 3D Context Engineering
 
