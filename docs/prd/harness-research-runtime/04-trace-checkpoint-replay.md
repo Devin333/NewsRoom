@@ -39,6 +39,8 @@ output_ref
 skill_name
 skill_version
 skill_candidate_id
+rag_session_id
+retrieval_round
 retry_count
 error
 timestamp
@@ -59,6 +61,11 @@ replan_reason
 evolution_action
 promotion_decision
 rollback_ref
+rag_decision
+retrieval_query_refs
+accepted_evidence_refs
+rejected_evidence_refs
+memory_hit_refs
 ```
 
 要求：
@@ -69,6 +76,7 @@ rollback_ref
 - event_id 稳定可生成，便于 replay。
 - PLAN、EXECUTE、VERIFY、REPLAN、HALT 每次转移都必须落 event。
 - Skill evolution 的 collect_experience、candidate_created、static_gate_failed、eval_completed、promotion_decided、release_published、rollback_completed 都必须落 event。
+- Bounded Agentic RAG 的 session_started、plan_verified、step_executed、source_verified、context_pack_assembled、gate_failed、replanned、halted、context_pack_returned 都必须落 event。
 
 ## Transcript
 
@@ -89,6 +97,10 @@ worker_call_ref
 artifact_refs
 skill_refs
 candidate_refs
+rag_session_refs
+retrieval_plan_refs
+context_pack_refs
+evidence_refs
 eval_refs
 release_refs
 timestamp
@@ -102,6 +114,7 @@ timestamp
 - replay 以 transcript/event log 为输入，不重新询问 LLM。
 - halted 必须记录触发预算和最后一个失败 gate。
 - skill candidate 被拒绝、晋升或回滚时，transcript 必须能指向对应 eval result、promotion decision 和 rollback plan。
+- RAG session 每轮检索、读取、补查、context pack 组装和 halted 都必须能从 transcript 复盘。
 
 ## Trace Export
 
@@ -117,6 +130,8 @@ Trace 是对 event log 的可读投影。
 - quality gate 为什么失败？
 - run 为什么成功或失败？
 - worker 产出了什么 artifact ref？
+- RAG 为什么继续检索、停止、replan 或 halted？
+- 哪些 evidence / memory hit 被接受、拒绝或标记冲突？
 - skill candidate 为什么被拒绝或晋升？
 - active skill version 为什么发生切换或回滚？
 
@@ -133,6 +148,9 @@ artifacts[]
 skills[]
 skill_candidates[]
 skill_releases[]
+rag_sessions[]
+retrieval_rounds[]
+context_packs[]
 phase_transitions[]
 gate_results[]
 budget_summary
@@ -173,7 +191,9 @@ ReplayRunner 使用 event log 或 checkpoint + fake worker 复现状态推进。
 - replay 不产生新的外部 side effect。
 - 能复盘 halted 前的全部 gate failure 和预算消耗。
 - 能复盘 skill evolution run 的候选生成、eval、promotion、release 和 rollback。
+- 能复盘 bounded RAG session 的 plan、query、source verification、context assembly、replan 和 halted。
 - replay 不重新运行 optimizer LLM，也不重新发布 skill。
+- replay 不重新执行真实检索、真实 MCP tool 或真实 memory write。
 
 ## 与已有框架复用
 
@@ -200,6 +220,7 @@ tests/framework/harness/runtime/test_replay.py
 tests/framework/harness/runtime/test_resume_from_checkpoint.py
 tests/framework/harness/runtime/test_transcript.py
 tests/framework/harness/runtime/test_skill_evolution_transcript.py
+tests/framework/harness/runtime/test_rag_transcript_replay.py
 ```
 
 必须覆盖：
@@ -214,6 +235,8 @@ tests/framework/harness/runtime/test_skill_evolution_transcript.py
 - checksum 不匹配时拒绝恢复。
 - skill evolution transcript 能解释 candidate 拒绝、晋升、发布和回滚。
 - replay skill evolution run 不产生新的 production skill release。
+- RAG transcript 能解释 query、source verification、evidence acceptance、memory hit、replan 和 halted。
+- replay RAG run 不产生新的真实检索、真实 MCP side effect 或真实 memory write。
 
 ## 验收命令
 
@@ -231,6 +254,7 @@ openspec validate harness-research-runtime --strict
 - 可以保存和恢复 checkpoint。
 - 可以 replay fake workflow。
 - 可以 replay fake skill evolution workflow，且不会触发新发布。
+- 可以 replay fake RAG workflow，且不会触发新检索或新写入。
 - 不接业务，不做 UI。
 - 完成后提交。
 
@@ -244,9 +268,10 @@ openspec validate harness-research-runtime --strict
 3. Event 和 transcript 不存大 payload，大内容使用 artifact ref。
 4. PLAN、EXECUTE、VERIFY、REPLAN、HALT 每次转移都必须落 transcript。
 5. Skill evolution 的 candidate、eval、promotion、release、rollback 也必须落 event/transcript。
-6. Replay 能复盘 gate failure、replan、halted、skill candidate 拒绝、skill 晋升和 rollback 原因。
-7. 添加 event、transcript、trace、checkpoint、resume、replay、skill evolution transcript 测试。
-8. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
-9. 修改完成后提交。
+6. Bounded Agentic RAG 的 session_started、plan_verified、step_executed、source_verified、context_pack_assembled、gate_failed、replanned、halted、context_pack_returned 也必须落 event/transcript。
+7. Replay 能复盘 gate failure、replan、halted、skill candidate 拒绝、skill 晋升、rollback、RAG query/source/evidence/memory hit 采纳或拒绝原因。
+8. 添加 event、transcript、trace、checkpoint、resume、replay、skill evolution transcript、RAG transcript replay 测试。
+9. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
+10. 修改完成后提交。
 全部回复和问题用中文。
 ```

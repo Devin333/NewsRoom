@@ -28,6 +28,7 @@ business/research/
     llm_worker.py
     artifact_store.py
     repair_memory.py
+    rag.py
   services/
     __init__.py
     evidence_builder.py
@@ -36,12 +37,14 @@ business/research/
     quality_gate.py
     citation_verifier.py
     profile_builder.py
+    rag_policy.py
     reader_issue_detector.py
     reader_repair_gate.py
   workflows/
     __init__.py
     paper_analysis_workflow.py
     paper_reader_workflow.py
+    paper_rag_workflow.py
     reader_repair_workflow.py
   application/
     __init__.py
@@ -149,6 +152,46 @@ lineage
 metadata
 ```
 
+### ResearchRetrievalGoal
+
+字段建议：
+
+```text
+goal_id
+paper_id
+question
+required_evidence_types
+target_sections
+target_claims
+allowed_source_refs
+allowed_memory_namespaces
+constraints
+metadata
+```
+
+### ResearchRAGContext
+
+字段建议：
+
+```text
+context_id
+paper_id
+goal
+accepted_evidence
+rejected_evidence
+conflicting_evidence
+memory_context
+gap_report
+source_refs
+metadata
+```
+
+约束：
+
+- Research 可以定义论文领域的 retrieval goal 和 context projection。
+- 通用 RAG loop、预算、replan、tool routing 仍由 `framework/harness/rag` 控制。
+- Research 不直接调用 RetrievalPort 多轮循环。
+
 ### ResearchAnalysis
 
 字段建议：
@@ -247,6 +290,7 @@ metadata
 | `CitationVerifier` | 验证 claim 是否有证据支持。 |
 | `ResearchQualityGate` | 产出质量 verdict。 |
 | `ResearchProfileBuilder` | 生成分析/reader payload 的确定性组合逻辑。 |
+| `ResearchRAGPolicyBuilder` | 把论文业务需求转换成 Harness RAGSessionSpec / RetrievalGoal，不执行检索循环。 |
 | `ReaderIssueDetector` | 从 reader payload、schema result、source lineage 中检测 reader 构建问题。 |
 | `ReaderRepairGate` | 验证修复没有破坏 schema、source lineage、citation、table/formula fidelity。 |
 
@@ -259,6 +303,7 @@ metadata
 ```text
 load_paper_source
 compile_document
+run_research_rag
 build_evidence_pack
 analyze_structure
 analyze_contribution
@@ -271,6 +316,21 @@ publish_artifacts
 
 该 workflow 应该可被 `framework/harness` 读取。
 
+`paper_rag_workflow.py` 只定义论文场景下的 RAG workflow spec，不执行 RAG loop。
+
+建议 step：
+
+```text
+build_retrieval_goal
+plan_retrieval
+verify_retrieval_plan
+execute_retrieval_round
+verify_rag_sources
+assemble_research_context
+verify_research_context
+project_to_evidence_pack
+```
+
 `reader_repair_workflow.py` 只定义 reader 修复 workflow，不发布 skill。
 
 建议 step：
@@ -279,6 +339,7 @@ publish_artifacts
 detect_reader_issue
 build_repair_memory_query
 recall_repair_memory
+run_repair_rag
 build_repair_context_pack
 propose_repair_candidate
 verify_repair_candidate
@@ -297,8 +358,10 @@ commit_repair_episode_memory
 tests/business/research/domain/test_models.py
 tests/business/research/services/test_evidence_builder.py
 tests/business/research/services/test_quality_gate.py
+tests/business/research/services/test_rag_policy.py
 tests/business/research/reader_repair/test_models.py
 tests/business/research/workflows/test_paper_analysis_workflow.py
+tests/business/research/workflows/test_paper_rag_workflow.py
 tests/business/research/workflows/test_reader_repair_workflow.py
 tests/architecture/test_research_boundaries.py
 ```
@@ -310,6 +373,7 @@ tests/architecture/test_research_boundaries.py
 - quality gate 能识别无证据 claim。
 - reader issue / repair case / repair strategy model 可序列化。
 - workflow spec step id 不重复。
+- Research RAG workflow spec 只声明业务目标和 gate，不实现通用 RAG loop。
 - reader repair workflow spec 不发布 skill，不直接写 memory，只声明受控 step。
 - `business/research` 不 import 旧 `business.boards.paper_radar`、`interfaces`、`infrastructure`。
 
@@ -327,6 +391,7 @@ openspec validate harness-research-runtime --strict
 - 无旧 paper_radar 依赖。
 - 无 interface/infrastructure 反向依赖。
 - workflow spec 能被 Harness 契约表达。
+- Research RAG 建模完成，但多轮检索控制权仍属于 `framework/harness/rag`。
 - 不做 UI，不接旧 API。
 - 完成后提交。
 
@@ -339,9 +404,10 @@ openspec validate harness-research-runtime --strict
 2. 定义 ResearchPaper、ResearchDocument、ResearchSection、ResearchClaim、ResearchEvidencePack、ResearchAnalysis、ResearchQualityResult、ResearchReaderPayload。
 3. 预留 ReaderIssue、ReaderRepairCase、ReaderRepairStrategy、ReaderRepairContextPack 等 reader repair 领域模型。
 4. business/research 不允许依赖 business/boards/paper_radar、interfaces、infrastructure。
-5. 定义单篇论文 analysis workflow spec 和 reader repair workflow spec，但不实现完整运行闭环。
-6. 添加 domain、service、workflow、架构边界测试。
-7. 运行 python -m scripts.dev compile、python -m pytest tests/business/research tests/architecture/test_research_boundaries.py -q、openspec validate harness-research-runtime --strict。
-8. 修改完成后提交。
+5. 定义 ResearchRetrievalGoal、ResearchRAGContext、ResearchRAGPolicyBuilder 和 paper_rag_workflow.py；Research 只表达论文检索目标，不实现通用 RAG loop。
+6. 定义单篇论文 analysis workflow spec 和 reader repair workflow spec，但不实现完整运行闭环。
+7. 添加 domain、service、workflow、架构边界测试。
+8. 运行 python -m scripts.dev compile、python -m pytest tests/business/research tests/architecture/test_research_boundaries.py -q、openspec validate harness-research-runtime --strict。
+9. 修改完成后提交。
 全部回复和问题用中文。
 ```
