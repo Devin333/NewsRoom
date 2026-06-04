@@ -14,6 +14,7 @@
 | 有界相位状态机 | 每个 step 必须按 `PLAN -> EXECUTE -> VERIFY` 推进；VERIFY 由纯函数 gate 完成，不通过只能受控 replan/retry/halt。 |
 | LLM 只做 worker | LLM 只生成候选结构化内容，不决定下一步，不直接写记忆，不直接调用高风险工具，不判定质量通过。 |
 | Agentic RAG 有界受控 | 多轮检索、读取、验证、补查和上下文组装必须由 Harness 控制；LLM 只能提出检索计划候选和证据摘要候选。 |
+| 子 Agent 隔离 | 子 Agent 独立上下文、独立历史、显式 handoff、独立工具白名单和 memory namespace，不能互相污染。 |
 | Skills 可进化但受控 | LLM 只能生成 skill candidate 或 patch；Harness 负责经验选择、静态校验、离线 eval、晋升、发布和回滚。 |
 | 业务自进化先入记忆 | Reader 修复、论文解析等业务问题先写 episodic/procedural memory；只有稳定策略才进入 skill evolution。 |
 | 业务层表达业务 | `business/research` 只表达 Research 领域模型、业务规则、用例和 workflow spec。 |
@@ -64,8 +65,10 @@ max_worker_calls
 | 3 | [03-seven-layer-ports.md](03-seven-layer-ports.md) | 建立七层可替换端口和 fake implementation。 |
 | 3A | [03a-skill-evolution.md](03a-skill-evolution.md) | 在 Harness 控制下建立 skills 自进化生命周期、候选仓、eval、晋升和回滚。 |
 | 3B | [03b-bounded-agentic-rag.md](03b-bounded-agentic-rag.md) | 在 Harness 控制下建立多轮检索、读取、验证、补查和上下文组装的 Bounded Agentic RAG。 |
+| 3C | [03c-subagent-isolation.md](03c-subagent-isolation.md) | 建立通用子 Agent 隔离、显式 handoff、上下文裁剪、工具白名单、memory namespace 和独立 transcript。 |
 | 4 | [04-trace-checkpoint-replay.md](04-trace-checkpoint-replay.md) | 实现事件日志、trace、checkpoint 和 replay。 |
 | 5 | [05-research-domain-modeling.md](05-research-domain-modeling.md) | 新建 `business/research` 领域模型、端口、服务和 workflow spec。 |
+| 5A | [05a-research-product-scenarios.md](05a-research-product-scenarios.md) | 明确 Research 产品场景：Paper with Code、Taxonomy、Reader、Reading Notes、Code Repo、Benchmark/Method Graph、Agent Intelligence。 |
 | 6 | [06-research-single-paper-loop.md](06-research-single-paper-loop.md) | 跑通单篇论文分析闭环，使用 fake LLM，不做 UI。 |
 | 6A | [06a-reader-repair-memory.md](06a-reader-repair-memory.md) | 加入 Reader Repair Memory / Repair RAG，把 reader 构建问题沉淀为可召回修复经验。 |
 | 7 | [07-research-backend-interface.md](07-research-backend-interface.md) | 新增 Research 后端 service 和 API router，不复用旧 paper API。 |
@@ -98,6 +101,7 @@ python -m scripts.dev smoke
 framework/harness
 framework/harness/skills/evolution
 framework/harness/rag
+framework/harness/subagents
 framework/llm
 framework/tool
 framework/memory
@@ -108,13 +112,22 @@ framework/workers
 framework/governance
 framework/shared
 business/research
+business/research/paper_card
+business/research/taxonomy
+business/research/reader
 business/research/reader_repair
+business/research/reading_session
+business/research/code_repository
+business/research/benchmark
+business/research/method_graph
+business/research/agent_intelligence
 business/research/rag
 interfaces/services/research_service.py
 interfaces/api/routers/research.py
 tests/framework/harness
 tests/framework/harness/skills/evolution
 tests/framework/harness/rag
+tests/framework/harness/subagents
 tests/business/research
 tests/interfaces/research
 ```
@@ -126,6 +139,8 @@ tests/interfaces/research
 - 不让 `business/research` import `interfaces` 或 `infrastructure`。
 - 不让 LLM 返回值控制 workflow routing。
 - 不让 LLM 决定 RAG 检索路由、停止条件、证据采纳、memory 写入或 skill 晋升。
+- 不让子 Agent 共享 raw context、private history、hidden prompt、sibling transcript、tool allowlist 或未授权 memory namespace。
+- 不让子 Agent 之间隐式传递信息；跨子 Agent 信息必须通过 Harness-approved handoff 和 schema gate。
 - 不让 LLM 直接修改、发布或激活生产 skill；skill 自进化必须经过 Harness gate、held-out eval、版本化发布和 rollback plan。
 - 不让普通 Research/Reader run 因一次修复成功就修改 skill；Reader 修复经验必须先写 memory，再经 consolidate 和 skill evolution 晋升。
 - 不允许没有 `max_replans`、`max_turns` 或 retry budget 的 Harness 运行循环。

@@ -12,6 +12,8 @@ Reader payload 构建失败时，阶段 6 只需要能产出明确 failure 和 t
 
 阶段 6 的证据构建和 claim 验证应使用阶段 3B 的 Bounded Agentic RAG。Research 负责构造论文领域 `ResearchRetrievalGoal` 和 `ResearchRAGPolicy`，Harness 负责多轮检索、读取、补查、VERIFY gate、预算和 transcript。
 
+阶段 6 的业务范围来自 [05a-research-product-scenarios.md](05a-research-product-scenarios.md) 第一批：Paper Card、Taxonomy、3 分钟速读、Reader Payload、Reader issue detection。Reading Notes 可先定义 use case 和模型，完整交互闭环可后续扩展。
+
 ## 目标流程
 
 ```text
@@ -25,6 +27,7 @@ load_paper_source
 -> verify_claims
 -> quality_gate
 -> build_reader_payload
+-> build_paper_card
 -> publish_artifacts
 ```
 
@@ -36,6 +39,8 @@ load_paper_source
 business/research/application/analyze_paper.py
 business/research/application/build_reader.py
 business/research/application/ask_paper.py
+business/research/application/build_paper_card.py
+business/research/application/generate_reading_note.py
 ```
 
 ### AnalyzePaperUseCase
@@ -130,6 +135,10 @@ candidate_contributions
 candidate_experiment_claims
 candidate_limitations
 candidate_reader_answer
+candidate_three_minute_read
+candidate_taxonomy
+candidate_method_tags
+candidate_benchmark_mentions
 ```
 
 Harness 和 Research services 决定：
@@ -193,6 +202,8 @@ Research 闭环至少启用这些纯函数 gate：
 | `ResearchEvidenceCoverageGate` | 主要 claim 必须有 evidence refs 和 lineage。 | route_to_repair 或 halt。 |
 | `ResearchBudgetGate` | 不超过 `max_turns`、`max_replans`、`max_retries_per_step`。 | halted。 |
 | `ResearchReaderPayloadGate` | reader payload schema、navigation、source lineage 合法。 | route_to_reader_repair 或 fail。 |
+| `ResearchPaperCardGate` | paper card 必须有 pdf/code/source lineage，GitHub metrics 不能来自 LLM 编造。 | fail 或 mark missing metric。 |
+| `ResearchTaxonomyGate` | domain/area/task 必须来自 taxonomy registry，并带 evidence refs。 | replan 或 review。 |
 
 Research RAG 至少启用这些 gate：
 
@@ -227,6 +238,7 @@ rag_max_memory_hits: 8
 ```text
 research-analysis.json
 research-reader-payload.json
+research-paper-card.json
 research-quality-result.json
 harness-trace.json
 harness-transcript.json
@@ -245,6 +257,8 @@ reader-issue.json 如果 reader payload gate 失败
 tests/business/research/application/test_analyze_paper_use_case.py
 tests/business/research/application/test_build_reader_use_case.py
 tests/business/research/application/test_ask_paper_use_case.py
+tests/business/research/application/test_build_paper_card_use_case.py
+tests/business/research/application/test_generate_reading_note_use_case.py
 tests/business/research/integration/test_single_paper_loop_fake_runtime.py
 tests/business/research/integration/test_research_rag_loop_fake_runtime.py
 ```
@@ -252,6 +266,9 @@ tests/business/research/integration/test_research_rag_loop_fake_runtime.py
 必须覆盖：
 
 - 单篇论文完整闭环成功。
+- Paper card 输出 pdf_url、code_url、GitHub metrics、taxonomy、three_minute_read、reader_payload_status。
+- GitHub stars 和 star growth 不接受 LLM 编造值。
+- taxonomy 不在 registry 时进入 review 或被 gate 拒绝。
 - fake LLM 返回 `next_step` 不影响流程。
 - evidence 缺失时 quality gate 失败。
 - quality gate 失败时 Harness retry 或 fail。
@@ -279,7 +296,7 @@ openspec validate harness-research-runtime --strict
 ## 完成标准
 
 - Fake runtime 跑通单篇论文完整闭环。
-- 输出 ResearchAnalysis、ResearchReaderPayload、ResearchQualityResult。
+- 输出 ResearchAnalysis、ResearchReaderPayload、ResearchPaperCard、ResearchQualityResult。
 - Harness trace 可导出。
 - Harness transcript 可导出并能复盘 PLAN/EXECUTE/VERIFY。
 - Research RAGContextPack 可导出，并能解释 evidence 来源、拒绝原因、冲突和 gap。
@@ -297,18 +314,21 @@ openspec validate harness-research-runtime --strict
 要求：
 1. 用新 Harness 跑通 Research 单篇论文闭环。
 2. 实现 AnalyzePaperUseCase、BuildReaderUseCase、AskPaperUseCase 的后端应用层逻辑。
-3. 使用 fake LLM、fake repository、fake source provider、fake compiler、fake artifact store 测试，不接真实 UI。
-4. build_evidence_pack 和 verify_claims 必须通过阶段 3B 的 Bounded Agentic RAG 获取 RAGContextPack，Research 只构造 ResearchRetrievalGoal / ResearchRAGPolicy。
-5. LLM 只生成候选内容和 retrieval plan candidate，不能决定流程、证据采纳、停止检索或写 memory。
-6. 每个 Research step 必须经过 PLAN/EXECUTE/VERIFY，VERIFY 使用纯函数 gate。
-7. 添加 ResearchToolAllowlistGate、ResearchClaimDedupGate、ResearchScoreRangeGate、ResearchEvidenceCoverageGate、ResearchBudgetGate、ResearchReaderPayloadGate。
-8. 添加 ResearchRAGScopeGate、ResearchRAGQueryDedupGate、ResearchRAGSourceLineageGate、ResearchRAGEvidenceNeedGate、ResearchRAGConflictGate、ResearchRAGBudgetGate。
-9. max_replans、max_turns、rag_max_rounds、rag_max_queries 或 rag_max_source_reads 耗尽时必须受控 halted 或返回 insufficient_evidence，并写入 transcript。
-10. 每次 Research skill 调用记录 skill_name、skill_version、package_hash，并可产出 SkillExperience refs。
-11. Research 普通分析 run 不允许调用 SkillPromotionPort，不允许发布新 skill。
-12. 输出 ResearchAnalysis、ResearchReaderPayload、ResearchQualityResult、ResearchRAGContextPack、Harness trace、Harness transcript、SkillExperience refs 和 artifact refs。
-13. 添加完整闭环、RAG loop、质量门失败、非法 LLM 流程字段、replan/halt、claim/query 去重、分数越界、source lineage、conflict report、artifact、trace/transcript、skill experience 不晋升、reader issue 生成测试。
-14. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
-15. 修改完成后提交。
+3. 实现 BuildPaperCardUseCase，支持 pdf_url、code_url、github_repo、github_stars、star_growth_daily、three_minute_read、domains、areas、tasks、methods、benchmarks、reader_payload_status。
+4. 预留 GenerateReadingNoteUseCase，基于用户选择 refs、source refs、reading session 生成阅读笔记候选。
+5. 使用 fake LLM、fake repository、fake source provider、fake compiler、fake artifact store、fake GitHub repository port 测试，不接真实 UI。
+6. build_evidence_pack 和 verify_claims 必须通过阶段 3B 的 Bounded Agentic RAG 获取 RAGContextPack，Research 只构造 ResearchRetrievalGoal / ResearchRAGPolicy。
+7. 摘要生成/验证、分类候选/gate、reader payload candidate/gate 必须复用阶段 3C 子 Agent 隔离；生成型 worker 不能污染验证型 worker。
+8. LLM 只生成候选内容和 retrieval plan candidate，不能决定流程、证据采纳、停止检索或写 memory。
+9. 每个 Research step 必须经过 PLAN/EXECUTE/VERIFY，VERIFY 使用纯函数 gate。
+10. 添加 ResearchToolAllowlistGate、ResearchClaimDedupGate、ResearchScoreRangeGate、ResearchEvidenceCoverageGate、ResearchBudgetGate、ResearchReaderPayloadGate、ResearchPaperCardGate、ResearchTaxonomyGate。
+11. 添加 ResearchRAGScopeGate、ResearchRAGQueryDedupGate、ResearchRAGSourceLineageGate、ResearchRAGEvidenceNeedGate、ResearchRAGConflictGate、ResearchRAGBudgetGate。
+12. max_replans、max_turns、rag_max_rounds、rag_max_queries 或 rag_max_source_reads 耗尽时必须受控 halted 或返回 insufficient_evidence，并写入 transcript。
+13. 每次 Research skill 调用记录 skill_name、skill_version、package_hash，并可产出 SkillExperience refs。
+14. Research 普通分析 run 不允许调用 SkillPromotionPort，不允许发布新 skill。
+15. 输出 ResearchAnalysis、ResearchReaderPayload、ResearchPaperCard、ResearchQualityResult、ResearchRAGContextPack、Harness trace、Harness transcript、SkillExperience refs 和 artifact refs。
+16. 添加完整闭环、Paper Card、taxonomy、RAG loop、质量门失败、非法 LLM 流程字段、replan/halt、claim/query 去重、分数越界、source lineage、conflict report、artifact、trace/transcript、skill experience 不晋升、reader issue 生成测试。
+17. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
+18. 修改完成后提交。
 全部回复和问题用中文。
 ```
