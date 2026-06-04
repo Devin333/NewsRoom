@@ -56,11 +56,11 @@
 
 ## 7. Stage 3A Skill Evolution
 
-- [ ] 7.1 Define skill candidate repository, validation result, eval result, promotion decision, versioned release, and rollback models.
-- [ ] 7.2 Reuse `framework/skills/package`, `framework/skills/runtime`, `framework/skills/validation`, `framework/skills/quality`, and `framework/skills/evaluation` through Harness ports.
-- [ ] 7.3 Implement candidate validation, held-out eval replay, promotion, release, and rollback gates.
-- [ ] 7.4 Ensure LLM optimizers can only propose candidates or patches and cannot mutate active skill packages.
-- [ ] 7.5 Add tests for invalid candidates, failed evals, successful promotion, and rollback.
+- [x] 7.1 Define skill candidate repository, validation result, eval result, promotion decision, versioned release, and rollback models.
+- [x] 7.2 Reuse `framework/skills/package`, `framework/skills/runtime`, `framework/skills/validation`, `framework/skills/quality`, and `framework/skills/evaluation` through Harness ports.
+- [x] 7.3 Implement candidate validation, held-out eval replay, promotion, release, and rollback gates.
+- [x] 7.4 Ensure LLM optimizers can only propose candidates or patches and cannot mutate active skill packages.
+- [x] 7.5 Add tests for invalid candidates, failed evals, successful promotion, and rollback.
 
 ## 8. Stage 4 Trace Checkpoint Replay
 
