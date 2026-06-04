@@ -34,6 +34,16 @@ framework/harness/rag/
   session.py
   gates.py
   fake.py
+framework/harness/context/
+  __init__.py
+  models.py
+  assembler.py
+  budget.py
+  cache.py
+  compression.py
+  snapshot.py
+  gates.py
+  fake.py
 framework/harness/memory/
   __init__.py
   ports.py
@@ -183,6 +193,17 @@ metadata
 - EvidencePack 必须保留 `lineage`、`source_refs`、`metadata`，否则 RAG source/evidence gate 无法做确定性校验。
 - fake retrieval 数据要包含可验证的 source refs、section refs、citation refs，不要只返回纯文本。
 
+### Context Engineering
+
+阶段 3 只需要预留上下文装配所需端口兼容性，完整实现放在 [03d-context-engineering.md](03d-context-engineering.md)。
+
+要求：
+
+- `LLMWorkerPort`、`SkillWorkerPort`、`SubAgentWorkerPort` 和 `RAGSessionController` 的输入都应支持 `ContextEnvelope` 或等价 context payload。
+- `HarnessWorkerResult` 不应携带流程决策，但可以携带 context usage、artifact refs、memory write candidates 和 compression refs。
+- 大工具结果、大 RAG 结果、大 reader payload 只能通过 artifact refs 进入上下文。
+- 端口 fake 必须能模拟 context budget 超限、compression summary、context snapshot 和 forbidden field 输出。
+
 ### MemoryPort
 
 能力：
@@ -239,6 +260,9 @@ FakeSubAgentWorker
 FakeRetrievalPort
 FakeRAGSessionController
 FakeRAGPlanner
+FakeContextAssembler
+FakeContextCompressor
+FakeContextSnapshotStore
 FakeMemoryPort
 FakeMCPToolPort
 FakeQualityGate
@@ -255,6 +279,7 @@ Fake 必须用于 Harness 单测，不允许测试依赖真实 LLM、真实 Qdra
 tests/framework/harness/ports/test_llm_worker_port.py
 tests/framework/harness/ports/test_retrieval_port.py
 tests/framework/harness/rag/test_rag_port_compatibility.py
+tests/framework/harness/context/test_context_port_compatibility.py
 tests/framework/harness/ports/test_memory_port.py
 tests/framework/harness/ports/test_mcp_policy.py
 tests/framework/harness/ports/test_fake_runtime.py
@@ -266,6 +291,8 @@ tests/framework/harness/skills/evolution/test_skill_evolution_port.py
 - 所有 fake 可被 Harness 调用。
 - EvidencePack 可序列化。
 - EvidencePack 有 lineage 和 source refs，可被 RAG gate 使用。
+- ContextEnvelope 可被 LLM / Skill / SubAgent / RAG fake runtime 使用。
+- ContextSnapshot 不保存大 payload，只保存 refs、token estimate、cache key 和 checksum。
 - Memory candidate 不会自动写入。
 - Skill candidate 不会自动覆盖 active skill。
 - MCP side effect 请求未批准时拒绝。
@@ -284,6 +311,7 @@ openspec validate harness-research-runtime --strict
 - 七层端口完整。
 - Skill evolution 端口和 fake implementation 完整，但真正生命周期细节在阶段 3A 实现。
 - Retrieval / Memory / MCP / QualityGate / Artifact 端口可支撑阶段 3B 的 Bounded Agentic RAG。
+- LLM / Skill / SubAgent / RAG 端口可支撑阶段 3D 的 Context Engineering。
 - 每层 fake implementation 可单测。
 - Harness 通过端口调 worker，不直接依赖具体实现。
 - 没有接 Research，仍不做 UI。
@@ -299,8 +327,9 @@ openspec validate harness-research-runtime --strict
 3. EvidencePack、RetrievalRequest、Memory write candidate、Skill candidate ref、MCP policy、Artifact ref 都要可序列化和可测试。
 4. Harness 只能依赖端口，不直接依赖真实实现。
 5. RetrievalPort 只做一次检索/读取，不实现多轮 RAG loop；但 EvidencePack 必须保留 lineage/source refs，支撑阶段 3B。
-6. 添加端口和 fake runtime 测试。
-7. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
-8. 修改完成后提交。
+6. 预留 ContextEnvelope / ContextSnapshot 兼容性，LLM / Skill / SubAgent / RAG 输入都要能通过 Harness 组装的上下文进入 worker。
+7. 添加端口和 fake runtime 测试。
+8. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
+9. 修改完成后提交。
 全部回复和问题用中文。
 ```

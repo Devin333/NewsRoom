@@ -98,6 +98,54 @@ ResearchRAGPolicy
 - 让 RetrievalPort 直接决定 claim 是否通过。
 - 绕过 RAG gate 直接把检索结果塞进 final analysis。
 
+### Context Engineering 使用边界
+
+`AnalyzePaperUseCase` 和 `BuildReaderUseCase` 不能直接拼 prompt。Research 只能把业务输入投影成：
+
+```text
+ResearchRetrievalGoal
+ResearchEvidenceNeed
+ResearchRAGPolicy
+ResearchTaskInput
+ResearchOutputSchema
+```
+
+然后交给 Harness：
+
+```text
+Research task input
+-> RAGContextPack
+-> ContextAssembler
+-> ContextEnvelope
+-> LLMWorkerPort / SkillWorkerPort / SubAgentWorkerPort
+```
+
+Research 的上下文段落建议：
+
+| 段落 | Research 内容 |
+| --- | --- |
+| Global Policy | Harness 全局规则、LLM worker 禁止事项。 |
+| Workflow | `paper_analysis_workflow` 当前 step、预算、gate。 |
+| Worker Contract | summary/taxonomy/reader/claim verifier 的输入输出 schema。 |
+| Run State | `paper_id`、已完成 step、reader issue ref、artifact refs、budget snapshot。 |
+| Evidence / Memory | `ResearchRAGContextPack`、accepted/rejected/conflicting evidence、source refs、repair memory hits。 |
+| Current Task | 当前要生成的 candidate，例如 `candidate_three_minute_read` 或 `candidate_reader_payload_patch`。 |
+
+禁止：
+
+- 在 Research service 内手写 prompt 拼接全量论文。
+- 把完整 transcript 塞给 LLM。
+- 把未通过 RAG gate 的 retrieval result 塞给 LLM。
+- 把 GitHub stars、star growth 这类真实指标交给 LLM 补全。
+- 压缩 source refs、schema、gate definition、taxonomy registry 和 budget。
+
+阶段 6 至少要产出：
+
+```text
+research-context-snapshot.json
+research-context-compression-records.json 如果发生压缩
+```
+
 ## Fake 数据和真实业务规则
 
 生产代码不能写假业务能力。测试里可以使用 fake：
@@ -243,6 +291,8 @@ research-quality-result.json
 harness-trace.json
 harness-transcript.json
 research-rag-context-pack.json
+research-context-snapshot.json
+research-context-compression-records.json 如果发生压缩
 research-rag-gap-report.json 如果 evidence 不足
 reader-issue.json 如果 reader payload gate 失败
 ```
@@ -261,6 +311,7 @@ tests/business/research/application/test_build_paper_card_use_case.py
 tests/business/research/application/test_generate_reading_note_use_case.py
 tests/business/research/integration/test_single_paper_loop_fake_runtime.py
 tests/business/research/integration/test_research_rag_loop_fake_runtime.py
+tests/business/research/integration/test_research_context_engineering.py
 ```
 
 必须覆盖：
@@ -278,6 +329,9 @@ tests/business/research/integration/test_research_rag_loop_fake_runtime.py
 - 重复 RAG query 被拒绝或规范化。
 - source lineage 缺失的 evidence 不能进入 accepted evidence。
 - 冲突 evidence 进入 conflict report。
+- RAGContextPack 进入 LLM 前必须写 ContextSnapshot。
+- context budget 超限时压缩动态证据摘要，但保留 source refs 和 gate result。
+- stable prefix 不包含当前论文全文、GitHub metrics、用户笔记或动态 RAG 结果。
 - 分数越界被 score gate 拒绝。
 - artifact refs 完整。
 - trace 能解释每个 step。
@@ -300,6 +354,8 @@ openspec validate harness-research-runtime --strict
 - Harness trace 可导出。
 - Harness transcript 可导出并能复盘 PLAN/EXECUTE/VERIFY。
 - Research RAGContextPack 可导出，并能解释 evidence 来源、拒绝原因、冲突和 gap。
+- Research ContextSnapshot 可导出，并能解释每个 worker 当时看到的 context refs。
+- context compression record 可导出，并能证明 source refs、gate failures、budget 未丢失。
 - Research 可以产出 SkillExperience refs，但不会自动发布新 skill。
 - Reader payload gate 失败时有明确 issue signature 和 trace，供阶段 6A 修复。
 - 质量门失败路径可测试。
@@ -318,17 +374,18 @@ openspec validate harness-research-runtime --strict
 4. 预留 GenerateReadingNoteUseCase，基于用户选择 refs、source refs、reading session 生成阅读笔记候选。
 5. 使用 fake LLM、fake repository、fake source provider、fake compiler、fake artifact store、fake GitHub repository port 测试，不接真实 UI。
 6. build_evidence_pack 和 verify_claims 必须通过阶段 3B 的 Bounded Agentic RAG 获取 RAGContextPack，Research 只构造 ResearchRetrievalGoal / ResearchRAGPolicy。
-7. 摘要生成/验证、分类候选/gate、reader payload candidate/gate 必须复用阶段 3C 子 Agent 隔离；生成型 worker 不能污染验证型 worker。
-8. LLM 只生成候选内容和 retrieval plan candidate，不能决定流程、证据采纳、停止检索或写 memory。
-9. 每个 Research step 必须经过 PLAN/EXECUTE/VERIFY，VERIFY 使用纯函数 gate。
-10. 添加 ResearchToolAllowlistGate、ResearchClaimDedupGate、ResearchScoreRangeGate、ResearchEvidenceCoverageGate、ResearchBudgetGate、ResearchReaderPayloadGate、ResearchPaperCardGate、ResearchTaxonomyGate。
-11. 添加 ResearchRAGScopeGate、ResearchRAGQueryDedupGate、ResearchRAGSourceLineageGate、ResearchRAGEvidenceNeedGate、ResearchRAGConflictGate、ResearchRAGBudgetGate。
-12. max_replans、max_turns、rag_max_rounds、rag_max_queries 或 rag_max_source_reads 耗尽时必须受控 halted 或返回 insufficient_evidence，并写入 transcript。
-13. 每次 Research skill 调用记录 skill_name、skill_version、package_hash，并可产出 SkillExperience refs。
-14. Research 普通分析 run 不允许调用 SkillPromotionPort，不允许发布新 skill。
-15. 输出 ResearchAnalysis、ResearchReaderPayload、ResearchPaperCard、ResearchQualityResult、ResearchRAGContextPack、Harness trace、Harness transcript、SkillExperience refs 和 artifact refs。
-16. 添加完整闭环、Paper Card、taxonomy、RAG loop、质量门失败、非法 LLM 流程字段、replan/halt、claim/query 去重、分数越界、source lineage、conflict report、artifact、trace/transcript、skill experience 不晋升、reader issue 生成测试。
-17. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
-18. 修改完成后提交。
+7. RAGContextPack 进入 LLM / Skill / SubAgent 前必须通过阶段 3D ContextAssembler，写入 ContextSnapshot；Research service 不允许手写 prompt 拼接。
+8. 摘要生成/验证、分类候选/gate、reader payload candidate/gate 必须复用阶段 3C 子 Agent 隔离；生成型 worker 不能污染验证型 worker。
+9. LLM 只生成候选内容和 retrieval plan candidate，不能决定流程、证据采纳、停止检索或写 memory。
+10. 每个 Research step 必须经过 PLAN/EXECUTE/VERIFY，VERIFY 使用纯函数 gate。
+11. 添加 ResearchToolAllowlistGate、ResearchClaimDedupGate、ResearchScoreRangeGate、ResearchEvidenceCoverageGate、ResearchBudgetGate、ResearchReaderPayloadGate、ResearchPaperCardGate、ResearchTaxonomyGate。
+12. 添加 ResearchRAGScopeGate、ResearchRAGQueryDedupGate、ResearchRAGSourceLineageGate、ResearchRAGEvidenceNeedGate、ResearchRAGConflictGate、ResearchRAGBudgetGate。
+13. max_replans、max_turns、rag_max_rounds、rag_max_queries 或 rag_max_source_reads 耗尽时必须受控 halted 或返回 insufficient_evidence，并写入 transcript。
+14. 每次 Research skill 调用记录 skill_name、skill_version、package_hash，并可产出 SkillExperience refs。
+15. Research 普通分析 run 不允许调用 SkillPromotionPort，不允许发布新 skill。
+16. 输出 ResearchAnalysis、ResearchReaderPayload、ResearchPaperCard、ResearchQualityResult、ResearchRAGContextPack、Research ContextSnapshot、Harness trace、Harness transcript、SkillExperience refs 和 artifact refs。
+17. 添加完整闭环、Paper Card、taxonomy、RAG loop、Context Engineering、质量门失败、非法 LLM 流程字段、replan/halt、claim/query 去重、分数越界、source lineage、conflict report、artifact、trace/transcript、skill experience 不晋升、reader issue 生成测试。
+18. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
+19. 修改完成后提交。
 全部回复和问题用中文。
 ```

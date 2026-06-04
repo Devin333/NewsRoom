@@ -213,6 +213,8 @@ metadata
 - context pack 不存大 payload，大内容用 artifact/source refs。
 - 每个 evidence 都要有 lineage。
 - 被拒绝和冲突证据也要记录，便于复盘。
+- `RAGContextPack` 不是最终 prompt；进入 LLMWorkerPort 前必须交给阶段 3D 的 `ContextAssembler`，变成 Evidence / Memory Segment。
+- context pack 过大时，只能压缩 evidence / memory 摘要，不能丢失 source refs、accepted/rejected/conflicting 标记、gap report 和 budget snapshot。
 
 ### RAGBudget
 
@@ -305,6 +307,8 @@ Harness Scheduler
 -> SourceVerifier / ContextAssembler
 -> RAG VERIFY Gates
 -> RAGContextPack
+-> ContextAssembler
+-> ContextEnvelope
 ```
 
 端口边界：
@@ -317,6 +321,28 @@ Harness Scheduler
 | `MCPToolPort` | 访问外部工具或远程资料源，受白名单和审批控制。 |
 | `QualityGatePort` | 执行 RAG gate 和 context pack gate。 |
 | `ArtifactPort` | 保存大 source/result/context snapshot。 |
+
+## 与 Context Engineering 的关系
+
+阶段 3D 负责把 RAG 输出装配进 worker 上下文：
+
+```text
+RAGContextPack
+-> ContextAssembler
+-> Evidence / Memory Segment
+-> ContextBudgetGate
+-> ContextSnapshot
+-> LLMWorkerPort
+```
+
+RAG session controller 不直接拼 prompt。它只产出可验证、可回放、带 provenance 的 context pack。
+
+要求：
+
+- RAG gate 决定 evidence 是否可进入 context pack。
+- Context gate 决定 context pack 如何进入 worker 上下文。
+- prompt token 超限时，优先压缩 rejected/conflicting evidence 摘要，再压缩 accepted evidence 摘要；不能删除 source refs。
+- replay 时使用 `RAGContextPack`、`ContextSnapshot` 和 artifact refs 重建上下文，不重新检索。
 
 ## 与四层记忆的关系
 
@@ -492,8 +518,9 @@ openspec validate harness-research-runtime --strict
 6. 实现 RAGPlanSchemaGate、RAGToolAllowlistGate、RAGQueryDedupGate、RAGScopeGate、RAGSourceQualityGate、RAGEvidenceCoverageGate、RAGEvidenceConflictGate、RAGContextSizeGate、RAGMemoryRelevanceGate、RAGLineageGate、RAGBudgetGate。
 7. max_rounds、max_replans、max_queries、max_source_reads、max_memory_hits、max_context_items、max_context_tokens、max_worker_calls 必须防止无限检索和无限补查。
 8. 每次 rag plan、execute、verify、replan、halt、context_pack_returned 都要写 transcript/event log。
-9. 添加 RAG models、plan gates、session controller、context assembler、transcript、fake runtime 测试。
-10. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
-11. 修改完成后提交。
+9. RAGContextPack 进入 LLM 前必须通过阶段 3D ContextAssembler，写入 ContextSnapshot，不能由 RAG 直接拼 prompt。
+10. 添加 RAG models、plan gates、session controller、context assembler、transcript、fake runtime 测试。
+11. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
+12. 修改完成后提交。
 全部回复和问题用中文。
 ```

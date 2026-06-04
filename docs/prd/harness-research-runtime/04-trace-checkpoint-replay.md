@@ -66,6 +66,10 @@ retrieval_query_refs
 accepted_evidence_refs
 rejected_evidence_refs
 memory_hit_refs
+context_envelope_ref
+context_snapshot_ref
+context_cache_key
+compression_record_refs
 ```
 
 要求：
@@ -77,6 +81,7 @@ memory_hit_refs
 - PLAN、EXECUTE、VERIFY、REPLAN、HALT 每次转移都必须落 event。
 - Skill evolution 的 collect_experience、candidate_created、static_gate_failed、eval_completed、promotion_decided、release_published、rollback_completed 都必须落 event。
 - Bounded Agentic RAG 的 session_started、plan_verified、step_executed、source_verified、context_pack_assembled、gate_failed、replanned、halted、context_pack_returned 都必须落 event。
+- Context Engineering 的 context_assembly_started、context_budget_checked、context_compression_verified、context_snapshot_written、context_cache_key_created 都必须落 event。
 
 ## Transcript
 
@@ -100,6 +105,9 @@ candidate_refs
 rag_session_refs
 retrieval_plan_refs
 context_pack_refs
+context_envelope_ref
+context_snapshot_ref
+compression_record_refs
 evidence_refs
 eval_refs
 release_refs
@@ -115,6 +123,8 @@ timestamp
 - halted 必须记录触发预算和最后一个失败 gate。
 - skill candidate 被拒绝、晋升或回滚时，transcript 必须能指向对应 eval result、promotion decision 和 rollback plan。
 - RAG session 每轮检索、读取、补查、context pack 组装和 halted 都必须能从 transcript 复盘。
+- 每次 worker 调用使用的 context envelope 和 context snapshot 必须能从 transcript 追踪。
+- 如果发生上下文压缩，transcript 必须记录 compression record refs、source refs、target level 和 gate result。
 
 ## Trace Export
 
@@ -151,6 +161,8 @@ skill_releases[]
 rag_sessions[]
 retrieval_rounds[]
 context_packs[]
+context_snapshots[]
+compression_records[]
 phase_transitions[]
 gate_results[]
 budget_summary
@@ -180,6 +192,32 @@ metadata
 - 后续可接文件或数据库 store。
 - checksum 用于发现损坏或错配。
 
+## Context Snapshot / Compression Replay
+
+阶段 4 必须接入阶段 3D 的 Context Engineering 记录。
+
+每次上下文装配至少写入 event：
+
+```text
+context_assembly_started
+context_segment_collected
+context_budget_checked
+context_compression_requested
+context_compression_verified
+context_snapshot_written
+context_cache_key_created
+context_envelope_returned
+```
+
+Context replay 要求：
+
+- replay 不重新调用 LLM 生成上下文摘要。
+- replay 不重新执行真实 retrieval、真实 memory recall、真实 MCP tool。
+- replay 只使用 `ContextSnapshot`、`CompressionRecord`、event/transcript 和 artifact refs 重建上下文。
+- checksum 不匹配时拒绝恢复。
+- trace 必须能解释某个 worker 当时看到了哪些 context refs、哪些被裁剪、哪些被压缩、为什么压缩。
+- stable prefix 的 cache key 必须能从 workflow version、worker contract version 和 policy version 重算。
+
 ## Replay
 
 ReplayRunner 使用 event log 或 checkpoint + fake worker 复现状态推进。
@@ -192,8 +230,10 @@ ReplayRunner 使用 event log 或 checkpoint + fake worker 复现状态推进。
 - 能复盘 halted 前的全部 gate failure 和预算消耗。
 - 能复盘 skill evolution run 的候选生成、eval、promotion、release 和 rollback。
 - 能复盘 bounded RAG session 的 plan、query、source verification、context assembly、replan 和 halted。
+- 能复盘 context assembly、compression、snapshot 和 cache key 生成过程。
 - replay 不重新运行 optimizer LLM，也不重新发布 skill。
 - replay 不重新执行真实检索、真实 MCP tool 或真实 memory write。
+- replay 不重新调用 LLM compressor。
 
 ## 与已有框架复用
 
@@ -221,6 +261,8 @@ tests/framework/harness/runtime/test_resume_from_checkpoint.py
 tests/framework/harness/runtime/test_transcript.py
 tests/framework/harness/runtime/test_skill_evolution_transcript.py
 tests/framework/harness/runtime/test_rag_transcript_replay.py
+tests/framework/harness/runtime/test_context_snapshot_replay.py
+tests/framework/harness/runtime/test_compression_record_replay.py
 ```
 
 必须覆盖：
@@ -237,6 +279,9 @@ tests/framework/harness/runtime/test_rag_transcript_replay.py
 - replay skill evolution run 不产生新的 production skill release。
 - RAG transcript 能解释 query、source verification、evidence acceptance、memory hit、replan 和 halted。
 - replay RAG run 不产生新的真实检索、真实 MCP side effect 或真实 memory write。
+- context snapshot 能解释 worker 当时看到的上下文 refs。
+- replay context snapshot 不重新调用 LLM compressor。
+- compression record 缺少 preserved refs 或 checksum 不匹配时拒绝 replay。
 
 ## 验收命令
 
@@ -255,6 +300,7 @@ openspec validate harness-research-runtime --strict
 - 可以 replay fake workflow。
 - 可以 replay fake skill evolution workflow，且不会触发新发布。
 - 可以 replay fake RAG workflow，且不会触发新检索或新写入。
+- 可以 replay fake context assembly / compression workflow，且不会重新压缩或重新召回记忆。
 - 不接业务，不做 UI。
 - 完成后提交。
 
@@ -269,9 +315,10 @@ openspec validate harness-research-runtime --strict
 4. PLAN、EXECUTE、VERIFY、REPLAN、HALT 每次转移都必须落 transcript。
 5. Skill evolution 的 candidate、eval、promotion、release、rollback 也必须落 event/transcript。
 6. Bounded Agentic RAG 的 session_started、plan_verified、step_executed、source_verified、context_pack_assembled、gate_failed、replanned、halted、context_pack_returned 也必须落 event/transcript。
-7. Replay 能复盘 gate failure、replan、halted、skill candidate 拒绝、skill 晋升、rollback、RAG query/source/evidence/memory hit 采纳或拒绝原因。
-8. 添加 event、transcript、trace、checkpoint、resume、replay、skill evolution transcript、RAG transcript replay 测试。
-9. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
-10. 修改完成后提交。
+7. Context Engineering 的 context_assembly_started、context_budget_checked、context_compression_verified、context_snapshot_written、context_cache_key_created 也必须落 event/transcript。
+8. Replay 能复盘 gate failure、replan、halted、skill candidate 拒绝、skill 晋升、rollback、RAG query/source/evidence/memory hit 采纳或拒绝原因，以及 worker 当时看到的 context refs。
+9. 添加 event、transcript、trace、checkpoint、resume、replay、skill evolution transcript、RAG transcript replay、context snapshot replay、compression record replay 测试。
+10. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
+11. 修改完成后提交。
 全部回复和问题用中文。
 ```

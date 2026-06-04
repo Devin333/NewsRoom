@@ -360,6 +360,39 @@ Harness gate 必须检查：
 
 LLM 不能决定哪些 memory hit 最终采用。LLM 可以解释相似性候选，但 Harness/Research gate 决定 accepted/rejected memory context。
 
+### repair context engineering
+
+Reader Repair 不能直接把历史案例拼进 prompt。历史修复经验必须经过：
+
+```text
+ReaderIssue
+-> ReaderRepairMemoryQuery
+-> Bounded Repair RAG
+-> ReaderRepairContextPack
+-> ContextAssembler
+-> ContextEnvelope
+-> Repair proposer / verifier
+```
+
+Reader Repair 的 Evidence / Memory Segment 推荐顺序：
+
+```text
+current_issue
+promoted procedural repair strategies
+similar successful cases
+similar failed cases
+current source context
+repair constraints
+```
+
+要求：
+
+- 每个 recalled case 必须有 `why_retrieved`、similarity reason、success/failure outcome 和 source refs。
+- failed cases 不能因为 token 超限被优先全部删除；可以压缩摘要，但必须保留失败原因和适用边界。
+- verifier 的 ContextEnvelope 只能包含 repair candidate、source refs、gate inputs 和必要历史策略摘要，不能包含 proposer private notes。
+- repair context snapshot 必须写入 transcript，便于复盘为什么采用某个修复策略。
+- 压缩不能丢失 issue signature、source lineage、payload_before_ref、payload_after_ref、verification result。
+
 ### propose_repair_candidate
 
 LLM repair worker 只能输出候选：
@@ -510,6 +543,7 @@ tests/business/research/reader_repair/test_issue_detector.py
 tests/business/research/reader_repair/test_repair_memory_query.py
 tests/business/research/reader_repair/test_repair_rag_policy.py
 tests/business/research/reader_repair/test_repair_context_pack.py
+tests/business/research/reader_repair/test_repair_context_engineering.py
 tests/business/research/reader_repair/test_repair_gates.py
 tests/business/research/reader_repair/test_repair_memory_commit.py
 tests/business/research/reader_repair/test_repair_consolidation.py
@@ -522,6 +556,8 @@ tests/business/research/integration/test_reader_repair_rag_loop.py
 - table/citation/formula/section/source lineage 问题能生成不同 `issue_type`。
 - repair memory query 能召回成功和失败案例。
 - repair RAG context pack 必须包含成功案例、失败案例或明确的 failure-case gap。
+- repair context pack 进入 proposer/verifier 前必须写 ContextSnapshot。
+- context budget 超限时可以压缩历史案例摘要，但不能删除失败案例覆盖、issue signature、source refs 和 verification result。
 - repair RAG namespace 越权被拒绝。
 - repair RAG budget 耗尽时受控 halted。
 - LLM repair candidate 不能直接决定质量通过、写 memory 或发布 skill。
@@ -545,6 +581,7 @@ openspec validate harness-research-runtime --strict
 
 - Reader repair issue、case、strategy、context pack 模型完整。
 - Reader repair RAG 能召回历史成功/失败修复案例。
+- Reader repair context snapshot 能解释 proposer/verifier 当时看到的历史案例、失败边界和 source refs。
 - Reader repair RAG 受阶段 3B Harness RAG session controller 控制，Research 不自行实现无限补查循环。
 - LLM 只生成 repair candidate，不决定通过、不写记忆、不发布 skill。
 - 修复结果经过 reader repair gates。
@@ -562,15 +599,16 @@ openspec validate harness-research-runtime --strict
 1. 在 business/research 下实现 Reader Repair Memory / Repair RAG 业务自进化闭环，不做 UI，不复用旧 paper_radar。
 2. 新增 reader_repair 和 memory 子模块，定义 ReaderIssue、ReaderIssueSignature、ReaderRepairCase、ReaderRepairStrategy、ReaderRepairAttempt、ReaderRepairResult、ReaderRepairContextPack。
 3. Reader 构建失败时先由确定性 detector 生成 issue，再通过阶段 3B Bounded Agentic RAG 召回 research.reader_repair namespace 下的成功和失败修复案例。
-4. Repair proposer 和 repair verifier 必须复用阶段 3C SubAgent Isolation；verifier 不能看到 proposer private notes、raw history 或 hidden prompt。
-5. Repair RAG 必须有 ReaderRepairRAGPolicy，并启用 RepairRAGNamespaceGate、RepairRAGIssueSimilarityGate、RepairRAGFailureCaseGate、RepairRAGSourceLineageGate、RepairRAGBudgetGate。
-6. LLM repair worker 只能生成 repair candidate，不能决定 quality_passed、write_memory、publish、promote_skill。
-7. 实现 ReaderPayloadSchemaGate、ReaderSourceLineageGate、ReaderLocalizedPatchGate、ReaderCitationIntegrityGate、ReaderTableFidelityGate、ReaderFormulaFidelityGate、ReaderSectionOrderGate、ReaderRepairBudgetGate。
-8. 修复成功和失败都要写入 episodic repair memory，包含 issue signature、repair strategy、verification result、payload refs、source refs。
-9. 多个相似成功案例可 consolidate 成 procedural repair strategy，但不能自动发布 skill。
-10. procedural repair strategy 只能作为阶段 3A skill evolution candidate 的输入。
-11. 添加 issue detector、repair memory query、repair RAG policy、repair context pack、repair gates、memory commit、consolidation、repair RAG loop、repair proposer/verifier 隔离测试。
-12. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
-13. 修改完成后提交。
+4. ReaderRepairContextPack 进入 proposer/verifier 前必须通过阶段 3D ContextAssembler，写入 ContextSnapshot；不能直接拼 prompt。
+5. Repair proposer 和 repair verifier 必须复用阶段 3C SubAgent Isolation；verifier 不能看到 proposer private notes、raw history 或 hidden prompt。
+6. Repair RAG 必须有 ReaderRepairRAGPolicy，并启用 RepairRAGNamespaceGate、RepairRAGIssueSimilarityGate、RepairRAGFailureCaseGate、RepairRAGSourceLineageGate、RepairRAGBudgetGate。
+7. LLM repair worker 只能生成 repair candidate，不能决定 quality_passed、write_memory、publish、promote_skill。
+8. 实现 ReaderPayloadSchemaGate、ReaderSourceLineageGate、ReaderLocalizedPatchGate、ReaderCitationIntegrityGate、ReaderTableFidelityGate、ReaderFormulaFidelityGate、ReaderSectionOrderGate、ReaderRepairBudgetGate。
+9. 修复成功和失败都要写入 episodic repair memory，包含 issue signature、repair strategy、verification result、payload refs、source refs。
+10. 多个相似成功案例可 consolidate 成 procedural repair strategy，但不能自动发布 skill。
+11. procedural repair strategy 只能作为阶段 3A skill evolution candidate 的输入。
+12. 添加 issue detector、repair memory query、repair RAG policy、repair context pack、repair context engineering、repair gates、memory commit、consolidation、repair RAG loop、repair proposer/verifier 隔离测试。
+13. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
+14. 修改完成后提交。
 全部回复和问题用中文。
 ```

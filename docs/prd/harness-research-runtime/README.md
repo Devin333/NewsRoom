@@ -14,6 +14,7 @@
 | 有界相位状态机 | 每个 step 必须按 `PLAN -> EXECUTE -> VERIFY` 推进；VERIFY 由纯函数 gate 完成，不通过只能受控 replan/retry/halt。 |
 | LLM 只做 worker | LLM 只生成候选结构化内容，不决定下一步，不直接写记忆，不直接调用高风险工具，不判定质量通过。 |
 | Agentic RAG 有界受控 | 多轮检索、读取、验证、补查和上下文组装必须由 Harness 控制；LLM 只能提出检索计划候选和证据摘要候选。 |
+| Context Engineering 显式装配 | Worker 上下文必须由 Harness 按稳定前缀和动态尾部装配；规则、schema、gate、预算和 source refs 不允许被压缩丢失。 |
 | 子 Agent 隔离 | 子 Agent 独立上下文、独立历史、显式 handoff、独立工具白名单和 memory namespace，不能互相污染。 |
 | Skills 可进化但受控 | LLM 只能生成 skill candidate 或 patch；Harness 负责经验选择、静态校验、离线 eval、晋升、发布和回滚。 |
 | 业务自进化先入记忆 | Reader 修复、论文解析等业务问题先写 episodic/procedural memory；只有稳定策略才进入 skill evolution。 |
@@ -66,6 +67,7 @@ max_worker_calls
 | 3A | [03a-skill-evolution.md](03a-skill-evolution.md) | 在 Harness 控制下建立 skills 自进化生命周期、候选仓、eval、晋升和回滚。 |
 | 3B | [03b-bounded-agentic-rag.md](03b-bounded-agentic-rag.md) | 在 Harness 控制下建立多轮检索、读取、验证、补查和上下文组装的 Bounded Agentic RAG。 |
 | 3C | [03c-subagent-isolation.md](03c-subagent-isolation.md) | 建立通用子 Agent 隔离、显式 handoff、上下文裁剪、工具白名单、memory namespace 和独立 transcript。 |
+| 3D | [03d-context-engineering.md](03d-context-engineering.md) | 建立 6 段上下文装配、stable prefix / dynamic tail、5 级压缩链路、context snapshot 和 replay 约束。 |
 | 4 | [04-trace-checkpoint-replay.md](04-trace-checkpoint-replay.md) | 实现事件日志、trace、checkpoint 和 replay。 |
 | 5 | [05-research-domain-modeling.md](05-research-domain-modeling.md) | 新建 `business/research` 领域模型、端口、服务和 workflow spec。 |
 | 5A | [05a-research-product-scenarios.md](05a-research-product-scenarios.md) | 明确 Research 产品场景：Paper with Code、Taxonomy、Reader、Reading Notes、Code Repo、Benchmark/Method Graph、Agent Intelligence。 |
@@ -102,6 +104,7 @@ framework/harness
 framework/harness/skills/evolution
 framework/harness/rag
 framework/harness/subagents
+framework/harness/context
 framework/llm
 framework/tool
 framework/memory
@@ -128,6 +131,7 @@ tests/framework/harness
 tests/framework/harness/skills/evolution
 tests/framework/harness/rag
 tests/framework/harness/subagents
+tests/framework/harness/context
 tests/business/research
 tests/interfaces/research
 ```
@@ -145,6 +149,8 @@ tests/interfaces/research
 - 不让普通 Research/Reader run 因一次修复成功就修改 skill；Reader 修复经验必须先写 memory，再经 consolidate 和 skill evolution 晋升。
 - 不允许没有 `max_replans`、`max_turns` 或 retry budget 的 Harness 运行循环。
 - 不允许没有 `max_rounds`、`max_queries`、`max_source_reads`、`max_memory_hits` 或 context budget 的 RAG 循环。
+- 不允许把工具结果、RAG 动态结果、用户私有记忆、reader payload 或 transcript 摘要放进 stable prefix。
+- 不允许压缩 Global Policy、workflow route table、schema、gate definition、tool allowlist、memory namespace policy、source refs 或预算值。
 - 不允许用 LLM 自评替代纯函数 VERIFY gate。
 - 不用删除测试来掩盖失败；只有当旧行为明确废弃时才删除旧测试。
 - 不保留仅为了旧接口、旧 payload、旧 UI、旧兼容存在的 adapter。
