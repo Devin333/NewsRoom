@@ -328,6 +328,17 @@ class DailyScheduleRequest(BaseModel):
     queue_name: str = "news:queue:daily"
 
 
+class PaperIngestScheduleRequest(BaseModel):
+    schedule_id: str = "papers-ingest-github-arxiv-daily"
+    name: str = "Daily GitHub arXiv paper ingest"
+    trigger_type: Literal["interval", "manual"] = "interval"
+    interval_seconds: int = Field(default=86400, ge=1)
+    run_at: datetime | None = None
+    candidate_limit: int = Field(default=100, ge=1)
+    min_github_stars: int = Field(default=50, ge=0)
+    queue_name: str = "news:queue:papers"
+
+
 class ScheduleView(BaseModel):
     schedule_id: str
     name: str

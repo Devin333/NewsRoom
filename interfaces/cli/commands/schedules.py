@@ -64,6 +64,40 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     add_daily_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     add_daily_parser.set_defaults(handler=add_daily_schedule_from_cli)
 
+    add_paper_ingest_parser = schedules_subparsers.add_parser(
+        "add-paper-ingest",
+        help="Create or update a GitHub arXiv paper ingest schedule",
+    )
+    add_paper_ingest_parser.add_argument(
+        "--schedule-id",
+        default="papers-ingest-github-arxiv-daily",
+        help="Schedule id",
+    )
+    add_paper_ingest_parser.add_argument(
+        "--name",
+        default="Daily GitHub arXiv paper ingest",
+        help="Schedule name",
+    )
+    add_paper_ingest_parser.add_argument(
+        "--trigger-type",
+        choices=["interval", "manual"],
+        default="interval",
+        help="Schedule trigger type",
+    )
+    add_paper_ingest_parser.add_argument(
+        "--interval-seconds",
+        type=int,
+        default=86400,
+        help="Interval in seconds for interval schedules",
+    )
+    add_paper_ingest_parser.add_argument("--run-at", default=None, help="Optional first due time as ISO datetime")
+    add_paper_ingest_parser.add_argument("--candidate-limit", type=int, default=100, help="Maximum arXiv candidates to inspect")
+    add_paper_ingest_parser.add_argument("--min-github-stars", type=int, default=50, help="Minimum GitHub stars required to publish")
+    add_paper_ingest_parser.add_argument("--queue-name", default=DEFAULT_PAPER_QUEUE, help="Queue name")
+    _add_store_path(add_paper_ingest_parser)
+    add_paper_ingest_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    add_paper_ingest_parser.set_defaults(handler=add_paper_ingest_schedule_from_cli)
+
     add_paper_reader_backfill_parser = schedules_subparsers.add_parser(
         "add-paper-reader-backfill",
         help="Create or update a Paper Reader visual compile backfill schedule",
@@ -158,6 +192,10 @@ def add_daily_schedule_from_cli(args: argparse.Namespace) -> int:
     return add_daily_schedule(args, schedule_service_factory=ScheduleApplicationService)
 
 
+def add_paper_ingest_schedule_from_cli(args: argparse.Namespace) -> int:
+    return add_paper_ingest_schedule(args, schedule_service_factory=ScheduleApplicationService)
+
+
 def add_paper_reader_backfill_schedule_from_cli(args: argparse.Namespace) -> int:
     return add_paper_reader_backfill_schedule(args, schedule_service_factory=ScheduleApplicationService)
 
@@ -214,6 +252,40 @@ def add_daily_schedule(
         profile=args.profile,
         topic=args.topic,
         source_limit=args.source_limit,
+        queue_name=args.queue_name,
+    )
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    else:
+        spec_payload = payload["schedule"]["spec"]
+        print(f"schedule_id={spec_payload['schedule_id']}")
+        print(f"trigger_type={spec_payload['trigger_type']}")
+        print(f"task_type={spec_payload['task_type']}")
+        print(f"queue_name={spec_payload['queue_name']}")
+    return 0
+
+
+def add_paper_ingest_schedule(
+    args: argparse.Namespace,
+    *,
+    schedule_service_factory: ScheduleServiceFactory,
+) -> int:
+    if args.trigger_type == "interval" and args.interval_seconds <= 0:
+        raise SystemExit("--interval-seconds must be greater than zero")
+    if args.candidate_limit <= 0:
+        raise SystemExit("--candidate-limit must be greater than zero")
+    if args.min_github_stars < 0:
+        raise SystemExit("--min-github-stars must be non-negative")
+    run_at = parse_cli_datetime(args.run_at)
+    result = schedule_service_factory(store_path=args.store_path).upsert_paper_ingest_schedule(
+        schedule_id=args.schedule_id,
+        name=args.name,
+        trigger_type=args.trigger_type,
+        interval_seconds=args.interval_seconds if args.trigger_type == "interval" else None,
+        run_at=run_at if args.trigger_type == "interval" else None,
+        candidate_limit=args.candidate_limit,
+        min_github_stars=args.min_github_stars,
         queue_name=args.queue_name,
     )
     payload = result.to_dict()
@@ -365,6 +437,8 @@ __all__ = [
     "ScheduleServiceFactory",
     "add_daily_schedule",
     "add_daily_schedule_from_cli",
+    "add_paper_ingest_schedule",
+    "add_paper_ingest_schedule_from_cli",
     "add_paper_reader_backfill_schedule",
     "add_paper_reader_backfill_schedule_from_cli",
     "add_schedules_commands",

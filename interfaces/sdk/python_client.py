@@ -427,6 +427,32 @@ class SchedulesClient:
             params={"include_disabled": include_disabled},
         )
 
+    def create_paper_ingest(
+        self,
+        *,
+        schedule_id: str = "papers-ingest-github-arxiv-daily",
+        name: str = "Daily GitHub arXiv paper ingest",
+        trigger_type: str = "interval",
+        interval_seconds: int = 86400,
+        run_at: str | None = None,
+        candidate_limit: int = 100,
+        min_github_stars: int = 50,
+        queue_name: str = "news:queue:papers",
+    ) -> dict[str, Any]:
+        return self.client.post(
+            "/api/v1/schedules/papers/ingest",
+            json_body={
+                "schedule_id": schedule_id,
+                "name": name,
+                "trigger_type": trigger_type,
+                "interval_seconds": interval_seconds,
+                "run_at": run_at,
+                "candidate_limit": candidate_limit,
+                "min_github_stars": min_github_stars,
+                "queue_name": queue_name,
+            },
+        )
+
     def trigger(self, schedule_id: str, *, now: str | None = None) -> dict[str, Any]:
         return self.client.post(
             f"/api/v1/schedules/{_quote_path_segment(schedule_id)}/trigger",

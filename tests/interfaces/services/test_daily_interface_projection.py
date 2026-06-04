@@ -46,9 +46,9 @@ def test_project_daily_agent_loop_metrics_for_interface_reads_namespaced_metrics
     assert metrics == {"llm_calls": 2, "tool_calls": 1}
 
 
-def test_project_daily_agent_loop_metrics_for_interface_ignores_legacy_only_metrics() -> None:
+def test_project_daily_agent_loop_metrics_for_interface_falls_back_to_legacy_metrics() -> None:
     output = {"agent_loop_metrics": {"llm_calls": 1}}
 
     metrics = project_daily_agent_loop_metrics_for_interface(output)
 
-    assert metrics == {}
+    assert metrics == {"llm_calls": 1}

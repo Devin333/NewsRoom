@@ -80,6 +80,7 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/api/v1/mcp/manifest",
         "/api/v1/schedules",
         "/api/v1/schedules/daily",
+        "/api/v1/schedules/papers/ingest",
         "/api/v1/schedules/tick",
         "/api/v1/schedules/{schedule_id}/trigger",
         "/api/v1/entities",

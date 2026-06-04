@@ -124,6 +124,13 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
     assert client.sources.probe("source/1", force=True, include_disabled=True, limit=2) == {"ok": True}
     assert client.sources.fetch_arxiv("cat:cs.AI", limit=1) == {"ok": True}
     assert client.sources.fetch_github_releases("owner/repo", limit=1) == {"ok": True}
+    assert client.schedules.create_paper_ingest(
+        schedule_id="papers-ingest",
+        interval_seconds=21600,
+        run_at="2026-05-14T00:00:00Z",
+        candidate_limit=80,
+        min_github_stars=25,
+    ) == {"ok": True}
     assert client.schedules.trigger("schedule/1", now="2026-05-14T00:00:00Z") == {"ok": True}
     assert client.approvals.approve("approval/1", decided_by="reviewer", reason="ok") == {"ok": True}
     assert client.approvals.reject("approval/2", decided_by="reviewer") == {"ok": True}
@@ -142,6 +149,7 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
         "https://news.example/api/v1/sources/source%2F1/probe",
         "https://news.example/api/v1/sources/arxiv/fetch",
         "https://news.example/api/v1/sources/github/releases",
+        "https://news.example/api/v1/schedules/papers/ingest",
         "https://news.example/api/v1/schedules/schedule%2F1/trigger",
         "https://news.example/api/v1/approvals/approval%2F1/approve",
         "https://news.example/api/v1/approvals/approval%2F2/reject",
@@ -153,6 +161,16 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
         {"force": True, "include_disabled": True, "limit": 2},
         {"query": "cat:cs.AI", "limit": 1},
         {"repository": "owner/repo", "limit": 1},
+        {
+            "schedule_id": "papers-ingest",
+            "name": "Daily GitHub arXiv paper ingest",
+            "trigger_type": "interval",
+            "interval_seconds": 21600,
+            "run_at": "2026-05-14T00:00:00Z",
+            "candidate_limit": 80,
+            "min_github_stars": 25,
+            "queue_name": "news:queue:papers",
+        },
         {"now": "2026-05-14T00:00:00Z"},
         {"decided_by": "reviewer", "reason": "ok"},
         {"decided_by": "reviewer", "reason": None},

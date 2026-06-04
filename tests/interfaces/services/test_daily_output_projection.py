@@ -114,12 +114,12 @@ def test_project_daily_run_agent_loop_metrics_prefers_namespaced_metric_alias() 
     assert metrics == {"llm_calls": 2, "tool_calls": 1}
 
 
-def test_project_daily_run_agent_loop_metrics_ignores_legacy_only_metrics() -> None:
+def test_project_daily_run_agent_loop_metrics_falls_back_to_legacy_metrics() -> None:
     output = {"agent_loop_metrics": {"llm_calls": 1}}
 
     metrics = project_daily_run_agent_loop_metrics(output)
 
-    assert metrics == {}
+    assert metrics == {"llm_calls": 1}
 
 
 def test_apply_daily_run_board_attachment_result_merges_formal_result_keys() -> None:

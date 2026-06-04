@@ -68,6 +68,7 @@ _worker_queues = _worker_commands.queues
 
 _schedules_list = _schedule_commands.list_schedules_from_cli
 _schedules_add_daily = _schedule_commands.add_daily_schedule_from_cli
+_schedules_add_paper_ingest = _schedule_commands.add_paper_ingest_schedule_from_cli
 _schedules_tick = _schedule_commands.tick_schedules_from_cli
 _schedules_run = _schedule_commands.run_schedules_from_cli
 _schedules_trigger = _schedule_commands.trigger_schedule_from_cli

@@ -43,6 +43,7 @@ Minimum surface:
 - `client.sources.fetchArxiv({ query, limit })`
 - `client.sources.fetchGithubReleases({ repository, limit })`
 - `client.schedules.list({ includeDisabled })`
+- `client.schedules.createPaperIngest({ scheduleId, name, triggerType, intervalSeconds, runAt, candidateLimit, minGithubStars, queueName })`
 - `client.schedules.trigger(scheduleId, { now })`
 - `client.approvals.list({ status })`
 - `client.approvals.get(approvalId)`

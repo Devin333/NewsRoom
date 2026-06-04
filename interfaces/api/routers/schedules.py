@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from framework.workers.scheduler import ScheduleNotFoundError, ScheduleRecord, ScheduleSpec
+from framework.workers.scheduler import ScheduleNotFoundError
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
-from interfaces.models import DailyScheduleRequest, ManualScheduleTriggerRequest, ScheduleTickRequest
+from interfaces.models import (
+    DailyScheduleRequest,
+    ManualScheduleTriggerRequest,
+    PaperIngestScheduleRequest,
+    ScheduleTickRequest,
+)
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
@@ -18,26 +23,40 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     @router.post("/api/v1/schedules/daily")
     def upsert_daily_schedule(request: DailyScheduleRequest):
         try:
-            spec = ScheduleSpec(
+            result = services.schedule_service_factory().upsert_daily_schedule(
                 schedule_id=request.schedule_id,
                 name=request.name,
                 trigger_type=request.trigger_type,
-                task_type="daily_intelligence.run",
-                payload_template={
-                    "profile": request.profile,
-                    "topic": request.topic,
-                    "source_limit": request.source_limit,
-                },
-                queue_name=request.queue_name,
                 interval_seconds=(
                     request.interval_seconds if request.trigger_type == "interval" else None
                 ),
                 run_at=request.run_at if request.trigger_type == "interval" else None,
+                profile=request.profile,
+                topic=request.topic,
+                source_limit=request.source_limit,
+                queue_name=request.queue_name,
             )
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_schedule", message=str(exc))
-        record = ScheduleRecord(spec=spec, next_run_at=spec.run_at)
-        result = services.schedule_service_factory().upsert_schedule(record)
+        return helpers.success(result.to_dict())
+
+    @router.post("/api/v1/schedules/papers/ingest")
+    def upsert_paper_ingest_schedule(request: PaperIngestScheduleRequest):
+        try:
+            result = services.schedule_service_factory().upsert_paper_ingest_schedule(
+                schedule_id=request.schedule_id,
+                name=request.name,
+                trigger_type=request.trigger_type,
+                interval_seconds=(
+                    request.interval_seconds if request.trigger_type == "interval" else None
+                ),
+                run_at=request.run_at if request.trigger_type == "interval" else None,
+                candidate_limit=request.candidate_limit,
+                min_github_stars=request.min_github_stars,
+                queue_name=request.queue_name,
+            )
+        except ValueError as exc:
+            return helpers.error(status_code=400, code="invalid_schedule", message=str(exc))
         return helpers.success(result.to_dict())
 
     @router.post("/api/v1/schedules/tick")

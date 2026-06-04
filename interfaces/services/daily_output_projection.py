@@ -43,7 +43,9 @@ def apply_daily_run_public_output_aliases(output: dict[str, Any]) -> dict[str, A
 def project_daily_run_agent_loop_metrics(output: Any) -> dict[str, Any]:
     if not isinstance(output, dict):
         return {}
-    metrics = project_daily_output_for_interface_metadata(output).get("agent_loop_metrics", {})
+    metrics = project_daily_output_for_interface_metadata(output).get("agent_loop_metrics")
+    if not isinstance(metrics, dict):
+        metrics = output.get("agent_loop_metrics")
     return dict(metrics) if isinstance(metrics, dict) else {}
 
 
