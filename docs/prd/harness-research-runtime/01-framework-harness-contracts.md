@@ -27,6 +27,11 @@ framework/harness/
   quality/
     __init__.py
     verdict.py
+  skills/
+    __init__.py
+    evolution/
+      __init__.py
+      models.py
   runtime/
     __init__.py
     checkpoint.py
@@ -81,6 +86,7 @@ worker type 第一阶段只定义枚举或 literal：
 ```text
 llm
 skill
+skill_evolution
 subagent
 retrieval
 memory
@@ -157,6 +163,7 @@ halt
 - 定义 `max_turns`、`max_replans`、`max_retries_per_step`、`max_worker_calls`。
 - 所有 Harness run 必须有预算。
 - 超出预算时产出受控 `halted` 决策，而不是无限循环。
+- 为阶段 3A 预留 evolution budget 字段：`max_evolution_epochs`、`max_candidates_per_run`、`max_patch_operations`、`max_eval_cases`、`max_sandbox_runs`。
 
 ### HarnessDecision
 
@@ -216,6 +223,33 @@ framework/harness/control_plane/trace.py
 - 不包含 `write_memory=true` 这类直接 side effect 决策。
 - 不包含绕过 VERIFY gate 的 `accept=true` 这类最终采纳决策。
 
+### Skill Evolution 契约预留
+
+位置：
+
+```text
+framework/harness/skills/evolution/models.py
+```
+
+阶段 1 只预留可序列化契约，不实现完整生命周期：
+
+```text
+SkillVersionRef
+SkillExperience
+SkillPatchSet
+SkillCandidate
+SkillEvaluationResult
+SkillPromotionDecision
+SkillRelease
+SkillRollbackPlan
+```
+
+约束：
+
+- `SkillCandidate` 不能表示 active skill。
+- `SkillPromotionDecision` 只能由 Harness gate 或 policy 生成，不能来自 `HarnessWorkerResult`。
+- 所有对象必须可导出 dict，供阶段 4 trace/transcript 使用。
+
 ### HarnessQualityVerdict
 
 位置：`framework/harness/quality/verdict.py`
@@ -243,6 +277,10 @@ HarnessTrace
 HarnessCheckpoint
 HarnessWorkerResult
 HarnessQualityVerdict
+SkillVersionRef
+SkillExperience
+SkillCandidate
+SkillPromotionDecision
 ```
 
 ## 禁止事项
@@ -252,6 +290,7 @@ HarnessQualityVerdict
 - 不 import `infrastructure`。
 - 不复用旧 `framework.agent.harness` 命名为新实现。
 - 不让 `HarnessWorkerResult` 带流程控制字段。
+- 不让 skill candidate 契约带 `auto_promote`、`active=true`、`skip_eval` 等发布绕过字段。
 - 不在阶段 1 写完整 executor。
 
 ## 测试要求
@@ -262,6 +301,7 @@ HarnessQualityVerdict
 tests/framework/harness/test_contracts.py
 tests/framework/harness/test_serialization.py
 tests/framework/harness/test_worker_result_contract.py
+tests/framework/harness/skills/evolution/test_contracts.py
 ```
 
 必须测试：
@@ -273,6 +313,8 @@ tests/framework/harness/test_worker_result_contract.py
 - step id 不能重复。
 - Harness budget 缺失或非法时校验失败。
 - phase 不能绕过 VERIFY 直接完成。
+- skill candidate 不能表达自动发布或跳过 eval。
+- skill evolution budget 缺失时使用安全默认值或校验失败。
 
 ## 验收命令
 
@@ -298,10 +340,12 @@ openspec validate harness-research-runtime --strict
 要求：
 1. 新增 framework/harness 包和核心契约。
 2. 定义 HarnessRunSpec、HarnessWorkflowSpec、HarnessStepSpec、HarnessState、HarnessStepState、HarnessDecision、HarnessEvent、HarnessTrace、HarnessCheckpoint、HarnessWorkerResult、HarnessQualityVerdict。
-3. 确保 framework/harness 不依赖 business、interfaces、infrastructure。
-4. HarnessWorkerResult 不允许表达 next_step、quality_passed、write_memory 等流程决策。
-5. 添加 tests/framework/harness 契约和序列化测试。
-6. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
-7. 修改完成后提交。
+3. 为阶段 3A 预留 SkillVersionRef、SkillExperience、SkillPatchSet、SkillCandidate、SkillEvaluationResult、SkillPromotionDecision、SkillRelease、SkillRollbackPlan 等可序列化契约。
+4. 确保 framework/harness 不依赖 business、interfaces、infrastructure。
+5. HarnessWorkerResult 不允许表达 next_step、quality_passed、write_memory 等流程决策。
+6. SkillCandidate 不允许表达 auto_promote、active=true、skip_eval 等发布绕过字段。
+7. 添加 tests/framework/harness 契约和序列化测试。
+8. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
+9. 修改完成后提交。
 全部回复和问题用中文。
 ```

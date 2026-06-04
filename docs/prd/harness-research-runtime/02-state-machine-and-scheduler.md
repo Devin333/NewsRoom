@@ -6,6 +6,8 @@
 
 本阶段必须加入有界 `PLAN -> EXECUTE -> VERIFY` 状态机。每个 step 都要先由 Harness 规划，再执行 worker，最后由纯函数 gate 校验。gate 不通过只能触发受控 replan/retry/repair/halt，不能无限重试。
 
+阶段 2 的状态机要支持后续 `skill_evolution` worker type。此时可以只用 fake worker 验证预算、相位和 gate，不实现完整 skill 进化生命周期。
+
 ## 新增或修改目录
 
 ```text
@@ -34,6 +36,7 @@ framework/harness/control_plane/
 - 记录事件。
 - 驱动每个 step 的 `PLAN -> EXECUTE -> VERIFY` 相位。
 - 维护 `max_turns`、`max_replans`、`max_retries_per_step` 和 worker 调用预算。
+- 维护 skill evolution 预算：`max_evolution_epochs`、`max_candidates_per_run`、`max_patch_operations`、`max_eval_cases`、`max_sandbox_runs`。
 
 阶段 2 可以使用 fake worker registry，不接真实 LLM。
 
@@ -63,6 +66,8 @@ framework/harness/control_plane/
 | step failed 且 retry 耗尽 | fail run 或进入配置的 repair step。 |
 | quality gate failed | 按 policy retry、repair 或 fail。 |
 | approval required | waiting_approval。 |
+| skill evolution candidate failed | 记录 rejected candidate，按 policy replan、needs_more_eval、halt 或 rejected。 |
+| skill evolution promotion requires approval | waiting_approval，不能自动发布。 |
 
 ### RoutingRule
 
@@ -102,6 +107,11 @@ max_turns
 max_replans
 max_retries_per_step
 max_worker_calls
+max_evolution_epochs
+max_candidates_per_run
+max_patch_operations
+max_eval_cases
+max_sandbox_runs
 halt_on_budget_exceeded
 ```
 
@@ -112,6 +122,7 @@ halt_on_budget_exceeded
 - replan 次数超过 `max_replans` 时进入 `halted`。
 - turn 次数超过 `max_turns` 时进入 `halted`。
 - `halted` 是受控终态，必须带 reason。
+- skill evolution 预算耗尽时进入 `halted`、`rejected` 或 `succeeded_noop`，不能无限优化同一个 skill。
 
 ### DeterministicGate
 
@@ -131,6 +142,7 @@ halt_on_budget_exceeded
 | `DeduplicationGate` | 同一 run 内不能重复执行相同 plan key 或产生重复 claim/question。 |
 | `ScoreRangeGate` | score/rating/confidence 等数值必须在配置范围内，例如 1-5 或 0-1。 |
 | `BudgetGate` | replan、retry、turn、worker call 不能超过预算。 |
+| `SkillEvolutionBudgetGate` | candidate 数、patch 操作数、eval case 数、sandbox run 数不能超过预算。 |
 
 ## 状态转换要求
 
@@ -194,6 +206,7 @@ tests/framework/harness/control_plane/test_scheduler.py
 tests/framework/harness/control_plane/test_state_transitions.py
 tests/framework/harness/control_plane/test_retry_policy.py
 tests/framework/harness/control_plane/test_llm_cannot_route.py
+tests/framework/harness/control_plane/test_skill_evolution_budget.py
 ```
 
 必须覆盖：
@@ -205,10 +218,12 @@ tests/framework/harness/control_plane/test_llm_cannot_route.py
 - max_turns 耗尽后进入 halted。
 - illegal transition 抛错。
 - fake LLM worker 输出 `{"next_step": "publish"}` 时，scheduler 不采纳。
+- fake skill optimizer 输出 `{"promote": true}` 时，scheduler 不发布。
 - 工具白名单 gate 拒绝未授权工具。
 - 去重 gate 拒绝重复 plan key。
 - 分数 gate 拒绝 1-5 范围外的评分。
 - quality gate failed 后按 policy 返工或失败。
+- skill evolution 预算耗尽后受控 halted/rejected。
 
 ## 验收命令
 
@@ -224,6 +239,7 @@ openspec validate harness-research-runtime --strict
 - 每个 step 都经过 PLAN、EXECUTE、VERIFY。
 - VERIFY 由纯函数 gate 完成。
 - LLM worker 输出不能影响 routing。
+- skill optimizer worker 输出不能影响 promotion。
 - retry 和 fail 行为可测试。
 - max_replans / max_turns 能受控 halted，杜绝无限循环。
 - 状态转换集中且非法转换有保护。
@@ -238,10 +254,11 @@ openspec validate harness-research-runtime --strict
 1. 实现 framework/harness 的 HarnessControlPlane、HarnessScheduler、状态转换、routing rule、retry policy 和有界 PLAN/EXECUTE/VERIFY 相位模型。
 2. 不接入旧 AgentLoop 或旧 WorkflowExecutor。
 3. 证明 LLM worker 输出中的 next_step 等字段不会影响流程路由。
-4. 添加 ToolAllowlistGate、OutputSchemaGate、DeduplicationGate、ScoreRangeGate、BudgetGate 等纯函数 gate。
-5. max_replans、max_turns、max_retries_per_step 超限时必须进入受控 halted，不能无限重试。
-6. 添加状态机、调度、retry、replan/halt、非法转换、LLM 不能路由、工具白名单、去重、分数范围测试。
-7. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
-8. 修改完成后提交。
+4. 证明 skill optimizer 输出中的 promote/active/skip_eval 等字段不会影响 skill 发布。
+5. 添加 ToolAllowlistGate、OutputSchemaGate、DeduplicationGate、ScoreRangeGate、BudgetGate、SkillEvolutionBudgetGate 等纯函数 gate。
+6. max_replans、max_turns、max_retries_per_step、skill evolution budget 超限时必须进入受控 halted/rejected，不能无限重试或无限优化。
+7. 添加状态机、调度、retry、replan/halt、非法转换、LLM 不能路由、skill optimizer 不能发布、工具白名单、去重、分数范围测试。
+8. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
+9. 修改完成后提交。
 全部回复和问题用中文。
 ```

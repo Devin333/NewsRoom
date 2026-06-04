@@ -36,6 +36,9 @@ decision
 worker_type
 input_ref
 output_ref
+skill_name
+skill_version
+skill_candidate_id
 retry_count
 error
 timestamp
@@ -53,6 +56,9 @@ gate_results
 budget_snapshot
 halt_reason
 replan_reason
+evolution_action
+promotion_decision
+rollback_ref
 ```
 
 要求：
@@ -62,6 +68,7 @@ replan_reason
 - event 可导出 dict。
 - event_id 稳定可生成，便于 replay。
 - PLAN、EXECUTE、VERIFY、REPLAN、HALT 每次转移都必须落 event。
+- Skill evolution 的 collect_experience、candidate_created、static_gate_failed、eval_completed、promotion_decided、release_published、rollback_completed 都必须落 event。
 
 ## Transcript
 
@@ -80,6 +87,10 @@ gate_results
 budget_snapshot
 worker_call_ref
 artifact_refs
+skill_refs
+candidate_refs
+eval_refs
+release_refs
 timestamp
 ```
 
@@ -90,6 +101,7 @@ timestamp
 - 不存大 payload，只存 refs 和摘要。
 - replay 以 transcript/event log 为输入，不重新询问 LLM。
 - halted 必须记录触发预算和最后一个失败 gate。
+- skill candidate 被拒绝、晋升或回滚时，transcript 必须能指向对应 eval result、promotion decision 和 rollback plan。
 
 ## Trace Export
 
@@ -105,6 +117,8 @@ Trace 是对 event log 的可读投影。
 - quality gate 为什么失败？
 - run 为什么成功或失败？
 - worker 产出了什么 artifact ref？
+- skill candidate 为什么被拒绝或晋升？
+- active skill version 为什么发生切换或回滚？
 
 Trace 输出建议：
 
@@ -116,6 +130,9 @@ steps[]
 decisions[]
 errors[]
 artifacts[]
+skills[]
+skill_candidates[]
+skill_releases[]
 phase_transitions[]
 gate_results[]
 budget_summary
@@ -155,6 +172,8 @@ ReplayRunner 使用 event log 或 checkpoint + fake worker 复现状态推进。
 - 根据 checkpoint 恢复后继续运行 fake workflow。
 - replay 不产生新的外部 side effect。
 - 能复盘 halted 前的全部 gate failure 和预算消耗。
+- 能复盘 skill evolution run 的候选生成、eval、promotion、release 和 rollback。
+- replay 不重新运行 optimizer LLM，也不重新发布 skill。
 
 ## 与已有框架复用
 
@@ -180,6 +199,7 @@ tests/framework/harness/runtime/test_checkpoint_store.py
 tests/framework/harness/runtime/test_replay.py
 tests/framework/harness/runtime/test_resume_from_checkpoint.py
 tests/framework/harness/runtime/test_transcript.py
+tests/framework/harness/runtime/test_skill_evolution_transcript.py
 ```
 
 必须覆盖：
@@ -192,6 +212,8 @@ tests/framework/harness/runtime/test_transcript.py
 - 从 checkpoint 恢复后继续执行。
 - replay 不调用真实 worker side effect。
 - checksum 不匹配时拒绝恢复。
+- skill evolution transcript 能解释 candidate 拒绝、晋升、发布和回滚。
+- replay skill evolution run 不产生新的 production skill release。
 
 ## 验收命令
 
@@ -208,6 +230,7 @@ openspec validate harness-research-runtime --strict
 - 可以导出 trace。
 - 可以保存和恢复 checkpoint。
 - 可以 replay fake workflow。
+- 可以 replay fake skill evolution workflow，且不会触发新发布。
 - 不接业务，不做 UI。
 - 完成后提交。
 
@@ -220,9 +243,10 @@ openspec validate harness-research-runtime --strict
 2. 复用旧 framework/events 或 checkpoint 思路可以，但旧 workflow runtime 不能接管 Harness 状态。
 3. Event 和 transcript 不存大 payload，大内容使用 artifact ref。
 4. PLAN、EXECUTE、VERIFY、REPLAN、HALT 每次转移都必须落 transcript。
-5. Replay 能复盘 gate failure、replan 和 halted 原因。
-6. 添加 event、transcript、trace、checkpoint、resume、replay 测试。
-7. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
-8. 修改完成后提交。
+5. Skill evolution 的 candidate、eval、promotion、release、rollback 也必须落 event/transcript。
+6. Replay 能复盘 gate failure、replan、halted、skill candidate 拒绝、skill 晋升和 rollback 原因。
+7. 添加 event、transcript、trace、checkpoint、resume、replay、skill evolution transcript 测试。
+8. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。
+9. 修改完成后提交。
 全部回复和问题用中文。
 ```

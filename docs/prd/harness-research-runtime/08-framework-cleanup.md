@@ -23,6 +23,18 @@ framework/shared
 
 这些作为新 Harness 的零件库。
 
+`framework/skills` 默认作为保留资产，后续用于：
+
+- skill package scanning/loading。
+- skill manifest 和 metadata。
+- input/output schema validation。
+- skill runtime executor。
+- skill quality gates。
+- versioned skill registry adapter。
+- skills evolution 的 candidate static validation 和 eval runner。
+
+如果发现 `framework/skills` 里的兼容模块只转发旧路径，可以在确认所有新代码都使用新包路径后删除或保留为短期 deprecated export；不能删除真实 package/runtime/validation/quality 能力。
+
 ## 改造清单
 
 需要降级为 Harness 下层能力：
@@ -78,6 +90,18 @@ newsroom business board
 
 - 测试 fixture 中为了说明用途可以出现，但不应在 framework 生产代码中出现。
 
+Skills 自进化相关代码还必须避免：
+
+```text
+auto_promote
+self_modify_production_skill
+llm_decides_promotion
+disable_quality_gate
+skip_eval
+```
+
+如果这些词只出现在测试里用于验证禁止行为，可以保留。
+
 ## 架构测试
 
 新增或更新：
@@ -86,6 +110,7 @@ newsroom business board
 tests/architecture/test_framework_harness_boundary.py
 tests/architecture/test_framework_no_business_pollution.py
 tests/architecture/test_framework_exports_after_cleanup.py
+tests/architecture/test_skill_evolution_boundary.py
 ```
 
 必须检查：
@@ -93,6 +118,8 @@ tests/architecture/test_framework_exports_after_cleanup.py
 - `framework/harness` 不 import business/interfaces/infrastructure。
 - framework 生产代码不包含旧业务污染模块。
 - 删除旧 harness 后公共导出不破。
+- skill evolution 不 import business/interfaces/infrastructure。
+- production code 不允许出现自动晋升、跳过 eval、LLM 决定发布等 bypass 行为。
 - Research 仍可运行阶段 6/7 测试。
 
 ## 删除测试标准
@@ -119,6 +146,7 @@ openspec validate harness-research-runtime --strict
 
 - 无业务污染 framework 代码。
 - 新 Harness 测试仍通过。
+- Skills package/runtime/validation/quality 能力仍可被 Harness skill evolution 使用。
 - Research 测试仍通过。
 - 无旧 `framework/agent/harness` 公共依赖。
 - 删除的框架测试都有废弃理由。
@@ -131,10 +159,11 @@ openspec validate harness-research-runtime --strict
 要求：
 1. 根据阶段 0 audit-inventory.md 清理旧 framework。
 2. 保留 llm/tool/memory/skills/artifacts/events/workers/scoring/governance/shared 等可用资产。
-3. 删除业务污染、重复抽象、旧 harness eval、被新 Harness 替代且无用的旧控制流。
-4. 删除只验证废弃旧框架行为的测试；有价值规则迁移到新 Harness 测试。
-5. 添加或更新架构边界测试，确保 framework 不含业务污染。
-6. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research tests/architecture -q、openspec validate harness-research-runtime --strict。
-7. 修改完成后提交。
+3. 保留 framework/skills 的 package、runtime、validation、quality 能力，作为 Harness skill evolution 的底层资产。
+4. 删除业务污染、重复抽象、旧 harness eval、被新 Harness 替代且无用的旧控制流。
+5. 删除只验证废弃旧框架行为的测试；有价值规则迁移到新 Harness 测试。
+6. 添加或更新架构边界测试，确保 framework 不含业务污染，skill evolution 不含 auto promote、skip eval、LLM 决定发布等 bypass。
+7. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research tests/architecture -q、openspec validate harness-research-runtime --strict。
+8. 修改完成后提交。
 全部回复和问题用中文。
 ```

@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | OpenSpec proposal | `openspec/changes/harness-research-runtime/proposal.md` | 为什么重建、范围、非目标、风险。 |
 | OpenSpec design | `openspec/changes/harness-research-runtime/design.md` | Harness + Research 总体设计、分层、边界、删除策略。 |
-| OpenSpec tasks | `openspec/changes/harness-research-runtime/tasks.md` | 阶段 1-9 的可勾选任务。 |
+| OpenSpec tasks | `openspec/changes/harness-research-runtime/tasks.md` | 阶段 1-9 和阶段 3A 的可勾选任务。 |
 | Spec delta | `openspec/changes/harness-research-runtime/specs/.../spec.md` | 至少覆盖 Harness runtime 和 Research runtime 两类需求。 |
 | 审计清单 | `docs/prd/harness-research-runtime/audit-inventory.md` | `keep / adapt / delete` 表格和理由。 |
 
@@ -124,9 +124,22 @@ path | category | reason | replacement | deletion_phase | tests_action
 
 - Harness MUST be the only workflow decision maker.
 - LLM workers MUST NOT control routing, quality verdicts, memory writes, tool authorization, or publication.
+- Skills evolution MUST be Harness-controlled: LLM optimizers MAY propose candidates or patches, but MUST NOT modify active skill packages, decide promotion, skip held-out evals, disable quality gates, or publish production versions.
 - Research MUST NOT depend on legacy `business/boards/paper_radar`, `interfaces`, or `infrastructure`.
 - Legacy code and tests MUST be deleted when they no longer serve Harness + Research.
 - UI MUST be out of scope for this change.
+
+Skill 相关审计必须特别标记：
+
+```text
+framework/skills/package
+framework/skills/runtime
+framework/skills/validation
+framework/skills/quality
+business/foundation/skills
+```
+
+这些默认是 `keep` 或 `adapt` 候选，因为阶段 3A 会复用它们实现 skill candidate 校验、eval replay、versioned registry adapter 和 rollback。
 
 ## 测试与验证
 
@@ -152,9 +165,9 @@ python -m scripts.dev compile
 ```text
 请执行 docs/prd/harness-research-runtime/00-openspec-and-audit.md。
 要求：
-1. 建立 openspec/changes/harness-research-runtime，写 proposal/design/tasks/spec delta。
+1. 建立 openspec/changes/harness-research-runtime，写 proposal/design/tasks/spec delta，覆盖 Harness、Research 和 skills evolution。
 2. 审计 framework、business、interfaces、tests，生成 docs/prd/harness-research-runtime/audit-inventory.md。
-3. 按 keep/adapt/delete 标记旧资产，说明理由、替代方案、删除阶段和测试处理方式。
+3. 按 keep/adapt/delete 标记旧资产，说明理由、替代方案、删除阶段和测试处理方式；framework/skills 需要单独说明哪些能力保留给阶段 3A。
 4. 不实现新功能，不做 UI。
 5. 运行 openspec validate harness-research-runtime --strict 和 python -m scripts.dev compile。
 6. 修改完成后提交。

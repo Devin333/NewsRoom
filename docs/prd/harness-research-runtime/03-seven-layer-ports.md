@@ -9,7 +9,7 @@
 | 层 | 职责 | Harness 决策点 |
 | --- | --- | --- |
 | LLM Worker | 生成候选结构化内容。 | 是否调用、用哪个输入、是否采纳。 |
-| Skills | 执行确定性业务能力。 | 是否执行、参数是否有效、结果是否进入 state。 |
+| Skills | 执行确定性业务能力，暴露 versioned skill 能力。 | 是否执行、参数是否有效、结果是否进入 state；是否允许进入离线进化流程。 |
 | SubAgent | 执行受控子任务。 | 调谁、预算、输入、验收。 |
 | Retrieval | 返回 EvidencePack/ContextPack。 | 检索时机、检索范围、证据是否足够。 |
 | Memory | 读写长期/短期记忆。 | 何时读、何时写、写什么。 |
@@ -34,6 +34,11 @@ framework/harness/memory/
   fake.py
 framework/harness/skills/
   __init__.py
+  ports.py
+  fake.py
+framework/harness/skills/evolution/
+  __init__.py
+  models.py
   ports.py
   fake.py
 framework/harness/mcp/
@@ -85,6 +90,39 @@ execution context
 
 - 技能必须有 schema。
 - 输入验证失败是 worker failure，不是 Harness 崩溃。
+- 运行时必须记录 skill name、skill version、package hash，便于 trace、experience 和 rollback。
+- Skill 执行结果只能进入候选 output；是否采纳、是否写入 memory、是否发布 artifact 由 Harness 决定。
+
+### SkillEvolutionPort
+
+能力：
+
+```text
+collect_experience(request)
+propose_candidate(request)
+evaluate_candidate(request)
+promote_candidate(request)
+rollback_release(request)
+```
+
+输出：
+
+```text
+SkillExperience
+SkillCandidate
+SkillEvaluationResult
+SkillPromotionDecision
+SkillRelease
+SkillRollbackPlan
+```
+
+约束：
+
+- LLM optimizer 只能生成 skill patch candidate，不能直接发布。
+- candidate 必须先进入 candidate store，不能覆盖 active skill。
+- held-out eval 没有严格改进不得晋升。
+- active skill 必须版本化，且每次发布都有 rollback plan。
+- 普通业务 run 只能产生 experience，不自动触发 promotion。
 
 ### SubAgentWorkerPort
 
@@ -174,6 +212,7 @@ read_artifact(ref)
 ```text
 FakeLLMWorker
 FakeSkillWorker
+FakeSkillEvolutionPort
 FakeSubAgentWorker
 FakeRetrievalPort
 FakeMemoryPort
@@ -194,6 +233,7 @@ tests/framework/harness/ports/test_retrieval_port.py
 tests/framework/harness/ports/test_memory_port.py
 tests/framework/harness/ports/test_mcp_policy.py
 tests/framework/harness/ports/test_fake_runtime.py
+tests/framework/harness/skills/evolution/test_skill_evolution_port.py
 ```
 
 必须覆盖：
@@ -201,6 +241,7 @@ tests/framework/harness/ports/test_fake_runtime.py
 - 所有 fake 可被 Harness 调用。
 - EvidencePack 可序列化。
 - Memory candidate 不会自动写入。
+- Skill candidate 不会自动覆盖 active skill。
 - MCP side effect 请求未批准时拒绝。
 - Artifact 写入返回 ref。
 
@@ -215,6 +256,7 @@ openspec validate harness-research-runtime --strict
 ## 完成标准
 
 - 七层端口完整。
+- Skill evolution 端口和 fake implementation 完整，但真正生命周期细节在阶段 3A 实现。
 - 每层 fake implementation 可单测。
 - Harness 通过端口调 worker，不直接依赖具体实现。
 - 没有接 Research，仍不做 UI。
@@ -225,9 +267,9 @@ openspec validate harness-research-runtime --strict
 ```text
 请执行 docs/prd/harness-research-runtime/03-seven-layer-ports.md。
 要求：
-1. 建立 Harness 七层端口：LLMWorkerPort、SkillWorkerPort、SubAgentWorkerPort、RetrievalPort、MemoryPort、MCPToolPort、QualityGatePort、ArtifactPort。
+1. 建立 Harness 七层端口：LLMWorkerPort、SkillWorkerPort、SkillEvolutionPort、SubAgentWorkerPort、RetrievalPort、MemoryPort、MCPToolPort、QualityGatePort、ArtifactPort。
 2. 每个端口提供 fake implementation。
-3. EvidencePack、RetrievalRequest、Memory write candidate、MCP policy、Artifact ref 都要可序列化和可测试。
+3. EvidencePack、RetrievalRequest、Memory write candidate、Skill candidate ref、MCP policy、Artifact ref 都要可序列化和可测试。
 4. Harness 只能依赖端口，不直接依赖真实实现。
 5. 添加端口和 fake runtime 测试。
 6. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness -q、openspec validate harness-research-runtime --strict。

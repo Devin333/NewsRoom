@@ -13,6 +13,7 @@
 | Harness 控制流程 | Harness 是唯一流程决策者，负责状态推进、路由、重试、质量门、审批、记忆写入和 artifact 发布。 |
 | 有界相位状态机 | 每个 step 必须按 `PLAN -> EXECUTE -> VERIFY` 推进；VERIFY 由纯函数 gate 完成，不通过只能受控 replan/retry/halt。 |
 | LLM 只做 worker | LLM 只生成候选结构化内容，不决定下一步，不直接写记忆，不直接调用高风险工具，不判定质量通过。 |
+| Skills 可进化但受控 | LLM 只能生成 skill candidate 或 patch；Harness 负责经验选择、静态校验、离线 eval、晋升、发布和回滚。 |
 | 业务层表达业务 | `business/research` 只表达 Research 领域模型、业务规则、用例和 workflow spec。 |
 | Research 不依赖旧代码 | 新 Research 不依赖 `business/boards/paper_radar`、旧 paper API、旧 reader payload 或旧兼容 adapter。 |
 | 保留有用资产 | 旧框架层中可复用的 LLM、Tool、Memory、Skills、Artifacts、Events、Workers、Governance 等资产保留。 |
@@ -59,6 +60,7 @@ max_worker_calls
 | 1 | [01-framework-harness-contracts.md](01-framework-harness-contracts.md) | 新增 `framework/harness` 核心契约和包结构。 |
 | 2 | [02-state-machine-and-scheduler.md](02-state-machine-and-scheduler.md) | 实现 Harness 状态机、显式调度器、路由和重试策略。 |
 | 3 | [03-seven-layer-ports.md](03-seven-layer-ports.md) | 建立七层可替换端口和 fake implementation。 |
+| 3A | [03a-skill-evolution.md](03a-skill-evolution.md) | 在 Harness 控制下建立 skills 自进化生命周期、候选仓、eval、晋升和回滚。 |
 | 4 | [04-trace-checkpoint-replay.md](04-trace-checkpoint-replay.md) | 实现事件日志、trace、checkpoint 和 replay。 |
 | 5 | [05-research-domain-modeling.md](05-research-domain-modeling.md) | 新建 `business/research` 领域模型、端口、服务和 workflow spec。 |
 | 6 | [06-research-single-paper-loop.md](06-research-single-paper-loop.md) | 跑通单篇论文分析闭环，使用 fake LLM，不做 UI。 |
@@ -90,6 +92,7 @@ python -m scripts.dev smoke
 
 ```text
 framework/harness
+framework/harness/skills/evolution
 framework/llm
 framework/tool
 framework/memory
@@ -103,6 +106,7 @@ business/research
 interfaces/services/research_service.py
 interfaces/api/routers/research.py
 tests/framework/harness
+tests/framework/harness/skills/evolution
 tests/business/research
 tests/interfaces/research
 ```
@@ -113,6 +117,7 @@ tests/interfaces/research
 - 不把 Research 代码写进 `business/boards/paper_radar`。
 - 不让 `business/research` import `interfaces` 或 `infrastructure`。
 - 不让 LLM 返回值控制 workflow routing。
+- 不让 LLM 直接修改、发布或激活生产 skill；skill 自进化必须经过 Harness gate、held-out eval、版本化发布和 rollback plan。
 - 不允许没有 `max_replans`、`max_turns` 或 retry budget 的 Harness 运行循环。
 - 不允许用 LLM 自评替代纯函数 VERIFY gate。
 - 不用删除测试来掩盖失败；只有当旧行为明确废弃时才删除旧测试。

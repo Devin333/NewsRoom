@@ -6,6 +6,8 @@
 
 Research 单篇论文闭环必须使用 Harness 的 `PLAN -> EXECUTE -> VERIFY` 有界状态机。每轮分析、验证、返工都要经过纯函数 gate，超过 `max_replans` 或 `max_turns` 时必须受控 `halted`，不能无限修复。
 
+Research 可以消费 active skill version，并把运行结果记录为 `SkillExperience`，但普通论文分析 run 不允许自动晋升或发布 skill。Skills 自进化必须作为独立离线/admin workflow 运行。
+
 ## 目标流程
 
 ```text
@@ -115,6 +117,32 @@ Harness 和 Research services 决定：
 是否写 artifact
 ```
 
+## Skill 使用边界
+
+Research workflow 可以调用 versioned skills：
+
+```text
+research-document-structure
+research-claim-extraction
+research-evidence-checking
+research-contribution-analysis
+research-experiment-analysis
+research-reader-answering
+```
+
+要求：
+
+- 每次 skill 调用记录 `skill_name`、`skill_version`、`package_hash`。
+- Research run 可以把成功/失败样本、gate result、artifact ref 写成 `SkillExperience`。
+- `SkillExperience` 只进入候选经验池，不改变 active skill。
+- skill evolution run 只能由显式 Harness workflow 触发。
+
+禁止：
+
+- `AnalyzePaperUseCase` 直接调用 `SkillPromotionPort`。
+- 为了让当前论文分析通过而临时改 skill。
+- 用户普通分析请求触发 skill 发布。
+
 ## Quality Gate
 
 至少检查：
@@ -186,6 +214,7 @@ tests/business/research/integration/test_single_paper_loop_fake_runtime.py
 - 分数越界被 score gate 拒绝。
 - artifact refs 完整。
 - trace 能解释每个 step。
+- skill experience 被记录但不会触发 skill promotion。
 - 不依赖旧 paper_radar。
 
 ## 验收命令
@@ -202,6 +231,7 @@ openspec validate harness-research-runtime --strict
 - 输出 ResearchAnalysis、ResearchReaderPayload、ResearchQualityResult。
 - Harness trace 可导出。
 - Harness transcript 可导出并能复盘 PLAN/EXECUTE/VERIFY。
+- Research 可以产出 SkillExperience refs，但不会自动发布新 skill。
 - 质量门失败路径可测试。
 - replan/halt 路径可测试。
 - 不做 UI，不接旧 API。
@@ -219,9 +249,11 @@ openspec validate harness-research-runtime --strict
 5. 每个 Research step 必须经过 PLAN/EXECUTE/VERIFY，VERIFY 使用纯函数 gate。
 6. 添加 ResearchToolAllowlistGate、ResearchClaimDedupGate、ResearchScoreRangeGate、ResearchEvidenceCoverageGate、ResearchBudgetGate。
 7. max_replans 或 max_turns 耗尽时必须受控 halted，并写入 transcript。
-8. 输出 ResearchAnalysis、ResearchReaderPayload、ResearchQualityResult、Harness trace、Harness transcript 和 artifact refs。
-9. 添加完整闭环、质量门失败、非法 LLM 流程字段、replan/halt、去重、分数越界、artifact、trace/transcript 测试。
-10. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
-11. 修改完成后提交。
+8. 每次 Research skill 调用记录 skill_name、skill_version、package_hash，并可产出 SkillExperience refs。
+9. Research 普通分析 run 不允许调用 SkillPromotionPort，不允许发布新 skill。
+10. 输出 ResearchAnalysis、ResearchReaderPayload、ResearchQualityResult、Harness trace、Harness transcript、SkillExperience refs 和 artifact refs。
+11. 添加完整闭环、质量门失败、非法 LLM 流程字段、replan/halt、去重、分数越界、artifact、trace/transcript、skill experience 不晋升测试。
+12. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
+13. 修改完成后提交。
 全部回复和问题用中文。
 ```
