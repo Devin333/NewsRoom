@@ -48,11 +48,11 @@
 
 ## 6. Stage 3B Bounded Agentic RAG
 
-- [ ] 6.1 Define RAG plan, query, source read, evidence summary, gap, and `RAGContextPack` models.
-- [ ] 6.2 Implement Harness-controlled retrieval, read, verify, gap-fill, and stop conditions.
-- [ ] 6.3 Enforce `max_rounds`, `max_queries`, `max_source_reads`, `max_memory_hits`, and context budgets.
-- [ ] 6.4 Connect RAG context packs to context engineering without placing dynamic results in stable prefix.
-- [ ] 6.5 Add bounded RAG tests with fake retrieval and memory ports.
+- [x] 6.1 Define RAG plan, query, source read, evidence summary, gap, and `RAGContextPack` models.
+- [x] 6.2 Implement Harness-controlled retrieval, read, verify, gap-fill, and stop conditions.
+- [x] 6.3 Enforce `max_rounds`, `max_queries`, `max_source_reads`, `max_memory_hits`, and context budgets.
+- [x] 6.4 Connect RAG context packs to context engineering without placing dynamic results in stable prefix.
+- [x] 6.5 Add bounded RAG tests with fake retrieval and memory ports.
 
 ## 7. Stage 3A Skill Evolution
 

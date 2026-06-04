@@ -1,34 +1,238 @@
 from __future__ import annotations
 
-from framework.harness.rag.models import RAGContextPack, RAGSessionRequest
+from typing import Any
+
+from framework.harness.context.fake import FakeContextAssembler
+from framework.harness.memory.fake import FakeMemoryPort
+from framework.harness.rag.context_pack_assembler import FakeRAGContextPackAssembler
+from framework.harness.rag.gates import RAGGateSuite
+from framework.harness.rag.models import (
+    RAGBudget,
+    RAGContextPack,
+    RAGSessionRequest,
+    RAGSessionSpec,
+    RetrievalGoal,
+    RetrievalOperation,
+    RetrievalPlanCandidate,
+    RetrievalStepSpec,
+)
+from framework.harness.rag.planner import DeterministicRAGPlanner
+from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionResult
+from framework.harness.rag.source_verifier import FakeSourceVerifier
+from framework.harness.retrieval.evidence_pack import EvidencePack
 from framework.harness.retrieval.fake import FakeRetrievalPort
-from framework.harness.retrieval.request import RetrievalRequest
 
 
-class FakeRAGPlanner:
-    def plan(self, request: RAGSessionRequest) -> tuple[RetrievalRequest, ...]:
-        return (RetrievalRequest(query=request.query, limit=5, context_refs=request.context_refs),)
+class FakeRAGPlanner(DeterministicRAGPlanner):
+    def __init__(self, plans: tuple[RetrievalPlanCandidate, ...] = ()) -> None:
+        self.plans = list(plans)
+        self.requests: list[dict[str, Any]] = []
 
-
-class FakeRAGSessionController:
-    def __init__(self, retrieval: FakeRetrievalPort | None = None, planner: FakeRAGPlanner | None = None) -> None:
-        self.retrieval = retrieval or FakeRetrievalPort()
-        self.planner = planner or FakeRAGPlanner()
-        self.requests: list[RAGSessionRequest] = []
-
-    def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
-        self.requests.append(request)
-        retrieval_requests = self.planner.plan(request)
-        evidence = []
-        for retrieval_request in retrieval_requests[: request.max_rounds]:
-            evidence.extend(self.retrieval.retrieve(retrieval_request).packs)
-        return RAGContextPack(
-            pack_id=f"rag://fake/{len(self.requests)}",
-            query=request.query,
-            evidence=tuple(evidence),
-            context_refs=request.context_refs,
-            metadata={"rounds": min(len(retrieval_requests), request.max_rounds)},
+    def plan(self, spec: RAGSessionSpec, *, round_index: int, gap_report: dict[str, Any]) -> RetrievalPlanCandidate:
+        self.requests.append({"spec": spec.to_dict(), "round_index": round_index, "gap_report": dict(gap_report)})
+        if self.plans:
+            return self.plans.pop(0) if len(self.plans) > 1 else self.plans[0]
+        query_text = spec.goal.question
+        missing = tuple(gap_report.get("missing_evidence_types", ()))
+        if missing:
+            query_text = f"{query_text} {' '.join(missing)}"
+        return RetrievalPlanCandidate(
+            candidate_id=f"fake-plan:{spec.session_id}:{round_index + 1}",
+            queries=(
+                RetrievalStepSpec(
+                    step_id=f"fake-query:{round_index + 1}",
+                    operation=RetrievalOperation.SEARCH_CORPUS,
+                    query=query_text,
+                    corpus=spec.allowed_corpora[0],
+                    max_results=5,
+                    metadata={
+                        "scope_ref": spec.source_policy.get("scope_ref"),
+                        "evidence_type": spec.goal.required_evidence_types[min(round_index, len(spec.goal.required_evidence_types) - 1)],
+                    },
+                ),
+            ),
+            source_reading_plan=(
+                RetrievalStepSpec(
+                    step_id=f"fake-source-read:{round_index + 1}",
+                    operation=RetrievalOperation.READ_SOURCE,
+                    query=query_text,
+                    source_refs=("source://paper/sparse-mixture-reader#section=method",),
+                    max_source_reads=1,
+                    metadata={"tool_name": "retrieval.read_source", "scope_ref": spec.source_policy.get("scope_ref")},
+                ),
+            ),
+            memory_recall_plan=(
+                RetrievalStepSpec(
+                    step_id=f"fake-memory:{round_index + 1}",
+                    operation=RetrievalOperation.RECALL_MEMORY,
+                    query=query_text,
+                    memory_namespace=spec.allowed_memory_namespaces[0],
+                    max_results=_per_round_memory_limit(spec.budget.max_memory_hits, spec.budget.max_rounds),
+                    metadata={"scope_ref": spec.source_policy.get("scope_ref")},
+                ),
+            ),
+            expected_evidence=spec.goal.required_evidence_types,
+            expected_gaps=missing,
+            risks=("source_conflict_needs_review",),
+            confidence=0.74,
+            metadata={"planner": "fake-bounded-rag"},
         )
 
 
-__all__ = ["FakeRAGPlanner", "FakeRAGSessionController"]
+class FakeRAGGateSuite(RAGGateSuite):
+    pass
+
+
+class FakeRAGSessionController(BoundedRAGSessionController):
+    def __init__(
+        self,
+        retrieval: FakeRetrievalPort | None = None,
+        planner: FakeRAGPlanner | None = None,
+        memory: FakeMemoryPort | None = None,
+    ) -> None:
+        self.fake_context_assembler = FakeContextAssembler()
+        super().__init__(
+            retrieval=retrieval or FakeRetrievalPort(fake_research_evidence_packs()),
+            memory=memory or FakeMemoryPort(fake_reader_repair_memory()),
+            planner=planner or FakeRAGPlanner(),
+            source_verifier=FakeSourceVerifier(),
+            context_pack_assembler=FakeRAGContextPackAssembler(self.fake_context_assembler),
+            gates=FakeRAGGateSuite(),
+        )
+
+    def run_fake_session(self, spec: RAGSessionSpec | None = None) -> RAGSessionResult:
+        return self.run(spec or fake_rag_session_spec())
+
+    def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
+        return super().build_context_pack(request)
+
+
+def fake_rag_session_spec(
+    *,
+    session_id: str = "rag-session:sparse-mixture-reader",
+    required_evidence_types: tuple[str, ...] = ("method",),
+    budget: RAGBudget | None = None,
+) -> RAGSessionSpec:
+    return RAGSessionSpec(
+        session_id=session_id,
+        run_id="run:research-runtime-fixture",
+        workflow_id="workflow:bounded-rag-fixture",
+        step_id="step:build-evidence-context",
+        goal=RetrievalGoal(
+            goal_id="goal:verify-reader-method",
+            question="How does the sparse mixture reader repair missing method sections?",
+            required_evidence_types=required_evidence_types,
+            target_entities=("Sparse Mixture Reader", "reader repair"),
+            known_context_refs=("paper://sparse-mixture-reader",),
+            missing_information=("method evidence", "repair precedent"),
+            constraints={"scope_ref": "paper://sparse-mixture-reader"},
+        ),
+        allowed_corpora=("research-papers",),
+        allowed_memory_namespaces=("research.reader_repair",),
+        allowed_tools=("retrieval.read_source",),
+        source_policy={"scope_ref": "paper://sparse-mixture-reader", "min_confidence": 0.5},
+        budget=budget or RAGBudget.safe_default(),
+        context_policy={"max_output_tokens": 1024, "reserved_output_tokens": 256},
+        metadata={"fixture": "bounded_agentic_rag"},
+    )
+
+
+def fake_research_evidence_packs() -> tuple[EvidencePack, ...]:
+    return (
+        EvidencePack(
+            evidence_id="evidence:sparse-mixture-reader:method",
+            title="Sparse Mixture Reader method paragraph",
+            summary=(
+                "The method section describes a bounded reader that retrieves abstract, method, "
+                "experiment table, and citation spans before synthesizing a repair candidate."
+            ),
+            source_refs=(
+                "source://paper/sparse-mixture-reader#section=method",
+                "source://paper/sparse-mixture-reader#paragraph=method-3",
+            ),
+            confidence=0.91,
+            freshness="static-fixture",
+            lineage=("retrieval.fake", "paper-section.method", "bounded-rag.fixture"),
+            metadata={
+                "section_refs": ["source://paper/sparse-mixture-reader#paragraph=method-3"],
+                "claim_refs": ["claim://reader-repair#bounded-method-retrieval"],
+            },
+        ),
+        EvidencePack(
+            evidence_id="evidence:sparse-mixture-reader:experiment",
+            title="Experiment table snippet for repair accuracy",
+            summary=(
+                "Table 2 reports reader repair accuracy after adding citation-aware source reads "
+                "and procedural repair memory recall."
+            ),
+            source_refs=(
+                "source://paper/sparse-mixture-reader#table=2",
+                "source://paper/sparse-mixture-reader#citation=14",
+            ),
+            confidence=0.86,
+            freshness="static-fixture",
+            lineage=("retrieval.fake", "paper-table.table-2", "bounded-rag.fixture"),
+            metadata={
+                "section_refs": ["source://paper/sparse-mixture-reader#table=2"],
+                "claim_refs": ["claim://reader-repair#citation-aware-repair"],
+            },
+        ),
+    )
+
+
+def fake_reader_repair_memory() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "memory_ref": "memory://research.reader_repair/success/method-gap-2026-01",
+            "namespace": "research.reader_repair",
+            "case_type": "successful_repair_case",
+            "title": "Recovered missing method section with citation-adjacent source read",
+            "summary": (
+                "A prior reader repair recovered an omitted method paragraph by reading the "
+                "citation-adjacent source and preserving section lineage before synthesis."
+            ),
+            "outcome": "success",
+            "relevance": 0.93,
+            "source_refs": ("source://paper/sparse-mixture-reader#paragraph=method-3",),
+        },
+        {
+            "memory_ref": "memory://research.reader_repair/failure/table-only-2026-02",
+            "namespace": "research.reader_repair",
+            "case_type": "failed_repair_case",
+            "title": "Table-only repair failed when lineage was missing",
+            "summary": (
+                "A previous repair that used only experiment table snippets failed the evidence "
+                "gate because paragraph-level method lineage was absent."
+            ),
+            "outcome": "failure",
+            "relevance": 0.78,
+            "source_refs": ("source://paper/sparse-mixture-reader#table=2",),
+        },
+        {
+            "memory_ref": "memory://research.reader_repair/procedure/citation-aware-method",
+            "namespace": "research.reader_repair",
+            "case_type": "procedural_strategy",
+            "title": "Citation-aware method recovery strategy",
+            "summary": (
+                "When method evidence is sparse, retrieve abstract, method paragraph, table note, "
+                "and cited baseline refs before accepting the repair."
+            ),
+            "outcome": "strategy",
+            "relevance": 0.88,
+            "source_refs": ("procedure://reader-repair/citation-aware-method",),
+        },
+    )
+
+
+def _per_round_memory_limit(total: int, rounds: int) -> int:
+    return max(1, min(4, total // max(rounds, 1) or total or 1))
+
+
+__all__ = [
+    "FakeRAGGateSuite",
+    "FakeRAGPlanner",
+    "FakeRAGSessionController",
+    "fake_rag_session_spec",
+    "fake_reader_repair_memory",
+    "fake_research_evidence_packs",
+]
