@@ -91,10 +91,10 @@
 
 ## 12. Stage 6A Reader Repair Memory
 
-- [ ] 12.1 Implement reader repair memory models and ports under `business/research/reader_repair`.
-- [ ] 12.2 Route repair outcomes to memory first, not active skill mutation.
-- [ ] 12.3 Connect consolidated repair strategies to skill evolution candidate generation.
-- [ ] 12.4 Add tests proving ordinary repair runs cannot publish skill changes.
+- [x] 12.1 Implement reader repair memory models and ports under `business/research/reader_repair`.
+- [x] 12.2 Route repair outcomes to memory first, not active skill mutation.
+- [x] 12.3 Connect consolidated repair strategies to skill evolution candidate generation.
+- [x] 12.4 Add tests proving ordinary repair runs cannot publish skill changes.
 
 ## 13. Stage 7 Research Backend Interface
 

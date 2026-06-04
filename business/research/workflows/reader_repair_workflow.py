@@ -81,10 +81,13 @@ def build_reader_repair_workflow_spec() -> HarnessWorkflowSpec:
         entry_step_id="detect_reader_issue",
         routing_rules=tuple(HarnessRoutingRule(from_step=left.step_id, to_step=right.step_id) for left, right in zip(steps, steps[1:])),
         metadata={
-            "scope": "stage_5_modeling_only",
+            "scope": "stage_6a_reader_repair_memory",
             "publishes_skill": False,
             "writes_memory_directly": False,
             "memory_write_owner": "framework.harness",
+            "memory_namespace": "research.reader_repair",
+            "requires_bounded_rag": True,
+            "requires_subagent_isolation": True,
         },
     )
 
