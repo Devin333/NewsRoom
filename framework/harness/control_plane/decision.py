@@ -18,6 +18,7 @@ class HarnessDecisionType(StrEnum):
     RETRY_STEP = "retry_step"
     REPLAN_STEP = "replan_step"
     ROUTE_TO_STEP = "route_to_step"
+    ROUTE_TO_REPAIR = "route_to_repair"
     WAIT_FOR_APPROVAL = "wait_for_approval"
     FAIL_RUN = "fail_run"
     COMPLETE_RUN = "complete_run"
@@ -43,7 +44,7 @@ class HarnessDecision:
             raise HarnessValidationError("run_id is required")
         if str(self.decided_by).strip() != "harness":
             raise HarnessValidationError("HarnessDecision must be decided_by='harness'")
-        if self.decision_type == HarnessDecisionType.ROUTE_TO_STEP and not self.target_step_id:
+        if self.decision_type in {HarnessDecisionType.ROUTE_TO_STEP, HarnessDecisionType.ROUTE_TO_REPAIR} and not self.target_step_id:
             raise HarnessValidationError("route_to_step requires target_step_id")
         object.__setattr__(self, "run_id", str(self.run_id))
         object.__setattr__(self, "payload", dict(self.payload))

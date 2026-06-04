@@ -17,11 +17,11 @@
 
 ## 2. Stage 2 State Machine And Scheduler
 
-- [ ] 2.1 Implement bounded `PLAN -> EXECUTE -> VERIFY` state transitions.
-- [ ] 2.2 Implement scheduler decisions for `replan`, `retry`, `route_to_repair`, `wait_for_approval`, `halted`, and `failed`.
-- [ ] 2.3 Implement retry, replan, turn, and worker-call budget enforcement.
-- [ ] 2.4 Record phase transition events through Harness event ports.
-- [ ] 2.5 Add deterministic state machine and scheduler tests.
+- [x] 2.1 Implement bounded `PLAN -> EXECUTE -> VERIFY` state transitions.
+- [x] 2.2 Implement scheduler decisions for `replan`, `retry`, `route_to_repair`, `wait_for_approval`, `halted`, and `failed`.
+- [x] 2.3 Implement retry, replan, turn, and worker-call budget enforcement.
+- [x] 2.4 Record phase transition events through Harness event ports.
+- [x] 2.5 Add deterministic state machine and scheduler tests.
 
 ## 3. Stage 3 Seven-Layer Ports
 

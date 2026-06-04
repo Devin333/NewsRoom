@@ -14,9 +14,14 @@ from framework.shared.time import format_datetime, utc_now
 class HarnessRunStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
+    PLANNING = "planning"
+    EXECUTING = "executing"
+    VERIFYING = "verifying"
+    REPLANNING = "replanning"
     WAITING_APPROVAL = "waiting_approval"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    HALTED = "halted"
     CANCELLED = "cancelled"
     BLOCKED = "blocked"
 
