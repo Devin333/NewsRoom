@@ -14,6 +14,7 @@
 | 有界相位状态机 | 每个 step 必须按 `PLAN -> EXECUTE -> VERIFY` 推进；VERIFY 由纯函数 gate 完成，不通过只能受控 replan/retry/halt。 |
 | LLM 只做 worker | LLM 只生成候选结构化内容，不决定下一步，不直接写记忆，不直接调用高风险工具，不判定质量通过。 |
 | Skills 可进化但受控 | LLM 只能生成 skill candidate 或 patch；Harness 负责经验选择、静态校验、离线 eval、晋升、发布和回滚。 |
+| 业务自进化先入记忆 | Reader 修复、论文解析等业务问题先写 episodic/procedural memory；只有稳定策略才进入 skill evolution。 |
 | 业务层表达业务 | `business/research` 只表达 Research 领域模型、业务规则、用例和 workflow spec。 |
 | Research 不依赖旧代码 | 新 Research 不依赖 `business/boards/paper_radar`、旧 paper API、旧 reader payload 或旧兼容 adapter。 |
 | 保留有用资产 | 旧框架层中可复用的 LLM、Tool、Memory、Skills、Artifacts、Events、Workers、Governance 等资产保留。 |
@@ -64,6 +65,7 @@ max_worker_calls
 | 4 | [04-trace-checkpoint-replay.md](04-trace-checkpoint-replay.md) | 实现事件日志、trace、checkpoint 和 replay。 |
 | 5 | [05-research-domain-modeling.md](05-research-domain-modeling.md) | 新建 `business/research` 领域模型、端口、服务和 workflow spec。 |
 | 6 | [06-research-single-paper-loop.md](06-research-single-paper-loop.md) | 跑通单篇论文分析闭环，使用 fake LLM，不做 UI。 |
+| 6A | [06a-reader-repair-memory.md](06a-reader-repair-memory.md) | 加入 Reader Repair Memory / Repair RAG，把 reader 构建问题沉淀为可召回修复经验。 |
 | 7 | [07-research-backend-interface.md](07-research-backend-interface.md) | 新增 Research 后端 service 和 API router，不复用旧 paper API。 |
 | 8 | [08-framework-cleanup.md](08-framework-cleanup.md) | 清理旧框架层，保留有用资产，删除无用旧控制流和业务污染。 |
 | 9 | [09-legacy-business-test-deletion.md](09-legacy-business-test-deletion.md) | 删除不服务新架构的旧业务、旧接口、旧测试和兼容逻辑。 |
@@ -103,6 +105,7 @@ framework/workers
 framework/governance
 framework/shared
 business/research
+business/research/reader_repair
 interfaces/services/research_service.py
 interfaces/api/routers/research.py
 tests/framework/harness
@@ -118,6 +121,7 @@ tests/interfaces/research
 - 不让 `business/research` import `interfaces` 或 `infrastructure`。
 - 不让 LLM 返回值控制 workflow routing。
 - 不让 LLM 直接修改、发布或激活生产 skill；skill 自进化必须经过 Harness gate、held-out eval、版本化发布和 rollback plan。
+- 不让普通 Research/Reader run 因一次修复成功就修改 skill；Reader 修复经验必须先写 memory，再经 consolidate 和 skill evolution 晋升。
 - 不允许没有 `max_replans`、`max_turns` 或 retry budget 的 Harness 运行循环。
 - 不允许用 LLM 自评替代纯函数 VERIFY gate。
 - 不用删除测试来掩盖失败；只有当旧行为明确废弃时才删除旧测试。

@@ -547,6 +547,7 @@ research-reader-answering
 
 - 使用 active skill version。
 - Research run 只产生 SkillExperience。
+- Reader repair run 只产生 ReaderRepairCase、ReaderRepairStrategy 或 SkillExperience seed。
 - skill evolution 作为离线或显式 admin workflow 运行。
 - promotion 后新的 Research run 才消费新 active version。
 
@@ -555,6 +556,35 @@ research-reader-answering
 - 用户触发普通论文分析时直接修改 skill。
 - Research application service 直接 publish skill。
 - 为了让单篇论文通过而临时改 skill。
+- Reader repair 成功一次就直接修改 reader repair skill。
+
+## Reader Repair 输入
+
+阶段 6A 的 Reader Repair Memory 可以作为 skill evolution 的输入，但必须先经过业务记忆固化：
+
+```text
+ReaderIssue
+-> ReaderRepairCase
+-> ReaderRepairStrategy
+-> SkillExperience / SkillPatchSet seed
+-> SkillCandidate
+```
+
+要求：
+
+- 只有 promoted procedural repair strategy 可以进入 skill evolution。
+- failed repair case 可以作为 rejected/avoid pattern 输入，不能作为正向规则直接写入 skill。
+- reader repair skill candidate 必须在 held-out reader repair eval 上超过 active version。
+- table、formula、citation、source lineage 等关键指标不得回退。
+
+可能生成的 skill：
+
+```text
+research-reader-repair
+research-table-repair
+research-citation-repair
+research-formula-repair
+```
 
 ## 测试要求
 

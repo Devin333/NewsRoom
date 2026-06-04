@@ -17,6 +17,7 @@ business/research/
     analysis.py
     quality.py
     reader.py
+    reader_repair.py
   ports/
     __init__.py
     repositories.py
@@ -26,6 +27,7 @@ business/research/
     memory.py
     llm_worker.py
     artifact_store.py
+    repair_memory.py
   services/
     __init__.py
     evidence_builder.py
@@ -34,10 +36,13 @@ business/research/
     quality_gate.py
     citation_verifier.py
     profile_builder.py
+    reader_issue_detector.py
+    reader_repair_gate.py
   workflows/
     __init__.py
     paper_analysis_workflow.py
     paper_reader_workflow.py
+    reader_repair_workflow.py
   application/
     __init__.py
     analyze_paper.py
@@ -178,6 +183,60 @@ quality
 metadata
 ```
 
+### ReaderIssue
+
+字段建议：
+
+```text
+issue_id
+paper_id
+run_id
+step_id
+issue_type
+severity
+error_signature
+symptom
+source_refs
+payload_ref
+detector_evidence
+metadata
+```
+
+### ReaderRepairCase
+
+字段建议：
+
+```text
+repair_case_id
+issue
+repair_strategy
+successful
+verification_results
+payload_before_ref
+payload_after_ref
+source_refs
+constraints
+failure_reason
+metadata
+```
+
+### ReaderRepairStrategy
+
+字段建议：
+
+```text
+strategy_id
+issue_type
+applicability
+steps
+constraints
+known_failures
+confidence
+source_case_refs
+status
+metadata
+```
+
 ## 服务职责
 
 | 服务 | 职责 |
@@ -188,6 +247,8 @@ metadata
 | `CitationVerifier` | 验证 claim 是否有证据支持。 |
 | `ResearchQualityGate` | 产出质量 verdict。 |
 | `ResearchProfileBuilder` | 生成分析/reader payload 的确定性组合逻辑。 |
+| `ReaderIssueDetector` | 从 reader payload、schema result、source lineage 中检测 reader 构建问题。 |
+| `ReaderRepairGate` | 验证修复没有破坏 schema、source lineage、citation、table/formula fidelity。 |
 
 ## Workflow Spec
 
@@ -210,6 +271,24 @@ publish_artifacts
 
 该 workflow 应该可被 `framework/harness` 读取。
 
+`reader_repair_workflow.py` 只定义 reader 修复 workflow，不发布 skill。
+
+建议 step：
+
+```text
+detect_reader_issue
+build_repair_memory_query
+recall_repair_memory
+build_repair_context_pack
+propose_repair_candidate
+verify_repair_candidate
+apply_repair
+verify_reader_payload
+commit_repair_episode_memory
+```
+
+阶段 5 只建模，不实现完整 repair RAG loop；完整闭环在阶段 6A。
+
 ## 测试要求
 
 新增：
@@ -218,7 +297,9 @@ publish_artifacts
 tests/business/research/domain/test_models.py
 tests/business/research/services/test_evidence_builder.py
 tests/business/research/services/test_quality_gate.py
+tests/business/research/reader_repair/test_models.py
 tests/business/research/workflows/test_paper_analysis_workflow.py
+tests/business/research/workflows/test_reader_repair_workflow.py
 tests/architecture/test_research_boundaries.py
 ```
 
@@ -227,7 +308,9 @@ tests/architecture/test_research_boundaries.py
 - domain model 可序列化。
 - evidence pack 记录 lineage。
 - quality gate 能识别无证据 claim。
+- reader issue / repair case / repair strategy model 可序列化。
 - workflow spec step id 不重复。
+- reader repair workflow spec 不发布 skill，不直接写 memory，只声明受控 step。
 - `business/research` 不 import 旧 `business.boards.paper_radar`、`interfaces`、`infrastructure`。
 
 ## 验收命令
@@ -254,10 +337,11 @@ openspec validate harness-research-runtime --strict
 要求：
 1. 新增 business/research，建立 domain、ports、services、workflows、application 结构。
 2. 定义 ResearchPaper、ResearchDocument、ResearchSection、ResearchClaim、ResearchEvidencePack、ResearchAnalysis、ResearchQualityResult、ResearchReaderPayload。
-3. business/research 不允许依赖 business/boards/paper_radar、interfaces、infrastructure。
-4. 定义单篇论文 analysis workflow spec，但不实现完整运行闭环。
-5. 添加 domain、service、workflow、架构边界测试。
-6. 运行 python -m scripts.dev compile、python -m pytest tests/business/research tests/architecture/test_research_boundaries.py -q、openspec validate harness-research-runtime --strict。
-7. 修改完成后提交。
+3. 预留 ReaderIssue、ReaderRepairCase、ReaderRepairStrategy、ReaderRepairContextPack 等 reader repair 领域模型。
+4. business/research 不允许依赖 business/boards/paper_radar、interfaces、infrastructure。
+5. 定义单篇论文 analysis workflow spec 和 reader repair workflow spec，但不实现完整运行闭环。
+6. 添加 domain、service、workflow、架构边界测试。
+7. 运行 python -m scripts.dev compile、python -m pytest tests/business/research tests/architecture/test_research_boundaries.py -q、openspec validate harness-research-runtime --strict。
+8. 修改完成后提交。
 全部回复和问题用中文。
 ```

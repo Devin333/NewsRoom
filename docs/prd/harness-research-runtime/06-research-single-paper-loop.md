@@ -8,6 +8,8 @@ Research 单篇论文闭环必须使用 Harness 的 `PLAN -> EXECUTE -> VERIFY` 
 
 Research 可以消费 active skill version，并把运行结果记录为 `SkillExperience`，但普通论文分析 run 不允许自动晋升或发布 skill。Skills 自进化必须作为独立离线/admin workflow 运行。
 
+Reader payload 构建失败时，阶段 6 只需要能产出明确 failure 和 trace；完整 Reader Repair Memory / Repair RAG 闭环在阶段 6A 实现。
+
 ## 目标流程
 
 ```text
@@ -154,6 +156,7 @@ research-reader-answering
 | reader payload 有章节导航 | 失败。 |
 | source lineage 存在 | 失败。 |
 | LLM 输出没有非法流程字段 | 忽略并记录 warning。 |
+| reader payload 可修复问题有 issue signature | route_to_repair 或 halted，完整修复在阶段 6A。 |
 
 ## Research VERIFY Gates
 
@@ -166,6 +169,7 @@ Research 闭环至少启用这些纯函数 gate：
 | `ResearchScoreRangeGate` | novelty、evidence、reproducibility、reader confidence 等分数必须在合法范围内。 | replan 或 fail。 |
 | `ResearchEvidenceCoverageGate` | 主要 claim 必须有 evidence refs 和 lineage。 | route_to_repair 或 halt。 |
 | `ResearchBudgetGate` | 不超过 `max_turns`、`max_replans`、`max_retries_per_step`。 | halted。 |
+| `ResearchReaderPayloadGate` | reader payload schema、navigation、source lineage 合法。 | route_to_reader_repair 或 fail。 |
 
 建议 Research 默认预算：
 
@@ -188,6 +192,7 @@ research-reader-payload.json
 research-quality-result.json
 harness-trace.json
 harness-transcript.json
+reader-issue.json 如果 reader payload gate 失败
 ```
 
 阶段 6 用 fake artifact store 即可，但 domain/application 不应依赖具体 store。
@@ -215,6 +220,7 @@ tests/business/research/integration/test_single_paper_loop_fake_runtime.py
 - artifact refs 完整。
 - trace 能解释每个 step。
 - skill experience 被记录但不会触发 skill promotion。
+- reader payload gate 失败时产出 reader issue ref，但不在阶段 6 展开 repair RAG。
 - 不依赖旧 paper_radar。
 
 ## 验收命令
@@ -232,6 +238,7 @@ openspec validate harness-research-runtime --strict
 - Harness trace 可导出。
 - Harness transcript 可导出并能复盘 PLAN/EXECUTE/VERIFY。
 - Research 可以产出 SkillExperience refs，但不会自动发布新 skill。
+- Reader payload gate 失败时有明确 issue signature 和 trace，供阶段 6A 修复。
 - 质量门失败路径可测试。
 - replan/halt 路径可测试。
 - 不做 UI，不接旧 API。
@@ -247,12 +254,12 @@ openspec validate harness-research-runtime --strict
 3. 使用 fake LLM、fake repository、fake source provider、fake compiler、fake artifact store 测试，不接真实 UI。
 4. LLM 只生成候选内容，不能决定流程。
 5. 每个 Research step 必须经过 PLAN/EXECUTE/VERIFY，VERIFY 使用纯函数 gate。
-6. 添加 ResearchToolAllowlistGate、ResearchClaimDedupGate、ResearchScoreRangeGate、ResearchEvidenceCoverageGate、ResearchBudgetGate。
+6. 添加 ResearchToolAllowlistGate、ResearchClaimDedupGate、ResearchScoreRangeGate、ResearchEvidenceCoverageGate、ResearchBudgetGate、ResearchReaderPayloadGate。
 7. max_replans 或 max_turns 耗尽时必须受控 halted，并写入 transcript。
 8. 每次 Research skill 调用记录 skill_name、skill_version、package_hash，并可产出 SkillExperience refs。
 9. Research 普通分析 run 不允许调用 SkillPromotionPort，不允许发布新 skill。
 10. 输出 ResearchAnalysis、ResearchReaderPayload、ResearchQualityResult、Harness trace、Harness transcript、SkillExperience refs 和 artifact refs。
-11. 添加完整闭环、质量门失败、非法 LLM 流程字段、replan/halt、去重、分数越界、artifact、trace/transcript、skill experience 不晋升测试。
+11. 添加完整闭环、质量门失败、非法 LLM 流程字段、replan/halt、去重、分数越界、artifact、trace/transcript、skill experience 不晋升、reader issue 生成测试。
 12. 运行 python -m scripts.dev compile、python -m pytest tests/framework/harness tests/business/research -q、openspec validate harness-research-runtime --strict。
 13. 修改完成后提交。
 全部回复和问题用中文。
