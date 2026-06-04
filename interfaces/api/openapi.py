@@ -31,7 +31,6 @@ OPENAPI_TAGS = [
     {"name": "reports", "description": "Report catalog, detail, search, and actions."},
     {"name": "projects", "description": "Projects product module, rankings, tools, cases, lab, collections, and watchlist."},
     {"name": "research", "description": "Research paper analysis, reader payload, Q&A, and Harness trace endpoints."},
-    {"name": "boards", "description": "Business board output DTO generation."},
     {"name": "memory", "description": "Memory search and indexing."},
     {"name": "sources", "description": "Source catalog, health, and probes."},
     {"name": "workers", "description": "Worker and queue status."},

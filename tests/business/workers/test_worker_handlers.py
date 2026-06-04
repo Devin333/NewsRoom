@@ -1,107 +1,8 @@
 from business.workers import (
-    DailyIntelligenceTaskHandler,
     MemoryReindexTaskHandler,
     SourceHealthCheckTaskHandler,
 )
-from framework.specs import WorkflowStatus
-from framework.workers import InMemoryTaskQueue, Task, WorkerLoop
-from framework.workers.models import TaskStatus
-
-
-DAILY_QUEUE = "news:queue:daily"
-
-
-def test_worker_loop_runs_daily_handler_once() -> None:
-    queue = InMemoryTaskQueue()
-    task = Task(
-        task_type="daily_intelligence.run",
-        payload={"profile": "live-offline", "topic": "AI", "source_limit": 1, "run_id": "worker-run"},
-        queue_name=DAILY_QUEUE,
-    )
-    queue.enqueue(task)
-    handler = DailyIntelligenceTaskHandler(run_service=_FakeRunService())
-    worker = WorkerLoop(
-        worker_id="worker-1",
-        queue=queue,
-        handlers={handler.task_type: handler},
-        queue_names=[DAILY_QUEUE],
-    )
-
-    result = worker.run_once()
-
-    assert result.success is True
-    assert result.workflow_run_id == "worker-run"
-    assert result.run_status == "succeeded"
-    assert result.output["run_id"] == "worker-run"
-    assert result.output["artifact_dir"] == "artifacts/worker-run"
-    assert result.output["summary"] == {"title": "Daily summary"}
-    assert task.status == TaskStatus.SUCCEEDED
-    assert [event.event_type for event in worker.events] == ["task_started", "task_succeeded"]
-    assert queue.lease("worker-1", [DAILY_QUEUE]) is None
-
-
-def test_daily_handler_maps_blocked_workflow_to_completed_task() -> None:
-    task = Task(
-        task_type="daily_intelligence.run",
-        payload={"profile": "live-offline", "topic": "AI", "source_limit": 1, "run_id": "blocked-run"},
-    )
-    handler = DailyIntelligenceTaskHandler(
-        run_service=_FakeRunService(
-            status=WorkflowStatus.BLOCKED,
-            error={"error_type": "QualityGateBlocked", "message": "quality gate blocked"},
-            output={"blocked_report": {"title": "Blocked", "reasons": ["quality"]}},
-        )
-    )
-
-    result = handler.handle(task)
-
-    assert result.success is True
-    assert result.status == TaskStatus.SUCCEEDED
-    assert result.task_status == TaskStatus.SUCCEEDED
-    assert result.run_status == "blocked"
-    assert result.report_status == "blocked"
-    assert result.error_type is None
-    assert result.output["status"] == "blocked"
-    assert result.output["error"]["error_type"] == "QualityGateBlocked"
-    assert result.output["output"]["blocked_report"]["title"] == "Blocked"
-
-
-def test_daily_handler_maps_human_review_workflow_to_waiting_task() -> None:
-    task = Task(
-        task_type="daily_intelligence.run",
-        payload={"profile": "live-offline", "topic": "AI", "source_limit": 1, "run_id": "human-run"},
-    )
-    handler = DailyIntelligenceTaskHandler(
-        run_service=_FakeRunService(status=WorkflowStatus.WAITING_FOR_HUMAN)
-    )
-
-    result = handler.handle(task)
-
-    assert result.success is True
-    assert result.status == TaskStatus.WAITING_FOR_APPROVAL
-    assert result.task_status == TaskStatus.WAITING_FOR_APPROVAL
-    assert result.run_status == "waiting_for_human"
-    assert result.output["status"] == "waiting_for_human"
-
-
-def test_daily_handler_maps_failed_workflow_to_failed_task() -> None:
-    task = Task(
-        task_type="daily_intelligence.run",
-        payload={"profile": "live-offline", "topic": "AI", "source_limit": 1, "run_id": "failed-run"},
-    )
-    handler = DailyIntelligenceTaskHandler(
-        run_service=_FakeRunService(
-            status=WorkflowStatus.FAILED,
-            error={"error_type": "StepFailed", "message": "step failed"},
-        )
-    )
-
-    result = handler.handle(task)
-
-    assert result.success is False
-    assert result.status == TaskStatus.FAILED
-    assert result.error_type == "StepFailed"
-    assert result.error_message == "step failed"
+from framework.workers import Task
 
 
 def test_memory_reindex_handler_reindexes_run() -> None:
@@ -165,38 +66,6 @@ def test_source_health_handler_checks_sources_without_daily_workflow() -> None:
     assert result.output["run_id"] == "health-run"
     assert result.output["artifact_dir"] is None
     assert result.output["summary"] == {"healthy": 1, "unhealthy": 0}
-
-
-class _FakeRunService:
-    def __init__(self, *, status=WorkflowStatus.SUCCEEDED, error=None, output=None) -> None:
-        self.status = status
-        self.error = error
-        self.output = output or {"summary": {"title": "Daily summary"}}
-
-    def run_daily(self, *, profile, topic, source_limit, run_id):
-        return _FakeRunResult(
-            run_id=run_id,
-            status=self.status,
-            error=self.error,
-            output=self.output,
-        )
-
-
-class _FakeRunResult:
-    def __init__(self, run_id, *, status, error, output):
-        self.run_id = run_id
-        self.status = status
-        self.error = error
-        self.output = output
-
-    def to_dict(self):
-        return {
-            "run_id": self.run_id,
-            "status": self.status.value,
-            "artifact_dir": f"artifacts/{self.run_id}",
-            "output": dict(self.output),
-            "error": dict(self.error) if self.error else None,
-        }
 
 
 class _FakeMemoryService:

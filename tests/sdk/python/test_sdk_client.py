@@ -3,9 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
-from interfaces.services.worker_service import EnqueuedTaskResult
 from newsroom_sdk import NewsRoomAPIError, NewsRoomClient
 from newsroom_sdk.errors import NewsRoomResponseError
 from newsroom_sdk.transport import HttpTransport
@@ -107,6 +105,7 @@ def test_client_can_use_fastapi_testclient_without_real_server() -> None:
             worker_service_factory=lambda: _FakeWorkerService(),
             report_service_factory=lambda: _FakeReportService(),
             memory_service_factory=lambda: _FakeMemoryService(),
+            research_service_factory=lambda: _FakeResearchService(),
             audit_emitter_factory=None,
         )
     )
@@ -116,11 +115,16 @@ def test_client_can_use_fastapi_testclient_without_real_server() -> None:
 
     client = NewsRoomClient("http://testserver", request_func=request_func)
 
-    run = client.runs.create_daily(topic="AI policy", source_limit=2)
+    run = client.transport.request(
+        "POST",
+        "/api/v1/research/papers/analyze",
+        json={"paperId": "paper-1", "sourceUrl": "https://arxiv.org/abs/2401.00001"},
+    )
     report = client.reports.latest()
     memory = client.memory.search("OpenAI", limit=3)
 
-    assert run["task_status"] == "queued"
+    assert run["status"] == "succeeded"
+    assert run["paperId"] == "paper-1"
     assert report["report_id"] == "report-sdk"
     assert memory["query"] == "OpenAI"
 
@@ -135,20 +139,17 @@ class _Response:
 
 
 class _FakeWorkerService:
-    def enqueue_daily(self, **kwargs):
-        task = Task(
-            task_id="task-sdk",
-            task_type="daily_intelligence.run",
-            payload={
-                "profile": kwargs["profile"],
-                "topic": kwargs["topic"],
-                "source_limit": kwargs["source_limit"],
-                "run_id": kwargs["run_id"],
-            },
-            queue_name=kwargs["queue_name"],
-        )
-        task.status = TaskStatus.QUEUED
-        return EnqueuedTaskResult(task=task, message_id="1-0")
+    pass
+
+
+class _FakeResearchService:
+    def analyze_paper(self, request):
+        return {
+            "runId": request.run_id or "research-run-sdk",
+            "paperId": request.paper_id,
+            "status": "succeeded",
+            "analysisRef": f"artifact://{request.run_id or 'research-run-sdk'}/analysis",
+        }
 
 
 class _FakeReportService:

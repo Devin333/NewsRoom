@@ -109,7 +109,7 @@ def test_prd_context_models_compose_run_board_and_analysis_context() -> None:
         created_at=datetime(2026, 5, 20),
     )
     board_context = BoardContext(
-        board_type=BoardType.PAPER_RADAR,
+        board_type=BoardType.RESEARCH,
         source_limit=5,
         time_window=TimeWindow(start_at=window.start_at - timedelta(days=6), end_at=window.end_at),
     )
@@ -117,7 +117,7 @@ def test_prd_context_models_compose_run_board_and_analysis_context() -> None:
     context = AnalysisContext(run_context=run_context, board_context=board_context, taxonomy_version="v1")
 
     assert run_context.created_at.tzinfo == UTC
-    assert context.board_type == BoardType.PAPER_RADAR
+    assert context.board_type == BoardType.RESEARCH
     assert context.time_window == board_context.time_window
     assert context.enable_llm is True
 

@@ -16,84 +16,6 @@ def test_news_cli_schedules_list_json(monkeypatch, capsys) -> None:
     assert _FakeScheduleService.last_instance.list_calls == [{"enabled_only": True}]
 
 
-def test_news_cli_schedules_add_daily_interval_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(schedule_commands, "ScheduleApplicationService", _FakeScheduleService)
-
-    exit_code = news_cli.main(
-        [
-            "schedules",
-            "add-daily",
-            "--schedule-id",
-            "daily",
-            "--trigger-type",
-            "interval",
-            "--interval-seconds",
-            "3600",
-            "--run-at",
-            "2026-05-11T00:00:00Z",
-            "--profile",
-            "live-offline",
-            "--topic",
-            "AI policy",
-            "--source-limit",
-            "2",
-            "--json",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    payload = json.loads(captured.out)
-    upsert_call = _FakeScheduleService.last_instance.upsert_daily_calls[0]
-    assert exit_code == 0
-    assert payload["schedule_id"] == "daily"
-    assert upsert_call["schedule_id"] == "daily"
-    assert upsert_call["trigger_type"] == "interval"
-    assert upsert_call["interval_seconds"] == 3600
-    assert upsert_call["run_at"].isoformat().replace("+00:00", "Z") == "2026-05-11T00:00:00Z"
-    assert upsert_call["profile"] == "live-offline"
-    assert upsert_call["topic"] == "AI policy"
-    assert upsert_call["source_limit"] == 2
-
-
-def test_news_cli_schedules_add_paper_ingest_interval_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(schedule_commands, "ScheduleApplicationService", _FakeScheduleService)
-
-    exit_code = news_cli.main(
-        [
-            "schedules",
-            "add-paper-ingest",
-            "--schedule-id",
-            "papers-ingest",
-            "--trigger-type",
-            "interval",
-            "--interval-seconds",
-            "21600",
-            "--run-at",
-            "2026-05-11T00:00:00Z",
-            "--candidate-limit",
-            "80",
-            "--min-github-stars",
-            "25",
-            "--queue-name",
-            "news:queue:papers",
-            "--json",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    payload = json.loads(captured.out)
-    upsert_call = _FakeScheduleService.last_instance.upsert_paper_ingest_calls[0]
-    assert exit_code == 0
-    assert payload["schedule_id"] == "papers-ingest"
-    assert upsert_call["schedule_id"] == "papers-ingest"
-    assert upsert_call["trigger_type"] == "interval"
-    assert upsert_call["interval_seconds"] == 21600
-    assert upsert_call["run_at"].isoformat().replace("+00:00", "Z") == "2026-05-11T00:00:00Z"
-    assert upsert_call["candidate_limit"] == 80
-    assert upsert_call["min_github_stars"] == 25
-    assert upsert_call["queue_name"] == "news:queue:papers"
-
-
 def test_news_cli_schedules_tick_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(schedule_commands, "ScheduleApplicationService", _FakeScheduleService)
 
@@ -152,7 +74,7 @@ def test_news_cli_schedules_trigger_json(monkeypatch, capsys) -> None:
         [
             "schedules",
             "trigger",
-            "manual-daily",
+            "manual-memory-reindex",
             "--now",
             "2026-05-11T01:05:00Z",
             "--json",
@@ -163,8 +85,8 @@ def test_news_cli_schedules_trigger_json(monkeypatch, capsys) -> None:
     payload = json.loads(captured.out)
     instance = _FakeScheduleService.last_instance
     assert exit_code == 0
-    assert payload["schedule_id"] == "manual-daily"
-    assert instance.trigger_calls[0]["schedule_id"] == "manual-daily"
+    assert payload["schedule_id"] == "manual-memory-reindex"
+    assert instance.trigger_calls[0]["schedule_id"] == "manual-memory-reindex"
     assert instance.trigger_calls[0]["now"].isoformat().replace("+00:00", "Z") == "2026-05-11T01:05:00Z"
 
 
@@ -177,8 +99,6 @@ class _FakeScheduleService:
         self.tick_calls = []
         self.trigger_calls = []
         self.run_loop_calls = []
-        self.upsert_daily_calls = []
-        self.upsert_paper_ingest_calls = []
         _FakeScheduleService.last_instance = self
 
     def list_schedules(self, *, enabled_only=False):
@@ -192,43 +112,11 @@ class _FakeScheduleService:
                             "schedule_id": "daily",
                             "trigger_type": "interval",
                             "enabled": True,
-                            "task_type": "daily_intelligence.run",
-                            "queue_name": "news:queue:daily",
+                            "task_type": "memory.reindex",
+                            "queue_name": "news:queue:memory",
                         }
                     }
                 ],
-            }
-        )
-
-    def upsert_daily_schedule(self, **kwargs):
-        self.upsert_daily_calls.append(kwargs)
-        return _Result(
-            {
-                "schedule_id": kwargs["schedule_id"],
-                "schedule": {
-                    "spec": {
-                        "schedule_id": kwargs["schedule_id"],
-                        "trigger_type": kwargs["trigger_type"],
-                        "task_type": "daily_intelligence.run",
-                        "queue_name": kwargs["queue_name"],
-                    }
-                },
-            }
-        )
-
-    def upsert_paper_ingest_schedule(self, **kwargs):
-        self.upsert_paper_ingest_calls.append(kwargs)
-        return _Result(
-            {
-                "schedule_id": kwargs["schedule_id"],
-                "schedule": {
-                    "spec": {
-                        "schedule_id": kwargs["schedule_id"],
-                        "trigger_type": kwargs["trigger_type"],
-                        "task_type": "papers.ingest_github_arxiv_daily",
-                        "queue_name": kwargs["queue_name"],
-                    }
-                },
             }
         )
 

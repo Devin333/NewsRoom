@@ -7,7 +7,7 @@ from interfaces.cli.news import build_parser, main
 
 
 CORE_COMMANDS = {
-    "run",
+    "api",
     "reports",
     "subscriptions",
     "entities",
@@ -19,7 +19,7 @@ CORE_COMMANDS = {
     "storage",
     "artifacts",
     "tools",
-    "dev",
+    "runs",
 }
 
 

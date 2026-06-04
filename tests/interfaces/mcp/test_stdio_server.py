@@ -9,7 +9,7 @@ def test_stdio_handles_tools_list() -> None:
 
     assert response["id"] == 1
     tool_names = [tool["name"] for tool in response["result"]["tools"]]
-    assert tool_names[0] == "news.daily.enqueue"
+    assert "news.research.analyze_paper" in tool_names
     assert "news.approval.submit" in tool_names
     assert "news.worker.status" in tool_names
     assert "news.queue.status" in tool_names
@@ -302,5 +302,5 @@ def _resource_payload(uri):
     if uri.startswith("news://workers"):
         return {"worker_count": 1, "workers": [{"worker_id": "worker-1"}]}
     if uri == "news://queues":
-        return {"queue_count": 1, "queues": [{"queue_name": "news:queue:daily"}]}
+        return {"queue_count": 1, "queues": [{"queue_name": "news:queue:memory"}]}
     return {"source_count": 1}

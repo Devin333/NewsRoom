@@ -9,14 +9,11 @@ from interfaces.cli.commands import (
     api,
     approvals,
     artifacts,
-    business,
-    dev,
     diagnose,
     entities,
     mcp,
     memory,
     reports,
-    run,
     runs,
     schedules,
     sources,
@@ -28,7 +25,6 @@ from interfaces.cli.commands import (
 
 
 COMMAND_MODULES = (
-    run,
     reports,
     subscriptions,
     entities,
@@ -42,10 +38,8 @@ COMMAND_MODULES = (
     sources,
     runs,
     artifacts,
-    business,
     tools,
     mcp,
-    dev,
 )
 
 

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from business.boards.cross_board.profiles import daily_workflow_ids
 from business.layers.output.report_quality_projection import (
     normalize_quality_result_records,
     project_report_quality_payload,
@@ -120,7 +119,7 @@ class ReportApplicationService:
             reports=self.repository.list_reports(
                 limit=limit,
                 workflow_id=workflow_id,
-                workflow_ids=_workflow_ids_for_family(workflow_family),
+                workflow_ids=None,
             ),
         )
 
@@ -256,14 +255,3 @@ def _quality_result_records(repository: Any, run_id: str) -> list[dict[str, Any]
     list_quality_results = getattr(repository, "list_quality_results", None)
     raw_quality_results = list_quality_results(run_id) if callable(list_quality_results) else []
     return normalize_quality_result_records(raw_quality_results)
-
-
-def _workflow_ids_for_family(workflow_family: str | None) -> tuple[str, ...] | None:
-    if workflow_family is None:
-        return None
-    normalized = workflow_family.strip().lower()
-    if not normalized:
-        return None
-    if normalized == "daily":
-        return daily_workflow_ids()
-    raise ValueError(f"unsupported workflow_family: {workflow_family}")

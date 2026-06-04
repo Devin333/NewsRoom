@@ -17,25 +17,6 @@ class RunsResource:
             json=_without_none({"workflow_id": workflow_id, **kwargs}),
         )
 
-    def create_daily(
-        self,
-        topic: str = "AI",
-        profile: str = "live-offline",
-        source_limit: int = 3,
-        async_run: bool = True,
-        run_id: str | None = None,
-        queue_name: str | None = None,
-    ) -> JsonDict:
-        return self.create(
-            "daily",
-            topic=topic,
-            profile=profile,
-            source_limit=source_limit,
-            async_run=async_run,
-            run_id=run_id,
-            queue_name=queue_name,
-        )
-
     def list(
         self,
         limit: int = 20,

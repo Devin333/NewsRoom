@@ -2,20 +2,12 @@
 
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.auth_service import AuthApplicationService
-from interfaces.services.board_service import BoardApplicationService
-from interfaces.services.business_acceptance_service import BusinessAcceptanceService
-from interfaces.services.daily_run_service import DailyRunApplicationService
-from interfaces.services.run_service import LiveSmokeResult, RunApplicationService
-from interfaces.services.weekly_run_service import WeeklyRunApplicationService
+from interfaces.services.run_service import RunApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
-from interfaces.services.paper_service import PapersApplicationService
-from interfaces.services.paper_reader_interaction_service import PaperReaderInteractionApplicationService
-from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
-from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
 from interfaces.services.project_service import ProjectApplicationService, ProjectsApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -29,26 +21,17 @@ from interfaces.services.tool_service import ToolApplicationService
 __all__ = [
     "ApprovalApplicationService",
     "AuthApplicationService",
-    "BoardApplicationService",
-    "BusinessAcceptanceService",
-    "DailyRunApplicationService",
     "DiagnosticApplicationService",
     "EntityTrackingApplicationService",
     "ArtifactInspectionService",
     "MemoryApplicationService",
     "MCPApplicationService",
-    "PapersApplicationService",
-    "PaperReaderInteractionApplicationService",
-    "PaperReaderNotesApplicationService",
-    "PaperUserStateApplicationService",
     "ProjectApplicationService",
     "ProjectsApplicationService",
     "ResearchApplicationService",
     "ReportApplicationService",
     "RunInspectionService",
     "RunApplicationService",
-    "WeeklyRunApplicationService",
-    "LiveSmokeResult",
     "ScheduleApplicationService",
     "SourceApplicationService",
     "StorageApplicationService",

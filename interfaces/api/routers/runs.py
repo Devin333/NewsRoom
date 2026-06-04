@@ -5,99 +5,16 @@ from fastapi.responses import StreamingResponse
 
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.models import (
-    DailyRunRequest,
     RunMarkBlockedResolvedRequest,
     RunOperationRequest,
-    RunRequest,
-    RunResponse,
     RunRerunFromStepRequest,
     RunResumeWithPatchRequest,
     RunSkipStepRequest,
-    WeeklyRunRequest,
 )
 
 
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     router = APIRouter()
-
-    @router.post("/api/v1/runs")
-    def submit_run(request: RunRequest):
-        workflow_id = request.workflow_id.strip().lower()
-        try:
-            if workflow_id in {"daily", "daily-intelligence", "daily_intelligence"}:
-                source_limit = request.source_limit or request.max_items or 3
-                if request.async_run:
-                    result = services.worker_service_factory().enqueue_daily(
-                        profile=request.profile,
-                        topic=request.topic or "AI",
-                        source_limit=source_limit,
-                        run_id=request.run_id,
-                        queue_name=request.queue_name,
-                    )
-                    data = RunResponse(
-                        run_id=request.run_id,
-                        task_id=result.task.task_id,
-                        status="queued",
-                        task_status=result.task.status.value,
-                        message=f"queued as {result.message_id}",
-                    )
-                    return helpers.success(helpers.model_to_dict(data))
-                result = services.run_service_factory().run_daily(
-                    profile=request.profile,
-                    topic=request.topic or "AI",
-                    source_limit=source_limit,
-                    run_id=request.run_id,
-                )
-                return helpers.success(helpers.run_result_response(result))
-            if workflow_id in {"weekly", "weekly-intelligence", "weekly_intelligence"}:
-                result = services.run_service_factory().run_weekly(
-                    language=request.language,
-                    topic=request.topic,
-                    source_limit=request.source_limit or request.max_items or 20,
-                    run_id=request.run_id,
-                )
-                return helpers.success(helpers.run_result_response(result))
-        except ValueError as exc:
-            return helpers.error(status_code=400, code="invalid_run_request", message=str(exc))
-        return helpers.error(
-            status_code=404,
-            code="workflow_not_found",
-            message=f"unknown workflow_id: {request.workflow_id}",
-            user_action_required=True,
-        )
-
-    @router.post("/api/v1/runs/daily")
-    def submit_daily_run(request: DailyRunRequest):
-        result = services.worker_service_factory().enqueue_daily(
-            profile=request.profile,
-            topic=request.topic,
-            source_limit=request.source_limit,
-            run_id=request.run_id,
-            queue_name=request.queue_name,
-        )
-        data = RunResponse(
-            run_id=request.run_id,
-            task_id=result.task.task_id,
-            status="queued",
-            task_status=result.task.status.value,
-            message=f"queued as {result.message_id}",
-        )
-        return helpers.success(helpers.model_to_dict(data))
-
-    @router.post("/api/v1/runs/weekly")
-    def run_weekly(request: WeeklyRunRequest):
-        try:
-            result = services.run_service_factory().run_weekly(
-                language=request.language,
-                topic=request.topic,
-                source_limit=request.source_limit,
-                period_start=request.period_start,
-                period_end=request.period_end,
-                run_id=request.run_id,
-            )
-        except ValueError as exc:
-            return helpers.error(status_code=400, code="invalid_weekly_run_request", message=str(exc))
-        return helpers.success(helpers.run_result_response(result))
 
     @router.get("/api/v1/runs")
     def list_runs(

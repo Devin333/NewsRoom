@@ -3,12 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from business.boards.paper_radar.tools import register_arxiv_tools
-from business.boards.project_radar.tools import register_github_tools
 from business.layers.analysis.tools import register_quality_tools
 from business.layers.output.memory_tools import register_memory_index_tools
 from business.layers.output.postgres_tools import register_postgres_tools
 from business.layers.output.tools import register_report_tools
+from business.layers.signal.connector_tools import register_arxiv_tools, register_github_tools
 from business.layers.signal.tools import FetchText, register_source_tools
 from framework.artifacts import ArtifactManager
 from framework.memory import MemoryRuntime

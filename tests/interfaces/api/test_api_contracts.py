@@ -51,8 +51,8 @@ def test_api_validation_error_uses_contract_envelope() -> None:
     client = TestClient(create_app(audit_emitter_factory=None))
 
     response = client.post(
-        "/api/v1/runs/daily",
-        json={"profile": "live-offline", "topic": "AI", "source_limit": 0},
+        "/api/v1/research/papers/analyze",
+        json={"sourceUrl": "https://arxiv.org/abs/2401.00001"},
         headers={"X-Request-ID": "contract-invalid"},
     )
     payload = response.json()
@@ -65,7 +65,7 @@ def test_api_validation_error_uses_contract_envelope() -> None:
     assert payload["error"]["code"] == ApiErrorCode.INVALID_REQUEST.value
     assert payload["error"]["request_id"] == payload["request_id"]
     assert payload["error"]["user_action_required"] is True
-    assert payload["error"]["details"]["errors"][0]["loc"] == ["body", "source_limit"]
+    assert payload["error"]["details"]["errors"][0]["loc"] == ["body", "paperId"]
 
 
 def test_api_unknown_route_uses_contract_envelope() -> None:

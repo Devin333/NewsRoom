@@ -13,9 +13,9 @@ REQUIRED_DOCS = [
 ]
 
 REQUIRED_EXAMPLES = [
-    "examples/api/run_daily.py",
+    "examples/api/analyze_research_paper.py",
     "examples/api/list_reports.py",
-    "examples/sdk/run_daily.py",
+    "examples/sdk/analyze_research_paper.py",
     "examples/sdk/latest_report.py",
     "examples/mcp/read_latest_report.py",
 ]

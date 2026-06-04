@@ -43,15 +43,8 @@ from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.run_report_projection import project_run_report_for_interface
 from interfaces.services.entity_service import EntityTrackingApplicationService
-from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
-from interfaces.services.paper_service import PapersApplicationService
-from interfaces.services.paper_ingest_service import PaperIngestApplicationService
-from interfaces.services.paper_reader_interaction_service import PaperReaderInteractionApplicationService
-from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
-from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
-from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
 from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -81,14 +74,7 @@ ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
-BoardServiceFactory = Callable[[], BoardApplicationService]
-PapersServiceFactory = Callable[[], PapersApplicationService]
-PaperIngestServiceFactory = Callable[[], PaperIngestApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
-PaperReaderInteractionServiceFactory = Callable[[], PaperReaderInteractionApplicationService]
-PaperReaderNotesServiceFactory = Callable[[], PaperReaderNotesApplicationService]
-PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
-PaperVisualCompilerServiceFactory = Callable[[], PaperVisualCompilerApplicationService]
 ProjectServiceFactory = Callable[[], ProjectApplicationService]
 ResearchServiceFactory = Callable[[], ResearchApplicationService]
 AuditEmitterFactory = Callable[[], AuditEmitter | None]
@@ -112,14 +98,7 @@ def create_app(
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
-    board_service_factory: BoardServiceFactory = BoardApplicationService,
-    papers_service_factory: PapersServiceFactory = PapersApplicationService,
-    paper_ingest_service_factory: PaperIngestServiceFactory = PaperIngestApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
-    paper_reader_interaction_service_factory: PaperReaderInteractionServiceFactory = PaperReaderInteractionApplicationService,
-    paper_reader_notes_service_factory: PaperReaderNotesServiceFactory = PaperReaderNotesApplicationService,
-    paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
-    paper_visual_compiler_service_factory: PaperVisualCompilerServiceFactory = PaperVisualCompilerApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
     research_service_factory: ResearchServiceFactory = ResearchApplicationService,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
@@ -253,6 +232,7 @@ def create_app(
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
         approval_service_factory=approval_service_factory,
+        research_service_factory=research_service_factory,
     )
     services = build_api_services(
         worker_service_factory=worker_service_factory,
@@ -270,14 +250,7 @@ def create_app(
         storage_service_factory=storage_service_factory,
         schedule_service_factory=schedule_service_factory,
         approval_service_factory=approval_service_factory,
-        board_service_factory=board_service_factory,
-        papers_service_factory=papers_service_factory,
-        paper_ingest_service_factory=paper_ingest_service_factory,
         auth_service_factory=auth_service_factory,
-        paper_reader_interaction_service_factory=paper_reader_interaction_service_factory,
-        paper_reader_notes_service_factory=paper_reader_notes_service_factory,
-        paper_user_state_service_factory=paper_user_state_service_factory,
-        paper_visual_compiler_service_factory=paper_visual_compiler_service_factory,
         project_service_factory=project_service_factory,
         research_service_factory=research_service_factory,
     )
@@ -321,6 +294,7 @@ def _mcp_service_factory(
     artifact_service_factory: ArtifactInspectionServiceFactory,
     storage_service_factory: StorageServiceFactory,
     approval_service_factory: ApprovalServiceFactory,
+    research_service_factory: ResearchServiceFactory,
 ) -> MCPServiceFactory:
     if mcp_service_factory is not MCPApplicationService:
         return mcp_service_factory
@@ -340,6 +314,7 @@ def _mcp_service_factory(
             artifact_service_factory=artifact_service_factory,
             storage_service_factory=storage_service_factory,
             approval_service_factory=approval_service_factory,
+            research_service_factory=research_service_factory,
         )
 
     return factory
@@ -711,16 +686,10 @@ def _required_api_permission(method: str, path: str) -> str | None:
         return "read:reports"
     if resource == "sources":
         return "read:reports"
-    if resource == "papers":
-        if len(parts) >= 4 and parts[3] == "ops":
-            return "papers:ops"
-        if method == "POST" and len(parts) >= 5 and parts[4] == "compile":
-            return "papers:ops"
-        return "papers:read" if method == "GET" else "papers:write"
     if resource == "projects":
         return "read:reports" if method == "GET" else "write:runs"
     if resource == "research":
-        return "papers:read" if method == "GET" else "papers:write"
+        return "read:reports" if method == "GET" else "write:runs"
     if resource in {"workers", "queues"}:
         return "read:reports"
     if resource == "schedules":
@@ -731,8 +700,6 @@ def _required_api_permission(method: str, path: str) -> str | None:
         return "read:reports" if method == "GET" else "write:runs"
     if resource == "subscriptions":
         return "read:reports" if method == "GET" else "manage:schedules"
-    if resource == "boards":
-        return "read:reports" if method == "GET" else "write:runs"
     if resource == "storage":
         return "admin:storage"
     if resource == "artifacts":

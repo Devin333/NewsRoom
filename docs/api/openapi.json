@@ -456,57 +456,6 @@
         "title": "ApprovalView",
         "type": "object"
       },
-      "ApprovalWorkflowResumeRequest": {
-        "properties": {
-          "checkpoint_store_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Checkpoint Store Path"
-          },
-          "decision_key": {
-            "default": "human_review_decision",
-            "minLength": 1,
-            "title": "Decision Key",
-            "type": "string"
-          },
-          "profile": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
-          },
-          "workflow_id": {
-            "default": "daily",
-            "minLength": 1,
-            "title": "Workflow Id",
-            "type": "string"
-          }
-        },
-        "title": "ApprovalWorkflowResumeRequest",
-        "type": "object"
-      },
       "ArxivSourceFetchRequest": {
         "properties": {
           "limit": {
@@ -567,144 +516,261 @@
         "title": "AuthLogoutRequest",
         "type": "object"
       },
-      "BoardOutputRequest": {
+      "CaseExplainRequest": {
+        "additionalProperties": false,
         "properties": {
-          "items": {
+          "style": {
+            "default": "plain",
+            "enum": [
+              "plain",
+              "technical",
+              "migration"
+            ],
+            "title": "Style",
+            "type": "string"
+          },
+          "user_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Context"
+          }
+        },
+        "title": "CaseExplainRequest",
+        "type": "object"
+      },
+      "CaseMapRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "constraints": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "type": "string"
             },
-            "title": "Items",
+            "title": "Constraints",
+            "type": "array"
+          },
+          "target_module": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Module"
+          },
+          "user_context": {
+            "title": "User Context",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_context"
+        ],
+        "title": "CaseMapRequest",
+        "type": "object"
+      },
+      "CollectionCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "collection_type": {
+            "$ref": "#/components/schemas/CollectionType",
+            "default": "topic"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "learning_goals": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Learning Goals",
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "target_audience": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Audience",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description"
+        ],
+        "title": "CollectionCreateRequest",
+        "type": "object"
+      },
+      "CollectionGenerateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "case_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Case Ids",
+            "type": "array"
+          },
+          "collection_type": {
+            "$ref": "#/components/schemas/CollectionType",
+            "default": "topic"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "project_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Project Ids",
             "type": "array"
           },
           "topic": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Topic"
-          }
-        },
-        "title": "BoardOutputRequest",
-        "type": "object"
-      },
-      "DailyRunRequest": {
-        "properties": {
-          "profile": {
-            "default": "live-offline",
-            "enum": [
-              "live",
-              "live-offline",
-              "agentic-offline",
-              "agentic-live"
-            ],
-            "title": "Profile",
-            "type": "string"
-          },
-          "queue_name": {
-            "default": "news:queue:daily",
-            "title": "Queue Name",
-            "type": "string"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
-          },
-          "source_limit": {
-            "default": 3,
-            "minimum": 1.0,
-            "title": "Source Limit",
-            "type": "integer"
-          },
-          "topic": {
-            "default": "AI",
             "title": "Topic",
             "type": "string"
           }
         },
-        "title": "DailyRunRequest",
+        "required": [
+          "topic"
+        ],
+        "title": "CollectionGenerateRequest",
         "type": "object"
       },
-      "DailyScheduleRequest": {
+      "CollectionItemCreateRequest": {
+        "additionalProperties": false,
         "properties": {
-          "interval_seconds": {
-            "default": 86400,
-            "minimum": 1.0,
-            "title": "Interval Seconds",
-            "type": "integer"
-          },
-          "name": {
-            "default": "Daily intelligence",
-            "title": "Name",
-            "type": "string"
-          },
-          "profile": {
-            "default": "live-offline",
-            "enum": [
-              "live",
-              "live-offline",
-              "agentic-offline",
-              "agentic-live"
-            ],
-            "title": "Profile",
-            "type": "string"
-          },
-          "queue_name": {
-            "default": "news:queue:daily",
-            "title": "Queue Name",
-            "type": "string"
-          },
-          "run_at": {
+          "difficulty": {
             "anyOf": [
               {
-                "format": "date-time",
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Run At"
+            "title": "Difficulty"
           },
-          "schedule_id": {
-            "default": "daily-intelligence",
-            "title": "Schedule Id",
-            "type": "string"
-          },
-          "source_limit": {
-            "default": 3,
-            "minimum": 1.0,
-            "title": "Source Limit",
-            "type": "integer"
-          },
-          "topic": {
-            "default": "AI",
-            "title": "Topic",
-            "type": "string"
-          },
-          "trigger_type": {
-            "default": "interval",
-            "enum": [
-              "interval",
-              "manual"
+          "external_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Trigger Type",
+            "title": "External Url"
+          },
+          "item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Id"
+          },
+          "item_type": {
+            "enum": [
+              "project",
+              "tool",
+              "case",
+              "pattern",
+              "external_link"
+            ],
+            "title": "Item Type",
+            "type": "string"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "recommended_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommended Action"
+          },
+          "title": {
+            "title": "Title",
             "type": "string"
           }
         },
-        "title": "DailyScheduleRequest",
+        "required": [
+          "item_type",
+          "title",
+          "reason"
+        ],
+        "title": "CollectionItemCreateRequest",
         "type": "object"
+      },
+      "CollectionType": {
+        "enum": [
+          "topic",
+          "toolset",
+          "casebook",
+          "watchpack",
+          "ui_reference",
+          "implementation_path"
+        ],
+        "title": "CollectionType",
+        "type": "string"
       },
       "EntityCreateRequest": {
         "properties": {
@@ -911,6 +977,57 @@
           "answer"
         ],
         "title": "LabAnswerRequest",
+        "type": "object"
+      },
+      "LabNodeExplainRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "style": {
+            "default": "plain",
+            "enum": [
+              "plain",
+              "technical"
+            ],
+            "title": "Style",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id"
+        ],
+        "title": "LabNodeExplainRequest",
+        "type": "object"
+      },
+      "LabSaveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "default": "saved",
+            "enum": [
+              "saved",
+              "adopted",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "LabSaveRequest",
         "type": "object"
       },
       "LabSessionRequest": {
@@ -1230,841 +1347,6 @@
         "title": "PageRequest",
         "type": "object"
       },
-      "PaperAskRequest": {
-        "properties": {
-          "locale": {
-            "default": "en",
-            "pattern": "^(zh|en)$",
-            "title": "Locale",
-            "type": "string"
-          },
-          "question": {
-            "maxLength": 1000,
-            "minLength": 1,
-            "title": "Question",
-            "type": "string"
-          }
-        },
-        "required": [
-          "question"
-        ],
-        "title": "PaperAskRequest",
-        "type": "object"
-      },
-      "PaperCitationBackfillTriggerRequest": {
-        "properties": {
-          "batchSize": {
-            "default": 50,
-            "maximum": 200.0,
-            "minimum": 1.0,
-            "title": "Batchsize",
-            "type": "integer"
-          },
-          "limit": {
-            "anyOf": [
-              {
-                "maximum": 100000.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Limit"
-          },
-          "runId": {
-            "anyOf": [
-              {
-                "maxLength": 120,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Runid"
-          }
-        },
-        "title": "PaperCitationBackfillTriggerRequest",
-        "type": "object"
-      },
-      "PaperClassificationBackfillTriggerRequest": {
-        "properties": {
-          "batchSize": {
-            "default": 25,
-            "maximum": 500.0,
-            "minimum": 1.0,
-            "title": "Batchsize",
-            "type": "integer"
-          },
-          "limit": {
-            "anyOf": [
-              {
-                "maximum": 100000.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Limit"
-          },
-          "runId": {
-            "anyOf": [
-              {
-                "maxLength": 120,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Runid"
-          }
-        },
-        "title": "PaperClassificationBackfillTriggerRequest",
-        "type": "object"
-      },
-      "PaperIngestTriggerRequest": {
-        "properties": {
-          "candidateLimit": {
-            "anyOf": [
-              {
-                "maximum": 500.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidatelimit"
-          },
-          "minGithubStars": {
-            "anyOf": [
-              {
-                "maximum": 1000000.0,
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mingithubstars"
-          },
-          "runId": {
-            "anyOf": [
-              {
-                "maxLength": 120,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Runid"
-          }
-        },
-        "title": "PaperIngestTriggerRequest",
-        "type": "object"
-      },
-      "PaperReaderBlockTargetRequest": {
-        "properties": {
-          "assetId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assetid"
-          },
-          "blockId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Blockid"
-          },
-          "metadata": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Metadata"
-          },
-          "pageNumber": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pagenumber"
-          },
-          "paragraphId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paragraphid"
-          },
-          "sectionId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sectionid"
-          },
-          "sourceBox": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "number"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sourcebox"
-          },
-          "targetType": {
-            "pattern": "^(text_selection|paragraph|figure|table|equation)$",
-            "title": "Targettype",
-            "type": "string"
-          }
-        },
-        "required": [
-          "targetType"
-        ],
-        "title": "PaperReaderBlockTargetRequest",
-        "type": "object"
-      },
-      "PaperReaderEventRequest": {
-        "properties": {
-          "paragraphId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paragraphid"
-          },
-          "payload": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payload"
-          },
-          "sectionId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sectionid"
-          },
-          "selectedText": {
-            "anyOf": [
-              {
-                "maxLength": 8000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Selectedtext"
-          },
-          "selectionId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Selectionid"
-          },
-          "surroundingText": {
-            "anyOf": [
-              {
-                "maxLength": 16000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Surroundingtext"
-          },
-          "target": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PaperReaderBlockTargetRequest"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "type": {
-            "pattern": "^(selection_created|selection_discarded|selection_updated|note_updated|explanation_generated|example_generated|confusion_marked|confusion_unmarked|reader_settings_changed|drawer_resized|toc_navigated|reader_progress_sampled|figure_explanation_requested|figure_explanation_generated|table_explanation_requested|table_explanation_generated)$",
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "title": "PaperReaderEventRequest",
-        "type": "object"
-      },
-      "PaperReaderNoteAnchorRequest": {
-        "properties": {
-          "pageNumber": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pagenumber"
-          },
-          "quote": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quote"
-          },
-          "rects": {
-            "anyOf": [
-              {
-                "items": {
-                  "additionalProperties": {
-                    "type": "number"
-                  },
-                  "type": "object"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rects"
-          },
-          "textEnd": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Textend"
-          },
-          "textStart": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Textstart"
-          }
-        },
-        "title": "PaperReaderNoteAnchorRequest",
-        "type": "object"
-      },
-      "PaperReaderNoteCreateRequest": {
-        "properties": {
-          "anchor": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PaperReaderNoteAnchorRequest"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "color": {
-            "default": "yellow",
-            "pattern": "^(yellow|green|blue|pink)$",
-            "title": "Color",
-            "type": "string"
-          },
-          "kind": {
-            "pattern": "^(bookmark|highlight|note)$",
-            "title": "Kind",
-            "type": "string"
-          },
-          "label": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Label"
-          },
-          "noteText": {
-            "anyOf": [
-              {
-                "maxLength": 4000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notetext"
-          },
-          "pageNumber": {
-            "minimum": 1.0,
-            "title": "Pagenumber",
-            "type": "integer"
-          },
-          "quote": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quote"
-          }
-        },
-        "required": [
-          "kind",
-          "pageNumber"
-        ],
-        "title": "PaperReaderNoteCreateRequest",
-        "type": "object"
-      },
-      "PaperReaderNotePatchRequest": {
-        "properties": {
-          "anchor": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PaperReaderNoteAnchorRequest"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "color": {
-            "anyOf": [
-              {
-                "pattern": "^(yellow|green|blue|pink)$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Color"
-          },
-          "label": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Label"
-          },
-          "noteText": {
-            "anyOf": [
-              {
-                "maxLength": 4000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notetext"
-          },
-          "quote": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Quote"
-          }
-        },
-        "title": "PaperReaderNotePatchRequest",
-        "type": "object"
-      },
-      "PaperReaderSelectionCreateRequest": {
-        "properties": {
-          "paragraphId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Paragraphid"
-          },
-          "payload": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payload"
-          },
-          "sectionId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sectionid"
-          },
-          "selectedText": {
-            "anyOf": [
-              {
-                "maxLength": 8000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Selectedtext"
-          },
-          "selectionId": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Selectionid"
-          },
-          "surroundingText": {
-            "anyOf": [
-              {
-                "maxLength": 16000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Surroundingtext"
-          },
-          "target": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PaperReaderBlockTargetRequest"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "title": "PaperReaderSelectionCreateRequest",
-        "type": "object"
-      },
-      "PaperReaderSelectionPatchRequest": {
-        "properties": {
-          "answer": {
-            "anyOf": [
-              {
-                "maxLength": 20000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Answer"
-          },
-          "confused": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Confused"
-          },
-          "example": {
-            "anyOf": [
-              {
-                "maxLength": 20000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Example"
-          },
-          "exampleQuestion": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Examplequestion"
-          },
-          "exampled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exampled"
-          },
-          "explainQuestion": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Explainquestion"
-          },
-          "explained": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Explained"
-          },
-          "noteText": {
-            "anyOf": [
-              {
-                "maxLength": 12000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notetext"
-          },
-          "question": {
-            "anyOf": [
-              {
-                "maxLength": 2000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Question"
-          }
-        },
-        "title": "PaperReaderSelectionPatchRequest",
-        "type": "object"
-      },
-      "PaperStatePatchRequest": {
-        "properties": {
-          "currentPage": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Currentpage"
-          },
-          "favorite": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Favorite"
-          },
-          "progressPercent": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Progresspercent"
-          },
-          "readingStatus": {
-            "anyOf": [
-              {
-                "pattern": "^(unread|reading|finished)$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Readingstatus"
-          },
-          "subscribed": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Subscribed"
-          }
-        },
-        "title": "PaperStatePatchRequest",
-        "type": "object"
-      },
-      "PaperVisualCompileRequest": {
-        "properties": {
-          "force": {
-            "default": false,
-            "title": "Force",
-            "type": "boolean"
-          },
-          "runId": {
-            "anyOf": [
-              {
-                "maxLength": 120,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Runid"
-          }
-        },
-        "title": "PaperVisualCompileRequest",
-        "type": "object"
-      },
       "ReportActionRequest": {
         "properties": {
           "metadata": {
@@ -2096,6 +1378,109 @@
           }
         },
         "title": "ReportActionRequest",
+        "type": "object"
+      },
+      "ResearchAnalyzeRequest": {
+        "properties": {
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          },
+          "paperId": {
+            "minLength": 1,
+            "title": "Paperid",
+            "type": "string"
+          },
+          "pdfUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdfurl"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "sourceUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceurl"
+          },
+          "userId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Userid"
+          }
+        },
+        "required": [
+          "paperId"
+        ],
+        "title": "ResearchAnalyzeRequest",
+        "type": "object"
+      },
+      "ResearchAskRequest": {
+        "properties": {
+          "locale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          },
+          "question": {
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "selection": {
+            "additionalProperties": true,
+            "title": "Selection",
+            "type": "object"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "ResearchAskRequest",
         "type": "object"
       },
       "RunDetail": {
@@ -2467,125 +1852,6 @@
         "title": "RunOperationRequest",
         "type": "object"
       },
-      "RunRequest": {
-        "properties": {
-          "async_run": {
-            "default": true,
-            "title": "Async Run",
-            "type": "boolean"
-          },
-          "budget_limit_usd": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Budget Limit Usd"
-          },
-          "dry_run": {
-            "default": false,
-            "title": "Dry Run",
-            "type": "boolean"
-          },
-          "language": {
-            "const": "en",
-            "default": "en",
-            "title": "Language",
-            "type": "string"
-          },
-          "max_items": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Items"
-          },
-          "metadata": {
-            "additionalProperties": true,
-            "title": "Metadata",
-            "type": "object"
-          },
-          "model_route": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model Route"
-          },
-          "profile": {
-            "default": "live-offline",
-            "enum": [
-              "live",
-              "live-offline",
-              "agentic-offline",
-              "agentic-live"
-            ],
-            "title": "Profile",
-            "type": "string"
-          },
-          "queue_name": {
-            "default": "news:queue:daily",
-            "title": "Queue Name",
-            "type": "string"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
-          },
-          "source_limit": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Limit"
-          },
-          "topic": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Topic"
-          },
-          "workflow_id": {
-            "title": "Workflow Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "workflow_id"
-        ],
-        "title": "RunRequest",
-        "type": "object"
-      },
       "RunRerunFromStepRequest": {
         "properties": {
           "actor_id": {
@@ -2927,6 +2193,80 @@
           }
         },
         "title": "ScheduleTickRequest",
+        "type": "object"
+      },
+      "ScheduleUpsertRequest": {
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "interval_seconds": {
+            "default": 86400,
+            "minimum": 1.0,
+            "title": "Interval Seconds",
+            "type": "integer"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "payload_template": {
+            "additionalProperties": true,
+            "title": "Payload Template",
+            "type": "object"
+          },
+          "queue_name": {
+            "default": "news:queue:memory",
+            "minLength": 1,
+            "title": "Queue Name",
+            "type": "string"
+          },
+          "run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run At"
+          },
+          "schedule_id": {
+            "minLength": 1,
+            "title": "Schedule Id",
+            "type": "string"
+          },
+          "task_type": {
+            "minLength": 1,
+            "title": "Task Type",
+            "type": "string"
+          },
+          "trigger_type": {
+            "default": "interval",
+            "enum": [
+              "interval",
+              "manual"
+            ],
+            "title": "Trigger Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schedule_id",
+          "name",
+          "task_type"
+        ],
+        "title": "ScheduleUpsertRequest",
         "type": "object"
       },
       "ScheduleView": {
@@ -3485,13 +2825,7 @@
             "type": "object"
           },
           "profile": {
-            "default": "live-offline",
-            "enum": [
-              "live",
-              "live-offline",
-              "agentic-offline",
-              "agentic-live"
-            ],
+            "default": "research",
             "title": "Profile",
             "type": "string"
           },
@@ -3705,68 +3039,6 @@
           }
         },
         "title": "WatchlistPatchRequest",
-        "type": "object"
-      },
-      "WeeklyRunRequest": {
-        "properties": {
-          "language": {
-            "const": "en",
-            "default": "en",
-            "title": "Language",
-            "type": "string"
-          },
-          "period_end": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Period End"
-          },
-          "period_start": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Period Start"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
-          },
-          "source_limit": {
-            "default": 20,
-            "minimum": 1.0,
-            "title": "Source Limit",
-            "type": "integer"
-          },
-          "topic": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Topic"
-          }
-        },
-        "title": "WeeklyRunRequest",
         "type": "object"
       }
     }
@@ -4143,65 +3415,6 @@
         ]
       }
     },
-    "/api/v1/approvals/{approval_id}/resume-workflow": {
-      "post": {
-        "operationId": "approvals_resume_workflow",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "approval_id",
-            "required": true,
-            "schema": {
-              "title": "Approval Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/ApprovalWorkflowResumeRequest"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Request"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Approval Resume Workflow",
-        "tags": [
-          "approvals"
-        ]
-      }
-    },
     "/api/v1/artifacts": {
       "get": {
         "operationId": "storage_list",
@@ -4489,79 +3702,6 @@
         "summary": "Session",
         "tags": [
           "admin"
-        ]
-      }
-    },
-    "/api/v1/boards": {
-      "get": {
-        "operationId": "boards_list",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Boards",
-        "tags": [
-          "boards"
-        ]
-      }
-    },
-    "/api/v1/boards/{board_type}/output": {
-      "post": {
-        "operationId": "boards_output",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "board_type",
-            "required": true,
-            "schema": {
-              "title": "Board Type",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BoardOutputRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Build Board Output",
-        "tags": [
-          "boards"
         ]
       }
     },
@@ -5229,2001 +4369,6 @@
         ]
       }
     },
-    "/api/v1/papers": {
-      "get": {
-        "operationId": "papers_list",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 1000,
-              "maximum": 5000,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 200,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Q"
-            }
-          },
-          {
-            "in": "query",
-            "name": "period",
-            "required": false,
-            "schema": {
-              "default": "all",
-              "enum": [
-                "daily",
-                "weekly",
-                "monthly",
-                "all"
-              ],
-              "title": "Period",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "sort",
-            "required": false,
-            "schema": {
-              "default": "trending",
-              "enum": [
-                "trending",
-                "newest",
-                "most_cited"
-              ],
-              "title": "Sort",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "task",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Task"
-            }
-          },
-          {
-            "in": "query",
-            "name": "method",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 100,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Method"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Papers",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/assets/thumbnails/{file_name}": {
-      "get": {
-        "operationId": "papers_get_assets_thumbnails_file_name_id",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "file_name",
-            "required": true,
-            "schema": {
-              "title": "File Name",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Thumbnail",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/me/state": {
-      "get": {
-        "operationId": "papers_get_me_state",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "paperIds",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 2000,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Paperids"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List My Paper State",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/methods": {
-      "get": {
-        "operationId": "papers_get_methods",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Methods",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/blocked": {
-      "get": {
-        "operationId": "papers_get_ops_blocked",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Ingest Blocked Items",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/citation-backfill/trigger": {
-      "post": {
-        "operationId": "papers_ops_citation_backfill_trigger",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperCitationBackfillTriggerRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Trigger Paper Citation Backfill",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/classification-backfill/trigger": {
-      "post": {
-        "operationId": "papers_ops_classification_backfill_trigger",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperClassificationBackfillTriggerRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Trigger Paper Classification Backfill",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/ingest": {
-      "get": {
-        "operationId": "papers_get_ops_ingest",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Ingest Ops",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/ingest-runs": {
-      "get": {
-        "operationId": "papers_get_ops_ingest_runs",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Ingest Runs",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/ingest/trigger": {
-      "post": {
-        "operationId": "papers_ops_ingest_trigger",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperIngestTriggerRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Trigger Paper Ingest",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/repair": {
-      "get": {
-        "operationId": "papers_get_ops_repair",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Ingest Repair Queue",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/stats": {
-      "get": {
-        "operationId": "papers_get_ops_stats",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "windowHours",
-            "required": false,
-            "schema": {
-              "default": 24,
-              "maximum": 720,
-              "minimum": 1,
-              "title": "Windowhours",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Reader Ops Stats",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/ops/taxonomy-events": {
-      "get": {
-        "operationId": "papers_get_ops_taxonomy_events",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Ingest Taxonomy Events",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/tasks": {
-      "get": {
-        "operationId": "papers_get_tasks",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Tasks",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}": {
-      "get": {
-        "operationId": "papers_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/ask": {
-      "post": {
-        "operationId": "papers_ask",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperAskRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Ask Paper",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/assets/{asset_id}": {
-      "get": {
-        "operationId": "papers_get_assets_asset_id",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "asset_id",
-            "required": true,
-            "schema": {
-              "title": "Asset Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Visual Asset",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/compile": {
-      "post": {
-        "operationId": "papers_compile",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperVisualCompileRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Trigger Paper Visual Compile",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/compile-status": {
-      "get": {
-        "operationId": "papers_get_compile_status",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Compile Status",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/document": {
-      "get": {
-        "operationId": "papers_get_document",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Document",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/graph": {
-      "get": {
-        "operationId": "papers_get_graph",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Graph",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/notes": {
-      "get": {
-        "operationId": "papers_get_notes",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Paper Notes",
-        "tags": [
-          "admin"
-        ]
-      },
-      "post": {
-        "operationId": "papers_notes",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperReaderNoteCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Paper Note",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/notes/{note_id}": {
-      "delete": {
-        "operationId": "papers_delete_notes",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "note_id",
-            "required": true,
-            "schema": {
-              "title": "Note Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Paper Note",
-        "tags": [
-          "admin"
-        ]
-      },
-      "patch": {
-        "operationId": "papers_update_notes",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "note_id",
-            "required": true,
-            "schema": {
-              "title": "Note Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperReaderNotePatchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Patch Paper Note",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/reader": {
-      "get": {
-        "operationId": "papers_get_reader",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "locale",
-            "required": false,
-            "schema": {
-              "default": "en",
-              "pattern": "^(zh|en)$",
-              "title": "Locale",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Reader Payload",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/reader/events": {
-      "post": {
-        "operationId": "papers_reader_events",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperReaderEventRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Record Paper Reader Event",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/reader/materials": {
-      "delete": {
-        "operationId": "papers_delete_reader_materials",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Paper Reader Materials",
-        "tags": [
-          "admin"
-        ]
-      },
-      "get": {
-        "operationId": "papers_get_reader_materials",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Reader Materials",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/reader/selections": {
-      "post": {
-        "operationId": "papers_reader_selections",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperReaderSelectionCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Paper Reader Selection",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/reader/selections/{selection_id}": {
-      "patch": {
-        "operationId": "papers_update_reader_selections",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "selection_id",
-            "required": true,
-            "schema": {
-              "title": "Selection Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperReaderSelectionPatchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Patch Paper Reader Selection",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/related": {
-      "get": {
-        "operationId": "papers_get_related",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Related Papers",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/sections": {
-      "get": {
-        "operationId": "papers_get_sections",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "locale",
-            "required": false,
-            "schema": {
-              "default": "en",
-              "pattern": "^(zh|en)$",
-              "title": "Locale",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Sections",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/source-preview": {
-      "get": {
-        "operationId": "papers_get_source_preview",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page",
-            "required": true,
-            "schema": {
-              "minimum": 1,
-              "title": "Page",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "bbox",
-            "required": true,
-            "schema": {
-              "maxLength": 200,
-              "minLength": 1,
-              "title": "Bbox",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper Source Preview",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/state": {
-      "get": {
-        "operationId": "papers_get_state",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Paper State",
-        "tags": [
-          "admin"
-        ]
-      },
-      "patch": {
-        "operationId": "papers_update_state",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-newsroom-session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Newsroom-Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PaperStatePatchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Patch Paper State",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/api/v1/papers/{paper_id}/summary": {
-      "post": {
-        "operationId": "papers_summary",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "paper_id",
-            "required": true,
-            "schema": {
-              "title": "Paper Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "locale",
-            "required": false,
-            "schema": {
-              "default": "en",
-              "pattern": "^(zh|en)$",
-              "title": "Locale",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "refresh",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Refresh",
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Summarize Paper",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
     "/api/v1/projects": {
       "get": {
         "operationId": "projects_list",
@@ -7236,22 +4381,6 @@
               "default": 6,
               "title": "Limit",
               "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "user_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "User Id"
             }
           }
         ],
@@ -7490,6 +4619,110 @@
         ]
       }
     },
+    "/api/v1/projects/cases/{case_id}/explain": {
+      "post": {
+        "operationId": "projects_cases_explain",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseExplainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Explain Project Case",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/cases/{case_id}/map-to-context": {
+      "post": {
+        "operationId": "projects_cases_map_to_context",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaseMapRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Map Project Case To Context",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
     "/api/v1/projects/collections": {
       "get": {
         "operationId": "projects_get_collections",
@@ -7506,6 +4739,138 @@
           }
         },
         "summary": "List Project Collections",
+        "tags": [
+          "projects"
+        ]
+      },
+      "post": {
+        "operationId": "projects_collections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project Collection",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/collections/generate": {
+      "post": {
+        "operationId": "projects_collections_generate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Project Collection",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/collections/{collection_id}/items": {
+      "post": {
+        "operationId": "projects_collections_items",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionItemCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Project Collection Item",
         "tags": [
           "projects"
         ]
@@ -7548,6 +4913,27 @@
           }
         },
         "summary": "Get Project Collection",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/evolution/proposals": {
+      "get": {
+        "operationId": "projects_get_evolution_proposals",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Project Evolution Proposals",
         "tags": [
           "projects"
         ]
@@ -7784,6 +5170,48 @@
         ]
       }
     },
+    "/api/v1/projects/lab/sessions/{session_id}": {
+      "get": {
+        "operationId": "projects_get_lab_sessions_session_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Lab Session",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
     "/api/v1/projects/lab/sessions/{session_id}/answer": {
       "post": {
         "operationId": "projects_lab_sessions_answer",
@@ -7836,6 +5264,58 @@
         ]
       }
     },
+    "/api/v1/projects/lab/sessions/{session_id}/explain-node": {
+      "post": {
+        "operationId": "projects_lab_sessions_explain_node",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabNodeExplainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Explain Project Lab Node",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
     "/api/v1/projects/lab/sessions/{session_id}/generate-solution": {
       "post": {
         "operationId": "projects_lab_sessions_generate_solution",
@@ -7873,6 +5353,58 @@
           }
         },
         "summary": "Generate Project Lab Solution",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/lab/sessions/{session_id}/save": {
+      "post": {
+        "operationId": "projects_lab_sessions_save",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Project Lab Session",
         "tags": [
           "projects"
         ]
@@ -8399,24 +5931,6 @@
     "/api/v1/projects/watchlist": {
       "get": {
         "operationId": "projects_get_watchlist",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "user_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "User Id"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -8427,16 +5941,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "List Project Watchlist",
@@ -8571,6 +6075,48 @@
           }
         },
         "summary": "Patch Project Watchlist Item",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/watchlist/{item_id}/refresh": {
+      "post": {
+        "operationId": "projects_watchlist_refresh",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Project Watchlist Item",
         "tags": [
           "projects"
         ]
@@ -9010,6 +6556,225 @@
         ]
       }
     },
+    "/api/v1/research/papers/analyze": {
+      "post": {
+        "operationId": "research_papers_analyze",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchAnalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyze Paper",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research/papers/{paper_id}/analysis": {
+      "get": {
+        "operationId": "research_get_papers_analysis",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "title": "Paper Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Analysis",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research/papers/{paper_id}/ask": {
+      "post": {
+        "operationId": "research_papers_ask",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "title": "Paper Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchAskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ask Paper",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research/papers/{paper_id}/reader": {
+      "get": {
+        "operationId": "research_get_papers_reader",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "title": "Paper Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Reader",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research/runs/{run_id}/trace": {
+      "get": {
+        "operationId": "research_get_runs_trace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Trace",
+        "tags": [
+          "research"
+        ]
+      }
+    },
     "/api/v1/runs": {
       "get": {
         "operationId": "runs_list",
@@ -9109,45 +6874,6 @@
         "tags": [
           "runs"
         ]
-      },
-      "post": {
-        "operationId": "runs_create",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RunRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Submit Run",
-        "tags": [
-          "runs"
-        ]
       }
     },
     "/api/v1/runs/catalog/health": {
@@ -9217,88 +6943,6 @@
           }
         },
         "summary": "Compare Runs",
-        "tags": [
-          "runs"
-        ]
-      }
-    },
-    "/api/v1/runs/daily": {
-      "post": {
-        "operationId": "runs_daily",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DailyRunRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Submit Daily Run",
-        "tags": [
-          "runs"
-        ]
-      }
-    },
-    "/api/v1/runs/weekly": {
-      "post": {
-        "operationId": "runs_weekly",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WeeklyRunRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Run Weekly",
         "tags": [
           "runs"
         ]
@@ -10341,16 +7985,14 @@
         "tags": [
           "admin"
         ]
-      }
-    },
-    "/api/v1/schedules/daily": {
+      },
       "post": {
-        "operationId": "schedules_daily",
+        "operationId": "schedules_create",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DailyScheduleRequest"
+                "$ref": "#/components/schemas/ScheduleUpsertRequest"
               }
             }
           },
@@ -10378,7 +8020,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Upsert Daily Schedule",
+        "summary": "Upsert Schedule",
         "tags": [
           "admin"
         ]
@@ -11644,8 +9286,8 @@
       "name": "projects"
     },
     {
-      "description": "Business board output DTO generation.",
-      "name": "boards"
+      "description": "Research paper analysis, reader payload, Q&A, and Harness trace endpoints.",
+      "name": "research"
     },
     {
       "description": "Memory search and indexing.",

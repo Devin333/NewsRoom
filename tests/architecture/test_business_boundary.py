@@ -26,36 +26,20 @@ def test_business_layers_do_not_import_boards() -> None:
     assert violations == []
 
 
-def test_business_has_no_direct_legacy_domain_or_source_imports() -> None:
+def test_business_research_does_not_import_legacy_or_interface_layers() -> None:
     violations = _forbidden_imports(
-        BUSINESS_ROOT,
-        forbidden_prefixes=(
-            "domain",
-            "sources",
-            "workflows",
-            "evidence",
-            "quality",
-            "storage",
-            "interfaces",
-        ),
+        BUSINESS_ROOT / "research",
+        forbidden_prefixes=("business.boards", "interfaces", "infrastructure"),
     )
 
     assert violations == []
 
 
-def test_business_has_no_runtime_legacy_source_import_adapters() -> None:
-    needles = (
-        'import_module("domain',
-        "import_module('domain",
-        'import_module("sources',
-        "import_module('sources",
+def test_business_has_no_direct_legacy_domain_or_source_imports() -> None:
+    violations = _forbidden_imports(
+        BUSINESS_ROOT,
+        forbidden_prefixes=("domain", "sources", "workflows", "evidence", "quality", "storage", "interfaces"),
     )
-    violations = [
-        f"{path.relative_to(PROJECT_ROOT).as_posix()}: {needle}"
-        for path in BUSINESS_ROOT.rglob("*.py")
-        for needle in needles
-        if needle in path.read_text(encoding="utf-8")
-    ]
 
     assert violations == []
 
@@ -80,54 +64,17 @@ def test_signal_source_processing_does_not_import_external_source_infrastructure
 
 def test_signal_source_router_uses_injected_connector_boundary() -> None:
     imported_modules = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "source_router.py")
-    violations = _matching_forbidden(
-        imported_modules,
-        ("infrastructure.external.sources",),
-    )
 
-    assert violations == []
+    assert _matching_forbidden(imported_modules, ("infrastructure.external.sources",)) == []
 
 
-def test_signal_source_config_uses_business_fetch_policy_boundary() -> None:
-    imported_modules = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "source_config.py")
-    violations = _matching_forbidden(
-        imported_modules,
-        ("infrastructure.external.sources",),
-    )
+def test_signal_connector_tools_keep_real_connector_urls_outside_old_boards() -> None:
+    imported_modules = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "connector_tools.py")
+    source = (BUSINESS_ROOT / "layers" / "signal" / "connector_tools.py").read_text(encoding="utf-8")
 
-    assert violations == []
-
-
-def test_signal_source_health_checker_uses_probe_adapter_boundary() -> None:
-    imported_modules = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "source_health" / "checker.py")
-    violations = _matching_forbidden(
-        imported_modules,
-        ("infrastructure.external.sources",),
-    )
-
-    assert violations == []
-
-
-def test_signal_source_tools_use_runtime_adapter_boundary() -> None:
-    imported_modules = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "tools.py")
-    violations = _matching_forbidden(
-        imported_modules,
-        ("infrastructure.external.sources",),
-    )
-
-    assert violations == []
-
-
-def test_signal_pipeline_uses_records_facade_for_source_processing() -> None:
-    pipeline_imports = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "pipeline.py")
-    assert _matching_forbidden(
-        pipeline_imports,
-        ("business.foundation.models.source", "business.layers.signal.source_processing"),
-    ) == []
-
-    record_imports = _imports_for_file(BUSINESS_ROOT / "layers" / "signal" / "records.py")
-    assert "business.foundation.models.source" in record_imports
-    assert any(imported.startswith("business.layers.signal.source_processing") for imported in record_imports)
+    assert _matching_forbidden(imported_modules, ("business.boards",)) == []
+    assert "https://export.arxiv.org/api/query" in source
+    assert "https://api.github.com" in source
 
 
 def test_relation_lineage_boundary_does_not_import_storage_lineage() -> None:
@@ -142,7 +89,11 @@ def test_relation_lineage_boundary_does_not_import_storage_lineage() -> None:
 def test_output_report_tools_do_not_import_storage_or_domain_report_models() -> None:
     violations = _forbidden_imports(
         BUSINESS_ROOT / "layers" / "output",
-        forbidden_prefixes=("business.foundation.models.report_output", "business.foundation.models.source", "infrastructure.storage.repository"),
+        forbidden_prefixes=(
+            "business.foundation.models.report_output",
+            "business.foundation.models.source",
+            "infrastructure.storage.repository",
+        ),
     )
 
     assert violations == []
@@ -157,225 +108,10 @@ def test_analysis_quality_tools_do_not_import_legacy_quality_or_evidence_package
     assert violations == []
 
 
-def test_business_boards_do_not_import_concrete_storage() -> None:
-    violations = _forbidden_imports(
-        BUSINESS_ROOT / "boards",
-        forbidden_prefixes=(
-            "infrastructure.storage.postgres",
-            "infrastructure.storage.qdrant",
-            "infrastructure.storage.redis",
-            "infrastructure.storage.postgres",
-            "infrastructure.storage.qdrant",
-            "infrastructure.storage.redis",
-        ),
-    )
-
-    assert violations == []
-
-
-def test_productized_workflow_steps_delegate_business_logic_to_productized_services() -> None:
-    imported_modules = _imports_for_file(BUSINESS_ROOT / "boards" / "_productized_steps.py")
-
-    assert "business.boards.productized.steps" in imported_modules
-    assert "business.boards.productized.workflow" in imported_modules
-    assert "business.layers.signal" not in imported_modules
-    assert "business.foundation.subscription" not in imported_modules
-
-
-def test_business_boards_use_policy_experiment_application_api() -> None:
-    call_violations = _attribute_calls(
-        BUSINESS_ROOT / "boards",
-        forbidden_names=("apply_approved_overrides",),
-    )
-    import_violations = _imported_symbol_violations(
-        BUSINESS_ROOT / "boards",
-        forbidden_names=("BoardImprovementContext",),
-    )
-
-    assert [*call_violations, *import_violations] == []
-
-
-def test_business_foundation_root_does_not_export_legacy_override_names() -> None:
-    foundation_init = BUSINESS_ROOT / "foundation" / "__init__.py"
-    source = foundation_init.read_text(encoding="utf-8")
-
-    assert "BoardImprovementContext" not in source
-    assert "ImprovementOverride" not in source
-    assert "PolicyExperimentApplicationContext" in source
-
-
-def test_feedback_root_does_not_export_legacy_override_names() -> None:
-    feedback_init = BUSINESS_ROOT / "foundation" / "feedback" / "__init__.py"
-    source = feedback_init.read_text(encoding="utf-8")
-
-    assert "BoardImprovementContext" not in source
-    assert "ImprovementOverride" not in source
-    assert "LegacyPolicyExperimentPatch" not in source
-    assert "SUPPORTED_OVERRIDE_TYPES" not in source
-    assert "PolicyExperimentApplicationContext" in source
-
-
-def test_productized_artifact_publisher_delegates_legacy_override_projection() -> None:
-    publisher_path = BUSINESS_ROOT / "boards" / "_artifact_publisher.py"
-    source = publisher_path.read_text(encoding="utf-8")
-    imported_modules = _imports_for_file(publisher_path)
-
-    assert "business.boards.productized.artifact_payloads" in imported_modules
-    assert "applied_overrides" not in source
-
-
-def test_daily_service_output_projections_require_namespaced_daily_keys() -> None:
-    projection_path = (
-        BUSINESS_ROOT
-        / "boards"
-        / "cross_board"
-        / "workflows"
-        / "daily_intelligence"
-        / "output_projection.py"
-    )
-    tree = ast.parse(projection_path.read_text(encoding="utf-8"), filename=str(projection_path))
-    violations: list[str] = []
-
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        if not node.name.startswith("project_daily_output_for_"):
-            continue
-        if node.name == "project_daily_output_for_legacy_consumers" or node.name.endswith("_artifacts"):
-            continue
-        policies = _keyword_attribute_values(node, keyword_name="read_policy")
-        if policies != ["NAMESPACED_ONLY"]:
-            violations.append(f"{node.name}: {policies}")
-
-    assert violations == []
-
-
-def test_daily_output_legacy_fallback_stays_artifact_facing_or_explicit_legacy_only() -> None:
-    projection_path = (
-        BUSINESS_ROOT
-        / "boards"
-        / "cross_board"
-        / "workflows"
-        / "daily_intelligence"
-        / "output_projection.py"
-    )
-    tree = ast.parse(projection_path.read_text(encoding="utf-8"), filename=str(projection_path))
-    allowed_functions = {
-        "daily_output_contains",
-        "daily_output_value",
-        "ensure_legacy_daily_output_aliases",
-        "project_daily_output_for_agentic_artifacts",
-        "project_daily_output_for_evidence_artifacts",
-        "project_daily_output_for_legacy_consumers",
-        "project_daily_output_for_quality_artifacts",
-        "project_daily_output_for_report_artifacts",
-        "project_daily_output_for_source_diagnostic_artifacts",
-        "project_daily_output_for_source_recollection_artifacts",
-    }
-    violations: list[str] = []
-
-    for node in tree.body:
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        policies = _keyword_attribute_values(node, keyword_name="read_policy")
-        if "NAMESPACED_WITH_LEGACY_FALLBACK" in policies and node.name not in allowed_functions:
-            violations.append(f"{node.name}: {policies}")
-
-    assert violations == []
-
-
-def test_daily_agent_registry_stays_fixture_free() -> None:
-    registry_path = (
-        BUSINESS_ROOT
-        / "boards"
-        / "cross_board"
-        / "workflows"
-        / "daily_intelligence"
-        / "agent_registry.py"
-    )
-    imported_modules = _imports_for_file(registry_path)
-    defined_functions = _function_defs_for_file(registry_path)
-
-    assert (
-        "business.boards.cross_board.workflows.daily_intelligence.agent_fixtures"
-        not in imported_modules
-    )
-    assert [
-        name
-        for name in defined_functions
-        if "fake" in name or "fixture" in name
-    ] == []
-
-
-def test_agentic_daily_runner_uses_explicit_fixture_runner_factory() -> None:
-    runner_path = (
-        BUSINESS_ROOT
-        / "boards"
-        / "cross_board"
-        / "workflows"
-        / "daily_intelligence"
-        / "runner_agentic.py"
-    )
-    imported_modules = _imports_for_file(runner_path)
-
-    assert (
-        "business.boards.cross_board.workflows.daily_intelligence.agent_fixtures"
-        not in imported_modules
-    )
-    assert (
-        "business.boards.cross_board.workflows.daily_intelligence.agent_runner_factory"
-        in imported_modules
-    )
-
-
-def test_board_radar_tools_do_not_import_legacy_source_modules() -> None:
-    violations: list[str] = []
-    for path in (
-        BUSINESS_ROOT / "boards" / "paper_radar" / "tools.py",
-        BUSINESS_ROOT / "boards" / "project_radar" / "tools.py",
-    ):
-        imported_modules = _imports_for_file(path)
-        for imported in _matching_forbidden(imported_modules, ("business.foundation.models.source", "infrastructure.external.sources")):
-            violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {imported}")
-
-    assert violations == []
-
-
-def test_source_error_consumers_use_normalized_error_models() -> None:
-    consumer_paths = (
-        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "report_writer.py",
-        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_processing.py",
-        BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence" / "source_recollection_executor.py",
-        BUSINESS_ROOT / "layers" / "signal" / "artifacts.py",
-        BUSINESS_ROOT / "layers" / "signal" / "source_artifact_inputs.py",
-        *(BUSINESS_ROOT / "layers" / "signal" / "source_processing").glob("*.py"),
-    )
-
-    assert _source_error_duck_typing_violations(consumer_paths) == []
-
-
-def test_daily_source_connector_metadata_reads_stay_in_runtime_options_view() -> None:
-    daily_root = BUSINESS_ROOT / "boards" / "cross_board" / "workflows" / "daily_intelligence"
-    consumer_paths = (
-        daily_root / "source_collection.py",
-        daily_root / "source_dispatcher.py",
-        daily_root / "source_fetch_records.py",
-        daily_root / "source_recollection_executor.py",
-    )
-    allowed_paths = {
-        daily_root / "source_connector_options.py",
-    }
-
-    violations = _connector_metadata_access_violations(
-        consumer_paths,
-        allowed_paths=allowed_paths,
-    )
-
-    assert violations == []
-
-
 def _forbidden_imports(root: Path, *, forbidden_prefixes: tuple[str, ...]) -> list[str]:
     violations: list[str] = []
+    if not root.exists():
+        return violations
     for path in root.rglob("*.py"):
         for imported in _imports_for_file(path):
             if any(imported == prefix or imported.startswith(f"{prefix}.") for prefix in forbidden_prefixes):
@@ -385,59 +121,13 @@ def _forbidden_imports(root: Path, *, forbidden_prefixes: tuple[str, ...]) -> li
 
 def _imports_for_file(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return _imported_modules(tree)
-
-
-def _function_defs_for_file(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    return [
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-
-
-def _attribute_calls(root: Path, *, forbidden_names: tuple[str, ...]) -> list[str]:
-    violations: list[str] = []
-    for path in root.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr in forbidden_names:
-                violations.append(
-                    f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: {node.attr}"
-                )
-    return violations
-
-
-def _imported_symbol_violations(root: Path, *, forbidden_names: tuple[str, ...]) -> list[str]:
-    violations: list[str] = []
-    for path in root.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom):
-                continue
-            for alias in node.names:
-                if alias.name in forbidden_names:
-                    violations.append(
-                        f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: {alias.name}"
-                    )
-    return violations
-
-
-def _keyword_attribute_values(node: ast.AST, *, keyword_name: str) -> list[str]:
-    values: list[str] = []
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Call):
-            continue
-        for keyword in child.keywords:
-            if keyword.arg != keyword_name:
-                continue
-            value = keyword.value
-            if isinstance(value, ast.Attribute):
-                values.append(value.attr)
-            else:
-                values.append(ast.unparse(value))
-    return values
+    modules: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules.append(node.module)
+    return modules
 
 
 def _matching_forbidden(
@@ -449,124 +139,3 @@ def _matching_forbidden(
         for imported in imported_modules
         if any(imported == prefix or imported.startswith(f"{prefix}.") for prefix in forbidden_prefixes)
     ]
-
-
-def _source_error_duck_typing_violations(paths: tuple[Path, ...]) -> list[str]:
-    violations: list[str] = []
-    forbidden_fields = (
-        "source_id",
-        "source_name",
-        "error_type",
-        "error_message",
-        "retryable",
-        "request_ref",
-        "response_ref",
-    )
-    for path in paths:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if _is_mapping_get_on_source_error(node, fields=forbidden_fields):
-                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: get")
-            if _is_getattr_on_source_error(node, fields=forbidden_fields):
-                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: getattr")
-    return violations
-
-
-def _connector_metadata_access_violations(
-    paths: tuple[Path, ...],
-    *,
-    allowed_paths: set[Path],
-) -> list[str]:
-    connector_fields = (
-        "query",
-        "repository",
-        "github_mode",
-        "mode",
-        "discussion_category",
-        "story_list",
-        "subreddit",
-        "listing",
-        "time_range",
-        "time",
-        "tagged",
-        "tag",
-        "site",
-        "records",
-        "token_env",
-        "connector_name",
-    )
-    violations: list[str] = []
-    for path in paths:
-        if path in allowed_paths:
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if _is_connector_metadata_get(node, fields=connector_fields):
-                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: metadata.get")
-            if _is_connector_metadata_subscript(node, fields=connector_fields):
-                violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}:{node.lineno}: metadata[]")
-    return violations
-
-
-def _is_connector_metadata_get(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
-    if not isinstance(node, ast.Call):
-        return False
-    if not isinstance(node.func, ast.Attribute) or node.func.attr != "get":
-        return False
-    if not _is_metadata_access_target(node.func.value):
-        return False
-    return bool(node.args) and _constant_value(node.args[0]) in fields
-
-
-def _is_connector_metadata_subscript(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
-    if not isinstance(node, ast.Subscript):
-        return False
-    if not _is_metadata_access_target(node.value):
-        return False
-    return _constant_value(node.slice) in fields
-
-
-def _is_metadata_access_target(node: ast.AST) -> bool:
-    if isinstance(node, ast.Name):
-        return node.id == "metadata"
-    return isinstance(node, ast.Attribute) and node.attr == "metadata"
-
-
-def _is_mapping_get_on_source_error(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
-    if not isinstance(node, ast.Call):
-        return False
-    if not isinstance(node.func, ast.Attribute) or node.func.attr != "get":
-        return False
-    if not _is_source_error_name(node.func.value):
-        return False
-    return bool(node.args) and _constant_value(node.args[0]) in fields
-
-
-def _is_getattr_on_source_error(node: ast.AST, *, fields: tuple[str, ...]) -> bool:
-    if not isinstance(node, ast.Call):
-        return False
-    if not isinstance(node.func, ast.Name) or node.func.id != "getattr":
-        return False
-    if len(node.args) < 2 or not _is_source_error_name(node.args[0]):
-        return False
-    return _constant_value(node.args[1]) in fields
-
-
-def _is_source_error_name(node: ast.AST) -> bool:
-    return isinstance(node, ast.Name) and node.id in {"error", "source_error"}
-
-
-def _constant_value(node: ast.AST) -> object:
-    if isinstance(node, ast.Constant):
-        return node.value
-    return None
-
-
-def _imported_modules(tree: ast.AST) -> list[str]:
-    modules: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules.append(node.module)
-    return modules

@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from framework.workers.models import Task
-from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
-from interfaces.services.paper_visual_compiler_service import PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE
 from framework.workers.scheduler import (
     EnqueuedScheduleTask,
     ScheduleEvaluation,
@@ -25,8 +23,6 @@ from infrastructure.storage.local_json import LocalJsonScheduleStore
 
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
-DEFAULT_DAILY_QUEUE = "news:queue:daily"
-DEFAULT_PAPER_QUEUE = "news:queue:papers"
 DEFAULT_SCHEDULE_STORE_PATH = ".newsroom/schedules/schedules.json"
 
 
@@ -122,19 +118,28 @@ class ScheduleApplicationService:
     def upsert_schedule(self, record: ScheduleRecord) -> ScheduleUpsertResult:
         return ScheduleUpsertResult(self.store.upsert_schedule(record))
 
-    def upsert_daily_schedule(
+    def upsert_task_schedule(
         self,
         *,
-        schedule_id: str = "daily-intelligence",
-        name: str = "Daily intelligence",
+        schedule_id: str,
+        name: str,
+        task_type: str,
+        payload_template: dict[str, Any] | None = None,
         trigger_type: str = "interval",
         interval_seconds: int | None = 86400,
         run_at: datetime | None = None,
-        profile: str = "live-offline",
-        topic: str = "AI",
-        source_limit: int = 3,
-        queue_name: str = DEFAULT_DAILY_QUEUE,
+        queue_name: str = "news:queue:memory",
+        enabled: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> ScheduleUpsertResult:
+        if not schedule_id.strip():
+            raise ValueError("schedule_id is required")
+        if not name.strip():
+            raise ValueError("name is required")
+        if not task_type.strip():
+            raise ValueError("task_type is required")
+        if not queue_name.strip():
+            raise ValueError("queue_name is required")
         effective_interval_seconds = interval_seconds if interval_seconds is not None else 86400
         if trigger_type == "interval" and effective_interval_seconds <= 0:
             raise ValueError("interval_seconds must be greater than zero")
@@ -142,83 +147,13 @@ class ScheduleApplicationService:
             schedule_id=schedule_id,
             name=name,
             trigger_type=trigger_type,
-            task_type="daily_intelligence.run",
-            payload_template={
-                "profile": profile,
-                "topic": topic,
-                "source_limit": source_limit,
-            },
+            task_type=task_type,
+            payload_template=dict(payload_template or {}),
             queue_name=queue_name,
             interval_seconds=effective_interval_seconds if trigger_type == "interval" else None,
             run_at=run_at if trigger_type == "interval" else None,
-        )
-        return self.upsert_schedule(ScheduleRecord(spec=spec, next_run_at=spec.run_at))
-
-    def upsert_paper_ingest_schedule(
-        self,
-        *,
-        schedule_id: str = "papers-ingest-github-arxiv-daily",
-        name: str = "Daily GitHub arXiv paper ingest",
-        trigger_type: str = "interval",
-        interval_seconds: int | None = 86400,
-        run_at: datetime | None = None,
-        candidate_limit: int = 100,
-        min_github_stars: int = 50,
-        queue_name: str = DEFAULT_PAPER_QUEUE,
-    ) -> ScheduleUpsertResult:
-        effective_interval_seconds = interval_seconds if interval_seconds is not None else 86400
-        if trigger_type == "interval" and effective_interval_seconds <= 0:
-            raise ValueError("interval_seconds must be greater than zero")
-        if candidate_limit <= 0:
-            raise ValueError("candidate_limit must be greater than zero")
-        if min_github_stars < 0:
-            raise ValueError("min_github_stars must be non-negative")
-        spec = ScheduleSpec(
-            schedule_id=schedule_id,
-            name=name,
-            trigger_type=trigger_type,
-            task_type=PAPER_INGEST_TASK_TYPE,
-            payload_template={
-                "candidate_limit": candidate_limit,
-                "min_github_stars": min_github_stars,
-            },
-            queue_name=queue_name,
-            interval_seconds=effective_interval_seconds if trigger_type == "interval" else None,
-            run_at=run_at if trigger_type == "interval" else None,
-        )
-        return self.upsert_schedule(ScheduleRecord(spec=spec, next_run_at=spec.run_at))
-
-    def upsert_paper_visual_compile_backfill_schedule(
-        self,
-        *,
-        schedule_id: str = "papers-visual-compile-backfill",
-        name: str = "Paper Reader visual compile backfill",
-        trigger_type: str = "interval",
-        interval_seconds: int | None = 21600,
-        run_at: datetime | None = None,
-        limit: int | None = None,
-        force: bool = False,
-        queue_name: str = DEFAULT_PAPER_QUEUE,
-    ) -> ScheduleUpsertResult:
-        effective_interval_seconds = interval_seconds if interval_seconds is not None else 21600
-        if trigger_type == "interval" and effective_interval_seconds <= 0:
-            raise ValueError("interval_seconds must be greater than zero")
-        if limit is not None and limit <= 0:
-            raise ValueError("limit must be greater than zero")
-        payload_template: dict[str, Any] = {
-            "force": bool(force),
-        }
-        if limit is not None:
-            payload_template["limit"] = limit
-        spec = ScheduleSpec(
-            schedule_id=schedule_id,
-            name=name,
-            trigger_type=trigger_type,
-            task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
-            payload_template=payload_template,
-            queue_name=queue_name,
-            interval_seconds=effective_interval_seconds if trigger_type == "interval" else None,
-            run_at=run_at if trigger_type == "interval" else None,
+            enabled=enabled,
+            metadata=dict(metadata or {}),
         )
         return self.upsert_schedule(ScheduleRecord(spec=spec, next_run_at=spec.run_at))
 

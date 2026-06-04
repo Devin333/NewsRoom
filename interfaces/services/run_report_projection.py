@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from interfaces.services.daily_interface_projection import project_run_output_for_interface
-
 
 @dataclass(frozen=True)
 class InterfaceRunReportProjection:
@@ -14,7 +12,7 @@ class InterfaceRunReportProjection:
 
 
 def project_run_report_for_interface(payload: dict[str, Any]) -> InterfaceRunReportProjection:
-    output = project_run_output_for_interface(payload)
+    output = _run_output_for_interface(payload)
     report_status = report_status_from_interface_output(output)
     return InterfaceRunReportProjection(
         output=output,
@@ -59,6 +57,18 @@ def report_id_from_interface_output(
     if run_id and resolved_status in {"final", "blocked"}:
         return f"{run_id}:{resolved_status}"
     return None
+
+
+def _run_output_for_interface(payload: dict[str, Any]) -> Any:
+    output = payload.get("output")
+    if isinstance(output, Mapping):
+        return dict(output)
+    manifest = payload.get("manifest")
+    if isinstance(manifest, Mapping):
+        manifest_output = manifest.get("output")
+        if isinstance(manifest_output, Mapping):
+            return dict(manifest_output)
+    return output
 
 
 def _optional_text(value: Any) -> str | None:

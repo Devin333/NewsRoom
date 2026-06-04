@@ -17,21 +17,21 @@ def test_schedule_api_lists_schedules() -> None:
     assert fake_service.list_calls == [{"enabled_only": False}]
 
 
-def test_schedule_api_upserts_daily_interval_schedule() -> None:
+def test_schedule_api_upserts_task_interval_schedule() -> None:
     fake_service = _FakeScheduleService()
     client = TestClient(create_app(schedule_service_factory=lambda: fake_service))
 
     response = client.post(
-        "/api/v1/schedules/daily",
+        "/api/v1/schedules",
         json={
-            "schedule_id": "daily",
-            "name": "Daily",
+            "schedule_id": "memory-reindex",
+            "name": "Memory Reindex",
             "trigger_type": "interval",
             "interval_seconds": 3600,
             "run_at": "2026-05-11T00:00:00Z",
-            "profile": "live-offline",
-            "topic": "AI policy",
-            "source_limit": 2,
+            "task_type": "memory.reindex",
+            "payload_template": {"run_id": "run-1", "topic": "AI policy"},
+            "queue_name": "news:queue:memory",
         },
     )
     payload = response.json()
@@ -39,45 +39,15 @@ def test_schedule_api_upserts_daily_interval_schedule() -> None:
 
     assert response.status_code == 200
     assert payload["success"] is True
-    assert payload["data"]["schedule_id"] == "daily"
-    assert record.spec.schedule_id == "daily"
+    assert payload["data"]["schedule_id"] == "memory-reindex"
+    assert record.spec.schedule_id == "memory-reindex"
     assert record.spec.interval_seconds == 3600
+    assert record.spec.task_type == "memory.reindex"
+    assert record.spec.queue_name == "news:queue:memory"
     assert record.spec.payload_template == {
-        "profile": "live-offline",
+        "run_id": "run-1",
         "topic": "AI policy",
-        "source_limit": 2,
     }
-
-
-def test_schedule_api_upserts_paper_ingest_interval_schedule() -> None:
-    fake_service = _FakeScheduleService()
-    client = TestClient(create_app(schedule_service_factory=lambda: fake_service))
-
-    response = client.post(
-        "/api/v1/schedules/papers/ingest",
-        json={
-            "schedule_id": "papers-ingest",
-            "name": "Papers ingest",
-            "trigger_type": "interval",
-            "interval_seconds": 21600,
-            "run_at": "2026-05-11T00:00:00Z",
-            "candidate_limit": 80,
-            "min_github_stars": 25,
-            "queue_name": "news:queue:papers",
-        },
-    )
-    payload = response.json()
-    call = fake_service.paper_ingest_calls[0]
-
-    assert response.status_code == 200
-    assert payload["success"] is True
-    assert payload["data"]["schedule_id"] == "papers-ingest"
-    assert call["schedule_id"] == "papers-ingest"
-    assert call["interval_seconds"] == 21600
-    assert call["run_at"].isoformat().replace("+00:00", "Z") == "2026-05-11T00:00:00Z"
-    assert call["candidate_limit"] == 80
-    assert call["min_github_stars"] == 25
-    assert call["queue_name"] == "news:queue:papers"
 
 
 def test_schedule_api_ticks_schedules() -> None:
@@ -112,7 +82,6 @@ class _FakeScheduleService:
     def __init__(self) -> None:
         self.list_calls = []
         self.tick_calls = []
-        self.paper_ingest_calls = []
         self.upserted_record = None
 
     def list_schedules(self, *, enabled_only=False):
@@ -136,7 +105,7 @@ class _FakeScheduleService:
         self.upserted_record = record
         return _Result({"schedule_id": record.schedule_id, "schedule": record.to_dict()})
 
-    def upsert_daily_schedule(self, **kwargs):
+    def upsert_task_schedule(self, **kwargs):
         from framework.workers import ScheduleRecord, ScheduleSpec
 
         record = ScheduleRecord(
@@ -144,12 +113,8 @@ class _FakeScheduleService:
                 schedule_id=kwargs["schedule_id"],
                 name=kwargs["name"],
                 trigger_type=kwargs["trigger_type"],
-                task_type="daily_intelligence.run",
-                payload_template={
-                    "profile": kwargs["profile"],
-                    "topic": kwargs["topic"],
-                    "source_limit": kwargs["source_limit"],
-                },
+                task_type=kwargs["task_type"],
+                payload_template=kwargs["payload_template"],
                 queue_name=kwargs["queue_name"],
                 interval_seconds=kwargs["interval_seconds"],
                 run_at=kwargs["run_at"],
@@ -157,26 +122,6 @@ class _FakeScheduleService:
         )
         self.upserted_record = record
         return _Result({"schedule_id": record.schedule_id, "schedule": record.to_dict()})
-
-    def upsert_paper_ingest_schedule(self, **kwargs):
-        self.paper_ingest_calls.append(kwargs)
-        return _Result(
-            {
-                "schedule_id": kwargs["schedule_id"],
-                "schedule": {
-                    "spec": {
-                        "schedule_id": kwargs["schedule_id"],
-                        "trigger_type": kwargs["trigger_type"],
-                        "task_type": "papers.ingest_github_arxiv_daily",
-                        "queue_name": kwargs["queue_name"],
-                        "payload_template": {
-                            "candidate_limit": kwargs["candidate_limit"],
-                            "min_github_stars": kwargs["min_github_stars"],
-                        },
-                    }
-                },
-            }
-        )
 
     def tick(self, *, now=None, enabled_only=True):
         self.tick_calls.append({"now": now, "enabled_only": enabled_only})

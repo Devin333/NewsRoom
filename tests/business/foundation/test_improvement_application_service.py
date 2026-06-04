@@ -11,7 +11,7 @@ from business.foundation.feedback import (
 def test_improvement_application_service_filters_store_proposals_by_board() -> None:
     store = InMemoryImprovementProposalStore()
     ai_proposal = store.save(_proposal("proposal-ai", board_type="ai_news")).with_status("approved")
-    paper_proposal = store.save(_proposal("proposal-paper", board_type="paper_radar")).with_status("approved")
+    paper_proposal = store.save(_proposal("proposal-paper", board_type="research")).with_status("approved")
     store.save(ai_proposal)
     store.save(paper_proposal)
 

@@ -7,14 +7,13 @@ from interfaces.services.research_service import InMemoryResearchRunStore, Resea
 from tests.interfaces.research_fixtures import FakeAnalyzeUseCase, make_research_result
 
 
-def _client(*, result=None, paper_service_factory=None):
+def _client(*, result=None):
     store = InMemoryResearchRunStore()
     use_case = FakeAnalyzeUseCase(result or make_research_result())
     service = ResearchApplicationService(analyze_use_case=use_case, run_store=store)
     return TestClient(
         create_app(
             research_service_factory=lambda: service,
-            papers_service_factory=paper_service_factory or _unused_paper_service_factory,
             audit_emitter_factory=None,
         )
     )
@@ -83,18 +82,13 @@ def test_research_api_returns_stable_error_codes_without_tracebacks() -> None:
 
 
 def test_research_api_does_not_use_old_paper_service_or_old_papers_routes() -> None:
-    def old_paper_service_must_not_be_used():
-        raise AssertionError("old paper service must not be used")
-
-    client = _client(paper_service_factory=old_paper_service_must_not_be_used)
+    client = _client()
     response = client.post(
         "/api/v1/research/papers/analyze",
         json={"paperId": "paper-1", "sourceUrl": "https://arxiv.org/abs/2606.00001"},
     )
+    old_route = client.get("/api/v1/papers/paper-1")
 
     assert response.status_code == 200
     assert response.json()["data"]["paperId"] == "paper-1"
-
-
-def _unused_paper_service_factory():
-    raise AssertionError("old paper service must not be used by research API tests")
+    assert old_route.status_code == 404

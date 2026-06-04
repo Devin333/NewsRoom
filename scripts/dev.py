@@ -39,8 +39,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "test-workflows":
         return _run(
             _pytest_command(
+                "tests/framework/harness",
                 "tests/framework/workflow",
-                "tests/business/boards/cross_board/workflows",
                 "-q",
             ),
             env=env,
@@ -56,7 +56,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "test-workflow-domain":
         return _run(
             _pytest_command(
-                "tests/business/boards/cross_board/workflows",
+                "tests/framework/harness",
+                "tests/business/research",
                 "-q",
             ),
             env=env,
@@ -79,34 +80,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(_pytest_command("tests/interfaces/mcp", "-q"), env=env)
     if args.command == "test-sdk":
         return _run(_pytest_command("tests/sdk", "-q"), env=env)
-    if args.command == "test-prd-daily":
+    if args.command == "test-prd-research":
         return _run(
             _pytest_command(
-                "tests/framework/agent",
-                "tests/framework/llm/test_clients_cache_prompt_redaction.py",
-                "tests/interfaces/services/test_run_service_agentic_daily.py",
-                "tests/interfaces/services/test_run_service_live_smoke.py",
+                "tests/framework/harness",
+                "tests/business/research",
+                "tests/interfaces/api/test_research_api.py",
+                "tests/interfaces/services/test_research_service.py",
                 "tests/interfaces/services/test_report_service.py",
-                "tests/interfaces/services/test_entity_service.py",
                 "tests/interfaces/services/test_mcp_application_service.py",
-                "tests/interfaces/services/test_approval_workflow_resume_service.py",
-                "tests/interfaces/api/test_http_api_foundation.py",
-                "tests/interfaces/api/test_final_target_routes.py",
-                "tests/interfaces/api/test_approval_api.py",
-                "tests/interfaces/cli/test_news_cli.py",
-                "tests/interfaces/cli/test_entity_commands.py",
-                "tests/interfaces/cli/test_approval_commands.py",
                 "tests/business/layers/relation/evidence/test_claim_verifier.py",
                 "tests/business/layers/analysis/quality/test_citation_editor.py",
                 "tests/business/layers/analysis/quality/test_support_scoring.py",
-                "tests/business/boards/cross_board/workflows/daily_intelligence/test_daily_agent_contracts.py",
-                "tests/business/boards/cross_board/workflows/daily_intelligence/test_daily_agent_registry.py",
-                "tests/business/boards/cross_board/workflows/daily_intelligence/test_daily_agentic_runner_offline.py",
-                "tests/business/boards/cross_board/workflows/daily_intelligence/test_daily_finalize_report_step.py",
-                "tests/business/boards/cross_board/workflows/daily_intelligence/test_daily_current_baseline.py",
-                "tests/business/boards/cross_board/workflows/test_daily_intelligence_runner.py",
-                "tests/business/boards/cross_board/workflows/test_weekly_intelligence_runner.py",
-                "tests/business/boards/cross_board/workflows/test_workflow_runner_contracts.py",
                 "tests/infrastructure/storage/test_artifact_store.py",
                 "tests/infrastructure/storage/test_backup_restore.py",
                 "-q",
@@ -149,16 +134,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             _web_check_command(),
         ]
         return _run_many(commands, env=env, keep_going=args.keep_going)
-    if args.command == "smoke-test-no-llm":
-        return _run(_smoke_test_no_llm_command(run_id=args.run_id), env=env)
-    if args.command == "smoke-test-agent-loop":
-        return _run(_smoke_test_agent_loop_command(run_id=args.run_id), env=env)
-    if args.command == "smoke-live-offline":
-        return _run(_smoke_live_offline_command(run_id=args.run_id), env=env)
-    if args.command == "smoke-agentic-offline":
-        return _run(_smoke_agentic_offline_command(run_id=args.run_id), env=env)
-    if args.command == "smoke-live":
-        return _run(_smoke_live_command(fail_if_unready=args.fail_if_unready), env=env)
     if args.command == "sources-validate":
         return _run(_news_command("sources", "validate"), env=env)
     if args.command == "diagnose":
@@ -176,10 +151,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "smoke":
         commands = [
             _compile_command(),
-            _smoke_test_no_llm_command(),
-            _smoke_test_agent_loop_command(),
-            _smoke_live_offline_command(),
-            _smoke_agentic_offline_command(),
+            _pytest_command(
+                "tests/framework/harness",
+                "tests/business/research",
+                "tests/interfaces/api/test_research_api.py",
+                "tests/interfaces/services/test_research_service.py",
+                "tests/architecture",
+                "-q",
+            ),
             _news_command("sources", "validate"),
         ]
         return _run_many(commands, env=env, keep_going=args.keep_going)
@@ -206,7 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("test-cli", help="Run CLI interface tests")
     subparsers.add_parser("test-mcp", help="Run MCP interface tests")
     subparsers.add_parser("test-sdk", help="Run SDK tests")
-    subparsers.add_parser("test-prd-daily", help="Run the PRD-aligned daily agentic regression sweep")
+    subparsers.add_parser("test-prd-research", help="Run the PRD-aligned Harness and Research regression sweep")
     subparsers.add_parser("export-openapi", help="Export docs/api/openapi.json")
     subparsers.add_parser("test-api-contracts", help="Run API contract tests")
     subparsers.add_parser("web-check", help="Check Web Console skeleton files")
@@ -225,28 +204,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     smoke_parser = subparsers.add_parser("smoke", help="Run fixed offline smoke commands")
     smoke_parser.add_argument("--keep-going", action="store_true", help="Run all commands even after a failure")
-
-    no_llm_parser = subparsers.add_parser("smoke-test-no-llm", help="Run deterministic no-LLM smoke")
-    no_llm_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
-
-    agent_loop_parser = subparsers.add_parser("smoke-test-agent-loop", help="Run deterministic AgentLoop smoke")
-    agent_loop_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
-
-    live_offline_parser = subparsers.add_parser("smoke-live-offline", help="Run offline daily workflow smoke")
-    live_offline_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
-
-    agentic_offline_parser = subparsers.add_parser(
-        "smoke-agentic-offline",
-        help="Run deterministic agentic offline daily workflow smoke",
-    )
-    agentic_offline_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
-
-    live_parser = subparsers.add_parser("smoke-live", help="Run gated live smoke")
-    live_parser.add_argument(
-        "--fail-if-unready",
-        action="store_true",
-        help="Fail instead of returning skipped when live dependencies are not configured",
-    )
 
     _add_run_operation_parsers(subparsers)
 
@@ -315,75 +272,6 @@ def _api_smoke_command() -> list[str]:
 
 def _mcp_smoke_command() -> list[str]:
     return [sys.executable, "-m", "scripts.smoke.mcp_smoke"]
-
-
-def _smoke_test_no_llm_command(run_id: str | None = None) -> list[str]:
-    command = _news_command(
-        "dev",
-        "run-test-no-llm",
-        "--topic",
-        SMOKE_TOPIC,
-    )
-    if run_id:
-        command.extend(["--run-id", run_id])
-    return command
-
-
-def _smoke_test_agent_loop_command(run_id: str | None = None) -> list[str]:
-    command = _news_command(
-        "dev",
-        "run-test-agent-loop",
-        "--topic",
-        SMOKE_TOPIC,
-    )
-    if run_id:
-        command.extend(["--run-id", run_id])
-    return command
-
-
-def _smoke_live_offline_command(run_id: str | None = None) -> list[str]:
-    command = _news_command(
-        "run",
-        "daily",
-        "--profile",
-        "live-offline",
-        "--topic",
-        SMOKE_TOPIC,
-        "--source-limit",
-        "2",
-    )
-    if run_id:
-        command.extend(["--run-id", run_id])
-    return command
-
-
-def _smoke_agentic_offline_command(run_id: str | None = None) -> list[str]:
-    command = [
-        sys.executable,
-        "-m",
-        "scripts.smoke.agentic_daily_offline",
-        "--topic",
-        SMOKE_TOPIC,
-        "--source-limit",
-        "2",
-    ]
-    if run_id:
-        command.extend(["--run-id", run_id])
-    return command
-
-
-def _smoke_live_command(*, fail_if_unready: bool) -> list[str]:
-    command = _news_command(
-        "dev",
-        "run-live-smoke",
-        "--topic",
-        SMOKE_TOPIC,
-        "--source-limit",
-        "3",
-    )
-    if fail_if_unready:
-        command.append("--fail-if-unready")
-    return command
 
 
 def _news_command(*args: str) -> list[str]:

@@ -61,7 +61,7 @@ class _FakeWorkerService:
                 "workers": [
                     {
                         "worker_id": "worker-1",
-                        "queue_names": ["news:queue:daily"],
+                        "queue_names": ["news:queue:memory"],
                         "status": "running",
                         "stored_status": "running",
                         "stale": False,

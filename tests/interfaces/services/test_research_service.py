@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
 from interfaces.services.research_service import (
@@ -95,13 +98,26 @@ def test_research_service_default_runtime_requires_real_configuration() -> None:
     assert exc.value.status_code == 503
 
 
-def test_research_service_does_not_depend_on_old_papers_application_service(monkeypatch) -> None:
-    import interfaces.services.paper_service as paper_service
+def test_research_service_does_not_depend_on_old_papers_application_service() -> None:
+    project_root = Path(__file__).resolve().parents[3]
+    assert not (project_root / "interfaces" / "services" / "paper_service.py").exists()
 
-    def fail_if_constructed(*args, **kwargs):
-        raise AssertionError("old paper service must not be used")
+    source = (project_root / "interfaces" / "services" / "research_service.py").read_text(
+        encoding="utf-8"
+    )
+    imports = {
+        alias.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    imports.update(
+        node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom) and node.module
+    )
+    assert "interfaces.services.paper_service" not in imports
 
-    monkeypatch.setattr(paper_service, "PapersApplicationService", fail_if_constructed)
     service = ResearchApplicationService(
         analyze_use_case=FakeAnalyzeUseCase(),
         run_store=InMemoryResearchRunStore(),

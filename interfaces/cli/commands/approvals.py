@@ -9,7 +9,6 @@ from typing import Any, Callable
 from framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.approval_service import DEFAULT_APPROVAL_STORE_PATH, ApprovalApplicationService
-from interfaces.services.run_service import DEFAULT_CHECKPOINT_STORE_PATH, RunApplicationService
 
 
 APPROVAL_STATUS_CHOICES = ["pending", "approved", "rejected", "modified", "expired", "cancelled"]
@@ -63,41 +62,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     _add_store_path(resume_context_parser)
     resume_context_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     resume_context_parser.set_defaults(handler=resume_context)
-
-    resume_workflow_parser = approvals_subparsers.add_parser(
-        "resume-workflow",
-        help="Resume a supported workflow from a decided approval",
-    )
-    resume_workflow_parser.add_argument("approval_id", help="Approval id")
-    resume_workflow_parser.add_argument(
-        "--workflow-id",
-        default="daily",
-        help="Workflow id or supported alias to resume",
-    )
-    resume_workflow_parser.add_argument(
-        "--profile",
-        default=None,
-        help="Workflow profile; defaults to the supported workflow default",
-    )
-    resume_workflow_parser.add_argument("--run-id", default=None, help="Optional run id for the resumed workflow")
-    resume_workflow_parser.add_argument(
-        "--decision-key",
-        default="human_review_decision",
-        help="DataBuffer key to write the decision payload into",
-    )
-    _add_store_path(resume_workflow_parser)
-    resume_workflow_parser.add_argument(
-        "--checkpoint-store-path",
-        default=DEFAULT_CHECKPOINT_STORE_PATH,
-        help="Local checkpoint store path",
-    )
-    resume_workflow_parser.add_argument(
-        "--artifact-root",
-        default=".newsroom/runs",
-        help="Directory where resumed run artifacts are written",
-    )
-    resume_workflow_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    resume_workflow_parser.set_defaults(handler=resume_workflow)
 
     approve_parser = approvals_subparsers.add_parser("approve", help="Approve a request")
     _add_decision_arguments(approve_parser)
@@ -180,35 +144,6 @@ def resume_context(args: argparse.Namespace) -> int:
         approval_run_id = payload["resume_metadata"].get("approval_run_id")
         if approval_run_id:
             print(f"approval_run_id={approval_run_id}")
-    return 0
-
-
-def resume_workflow(args: argparse.Namespace) -> int:
-    approval_service = ApprovalApplicationService(store_path=args.store_path)
-    try:
-        result = RunApplicationService(artifact_root=args.artifact_root).resume_from_approval(
-            args.approval_id,
-            workflow_id=args.workflow_id,
-            profile=args.profile,
-            run_id=args.run_id,
-            decision_key=args.decision_key,
-            approval_service=approval_service,
-            checkpoint_store_path=args.checkpoint_store_path,
-        )
-    except (ApprovalNotFoundError, ValueError) as exc:
-        print(str(exc))
-        return 1
-    payload = result.to_dict()
-    approval_context = payload.get("approval_context")
-    approval_payload = approval_context if isinstance(approval_context, dict) else {}
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    else:
-        print(f"approval_id={approval_payload.get('approval_id')}")
-        print(f"run_id={payload['run_id']}")
-        print(f"workflow_id={payload['workflow_id']}")
-        print(f"status={payload['status']}")
-        print(f"manifest_path={payload['manifest_path']}")
     return 0
 
 
@@ -321,7 +256,6 @@ __all__ = [
     "register",
     "reject",
     "resume_context",
-    "resume_workflow",
     "show_approval",
     "submit_approval",
 ]

@@ -4,7 +4,11 @@ The TypeScript SDK should call the same `/api/v1` HTTP contract as `NewsClient`.
 
 Minimum surface:
 
-- `client.runs.createDaily({ topic, profile, sourceLimit })`
+- `client.research.analyzePaper({ paperId, sourceUrl, pdfUrl, runId, userId, metadata, options })`
+- `client.research.analysis(paperId)`
+- `client.research.reader(paperId)`
+- `client.research.ask(paperId, { question, locale, selection, options })`
+- `client.research.trace(runId)`
 - `client.runs.get(runId)`
 - `client.runs.list({ limit })`
 - `client.runs.manifest(runId)`
@@ -50,8 +54,8 @@ Minimum surface:
 - `client.approvals.approve(approvalId, { decidedBy, reason })`
 - `client.approvals.reject(approvalId, { decidedBy, reason })`
 - `client.approvals.resumeContext(approvalId, { decisionKey })`
-- `client.approvals.resumeWorkflow(approvalId, { workflowId, profile, runId, decisionKey, checkpointStorePath })`
 
 SDK implementations must preserve the common `ApiResponse` / `ApiError` envelope and must not read runtime storage directly.
+Research helpers must call `/api/v1/research/...` endpoints and must not call retired `/api/v1/papers*` routes.
 Run inspection helpers must call `/api/v1/runs/...` endpoints and must not read `.newsroom/runs` directly.
-Approval workflow resume helpers must call `POST /api/v1/approvals/{approvalId}/resume-workflow` and must not resolve checkpoints locally.
+Approval resume helpers are context-only and must call `POST /api/v1/approvals/{approvalId}/resume-context`; workflow routing remains Harness-controlled.

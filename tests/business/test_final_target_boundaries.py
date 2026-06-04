@@ -8,16 +8,31 @@ def test_final_target_dependency_boundaries() -> None:
     root = Path(__file__).resolve().parents[2]
 
     foundation_imports = _imports_under(root / "business" / "foundation")
-    assert not any(name.startswith("business.layers") or name.startswith("business.boards") or name.startswith("infrastructure") for name in foundation_imports)
+    assert not any(
+        name.startswith("business.layers")
+        or name.startswith("business.boards")
+        or name.startswith("infrastructure")
+        for name in foundation_imports
+    )
 
     layer_imports = _imports_under(root / "business" / "layers")
-    assert not any(name.startswith("business.boards") or name.startswith("infrastructure.storage.postgres") or name.startswith("infrastructure.storage.redis") or name.startswith("infrastructure.storage.vector") for name in layer_imports)
+    assert not any(
+        name.startswith("business.boards")
+        or name.startswith("infrastructure.storage.postgres")
+        or name.startswith("infrastructure.storage.redis")
+        or name.startswith("infrastructure.storage.vector")
+        for name in layer_imports
+    )
 
-    board_imports = _imports_under(root / "business" / "boards")
-    assert not any(name.startswith("infrastructure.storage.postgres") or name.startswith("infrastructure.storage.redis") or name.startswith("infrastructure.storage.vector") for name in board_imports)
+    research_imports = _imports_under(root / "business" / "research")
+    assert not any(
+        name.startswith("business.boards")
+        or name.startswith("interfaces")
+        or name.startswith("infrastructure")
+        for name in research_imports
+    )
 
-    interface_imports = _imports_under(root / "interfaces" / "web")
-    assert not any(name.startswith("infrastructure.storage.postgres") or name.startswith("infrastructure.storage.redis") or name.startswith("infrastructure.storage.vector") for name in interface_imports)
+    assert not (root / "business" / "boards").exists()
 
 
 def _imports_under(path: Path) -> set[str]:

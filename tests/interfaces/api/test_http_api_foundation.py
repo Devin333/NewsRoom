@@ -2,14 +2,14 @@ import json
 
 from fastapi.testclient import TestClient
 
-from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
 from interfaces.api.app import _api_token_from_env
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.run_inspection_service import RunInspectionService
-from interfaces.services.worker_service import EnqueuedTaskResult
 from infrastructure.storage.repository import ReportRecord
-from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+
+
+RESEARCH_WORKFLOW_ID = "research.paper_analysis"
 
 
 def test_health_uses_common_envelope() -> None:
@@ -133,12 +133,12 @@ def test_api_token_can_be_loaded_from_newsroom_env_alias() -> None:
 
 
 def test_api_key_readonly_role_allows_read_and_blocks_write() -> None:
-    fake_worker = _FakeWorkerService()
+    fake_research = _FakeResearchService()
     client = TestClient(
         create_app(
             api_keys={"read-token": "read-only"},
             report_service_factory=lambda: _FakeReportService(),
-            worker_service_factory=lambda: fake_worker,
+            research_service_factory=lambda: fake_research,
         )
     )
 
@@ -147,8 +147,8 @@ def test_api_key_readonly_role_allows_read_and_blocks_write() -> None:
         headers={"Authorization": "Bearer read-token"},
     )
     write_response = client.post(
-        "/api/v1/runs/daily",
-        json={"topic": "AI policy", "source_limit": 2},
+        "/api/v1/research/papers/analyze",
+        json={"paperId": "paper-1", "sourceUrl": "https://arxiv.org/abs/2401.00001"},
         headers={"Authorization": "Bearer read-token"},
     )
 
@@ -156,34 +156,38 @@ def test_api_key_readonly_role_allows_read_and_blocks_write() -> None:
     assert write_response.status_code == 403
     assert write_response.json()["error"]["code"] == "forbidden"
     assert write_response.json()["error"]["details"]["required_permission"] == "write:runs"
-    assert fake_worker.enqueue_calls == []
+    assert fake_research.analyze_calls == []
 
 
 def test_api_key_operator_role_allows_run_write() -> None:
-    fake_worker = _FakeWorkerService()
+    fake_research = _FakeResearchService()
     client = TestClient(
         create_app(
             api_keys={"operator-token": ["operator"]},
-            worker_service_factory=lambda: fake_worker,
+            research_service_factory=lambda: fake_research,
         )
     )
 
     response = client.post(
-        "/api/v1/runs/daily",
-        json={"topic": "AI policy", "source_limit": 2, "run_id": "rbac-run"},
+        "/api/v1/research/papers/analyze",
+        json={
+            "paperId": "paper-1",
+            "sourceUrl": "https://arxiv.org/abs/2401.00001",
+            "runId": "rbac-run",
+        },
         headers={"Authorization": "Bearer operator-token"},
     )
 
     assert response.status_code == 200
-    assert fake_worker.enqueue_calls[0]["run_id"] == "rbac-run"
+    assert fake_research.analyze_calls[0].run_id == "rbac-run"
 
 
 def test_api_key_mcp_client_role_allows_mcp_catalog_only() -> None:
-    fake_worker = _FakeWorkerService()
+    fake_research = _FakeResearchService()
     client = TestClient(
         create_app(
             api_keys={"mcp-token": "mcp_client"},
-            worker_service_factory=lambda: fake_worker,
+            research_service_factory=lambda: fake_research,
         )
     )
 
@@ -192,8 +196,8 @@ def test_api_key_mcp_client_role_allows_mcp_catalog_only() -> None:
         headers={"Authorization": "Bearer mcp-token", "X-API-Client-ID": "mcp-client-1"},
     )
     run = client.post(
-        "/api/v1/runs/daily",
-        json={"topic": "AI policy", "source_limit": 2},
+        "/api/v1/research/papers/analyze",
+        json={"paperId": "paper-1", "sourceUrl": "https://arxiv.org/abs/2401.00001"},
         headers={"Authorization": "Bearer mcp-token", "X-API-Client-ID": "mcp-client-1"},
     )
 
@@ -220,17 +224,21 @@ def test_api_key_roles_can_be_loaded_from_env(monkeypatch) -> None:
 
 def test_api_key_role_lists_can_be_loaded_from_json_env(monkeypatch) -> None:
     monkeypatch.setenv("NEWS_API_KEYS", json.dumps({"env-operator": ["operator"]}))
-    fake_worker = _FakeWorkerService()
-    client = TestClient(create_app(worker_service_factory=lambda: fake_worker))
+    fake_research = _FakeResearchService()
+    client = TestClient(create_app(research_service_factory=lambda: fake_research))
 
     response = client.post(
-        "/api/v1/runs/daily",
-        json={"topic": "AI policy", "source_limit": 2, "run_id": "env-rbac-run"},
+        "/api/v1/research/papers/analyze",
+        json={
+            "paperId": "paper-1",
+            "sourceUrl": "https://arxiv.org/abs/2401.00001",
+            "runId": "env-rbac-run",
+        },
         headers={"Authorization": "Bearer env-operator"},
     )
 
     assert response.status_code == 200
-    assert fake_worker.enqueue_calls[0]["run_id"] == "env-rbac-run"
+    assert fake_research.analyze_calls[0].run_id == "env-rbac-run"
 
 
 def test_api_key_actor_is_used_for_audit_records() -> None:
@@ -260,8 +268,8 @@ def test_api_validation_errors_use_common_envelope() -> None:
     client = TestClient(create_app())
 
     response = client.post(
-        "/api/v1/runs/daily",
-        json={"profile": "live-offline", "topic": "AI", "source_limit": 0},
+        "/api/v1/research/papers/analyze",
+        json={"sourceUrl": "https://arxiv.org/abs/2401.00001"},
         headers={"X-Request-ID": "invalid-run"},
     )
     payload = response.json()
@@ -273,7 +281,7 @@ def test_api_validation_errors_use_common_envelope() -> None:
     assert payload["error"]["code"] == "invalid_request"
     assert payload["error"]["user_action_required"] is True
     errors = payload["error"]["details"]["errors"]
-    assert errors[0]["loc"] == ["body", "source_limit"]
+    assert errors[0]["loc"] == ["body", "paperId"]
     assert errors[0]["type"]
 
 
@@ -290,50 +298,48 @@ def test_api_unknown_route_uses_common_envelope() -> None:
     assert payload["error"]["code"] == "not_found"
 
 
-def test_submit_daily_run_enqueues_task() -> None:
-    fake_worker = _FakeWorkerService()
-    client = TestClient(create_app(worker_service_factory=lambda: fake_worker))
+def test_submit_research_analysis_uses_research_service() -> None:
+    fake_research = _FakeResearchService()
+    client = TestClient(create_app(research_service_factory=lambda: fake_research))
 
     response = client.post(
-        "/api/v1/runs/daily",
+        "/api/v1/research/papers/analyze",
         json={
-            "profile": "live-offline",
-            "topic": "AI policy",
-            "source_limit": 2,
-            "run_id": "api-run",
+            "paperId": "paper-1",
+            "sourceUrl": "https://arxiv.org/abs/2401.00001",
+            "runId": "api-run",
         },
     )
     payload = response.json()
 
     assert response.status_code == 200
-    assert fake_worker.enqueue_calls[0]["topic"] == "AI policy"
+    assert fake_research.analyze_calls[0].paper_id == "paper-1"
     assert payload["success"] is True
-    assert payload["data"]["status"] == "queued"
-    assert payload["data"]["task_status"] == "queued"
-    assert payload["data"]["task_id"] == "task-1"
-    assert payload["data"]["run_id"] == "api-run"
+    assert payload["data"]["status"] == "succeeded"
+    assert payload["data"]["runId"] == "api-run"
+    assert payload["data"]["paperId"] == "paper-1"
 
 
-def test_submit_daily_run_accepts_agentic_profile() -> None:
-    fake_worker = _FakeWorkerService()
-    client = TestClient(create_app(worker_service_factory=lambda: fake_worker))
+def test_submit_research_analysis_accepts_options() -> None:
+    fake_research = _FakeResearchService()
+    client = TestClient(create_app(research_service_factory=lambda: fake_research))
 
     response = client.post(
-        "/api/v1/runs/daily",
+        "/api/v1/research/papers/analyze",
         json={
-            "profile": "agentic-offline",
-            "topic": "AI policy",
-            "source_limit": 2,
-            "run_id": "api-agentic-run",
+            "paperId": "paper-1",
+            "sourceUrl": "https://arxiv.org/abs/2401.00001",
+            "runId": "api-options-run",
+            "options": {"max_turns": 4},
         },
     )
     payload = response.json()
 
     assert response.status_code == 200
-    assert fake_worker.enqueue_calls[0]["profile"] == "agentic-offline"
+    assert fake_research.analyze_calls[0].options == {"max_turns": 4}
     assert payload["success"] is True
     assert payload["data"]["status"] == "queued"
-    assert payload["data"]["run_id"] == "api-agentic-run"
+    assert payload["data"]["runId"] == "api-options-run"
 
 
 def test_latest_report_returns_report_detail() -> None:
@@ -375,26 +381,26 @@ def test_get_report_returns_report_detail() -> None:
 def test_list_reports_returns_report_catalog() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
 
-    response = client.get(f"/api/v1/reports?limit=1&workflow_id={LEGACY_DAILY_WORKFLOW_ID}")
+    response = client.get(f"/api/v1/reports?limit=1&workflow_id={RESEARCH_WORKFLOW_ID}")
     payload = response.json()
 
     assert response.status_code == 200
     assert payload["success"] is True
-    assert payload["data"]["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
+    assert payload["data"]["workflow_id"] == RESEARCH_WORKFLOW_ID
     assert payload["data"]["report_count"] == 1
     assert payload["data"]["reports"][0]["report_id"] == "report-1"
-    assert payload["data"]["reports"][0]["workflow_id"] == LEGACY_DAILY_WORKFLOW_ID
+    assert payload["data"]["reports"][0]["workflow_id"] == RESEARCH_WORKFLOW_ID
 
 
-def test_list_reports_returns_report_catalog_for_daily_workflow_family() -> None:
+def test_list_reports_returns_report_catalog_for_research_workflow_family() -> None:
     client = TestClient(create_app(report_service_factory=lambda: _FakeReportService()))
 
-    response = client.get("/api/v1/reports?limit=1&workflow_family=daily")
+    response = client.get("/api/v1/reports?limit=1&workflow_family=research")
     payload = response.json()
 
     assert response.status_code == 200
     assert payload["success"] is True
-    assert payload["data"]["workflow_family"] == "daily"
+    assert payload["data"]["workflow_family"] == "research"
     assert payload["data"]["report_count"] == 1
 
 
@@ -686,7 +692,7 @@ def test_entity_report_matches_return_matches() -> None:
     client = TestClient(create_app(entity_service_factory=lambda: _FakeEntityService()))
 
     response = client.get(
-        f"/api/v1/entities/company:openai/report-matches?limit=1&workflow_id={LEGACY_DAILY_WORKFLOW_ID}"
+        f"/api/v1/entities/company:openai/report-matches?limit=1&workflow_id={RESEARCH_WORKFLOW_ID}"
     )
     payload = response.json()
 
@@ -1039,25 +1045,19 @@ def test_artifact_missing_uses_unified_error() -> None:
     assert payload["error"]["code"] == "artifact_not_found"
 
 
-class _FakeWorkerService:
+class _FakeResearchService:
     def __init__(self) -> None:
-        self.enqueue_calls = []
+        self.analyze_calls = []
 
-    def enqueue_daily(self, **kwargs):
-        self.enqueue_calls.append(kwargs)
-        task = Task(
-            task_id="task-1",
-            task_type="daily_intelligence.run",
-            payload={
-                "profile": kwargs["profile"],
-                "topic": kwargs["topic"],
-                "source_limit": kwargs["source_limit"],
-                "run_id": kwargs["run_id"],
-            },
-            queue_name=kwargs["queue_name"],
-        )
-        task.status = TaskStatus.QUEUED
-        return EnqueuedTaskResult(task=task, message_id="1-0")
+    def analyze_paper(self, request):
+        self.analyze_calls.append(request)
+        status = "queued" if request.options else "succeeded"
+        return {
+            "runId": request.run_id or "research-run-1",
+            "paperId": request.paper_id,
+            "status": status,
+            "analysisRef": f"artifact://{request.run_id or 'research-run-1'}/analysis",
+        }
 
 
 class _FakeReportService:
@@ -1095,7 +1095,7 @@ class _FakeReportService:
                         "finished_at": "2026-05-11T01:00:00Z",
                         "title": "Daily Intelligence",
                         "quality_score": 0.9,
-                        "workflow_id": LEGACY_DAILY_WORKFLOW_ID,
+                        "workflow_id": RESEARCH_WORKFLOW_ID,
                         "manifest_path": ".newsroom/runs/run-1/manifest.json",
                         "report_json_path": ".newsroom/runs/run-1/report.json",
                         "report_markdown_path": ".newsroom/runs/run-1/report.md",
@@ -1522,7 +1522,7 @@ class _FakeEntityService:
                         "run_id": "run-1",
                         "title": "Daily Intelligence: OpenAI",
                         "finished_at": "2026-05-11T00:00:00Z",
-                        "workflow_id": LEGACY_DAILY_WORKFLOW_ID,
+                        "workflow_id": RESEARCH_WORKFLOW_ID,
                         "matched_aliases": ["OpenAI", "ChatGPT"],
                         "match_count": 2,
                         "quality_score": 0.9,

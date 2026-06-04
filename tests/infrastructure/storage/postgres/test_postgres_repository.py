@@ -6,7 +6,9 @@ from business.foundation.models.source import SourceError, SourceHealth, SourceH
 from infrastructure.storage.postgres import PostgresRepository
 from infrastructure.storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
 from infrastructure.storage.repository import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
-from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
+
+
+RESEARCH_WORKFLOW_ID = "research-paper-analysis"
 
 
 class FakeCursor:
@@ -488,20 +490,20 @@ def test_postgres_repository_lists_reports_with_workflow_filter() -> None:
                 0.8,
                 ".newsroom/runs/run-1/manifest.json",
                 "2026-05-11T01:00:00Z",
-                LEGACY_DAILY_WORKFLOW_ID,
+                RESEARCH_WORKFLOW_ID,
             )
         ]
     )
     repository = PostgresRepository("postgresql://example", connection_factory=lambda: connection)
 
-    records = repository.list_reports(limit=5, workflow_id=LEGACY_DAILY_WORKFLOW_ID)
+    records = repository.list_reports(limit=5, workflow_id=RESEARCH_WORKFLOW_ID)
 
     sql, params = connection.calls[0]
     assert "LEFT JOIN workflow_runs" in sql
     assert "wr.workflow_id = %s" in sql
-    assert params == (LEGACY_DAILY_WORKFLOW_ID, 5)
+    assert params == (RESEARCH_WORKFLOW_ID, 5)
     assert records[0].report_id == "report-1"
-    assert records[0].workflow_id == LEGACY_DAILY_WORKFLOW_ID
+    assert records[0].workflow_id == RESEARCH_WORKFLOW_ID
 
 
 def test_postgres_repository_lists_final_state_records_by_run() -> None:

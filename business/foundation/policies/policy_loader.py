@@ -28,7 +28,7 @@ DEFAULT_BOARD_POLICY_PARAMETERS: dict[str, dict[str, Any]] = {
         "top_requires_release_or_benchmark": True,
         "star_spike_penalty_without_evidence": 0.30,
     },
-    "paper_radar": {
+    "research": {
         "technology_novelty_weight": 0.25,
         "relevance_weight": 0.20,
         "implementation_potential_weight": 0.20,

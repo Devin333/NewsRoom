@@ -7,7 +7,12 @@ def test_runs_resource_paths_and_payloads() -> None:
     request_func = _Recorder()
     client = NewsRoomClient("https://news.example", request_func=request_func)
 
-    assert client.runs.create_daily(topic="AI", profile="live-offline", source_limit=3)["ok"] is True
+    assert client.runs.create(
+        "research.paper_analysis",
+        paper_id="paper-1",
+        source_url="https://arxiv.org/abs/2401.00001",
+        async_run=True,
+    )["ok"] is True
     assert client.runs.get("run/1")["ok"] is True
     assert client.runs.list(limit=10, status="running")["ok"] is True
     assert client.runs.events("run/1", event_type="step_succeeded", limit=2)["ok"] is True
@@ -24,9 +29,10 @@ def test_runs_resource_paths_and_payloads() -> None:
         ("GET", "/api/v1/runs/run%2F1/diagnostics"),
         ("POST", "/api/v1/runs/run%2F1/operations/cancel"),
     ]
-    assert request_func.calls[0]["json"]["workflow_id"] == "daily"
+    assert request_func.calls[0]["json"]["workflow_id"] == "research.paper_analysis"
     assert request_func.calls[0]["json"]["async_run"] is True
-    assert "queue_name" not in request_func.calls[0]["json"]
+    assert request_func.calls[0]["json"]["paper_id"] == "paper-1"
+    assert request_func.calls[0]["json"]["source_url"] == "https://arxiv.org/abs/2401.00001"
     assert request_func.calls[2]["params"]["status"] == "running"
     assert request_func.calls[3]["params"]["event_type"] == "step_succeeded"
     assert request_func.calls[6]["json"] == {"reason": "manual stop"}

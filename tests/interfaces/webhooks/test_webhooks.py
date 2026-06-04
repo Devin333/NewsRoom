@@ -11,19 +11,19 @@ from interfaces.webhooks import (
 
 
 def test_webhook_signature_verification() -> None:
-    body = b'{"event_type":"manual.daily_run"}'
+    body = b'{"event_type":"manual.memory_reindex"}'
     signature = build_signature_header(body, "secret")
 
     assert verify_signature(body, "secret", signature) is True
     assert verify_signature(body, "secret", "sha256=wrong") is False
 
 
-def test_incoming_webhook_manual_daily_run_enqueues_worker_task() -> None:
-    body = json.dumps({"topic": "AI policy", "source_limit": 2}).encode("utf-8")
+def test_incoming_webhook_manual_memory_reindex_enqueues_worker_task() -> None:
+    body = json.dumps({"run_id": "run-1", "topic": "AI policy"}).encode("utf-8")
     handler = IncomingWebhookHandler(secret="secret", worker_service=_FakeWorkerService())
     event = handler.parse(
         body,
-        event_type="manual.daily_run",
+        event_type="manual.memory_reindex",
         signature_header=build_signature_header(body, "secret"),
     )
 
@@ -31,7 +31,10 @@ def test_incoming_webhook_manual_daily_run_enqueues_worker_task() -> None:
 
     assert event.signature_verified is True
     assert result["handled"] is True
+    assert result["action"] == "enqueue_memory_reindex"
+    assert result["result"]["run_id"] == "run-1"
     assert result["result"]["topic"] == "AI policy"
+    assert result["result"]["task_type"] == "memory.reindex"
 
 
 def test_outgoing_webhook_signs_json_request() -> None:
@@ -113,13 +116,14 @@ def test_outgoing_webhook_records_http_error_status_attempt() -> None:
 
 
 class _FakeWorkerService:
-    def enqueue_daily(self, **kwargs):
+    def enqueue_memory_reindex(self, **kwargs):
         return _FakeResult(
             {
                 "task_id": "task-1",
                 "status": "queued",
+                "run_id": kwargs["run_id"],
                 "topic": kwargs["topic"],
-                "source_limit": kwargs["source_limit"],
+                "task_type": "memory.reindex",
             }
         )
 

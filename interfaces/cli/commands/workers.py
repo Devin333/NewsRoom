@@ -3,14 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 
-from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.worker_service import (
     DEFAULT_WORKER_STATUS,
-    DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
     DEFAULT_MEMORY_QUEUE,
-    DEFAULT_PAPER_QUEUE,
     DEFAULT_SOURCE_QUEUE,
     WorkerApplicationService,
     WORKER_STATUS_CHOICES,
@@ -25,24 +22,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def _register_worker_tree(subparsers: argparse._SubParsersAction, command_name: str) -> None:
     worker_parser = subparsers.add_parser(command_name, help="Submit and process background tasks")
     worker_subparsers = worker_parser.add_subparsers(dest="worker_command", required=True)
-
-    enqueue_daily_parser = worker_subparsers.add_parser(
-        "enqueue-daily",
-        help="Enqueue a daily intelligence task",
-    )
-    enqueue_daily_parser.add_argument(
-        "--profile",
-        choices=DAILY_PROFILE_CHOICES,
-        default="live-offline",
-        help="Execution profile",
-    )
-    enqueue_daily_parser.add_argument("--topic", default="AI", help="Topic for the daily report")
-    enqueue_daily_parser.add_argument("--source-limit", type=int, default=3, help="Maximum source items")
-    enqueue_daily_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
-    enqueue_daily_parser.add_argument("--queue-name", default=DEFAULT_DAILY_QUEUE, help="Redis stream queue name")
-    enqueue_daily_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
-    enqueue_daily_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    enqueue_daily_parser.set_defaults(handler=enqueue_daily)
 
     enqueue_memory_parser = worker_subparsers.add_parser(
         "enqueue-memory-reindex",
@@ -67,18 +46,6 @@ def _register_worker_tree(subparsers: argparse._SubParsersAction, command_name: 
     enqueue_source_health_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
     enqueue_source_health_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     enqueue_source_health_parser.set_defaults(handler=enqueue_source_health)
-
-    enqueue_paper_reader_backfill_parser = worker_subparsers.add_parser(
-        "enqueue-paper-reader-backfill",
-        help="Enqueue a Paper Reader visual compile backfill task",
-    )
-    enqueue_paper_reader_backfill_parser.add_argument("--limit", type=int, default=None, help="Maximum papers to enqueue")
-    enqueue_paper_reader_backfill_parser.add_argument("--force", action="store_true", help="Recompile already compiled papers")
-    enqueue_paper_reader_backfill_parser.add_argument("--run-id", default=None, help="Optional deterministic run id")
-    enqueue_paper_reader_backfill_parser.add_argument("--queue-name", default=DEFAULT_PAPER_QUEUE, help="Redis stream queue name")
-    enqueue_paper_reader_backfill_parser.add_argument("--redis-url", default=None, help="Redis URL; defaults to NEWS_REDIS_URL")
-    enqueue_paper_reader_backfill_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
-    enqueue_paper_reader_backfill_parser.set_defaults(handler=enqueue_paper_reader_backfill)
 
     run_once_parser = worker_subparsers.add_parser(
         "run-once",
@@ -171,29 +138,6 @@ def _register_worker_tree(subparsers: argparse._SubParsersAction, command_name: 
     worker_queues_parser.set_defaults(handler=queues)
 
 
-def enqueue_daily(args: argparse.Namespace) -> int:
-    service = _worker_service(redis_url=args.redis_url)
-    result = service.enqueue_daily(
-        profile=args.profile,
-        topic=args.topic,
-        source_limit=args.source_limit,
-        run_id=args.run_id,
-        queue_name=args.queue_name,
-    )
-    payload = result.to_dict()
-
-    if args.json:
-        _print_json(payload)
-    else:
-        print(f"task_id={payload['task_id']}")
-        print(f"task_type={payload['task_type']}")
-        print(f"queue_name={payload['queue_name']}")
-        print(f"message_id={payload['message_id']}")
-        print(f"profile={payload['profile']}")
-        print(f"topic={payload['topic']}")
-    return 0
-
-
 def enqueue_memory_reindex(args: argparse.Namespace) -> int:
     service = _worker_service(redis_url=args.redis_url)
     result = service.enqueue_memory_reindex(
@@ -241,34 +185,12 @@ def enqueue_source_health(args: argparse.Namespace) -> int:
     return 0
 
 
-def enqueue_paper_reader_backfill(args: argparse.Namespace) -> int:
-    service = _worker_service(redis_url=args.redis_url)
-    result = service.enqueue_paper_visual_compile_backfill(
-        limit=args.limit,
-        force=args.force,
-        run_id=args.run_id,
-        queue_name=args.queue_name,
-    )
-    payload = result.to_dict()
-
-    if args.json:
-        _print_json(payload)
-    else:
-        print(f"task_id={payload['task_id']}")
-        print(f"task_type={payload['task_type']}")
-        print(f"queue_name={payload['queue_name']}")
-        print(f"message_id={payload['message_id']}")
-        print(f"limit={payload['limit']}")
-        print(f"force={payload['force']}")
-    return 0
-
-
 def run_once(args: argparse.Namespace) -> int:
     service = _worker_service(artifact_root=args.artifact_root, redis_url=args.redis_url)
     try:
         result = service.run_once(
             worker_id=args.worker_id,
-            queue_names=args.queue_names or [DEFAULT_DAILY_QUEUE],
+            queue_names=args.queue_names or [DEFAULT_MEMORY_QUEUE],
             block_ms=args.block_ms,
             reclaim_stale_ms=args.reclaim_stale_ms,
         )
@@ -300,7 +222,7 @@ def run_loop(args: argparse.Namespace) -> int:
     try:
         result = service.run_loop(
             worker_id=args.worker_id,
-            queue_names=args.queue_names or [DEFAULT_DAILY_QUEUE],
+            queue_names=args.queue_names or [DEFAULT_MEMORY_QUEUE],
             block_ms=args.block_ms,
             reclaim_stale_ms=args.reclaim_stale_ms,
             max_tasks=args.max_tasks,
@@ -332,7 +254,7 @@ def heartbeat(args: argparse.Namespace) -> int:
     service = _worker_service(redis_url=args.redis_url)
     result = service.record_heartbeat(
         worker_id=args.worker_id,
-        queue_names=args.queue_names or [DEFAULT_DAILY_QUEUE],
+        queue_names=args.queue_names or [DEFAULT_MEMORY_QUEUE],
         status=args.status,
         current_task_id=args.current_task_id,
     )
@@ -376,7 +298,7 @@ def status(args: argparse.Namespace) -> int:
 def queues(args: argparse.Namespace) -> int:
     result = _worker_service(redis_url=args.redis_url).queue_status(
         queue_names=args.queue_names
-        or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
+        or [DEFAULT_MEMORY_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
     )
     payload = result.to_dict()
 
@@ -427,9 +349,7 @@ __all__ = [
     "CommandHandler",
     "add_workers_commands",
     "call_handler",
-    "enqueue_daily",
     "enqueue_memory_reindex",
-    "enqueue_paper_reader_backfill",
     "enqueue_source_health",
     "heartbeat",
     "queues",

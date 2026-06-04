@@ -11,7 +11,7 @@ def test_cli_build_parser_and_top_level_commands_exist() -> None:
 
     assert parser.prog == "news"
     for command in {
-        "run",
+        "api",
         "latest",
         "reports",
         "subscriptions",
@@ -25,6 +25,7 @@ def test_cli_build_parser_and_top_level_commands_exist() -> None:
         "storage",
         "approvals",
         "artifacts",
+        "tools",
     }:
         assert command in action.choices
 
@@ -33,8 +34,8 @@ def test_cli_key_subcommands_and_handlers_are_bound() -> None:
     parser = build_parser()
 
     for argv in [
-        ["run", "daily"],
-        ["run", "weekly"],
+        ["api", "openapi"],
+        ["runs", "list"],
         ["reports", "list"],
         ["reports", "show", "report-1"],
         ["subscriptions", "list"],

@@ -25,7 +25,7 @@ def test_openapi_operation_ids_are_unique_and_stable() -> None:
 
     assert operation_ids
     assert len(operation_ids) == len(set(operation_ids))
-    assert "runs_create" in operation_ids
+    assert "research_papers_analyze" in operation_ids
     assert "runs_get_events" in operation_ids
     assert "reports_latest" in operation_ids
     assert "memory_search" in operation_ids

@@ -478,7 +478,7 @@ def _board_type_for_source_type(source_type: Any, context: AnalysisContext) -> B
     if value in {"github"}:
         return BoardType.PROJECT_RADAR
     if value in {"arxiv", "paper_index"}:
-        return BoardType.PAPER_RADAR
+        return BoardType.RESEARCH
     if value in {"hackernews", "reddit", "github_discussion", "lobsters", "stackoverflow", "devto", "medium"}:
         return BoardType.COMMUNITY_PULSE
     return context.board_type or BoardType.AI_NEWS

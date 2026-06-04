@@ -26,24 +26,13 @@ def test_news_cli_entities_create_list_and_match_reports_json(tmp_path, capsys) 
     assert create_code == 0
     assert create_payload["entity_id"] == "company:openai"
 
-    assert (
-        main(
-            [
-                "run",
-                "daily",
-                "--profile",
-                "live-offline",
-                "--topic",
-                "OpenAI policy",
-                "--artifact-root",
-                str(artifact_root),
-                "--run-id",
-                "entity-daily",
-            ]
-        )
-        == 0
+    _write_research_report(
+        artifact_root,
+        run_id="entity-research",
+        report_id="entity-research:final",
+        title="Research analysis for OpenAI policy",
+        content="OpenAI and ChatGPT appear in the research evidence.",
     )
-    capsys.readouterr()
 
     list_code = main(["entities", "list", "--store-path", str(store_path), "--json"])
     list_payload = json.loads(capsys.readouterr().out)
@@ -60,7 +49,7 @@ def test_news_cli_entities_create_list_and_match_reports_json(tmp_path, capsys) 
             "--artifact-root",
             str(artifact_root),
             "--workflow-family",
-            "daily",
+            "research",
             "--json",
         ]
     )
@@ -68,7 +57,7 @@ def test_news_cli_entities_create_list_and_match_reports_json(tmp_path, capsys) 
 
     assert match_code == 0
     assert match_payload["match_count"] == 1
-    assert match_payload["matches"][0]["report_id"] == "entity-daily:final"
+    assert match_payload["matches"][0]["report_id"] == "entity-research:final"
 
 
 def test_news_cli_entities_match_reports_accepts_workflow_family(tmp_path, capsys) -> None:
@@ -93,24 +82,13 @@ def test_news_cli_entities_match_reports_accepts_workflow_family(tmp_path, capsy
     capsys.readouterr()
     assert create_code == 0
 
-    assert (
-        main(
-            [
-                "run",
-                "daily",
-                "--profile",
-                "live-offline",
-                "--topic",
-                "OpenAI policy",
-                "--artifact-root",
-                str(artifact_root),
-                "--run-id",
-                "entity-family-daily",
-            ]
-        )
-        == 0
+    _write_research_report(
+        artifact_root,
+        run_id="entity-family-research",
+        report_id="entity-family-research:final",
+        title="Research analysis for OpenAI policy",
+        content="ChatGPT is mentioned in the paper summary.",
     )
-    capsys.readouterr()
 
     match_code = main(
         [
@@ -122,14 +100,14 @@ def test_news_cli_entities_match_reports_accepts_workflow_family(tmp_path, capsy
             "--artifact-root",
             str(artifact_root),
             "--workflow-family",
-            "daily",
+            "research",
             "--json",
         ]
     )
     match_payload = json.loads(capsys.readouterr().out)
 
     assert match_code == 0
-    assert match_payload["workflow_family"] == "daily"
+    assert match_payload["workflow_family"] == "research"
     assert match_payload["match_count"] == 1
 
 
@@ -184,3 +162,38 @@ def test_news_cli_entities_rejects_secret_metadata(tmp_path, capsys) -> None:
 
     assert exit_code == 1
     assert "secret-like key" in captured.out
+
+
+def _write_research_report(
+    artifact_root,
+    *,
+    run_id: str,
+    report_id: str,
+    title: str,
+    content: str,
+) -> None:
+    run_dir = artifact_root / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "report.json").write_text(
+        json.dumps({"title": title, "sections": [{"content": content}]}),
+        encoding="utf-8",
+    )
+    (run_dir / "report.md").write_text(f"# {title}\n\n{content}", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "workflow_id": "research.paper_analysis",
+                "workflow_version": "0.1.0",
+                "profile": "research",
+                "status": "succeeded",
+                "finished_at": "2026-05-11T00:00:00Z",
+                "quality_score": 0.92,
+                "artifacts": {
+                    "report_json": "report.json",
+                    "report_markdown": "report.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )

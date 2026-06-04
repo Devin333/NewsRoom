@@ -6,7 +6,6 @@ UTC = _tz.utc
 from typing import Any, Callable, Literal, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
 from interfaces.mcp.models import (
     MCPCatalog,
     MCPCapability,
@@ -18,10 +17,10 @@ from interfaces.mcp.models import (
     MCPTool,
     MCPToolCallResult,
 )
+from interfaces.services.research_service import ResearchAnalyzeInput, ResearchAskInput
 from infrastructure.storage.lifecycle import RetentionPolicy
 
 
-DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_COLLECTION = "report_sections"
 MCP_CAPABILITY_MANIFEST_VERSION = "1.0"
 LATEST_REPORT_RESOURCE_URI = "news://reports/latest"
@@ -71,7 +70,7 @@ RETENTION_POLICY_ARG_NAMES = (
     "evidence_retention_days",
     "vector_retention_days",
 )
-DAILY_PROFILE_ENUM = list(DAILY_PROFILE_CHOICES)
+SUBSCRIPTION_PROFILE_ENUM = ["research"]
 
 
 class MCPApplicationService:
@@ -91,6 +90,7 @@ class MCPApplicationService:
         run_operation_service_factory: Callable[[], Any] | None = None,
         artifact_service_factory: Callable[[], Any] | None = None,
         storage_service_factory: Callable[[], Any] | None = None,
+        research_service_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
         self.run_service_factory = run_service_factory or _run_service_factory
@@ -111,6 +111,7 @@ class MCPApplicationService:
         )
         self.artifact_service_factory = artifact_service_factory or _artifact_service_factory
         self.storage_service_factory = storage_service_factory or _storage_service_factory
+        self.research_service_factory = research_service_factory or _research_service_factory
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
@@ -225,14 +226,16 @@ class MCPApplicationService:
     def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> MCPToolCallResult:
         args = arguments or {}
         try:
-            if tool_name == "news.daily.run":
-                return self._daily_run(args)
-            if tool_name == "news.topic.run":
-                return self._topic_run(args)
-            if tool_name == "news.weekly.run":
-                return self._weekly_run(args)
-            if tool_name == "news.daily.enqueue":
-                return self._daily_enqueue(args)
+            if tool_name == "news.research.analyze_paper":
+                return self._research_analyze_paper(args)
+            if tool_name == "news.research.paper_analysis":
+                return self._research_paper_analysis(args)
+            if tool_name == "news.research.reader":
+                return self._research_reader(args)
+            if tool_name == "news.research.ask":
+                return self._research_ask(args)
+            if tool_name == "news.research.trace":
+                return self._research_trace(args)
             if tool_name == "news.report.latest":
                 return self._latest_report()
             if tool_name == "news.report.list":
@@ -329,8 +332,6 @@ class MCPApplicationService:
                 return self._approval_submit_decision(args)
             if tool_name == "news.approval.resume_context":
                 return self._approval_resume_context(args)
-            if tool_name == "news.approval.resume_workflow":
-                return self._approval_resume_workflow(args)
             return MCPToolCallResult(
                 tool_name=tool_name,
                 success=False,
@@ -345,59 +346,62 @@ class MCPApplicationService:
                 error_message=str(exc),
             )
 
-    def _daily_run(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.run_service_factory().run_daily(
-            profile=str(args.get("profile") or "live-offline"),
-            topic=str(args.get("topic") or "AI"),
-            source_limit=_optional_int_arg(args, "source_limit", default=3),
-            run_id=_optional_arg(args, "run_id"),
+    def _research_analyze_paper(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.research_service_factory().analyze_paper(
+            ResearchAnalyzeInput(
+                paper_id=_required_arg(args, "paper_id"),
+                source_url=_optional_arg(args, "source_url"),
+                pdf_url=_optional_arg(args, "pdf_url"),
+                run_id=_optional_arg(args, "run_id"),
+                user_id=_optional_arg(args, "user_id"),
+                metadata=dict(args.get("metadata") or {}),
+                options=dict(args.get("options") or {}),
+            )
         )
         return MCPToolCallResult(
-            tool_name="news.daily.run",
+            tool_name="news.research.analyze_paper",
             success=True,
-            data=result.to_dict(),
+            data=_to_dict(result),
         )
 
-    def _topic_run(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.run_service_factory().run_daily(
-            profile=str(args.get("profile") or "live-offline"),
-            topic=_required_arg(args, "topic"),
-            source_limit=_optional_int_arg(args, "source_limit", default=3),
-            run_id=_optional_arg(args, "run_id"),
-        )
+    def _research_paper_analysis(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.research_service_factory().get_analysis(_required_arg(args, "paper_id"))
         return MCPToolCallResult(
-            tool_name="news.topic.run",
+            tool_name="news.research.paper_analysis",
             success=True,
-            data=result.to_dict(),
+            data=_to_dict(result),
         )
 
-    def _weekly_run(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.run_service_factory().run_weekly(
-            language=str(args.get("language") or "en"),
-            topic=_optional_arg(args, "topic"),
-            source_limit=_optional_int_arg(args, "source_limit", default=20),
-            period_start=_optional_arg(args, "period_start"),
-            period_end=_optional_arg(args, "period_end"),
-            run_id=_optional_arg(args, "run_id"),
-        )
+    def _research_reader(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.research_service_factory().get_reader(_required_arg(args, "paper_id"))
         return MCPToolCallResult(
-            tool_name="news.weekly.run",
+            tool_name="news.research.reader",
             success=True,
-            data=result.to_dict(),
+            data=_to_dict(result),
         )
 
-    def _daily_enqueue(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.worker_service_factory().enqueue_daily(
-            profile=str(args.get("profile") or "live-offline"),
-            topic=str(args.get("topic") or "AI"),
-            source_limit=int(args.get("source_limit") or 3),
-            run_id=args.get("run_id"),
-            queue_name=str(args.get("queue_name") or DEFAULT_DAILY_QUEUE),
+    def _research_ask(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.research_service_factory().ask_paper(
+            _required_arg(args, "paper_id"),
+            ResearchAskInput(
+                question=_required_arg(args, "question"),
+                locale=_optional_arg(args, "locale"),
+                selection=dict(args.get("selection") or {}),
+                options=dict(args.get("options") or {}),
+            ),
         )
         return MCPToolCallResult(
-            tool_name="news.daily.enqueue",
+            tool_name="news.research.ask",
             success=True,
-            data=result.to_dict(),
+            data=_to_dict(result),
+        )
+
+    def _research_trace(self, args: dict[str, Any]) -> MCPToolCallResult:
+        result = self.research_service_factory().get_trace(_required_arg(args, "run_id"))
+        return MCPToolCallResult(
+            tool_name="news.research.trace",
+            success=True,
+            data=_to_dict(result),
         )
 
     def _latest_report(self) -> MCPToolCallResult:
@@ -993,22 +997,6 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
-    def _approval_resume_workflow(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.run_service_factory().resume_from_approval(
-            _approval_id(args),
-            workflow_id=str(args.get("workflow_id") or "daily"),
-            profile=_optional_arg(args, "profile"),
-            run_id=_optional_arg(args, "run_id"),
-            decision_key=str(args.get("decision_key") or "human_review_decision"),
-            approval_service=self.approval_service_factory(),
-            checkpoint_store_path=str(args.get("checkpoint_store_path") or ".newsroom/checkpoints"),
-        )
-        return MCPToolCallResult(
-            tool_name="news.approval.resume_workflow",
-            success=True,
-            data=result.to_dict(),
-        )
-
     def _read_latest_report_resource(self) -> MCPResourceReadResult:
         record = self.report_service_factory().latest_report()
         return MCPResourceReadResult(
@@ -1184,63 +1172,67 @@ class MCPApplicationService:
 def _tools() -> list[MCPTool]:
     return [
         MCPTool(
-            name="news.daily.enqueue",
-            title="Enqueue daily intelligence run",
-            description="Queue a daily intelligence workflow task through WorkerApplicationService.",
+            name="news.research.analyze_paper",
+            title="Analyze research paper",
+            description="Run Harness-controlled Research paper analysis through ResearchApplicationService.",
             input_schema={
                 "type": "object",
+                "required": ["paper_id"],
                 "properties": {
-                    "profile": {"type": "string", "enum": DAILY_PROFILE_ENUM},
-                    "topic": {"type": "string"},
-                    "source_limit": {"type": "integer", "minimum": 1},
+                    "paper_id": {"type": "string"},
+                    "source_url": {"type": "string"},
+                    "pdf_url": {"type": "string"},
                     "run_id": {"type": "string"},
-                    "queue_name": {"type": "string"},
+                    "user_id": {"type": "string"},
+                    "metadata": {"type": "object"},
+                    "options": {"type": "object"},
                 },
             },
         ),
         MCPTool(
-            name="news.daily.run",
-            title="Run daily intelligence",
-            description="Run daily intelligence directly through RunApplicationService.",
+            name="news.research.paper_analysis",
+            title="Read research analysis",
+            description="Read the latest accepted Research analysis for a paper.",
             input_schema={
                 "type": "object",
+                "required": ["paper_id"],
+                "properties": {"paper_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.research.reader",
+            title="Read research reader payload",
+            description="Read the latest accepted Research reader payload for a paper.",
+            input_schema={
+                "type": "object",
+                "required": ["paper_id"],
+                "properties": {"paper_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.research.ask",
+            title="Ask research paper",
+            description="Ask an evidence-grounded question against an accepted Research paper analysis.",
+            input_schema={
+                "type": "object",
+                "required": ["paper_id", "question"],
                 "properties": {
-                    "profile": {"type": "string", "enum": DAILY_PROFILE_ENUM},
-                    "topic": {"type": "string"},
-                    "source_limit": {"type": "integer", "minimum": 1},
-                    "run_id": {"type": "string"},
+                    "paper_id": {"type": "string"},
+                    "question": {"type": "string"},
+                    "locale": {"type": "string"},
+                    "selection": {"type": "object"},
+                    "options": {"type": "object"},
                 },
             },
         ),
         MCPTool(
-            name="news.topic.run",
-            title="Run topic intelligence",
-            description="Run a topic-focused daily intelligence workflow through RunApplicationService.",
+            name="news.research.trace",
+            title="Read research trace",
+            description="Read Harness trace metadata for a Research run.",
             input_schema={
                 "type": "object",
-                "required": ["topic"],
-                "properties": {
-                    "profile": {"type": "string", "enum": DAILY_PROFILE_ENUM},
-                    "topic": {"type": "string"},
-                    "source_limit": {"type": "integer", "minimum": 1},
-                    "run_id": {"type": "string"},
-                },
-            },
-        ),
-        MCPTool(
-            name="news.weekly.run",
-            title="Run weekly intelligence",
-            description="Run weekly intelligence directly through RunApplicationService.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "language": {"type": "string", "enum": ["en"]},
-                    "topic": {"type": "string"},
-                    "source_limit": {"type": "integer", "minimum": 1},
-                    "period_start": {"type": "string", "format": "date-time"},
-                    "period_end": {"type": "string", "format": "date-time"},
-                    "run_id": {"type": "string"},
-                },
+                "required": ["run_id"],
+                "properties": {"run_id": {"type": "string"}},
             },
         ),
         MCPTool(
@@ -1453,7 +1445,7 @@ def _tools() -> list[MCPTool]:
                 "properties": {
                     "topic": {"type": "string"},
                     "cadence": {"type": "string", "enum": ["daily", "weekly"]},
-                    "profile": {"type": "string", "enum": DAILY_PROFILE_ENUM},
+                    "profile": {"type": "string", "enum": SUBSCRIPTION_PROFILE_ENUM},
                     "source_limit": {"type": "integer", "minimum": 1},
                     "subscription_id": {"type": "string"},
                     "enabled": {"type": "boolean"},
@@ -1850,26 +1842,6 @@ def _tools() -> list[MCPTool]:
                 },
             },
         ),
-        MCPTool(
-            name="news.approval.resume_workflow",
-            title="Resume workflow from approval",
-            description="Resume a supported workflow from the latest checkpoint for a decided approval.",
-            input_schema={
-                "type": "object",
-                "required": ["approval_id"],
-                "properties": {
-                    "approval_id": {"type": "string"},
-                    "workflow_id": {"type": "string", "default": "daily"},
-                    "profile": {"type": "string"},
-                    "run_id": {"type": "string"},
-                    "decision_key": {
-                        "type": "string",
-                        "default": "human_review_decision",
-                    },
-                    "checkpoint_store_path": {"type": "string"},
-                },
-            },
-        ),
     ]
 
 
@@ -2036,10 +2008,10 @@ def _tool_permission(tool_name: str) -> str:
         return "manage:approvals"
     if tool_name.startswith("news.approval."):
         return "manage:approvals" if not tool_name.endswith((".list", ".get")) else "read:reports"
-    if tool_name.startswith("news.daily.") or tool_name.startswith("news.topic.") or tool_name.startswith(
-        "news.weekly."
-    ):
+    if tool_name == "news.research.analyze_paper":
         return "write:runs"
+    if tool_name.startswith("news.research."):
+        return "read:reports"
     if tool_name in {"news.run.cancel", "news.run.rerun_from_step"}:
         return "write:runs"
     if tool_name.startswith("news.run."):
@@ -2081,8 +2053,8 @@ def _resource_permission(uri: str) -> str:
 
 def _mcp_category(name: str) -> str:
     value = name.removeprefix("news.").removeprefix("news://")
-    if value.startswith("daily.") or value.startswith("weekly.") or value.startswith("topic."):
-        return "runs"
+    if value.startswith("research."):
+        return "research"
     if value.startswith("run.") or value.startswith("runs/") or value.startswith("artifacts/"):
         return "runs"
     if value.startswith("report.") or value.startswith("reports/"):
@@ -2109,6 +2081,8 @@ def _mcp_category(name: str) -> str:
 
 
 def _tool_is_read_only(tool_name: str) -> bool:
+    if tool_name == "news.research.analyze_paper":
+        return False
     if tool_name in {"news.run.cancel", "news.run.rerun_from_step"}:
         return False
     write_markers = (
@@ -2127,7 +2101,6 @@ def _tool_is_read_only(tool_name: str) -> bool:
         ".reject",
         ".modify",
         ".submit_decision",
-        ".resume_workflow",
     )
     return not any(tool_name.endswith(marker) for marker in write_markers)
 
@@ -2157,13 +2130,13 @@ def _tool_side_effect_level(tool_name: str, *, read_only: bool) -> str:
 def _prompts() -> list[MCPPrompt]:
     return [
         MCPPrompt(
-            name="news.daily.briefing",
-            description="Prepare a daily intelligence briefing prompt for a topic.",
+            name="news.research.paper_briefing",
+            description="Prepare a grounded Research paper briefing prompt.",
             arguments_schema={
                 "type": "object",
                 "properties": {
-                    "topic": {"type": "string"},
-                    "date": {"type": "string"},
+                    "paper_id": {"type": "string"},
+                    "question": {"type": "string"},
                 },
             },
         ),
@@ -2181,11 +2154,6 @@ def _prompts() -> list[MCPPrompt]:
             name="news.source.triage",
             description="Triage source health and reliability issues.",
             arguments_schema={"type": "object", "properties": {"source_id": {"type": "string"}}},
-        ),
-        MCPPrompt(
-            name="news.daily_report_review",
-            description="Review a generated daily report for evidence coverage and clarity.",
-            arguments_schema={"type": "object", "properties": {"report_id": {"type": "string"}}},
         ),
         MCPPrompt(
             name="news.evidence_audit",
@@ -2224,11 +2192,12 @@ def _prompts() -> list[MCPPrompt]:
 
 def _prompt_templates() -> dict[str, dict[str, str]]:
     return {
-        "news.daily.briefing": {
-            "description": "Prepare a daily intelligence briefing prompt for a topic.",
+        "news.research.paper_briefing": {
+            "description": "Prepare a grounded Research paper briefing prompt.",
             "text": (
-                "Prepare the daily intelligence briefing for {topic} on {date}.\n"
-                "Use only approved NewsRoom evidence and separate current facts from historical context."
+                "Prepare a concise Research paper briefing for paper {paper_id}.\n"
+                "Focus question: {question}\n"
+                "Use only accepted Research evidence refs and separate claims from interpretation."
             ),
         },
         "news.report.review": {
@@ -2251,15 +2220,6 @@ def _prompt_templates() -> dict[str, dict[str, str]]:
             "text": (
                 "Triage source {source_id}.\n"
                 "Review recent failures, cooldown state, reliability, and remediation steps."
-            ),
-        },
-        "news.daily_report_review": {
-            "description": "Review a generated daily report for evidence coverage and clarity.",
-            "text": (
-                "Review the daily intelligence report.\n"
-                "Report id: {report_id}\n"
-                "Check evidence coverage, citation clarity, unsupported claims, and rewrite risks. "
-                "Return concise findings and recommended fixes."
             ),
         },
         "news.evidence_audit": {
@@ -2337,6 +2297,12 @@ def _run_service_factory():
     from interfaces.services.run_service import RunApplicationService
 
     return RunApplicationService()
+
+
+def _research_service_factory():
+    from interfaces.services.research_service import ResearchApplicationService
+
+    return ResearchApplicationService()
 
 
 def _report_service_factory():

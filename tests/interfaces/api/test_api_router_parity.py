@@ -13,8 +13,6 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/health/ready",
         "/health/dependencies",
         "/api/v1/runs",
-        "/api/v1/runs/daily",
-        "/api/v1/runs/weekly",
         "/api/v1/runs/catalog/health",
         "/api/v1/runs/compare",
         "/api/v1/runs/{run_id}",
@@ -62,7 +60,6 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/api/v1/sources/fetch-topic",
         "/api/v1/sources/arxiv/fetch",
         "/api/v1/sources/github/releases",
-        "/api/v1/papers",
         "/api/v1/research/papers/analyze",
         "/api/v1/research/papers/{paper_id}/analysis",
         "/api/v1/research/papers/{paper_id}/reader",
@@ -74,7 +71,6 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/api/v1/approvals",
         "/api/v1/approvals/{approval_id}",
         "/api/v1/approvals/{approval_id}/resume-context",
-        "/api/v1/approvals/{approval_id}/resume-workflow",
         "/api/v1/approvals/{approval_id}/approve",
         "/api/v1/approvals/{approval_id}/reject",
         "/api/v1/approvals/{approval_id}/modify",
@@ -84,8 +80,6 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
         "/api/v1/mcp/capabilities",
         "/api/v1/mcp/manifest",
         "/api/v1/schedules",
-        "/api/v1/schedules/daily",
-        "/api/v1/schedules/papers/ingest",
         "/api/v1/schedules/tick",
         "/api/v1/schedules/{schedule_id}/trigger",
         "/api/v1/entities",
@@ -101,3 +95,10 @@ def test_api_router_parity_keeps_current_paths_registered() -> None:
     }
 
     assert expected_paths <= paths
+    assert not any(path.startswith("/api/v1/papers") for path in paths)
+    assert not any(path.startswith("/api/v1/boards") for path in paths)
+    assert "/api/v1/runs/daily" not in paths
+    assert "/api/v1/runs/weekly" not in paths
+    assert "/api/v1/approvals/{approval_id}/resume-workflow" not in paths
+    assert "/api/v1/schedules/daily" not in paths
+    assert "/api/v1/schedules/papers/ingest" not in paths

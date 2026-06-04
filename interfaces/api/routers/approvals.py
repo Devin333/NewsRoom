@@ -9,7 +9,6 @@ from interfaces.models import (
     ApprovalModifyRequest,
     ApprovalResumeContextRequest,
     ApprovalSubmitRequest,
-    ApprovalWorkflowResumeRequest,
 )
 
 
@@ -67,33 +66,6 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             return helpers.error(
                 status_code=400,
                 code="approval_resume_context_unavailable",
-                message=str(exc),
-            )
-        return helpers.success(result.to_dict())
-
-    @router.post("/api/v1/approvals/{approval_id}/resume-workflow")
-    def approval_resume_workflow(
-        approval_id: str,
-        request: ApprovalWorkflowResumeRequest | None = None,
-    ):
-        actual_request = request or ApprovalWorkflowResumeRequest()
-        try:
-            result = services.run_service_factory().resume_from_approval(
-                approval_id,
-                workflow_id=actual_request.workflow_id,
-                profile=actual_request.profile,
-                run_id=actual_request.run_id,
-                decision_key=actual_request.decision_key,
-                approval_service=services.approval_service_factory(),
-                checkpoint_store_path=actual_request.checkpoint_store_path
-                or ".newsroom/checkpoints",
-            )
-        except ApprovalNotFoundError as exc:
-            return helpers.error(status_code=404, code="approval_not_found", message=str(exc))
-        except ValueError as exc:
-            return helpers.error(
-                status_code=400,
-                code="approval_workflow_resume_unavailable",
                 message=str(exc),
             )
         return helpers.success(result.to_dict())

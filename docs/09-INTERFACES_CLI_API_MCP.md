@@ -2,33 +2,40 @@
 
 ## Interface Boundary
 
-Interface code is an inbound adapter layer. CLI, API, SDK, MCP, and Web-facing modules call `interfaces.services.*` application services and return interface DTOs or business board DTOs. They must not import workflow executors, concrete storage clients, or business internals for presentation data.
+Interface code is an inbound adapter layer. CLI, API, SDK, MCP, webhook, and web-facing modules call `interfaces.services.*` application services and return interface DTOs. They must not import workflow executors, concrete storage clients, or business internals for presentation data.
 
-Board presentation surfaces consume board services and output DTOs. A request for board data returns `BoardOutput` or `BoardRunResult` shaped data, including trace refs, manifest refs, cards, detail pages, insights, reports, quality summaries, policy snapshots, and feedback candidates when available.
+The current backend product surface is Harness + Research. Legacy board, paper ingest, daily run, weekly run, and old paper reader routes are retired from the registered interface surface.
 
 ## CLI Command Map
 
-- `news run daily` starts a daily intelligence workflow through `RunApplicationService`.
-- `news run weekly` starts a weekly intelligence workflow through `RunApplicationService`.
-- `news reports latest` reads report summaries through `ReportApplicationService`.
-- `news boards list` and board detail commands read board DTOs through `BoardApplicationService`.
-- `news mcp catalog` exposes MCP tool/resource/prompt metadata through `MCPApplicationService`.
-- `news interface-smoke` is the acceptance smoke path for checking CLI, API service wiring, MCP catalog access, and standard response envelopes.
+- `news api serve` starts the HTTP API server.
+- `news api openapi` exports the current OpenAPI schema.
+- `news runs list`, `news runs show`, `news runs events`, and `news runs replay` inspect Harness run artifacts.
+- `news reports list`, `news reports show`, and `news latest` read persisted reports through `ReportApplicationService`.
+- `news schedules` manages generic task schedules such as source health checks and memory reindex tasks.
+- `news workers` and `news worker` inspect workers and queues.
+- `news sources` lists, probes, validates, and fetches configured real sources.
+- `news memory` searches and reindexes memory.
+- `news mcp catalog` exposes MCP tool, resource, and prompt metadata through `MCPApplicationService`.
 
 ## API Endpoint Map
 
-- `GET /health` returns API health in the standard envelope.
-- `POST /api/v1/runs/daily` creates a daily run.
-- `POST /api/v1/runs/weekly` creates a weekly run.
-- `GET /api/v1/reports` lists reports.
-- `GET /api/v1/reports/{report_id}` returns a report detail DTO.
-- `GET /api/v1/boards` lists available board views.
-- `GET /api/v1/boards/{board_type}` returns board output through the board application service.
-- `POST /api/v1/mcp/tools/{tool_name}` invokes MCP tools through the MCP application service.
+- `GET /health`, `/health/live`, `/health/ready`, and `/health/dependencies` return API health in the standard envelope.
+- `POST /api/v1/research/papers/analyze` starts a Research paper analysis request.
+- `GET /api/v1/research/papers/{paper_id}/analysis` returns the stored Research analysis payload.
+- `GET /api/v1/research/papers/{paper_id}/reader` returns the Research reader payload.
+- `POST /api/v1/research/papers/{paper_id}/ask` answers a paper question with evidence refs.
+- `GET /api/v1/research/runs/{run_id}/trace` returns the Harness trace for a Research run.
+- `GET /api/v1/runs*` inspects run manifests, events, replay bundles, health, diagnostics, artifacts, and operations.
+- `GET /api/v1/reports*` lists and reads persisted reports.
+- `GET /api/v1/sources*` and `POST /api/v1/sources/*` expose configured source operations.
+- `GET /api/v1/mcp/catalog` and related MCP routes expose the MCP surface.
+
+Retired routes such as `/api/v1/papers*`, `/api/v1/boards*`, `/api/v1/runs/daily`, and `/api/v1/runs/weekly` must remain unregistered.
 
 ## SDK Usage
 
-The Python SDK mirrors the HTTP contract. It sends the same request bodies as API clients, preserves `Request-ID` correlation, and raises typed API errors from the standard envelope rather than exposing raw transport exceptions to callers.
+The Python SDK mirrors the HTTP contract. It sends the same request bodies as API clients, preserves request correlation, and raises typed API errors from the standard envelope rather than exposing raw transport exceptions to callers. Research API examples live in `examples/api/analyze_research_paper.py` and `examples/sdk/analyze_research_paper.py`.
 
 ## MCP Surface
 
@@ -44,14 +51,15 @@ All API responses use the shared envelope:
 
 ```json
 {
-  "ok": true,
+  "success": true,
   "data": {},
   "error": null,
-  "request_id": "request-id"
+  "request_id": "request-id",
+  "schema_version": "1.0"
 }
 ```
 
-Errors keep the same envelope shape with `ok: false`, an error code, a message, details, and the same `Request-ID` value.
+Errors keep the same envelope shape with `success: false`, an error code, a message, details, and the same request id.
 
 ## Request-ID
 
@@ -59,7 +67,8 @@ Clients should send `X-Request-ID` for traceability. When omitted, the API creat
 
 ## Current Limits
 
-- Interfaces do not call real LLMs directly; workflow services decide runtime profile behavior.
-- Interfaces do not bypass business services to read concrete postgres, qdrant, redis, or artifact storage for board presentation data.
+- Interfaces do not call real LLMs directly; Harness and application services own runtime profile behavior.
+- Interfaces do not bypass application services to read concrete postgres, qdrant, redis, or artifact storage.
 - Web console code remains a consumer of API contracts, not a direct framework runtime client.
 - MCP stdio and HTTP surfaces share the same application service contracts.
+- `python -m scripts.dev interface-smoke` remains the interface-layer acceptance command.

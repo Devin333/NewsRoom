@@ -8,7 +8,7 @@ from interfaces.cli.news import build_parser
 @pytest.mark.parametrize(
     "argv",
     [
-        ["run", "daily", "--help"],
+        ["api", "openapi", "--help"],
         ["reports", "list", "--help"],
         ["reports", "latest", "--help"],
         ["latest", "--help"],

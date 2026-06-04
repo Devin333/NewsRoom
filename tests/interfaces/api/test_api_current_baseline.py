@@ -4,9 +4,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from framework.workers import Task, TaskStatus
 from interfaces.api import create_app
-from interfaces.services.worker_service import EnqueuedTaskResult
 from infrastructure.storage.repository import ReportRecord
 
 
@@ -26,13 +24,11 @@ def test_current_core_api_routes_return_unified_envelope() -> None:
         ("GET", "/health/dependencies", None),
         (
             "POST",
-            "/api/v1/runs",
+            "/api/v1/research/papers/analyze",
             {
-                "workflow_id": "daily",
-                "profile": "live-offline",
-                "topic": "AI",
-                "source_limit": 3,
-                "run_id": "baseline-run",
+                "paperId": "arxiv:2501.00001",
+                "sourceUrl": "https://arxiv.org/abs/2501.00001",
+                "runId": "baseline-run",
             },
         ),
         ("GET", "/api/v1/reports/latest", None),
@@ -61,7 +57,7 @@ def test_current_core_api_routes_return_unified_envelope() -> None:
 
 def _baseline_app():
     return create_app(
-        worker_service_factory=lambda: _FakeWorkerService(),
+        research_service_factory=lambda: _FakeResearchService(),
         report_service_factory=lambda: _FakeReportService(),
         memory_service_factory=lambda: _FakeMemoryService(),
         diagnostic_service_factory=lambda: _FakeDiagnosticService(),
@@ -69,21 +65,14 @@ def _baseline_app():
     )
 
 
-class _FakeWorkerService:
-    def enqueue_daily(self, **kwargs: Any) -> EnqueuedTaskResult:
-        task = Task(
-            task_id="task-baseline",
-            task_type="daily_intelligence.run",
-            payload={
-                "profile": kwargs["profile"],
-                "topic": kwargs["topic"],
-                "source_limit": kwargs["source_limit"],
-                "run_id": kwargs["run_id"],
-            },
-            queue_name=kwargs["queue_name"],
-        )
-        task.status = TaskStatus.QUEUED
-        return EnqueuedTaskResult(task=task, message_id="1-0")
+class _FakeResearchService:
+    def analyze_paper(self, request) -> dict[str, Any]:
+        return {
+            "paperId": request.paper_id,
+            "runId": request.run_id or "baseline-run",
+            "status": "completed",
+            "analysisRef": f"artifact://{request.run_id or 'baseline-run'}/analysis",
+        }
 
 
 class _FakeReportService:
@@ -92,9 +81,9 @@ class _FakeReportService:
             report_id="report-baseline",
             run_id="run-baseline",
             status="final",
-            title="Daily Intelligence",
-            report_json={"title": "Daily Intelligence"},
-            report_markdown="# Daily Intelligence",
+            title="Research Analysis",
+            report_json={"title": "Research Analysis"},
+            report_markdown="# Research Analysis",
             quality_score=0.95,
             manifest_path=".newsroom/runs/run-baseline/manifest.json",
         )

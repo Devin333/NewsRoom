@@ -8,17 +8,6 @@ UTC = _tz.utc
 from pathlib import Path
 from typing import Any, Callable
 
-from business.boards.cross_board.worker_handlers import DailyIntelligenceTaskHandler
-from business.boards.paper_radar.reader_feedback import PaperReaderFeedbackService
-from business.boards.paper_radar.worker_handlers import (
-    PAPER_READER_FEEDBACK_TASK_TYPE,
-    PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
-    PAPER_VISUAL_COMPILE_TASK_TYPE,
-    PaperIngestTaskHandler,
-    PaperReaderFeedbackTaskHandler,
-    PaperVisualCompileBackfillTaskHandler,
-    PaperVisualCompileTaskHandler,
-)
 from business.layers.output.worker_handlers import MemoryReindexTaskHandler
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
 from framework.workers import (
@@ -37,18 +26,11 @@ from infrastructure.storage.workers import (
     RedisWorkerRegistry,
 )
 from interfaces.services.memory_service import MemoryApplicationService
-from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE, PaperIngestApplicationService
-from interfaces.services.paper_reader_interaction_service import LocalJsonPaperReaderInteractionRepository
-from interfaces.services.paper_reader_memory_repository import paper_reader_memory_repository_from_env
-from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
-from interfaces.services.run_service import RunApplicationService
 from interfaces.services.source_service import SourceApplicationService
 
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
-DEFAULT_DAILY_QUEUE = "news:queue:daily"
 DEFAULT_MEMORY_QUEUE = "news:queue:memory"
-DEFAULT_PAPER_QUEUE = "news:queue:papers"
 DEFAULT_SOURCE_QUEUE = "news:queue:sources"
 DEFAULT_DEAD_LETTER_QUEUE = "news:queue:dead-letter"
 WORKER_STATUS_CHOICES = tuple(status.value for status in WorkerStatus)
@@ -67,11 +49,8 @@ class EnqueuedTaskResult:
             "task_type": self.task.task_type,
             "queue_name": self.task.queue_name,
             "status": self.task.status.value,
-            "profile": self.task.payload.get("profile"),
             "topic": self.task.payload.get("topic"),
-            "source_limit": self.task.payload.get("source_limit"),
             "run_id": self.task.payload.get("run_id"),
-            "paper_id": self.task.payload.get("paper_id"),
             "force": self.task.payload.get("force"),
             "limit": self.task.payload.get("limit"),
         }
@@ -202,66 +181,13 @@ class WorkerApplicationService:
 
     def _build_default_handlers(self) -> dict[str, TaskHandler]:
         return {
-            DailyIntelligenceTaskHandler.task_type: DailyIntelligenceTaskHandler(
-                RunApplicationService(artifact_root=self.artifact_root)
-            ),
             MemoryReindexTaskHandler.task_type: MemoryReindexTaskHandler(
                 memory_service=MemoryApplicationService(artifact_root=self.artifact_root)
             ),
             SourceHealthCheckTaskHandler.task_type: SourceHealthCheckTaskHandler(
                 source_service=SourceApplicationService()
             ),
-            PaperIngestTaskHandler.task_type: PaperIngestTaskHandler(
-                paper_ingest_service=PaperIngestApplicationService(),
-                visual_compile_enqueue=lambda *, paper_id: self.enqueue_paper_visual_compile(paper_id=paper_id),
-            ),
-            PaperVisualCompileTaskHandler.task_type: PaperVisualCompileTaskHandler(
-                paper_visual_compiler_service=PaperVisualCompilerApplicationService()
-            ),
-            PaperVisualCompileBackfillTaskHandler.task_type: PaperVisualCompileBackfillTaskHandler(
-                paper_visual_compiler_service=PaperVisualCompilerApplicationService(),
-                visual_compile_enqueue=lambda *, paper_id, force=False, run_id=None: self.enqueue_paper_visual_compile(
-                    paper_id=paper_id,
-                    force=force,
-                    run_id=run_id,
-                ),
-            ),
-            PaperReaderFeedbackTaskHandler.task_type: PaperReaderFeedbackTaskHandler(
-                event_repository=LocalJsonPaperReaderInteractionRepository(),
-                feedback_service=_paper_reader_feedback_service_from_env(),
-            ),
         }
-
-    def enqueue_daily(
-        self,
-        *,
-        profile: str = "live-offline",
-        topic: str = "AI",
-        source_limit: int = 3,
-        run_id: str | None = None,
-        queue_name: str = DEFAULT_DAILY_QUEUE,
-    ) -> EnqueuedTaskResult:
-        payload: dict[str, Any] = {
-            "profile": profile,
-            "topic": topic,
-            "source_limit": source_limit,
-        }
-        if run_id:
-            payload["run_id"] = run_id
-        _reject_secret_payload_keys(payload)
-        task = Task(
-            task_type=DailyIntelligenceTaskHandler.task_type,
-            queue_name=queue_name,
-            payload=payload,
-            dedup_key=_daily_task_dedup_key(
-                queue_name=queue_name,
-                profile=profile,
-                topic=topic,
-                run_id=run_id,
-            ),
-        )
-        message_id = self.queue.enqueue(task)
-        return EnqueuedTaskResult(task=task, message_id=str(message_id))
 
     def enqueue_memory_reindex(
         self,
@@ -310,123 +236,6 @@ class WorkerApplicationService:
         message_id = self.queue.enqueue(task)
         return EnqueuedTaskResult(task=task, message_id=str(message_id))
 
-    def enqueue_paper_ingest(
-        self,
-        *,
-        candidate_limit: int | None = None,
-        min_github_stars: int | None = None,
-        run_id: str | None = None,
-        queue_name: str = DEFAULT_PAPER_QUEUE,
-    ) -> EnqueuedTaskResult:
-        payload: dict[str, Any] = {}
-        if candidate_limit is not None:
-            if candidate_limit <= 0:
-                raise ValueError("candidate_limit must be greater than zero")
-            payload["candidate_limit"] = candidate_limit
-        if min_github_stars is not None:
-            if min_github_stars < 0:
-                raise ValueError("min_github_stars must be non-negative")
-            payload["min_github_stars"] = min_github_stars
-        if run_id:
-            payload["run_id"] = run_id
-        _reject_secret_payload_keys(payload)
-        task = Task(
-            task_type=PAPER_INGEST_TASK_TYPE,
-            queue_name=queue_name,
-            payload=payload,
-            dedup_key=None if run_id else f"{queue_name}:daily:github-arxiv",
-        )
-        message_id = self.queue.enqueue(task)
-        return EnqueuedTaskResult(task=task, message_id=str(message_id))
-
-    def enqueue_paper_reader_feedback(
-        self,
-        *,
-        paper_id: str,
-        user_id: str | None = None,
-        limit: int = 100,
-        queue_name: str = DEFAULT_MEMORY_QUEUE,
-    ) -> EnqueuedTaskResult:
-        resolved_paper_id = str(paper_id).strip()
-        if not resolved_paper_id:
-            raise ValueError("paper_id is required")
-        resolved_user_id = str(user_id).strip() if user_id is not None else None
-        if limit <= 0:
-            raise ValueError("limit must be greater than zero")
-        payload: dict[str, Any] = {
-            "paper_id": resolved_paper_id,
-            "limit": int(limit),
-        }
-        if resolved_user_id:
-            payload["user_id"] = resolved_user_id
-        _reject_secret_payload_keys(payload)
-        task = Task(
-            task_type=PAPER_READER_FEEDBACK_TASK_TYPE,
-            queue_name=queue_name,
-            payload=payload,
-            dedup_key=_paper_reader_feedback_dedup_key(
-                queue_name=queue_name,
-                paper_id=resolved_paper_id,
-                user_id=resolved_user_id,
-            ),
-        )
-        message_id = self.queue.enqueue(task)
-        return EnqueuedTaskResult(task=task, message_id=str(message_id))
-
-    def enqueue_paper_visual_compile(
-        self,
-        *,
-        paper_id: str,
-        force: bool = False,
-        run_id: str | None = None,
-        queue_name: str = DEFAULT_PAPER_QUEUE,
-    ) -> EnqueuedTaskResult:
-        resolved_paper_id = str(paper_id).strip()
-        if not resolved_paper_id:
-            raise ValueError("paper_id is required")
-        payload: dict[str, Any] = {
-            "paper_id": resolved_paper_id,
-            "force": bool(force),
-        }
-        if run_id:
-            payload["run_id"] = run_id
-        _reject_secret_payload_keys(payload)
-        task = Task(
-            task_type=PAPER_VISUAL_COMPILE_TASK_TYPE,
-            queue_name=queue_name,
-            payload=payload,
-            dedup_key=None if force or run_id else f"{queue_name}:paper-visual-compile:{resolved_paper_id}",
-        )
-        message_id = self.queue.enqueue(task)
-        return EnqueuedTaskResult(task=task, message_id=str(message_id))
-
-    def enqueue_paper_visual_compile_backfill(
-        self,
-        *,
-        limit: int | None = None,
-        force: bool = False,
-        run_id: str | None = None,
-        queue_name: str = DEFAULT_PAPER_QUEUE,
-    ) -> EnqueuedTaskResult:
-        if limit is not None and limit <= 0:
-            raise ValueError("limit must be greater than zero")
-        payload: dict[str, Any] = {
-            "force": bool(force),
-        }
-        if limit is not None:
-            payload["limit"] = int(limit)
-        if run_id:
-            payload["run_id"] = run_id
-        _reject_secret_payload_keys(payload)
-        task = Task(
-            task_type=PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
-            queue_name=queue_name,
-            payload=payload,
-            dedup_key=None if force or run_id else f"{queue_name}:paper-visual-compile-backfill:missing",
-        )
-        message_id = self.queue.enqueue(task)
-        return EnqueuedTaskResult(task=task, message_id=str(message_id))
-
     def run_once(
         self,
         *,
@@ -435,7 +244,7 @@ class WorkerApplicationService:
         block_ms: int = 1000,
         reclaim_stale_ms: int | None = None,
     ) -> WorkerRunOnceResult:
-        queues = queue_names or [DEFAULT_DAILY_QUEUE]
+        queues = queue_names or [DEFAULT_MEMORY_QUEUE]
         self._record_worker_heartbeat(
             worker_id=worker_id,
             queue_names=queues,
@@ -505,7 +314,7 @@ class WorkerApplicationService:
     ) -> WorkerHeartbeatResult:
         worker = self._record_worker_heartbeat(
             worker_id=worker_id,
-            queue_names=queue_names or [DEFAULT_DAILY_QUEUE],
+            queue_names=queue_names or [DEFAULT_MEMORY_QUEUE],
             status=status,
             current_task_id=current_task_id,
             metadata=metadata,
@@ -551,7 +360,7 @@ class WorkerApplicationService:
     def queue_status(self, *, queue_names: list[str] | None = None) -> WorkerQueueStatusResult:
         queues = _unique_queue_names(
             queue_names
-            or [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_PAPER_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
+            or [DEFAULT_MEMORY_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
         )
         return WorkerQueueStatusResult(queues=self.queue.status(queues))
 
@@ -732,32 +541,3 @@ def _reject_secret_payload_keys(payload: dict[str, Any]) -> None:
         normalized = key.lower().replace("-", "_")
         if any(fragment in normalized for fragment in secret_fragments):
             raise ValueError(f"task payload key is not allowed: {key}")
-
-
-def _daily_task_dedup_key(
-    *,
-    queue_name: str,
-    profile: str,
-    topic: str,
-    run_id: str | None,
-) -> str | None:
-    if run_id:
-        return None
-    return f"{queue_name}:daily:{profile}:{topic.strip().casefold()}"
-
-
-def _paper_reader_feedback_dedup_key(
-    *,
-    queue_name: str,
-    paper_id: str,
-    user_id: str | None,
-) -> str:
-    now = datetime.now(UTC)
-    window_start_minute = now.minute - (now.minute % 5)
-    window = now.replace(minute=window_start_minute, second=0, microsecond=0)
-    user_part = user_id or "*"
-    return f"{queue_name}:paper-reader-feedback:{paper_id}:{user_part}:{window.isoformat()}"
-
-
-def _paper_reader_feedback_service_from_env() -> PaperReaderFeedbackService:
-    return PaperReaderFeedbackService(repository=paper_reader_memory_repository_from_env())

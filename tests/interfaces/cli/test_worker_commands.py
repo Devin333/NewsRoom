@@ -4,34 +4,6 @@ import interfaces.cli.news as news_cli
 from interfaces.cli.commands import workers as worker_commands
 
 
-def test_news_cli_worker_enqueue_daily_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
-
-    exit_code = news_cli.main(
-        [
-            "worker",
-            "enqueue-daily",
-            "--profile",
-            "live-offline",
-            "--topic",
-            "AI policy",
-            "--source-limit",
-            "2",
-            "--run-id",
-            "queued-run",
-            "--json",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    payload = json.loads(captured.out)
-
-    assert exit_code == 0
-    assert payload["task_id"] == "task-1"
-    assert payload["queue_name"] == "news:queue:daily"
-    assert payload["topic"] == "AI policy"
-
-
 def test_news_cli_worker_enqueue_memory_reindex_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(worker_commands, "WorkerApplicationService", _FakeWorkerService)
 
@@ -174,7 +146,7 @@ def test_news_cli_worker_heartbeat_json(monkeypatch, capsys) -> None:
             "--worker-id",
             "worker-1",
             "--queue-name",
-            "news:queue:daily",
+            "news:queue:memory",
             "--current-task-id",
             "task-1",
             "--json",
@@ -222,7 +194,7 @@ def test_news_cli_worker_queues_json(monkeypatch, capsys) -> None:
             "worker",
             "queues",
             "--queue-name",
-            "news:queue:daily",
+            "news:queue:memory",
             "--json",
         ]
     )
@@ -232,7 +204,7 @@ def test_news_cli_worker_queues_json(monkeypatch, capsys) -> None:
 
     assert exit_code == 0
     assert payload["queue_count"] == 1
-    assert payload["queues"][0]["queue_name"] == "news:queue:daily"
+    assert payload["queues"][0]["queue_name"] == "news:queue:memory"
     assert payload["queues"][0]["pending_count"] == 2
 
 
@@ -243,21 +215,6 @@ class _FakeWorkerService:
     def __init__(self, *args, **kwargs) -> None:
         self.args = args
         self.kwargs = kwargs
-
-    def enqueue_daily(self, **kwargs):
-        return _FakeResult(
-            {
-                "message_id": "1-0",
-                "task_id": "task-1",
-                "task_type": "daily_intelligence.run",
-                "queue_name": kwargs["queue_name"],
-                "status": "queued",
-                "profile": kwargs["profile"],
-                "topic": kwargs["topic"],
-                "source_limit": kwargs["source_limit"],
-                "run_id": kwargs["run_id"],
-            }
-        )
 
     def enqueue_memory_reindex(self, **kwargs):
         return _FakeResult(
@@ -326,7 +283,7 @@ class _FakeWorkerService:
                 "workers": [
                     {
                         "worker_id": "worker-1",
-                        "queue_names": ["news:queue:daily"],
+                        "queue_names": ["news:queue:memory"],
                         "status": "running",
                         "stored_status": "running",
                         "stale": False,
@@ -382,10 +339,10 @@ class _FakeRunOnceResult:
             "processed": True,
             "worker_id": "worker-1",
             "reclaimed": self.reclaimed,
-            "queue_name": "news:queue:daily",
+            "queue_name": "news:queue:memory",
             "message_id": "1-0",
             "task_id": "task-1",
-            "task_type": "daily_intelligence.run",
+            "task_type": "memory.reindex",
             "success": True,
             "task_status": "succeeded",
             "workflow_run_id": "workflow-1",

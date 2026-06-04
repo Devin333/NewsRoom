@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from business.boards.cross_board.profiles import is_daily_workflow_id
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.workflow.inspection import (
     WorkflowArtifactContentRecord,
@@ -16,9 +15,6 @@ from framework.workflow.inspection import (
     resolve_run_dir,
 )
 from framework.workflow.runtime.manifest import normalize_legacy_run_manifest
-from interfaces.services.daily_output_projection import (
-    project_daily_run_output_for_run_inspection,
-)
 from interfaces.services.run_inspection_projection import project_manifest_output_preview
 
 
@@ -461,8 +457,6 @@ def _manifest_business_output(manifest: dict[str, Any]) -> dict[str, Any]:
     output = manifest.get("output")
     if not isinstance(output, dict):
         return {}
-    if is_daily_workflow_id(str(manifest.get("workflow_id") or "")):
-        return project_daily_run_output_for_run_inspection(output)
     return dict(output)
 
 

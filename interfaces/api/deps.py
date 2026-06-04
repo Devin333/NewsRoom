@@ -9,17 +9,10 @@ from interfaces.models import ActorContext, actor_context_from_headers
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.auth_service import AuthApplicationService
-from interfaces.services.board_service import BoardApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
-from interfaces.services.paper_service import PapersApplicationService
-from interfaces.services.paper_ingest_service import PaperIngestApplicationService
-from interfaces.services.paper_reader_interaction_service import PaperReaderInteractionApplicationService
-from interfaces.services.paper_reader_notes_service import PaperReaderNotesApplicationService
-from interfaces.services.paper_user_state_service import PaperUserStateApplicationService
-from interfaces.services.paper_visual_compiler_service import PaperVisualCompilerApplicationService
 from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -48,14 +41,7 @@ ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
 ScheduleServiceFactory = Callable[[], ScheduleApplicationService]
 ApprovalServiceFactory = Callable[[], ApprovalApplicationService]
-BoardServiceFactory = Callable[[], BoardApplicationService]
-PapersServiceFactory = Callable[[], PapersApplicationService]
-PaperIngestServiceFactory = Callable[[], PaperIngestApplicationService]
 AuthServiceFactory = Callable[[], AuthApplicationService]
-PaperReaderInteractionServiceFactory = Callable[[], PaperReaderInteractionApplicationService]
-PaperReaderNotesServiceFactory = Callable[[], PaperReaderNotesApplicationService]
-PaperUserStateServiceFactory = Callable[[], PaperUserStateApplicationService]
-PaperVisualCompilerServiceFactory = Callable[[], PaperVisualCompilerApplicationService]
 ProjectServiceFactory = Callable[[], ProjectApplicationService]
 ResearchServiceFactory = Callable[[], ResearchApplicationService]
 
@@ -77,14 +63,7 @@ class ApiServices:
     storage_service_factory: StorageServiceFactory
     schedule_service_factory: ScheduleServiceFactory
     approval_service_factory: ApprovalServiceFactory
-    board_service_factory: BoardServiceFactory
-    papers_service_factory: PapersServiceFactory
-    paper_ingest_service_factory: PaperIngestServiceFactory
     auth_service_factory: AuthServiceFactory
-    paper_reader_interaction_service_factory: PaperReaderInteractionServiceFactory
-    paper_reader_notes_service_factory: PaperReaderNotesServiceFactory
-    paper_user_state_service_factory: PaperUserStateServiceFactory
-    paper_visual_compiler_service_factory: PaperVisualCompilerServiceFactory
     project_service_factory: ProjectServiceFactory
     research_service_factory: ResearchServiceFactory
 
@@ -119,14 +98,7 @@ def build_api_services(
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
-    board_service_factory: BoardServiceFactory = BoardApplicationService,
-    papers_service_factory: PapersServiceFactory = PapersApplicationService,
-    paper_ingest_service_factory: PaperIngestServiceFactory = PaperIngestApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
-    paper_reader_interaction_service_factory: PaperReaderInteractionServiceFactory = PaperReaderInteractionApplicationService,
-    paper_reader_notes_service_factory: PaperReaderNotesServiceFactory = PaperReaderNotesApplicationService,
-    paper_user_state_service_factory: PaperUserStateServiceFactory = PaperUserStateApplicationService,
-    paper_visual_compiler_service_factory: PaperVisualCompilerServiceFactory = PaperVisualCompilerApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
     research_service_factory: ResearchServiceFactory = ResearchApplicationService,
 ) -> ApiServices:
@@ -146,14 +118,7 @@ def build_api_services(
         storage_service_factory=storage_service_factory,
         schedule_service_factory=schedule_service_factory,
         approval_service_factory=approval_service_factory,
-        board_service_factory=board_service_factory,
-        papers_service_factory=papers_service_factory,
-        paper_ingest_service_factory=paper_ingest_service_factory,
         auth_service_factory=auth_service_factory,
-        paper_reader_interaction_service_factory=paper_reader_interaction_service_factory,
-        paper_reader_notes_service_factory=paper_reader_notes_service_factory,
-        paper_user_state_service_factory=paper_user_state_service_factory,
-        paper_visual_compiler_service_factory=paper_visual_compiler_service_factory,
         project_service_factory=project_service_factory,
         research_service_factory=research_service_factory,
     )

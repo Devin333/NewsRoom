@@ -14,7 +14,7 @@ def test_current_cli_parser_can_be_built() -> None:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["run", "daily", "--help"],
+        ["runs", "list", "--help"],
         ["reports", "list", "--help"],
         ["latest", "--help"],
         ["mcp", "catalog", "--help"],

@@ -61,6 +61,7 @@ class NewsClient:
         self.sources = SourcesClient(self)
         self.schedules = SchedulesClient(self)
         self.approvals = ApprovalsClient(self)
+        self.research = ResearchClient(self)
 
     def get(self, path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._request("GET", path, params=params)
@@ -158,26 +159,6 @@ class NewsClient:
 class RunsClient:
     def __init__(self, client: NewsClient) -> None:
         self.client = client
-
-    def create_daily(
-        self,
-        *,
-        topic: str = "AI",
-        profile: str = "live-offline",
-        source_limit: int = 3,
-        run_id: str | None = None,
-    ) -> dict[str, Any]:
-        return self.client.post(
-            "/api/v1/runs",
-            json_body={
-                "workflow_id": "daily",
-                "topic": topic,
-                "profile": profile,
-                "source_limit": source_limit,
-                "run_id": run_id,
-                "async_run": True,
-            },
-        )
 
     def get(self, run_id: str) -> dict[str, Any]:
         return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}")
@@ -427,29 +408,33 @@ class SchedulesClient:
             params={"include_disabled": include_disabled},
         )
 
-    def create_paper_ingest(
+    def upsert_task(
         self,
         *,
-        schedule_id: str = "papers-ingest-github-arxiv-daily",
-        name: str = "Daily GitHub arXiv paper ingest",
+        schedule_id: str,
+        name: str,
+        task_type: str,
+        payload_template: dict[str, Any] | None = None,
         trigger_type: str = "interval",
         interval_seconds: int = 86400,
         run_at: str | None = None,
-        candidate_limit: int = 100,
-        min_github_stars: int = 50,
-        queue_name: str = "news:queue:papers",
+        queue_name: str = "news:queue:memory",
+        enabled: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return self.client.post(
-            "/api/v1/schedules/papers/ingest",
+            "/api/v1/schedules",
             json_body={
                 "schedule_id": schedule_id,
                 "name": name,
+                "task_type": task_type,
+                "payload_template": payload_template or {},
                 "trigger_type": trigger_type,
                 "interval_seconds": interval_seconds,
                 "run_at": run_at,
-                "candidate_limit": candidate_limit,
-                "min_github_stars": min_github_stars,
                 "queue_name": queue_name,
+                "enabled": enabled,
+                "metadata": metadata or {},
             },
         )
 
@@ -493,26 +478,61 @@ class ApprovalsClient:
             json_body={"decision_key": decision_key},
         )
 
-    def resume_workflow(
+class ResearchClient:
+    def __init__(self, client: NewsClient) -> None:
+        self.client = client
+
+    def analyze_paper(
         self,
-        approval_id: str,
         *,
-        workflow_id: str = "daily",
-        profile: str | None = None,
+        paper_id: str,
+        source_url: str | None = None,
+        pdf_url: str | None = None,
         run_id: str | None = None,
-        decision_key: str = "human_review_decision",
-        checkpoint_store_path: str | None = None,
+        user_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return self.client.post(
-            f"/api/v1/approvals/{_quote_path_segment(approval_id)}/resume-workflow",
+            "/api/v1/research/papers/analyze",
             json_body={
-                "workflow_id": workflow_id,
-                "profile": profile,
-                "run_id": run_id,
-                "decision_key": decision_key,
-                "checkpoint_store_path": checkpoint_store_path,
+                "paperId": paper_id,
+                "sourceUrl": source_url,
+                "pdfUrl": pdf_url,
+                "runId": run_id,
+                "userId": user_id,
+                "metadata": metadata or {},
+                "options": options or {},
             },
         )
+
+    def analysis(self, paper_id: str) -> dict[str, Any]:
+        return self.client.get(f"/api/v1/research/papers/{_quote_path_segment(paper_id)}/analysis")
+
+    def reader(self, paper_id: str) -> dict[str, Any]:
+        return self.client.get(f"/api/v1/research/papers/{_quote_path_segment(paper_id)}/reader")
+
+    def ask(
+        self,
+        paper_id: str,
+        *,
+        question: str,
+        locale: str | None = None,
+        selection: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self.client.post(
+            f"/api/v1/research/papers/{_quote_path_segment(paper_id)}/ask",
+            json_body={
+                "question": question,
+                "locale": locale,
+                "selection": selection or {},
+                "options": options or {},
+            },
+        )
+
+    def trace(self, run_id: str) -> dict[str, Any]:
+        return self.client.get(f"/api/v1/research/runs/{_quote_path_segment(run_id)}/trace")
 
 
 def _url(base_url: str, path: str, *, params: dict[str, Any] | None) -> str:

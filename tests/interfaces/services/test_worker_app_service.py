@@ -1,21 +1,9 @@
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
-from business.boards.paper_radar.worker_handlers import PaperIngestTaskHandler
-from framework.workers import (
-    LeasedTask,
-    Task,
-    TaskResult,
-    TaskStatus,
-    WorkerStatus,
-)
-from framework import WorkflowRunner
-from framework.specs import StepSpec, WorkflowSpec, WorkflowStatus
-from framework.workflow import FunctionStepRegistry, WorkflowRunInspector
+from framework.workers import LeasedTask, Task, TaskResult, TaskStatus, WorkerStatus
 from infrastructure.storage.workers import RedisQueueStatus
 from interfaces.services.worker_service import (
-    DEFAULT_DAILY_QUEUE,
     DEFAULT_DEAD_LETTER_QUEUE,
     DEFAULT_MEMORY_QUEUE,
-    DEFAULT_PAPER_QUEUE,
     DEFAULT_SOURCE_QUEUE,
     WorkerApplicationService,
 )
@@ -28,52 +16,16 @@ def test_worker_service_status_does_not_build_default_task_handlers() -> None:
 
     registry = _FakeWorkerRegistry()
     service = StatusOnlyService(queue=_FakeQueue(), worker_registry=registry)
-    service.record_heartbeat(worker_id="worker-1", queue_names=[DEFAULT_PAPER_QUEUE])
+    service.record_heartbeat(worker_id="worker-1", queue_names=[DEFAULT_MEMORY_QUEUE])
 
     status = service.list_worker_status()
-    queues = service.queue_status(queue_names=[DEFAULT_PAPER_QUEUE])
+    queues = service.queue_status(queue_names=[DEFAULT_MEMORY_QUEUE])
 
     assert status.to_dict()["worker_count"] == 1
     assert queues.to_dict()["queue_count"] == 1
 
 
-def test_worker_service_enqueue_daily_uses_queue() -> None:
-    queue = _FakeQueue()
-    service = WorkerApplicationService(queue=queue, handlers={})
-
-    result = service.enqueue_daily(
-        profile="live-offline",
-        topic="AI policy",
-        source_limit=2,
-        run_id="queued-run",
-    )
-
-    assert result.task.task_type == "daily_intelligence.run"
-    assert result.task.queue_name == DEFAULT_DAILY_QUEUE
-    assert result.task.payload == {
-        "profile": "live-offline",
-        "topic": "AI policy",
-        "source_limit": 2,
-        "run_id": "queued-run",
-    }
-    assert result.task.dedup_key is None
-    assert result.message_id == "1-0"
-    assert queue.enqueued[0] is result.task
-
-
-def test_worker_service_enqueue_daily_without_run_id_uses_stable_dedup_key() -> None:
-    queue = _FakeQueue()
-    service = WorkerApplicationService(queue=queue, handlers={})
-
-    result = service.enqueue_daily(
-        profile="live-offline",
-        topic="AI policy",
-        source_limit=2,
-    )
-
-    assert result.task.dedup_key == "news:queue:daily:daily:live-offline:ai policy"
-
-
+def test_worker_service_enqueue_memory_reindex_uses_memory_queue() -> None:
     queue = _FakeQueue()
     service = WorkerApplicationService(queue=queue, handlers={})
 
@@ -114,47 +66,9 @@ def test_worker_service_default_redis_queue_uses_news_dead_letter_queue() -> Non
     assert service.queue.dead_letter_queue_name == DEFAULT_DEAD_LETTER_QUEUE
 
 
-def test_worker_service_enqueue_paper_ingest_uses_paper_queue() -> None:
-    queue = _FakeQueue()
-    service = WorkerApplicationService(queue=queue, handlers={})
-
-    result = service.enqueue_paper_ingest(candidate_limit=100, min_github_stars=50)
-
-    assert result.task.task_type == "papers.ingest_github_arxiv_daily"
-    assert result.task.queue_name == DEFAULT_PAPER_QUEUE
-    assert result.task.payload == {"candidate_limit": 100, "min_github_stars": 50}
-    assert result.task.dedup_key == "news:queue:papers:daily:github-arxiv"
-    assert result.message_id == "1-0"
-    assert queue.enqueued[0] is result.task
-
-
-def test_worker_service_enqueue_paper_visual_compile_backfill_uses_paper_queue() -> None:
-    queue = _FakeQueue()
-    service = WorkerApplicationService(queue=queue, handlers={})
-
-    result = service.enqueue_paper_visual_compile_backfill(limit=25, force=False, run_id="reader-backfill")
-
-    assert result.task.task_type == "papers.visual_compile_backfill"
-    assert result.task.queue_name == DEFAULT_PAPER_QUEUE
-    assert result.task.payload == {"force": False, "limit": 25, "run_id": "reader-backfill"}
-    assert result.task.dedup_key is None
-    assert result.to_dict()["limit"] == 25
-    assert result.message_id == "1-0"
-    assert queue.enqueued[0] is result.task
-
-
-def test_worker_service_enqueue_paper_visual_compile_backfill_uses_stable_dedup_key_without_run_id() -> None:
-    queue = _FakeQueue()
-    service = WorkerApplicationService(queue=queue, handlers={})
-
-    result = service.enqueue_paper_visual_compile_backfill()
-
-    assert result.task.dedup_key == "news:queue:papers:paper-visual-compile-backfill:missing"
-
-
 def test_worker_service_run_once_acks_success() -> None:
-    task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
-    queue = _FakeQueue(leased=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
+    task = Task(task_type="memory.reindex", payload={"run_id": "run-1"}, task_id="task-1")
+    queue = _FakeQueue(leased=LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", task))
     handler = _FakeHandler(success=True)
     service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
 
@@ -163,19 +77,19 @@ def test_worker_service_run_once_acks_success() -> None:
     assert result.processed is True
     assert result.success is True
     assert result.workflow_run_id == "workflow-1"
-    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
+    assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
     assert queue.dead_letters == []
 
 
 def test_worker_service_run_once_requeues_failed_task_before_max_attempts() -> None:
     task = Task(
-        task_type="daily_intelligence.run",
-        payload={"topic": "AI"},
+        task_type="memory.reindex",
+        payload={"run_id": "run-1"},
         task_id="task-1",
         attempts=1,
         max_attempts=3,
     )
-    queue = _FakeQueue(leased=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
+    queue = _FakeQueue(leased=LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", task))
     handler = _FakeHandler(success=False)
     service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
 
@@ -184,18 +98,18 @@ def test_worker_service_run_once_requeues_failed_task_before_max_attempts() -> N
     assert result.success is False
     assert queue.enqueued == [task]
     assert queue.dead_letters == []
-    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
+    assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
 
 
 def test_worker_service_run_once_dead_letters_non_retryable_task() -> None:
     task = Task(
-        task_type="daily_intelligence.run",
-        payload={"topic": "AI"},
+        task_type="memory.reindex",
+        payload={"run_id": "run-1"},
         task_id="task-1",
         attempts=1,
         max_attempts=3,
     )
-    queue = _FakeQueue(leased=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
+    queue = _FakeQueue(leased=LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", task))
     handler = _FakeHandler(success=False, retryable=False)
     service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
 
@@ -205,27 +119,7 @@ def test_worker_service_run_once_dead_letters_non_retryable_task() -> None:
     assert result.retryable is False
     assert queue.enqueued == []
     assert queue.dead_letters == [(task, "failed")]
-    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
-
-
-def test_worker_service_run_once_dead_letters_exhausted_task() -> None:
-    task = Task(
-        task_type="daily_intelligence.run",
-        payload={"topic": "AI"},
-        task_id="task-1",
-        attempts=3,
-        max_attempts=3,
-    )
-    queue = _FakeQueue(leased=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
-    handler = _FakeHandler(success=False)
-    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
-
-    result = service.run_once(worker_id="worker-1", block_ms=10)
-
-    assert result.success is False
-    assert queue.enqueued == []
-    assert queue.dead_letters == [(task, "failed")]
-    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
+    assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
 
 
 def test_worker_service_records_and_lists_worker_status() -> None:
@@ -234,7 +128,7 @@ def test_worker_service_records_and_lists_worker_status() -> None:
 
     result = service.record_heartbeat(
         worker_id="worker-1",
-        queue_names=[DEFAULT_DAILY_QUEUE],
+        queue_names=[DEFAULT_MEMORY_QUEUE],
         status=WorkerStatus.RUNNING,
         current_task_id="task-1",
         now=_dt("2026-05-11T00:00:00Z"),
@@ -257,28 +151,9 @@ def test_worker_service_records_and_lists_worker_status() -> None:
     assert status_payload["workers"][0]["stored_status"] == "running"
 
 
-def test_worker_service_run_once_updates_worker_heartbeat_counters() -> None:
-    task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
-    queue = _FakeQueue(leased=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
-    registry = _FakeWorkerRegistry()
-    handler = _FakeHandler(success=True)
-    service = WorkerApplicationService(
-        queue=queue,
-        worker_registry=registry,
-        handlers={handler.task_type: handler},
-    )
-
-    result = service.run_once(worker_id="worker-1", block_ms=10)
-
-    assert result.success is True
-    assert [record.current_task_id for record in registry.saved] == [None, "task-1", None]
-    assert registry.saved[-1].processed_count == 1
-    assert registry.saved[-1].failed_count == 0
-
-
 def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
-    task = Task(task_type="daily_intelligence.run", payload={"topic": "AI"}, task_id="task-1")
-    queue = _FakeQueue(reclaimed=LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", task))
+    task = Task(task_type="memory.reindex", payload={"run_id": "run-1"}, task_id="task-1")
+    queue = _FakeQueue(reclaimed=LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", task))
     handler = _FakeHandler(success=True)
     service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
 
@@ -294,42 +169,8 @@ def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
     assert task.attempts == 1
     assert task.metadata["lease_count"] == 1
     assert task.metadata["reclaimed"] is True
-    assert queue.reclaim_calls == [("worker-1", [DEFAULT_DAILY_QUEUE], 60_000)]
-    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "1-0")]
-
-
-def test_worker_service_reclaims_stale_workflow_task_and_persists_valid_run(tmp_path) -> None:
-    task = Task(
-        task_type="daily_intelligence.run",
-        payload={"topic": "AI", "run_id": "worker-reclaimed-run"},
-        task_id="task-reclaimed",
-    )
-    queue = _FakeQueue(reclaimed=LeasedTask(DEFAULT_DAILY_QUEUE, "9-0", task))
-    handler = _WorkflowRunHandler(tmp_path)
-    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
-
-    result = service.run_once(
-        worker_id="worker-reclaimer",
-        block_ms=10,
-        reclaim_stale_ms=60_000,
-    )
-
-    inspection = WorkflowRunInspector(tmp_path).inspect_run("worker-reclaimed-run", strict=True)
-    replay = WorkflowRunInspector(tmp_path).build_replay_bundle(
-        "worker-reclaimed-run",
-        strict=True,
-    )
-    assert result.processed is True
-    assert result.reclaimed is True
-    assert result.success is True
-    assert result.workflow_run_id == "worker-reclaimed-run"
-    assert handler.calls == [task.task_id]
-    assert queue.reclaim_calls == [("worker-reclaimer", [DEFAULT_DAILY_QUEUE], 60_000)]
-    assert queue.acked == [(DEFAULT_DAILY_QUEUE, "9-0")]
-    assert inspection.status == "succeeded"
-    assert inspection.integrity.valid is True
-    assert replay.integrity["valid"] is True
-    assert replay.output["report"] == "Reclaimed: AI"
+    assert queue.reclaim_calls == [("worker-1", [DEFAULT_MEMORY_QUEUE], 60_000)]
+    assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
 
 
 def test_worker_service_queue_status_uses_default_queues() -> None:
@@ -339,10 +180,8 @@ def test_worker_service_queue_status_uses_default_queues() -> None:
     result = service.queue_status()
 
     payload = result.to_dict()
-    assert queue.status_calls == [
-        [DEFAULT_DAILY_QUEUE, DEFAULT_MEMORY_QUEUE, DEFAULT_PAPER_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]
-    ]
-    assert payload["queue_count"] == 5
+    assert queue.status_calls == [[DEFAULT_MEMORY_QUEUE, DEFAULT_SOURCE_QUEUE, DEFAULT_DEAD_LETTER_QUEUE]]
+    assert payload["queue_count"] == 3
     assert payload["total_stream_length"] == 0
 
 
@@ -362,70 +201,10 @@ def test_source_health_check_task_handler_calls_source_service() -> None:
     assert result.output["entries"][0]["source_id"] == "source-1"
 
 
-def test_paper_ingest_task_handler_calls_ingest_service() -> None:
-    handler = PaperIngestTaskHandler(_FakePaperIngestService())
-    task = Task(
-        task_type="papers.ingest_github_arxiv_daily",
-        payload={"candidate_limit": 100, "min_github_stars": 50, "run_id": "paper-run-1"},
-        task_id="task-paper",
-    )
-
-    result = handler.handle(task)
-
-    assert result.success is True
-    assert result.status == TaskStatus.SUCCEEDED
-    assert result.workflow_run_id == "paper-run-1"
-    assert result.output["publishedCount"] == 1
-    assert result.output["visualCompileEnqueued"] == []
-
-
-def test_paper_ingest_task_handler_enqueues_visual_compile_for_published_papers() -> None:
-    enqueued = []
-
-    def enqueue_visual_compile(*, paper_id):
-        enqueued.append(paper_id)
-
-        class Result:
-            def to_dict(self):
-                return {
-                    "task_id": f"compile-{paper_id}",
-                    "task_type": "papers.visual_compile",
-                    "paper_id": paper_id,
-                }
-
-        return Result()
-
-    handler = PaperIngestTaskHandler(
-        _FakePaperIngestService(),
-        visual_compile_enqueue=enqueue_visual_compile,
-    )
-    task = Task(
-        task_type="papers.ingest_github_arxiv_daily",
-        payload={"candidate_limit": 100, "min_github_stars": 50, "run_id": "paper-run-1"},
-        task_id="task-paper",
-    )
-
-    result = handler.handle(task)
-
-    assert result.success is True
-    assert enqueued == ["paper-1"]
-    assert result.output["visualCompileEnqueued"] == [
-        {
-            "paperId": "paper-1",
-            "queued": True,
-            "enqueued": {
-                "task_id": "compile-paper-1",
-                "task_type": "papers.visual_compile",
-                "paper_id": "paper-1",
-            },
-        }
-    ]
-
-
 def test_worker_service_run_loop_stops_after_max_tasks() -> None:
     tasks = [
-        LeasedTask(DEFAULT_DAILY_QUEUE, "1-0", Task(task_type="daily_intelligence.run", payload={})),
-        LeasedTask(DEFAULT_DAILY_QUEUE, "2-0", Task(task_type="daily_intelligence.run", payload={})),
+        LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", Task(task_type="memory.reindex", payload={})),
+        LeasedTask(DEFAULT_MEMORY_QUEUE, "2-0", Task(task_type="memory.reindex", payload={})),
     ]
     queue = _FakeQueue(leased=tasks)
     handler = _FakeHandler(success=True)
@@ -530,7 +309,7 @@ class _FakeWorkerRegistry:
 
 
 class _FakeHandler:
-    task_type = "daily_intelligence.run"
+    task_type = "memory.reindex"
 
     def __init__(self, *, success, retryable=True) -> None:
         self.success = success
@@ -545,56 +324,6 @@ class _FakeHandler:
             workflow_run_id="workflow-1" if self.success else None,
             error_type=None if self.success else "FakeFailure",
             error_message=None if self.success else "failed",
-        )
-
-
-class _WorkflowRunHandler:
-    task_type = "daily_intelligence.run"
-
-    def __init__(self, artifact_root) -> None:
-        self.artifact_root = artifact_root
-        self.calls = []
-
-    def handle(self, task):
-        self.calls.append(task.task_id)
-        registry = FunctionStepRegistry()
-        registry.register(
-            "worker.write",
-            lambda buffer: {"report": f"Reclaimed: {buffer.read('request')['topic']}"},
-        )
-        runner = WorkflowRunner(artifact_root=self.artifact_root, function_registry=registry)
-        result = runner.run(
-            WorkflowSpec(
-                workflow_id="worker-reclaimed",
-                name="Worker Reclaimed",
-                version="1.0",
-                start_step_id="write",
-                steps=[
-                    StepSpec(
-                        step_id="write",
-                        implementation="worker.write",
-                        read_keys=["request"],
-                        write_keys=["report"],
-                        required_output_keys=["report"],
-                    )
-                ],
-            ),
-            {"topic": task.payload["topic"]},
-            profile="test",
-            run_id=task.payload["run_id"],
-        )
-        return TaskResult(
-            task_id=task.task_id,
-            success=result.status == WorkflowStatus.SUCCEEDED,
-            status=(
-                TaskStatus.SUCCEEDED
-                if result.status == WorkflowStatus.SUCCEEDED
-                else TaskStatus.FAILED
-            ),
-            workflow_run_id=result.run_id,
-            output={"status": result.status.value},
-            error_type=result.error["error_type"] if result.error else None,
-            error_message=result.error["message"] if result.error else None,
         )
 
 
@@ -619,24 +348,6 @@ class _FakeSourceHealthResult:
             "entries": [{"source_id": "source-1", "ok": True, "status": "healthy"}],
             "events": [],
         }
-
-
-class _FakePaperIngestService:
-    def run_daily_ingest(self, *, candidate_limit=None, min_github_stars=None, run_id=None):
-        assert candidate_limit == 100
-        assert min_github_stars == 50
-        assert run_id == "paper-run-1"
-
-        class Result:
-            def to_dict(self):
-                return {
-                    "runId": "paper-run-1",
-                    "status": "succeeded",
-                    "publishedCount": 1,
-                    "publishedPaperIds": ["paper-1"],
-                }
-
-        return Result()
 
 
 def _dt(value: str):

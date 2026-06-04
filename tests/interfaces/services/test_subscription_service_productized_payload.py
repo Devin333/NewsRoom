@@ -35,7 +35,7 @@ def test_subscription_service_builds_delivery_plan_from_cross_board_payload(tmp_
             summary="Productized board payload.",
             quality_score=0.8,
         )
-        for board_type in ("ai_news", "project_radar", "paper_radar", "community_pulse")
+        for board_type in ("ai_news", "project_radar", "research", "community_pulse")
     ]
     payload = aggregate_payloads("cross-board-run", board_payloads, topic="Agent Memory")
 

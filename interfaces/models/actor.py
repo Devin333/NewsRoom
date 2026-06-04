@@ -13,9 +13,6 @@ WRITE_RUNS_PERMISSION = "write:runs"
 MANAGE_SCHEDULES_PERMISSION = "manage:schedules"
 MANAGE_APPROVALS_PERMISSION = "manage:approvals"
 ADMIN_STORAGE_PERMISSION = "admin:storage"
-READ_PAPERS_PERMISSION = "papers:read"
-WRITE_PAPERS_PERMISSION = "papers:write"
-MANAGE_PAPERS_OPS_PERMISSION = "papers:ops"
 
 PERMISSION_ALIASES: dict[str, set[str]] = {
     READ_REPORTS_PERMISSION: {
@@ -30,9 +27,8 @@ PERMISSION_ALIASES: dict[str, set[str]] = {
         "storage:read",
         "entities:read",
         "subscriptions:read",
-        READ_PAPERS_PERMISSION,
     },
-    WRITE_RUNS_PERMISSION: {"runs:create", "runs:cancel", WRITE_PAPERS_PERMISSION},
+    WRITE_RUNS_PERMISSION: {"runs:create", "runs:cancel"},
     MANAGE_SCHEDULES_PERMISSION: {"schedules:write"},
     MANAGE_APPROVALS_PERMISSION: {"reports:publish", "approvals:decide"},
     ADMIN_STORAGE_PERMISSION: {"storage:read"},
@@ -48,9 +44,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         MANAGE_SCHEDULES_PERMISSION,
         MANAGE_APPROVALS_PERMISSION,
         ADMIN_STORAGE_PERMISSION,
-        READ_PAPERS_PERMISSION,
-        WRITE_PAPERS_PERMISSION,
-        MANAGE_PAPERS_OPS_PERMISSION,
         "runs:create",
         "runs:read",
         "runs:cancel",
@@ -70,17 +63,11 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "entities:write",
         "subscriptions:read",
         "subscriptions:write",
-        "papers:read",
-        "papers:write",
-        "papers:ops",
     },
     "operator": {
         READ_REPORTS_PERMISSION,
         WRITE_RUNS_PERMISSION,
         MANAGE_SCHEDULES_PERMISSION,
-        READ_PAPERS_PERMISSION,
-        WRITE_PAPERS_PERMISSION,
-        MANAGE_PAPERS_OPS_PERMISSION,
         "runs:create",
         "runs:read",
         "runs:cancel",
@@ -99,15 +86,10 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "entities:write",
         "subscriptions:read",
         "subscriptions:write",
-        "papers:read",
-        "papers:write",
-        "papers:ops",
     },
     "developer": {
         READ_REPORTS_PERMISSION,
         WRITE_RUNS_PERMISSION,
-        READ_PAPERS_PERMISSION,
-        WRITE_PAPERS_PERMISSION,
         "runs:create",
         "runs:read",
         "reports:read",
@@ -119,8 +101,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "storage:read",
         "entities:read",
         "subscriptions:read",
-        "papers:read",
-        "papers:write",
     },
     "reviewer": {
         READ_REPORTS_PERMISSION,
@@ -132,7 +112,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     },
     "read-only": {
         READ_REPORTS_PERMISSION,
-        READ_PAPERS_PERMISSION,
         "runs:read",
         "reports:read",
         "sources:read",
@@ -144,7 +123,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "storage:read",
         "entities:read",
         "subscriptions:read",
-        "papers:read",
     },
     "analyst_readonly": {
         READ_REPORTS_PERMISSION,
@@ -175,9 +153,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         MANAGE_SCHEDULES_PERMISSION,
         MANAGE_APPROVALS_PERMISSION,
         ADMIN_STORAGE_PERMISSION,
-        READ_PAPERS_PERMISSION,
-        WRITE_PAPERS_PERMISSION,
-        MANAGE_PAPERS_OPS_PERMISSION,
         "runs:create",
         "runs:read",
         "reports:read",
@@ -197,9 +172,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "entities:write",
         "subscriptions:read",
         "subscriptions:write",
-        "papers:read",
-        "papers:write",
-        "papers:ops",
     },
 }
 

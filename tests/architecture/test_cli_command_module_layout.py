@@ -5,13 +5,15 @@ import importlib
 
 def test_cli_command_group_modules_exist() -> None:
     command_groups = {
+        "api",
         "approvals",
         "artifacts",
-        "dev",
+        "diagnose",
+        "dispatch",
+        "entities",
         "mcp",
         "memory",
         "reports",
-        "run",
         "runs",
         "schedules",
         "sources",

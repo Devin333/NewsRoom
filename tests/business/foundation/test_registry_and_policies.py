@@ -29,7 +29,7 @@ def test_default_board_registry_lists_all_frontend_boards() -> None:
     assert boards == {
         BoardType.AI_NEWS,
         BoardType.PROJECT_RADAR,
-        BoardType.PAPER_RADAR,
+        BoardType.RESEARCH,
         BoardType.COMMUNITY_PULSE,
         BoardType.CROSS_BOARD,
     }
@@ -72,12 +72,12 @@ def test_analysis_context_normalizes_time_windows_and_specializes_board() -> Non
     window = default_time_window(days=14, reference_time=reference_time)
     context = AnalysisContext(time_window=window, metadata={"topic": "AI agents"})
 
-    board_context = context.for_board(BoardType.PAPER_RADAR)
+    board_context = context.for_board(BoardType.RESEARCH)
 
     assert window.start.tzinfo == UTC
     assert window.end.tzinfo == UTC
     assert window.label == "last_14_days"
-    assert board_context.board_type == BoardType.PAPER_RADAR
+    assert board_context.board_type == BoardType.RESEARCH
     assert board_context.metadata == {"topic": "AI agents"}
     assert context.board_type is None
 

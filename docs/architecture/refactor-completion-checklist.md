@@ -2,58 +2,40 @@
 
 ## Completed Items
 
-- Skill Runtime subpackaged under `framework/skills`.
-- Switched package configuration to setuptools package auto discovery.
+- Added Harness contracts, ports, state machine, bounded scheduling, RAG, subagent isolation, trace, checkpoint, replay, and skill evolution lifecycle.
+- Rebuilt Research under `business/research` without dependencies on old `business.boards`, `interfaces`, or concrete `infrastructure`.
+- Added `interfaces/services/research_service.py` and `interfaces/api/routers/research.py`.
+- Removed old board, paper, daily, weekly, paper reader, paper ingest, and compatibility adapter services from the backend interface surface.
 - Split CLI command registration into `interfaces/cli/commands`.
-- Split `RunApplicationService` into daily, weekly, live smoke, approval resume, persistence, and resolution services.
-- Slimmed `RunApplicationService` facade so business workflow runner selection and approval resume resolution live in focused services.
-- Extracted daily intelligence connector bundle, connector factory, dependency bundle, and runtime assembly.
-- Added `infrastructure/storage/persistence` and kept old repository import compatibility.
 - Cleaned `interfaces.cli.news` so it only owns parser construction, command registration, dispatch, and `print_json`.
-- Added architecture boundary documents for project, framework, interface, business, and persistence layers.
-- Added targeted CLI entrypoint, package, and static boundary tests.
+- Updated OpenAPI, SDK tests, MCP tests, CLI tests, API tests, and architecture tests around the Research surface.
 
-## Compatibility Exports
+## Retired Compatibility Exports
 
-- `interfaces.cli.news` intentionally does not export service, framework, business, or infrastructure symbols.
-- `interfaces.cli.commands.reports` and `interfaces.cli.commands.subscriptions` keep their handler helpers for focused command tests.
-- `interfaces.services.run_service` still exports `RunApplicationService`, `LiveSmokeResult`, approval resume helpers, workflow builders, `repository_from_env`, and `persist_run_result`.
-- `business.boards.cross_board.workflows.daily_intelligence.runtime_assembly` still exports `DailySourceRuntimeAssembly`, `build_daily_source_runtime_assembly`, and `apply_daily_source_runtime_assembly`.
-- `infrastructure.storage.repository` still exports persistence records, repository factory, local JSON adapter, and run-result persistence helpers.
+- Old `business/boards`, `business/scoring`, and `business/evaluation` production packages are removed.
+- Old `interfaces/api/routers/papers.py`, `interfaces/api/routers/boards.py`, and old paper service modules are removed.
+- Old `news run daily`, `news run weekly`, paper ingest queues, and paper reader backfill commands are removed.
+- Old `/api/v1/papers*`, `/api/v1/boards*`, `/api/v1/runs/daily`, and `/api/v1/runs/weekly` routes are not registered.
 
 ## Final Acceptance Items
 
-- `news.py` import cleanup complete.
-- `run_service.py` facade slimming complete.
-- Architecture boundary documentation complete.
-- Targeted CLI, service, package, and architecture tests added.
-
-## Remaining Items
-
-- No known architecture cleanup items remain in this package.
+- OpenSpec change `harness-research-runtime` validates with `openspec validate --strict`.
+- `python -m scripts.dev compile` passes.
+- `python -m scripts.dev test` passes.
+- `python -m scripts.dev smoke` passes with the backend smoke scope.
+- The OpenSpec change is archived after all tasks are complete.
 
 ## Test Commands
 
 ```powershell
-python -m compileall -q framework business interfaces infrastructure
-pytest tests/framework -q
-pytest tests/business -q
-pytest tests/interfaces -q
-pytest tests/infrastructure -q
-pytest tests/interfaces/cli -q
-pytest tests/interfaces/services -q
-pytest tests/business/boards/cross_board/workflows/daily_intelligence -q
-pytest tests/infrastructure/storage -q
 python -m scripts.dev compile
 python -m scripts.dev test
 python -m scripts.dev smoke
+openspec validate harness-research-runtime --strict
 ```
 
 ## Not In Scope
 
-- No LangGraph dependency.
-- No framework evolution or harness sidecar.
-- No business semantic changes.
-- No business skill content moved into framework Skill Runtime.
-- No scoring/governance merge.
-- No CLI direct access to executors, stores, or runners.
+- UI migration.
+- Old paper UI compatibility adapters.
+- Reintroducing daily, weekly, board, or paper ingest backend compatibility routes.

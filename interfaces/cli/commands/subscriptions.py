@@ -4,8 +4,10 @@ import argparse
 import json
 from typing import Any, Callable, Protocol
 
-from business.boards.cross_board.profiles import DAILY_PROFILE_CHOICES
 from interfaces.services.subscription_service import DEFAULT_SUBSCRIPTION_STORE_PATH, SubscriptionApplicationService
+
+
+SUBSCRIPTION_PROFILE_CHOICES = ("live", "live-offline")
 
 
 class SubscriptionServiceFactory(Protocol):
@@ -26,7 +28,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     create_parser.add_argument("--topic", required=True, help="Topic to track")
     create_parser.add_argument("--subscription-id", default=None, help="Optional subscription id")
     create_parser.add_argument("--cadence", choices=["daily", "weekly"], default="weekly")
-    create_parser.add_argument("--profile", choices=DAILY_PROFILE_CHOICES, default="live-offline")
+    create_parser.add_argument("--profile", choices=SUBSCRIPTION_PROFILE_CHOICES, default="live-offline")
     create_parser.add_argument("--source-limit", type=int, default=5)
     create_parser.add_argument("--disabled", action="store_true")
     create_parser.add_argument(

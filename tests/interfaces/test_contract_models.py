@@ -1,68 +1,60 @@
 from interfaces.api.models import ApiError as ApiApiError
 from interfaces.api.models import ApiResponse as ApiApiResponse
 from interfaces.api.models import ApprovalResumeContextRequest as ApiApprovalResumeContextRequest
-from interfaces.api.models import ApprovalWorkflowResumeRequest as ApiApprovalWorkflowResumeRequest
 from interfaces.api.models import ApprovalView as ApiApprovalView
 from interfaces.api.models import ArtifactRef as ApiArtifactRef
-from interfaces.api.models import DailyRunRequest as ApiDailyRunRequest
 from interfaces.api.models import MemorySearchResponse as ApiMemorySearchResponse
 from interfaces.api.models import PageResult as ApiPageResult
 from interfaces.api.models import Pagination as ApiPagination
 from interfaces.api.models import ReportDetail as ApiReportDetail
 from interfaces.api.models import ReportSummary as ApiReportSummary
-from interfaces.api.models import RunRequest as ApiRunRequest
 from interfaces.api.models import RunResponse as ApiRunResponse
+from interfaces.api.models import ScheduleUpsertRequest as ApiScheduleUpsertRequest
 from interfaces.api.models import ScheduleView as ApiScheduleView
 from interfaces.api.models import SourceHealthView as ApiSourceHealthView
-from interfaces.api.models import WeeklyRunRequest as ApiWeeklyRunRequest
 from interfaces.models import (
     ApiError,
     ApiResponse,
     ApprovalResumeContextRequest,
-    ApprovalWorkflowResumeRequest,
     ApprovalView,
     ArtifactRef,
-    DailyRunRequest,
     MemorySearchMatch,
     MemorySearchResponse,
     PageResult,
     Pagination,
     ReportDetail,
     ReportSummary,
-    RunRequest,
     RunResponse,
+    ScheduleUpsertRequest,
     ScheduleView,
     SourceHealthView,
-    WeeklyRunRequest,
 )
 
 
 def test_contract_models_are_exported_from_shared_interfaces_models() -> None:
-    assert ApiRunRequest is RunRequest
     assert ApiRunResponse is RunResponse
-    assert ApiDailyRunRequest is DailyRunRequest
     assert ApiApiResponse is ApiResponse
     assert ApiApprovalResumeContextRequest is ApprovalResumeContextRequest
-    assert ApiApprovalWorkflowResumeRequest is ApprovalWorkflowResumeRequest
     assert ApiApiError is ApiError
     assert ApiArtifactRef is ArtifactRef
     assert ApiPagination is Pagination
     assert ApiPageResult is PageResult
     assert ApiReportSummary is ReportSummary
     assert ApiReportDetail is ReportDetail
-    assert ApiWeeklyRunRequest is WeeklyRunRequest
     assert ApiSourceHealthView is SourceHealthView
     assert ApiMemorySearchResponse is MemorySearchResponse
+    assert ApiScheduleUpsertRequest is ScheduleUpsertRequest
     assert ApiScheduleView is ScheduleView
     assert ApiApprovalView is ApprovalView
-    assert RunRequest.__module__ == "interfaces.models.contracts"
     assert RunResponse.__module__ == "interfaces.models.contracts"
     assert ReportSummary.__module__ == "interfaces.models.contracts"
     assert ReportDetail.__module__ == "interfaces.models.contracts"
     assert ApprovalResumeContextRequest().decision_key == "human_review_decision"
-    resume_request = ApprovalWorkflowResumeRequest()
-    assert resume_request.workflow_id == "daily"
-    assert resume_request.decision_key == "human_review_decision"
+    assert ScheduleUpsertRequest(
+        schedule_id="memory-reindex",
+        name="Memory reindex",
+        task_type="memory.reindex",
+    ).queue_name == "news:queue:memory"
     assert Pagination(limit=10).limit == 10
     assert PageResult(items=[]).items == []
 
@@ -167,13 +159,13 @@ def test_target_view_models_are_serializable_and_schema_ready() -> None:
         ],
     )
     schedule = ScheduleView(
-        schedule_id="daily",
-        name="Daily intelligence",
+        schedule_id="memory-reindex",
+        name="Memory reindex",
         trigger_type="interval",
-        task_type="daily_intelligence.run",
-        queue_name="news:queue:daily",
+        task_type="memory.reindex",
+        queue_name="news:queue:memory",
         interval_seconds=86400,
-        payload={"topic": "AI"},
+        payload={"run_id": "run-1"},
     )
     approval = ApprovalView(
         approval_id="approval-1",
@@ -191,7 +183,7 @@ def test_target_view_models_are_serializable_and_schema_ready() -> None:
 
     assert payloads[0]["status"] == "healthy"
     assert payloads[1]["results"][0]["document_id"] == "doc-1"
-    assert payloads[2]["payload"] == {"topic": "AI"}
+    assert payloads[2]["payload"] == {"run_id": "run-1"}
     assert payloads[3]["requested_action"] == "publish_report"
     for model in (SourceHealthView, MemorySearchResponse, ScheduleView, ApprovalView):
         schema = (

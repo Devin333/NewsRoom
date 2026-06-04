@@ -150,7 +150,7 @@ def test_run_inspection_projects_namespaced_daily_output_for_quality_preview(tmp
     assert quality_trace["quality_lineage"]["report_id"] == "run-1:final"
 
 
-def test_run_inspection_ignores_legacy_only_daily_output_for_quality_preview(tmp_path) -> None:
+def test_run_inspection_projects_canonical_quality_output_when_namespaced_absent(tmp_path) -> None:
     _write_manifest(
         tmp_path,
         "run-1",
@@ -180,12 +180,13 @@ def test_run_inspection_ignores_legacy_only_daily_output_for_quality_preview(tmp
 
     result = RunInspectionService(tmp_path).get_run("run-1")
 
-    output_preview = result.to_dict()["output_preview"]
-    assert output_preview["quality_result"] == {
-        "type": "object",
-        "keys": ["decision", "route"],
-    }
-    assert "quality_trace" not in output_preview
+    quality_trace = result.to_dict()["output_preview"]["quality_trace"]
+    assert quality_trace["decision"] == "legacy"
+    assert quality_trace["route"] == "legacy"
+    assert quality_trace["unsupported_claims"] == ["claim-1"]
+    assert quality_trace["unsupported_sections"] == ["Summary"]
+    assert quality_trace["quality_lineage"]["report_id"] == "legacy-final"
+    assert quality_trace["quality_lineage"]["claim_count"] == 1
 
 
 def test_run_inspection_reads_events_jsonl(tmp_path) -> None:

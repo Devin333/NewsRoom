@@ -15,7 +15,7 @@ def board_subscription_defaults(board_type: str) -> tuple[list[str], list[str]]:
             ["github", "project", "framework", "release"],
             ["github", "hackernews", "devto"],
         ),
-        "paper_radar": (
+        "research": (
             ["paper", "arxiv", "research", "benchmark"],
             ["arxiv", "paper"],
         ),

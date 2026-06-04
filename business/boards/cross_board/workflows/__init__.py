@@ -1,2 +1,0 @@
-"""Cross-board workflow adapters."""
-

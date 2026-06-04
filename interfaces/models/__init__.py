@@ -2,7 +2,6 @@
 
 from interfaces.models.actor import ActorContext, actor_context_from_headers
 from interfaces.models.audit import AuditRecord
-from interfaces.models.business_acceptance import AcceptanceCheck, AcceptanceResult
 from interfaces.models.common import ApiActionResult, PageResult, Pagination
 from interfaces.models.contracts import (
     SCHEMA_VERSION,
@@ -13,12 +12,9 @@ from interfaces.models.contracts import (
     ApprovalDecisionRequest,
     ApprovalModifyRequest,
     ApprovalResumeContextRequest,
-    ApprovalWorkflowResumeRequest,
     ApprovalSubmitRequest,
     ArxivSourceFetchRequest,
     ArtifactRef,
-    DailyRunRequest,
-    DailyScheduleRequest,
     EntityCreateRequest,
     GithubReleaseFetchRequest,
     ManualScheduleTriggerRequest,
@@ -30,7 +26,6 @@ from interfaces.models.contracts import (
     MemorySearchMatch,
     MemorySearchResponse,
     PageRequest,
-    PaperIngestScheduleRequest,
     ReportStatus,
     ReportActionRequest,
     ReportDetail,
@@ -40,12 +35,12 @@ from interfaces.models.contracts import (
     RunListItem,
     RunMarkBlockedResolvedRequest,
     RunOperationRequest,
-    RunRequest,
     RunResponse,
     RunRerunFromStepRequest,
     RunResumeWithPatchRequest,
     RunSkipStepRequest,
     RunStatus,
+    ScheduleUpsertRequest,
     ScheduleView,
     ScheduleTickRequest,
     SourceHealthView,
@@ -55,7 +50,6 @@ from interfaces.models.contracts import (
     SourceProbeRequest,
     SourceTopicFetchRequest,
     TopicSubscriptionCreateRequest,
-    WeeklyRunRequest,
 )
 
 __all__ = [
@@ -66,18 +60,13 @@ __all__ = [
     "AuditRecord",
     "ApiActionResult",
     "ApiResponse",
-    "AcceptanceCheck",
-    "AcceptanceResult",
     "ApprovalView",
     "ApprovalDecisionRequest",
     "ApprovalModifyRequest",
     "ApprovalResumeContextRequest",
-    "ApprovalWorkflowResumeRequest",
     "ApprovalSubmitRequest",
     "ArxivSourceFetchRequest",
     "ArtifactRef",
-    "DailyRunRequest",
-    "DailyScheduleRequest",
     "EntityCreateRequest",
     "GithubReleaseFetchRequest",
     "ManualScheduleTriggerRequest",
@@ -89,7 +78,6 @@ __all__ = [
     "MemorySearchMatch",
     "MemorySearchResponse",
     "PageRequest",
-    "PaperIngestScheduleRequest",
     "PageResult",
     "Pagination",
     "ReportActionRequest",
@@ -101,12 +89,12 @@ __all__ = [
     "RunListItem",
     "RunMarkBlockedResolvedRequest",
     "RunOperationRequest",
-    "RunRequest",
     "RunResponse",
     "RunRerunFromStepRequest",
     "RunResumeWithPatchRequest",
     "RunSkipStepRequest",
     "RunStatus",
+    "ScheduleUpsertRequest",
     "ScheduleView",
     "ScheduleTickRequest",
     "SourceHealthView",
@@ -116,6 +104,5 @@ __all__ = [
     "SourceProbeRequest",
     "SourceTopicFetchRequest",
     "TopicSubscriptionCreateRequest",
-    "WeeklyRunRequest",
     "actor_context_from_headers",
 ]

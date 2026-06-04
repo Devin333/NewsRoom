@@ -63,18 +63,35 @@ class IncomingWebhookHandler:
         )
 
     def handle(self, event: IncomingWebhookEvent) -> dict[str, Any]:
-        if event.event_type == "manual.daily_run":
+        if event.event_type == "manual.memory_reindex":
             worker = self._require_worker_service()
-            result = worker.enqueue_daily(
-                profile=str(event.payload.get("profile") or "live-offline"),
-                topic=str(event.payload.get("topic") or "AI"),
-                source_limit=int(event.payload.get("source_limit") or 3),
-                run_id=event.payload.get("run_id"),
+            run_id = str(event.payload.get("run_id") or "")
+            if not run_id:
+                raise ValueError("run_id is required for manual.memory_reindex")
+            result = worker.enqueue_memory_reindex(
+                run_id=run_id,
+                topic=event.payload.get("topic"),
+                queue_name=str(event.payload.get("queue_name") or "news:queue:memory"),
             )
             return {
                 "event_type": event.event_type,
                 "handled": True,
-                "action": "enqueue_daily",
+                "action": "enqueue_memory_reindex",
+                "result": result.to_dict(),
+            }
+        if event.event_type == "manual.source_health_check":
+            worker = self._require_worker_service()
+            result = worker.enqueue_source_health_check(
+                source_id=event.payload.get("source_id"),
+                include_disabled=bool(event.payload.get("include_disabled", False)),
+                limit=event.payload.get("limit"),
+                force=bool(event.payload.get("force", False)),
+                queue_name=str(event.payload.get("queue_name") or "news:queue:sources"),
+            )
+            return {
+                "event_type": event.event_type,
+                "handled": True,
+                "action": "enqueue_source_health_check",
                 "result": result.to_dict(),
             }
         if event.event_type in {"source.notification", "github.release"}:
@@ -82,7 +99,9 @@ class IncomingWebhookHandler:
             result = worker.enqueue_source_health_check(
                 source_id=event.payload.get("source_id"),
                 include_disabled=bool(event.payload.get("include_disabled", False)),
+                limit=event.payload.get("limit"),
                 force=bool(event.payload.get("force", False)),
+                queue_name=str(event.payload.get("queue_name") or "news:queue:sources"),
             )
             return {
                 "event_type": event.event_type,

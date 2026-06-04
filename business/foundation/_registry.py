@@ -133,12 +133,12 @@ def default_board_registry() -> BoardRegistry:
                 visible_sections=["top_projects", "technology_radar", "related_papers"],
             ),
             BoardDefinition(
-                board_type=BoardType.PAPER_RADAR,
-                name="Paper Radar",
-                description="Papers and emerging techniques.",
+                board_type=BoardType.RESEARCH,
+                name="Research",
+                description="Research papers and emerging techniques.",
                 signal_types=[SignalType.PAPER],
                 default_time_window_hours=720,
-                visible_sections=["top_papers", "technology_radar", "related_projects"],
+                visible_sections=["research_papers", "technology_radar", "related_projects"],
             ),
             BoardDefinition(
                 board_type=BoardType.COMMUNITY_PULSE,

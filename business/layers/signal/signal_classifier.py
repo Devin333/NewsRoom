@@ -18,6 +18,6 @@ def board_type_for_signal(signal_type: SignalType) -> BoardType:
     return {
         SignalType.AI_NEWS: BoardType.AI_NEWS,
         SignalType.GITHUB_PROJECT: BoardType.PROJECT_RADAR,
-        SignalType.PAPER: BoardType.PAPER_RADAR,
+        SignalType.PAPER: BoardType.RESEARCH,
         SignalType.COMMUNITY_DISCUSSION: BoardType.COMMUNITY_PULSE,
     }[signal_type]

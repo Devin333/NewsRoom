@@ -1,6 +1,6 @@
 # NewsRoom
 
-NewsRoom is a spec-driven news intelligence runtime. The daily workflow runs through the shared Runner path, writes replayable artifacts, and keeps product `live` runs separate from deterministic development smoke runs.
+NewsRoom is a spec-driven news intelligence runtime. The current backend product path is Harness + Research: Harness owns workflow control, deterministic gates, replayable traces, and artifact publication while Research owns paper analysis domain behavior.
 
 ## Quick Start
 
@@ -79,11 +79,10 @@ python -m scripts.dev smoke
 The aggregate smoke runs the fixed command set below:
 
 ```bash
-python -m compileall -q core domain evidence interfaces quality sources storage workflows scripts
-python -m interfaces.cli.news dev run-test-no-llm --topic "AI agents"
-python -m interfaces.cli.news dev run-test-agent-loop --topic "AI agents"
-python -m interfaces.cli.news run daily --profile live-offline --topic "AI agents" --source-limit 2
+python -m compileall -q framework business interfaces infrastructure scripts tests
+python -m interfaces.cli.news api openapi --json
 python -m interfaces.cli.news sources validate
+python -m interfaces.cli.news mcp catalog --json
 ```
 
 Artifacts are written under `.newsroom/runs`.
@@ -129,9 +128,7 @@ make diagnose
 
 ## Profiles
 
-`live` is the product path: real sources, real LLM, real artifacts, and local JSON persistence by default.
-
-`test-no-llm`, `test-agent-loop`, and `live-offline` are development and regression profiles. They are useful for CI and local checks, but they are not the product MVP path.
+Research production runs use real sources, real model providers when configured, real artifacts, and local JSON persistence by default. Deterministic fake ports are used in tests only.
 
 ## Interface Layer
 

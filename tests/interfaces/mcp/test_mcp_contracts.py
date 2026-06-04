@@ -4,8 +4,11 @@ from interfaces.services.mcp_service import MCPApplicationService
 
 
 STABLE_TOOLS = {
-    "news.daily.run",
-    "news.daily.enqueue",
+    "news.research.analyze_paper",
+    "news.research.paper_analysis",
+    "news.research.reader",
+    "news.research.ask",
+    "news.research.trace",
     "news.report.latest",
     "news.report.list",
     "news.report.get",
@@ -43,7 +46,7 @@ STABLE_RESOURCES = {
 }
 
 STABLE_PROMPTS = {
-    "news.daily.briefing",
+    "news.research.paper_briefing",
     "news.report.review",
     "news.run.diagnose",
     "news.source.triage",

@@ -101,7 +101,6 @@ HTTP API:
 - `GET /api/v1/workers/{worker_id}`
 - `GET /api/v1/queues`
 - `GET /api/v1/schedules`
-- `POST /api/v1/schedules/daily`
 - `POST /api/v1/schedules/tick`
 - `POST /api/v1/schedules/{schedule_id}/trigger`
 
@@ -125,7 +124,6 @@ HTTP API:
 - `POST /api/v1/approvals/{approval_id}/reject`
 - `POST /api/v1/approvals/{approval_id}/modify`
 - `POST /api/v1/approvals/{approval_id}/resume-context`
-- `POST /api/v1/approvals/{approval_id}/resume-workflow`
 
 ## Memory Page
 

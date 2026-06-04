@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 
 
 SCHEMA_VERSION = "1.0"
-DailyProfile = Literal["live", "live-offline", "agentic-offline", "agentic-live"]
 RunStatus = Literal[
     "accepted",
     "queued",
@@ -67,39 +66,6 @@ class ArtifactRef(BaseModel):
     content_type: str | None = None
     redacted: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class DailyRunRequest(BaseModel):
-    profile: DailyProfile = "live-offline"
-    topic: str = "AI"
-    source_limit: int = Field(default=3, ge=1)
-    run_id: str | None = None
-    queue_name: str = "news:queue:daily"
-
-
-class RunRequest(BaseModel):
-    workflow_id: str
-    profile: DailyProfile = "live-offline"
-    topic: str | None = None
-    language: Literal["en"] = "en"
-    source_limit: int | None = Field(default=None, ge=1)
-    max_items: int | None = Field(default=None, ge=1)
-    model_route: str | None = None
-    budget_limit_usd: float | None = Field(default=None, ge=0)
-    dry_run: bool = False
-    async_run: bool = True
-    run_id: str | None = None
-    queue_name: str = "news:queue:daily"
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class WeeklyRunRequest(BaseModel):
-    language: Literal["en"] = "en"
-    topic: str | None = None
-    source_limit: int = Field(default=20, ge=1)
-    period_start: str | None = None
-    period_end: str | None = None
-    run_id: str | None = None
 
 
 class RunResponse(BaseModel):
@@ -309,34 +275,24 @@ class EntityCreateRequest(BaseModel):
 class TopicSubscriptionCreateRequest(BaseModel):
     topic: str = Field(min_length=1)
     cadence: Literal["daily", "weekly"] = "weekly"
-    profile: DailyProfile = "live-offline"
+    profile: str = "research"
     source_limit: int = Field(default=5, ge=1)
     subscription_id: str | None = None
     enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class DailyScheduleRequest(BaseModel):
-    schedule_id: str = "daily-intelligence"
-    name: str = "Daily intelligence"
+class ScheduleUpsertRequest(BaseModel):
+    schedule_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
     trigger_type: Literal["interval", "manual"] = "interval"
     interval_seconds: int = Field(default=86400, ge=1)
     run_at: datetime | None = None
-    profile: DailyProfile = "live-offline"
-    topic: str = "AI"
-    source_limit: int = Field(default=3, ge=1)
-    queue_name: str = "news:queue:daily"
-
-
-class PaperIngestScheduleRequest(BaseModel):
-    schedule_id: str = "papers-ingest-github-arxiv-daily"
-    name: str = "Daily GitHub arXiv paper ingest"
-    trigger_type: Literal["interval", "manual"] = "interval"
-    interval_seconds: int = Field(default=86400, ge=1)
-    run_at: datetime | None = None
-    candidate_limit: int = Field(default=100, ge=1)
-    min_github_stars: int = Field(default=50, ge=0)
-    queue_name: str = "news:queue:papers"
+    task_type: str = Field(min_length=1)
+    payload_template: dict[str, Any] = Field(default_factory=dict)
+    queue_name: str = Field(default="news:queue:memory", min_length=1)
+    enabled: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ScheduleView(BaseModel):
@@ -404,11 +360,3 @@ class ApprovalModifyRequest(ApprovalDecisionRequest):
 
 class ApprovalResumeContextRequest(BaseModel):
     decision_key: str = Field(default="human_review_decision", min_length=1)
-
-
-class ApprovalWorkflowResumeRequest(BaseModel):
-    workflow_id: str = Field(default="daily", min_length=1)
-    profile: str | None = None
-    run_id: str | None = None
-    decision_key: str = Field(default="human_review_decision", min_length=1)
-    checkpoint_store_path: str | None = None

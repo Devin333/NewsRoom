@@ -4,7 +4,7 @@ import urllib.error
 from interfaces.sdk import NewsApiError, NewsClient
 
 
-def test_news_client_posts_daily_run_with_api_envelope() -> None:
+def test_news_client_posts_research_analysis_with_api_envelope() -> None:
     opener = _FakeOpener(
         {
             "success": True,
@@ -22,15 +22,27 @@ def test_news_client_posts_daily_run_with_api_envelope() -> None:
     )
     client = NewsClient("https://news.example", api_key="token", opener=opener)
 
-    result = client.runs.create_daily(topic="AI policy", source_limit=2)
+    result = client.research.analyze_paper(
+        paper_id="paper-1",
+        source_url="https://arxiv.org/abs/2401.00001",
+        metadata={"source": "arxiv"},
+    )
 
     assert result["status"] == "queued"
     assert result["task_status"] == "queued"
     assert result["run_status"] is None
     assert result["report_status"] is None
-    assert opener.requests[0].full_url == "https://news.example/api/v1/runs"
+    assert opener.requests[0].full_url == "https://news.example/api/v1/research/papers/analyze"
     assert opener.requests[0].headers["Authorization"] == "Bearer token"
-    assert json.loads(opener.requests[0].data.decode("utf-8"))["topic"] == "AI policy"
+    assert json.loads(opener.requests[0].data.decode("utf-8")) == {
+        "paperId": "paper-1",
+        "sourceUrl": "https://arxiv.org/abs/2401.00001",
+        "pdfUrl": None,
+        "runId": None,
+        "userId": None,
+        "metadata": {"source": "arxiv"},
+        "options": {},
+    }
 
 
 def test_news_client_reads_run_inspection_endpoints() -> None:
@@ -80,7 +92,7 @@ def test_news_client_reads_p1_p2_interface_surfaces() -> None:
     assert client.mcp.capabilities() == {"ok": True}
     assert client.workers.list(stale_after_seconds=30) == {"ok": True}
     assert client.workers.get("worker/1", stale_after_seconds=45) == {"ok": True}
-    assert client.workers.queues(queue_names=["news:queue:daily", "custom"]) == {"ok": True}
+    assert client.workers.queues(queue_names=["news:queue:memory", "custom"]) == {"ok": True}
     assert client.storage.metrics() == {"ok": True}
     assert client.storage.retention_plan(run_id="run/1", report_retention_days=7) == {"ok": True}
     assert client.sources.list(include_disabled=True) == {"ok": True}
@@ -96,7 +108,7 @@ def test_news_client_reads_p1_p2_interface_surfaces() -> None:
         "https://news.example/api/v1/mcp/capabilities",
         "https://news.example/api/v1/workers?stale_after_seconds=30",
         "https://news.example/api/v1/workers/worker%2F1?stale_after_seconds=45",
-        "https://news.example/api/v1/queues?queue_name=news%3Aqueue%3Adaily&queue_name=custom",
+        "https://news.example/api/v1/queues?queue_name=news%3Aqueue%3Amemory&queue_name=custom",
         "https://news.example/api/v1/storage/metrics",
         "https://news.example/api/v1/storage/retention/plan?run_id=run%2F1&report_retention_days=7",
         "https://news.example/api/v1/sources?include_disabled=True",
@@ -124,64 +136,65 @@ def test_news_client_writes_extended_interface_surfaces() -> None:
     assert client.sources.probe("source/1", force=True, include_disabled=True, limit=2) == {"ok": True}
     assert client.sources.fetch_arxiv("cat:cs.AI", limit=1) == {"ok": True}
     assert client.sources.fetch_github_releases("owner/repo", limit=1) == {"ok": True}
-    assert client.schedules.create_paper_ingest(
-        schedule_id="papers-ingest",
-        interval_seconds=21600,
+    assert client.schedules.upsert_task(
+        schedule_id="memory-reindex",
+        name="Memory reindex",
+        task_type="memory.reindex",
+        payload_template={"run_id": "run/1", "topic": "AI policy"},
+        interval_seconds=3600,
         run_at="2026-05-14T00:00:00Z",
-        candidate_limit=80,
-        min_github_stars=25,
+        queue_name="news:queue:memory",
     ) == {"ok": True}
     assert client.schedules.trigger("schedule/1", now="2026-05-14T00:00:00Z") == {"ok": True}
     assert client.approvals.approve("approval/1", decided_by="reviewer", reason="ok") == {"ok": True}
     assert client.approvals.reject("approval/2", decided_by="reviewer") == {"ok": True}
     assert client.approvals.resume_context("approval/3", decision_key="editor_decision") == {"ok": True}
-    assert client.approvals.resume_workflow(
-        "approval/4",
-        workflow_id="test-no-llm",
-        profile="test-no-llm",
-        run_id="run-resumed",
-        decision_key="editor_decision",
-        checkpoint_store_path=".newsroom/checkpoints-test",
-    ) == {"ok": True}
+    assert client.research.analysis("paper/1") == {"ok": True}
+    assert client.research.reader("paper/1") == {"ok": True}
+    assert client.research.ask("paper/1", question="What changed?", locale="en-US") == {"ok": True}
+    assert client.research.trace("run/1") == {"ok": True}
 
     assert [request.full_url for request in opener.requests] == [
         "https://news.example/api/v1/memory/reindex",
         "https://news.example/api/v1/sources/source%2F1/probe",
         "https://news.example/api/v1/sources/arxiv/fetch",
         "https://news.example/api/v1/sources/github/releases",
-        "https://news.example/api/v1/schedules/papers/ingest",
+        "https://news.example/api/v1/schedules",
         "https://news.example/api/v1/schedules/schedule%2F1/trigger",
         "https://news.example/api/v1/approvals/approval%2F1/approve",
         "https://news.example/api/v1/approvals/approval%2F2/reject",
         "https://news.example/api/v1/approvals/approval%2F3/resume-context",
-        "https://news.example/api/v1/approvals/approval%2F4/resume-workflow",
+        "https://news.example/api/v1/research/papers/paper%2F1/analysis",
+        "https://news.example/api/v1/research/papers/paper%2F1/reader",
+        "https://news.example/api/v1/research/papers/paper%2F1/ask",
+        "https://news.example/api/v1/research/runs/run%2F1/trace",
     ]
-    assert [json.loads(request.data.decode("utf-8")) for request in opener.requests] == [
+    assert [
+        json.loads(request.data.decode("utf-8"))
+        for request in opener.requests
+        if request.data is not None
+    ] == [
         {"run_id": "run/1", "topic": "AI policy"},
         {"force": True, "include_disabled": True, "limit": 2},
         {"query": "cat:cs.AI", "limit": 1},
         {"repository": "owner/repo", "limit": 1},
         {
-            "schedule_id": "papers-ingest",
-            "name": "Daily GitHub arXiv paper ingest",
+            "schedule_id": "memory-reindex",
+            "name": "Memory reindex",
+            "task_type": "memory.reindex",
+            "payload_template": {"run_id": "run/1", "topic": "AI policy"},
             "trigger_type": "interval",
-            "interval_seconds": 21600,
+            "interval_seconds": 3600,
             "run_at": "2026-05-14T00:00:00Z",
-            "candidate_limit": 80,
-            "min_github_stars": 25,
-            "queue_name": "news:queue:papers",
+            "queue_name": "news:queue:memory",
+            "enabled": True,
+            "metadata": {},
         },
         {"now": "2026-05-14T00:00:00Z"},
         {"decided_by": "reviewer", "reason": "ok"},
         {"decided_by": "reviewer", "reason": None},
         {"decision_key": "editor_decision"},
-        {
-            "workflow_id": "test-no-llm",
-            "profile": "test-no-llm",
-            "run_id": "run-resumed",
-            "decision_key": "editor_decision",
-            "checkpoint_store_path": ".newsroom/checkpoints-test",
-        },
+        {"question": "What changed?", "locale": "en-US", "selection": {}, "options": {}},
     ]
 
 
@@ -196,7 +209,7 @@ def test_news_client_reads_report_memory_and_artifact_helpers() -> None:
     )
     client = NewsClient("https://news.example", opener=opener)
 
-    assert client.reports.list(limit=1, workflow_id="daily") == {"ok": True}
+    assert client.reports.list(limit=1, workflow_id="research.paper_analysis") == {"ok": True}
     assert client.reports.markdown("report/1") == {"ok": True}
     assert client.reports.quality("report/1") == {"ok": True}
     assert client.memory.get("doc/1", collection="reports") == {"ok": True}
@@ -207,7 +220,7 @@ def test_news_client_reads_report_memory_and_artifact_helpers() -> None:
     assert client.runs.artifact("run/1", "report/json") == {"ok": True}
 
     assert [request.full_url for request in opener.requests] == [
-        "https://news.example/api/v1/reports?limit=1&workflow_id=daily",
+        "https://news.example/api/v1/reports?limit=1&workflow_id=research.paper_analysis",
         "https://news.example/api/v1/reports/report%2F1/markdown",
         "https://news.example/api/v1/reports/report%2F1/quality",
         "https://news.example/api/v1/memory/doc%2F1?collection=reports",
@@ -261,8 +274,8 @@ def test_news_client_raises_error_from_success_false_envelope() -> None:
                 "success": False,
                 "error": {
                     "code": "invalid_request",
-                    "message": "invalid source_limit",
-                    "details": {"field": "source_limit"},
+                    "message": "invalid paper_id",
+                    "details": {"field": "paper_id"},
                     "retryable": True,
                     "user_action_required": False,
                 },
@@ -273,11 +286,11 @@ def test_news_client_raises_error_from_success_false_envelope() -> None:
     )
 
     try:
-        client.runs.create_daily(source_limit=0)
+        client.research.analyze_paper(paper_id="")
     except NewsApiError as exc:
         assert exc.code == "invalid_request"
         assert exc.status_code == 200
-        assert exc.details == {"field": "source_limit"}
+        assert exc.details == {"field": "paper_id"}
         assert exc.retryable is True
         assert exc.user_action_required is False
         assert exc.request_id == "req-envelope"

@@ -43,7 +43,7 @@ class SignalType(StrEnum):
 class BoardType(StrEnum):
     AI_NEWS = "ai_news"
     PROJECT_RADAR = "project_radar"
-    PAPER_RADAR = "paper_radar"
+    RESEARCH = "research"
     COMMUNITY_PULSE = "community_pulse"
     CROSS_BOARD = "cross_board"
 

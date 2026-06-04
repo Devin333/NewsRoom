@@ -20,13 +20,13 @@ def test_queue_status_api_maps_repeated_queue_names() -> None:
     fake_service = _FakeWorkerService()
     client = TestClient(create_app(worker_service_factory=lambda: fake_service))
 
-    response = client.get("/api/v1/queues?queue_name=news:queue:daily&queue_name=news:queue:memory")
+    response = client.get("/api/v1/queues?queue_name=news:queue:memory&queue_name=news:queue:sources")
     payload = response.json()
 
     assert response.status_code == 200
-    assert payload["data"]["queues"][0]["queue_name"] == "news:queue:daily"
-    assert payload["data"]["queues"][1]["queue_name"] == "news:queue:memory"
-    assert fake_service.queue_status_calls == [["news:queue:daily", "news:queue:memory"]]
+    assert payload["data"]["queues"][0]["queue_name"] == "news:queue:memory"
+    assert payload["data"]["queues"][1]["queue_name"] == "news:queue:sources"
+    assert fake_service.queue_status_calls == [["news:queue:memory", "news:queue:sources"]]
 
 
 def test_queue_status_api_invalid_queue_request_uses_unified_error() -> None:
@@ -51,7 +51,7 @@ class _FakeWorkerService:
 
     def queue_status(self, *, queue_names=None):
         self.queue_status_calls.append(queue_names)
-        actual_queue_names = queue_names or ["news:queue:daily"]
+        actual_queue_names = queue_names or ["news:queue:memory"]
         return _Result(
             {
                 "queue_count": len(actual_queue_names),

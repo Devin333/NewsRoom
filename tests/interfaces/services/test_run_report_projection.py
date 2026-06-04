@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-from business.boards.cross_board.workflows.daily_intelligence.profiles import LEGACY_DAILY_WORKFLOW_ID
 from interfaces.services.run_report_projection import project_run_report_for_interface
 
 
-def test_project_run_report_for_interface_reads_daily_namespaced_blocked_report() -> None:
-    output = {"report.blocked": {"title": "Blocked"}}
+def test_project_run_report_for_interface_reads_blocked_report_output() -> None:
+    output = {"blocked_report": {"title": "Blocked"}}
 
     projection = project_run_report_for_interface(
         {
-            "workflow_id": LEGACY_DAILY_WORKFLOW_ID,
+            "workflow_id": "research-paper-analysis",
             "run_id": "run-1",
             "output": output,
         }
     )
 
+    assert projection.output == output
     assert projection.output is not output
     assert projection.report_status == "blocked"
     assert projection.report_id == "run-1:blocked"
     assert "blocked_report" in projection.output
-    assert output == {"report.blocked": {"title": "Blocked"}}
+    assert output == {"blocked_report": {"title": "Blocked"}}
 
 
 def test_project_run_report_for_interface_keeps_non_daily_canonical_report_output() -> None:
@@ -33,7 +33,8 @@ def test_project_run_report_for_interface_keeps_non_daily_canonical_report_outpu
         }
     )
 
-    assert projection.output is output
+    assert projection.output == output
+    assert projection.output is not output
     assert projection.report_status == "final"
     assert projection.report_id == "run-weekly:final"
 
