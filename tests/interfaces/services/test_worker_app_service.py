@@ -21,6 +21,22 @@ from interfaces.services.worker_service import (
 )
 
 
+def test_worker_service_status_does_not_build_default_task_handlers() -> None:
+    class StatusOnlyService(WorkerApplicationService):
+        def _build_default_handlers(self):
+            raise AssertionError("queue and worker diagnostics must not build task handlers")
+
+    registry = _FakeWorkerRegistry()
+    service = StatusOnlyService(queue=_FakeQueue(), worker_registry=registry)
+    service.record_heartbeat(worker_id="worker-1", queue_names=[DEFAULT_PAPER_QUEUE])
+
+    status = service.list_worker_status()
+    queues = service.queue_status(queue_names=[DEFAULT_PAPER_QUEUE])
+
+    assert status.to_dict()["worker_count"] == 1
+    assert queues.to_dict()["queue_count"] == 1
+
+
 def test_worker_service_enqueue_daily_uses_queue() -> None:
     queue = _FakeQueue()
     service = WorkerApplicationService(queue=queue, handlers={})

@@ -46,6 +46,8 @@ def test_papers_api_returns_real_cached_papers(monkeypatch, tmp_path) -> None:
         encoding="utf-8",
     )
     monkeypatch.setenv("NEWSROOM_PAPERS_DATA_PATH", str(cache_path))
+    monkeypatch.setenv("NEWSROOM_PAPERS_AI_SUMMARY_CACHE_PATH", str(tmp_path / "summaries.json"))
+    monkeypatch.setenv("NEWSROOM_PAPERS_SUMMARY_EVENTS_PATH", str(tmp_path / "summary-events.jsonl"))
 
     client = TestClient(create_app(audit_emitter_factory=None))
     response = client.get("/api/v1/papers?limit=10")
@@ -333,7 +335,7 @@ def test_papers_summary_api_generates_and_caches(monkeypatch, tmp_path) -> None:
     assert FakeClient.calls == 2
 
 
-def test_papers_summary_api_returns_non_blocking_error(monkeypatch, tmp_path) -> None:
+def test_papers_summary_api_returns_cached_fallback_when_model_is_unavailable(monkeypatch, tmp_path) -> None:
     cache_path = tmp_path / "papers.json"
     cache_path.write_text(
         json.dumps(
@@ -354,6 +356,8 @@ def test_papers_summary_api_returns_non_blocking_error(monkeypatch, tmp_path) ->
         encoding="utf-8",
     )
     monkeypatch.setenv("NEWSROOM_PAPERS_DATA_PATH", str(cache_path))
+    monkeypatch.setenv("NEWSROOM_PAPERS_AI_SUMMARY_CACHE_PATH", str(tmp_path / "fallback-summaries.json"))
+    monkeypatch.setenv("NEWSROOM_PAPERS_SUMMARY_EVENTS_PATH", str(tmp_path / "fallback-events.jsonl"))
 
     class FailingClient:
         def complete(self, request):
@@ -365,9 +369,11 @@ def test_papers_summary_api_returns_non_blocking_error(monkeypatch, tmp_path) ->
     client = TestClient(create_app(papers_service_factory=factory, audit_emitter_factory=None))
     response = client.post("/api/v1/papers/paper-summary-error/summary?locale=en")
 
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "paper_summary_unavailable"
-    assert response.json()["error"]["retryable"] is True
+    assert response.status_code == 200
+    summary = response.json()["data"]["summary"]
+    assert summary["summary"].startswith("Summary Error Paper is a research paper")
+    assert summary["cached"] is False
+    assert summary["summarySchemaVersion"] == "v2"
 
 
 def test_papers_ops_stats_api_returns_safe_reader_runtime_stats(monkeypatch, tmp_path) -> None:
@@ -794,6 +800,38 @@ def test_papers_ops_classification_backfill_trigger_runs_local_background() -> N
             break
         time.sleep(0.01)
     assert ingest.backfill_calls == [(10, 5, "classification-backfill-test")]
+
+
+def test_papers_ops_classification_backfill_records_background_result(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("NEWSROOM_PAPERS_OPS_STATE_DIR", str(tmp_path))
+    ingest = _RecordingPaperIngestService()
+    client = TestClient(
+        create_app(
+            paper_ingest_service_factory=lambda: ingest,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/papers/ops/classification-backfill/trigger",
+        json={"limit": 10, "batchSize": 5, "runId": "classification-backfill-recorded"},
+    )
+
+    assert response.status_code == 200
+    for _ in range(100):
+        runs_payload = json.loads((tmp_path / "ops-runs.json").read_text(encoding="utf-8"))
+        run = runs_payload["runs"][0]
+        if run["status"] == "succeeded":
+            break
+        time.sleep(0.01)
+
+    runs_payload = json.loads((tmp_path / "ops-runs.json").read_text(encoding="utf-8"))
+    run = runs_payload["runs"][0]
+    assert run["runId"] == "classification-backfill-recorded"
+    assert run["status"] == "succeeded"
+    assert run["batchSize"] == 5
+    assert run["scannedCount"] == 0
+    assert run["updatedPaperIds"] == []
 
 
 def test_papers_ops_citation_backfill_trigger_runs_local_background() -> None:

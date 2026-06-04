@@ -192,38 +192,45 @@ class WorkerApplicationService:
         self.worker_registry = worker_registry
         if self.worker_registry is None and queue is None:
             self.worker_registry = RedisWorkerRegistry(redis_client)
-        if handlers is None:
-            handlers = {
-                DailyIntelligenceTaskHandler.task_type: DailyIntelligenceTaskHandler(
-                    RunApplicationService(artifact_root=self.artifact_root)
+        self._handlers = handlers
+
+    @property
+    def handlers(self) -> dict[str, TaskHandler]:
+        if self._handlers is None:
+            self._handlers = self._build_default_handlers()
+        return self._handlers
+
+    def _build_default_handlers(self) -> dict[str, TaskHandler]:
+        return {
+            DailyIntelligenceTaskHandler.task_type: DailyIntelligenceTaskHandler(
+                RunApplicationService(artifact_root=self.artifact_root)
+            ),
+            MemoryReindexTaskHandler.task_type: MemoryReindexTaskHandler(
+                memory_service=MemoryApplicationService(artifact_root=self.artifact_root)
+            ),
+            SourceHealthCheckTaskHandler.task_type: SourceHealthCheckTaskHandler(
+                source_service=SourceApplicationService()
+            ),
+            PaperIngestTaskHandler.task_type: PaperIngestTaskHandler(
+                paper_ingest_service=PaperIngestApplicationService(),
+                visual_compile_enqueue=lambda *, paper_id: self.enqueue_paper_visual_compile(paper_id=paper_id),
+            ),
+            PaperVisualCompileTaskHandler.task_type: PaperVisualCompileTaskHandler(
+                paper_visual_compiler_service=PaperVisualCompilerApplicationService()
+            ),
+            PaperVisualCompileBackfillTaskHandler.task_type: PaperVisualCompileBackfillTaskHandler(
+                paper_visual_compiler_service=PaperVisualCompilerApplicationService(),
+                visual_compile_enqueue=lambda *, paper_id, force=False, run_id=None: self.enqueue_paper_visual_compile(
+                    paper_id=paper_id,
+                    force=force,
+                    run_id=run_id,
                 ),
-                MemoryReindexTaskHandler.task_type: MemoryReindexTaskHandler(
-                    memory_service=MemoryApplicationService(artifact_root=self.artifact_root)
-                ),
-                SourceHealthCheckTaskHandler.task_type: SourceHealthCheckTaskHandler(
-                    source_service=SourceApplicationService()
-                ),
-                PaperIngestTaskHandler.task_type: PaperIngestTaskHandler(
-                    paper_ingest_service=PaperIngestApplicationService(),
-                    visual_compile_enqueue=lambda *, paper_id: self.enqueue_paper_visual_compile(paper_id=paper_id),
-                ),
-                PaperVisualCompileTaskHandler.task_type: PaperVisualCompileTaskHandler(
-                    paper_visual_compiler_service=PaperVisualCompilerApplicationService()
-                ),
-                PaperVisualCompileBackfillTaskHandler.task_type: PaperVisualCompileBackfillTaskHandler(
-                    paper_visual_compiler_service=PaperVisualCompilerApplicationService(),
-                    visual_compile_enqueue=lambda *, paper_id, force=False, run_id=None: self.enqueue_paper_visual_compile(
-                        paper_id=paper_id,
-                        force=force,
-                        run_id=run_id,
-                    ),
-                ),
-                PaperReaderFeedbackTaskHandler.task_type: PaperReaderFeedbackTaskHandler(
-                    event_repository=LocalJsonPaperReaderInteractionRepository(),
-                    feedback_service=_paper_reader_feedback_service_from_env(),
-                ),
-            }
-        self.handlers = handlers
+            ),
+            PaperReaderFeedbackTaskHandler.task_type: PaperReaderFeedbackTaskHandler(
+                event_repository=LocalJsonPaperReaderInteractionRepository(),
+                feedback_service=_paper_reader_feedback_service_from_env(),
+            ),
+        }
 
     def enqueue_daily(
         self,

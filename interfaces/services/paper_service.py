@@ -426,17 +426,19 @@ class PapersApplicationService:
                 cache_hit=False,
             )
             return summary
-        except PaperSummaryUnavailableError:
+        except PaperSummaryUnavailableError as exc:
+            summary = _fallback_summary(paper, locale=locale, route=route, generated_at=self.clock())
+            self._upsert_summary_cache(summary_cache_key(paper, locale=locale, route=route), summary.to_dict() | {"cached": False})
             self._record_summary_event(
                 paper_id=paper.id,
                 locale=locale,
                 model_route=route,
-                outcome="failed",
+                outcome="fallback_generated",
                 duration_ms=_duration_ms(started),
                 cache_hit=False,
-                error_code="paper_summary_unavailable",
+                error_code=f"paper_summary_fallback:{type(exc).__name__}",
             )
-            raise
+            return summary
 
     def get_reader_payload(self, paper_id: str, *, locale: PaperLocale) -> PaperReaderPayload:
         paper = self.get_paper(paper_id)
@@ -550,7 +552,7 @@ class PapersApplicationService:
         paper_id: str,
         locale: PaperLocale,
         model_route: str,
-        outcome: Literal["cache_hit", "generated", "failed"],
+        outcome: Literal["cache_hit", "generated", "failed", "fallback_generated"],
         duration_ms: int,
         cache_hit: bool,
         error_code: str | None = None,
@@ -830,6 +832,7 @@ def _summary_event_stats(path: Path, *, window_start: datetime, window_end: date
     recent_failures: list[Mapping[str, Any]] = []
     cache_hit_count = 0
     generated_count = 0
+    fallback_generated_count = 0
     failure_count = 0
     durations: list[int] = []
     for event in events:
@@ -839,6 +842,8 @@ def _summary_event_stats(path: Path, *, window_start: datetime, window_end: date
             cache_hit_count += 1
         elif outcome == "generated":
             generated_count += 1
+        elif outcome == "fallback_generated":
+            fallback_generated_count += 1
         elif outcome == "failed":
             failure_count += 1
             recent_failures.append(
@@ -870,7 +875,7 @@ def _summary_event_stats(path: Path, *, window_start: datetime, window_end: date
         key=lambda event: _timestamp(_text(event.get("timestamp"))),
         reverse=True,
     )[:5]
-    summary_requests = cache_hit_count + generated_count
+    summary_requests = cache_hit_count + generated_count + fallback_generated_count
     hit_rate = round(cache_hit_count / summary_requests, 4) if summary_requests else 0.0
     return {
         "status": "partial" if partial else "ready",
@@ -878,6 +883,7 @@ def _summary_event_stats(path: Path, *, window_start: datetime, window_end: date
         "eventCount": len(events),
         "cacheHitCount": cache_hit_count,
         "generatedCount": generated_count,
+        "fallbackGeneratedCount": fallback_generated_count,
         "failureCount": failure_count,
         "hitRate": hit_rate,
         "outcomeCounts": outcome_counts,
@@ -902,6 +908,7 @@ def _empty_summary_event_stats(
         "eventCount": 0,
         "cacheHitCount": 0,
         "generatedCount": 0,
+        "fallbackGeneratedCount": 0,
         "failureCount": 0,
         "hitRate": 0.0,
         "outcomeCounts": {},
@@ -1601,6 +1608,196 @@ def _parse_summary_response(content: str) -> Mapping[str, Any]:
     except json.JSONDecodeError:
         return {"summary": stripped}
     return payload if isinstance(payload, Mapping) else {"summary": stripped}
+
+
+def _fallback_summary(
+    paper: PublicPaper,
+    *,
+    locale: PaperLocale,
+    route: str,
+    generated_at: datetime,
+) -> PaperAISummary:
+    task_names = [ref.name for ref in paper.taskRefs[:3]]
+    method_names = [ref.name for ref in paper.methodRefs[:3]]
+    implementation_names = [implementation.name for implementation in paper.implementations[:2]]
+    benchmark_names = [benchmark.name for benchmark in paper.benchmarks[:3]]
+    summary = _fallback_summary_text(
+        paper,
+        locale=locale,
+        task_names=task_names,
+        method_names=method_names,
+        implementation_names=implementation_names,
+        benchmark_names=benchmark_names,
+    )
+    return PaperAISummary(
+        paperId=paper.id,
+        locale=locale,
+        modelRoute=route,
+        abstractHash=paper_abstract_hash(paper),
+        summary=summary,
+        keyInsights=tuple(_fallback_key_insights(paper, locale=locale, task_names=task_names, method_names=method_names)),
+        limitations=tuple(_fallback_limitations(paper, locale=locale)),
+        contributions=tuple(_fallback_contributions(paper, locale=locale, method_names=method_names)),
+        methodSummary=_fallback_method_summary(paper, locale=locale, method_names=method_names),
+        experimentSummary=_fallback_experiment_summary(paper, locale=locale, benchmark_names=benchmark_names),
+        engineeringRelevance=_fallback_engineering_relevance(paper, locale=locale, implementation_names=implementation_names),
+        readingDifficulty="medium",
+        recommendedAudience=tuple(_fallback_audience(locale=locale, task_names=task_names)),
+        summarySchemaVersion=PAPER_SUMMARY_SCHEMA_VERSION,
+        generatedAt=generated_at.isoformat().replace("+00:00", "Z"),
+        cached=False,
+    )
+
+
+def _fallback_summary_text(
+    paper: PublicPaper,
+    *,
+    locale: PaperLocale,
+    task_names: Sequence[str],
+    method_names: Sequence[str],
+    implementation_names: Sequence[str],
+    benchmark_names: Sequence[str],
+) -> str:
+    abstract = _first_sentence(paper.abstractSnippet) or paper.abstractSnippet
+    if locale == "zh":
+        parts = [f"{paper.title} 是一篇来自 {paper.venue or '公开论文源'} 的研究论文。"]
+        if abstract:
+            parts.append(f"论文摘要显示：{abstract}")
+        if task_names:
+            parts.append(f"当前归类任务包括：{', '.join(task_names)}。")
+        if method_names:
+            parts.append(f"方法信号包括：{', '.join(method_names)}。")
+        if implementation_names:
+            parts.append(f"已关联实现：{', '.join(implementation_names)}。")
+        if benchmark_names:
+            parts.append(f"已提取基准：{', '.join(benchmark_names)}。")
+        return " ".join(parts)
+
+    parts = [f"{paper.title} is a research paper from {paper.venue or 'a public paper source'}."]
+    if abstract:
+        parts.append(f"The abstract says: {abstract}")
+    if task_names:
+        parts.append(f"Current task labels include {', '.join(task_names)}.")
+    if method_names:
+        parts.append(f"Method signals include {', '.join(method_names)}.")
+    if implementation_names:
+        parts.append(f"Linked implementations include {', '.join(implementation_names)}.")
+    if benchmark_names:
+        parts.append(f"Extracted benchmarks include {', '.join(benchmark_names)}.")
+    return " ".join(parts)
+
+
+def _fallback_key_insights(
+    paper: PublicPaper,
+    *,
+    locale: PaperLocale,
+    task_names: Sequence[str],
+    method_names: Sequence[str],
+) -> list[str]:
+    if locale == "zh":
+        insights = [
+            f"论文主题来自真实缓存的标题、摘要和 arXiv/论文元数据：{paper.title}。",
+        ]
+        if task_names:
+            insights.append(f"已归入任务方向：{', '.join(task_names)}。")
+        if method_names:
+            insights.append(f"已识别方法方向：{', '.join(method_names)}。")
+        return insights[:3]
+    insights = [
+        f"The summary is grounded in the cached title, abstract, and public paper metadata for {paper.title}.",
+    ]
+    if task_names:
+        insights.append(f"Task taxonomy signals: {', '.join(task_names)}.")
+    if method_names:
+        insights.append(f"Method taxonomy signals: {', '.join(method_names)}.")
+    return insights[:3]
+
+
+def _fallback_limitations(paper: PublicPaper, *, locale: PaperLocale) -> list[str]:
+    missing = []
+    if not paper.taskRefs:
+        missing.append("task taxonomy")
+    if not paper.methodRefs:
+        missing.append("method taxonomy")
+    if not paper.benchmarks:
+        missing.append("benchmark extraction")
+    if locale == "zh":
+        if missing:
+            return [f"本地摘要缺少完整的 {', '.join(missing)} 信号，应该在模型恢复后刷新。"]
+        return ["这是模型不可用时的本地降级摘要，细粒度分析应在模型恢复后刷新。"]
+    if missing:
+        return [f"This local fallback lacks complete {', '.join(missing)} signals and should be refreshed when the model route recovers."]
+    return ["This is a local fallback summary; refresh it when the model route is available for finer analysis."]
+
+
+def _fallback_contributions(
+    paper: PublicPaper,
+    *,
+    locale: PaperLocale,
+    method_names: Sequence[str],
+) -> list[str]:
+    if method_names:
+        if locale == "zh":
+            return [f"论文贡献与这些方法信号相关：{', '.join(method_names)}。"]
+        return [f"The paper's contribution is associated with these method signals: {', '.join(method_names)}."]
+    abstract = _first_sentence(paper.abstractSnippet)
+    if abstract:
+        return [abstract]
+    return []
+
+
+def _fallback_method_summary(paper: PublicPaper, *, locale: PaperLocale, method_names: Sequence[str]) -> str | None:
+    if method_names:
+        if locale == "zh":
+            return f"方法摘要来自已发布 taxonomy：{', '.join(method_names)}。"
+        return f"Method summary from published taxonomy: {', '.join(method_names)}."
+    return None
+
+
+def _fallback_experiment_summary(paper: PublicPaper, *, locale: PaperLocale, benchmark_names: Sequence[str]) -> str | None:
+    if benchmark_names:
+        if locale == "zh":
+            return f"已提取实验/基准信号：{', '.join(benchmark_names)}。"
+        return f"Extracted experiment or benchmark signals: {', '.join(benchmark_names)}."
+    return None
+
+
+def _fallback_engineering_relevance(
+    paper: PublicPaper,
+    *,
+    locale: PaperLocale,
+    implementation_names: Sequence[str],
+) -> str | None:
+    if implementation_names:
+        if locale == "zh":
+            return f"工程相关性来自已关联代码实现：{', '.join(implementation_names)}。"
+        return f"Engineering relevance is supported by linked implementations: {', '.join(implementation_names)}."
+    if paper.repoUrl:
+        if locale == "zh":
+            return f"论文提供了代码仓库：{paper.repoUrl}。"
+        return f"The paper provides a code repository: {paper.repoUrl}."
+    return None
+
+
+def _fallback_audience(*, locale: PaperLocale, task_names: Sequence[str]) -> list[str]:
+    if locale == "zh":
+        if task_names:
+            return [f"关注 {', '.join(task_names[:2])} 的研究和工程读者"]
+        return ["需要快速了解论文主题的研究和工程读者"]
+    if task_names:
+        return [f"Researchers and engineers tracking {', '.join(task_names[:2])}"]
+    return ["Researchers and engineers who need a quick paper overview"]
+
+
+def _first_sentence(value: str, *, max_chars: int = 360) -> str:
+    text = " ".join(value.split())
+    if not text:
+        return ""
+    match = re.search(r"(?<=[.!?。！？])\s+", text)
+    sentence = text[: match.start()].strip() if match else text
+    if len(sentence) <= max_chars:
+        return sentence
+    return sentence[: max_chars - 1].rstrip() + "..."
 
 
 def _summary_public_context(paper: PublicPaper) -> Mapping[str, Any]:

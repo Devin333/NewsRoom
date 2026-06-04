@@ -40,6 +40,8 @@ class RedisQueueStatus:
     group_exists: bool
     pending_count: int = 0
     lag: int | None = None
+    entries_read: int | None = None
+    last_delivered_id: str | None = None
     oldest_task_age: float | None = None
     consumers: list[RedisQueueConsumerStatus] | None = None
 
@@ -52,6 +54,8 @@ class RedisQueueStatus:
             "group_exists": self.group_exists,
             "pending_count": self.pending_count,
             "lag": self.stream_length if self.lag is None else self.lag,
+            "entries_read": self.entries_read,
+            "last_delivered_id": self.last_delivered_id,
             "oldest_task_age": self.oldest_task_age,
             "consumer_count": len(consumers),
             "consumers": [consumer.to_dict() for consumer in consumers],
@@ -273,15 +277,33 @@ class RedisStreamTaskQueue:
             )
             for consumer in _dict_value(pending, "consumers") or []
         ]
+        group_info = self._queue_group_info(queue_name)
+        lag = _non_negative_int(_dict_value(group_info, "lag"))
+        if lag is None:
+            lag = stream_length
         return RedisQueueStatus(
             queue_name=queue_name,
             stream_length=stream_length,
             group_name=self.group_name,
             group_exists=True,
             pending_count=int(_dict_value(pending, "pending") or 0),
-            lag=stream_length,
+            lag=lag,
+            entries_read=_non_negative_int(_dict_value(group_info, "entries-read")),
+            last_delivered_id=_optional_decoded_text(_dict_value(group_info, "last-delivered-id")),
             consumers=consumers,
         )
+
+    def _queue_group_info(self, queue_name: str) -> dict[Any, Any]:
+        if not hasattr(self.redis, "xinfo_groups"):
+            return {}
+        try:
+            groups = self.redis.xinfo_groups(queue_name)
+        except Exception:
+            return {}
+        for group in groups or []:
+            if str(_decode(_dict_value(group, "name")) or "") == self.group_name:
+                return dict(group)
+        return {}
 
 
 class RedisWorkerRegistry:
@@ -422,6 +444,22 @@ def _dict_value(data: dict[Any, Any], key: str) -> Any:
     if byte_key in data:
         return data[byte_key]
     return None
+
+
+def _non_negative_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_decoded_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(_decode(value))
+    return text or None
 
 
 def _redacted_task_dict(task: Task) -> dict[str, Any]:

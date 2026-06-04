@@ -140,6 +140,38 @@ def new_ops_run(
     return payload
 
 
+def ops_run_from_result(
+    *,
+    run_id: str,
+    task_type: str,
+    status: str,
+    result: Any,
+    mode: str = "local_background",
+    error: Exception | None = None,
+) -> dict[str, Any]:
+    payload = new_ops_run(
+        run_id=run_id,
+        task_type=task_type,
+        status=status,
+        mode=mode,
+        error=error,
+    )
+    result_payload = result.to_dict() if hasattr(result, "to_dict") else result
+    if isinstance(result_payload, Mapping):
+        payload.update(
+            {
+                key: value
+                for key, value in dict(result_payload).items()
+                if key not in {"runId", "status", "startedAt", "finishedAt"}
+            }
+        )
+        if result_payload.get("startedAt"):
+            payload["startedAt"] = result_payload["startedAt"]
+        if result_payload.get("finishedAt"):
+            payload["finishedAt"] = result_payload["finishedAt"]
+    return payload
+
+
 def _state_dir(configured_path: str | Path | None) -> Path:
     if configured_path is not None:
         return Path(configured_path).expanduser().resolve()

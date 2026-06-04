@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.services.auth_service import AuthSessionInvalidError
 from interfaces.services.paper_ingest_service import PAPER_INGEST_TASK_TYPE
-from interfaces.services.paper_ops_run_repository import PaperOpsRunRepository, new_ops_run
+from interfaces.services.paper_ops_run_repository import PaperOpsRunRepository, new_ops_run, ops_run_from_result
 from interfaces.services.paper_visual_compiler_service import (
     PAPER_VISUAL_COMPILE_BACKFILL_TASK_TYPE,
     PAPER_VISUAL_COMPILE_TASK_TYPE,
@@ -1309,12 +1309,17 @@ def _run_paper_classification_backfill_background(
     try:
         _record_local_ops_run(run_id=run_id, task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE, status="running")
         paper_ingest_service = paper_ingest_service_factory()
-        paper_ingest_service.backfill_published_classification(
+        result = paper_ingest_service.backfill_published_classification(
             limit=limit,
             batch_size=batch_size,
             run_id=run_id,
         )
-        _record_local_ops_run(run_id=run_id, task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE, status="succeeded")
+        _record_local_ops_run_result(
+            run_id=run_id,
+            task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE,
+            status="succeeded",
+            result=result,
+        )
     except Exception as exc:
         logger.exception("paper classification backfill background failed", extra={"run_id": run_id})
         _record_local_ops_run(run_id=run_id, task_type=PAPER_CLASSIFICATION_BACKFILL_TASK_TYPE, status="failed", error=exc)
@@ -1358,12 +1363,17 @@ def _run_paper_citation_backfill_background(
     try:
         _record_local_ops_run(run_id=run_id, task_type=PAPER_CITATION_BACKFILL_TASK_TYPE, status="running")
         paper_ingest_service = paper_ingest_service_factory()
-        paper_ingest_service.backfill_published_citations(
+        result = paper_ingest_service.backfill_published_citations(
             limit=limit,
             batch_size=batch_size,
             run_id=run_id,
         )
-        _record_local_ops_run(run_id=run_id, task_type=PAPER_CITATION_BACKFILL_TASK_TYPE, status="succeeded")
+        _record_local_ops_run_result(
+            run_id=run_id,
+            task_type=PAPER_CITATION_BACKFILL_TASK_TYPE,
+            status="succeeded",
+            result=result,
+        )
     except Exception as exc:
         logger.exception("paper citation backfill background failed", extra={"run_id": run_id})
         _record_local_ops_run(run_id=run_id, task_type=PAPER_CITATION_BACKFILL_TASK_TYPE, status="failed", error=exc)
@@ -1546,6 +1556,26 @@ def _record_local_ops_run(
         )
     except Exception:
         logger.exception("paper local ops run recording failed", extra={"run_id": run_id, "task_type": task_type, "status": status})
+
+
+def _record_local_ops_run_result(
+    *,
+    run_id: str,
+    task_type: str,
+    status: str,
+    result: Any,
+) -> None:
+    try:
+        PaperOpsRunRepository().record_run(
+            ops_run_from_result(
+                run_id=run_id,
+                task_type=task_type,
+                status=status,
+                result=result,
+            )
+        )
+    except Exception:
+        logger.exception("paper local ops run result recording failed", extra={"run_id": run_id, "task_type": task_type, "status": status})
 
 
 def _local_operation_key(task_type: str, **params: Any) -> str:

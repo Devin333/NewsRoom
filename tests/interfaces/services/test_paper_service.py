@@ -385,15 +385,20 @@ def test_paper_reader_ops_stats_empty_partial_and_failed_summary_events(tmp_path
         clock=lambda: datetime(2026, 5, 25, tzinfo=timezone.utc),
     )
 
-    with pytest.raises(PaperSummaryUnavailableError):
-        service.get_or_generate_summary("failure-paper", locale="en")
+    summary = service.get_or_generate_summary("failure-paper", locale="en")
+
+    assert summary.summary.startswith("Failure Paper is a research paper")
+    assert summary.cached is False
+    assert summary.summarySchemaVersion == PAPER_SUMMARY_SCHEMA_VERSION
 
     stats = service.get_ops_stats()
     assert stats["dataState"] == "partial"
-    assert stats["summaryCache"]["status"] == "invalid"
+    assert stats["summaryCache"]["status"] == "ready"
+    assert stats["summaryCache"]["entryCount"] == 1
     assert stats["summaryEvents"]["status"] == "partial"
-    assert stats["summaryEvents"]["failureCount"] == 1
-    assert stats["summaryEvents"]["recentFailures"][0]["errorCode"] == "paper_summary_unavailable"
+    assert stats["summaryEvents"]["failureCount"] == 0
+    assert stats["summaryEvents"]["fallbackGeneratedCount"] == 1
+    assert stats["summaryEvents"]["errorCodeCounts"]["paper_summary_fallback:PaperSummaryUnavailableError"] == 1
     assert "secret" not in json.dumps(stats)
 
 
