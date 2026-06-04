@@ -40,11 +40,11 @@
 
 ## 5. Stage 3D Context Engineering
 
-- [ ] 5.1 Define six-part `ContextEnvelope` assembly with stable prefix and dynamic tail.
-- [ ] 5.2 Implement context budget accounting and five-level compression chain.
-- [ ] 5.3 Preserve policy, route table, schemas, gates, allowlists, namespaces, source refs, and budgets from lossy compression.
-- [ ] 5.4 Add context snapshot and replay constraints.
-- [ ] 5.5 Add tests for stable prefix preservation and dynamic tail compression.
+- [x] 5.1 Define six-part `ContextEnvelope` assembly with stable prefix and dynamic tail.
+- [x] 5.2 Implement context budget accounting and five-level compression chain.
+- [x] 5.3 Preserve policy, route table, schemas, gates, allowlists, namespaces, source refs, and budgets from lossy compression.
+- [x] 5.4 Add context snapshot and replay constraints.
+- [x] 5.5 Add tests for stable prefix preservation and dynamic tail compression.
 
 ## 6. Stage 3B Bounded Agentic RAG
 
