@@ -71,9 +71,9 @@
 
 ## 9. Stage 5A Research Product Scenarios
 
-- [ ] 9.1 Document Research product scenarios for paper card, taxonomy, reader, reading session, code repository, benchmark, method graph, agent intelligence, and RAG.
-- [ ] 9.2 Map each scenario to domain model candidates and user-visible backend outcomes.
-- [ ] 9.3 Confirm scenarios do not depend on old paper_radar payloads or UI compatibility.
+- [x] 9.1 Document Research product scenarios for paper card, taxonomy, reader, reading session, code repository, benchmark, method graph, agent intelligence, and RAG.
+- [x] 9.2 Map each scenario to domain model candidates and user-visible backend outcomes.
+- [x] 9.3 Confirm scenarios do not depend on old paper_radar payloads or UI compatibility.
 
 ## 10. Stage 5 Research Domain Modeling
 

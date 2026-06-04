@@ -6,6 +6,8 @@
 
 本阶段只做业务 PRD 和模型边界规划，是阶段 5 的需求输入，不直接创建 `business/research` 代码、不添加测试、不实现 workflow。实现顺序仍然以后续阶段为准：先做框架层 Harness，再做 Research 第一批闭环；UI 暂时不做。
 
+阶段 5A 的结构化产物是 [research-product-scenarios.md](research-product-scenarios.md)。阶段 5 建模时应以该场景矩阵映射 domain model、port、service、gate、workflow spec 和测试输入，避免在代码阶段重新发明一套范围。
+
 ## 与阶段 5 的边界
 
 | 阶段 | 职责 |
