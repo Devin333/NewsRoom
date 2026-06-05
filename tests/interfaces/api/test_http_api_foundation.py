@@ -6,7 +6,7 @@ from interfaces.api import create_app
 from interfaces.api.app import _api_token_from_env
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.run_inspection_service import RunInspectionService
-from infrastructure.storage.repository import ReportRecord
+from infrastructure.storage.persistence import ReportRecord
 
 
 RESEARCH_WORKFLOW_ID = "research.paper_analysis"

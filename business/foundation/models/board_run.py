@@ -4,11 +4,13 @@ from typing import Any
 
 from pydantic import Field
 
-from business.foundation._models import BoardCard, DetailPage, Insight, Report
 from business.foundation.artifacts import BusinessArtifactRef
 from business.foundation.evidence import BusinessEvidenceRef
 from business.foundation.memory_refs import BusinessMemoryRef
+from business.foundation.models.board import BoardCard, DetailPage
+from business.foundation.models.insight import Insight
 from business.foundation.primitives import PrimitiveModel, SourceRef
+from business.foundation.models.report import Report
 from business.foundation.taxonomy import BoardType
 from business.foundation.models.quality_loop import (
     BusinessFeedbackEvent,

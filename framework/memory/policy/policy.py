@@ -168,3 +168,7 @@ DEFAULT_ADMIN_MEMORY_POLICY = MemoryPolicy(
     max_context_tokens=4000,
     allow_global_write=True,
 )
+
+
+MemoryRecallPolicy = MemoryPolicy
+MemoryWritePolicy = MemoryPolicy

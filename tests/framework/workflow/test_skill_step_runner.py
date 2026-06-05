@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from framework.specs import StepSpec, StepStatus, StepType
-from framework.workflow.runners.skill_step_runner import SkillStepRunner, resolve_skill_input
-from framework.workflow.specs.skill_step import SkillStepSpec
+from framework.workflow.runners.skill import SkillStepRunner, resolve_skill_input
+from framework.specs.skill_step import SkillStepSpec
 
 
 @dataclass

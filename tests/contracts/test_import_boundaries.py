@@ -60,8 +60,8 @@ def test_business_has_no_concrete_external_client_imports() -> None:
     assert violations == []
 
 
-def test_business_memory_ingestion_does_not_depend_on_legacy_report_or_storage_models() -> None:
-    imports = _imports_for_file(BUSINESS_ROOT / "layers" / "output" / "memory_ingestion.py")
+def test_business_memory_ingestion_boundary_does_not_depend_on_legacy_report_or_storage_models() -> None:
+    imports = _imports_for_file(BUSINESS_ROOT / "layers" / "memory" / "ingestion.py")
 
     assert _matching_forbidden(
         imports,
@@ -71,7 +71,7 @@ def test_business_memory_ingestion_does_not_depend_on_legacy_report_or_storage_m
 
 def test_graph_memory_port_has_single_canonical_definition() -> None:
     from business.memory.graph_memory import GraphMemoryPort as BusinessGraphMemoryPort
-    from infrastructure.storage.graph.ports import GraphMemoryPort as InfrastructureGraphMemoryPort
+    from business.memory.graph_memory import GraphMemoryPort as InfrastructureGraphMemoryPort
 
     assert InfrastructureGraphMemoryPort is BusinessGraphMemoryPort
 

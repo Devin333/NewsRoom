@@ -6,7 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
-from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.specs import WorkflowSpec, WorkflowStatus
 from framework.workflow.runtime.manifest import (
     manifest_hash,
@@ -15,7 +15,7 @@ from framework.workflow.runtime.manifest import (
     validate_run_manifest,
 )
 from framework.workflow.runtime.result import StepOutcome, WorkflowError
-from framework.workflow.runtime.artifacts import ArtifactRef
+from framework.artifacts import ArtifactRef
 
 
 class ArtifactPublishPhase(str, Enum):

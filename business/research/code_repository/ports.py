@@ -13,5 +13,4 @@ class GithubRepositoryPort(Protocol):
     def fetch_observation(self, repo_url: str) -> CodeRepositoryObservation:
         ...
 
-
 __all__ = ["GithubRepositoryPort"]

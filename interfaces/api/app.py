@@ -37,7 +37,7 @@ from interfaces.api.responses import (
 )
 from interfaces.api.errors import http_error_code
 from interfaces.events import AuditEmitter, audit_emitter_from_env
-from interfaces.env import load_root_env
+from framework.shared.env import load_root_env
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService

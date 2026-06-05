@@ -15,16 +15,10 @@ from business.foundation import (
     Signal,
     SignalType,
 )
+from business.foundation.models.source import Lineage as SignalLineage
+from business.foundation.models.source import NormalizedSourceItem, RankedSourceItem, RawSourceItem
 from business.foundation.primitives import ScoreFactor
-from business.layers.signal.records import (
-    NormalizedSourceItem,
-    RankedSourceItem,
-    RawSourceItem,
-    SignalLineage,
-    deduplicate_items,
-    normalize_items,
-    rank_items,
-)
+from business.layers.signal.source_processing import deduplicate_items, normalize_items, rank_items
 from business.layers.signal.signal_projection import (
     SourceSignalProjectionInput,
     SourceSignalProjectionService,

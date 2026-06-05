@@ -11,7 +11,7 @@ from framework.shared.time import utc_now
 from framework.workflow.buffer import DataBuffer
 from framework.workflow.governance.resource import StepResourceEstimator, StepResourceGuard
 from framework.workflow.governance.safety import safety_violation_for_step
-from framework.workflow.runtime.events import EventRecorder
+from framework.events import EventRecorder
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners.base import StepExecutionError, StepRunnerResolutionError
 from framework.workflow.runners.registry import StepRunnerRegistry

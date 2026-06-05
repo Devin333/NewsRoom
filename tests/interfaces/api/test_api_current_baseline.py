@@ -5,7 +5,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
-from infrastructure.storage.repository import ReportRecord
+from infrastructure.storage.persistence import ReportRecord
 
 
 def test_create_app_builds_current_fastapi_app() -> None:

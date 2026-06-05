@@ -1,8 +1,7 @@
 from datetime import UTC, datetime
 
 from business.foundation import BoardType, ProcessingStatus, SignalType, SourceType
-from business.foundation.models.source import SourceRankingSignals, SourceReliability
-from business.layers.signal.records import RawSourceItem
+from business.foundation.models.source import RawSourceItem, SourceRankingSignals, SourceReliability
 from business.layers.signal.signal_projection import (
     SourceSignalProjectionInput,
     SourceSignalProjectionService,

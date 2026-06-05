@@ -21,7 +21,7 @@ from framework.workflow.runners.parallel import ParallelGroupStepRunner
 from framework.workflow.runners.quality_gate import QualityGateStepRunner
 from framework.workflow.runners.registry import *  # noqa: F401,F403
 from framework.workflow.runners.router import RouterStepRunner
-from framework.workflow.runners.skill_step_runner import (
+from framework.workflow.runners.skill import (
     SkillRunContext,
     SkillRunnerProtocol,
     SkillStepRunner,

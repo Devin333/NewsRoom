@@ -5,7 +5,7 @@ from dataclasses import replace
 from framework.llm.cache.in_memory import InMemoryLLMCache
 from framework.llm.cache.key import LLMCacheKey
 from framework.llm.cache.policy import LLMCachePolicy
-from framework.llm.clients.base import LLMClient
+from framework.llm.models import LLMClient
 from framework.llm.models.request import LLMRequest
 from framework.llm.models.response import LLMResponse
 

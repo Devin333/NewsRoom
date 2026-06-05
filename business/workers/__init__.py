@@ -1,8 +1,8 @@
 """Business task handlers for worker queues."""
 
 from business.workers.memory_consolidation_handler import MemoryConsolidationTaskHandler
-from business.workers.memory_reindex_handler import MemoryReindexTaskHandler
-from business.workers.source_health_handler import SourceHealthCheckTaskHandler
+from business.layers.output.worker_handlers import MemoryReindexTaskHandler
+from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
 
 __all__ = [
     "MemoryConsolidationTaskHandler",

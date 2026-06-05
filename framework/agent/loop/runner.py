@@ -11,7 +11,7 @@ from framework.agent.loop.judge import OutputJudge
 from framework.agent.subagents import SubAgentExecutor
 from framework.agent.runtime.llm import GlobalBudgetTracker
 from framework.llm.models import LLMClient
-from framework.agent.runtime.memory import MemoryPolicy, MemoryRuntime
+from framework.memory import MemoryPolicy, MemoryRuntime
 from framework.tool import ToolExecutor
 from framework.tool import ToolRegistry
 from framework.agent.messages import (

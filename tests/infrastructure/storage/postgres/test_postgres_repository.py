@@ -5,7 +5,7 @@ import pytest
 from business.foundation.models.source import SourceError, SourceHealth, SourceHealthStatus
 from infrastructure.storage.postgres import PostgresRepository
 from infrastructure.storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, SourceItemRecord
-from infrastructure.storage.repository import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
+from infrastructure.storage.persistence import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
 
 
 RESEARCH_WORKFLOW_ID = "research-paper-analysis"

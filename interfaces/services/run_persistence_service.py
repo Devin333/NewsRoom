@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 
 from framework import RunResult
-from infrastructure.storage.repository import RunPersistenceInput
+from infrastructure.storage.persistence import RunPersistenceInput
 
 
 class RunPersistenceApplicationService:

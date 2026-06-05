@@ -1,4 +1,4 @@
-from framework.memory.context.block import MemoryContextBlock
+from framework.memory.models import MemoryContextBlock
 from framework.memory.context.budget import MemoryContextBudget
 from framework.memory.context.citation import MemoryCitationBuilder
 from framework.memory.context.compression import MemoryContextCompressor

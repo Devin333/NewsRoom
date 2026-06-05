@@ -7,7 +7,11 @@ from hashlib import sha256
 from typing import Any, Protocol
 
 from framework.specs import StepType, WorkflowSpec, WorkflowStatus
-from framework.workflow.runtime.workflow_artifacts import ArtifactRef, redact_metadata, utc_now_iso
+from framework.artifacts.runtime.publisher import (
+    WorkflowArtifactRef as ArtifactRef,
+    redact_metadata,
+    utc_now_iso,
+)
 
 
 RUN_MANIFEST_SCHEMA_VERSION = "newsroom.workflow_run_manifest.v1"

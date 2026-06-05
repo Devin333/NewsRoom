@@ -37,8 +37,8 @@ from framework.harness.skills.evolution import (
     SkillVersionRef,
     VersionedSkillReleaseRegistry,
 )
-from framework.harness.skills.fake import FakeSkillWorker
 from framework.harness.skills.ports import SkillWorkerPort
+from framework.harness.workers.fake import FakeSkillWorker
 
 __all__ = [
     "FakeSkillEvolutionPort",

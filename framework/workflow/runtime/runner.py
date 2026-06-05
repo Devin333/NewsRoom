@@ -41,9 +41,9 @@ from framework.workflow.operations import (
 )
 from framework.workflow.runtime.result import WorkflowResult
 from framework.workflow.routing import RoutingEngine
-from framework.workflow.checkpoint.checkpointing import WorkflowResumePlan
+from framework.workflow.checkpoint.resume import WorkflowResumePlan
 from framework.workflow.checkpoint.model import WorkflowCheckpoint
-from framework.workflow.runners.default_registry import build_default_step_runner_registry
+from framework.workflow.runners import build_default_step_runner_registry
 from framework.workflow.runners.function import FunctionStepRegistry
 from framework.workflow.runners.registry import StepRunnerRegistry
 

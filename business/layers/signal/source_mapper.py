@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from business.foundation import BoardType
+from business.foundation.models.source import RawSourceItem
 from business.layers.signal.models import RawSignalInput
 from business.layers.signal.normalizer import clean_text, normalize_datetime, normalize_url
-from business.layers.signal.records import RawSourceItem
 from business.layers.signal.signal_classifier import board_type_for_signal, signal_type_for_source
 
 

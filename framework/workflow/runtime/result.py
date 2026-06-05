@@ -9,7 +9,7 @@ from framework.shared.json import to_jsonable as to_json_safe
 from framework.shared.result import ErrorDetail
 from framework.shared.time import format_datetime, utc_now
 from framework.specs import StepStatus, WorkflowStatus
-from framework.workflow.runtime.artifacts import ArtifactRef
+from framework.artifacts import ArtifactRef
 
 
 @dataclass(frozen=True)

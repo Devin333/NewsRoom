@@ -37,13 +37,6 @@ def test_concrete_runner_modules_do_not_import_legacy_step_runner_shim() -> None
     assert violations == []
 
 
-def test_legacy_step_runner_module_is_shim_only() -> None:
-    path = RUNNERS_ROOT / "step_runner.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    definitions = [
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-
-    assert definitions == []
+def test_legacy_step_runner_module_is_removed() -> None:
+    assert not (RUNNERS_ROOT / "step_runner.py").exists()
+    assert not (RUNNERS_ROOT / "_step_runner_impl.py").exists()

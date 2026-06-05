@@ -9,7 +9,7 @@ from typing import Any, Callable
 import psycopg
 
 from infrastructure.storage.artifacts.local_json import ArtifactIndexNotFoundError
-from infrastructure.storage.artifacts.models import ArtifactRef
+from framework.artifacts.models import ArtifactRef
 
 
 ConnectionFactory = Callable[[], Any]

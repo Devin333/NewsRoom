@@ -10,7 +10,7 @@ from framework.tool import (
 )
 from business.layers.output.tools import register_report_tools
 from interfaces.services.report_service import ReportApplicationService
-from infrastructure.storage.repository import LocalJsonPersistenceAdapter
+from infrastructure.storage.persistence import LocalJsonPersistenceAdapter
 
 
 def test_report_tools_render_markdown_and_json_through_executor() -> None:

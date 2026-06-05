@@ -11,7 +11,7 @@ from infrastructure.external.sources.models import SourceError, SourceHealth, So
 from infrastructure.storage.local_json import ReportNotFoundError
 from infrastructure.storage.postgres.migrations import load_migration_sql
 from infrastructure.storage.records import ClaimRecord, EvidenceItemRecord, QualityResultRecord, ReportDetailRecord, ReportSummaryRecord, SourceItemRecord
-from infrastructure.storage.repository import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
+from infrastructure.storage.persistence import ReportRecord, RunPersistenceBatch, WorkflowRunRecord
 
 
 ConnectionFactory = Callable[[], Any]

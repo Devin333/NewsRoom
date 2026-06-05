@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from framework.specs import StepSpec
 from framework.workflow.checkpoint.model import WorkflowCheckpoint
-from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
 from framework.workflow.runtime.execution_context import build_execution_context
 from framework.workflow.runtime.result import StepOutcome

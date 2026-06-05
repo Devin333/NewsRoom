@@ -11,7 +11,6 @@ INFRA_STORAGE_ROOT = PROJECT_ROOT / "infrastructure" / "storage"
 # infrastructure memory/vector/graph adapters depend on port DTOs instead of
 # business memory models.
 ALLOWED_BUSINESS_MEMORY_IMPORTS = {
-    "infrastructure/storage/graph/ports.py": {"business.memory.graph_memory"},
     "infrastructure/storage/graph/postgres_graph_store.py": {"business.memory.graph_models"},
     "infrastructure/storage/memory/intelligence_vector_index.py": {
         "business.memory.intelligence_models",

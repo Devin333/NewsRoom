@@ -7,24 +7,6 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = ("framework", "business", "infrastructure", "interfaces", "scripts")
-LEGACY_SKILL_MODULES = {
-    "framework.skills.runner",
-    "framework.skills.executor",
-    "framework.skills.prompt",
-    "framework.skills.schema",
-    "framework.skills.registry",
-    "framework.skills.scanner",
-    "framework.skills.validator",
-    "framework.skills.evaluator",
-    "framework.skills.trace",
-    "framework.skills.context",
-    "framework.skills.errors",
-    "framework.skills.io",
-    "framework.skills.metadata",
-    "framework.skills.manifest",
-    "framework.skills.result",
-}
-
 
 def test_pyproject_declares_skill_subpackages() -> None:
     content = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -55,12 +37,44 @@ def test_pyproject_declares_skill_subpackages() -> None:
         assert f'"{package_name}"' in content
 
 
-def test_internal_code_does_not_import_legacy_skill_flat_modules() -> None:
+def test_flat_skill_compatibility_modules_are_removed() -> None:
+    removed_modules = {
+        "runner.py",
+        "executor.py",
+        "prompt.py",
+        "schema.py",
+        "registry.py",
+        "scanner.py",
+        "validator.py",
+        "evaluator.py",
+        "trace.py",
+        "context.py",
+        "errors.py",
+        "io.py",
+        "metadata.py",
+        "manifest.py",
+        "result.py",
+    }
+    existing = {
+        path.name
+        for path in (PROJECT_ROOT / "framework" / "skills").glob("*.py")
+        if path.name in removed_modules
+    }
+
+    assert existing == set()
+
+
+def test_internal_code_does_not_import_removed_skill_flat_modules() -> None:
+    removed_imports = {
+        f"framework.skills.{path.stem}"
+        for path in (PROJECT_ROOT / "framework" / "skills").glob("*.py")
+        if path.name != "__init__.py"
+    }
     violations: list[str] = []
     for root_name in SOURCE_ROOTS:
         for path in (PROJECT_ROOT / root_name).rglob("*.py"):
             for imported in _imports_for_file(path):
-                if imported in LEGACY_SKILL_MODULES:
+                if imported in removed_imports:
                     violations.append(f"{path.relative_to(PROJECT_ROOT).as_posix()}: {imported}")
 
     assert violations == []
@@ -69,7 +83,6 @@ def test_internal_code_does_not_import_legacy_skill_flat_modules() -> None:
 def test_workflow_skill_runner_does_not_import_skill_runtime_implementation() -> None:
     skill_runner_files = [
         PROJECT_ROOT / "framework" / "workflow" / "runners" / "skill" / "runner.py",
-        PROJECT_ROOT / "framework" / "workflow" / "runners" / "skill_step_runner.py",
     ]
     forbidden = {
         "framework.skills.runtime.runner",

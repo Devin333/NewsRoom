@@ -5,10 +5,7 @@ from typing import Any
 from framework.specs import StepSpec
 from framework.workflow.buffer import StepScopedDataBufferView
 from framework.workflow.runners.base import StepExecutionError
-from framework.workflow.runners.memory_models import (
-    MemoryConsolidationRequest,
-    MemoryQuery,
-)
+from framework.memory.models import MemoryConsolidationRequest, MemoryQuery
 
 
 def memory_query_from_step(

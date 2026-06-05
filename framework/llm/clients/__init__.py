@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.llm.clients.base import LLMClient
+from framework.llm.models import LLMClient
 from framework.llm.clients.config import (
     DEFAULT_MODEL_ROUTE_ID,
     DEFAULT_MODELS_CONFIG_PATH,

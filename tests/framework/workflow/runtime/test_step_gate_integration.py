@@ -7,7 +7,7 @@ from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
 from framework.artifacts import ArtifactReference
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
-from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.result import StepOutcome
 

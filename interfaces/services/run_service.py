@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from interfaces.services.run_persistence_service import RunPersistenceApplicationService
-from infrastructure.storage.repository import persist_run_input, persist_run_result, repository_from_env
+from infrastructure.storage.persistence import persist_run_input, persist_run_result, repository_from_env
 
 
 class RunApplicationService:

@@ -32,7 +32,7 @@ from business.layers.signal.source_tool_runtime import (
     source_fetch_policy_without_rate_limit,
     source_rate_limited_error,
 )
-from business.layers.signal.records import canonicalize_source_url
+from business.layers.signal.source_processing.url_normalization import canonicalize_url as canonicalize_source_url
 
 
 def register_source_tools(

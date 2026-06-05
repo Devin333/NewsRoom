@@ -3,7 +3,7 @@ from __future__ import annotations
 from framework.agent.models import AgentLoopMetrics, AgentLoopResult, AgentLoopStatus
 from framework.specs import StepSpec, StepType
 from framework.workflow.buffer import DataBuffer
-from framework.workflow.runners._step_runner_impl import AgentLoopStepRunner
+from framework.workflow.runners.agent_loop import AgentLoopStepRunner
 
 
 def test_agent_loop_step_outcome_exposes_trajectory_summary() -> None:

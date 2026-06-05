@@ -18,7 +18,7 @@ from infrastructure.storage.lifecycle import (
 )
 from infrastructure.storage.lineage import LineageRef, lineage_store_from_env
 from infrastructure.storage.metrics import StorageMetrics, storage_metrics_collector_from_env
-from infrastructure.storage.repository import repository_from_env
+from infrastructure.storage.persistence import repository_from_env
 
 
 @dataclass(frozen=True)

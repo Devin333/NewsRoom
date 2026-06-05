@@ -10,8 +10,8 @@ from typing import Any
 
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import DataBuffer, StepScopedDataBufferView
-from framework.workflow.runtime.artifacts import ArtifactManager
-from framework.workflow.runtime.artifacts import ArtifactRef as StorageArtifactRef
+from framework.artifacts import ArtifactManager
+from framework.artifacts import ArtifactRef as StorageArtifactRef
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners._utils import (
     failed_outcome as _failed_outcome,

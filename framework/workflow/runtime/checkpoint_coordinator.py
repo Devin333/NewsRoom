@@ -9,7 +9,7 @@ from framework.workflow.checkpoint.envelope import envelope_from_checkpoint, env
 from framework.workflow.checkpoint.model import WorkflowCheckpoint
 from framework.workflow.checkpoint.reference import CheckpointReference
 from framework.events.trace import TraceContext
-from framework.workflow.runtime.events import EventRecorder
+from framework.events import EventRecorder
 from framework.workflow.runtime.manifest import add_manifest_checkpoint, add_manifest_checkpoint_ref
 from framework.workflow.runtime.result import StepOutcome
 

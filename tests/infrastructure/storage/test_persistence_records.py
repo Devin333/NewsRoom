@@ -16,7 +16,7 @@ from infrastructure.storage.records import (
     ReportSummaryRecord,
     SourceItemRecord,
 )
-from infrastructure.storage.repository import (
+from infrastructure.storage.persistence import (
     LocalJsonPersistenceAdapter,
     ReportRecord,
     RunPersistenceBatch,

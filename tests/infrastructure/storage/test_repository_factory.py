@@ -1,4 +1,4 @@
-from infrastructure.storage.repository import LocalJsonPersistenceAdapter, repository_from_env
+from infrastructure.storage.persistence import LocalJsonPersistenceAdapter, repository_from_env
 
 
 def test_repository_factory_returns_local_json_without_dsn(tmp_path) -> None:

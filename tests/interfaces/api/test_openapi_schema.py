@@ -1,4 +1,4 @@
-from interfaces.api.schema import export_openapi_schema, summarize_openapi_schema
+from interfaces.api.openapi import export_openapi_schema, summarize_openapi_schema
 
 
 def test_export_openapi_schema_includes_known_api_routes() -> None:

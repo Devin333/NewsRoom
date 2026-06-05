@@ -1,16 +1,11 @@
 from datetime import UTC, datetime
 
+from business.foundation.models.source import RawSourceItem
 from business.layers.signal import SignalPipeline
-from business.layers.signal import records
-from business.layers.signal.source_processing import rank_items as canonical_rank_items
-
-
-def test_records_reexports_canonical_source_processing_services() -> None:
-    assert records.rank_items is canonical_rank_items
 
 
 def test_signal_pipeline_projects_raw_authority_through_ranking_signals() -> None:
-    raw = records.RawSourceItem(
+    raw = RawSourceItem(
         source_item_id="raw-authority",
         source_id="source",
         source_name="Source",

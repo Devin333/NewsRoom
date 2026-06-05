@@ -27,7 +27,7 @@ def test_workflow_root_exports_stable_compatibility_names() -> None:
 def test_workflow_skill_step_spec_is_compatibility_reexport() -> None:
     from framework.specs import SkillStepSpec as CanonicalSkillStepSpec
     from framework.workflow.specs import SkillStepSpec as PackageSkillStepSpec
-    from framework.workflow.specs.skill_step import SkillStepSpec as ModuleSkillStepSpec
+    from framework.specs.skill_step import SkillStepSpec as ModuleSkillStepSpec
 
     assert PackageSkillStepSpec is CanonicalSkillStepSpec
     assert ModuleSkillStepSpec is CanonicalSkillStepSpec

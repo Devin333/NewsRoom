@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 
-from interfaces.api.schema import export_openapi_schema
+from interfaces.api.openapi import export_openapi_schema
 
 
 BOUNDARY_PATH = Path("interfaces/web_console_boundary.md")

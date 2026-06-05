@@ -18,7 +18,7 @@ def run_api_server(
     if port <= 0 or port > 65535:
         raise ValueError("port must be between 1 and 65535")
 
-    from interfaces.env import load_root_env
+    from framework.shared.env import load_root_env
 
     load_root_env()
 

@@ -10,7 +10,7 @@ from framework.workflow.runtime.artifact_publishers import (
     ArtifactPublishPhase,
     WorkflowArtifactPublisherRegistry,
 )
-from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.workflow.runtime.execution_context import WorkflowExecutionContext, utc_now
 from framework.workflow.runtime.manifest import (
     append_manifest_artifact_index,

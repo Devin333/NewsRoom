@@ -10,7 +10,6 @@ INFRASTRUCTURE_ROOT = PROJECT_ROOT / "infrastructure"
 # TODO(architecture-p2-memory-port-migration): remove these exceptions when
 # infrastructure memory/vector/graph adapters use storage-facing port DTOs.
 ALLOWED_BUSINESS_MEMORY_IMPORTS = {
-    "infrastructure/storage/graph/ports.py": {"business.memory.graph_memory"},
     "infrastructure/storage/graph/postgres_graph_store.py": {"business.memory.graph_models"},
     "infrastructure/storage/memory/intelligence_vector_index.py": {
         "business.memory.intelligence_models",

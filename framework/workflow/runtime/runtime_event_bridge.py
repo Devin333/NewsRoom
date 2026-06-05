@@ -5,7 +5,7 @@ from typing import Any
 from framework.specs import StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from framework.events.trace import TraceContext
 from framework.workflow.routing import RoutingDecision
-from framework.workflow.runtime.events import EventRecorder
+from framework.events import EventRecorder
 from framework.workflow.runtime.result import StepOutcome, WorkflowError
 
 

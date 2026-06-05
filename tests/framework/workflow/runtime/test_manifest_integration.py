@@ -6,7 +6,7 @@ from typing import Any
 from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
-from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.manifest import validate_run_manifest
 from framework.workflow.runtime.result import StepOutcome

@@ -13,7 +13,7 @@ from framework.workflow.operations import (
     LocalWorkflowRunOperationService,
     OperationActor,
 )
-from interfaces.env import env_values_from_root
+from framework.shared.env import env_values_from_root
 
 
 COMPILE_PATHS = [

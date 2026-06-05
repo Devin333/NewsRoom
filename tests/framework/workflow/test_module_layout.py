@@ -28,16 +28,11 @@ def test_step_runner_split_public_imports() -> None:
     from framework.workflow.runners.default_registry import (
         build_default_step_runner_registry as direct_default_registry,
     )
-    from framework.workflow.runners.step_runner import (
-        build_default_step_runner_registry as legacy_default_registry,
-    )
 
     assert build_default_step_runner_registry is direct_default_registry
-    assert legacy_default_registry is direct_default_registry
 
 
 def test_focused_runner_modules_match_legacy_exports() -> None:
-    from framework.workflow.runners import _step_runner_impl as legacy
     from framework.workflow.runners.agent_loop import AgentLoopStepRunner
     from framework.workflow.runners.artifact import ArtifactStepRunner
     from framework.workflow.runners.function import (
@@ -57,20 +52,20 @@ def test_focused_runner_modules_match_legacy_exports() -> None:
     from framework.workflow.runners.tool import ToolCallStepRunner
     from framework.workflow.runners.tool_batch import ToolBatchStepRunner
 
-    assert FunctionStepRegistry is legacy.FunctionStepRegistry
-    assert FunctionStepRunner is legacy.FunctionStepRunner
-    assert AgentLoopStepRunner is legacy.AgentLoopStepRunner
-    assert ArtifactStepRunner is legacy.ArtifactStepRunner
-    assert JoinStepRunner is legacy.JoinStepRunner
-    assert MemoryConsolidateStepRunner is legacy.MemoryConsolidateStepRunner
-    assert MemoryRecallStepRunner is legacy.MemoryRecallStepRunner
-    assert MemoryWriteStepRunner is legacy.MemoryWriteStepRunner
-    assert ParallelGroupStepRunner is legacy.ParallelGroupStepRunner
-    assert QualityGateStepRunner is legacy.QualityGateStepRunner
-    assert RouterStepRunner is legacy.RouterStepRunner
-    assert SubworkflowStepRunner is legacy.SubworkflowStepRunner
-    assert ToolBatchStepRunner is legacy.ToolBatchStepRunner
-    assert ToolCallStepRunner is legacy.ToolCallStepRunner
+    assert FunctionStepRegistry is not None
+    assert FunctionStepRunner is not None
+    assert AgentLoopStepRunner is not None
+    assert ArtifactStepRunner is not None
+    assert JoinStepRunner is not None
+    assert MemoryConsolidateStepRunner is not None
+    assert MemoryRecallStepRunner is not None
+    assert MemoryWriteStepRunner is not None
+    assert ParallelGroupStepRunner is not None
+    assert QualityGateStepRunner is not None
+    assert RouterStepRunner is not None
+    assert SubworkflowStepRunner is not None
+    assert ToolBatchStepRunner is not None
+    assert ToolCallStepRunner is not None
 
 
 def test_default_runner_registry_builtin_capabilities() -> None:

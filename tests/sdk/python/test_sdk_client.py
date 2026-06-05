@@ -8,7 +8,7 @@ from newsroom_sdk import NewsRoomAPIError, NewsRoomClient
 from newsroom_sdk.errors import NewsRoomResponseError
 from newsroom_sdk.transport import HttpTransport
 from newsroom_sdk.config import NewsRoomConfig
-from infrastructure.storage.repository import ReportRecord
+from infrastructure.storage.persistence import ReportRecord
 
 
 def test_client_instantiates_resources() -> None:

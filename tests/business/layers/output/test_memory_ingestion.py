@@ -1,4 +1,4 @@
-from business.layers.output.memory_ingestion import MemoryIngestionService
+from business.layers.memory.ingestion import MemoryIngestionService
 from business.memory.intelligence_models import EventMemory
 from framework.memory import InMemoryMemoryStore, MemoryKind, MemoryRuntime, MemoryScope
 

@@ -44,7 +44,7 @@ def serve_api(args: argparse.Namespace) -> int:
 
 
 def export_openapi(args: argparse.Namespace) -> int:
-    from interfaces.api.schema import export_openapi_schema, summarize_openapi_schema
+    from interfaces.api.openapi import export_openapi_schema, summarize_openapi_schema
 
     schema = export_openapi_schema()
     if args.output:

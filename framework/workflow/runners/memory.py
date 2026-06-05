@@ -5,7 +5,7 @@ from typing import Any
 
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import StepScopedDataBufferView
-from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners._memory_utils import (
     memory_actor_from_step,

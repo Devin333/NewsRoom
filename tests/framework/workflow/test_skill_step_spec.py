@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from framework.workflow.specs.skill_step import SkillStepSpec
+from framework.specs.skill_step import SkillStepSpec
 
 
 def test_skill_step_spec_minimal_fields_are_valid() -> None:

@@ -43,9 +43,7 @@ def test_prd_directory_modules_import_independently() -> None:
         "business.foundation.models.insight",
         "business.foundation.models.board",
         "business.foundation.models.report",
-        "business.foundation.taxonomy.technology_taxonomy",
-        "business.foundation.taxonomy.topic_taxonomy",
-        "business.foundation.taxonomy.board_taxonomy",
+        "business.foundation.taxonomy",
         "business.foundation.contracts.repositories",
         "business.foundation.contracts.llm_ports",
         "business.foundation.contracts.source_ports",
@@ -65,7 +63,8 @@ def test_prd_directory_modules_import_independently() -> None:
 
     assert imported[0].BusinessId is BusinessId
     assert imported[5].Signal.__name__ == "Signal"
-    assert imported[18].BusinessLLMRequest is BusinessLLMRequest
+    imported_by_name = dict(zip(module_names, imported, strict=True))
+    assert imported_by_name["business.foundation.contracts.llm_ports"].BusinessLLMRequest is BusinessLLMRequest
 
 
 def test_prd_primitives_support_stable_ids_source_refs_and_confidence_metadata() -> None:

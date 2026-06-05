@@ -5,8 +5,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from framework.workflow.runtime.artifacts import ArtifactManager
-from framework.workflow.runtime.events import EventBus
+from framework.artifacts import ArtifactManager
+from framework.events import EventBus
 from framework.specs import (
     WorkflowSpec,
     WorkflowStatus,

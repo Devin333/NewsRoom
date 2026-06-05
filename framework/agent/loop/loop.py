@@ -63,7 +63,7 @@ from framework.llm.models import (
     LLMStreamEvent,
     LLMStreamAccumulator,
 )
-from framework.agent.runtime.memory import (
+from framework.memory import (
     AgentMemoryAdapter,
     DEFAULT_AGENT_MEMORY_POLICY,
     MemoryPolicy,

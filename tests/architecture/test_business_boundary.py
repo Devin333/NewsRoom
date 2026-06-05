@@ -92,7 +92,7 @@ def test_output_report_tools_do_not_import_storage_or_domain_report_models() -> 
         forbidden_prefixes=(
             "business.foundation.models.report_output",
             "business.foundation.models.source",
-            "infrastructure.storage.repository",
+            "infrastructure.storage.persistence",
         ),
     )
 

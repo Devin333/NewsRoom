@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from business.research.code_repository.ports import GithubRepositoryPort
 from business.research.ports.artifact_store import ResearchArtifactStorePort
 from business.research.ports.document_compiler import DocumentCompilerPort
-from business.research.ports.github_repository import GithubRepositoryPort
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
 from business.research.ports.memory import ResearchMemoryPort
 from business.research.ports.rag import ResearchRAGPolicyPort

@@ -6,10 +6,10 @@ from typing import Any
 
 from framework.specs import EdgeSpec, StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from framework.workflow.compiler import WorkflowCompiler
-from framework.workflow.runtime.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runners import FunctionStepRegistry, build_default_step_runner_registry
-from framework.workflow.runners.skill_step_runner import SkillStepRunner
+from framework.workflow.runners.skill import SkillStepRunner
 
 
 @dataclass
