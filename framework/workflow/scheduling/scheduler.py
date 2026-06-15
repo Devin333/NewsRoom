@@ -101,6 +101,8 @@ class WorkflowScheduler:
         self.state = state or SchedulerState()
         self._step_by_id = {step.step_id: step for step in workflow.steps}
         self._edge_by_id = {edge.edge_id: edge for edge in workflow.edges}
+        # O(1) set for ready_queue membership checks
+        self._queued_step_ids: set[str] = {item.step_id for item in self.state.ready_queue}
 
     def initialize(self, request: Mapping[str, Any]) -> SchedulerState:
         del request
@@ -346,7 +348,7 @@ class WorkflowScheduler:
             return
         if step_id in self.state.running:
             return
-        if any(item.step_id == step_id for item in self.state.ready_queue):
+        if step_id in self._queued_step_ids:
             return
         current = self.state.step_statuses.get(step_id, StepStatus.PENDING)
         if current != StepStatus.READY:
@@ -359,6 +361,7 @@ class WorkflowScheduler:
                 ),
                 default=StepStatus.PENDING,
             )
+        self._queued_step_ids.add(step_id)
         self.state.ready_queue.append(scheduled)
 
     def _resolve_outgoing_edges(self, step_id: str, outcome: StepOutcome) -> list[EdgeSpec]:
@@ -456,27 +459,29 @@ class WorkflowScheduler:
             self._block_descendants_if_needed(downstream_step_id)
 
     def _block_descendants_if_needed(self, step_id: str) -> None:
-        if step_id in self.state.completed:
-            return
-        if step_id in self.state.blocked:
-            return
-        if step_id in self.state.failed:
-            return
-
-        self._mark_blocked(step_id)
-
-        for downstream_step_id in self._get_downstream_step_ids(step_id):
-            if self._is_join_step(downstream_step_id):
-                if self.should_join_run(downstream_step_id):
-                    self._enqueue_once(
-                        ScheduledStep(
-                            step_id=downstream_step_id,
-                            reason=self._join_ready_reason(downstream_step_id),
-                            upstream_step_ids=self._get_upstream_step_ids(downstream_step_id),
-                        )
-                    )
+        # Iterative implementation to avoid Python recursion limit on deep graphs
+        stack = [step_id]
+        while stack:
+            current_id = stack.pop()
+            if current_id in self.state.completed:
                 continue
-            self._block_descendants_if_needed(downstream_step_id)
+            if current_id in self.state.blocked:
+                continue
+            if current_id in self.state.failed:
+                continue
+            self._mark_blocked(current_id)
+            for downstream_step_id in self._get_downstream_step_ids(current_id):
+                if self._is_join_step(downstream_step_id):
+                    if self.should_join_run(downstream_step_id):
+                        self._enqueue_once(
+                            ScheduledStep(
+                                step_id=downstream_step_id,
+                                reason=self._join_ready_reason(downstream_step_id),
+                                upstream_step_ids=self._get_upstream_step_ids(downstream_step_id),
+                            )
+                        )
+                else:
+                    stack.append(downstream_step_id)
 
     def _join_ready_reason(self, step_id: str) -> str:
         policy = self._get_join_policy(step_id)
@@ -554,6 +559,9 @@ class WorkflowScheduler:
         return False
 
     def _remove_ready_step(self, step_id: str) -> None:
+        if step_id not in self._queued_step_ids:
+            return
+        self._queued_step_ids.discard(step_id)
         self.state.ready_queue = [
             scheduled
             for scheduled in self.state.ready_queue
