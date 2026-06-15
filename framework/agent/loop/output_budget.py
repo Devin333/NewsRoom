@@ -383,6 +383,19 @@ def _inspect_output(
 
 
 def _json_scalar_bytes(value: Any) -> int:
+    # Fast-path common types to avoid json.dumps overhead on every leaf node
+    if value is None:
+        return 4  # "null"
+    if value is True:
+        return 4  # "true"
+    if value is False:
+        return 5  # "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return len(str(value))
+    if isinstance(value, float):
+        return len(repr(value))
+    if isinstance(value, str):
+        return len(value.encode("utf-8")) + 2  # +2 for surrounding quotes
     try:
         return len(
             json.dumps(

@@ -23,6 +23,7 @@ class WorkflowRuntimeEventType(StrEnum):
     RERUN_FROM_STEP = "rerun_from_step"
     RESUME_WITH_PATCH = "resume_with_patch"
     MARK_BLOCKED_RESOLVED = "mark_blocked_resolved"
+    RETRY = "retry"
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,7 @@ WORKFLOW_TRANSITIONS: dict[
         WorkflowRuntimeEventType.REQUEST_HUMAN_REVIEW: WorkflowStatus.WAITING_FOR_HUMAN,
         WorkflowRuntimeEventType.BUDGET_EXCEEDED: WorkflowStatus.BUDGET_EXCEEDED,
         WorkflowRuntimeEventType.CANCEL: WorkflowStatus.CANCELLED,
+        WorkflowRuntimeEventType.RETRY: WorkflowStatus.RETRYING,
     },
     WorkflowStatus.PAUSED: {
         WorkflowRuntimeEventType.RESUME: WorkflowStatus.RUNNING,

@@ -69,7 +69,10 @@ class WorkflowExecutionLoop:
             stop_after_checkpoint = self._handle_step_outcome(context, step, outcome)
             if stop_after_checkpoint:
                 break
-            self._write_checkpoint(context)
+            # Only checkpoint non-idempotent steps; idempotent steps can be
+            # safely re-run from the previous checkpoint, avoiding redundant I/O.
+            if not step.idempotent:
+                self._write_checkpoint(context)
 
     def _timeout_if_exceeded(
         self,
@@ -284,57 +287,7 @@ class WorkflowExecutionLoop:
             {"step_id": step.step_id, "outputs": sorted(outcome.outputs.keys())},
             trace_context=context.step_trace_contexts.get(step.step_id),
         )
-        try:
-            routing_decision = self._routing_engine.decide(
-                context.workflow,
-                step,
-                outcome,
-                buffer=context.buffer,
-                fan_out=True,
-            )
-        except Exception as exc:
-            context.status = workflow_transition(
-                self._state_machine,
-                context.status,
-                WorkflowRuntimeEvent(
-                    event_type=WorkflowRuntimeEventType.FAIL,
-                    reason=str(exc),
-                    step_id=step.step_id,
-                    metadata={
-                        "phase": "routing",
-                        "exception": repr(exc),
-                    },
-                ),
-            )
-            context.error = WorkflowError(
-                error_type=type(exc).__name__,
-                message=str(exc),
-                step_id=step.step_id,
-                details={"phase": "routing"},
-            )
-            context.current_step_ids = []
-            return
-        self._event_bridge.emit_routing_events(
-            context.recorder,
-            routing_decision,
-            trace_context=context.step_trace_contexts.get(step.step_id),
-        )
-        context.current_step_ids = prepend_schedulable_steps(
-            workflow=context.workflow,
-            new_step_ids=routing_decision.target_step_ids,
-            existing_step_ids=context.current_step_ids,
-            step_results=context.step_results,
-        )
-        if not context.current_step_ids:
-            context.status = workflow_transition(
-                self._state_machine,
-                context.status,
-                WorkflowRuntimeEvent(
-                    event_type=WorkflowRuntimeEventType.SUCCEED,
-                    reason="terminal_step_completed",
-                    step_id=step.step_id,
-                ),
-            )
+        self._route_after_step(context, step, outcome, terminal_reason="terminal_step_completed")
 
     def _handle_skipped(
         self,
@@ -347,6 +300,17 @@ class WorkflowExecutionLoop:
             {"step_id": step.step_id, "outputs": sorted(outcome.outputs.keys())},
             trace_context=context.step_trace_contexts.get(step.step_id),
         )
+        self._route_after_step(context, step, outcome, terminal_reason="terminal_step_skipped")
+
+    def _route_after_step(
+        self,
+        context: WorkflowExecutionContext,
+        step: StepSpec,
+        outcome: StepOutcome,
+        *,
+        terminal_reason: str,
+    ) -> None:
+        """Shared routing logic for succeeded and skipped steps."""
         try:
             routing_decision = self._routing_engine.decide(
                 context.workflow,
@@ -394,7 +358,7 @@ class WorkflowExecutionLoop:
                 context.status,
                 WorkflowRuntimeEvent(
                     event_type=WorkflowRuntimeEventType.SUCCEED,
-                    reason="terminal_step_skipped",
+                    reason=terminal_reason,
                     step_id=step.step_id,
                 ),
             )
@@ -651,11 +615,10 @@ def field_value(value: Any, key: str) -> Any:
 
 
 def prepend_new_steps(new_step_ids: list[str], existing_step_ids: list[str]) -> list[str]:
-    queued = list(existing_step_ids)
-    for step_id in reversed(new_step_ids):
-        if step_id not in queued:
-            queued.insert(0, step_id)
-    return queued
+    # O(n) fix: set lookup + list concat replaces O(n²) insert-at-front loop
+    existing_set = set(existing_step_ids)
+    to_add = [s for s in new_step_ids if s not in existing_set]
+    return to_add + list(existing_step_ids)
 
 
 def prepend_schedulable_steps(
