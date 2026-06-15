@@ -26,6 +26,8 @@ class ToolPolicy:
     spill_large_results_to_artifact: bool = True
     timeout_seconds_default: float | None = 30.0
     max_attempts_default: int = 1
+    # Fix #3: caps tool-level × step-level retry multiplication
+    max_total_attempts: int | None = None
 
     def __post_init__(self) -> None:
         blocked = sorted({*self.blocked_tools, *self.denied_tools})
@@ -98,6 +100,7 @@ class ToolPolicy:
             "spill_large_results_to_artifact": self.spill_large_results_to_artifact,
             "timeout_seconds_default": self.timeout_seconds_default,
             "max_attempts_default": self.max_attempts_default,
+            "max_total_attempts": self.max_total_attempts,
         }
 
     @classmethod

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
@@ -167,6 +165,7 @@ class ToolExecutor:
                 max_attempts,
                 call.tool_name,
                 record_attempt,
+                max_total_attempts=policy.max_total_attempts,
             )
             policy_trace.add(
                 "tool.retry",
@@ -759,14 +758,18 @@ def _invoke_with_retry(
     max_attempts: int,
     tool_name: str,
     attempt_callback: Any | None = None,
+    *,
+    max_total_attempts: int | None = None,
 ) -> tuple[Any, int]:
-    for attempt in range(1, max_attempts + 1):
+    # Fix #3: cap attempts to avoid tool-level × step-level retry explosion
+    effective_max = min(max_attempts, max_total_attempts) if max_total_attempts else max_attempts
+    for attempt in range(1, effective_max + 1):
         if callable(attempt_callback):
             attempt_callback(attempt)
         try:
             return _invoke_with_timeout(executor, arguments, timeout_seconds, tool_name), attempt
         except Exception:
-            if attempt == max_attempts:
+            if attempt == effective_max:
                 raise
     raise RuntimeError(f"tool {tool_name} retry loop exited unexpectedly")
 
@@ -779,19 +782,28 @@ def _invoke_with_timeout(
 ) -> Any:
     if timeout_seconds is None or timeout_seconds <= 0:
         return executor(arguments)
-    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="news-tool")
-    future = pool.submit(executor, arguments)
-    timed_out = False
-    try:
-        return future.result(timeout=timeout_seconds)
-    except FutureTimeoutError as exc:
-        timed_out = True
-        future.cancel()
+    import threading
+    result_holder: list[Any] = []
+    error_holder: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            result_holder.append(executor(arguments))
+        except BaseException as exc:  # noqa: BLE001
+            error_holder.append(exc)
+
+    # daemon=True: thread is abandoned (not joined) on timeout and won't block
+    # process exit, preventing thread accumulation on stuck tool functions.
+    thread = threading.Thread(target=_run, daemon=True, name=f"tool-timeout:{tool_name}")
+    thread.start()
+    thread.join(timeout=timeout_seconds)
+    if thread.is_alive():
         raise ToolTimeoutError(
             f"tool {tool_name} exceeded timeout of {timeout_seconds:g} seconds"
-        ) from exc
-    finally:
-        pool.shutdown(wait=not timed_out, cancel_futures=True)
+        )
+    if error_holder:
+        raise error_holder[0]
+    return result_holder[0]
 
 
 def _json_size_bytes(value: Any) -> int:
