@@ -28,7 +28,13 @@ class AsyncChunkPreprocessor:
         self._sample_rate = proposition_sample_rate
 
     async def preprocess(self, chunks: list[PaperChunk]) -> list[PaperChunk]:
-        return list(await asyncio.gather(*[self._process_chunk(c) for c in chunks]))
+        """Returns original chunks (updated) + new proposition chunks."""
+        updated = list(await asyncio.gather(*[self._process_chunk(c) for c in chunks]))
+        proposition_chunks: list[PaperChunk] = []
+        for chunk in updated:
+            if chunk.propositions_generated:
+                proposition_chunks.extend(self._emit_proposition_chunks(chunk))
+        return updated + proposition_chunks
 
     async def validate_proposition_quality(self, chunks: list[PaperChunk]) -> list[PaperChunk]:
         """Sample 10% of proposition-generated chunks and mark quality."""
@@ -57,7 +63,32 @@ class AsyncChunkPreprocessor:
             for chunk in chunks
         ]
 
-    # ── private ──────────────────────────────────────────────────────────────
+    def _emit_proposition_chunks(self, chunk: PaperChunk) -> list[PaperChunk]:
+        """Create separate PaperChunk objects for each proposition (PRD §5)."""
+        from business.foundation import build_stable_id
+        propositions: list[str] = chunk.metadata.get("propositions", [])
+        result: list[PaperChunk] = []
+        for i, text in enumerate(propositions):
+            if not text.strip():
+                continue
+            prop_id = build_stable_id("prop", chunk.chunk_id, str(i))
+            result.append(PaperChunk(
+                chunk_id=prop_id,
+                paper_id=chunk.paper_id,
+                parse_source=chunk.parse_source,
+                structure_detected=chunk.structure_detected,
+                chunk_type="proposition",
+                parent_chunk_id=chunk.chunk_id,
+                section_title=chunk.section_title,
+                section_role=chunk.section_role,
+                section_index=chunk.section_index,
+                references=chunk.references,
+                propositions_generated=True,
+                proposition_quality=chunk.proposition_quality,
+                content=text,
+                metadata={"proposition_index": i, "source_chunk_id": chunk.chunk_id},
+            ))
+        return result
 
     async def _process_chunk(self, chunk: PaperChunk) -> PaperChunk:
         updates: dict = {}
@@ -95,8 +126,8 @@ class AsyncChunkPreprocessor:
                 "proposition_quality": "unknown",
                 "metadata": {**chunk.metadata, "propositions": propositions},
             }
-        except Exception:
-            logger.warning("proposition decomposition failed for chunk %s", chunk.chunk_id)
+        except Exception as exc:
+            logger.warning("proposition decomposition failed for chunk %s: %s", chunk.chunk_id, exc)
             return {"propositions_generated": False}
 
     async def _describe_formula(self, chunk: PaperChunk) -> dict:
