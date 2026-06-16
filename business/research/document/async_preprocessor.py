@@ -27,9 +27,17 @@ class AsyncChunkPreprocessor:
         self._llm = llm_call
         self._sample_rate = proposition_sample_rate
 
-    async def preprocess(self, chunks: list[PaperChunk]) -> list[PaperChunk]:
+    async def preprocess(
+        self, chunks: list[PaperChunk], *, max_concurrency: int = 2
+    ) -> list[PaperChunk]:
         """Returns original chunks (updated) + new proposition chunks."""
-        updated = list(await asyncio.gather(*[self._process_chunk(c) for c in chunks]))
+        sem = asyncio.Semaphore(max_concurrency)
+
+        async def guarded(c: PaperChunk) -> PaperChunk:
+            async with sem:
+                return await self._process_chunk(c)
+
+        updated = list(await asyncio.gather(*[guarded(c) for c in chunks]))
         proposition_chunks: list[PaperChunk] = []
         for chunk in updated:
             if chunk.propositions_generated:

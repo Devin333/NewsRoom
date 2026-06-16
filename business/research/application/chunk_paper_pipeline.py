@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
-from framework.llm.clients.openai_compatible import OpenAICompatibleClient, OpenAICompatibleConfig
+from framework.llm.clients.openai_compatible import (
+    OpenAICompatibleClient,
+    OpenAICompatibleConfig,
+)
 from framework.llm.models.request import LLMRequest
+from framework.shared.env import load_root_env
 
 from infrastructure.document.latex_parser import LatexDocumentParser
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
@@ -25,42 +28,31 @@ class ChunkPipelineResult:
     parse_source: str
 
 
-def _resolve_api_key_env() -> str:
-    """Pick the first configured API-key env var name (OpenAI first, DashScope fallback)."""
-    import os
-    for env_name in ("OPENAI_API_KEY", "DASHSCOPE_API_KEY"):
-        if os.environ.get(env_name):
-            return env_name
-    # default to OPENAI_API_KEY so the error message points users at the standard var
-    return "OPENAI_API_KEY"
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+)
 
 
-def _build_default_llm_config() -> OpenAICompatibleConfig:
-    import os
-    base_url = (
-        os.environ.get("OPENAI_BASE_URL")
-        or os.environ.get("NEWS_LLM_BASE_URL")
-        or os.environ.get("DASHSCOPE_BASE_URL")
-        or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    )
-    model = (
-        os.environ.get("OPENAI_MODEL")
-        or os.environ.get("NEWS_LLM_MODEL")
-        or "deepseek-v4-flash"
-    )
-    return OpenAICompatibleConfig(
-        provider="openai-compatible",
-        base_url=base_url,
-        model=model,
-        api_key_env=_resolve_api_key_env(),
-    )
+def _browser_transport(request, timeout_seconds: float) -> bytes:
+    """Wrap urllib transport with a browser User-Agent (needed for Cloudflare-proxied APIs)."""
+    import urllib.request
+    request.add_header("User-Agent", _BROWSER_UA)
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as r:
+        return r.read()
 
 
 def _build_llm_call():
-    """Build an async-compatible LLM callable from standard OpenAI env vars."""
-    from framework.shared.env import load_root_env
-    load_root_env()  # load .env if present, without overriding existing env vars
-    client = OpenAICompatibleClient(_build_default_llm_config())
+    """Async LLM callable using OPENAI_* env vars (unity2.ai / gpt-5.4-mini)."""
+    load_root_env()
+    import os
+    config = OpenAICompatibleConfig(
+        provider="openai-compatible",
+        base_url=os.environ["OPENAI_BASE_URL"].rstrip("/"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        api_key_env="OPENAI_API_KEY",
+    )
+    client = OpenAICompatibleClient(config, transport=_browser_transport)
 
     async def llm_call(prompt: str) -> str:
         request = LLMRequest(
@@ -77,7 +69,7 @@ class ChunkPaperPipeline:
     """
     End-to-end pipeline:
       arXiv ID → download LaTeX source → parse → chunk
-                → [optional] LLM proposition decomposition
+                → [optional] LLM proposition decomposition + formula descriptions
                 → store vectors in Qdrant + metadata in PostgreSQL
     """
 
@@ -99,31 +91,22 @@ class ChunkPaperPipeline:
         self._with_propositions = with_propositions
 
     def run(self, arxiv_id: str) -> ChunkPipelineResult:
+        import logging
         paper_id = arxiv_id.replace("/", "_")
 
-        # 1. download LaTeX source from arXiv
         pkg = self._arxiv.fetch_source_package(arxiv_id)
-
-        # 2. parse LaTeX → ResearchDocument
         doc = self._parser.parse(paper_id, pkg.content)
-
-        # 3. sync chunk (paragraph / section / figure / table / abstract)
         chunks = self._chunker.chunk(doc, "latex")
 
-        # 4. async proposition decomposition + formula descriptions (if LLM available)
         if self._with_propositions:
             try:
                 preprocessor = AsyncChunkPreprocessor(_build_llm_call())
                 chunks = asyncio.run(preprocessor.preprocess(chunks))
             except Exception as exc:
-                import logging
                 logging.getLogger(__name__).warning("proposition preprocess skipped: %s", exc)
 
-        # 5a. store in Qdrant (vectors)
         self._store.ensure_collection()
         self._store.index_chunks(chunks)
-
-        # 5b. store in PostgreSQL (metadata + parent-child relationships)
         self._repo.save_chunks(chunks)
 
         by_type: dict[str, int] = {}
