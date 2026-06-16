@@ -52,6 +52,29 @@ class PaperChunkStore:
 
     # ── ChunkStorePort ───────────────────────────────────────────────────────
 
+    def search_with_scores(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 30,
+    ) -> list[tuple[PaperChunk, float]]:
+        """Return (chunk, semantic_score) pairs for position-aware re-ranking."""
+        combined: dict[str, Any] = {"paper_id": paper_id, **(filters or {})}
+        results = self._store.search(VectorSearchQuery(
+            collection=PAPER_CHUNKS_COLLECTION,
+            text=query_text,
+            filters=combined,
+            limit=limit,
+        ))
+        out: list[tuple[PaperChunk, float]] = []
+        for r in results:
+            chunk = _payload_to_chunk(r.payload)
+            if chunk is not None:
+                out.append((chunk, r.score))
+        return out
+
     def search_chunks(
         self,
         paper_id: str,
@@ -92,8 +115,10 @@ def _chunk_to_doc(chunk: PaperChunk) -> VectorDocument:
 
 
 def _payload_to_chunk(payload: dict[str, Any]) -> PaperChunk | None:
+    # PrimitiveModel uses extra="forbid"; strip VectorDocument canonical fields before validating
+    _CHUNK_FIELDS = PaperChunk.model_fields.keys()
     try:
-        return PaperChunk.model_validate(payload)
+        return PaperChunk.model_validate({k: v for k, v in payload.items() if k in _CHUNK_FIELDS})
     except Exception:
         return None
 
