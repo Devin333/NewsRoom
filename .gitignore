@@ -214,6 +214,7 @@ tempCodeRunnerFile.py
 # NewsRoom local/generated files
 .newsroom/
 .tmp/
+.agents/live-review/
 openspec/
 .codex/
 .claude/

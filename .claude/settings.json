@@ -1,0 +1,31 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "powershell",
+            "command": "$gitDir = git rev-parse --git-dir 2>$null; if ($LASTEXITCODE -eq 0 -and $gitDir) { Set-Content -Path (Join-Path $gitDir 'claude-codex-review-needed') -Value '1' -Encoding utf8 }",
+            "timeout": 10,
+            "statusMessage": "Marking Codex review needed..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "powershell",
+            "command": "$gitDir = git rev-parse --git-dir 2>$null; if ($LASTEXITCODE -ne 0 -or -not $gitDir) { exit 0 }; $flag = Join-Path $gitDir 'claude-codex-review-needed'; if (-not (Test-Path $flag)) { exit 0 }; Remove-Item $flag -Force -ErrorAction SilentlyContinue; $changes = git status --porcelain; if (-not $changes) { exit 0 }; $review = codex review --uncommitted 2>&1 | Out-String; $exitCode = $LASTEXITCODE; $message = \"Codex review completed with exit code $exitCode.``n``n$review\"; @{ systemMessage = $message } | ConvertTo-Json -Compress",
+            "timeout": 600,
+            "statusMessage": "Running Codex review..."
+          }
+        ]
+      }
+    ]
+  }
+}
