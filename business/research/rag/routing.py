@@ -49,13 +49,10 @@ def build_retrieval_route(question: str) -> RetrievalRoute:
     intent = classify_query_intent(question)
 
     if intent == "figure_query":
-        m = _FIGURE_ID_RE.search(question)
-        figure_id = (m.group(1) or m.group(2) or "") if m else ""
         return RetrievalRoute(
             intent=intent,
             chunk_type_filter=["figure"],
-            figure_id=figure_id,
-            extra_filters={"has_figure": True, **( {"figure_id": figure_id} if figure_id else {})},
+            extra_filters={"chunk_type": "figure"},
         )
 
     if intent == "formula_query":
