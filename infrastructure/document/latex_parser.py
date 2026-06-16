@@ -43,9 +43,12 @@ def _flatten(src: str) -> str:
     return _COMMAND_RE.sub(r"\1", src)
 
 
-def _find_main_tex(tf: tarfile.TarFile) -> str | None:
-    """Return content of main .tex file (largest, or one with \\begin{document})."""
-    candidates: list[tuple[int, str, str]] = []
+_INPUT_RE = re.compile(r"\\(?:input|include)\{([^}]+)\}")
+
+
+def _build_file_map(tf: tarfile.TarFile) -> dict[str, str]:
+    """Map every .tex member name (with and without extension) to its decoded content."""
+    file_map: dict[str, str] = {}
     for member in tf.getmembers():
         if not member.name.endswith(".tex"):
             continue
@@ -53,12 +56,38 @@ def _find_main_tex(tf: tarfile.TarFile) -> str | None:
         if f is None:
             continue
         content = f.read().decode("utf-8", errors="replace")
+        basename = member.name.split("/")[-1]
+        for key in (member.name, basename, basename.removesuffix(".tex")):
+            file_map.setdefault(key, content)
+    return file_map
+
+
+def _expand_inputs(src: str, file_map: dict[str, str], depth: int = 0) -> str:
+    """Recursively replace \\input{name} / \\include{name} with file content."""
+    if depth > 8:
+        return src
+
+    def _replace(m: re.Match) -> str:
+        name = m.group(1).strip()
+        for candidate in (name, name + ".tex", name.split("/")[-1], name.split("/")[-1] + ".tex"):
+            if candidate in file_map:
+                return _expand_inputs(file_map[candidate], file_map, depth + 1)
+        return ""  # silently drop unresolved \input
+
+    return _INPUT_RE.sub(_replace, src)
+
+
+def _find_main_tex(tf: tarfile.TarFile) -> tuple[str, dict[str, str]] | None:
+    """Return (content of main .tex, file_map) or None."""
+    file_map = _build_file_map(tf)
+    candidates: list[tuple[int, str]] = []
+    for content in file_map.values():
         if r"\begin{document}" in content:
-            candidates.append((len(content), member.name, content))
+            candidates.append((len(content), content))
     if not candidates:
         return None
     candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][2]
+    return candidates[0][1], file_map
 
 
 class LatexDocumentParser:
@@ -98,9 +127,12 @@ class LatexDocumentParser:
     def _extract_tex(self, source_bytes: bytes) -> str | None:
         try:
             with tarfile.open(fileobj=io.BytesIO(source_bytes), mode="r:*") as tf:
-                return _find_main_tex(tf)
+                result = _find_main_tex(tf)
+                if result is None:
+                    return None
+                main_src, file_map = result
+                return _expand_inputs(main_src, file_map)
         except tarfile.TarError:
-            # single .tex file uploaded directly
             return source_bytes.decode("utf-8", errors="replace")
 
     def _extract_body(self, src: str) -> str:
