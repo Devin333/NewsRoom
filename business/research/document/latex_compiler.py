@@ -151,6 +151,8 @@ def _parse_sections(tex: str, source_ref: str, paper_id: str) -> list[ResearchSe
     for i, m in enumerate(matches):
         level = {"section": 1, "subsection": 2, "subsubsection": 3}[m.group(1)]
         title = _clean_text(m.group(2))
+        if not title:
+            continue
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(tex_clean)
         body = tex_clean[start:end]
@@ -195,10 +197,13 @@ def _parse_figures(tex: str, source_ref: str, paper_id: str) -> list[ResearchFig
         caption_m = _CAPTION_RE.search(m.group(2))
         if not caption_m:
             continue
+        caption = _clean_text(caption_m.group(1))
+        if not caption:
+            continue
         fig_id = label_m.group(1) if label_m else f"fig_{i}"
         figures.append(ResearchFigure(
             figure_id=build_stable_id("fig", paper_id, fig_id),
-            caption=_clean_text(caption_m.group(1)),
+            caption=caption,
             source_ref=source_ref,
         ))
     return figures
@@ -214,10 +219,13 @@ def _parse_tables(tex: str, source_ref: str, paper_id: str) -> list[ResearchTabl
         caption_m = _CAPTION_RE.search(m.group(2))
         if not caption_m:
             continue
+        caption = _clean_text(caption_m.group(1))
+        if not caption:
+            continue
         tbl_id = label_m.group(1) if label_m else f"tbl_{i}"
         tables.append(ResearchTable(
             table_id=build_stable_id("tbl", paper_id, tbl_id),
-            caption=_clean_text(caption_m.group(1)),
+            caption=caption,
             source_ref=source_ref,
         ))
     return tables
