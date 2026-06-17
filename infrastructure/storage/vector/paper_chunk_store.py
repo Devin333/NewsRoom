@@ -6,7 +6,6 @@ from qdrant_client import models as qmodels
 
 from infrastructure.storage.vector.models import VectorDocument, VectorSearchQuery
 from infrastructure.storage.vector.qdrant_store import QdrantVectorStore
-from business.research.document.models import PaperChunk
 
 PAPER_CHUNKS_COLLECTION = "paper_chunks"
 
@@ -24,7 +23,13 @@ _PAYLOAD_INDEXES: dict[str, str] = {
 
 
 class PaperChunkStore:
-    """Qdrant-backed store for paper chunks. Implements ChunkIndexerPort + ChunkStorePort."""
+    """
+    Qdrant-backed payload store for paper chunks. Implements ChunkPayloadStorePort.
+    Speaks raw payload dicts only — no domain-DTO dependency. A business-layer
+    adapter converts payloads ↔ PaperChunk.
+
+    Each payload dict must carry 'chunk_id', 'paper_id' and 'content'.
+    """
 
     def __init__(self, vector_store: QdrantVectorStore) -> None:
         self._store = vector_store
@@ -33,12 +38,10 @@ class PaperChunkStore:
         self._store.ensure_collections([PAPER_CHUNKS_COLLECTION])
         self._store.ensure_payload_indexes([PAPER_CHUNKS_COLLECTION], _PAYLOAD_INDEXES)
 
-    # ── ChunkIndexerPort ─────────────────────────────────────────────────────
-
-    def index_chunks(self, chunks: list[PaperChunk]) -> None:
-        if not chunks:
+    def index_payloads(self, payloads: list[dict[str, Any]]) -> None:
+        if not payloads:
             return
-        self._store.upsert_documents([_chunk_to_doc(c) for c in chunks])
+        self._store.upsert_documents([_payload_to_doc(p) for p in payloads])
 
     def delete_paper_chunks(self, paper_id: str) -> None:
         self._store.client.delete(
@@ -50,17 +53,14 @@ class PaperChunkStore:
             ),
         )
 
-    # ── ChunkStorePort ───────────────────────────────────────────────────────
-
-    def search_with_scores(
+    def search_payloads_with_scores(
         self,
         paper_id: str,
         query_text: str,
         *,
         filters: dict[str, Any] | None = None,
         limit: int = 30,
-    ) -> list[tuple[PaperChunk, float]]:
-        """Return (chunk, semantic_score) pairs for position-aware re-ranking."""
+    ) -> list[tuple[dict[str, Any], float]]:
         combined: dict[str, Any] = {"paper_id": paper_id, **(filters or {})}
         results = self._store.search(VectorSearchQuery(
             collection=PAPER_CHUNKS_COLLECTION,
@@ -68,14 +68,9 @@ class PaperChunkStore:
             filters=combined,
             limit=limit,
         ))
-        out: list[tuple[PaperChunk, float]] = []
-        for r in results:
-            chunk = _payload_to_chunk(r.payload)
-            if chunk is not None:
-                out.append((chunk, r.score))
-        return out
+        return [(dict(r.payload), r.score) for r in results]
 
-    def search_chunks(
+    def search_payloads(
         self,
         paper_id: str,
         query_text: str,
@@ -83,7 +78,7 @@ class PaperChunkStore:
         filters: dict[str, Any] | None = None,
         limit: int = 10,
         score_threshold: float | None = None,
-    ) -> list[PaperChunk]:
+    ) -> list[dict[str, Any]]:
         combined: dict[str, Any] = {"paper_id": paper_id, **(filters or {})}
         results = self._store.search(VectorSearchQuery(
             collection=PAPER_CHUNKS_COLLECTION,
@@ -92,35 +87,23 @@ class PaperChunkStore:
             limit=limit,
             score_threshold=score_threshold,
         ))
-        return [c for r in results if (c := _payload_to_chunk(r.payload)) is not None]
+        return [dict(r.payload) for r in results]
 
-    def get_chunk(self, chunk_id: str) -> PaperChunk | None:
+    def get_payload(self, chunk_id: str) -> dict[str, Any] | None:
         result = self._store.get_document(PAPER_CHUNKS_COLLECTION, chunk_id)
-        return _payload_to_chunk(result.payload) if result else None
-
-    def get_parent_chunk(self, chunk: PaperChunk) -> PaperChunk | None:
-        return self.get_chunk(chunk.parent_chunk_id) if chunk.parent_chunk_id else None
+        return dict(result.payload) if result else None
 
 
-def _chunk_to_doc(chunk: PaperChunk) -> VectorDocument:
+def _payload_to_doc(payload: dict[str, Any]) -> VectorDocument:
     return VectorDocument(
-        document_id=chunk.chunk_id,
+        document_id=str(payload["chunk_id"]),
         collection=PAPER_CHUNKS_COLLECTION,
-        text=chunk.content,
-        payload=chunk.model_dump(),
+        text=str(payload["content"]),
+        payload=dict(payload),
         source_type="paper_chunk",
-        topic=chunk.paper_id,
-        section_id=chunk.chunk_id,
+        topic=str(payload["paper_id"]),
+        section_id=str(payload["chunk_id"]),
     )
-
-
-def _payload_to_chunk(payload: dict[str, Any]) -> PaperChunk | None:
-    # PrimitiveModel uses extra="forbid"; strip VectorDocument canonical fields before validating
-    _CHUNK_FIELDS = PaperChunk.model_fields.keys()
-    try:
-        return PaperChunk.model_validate({k: v for k, v in payload.items() if k in _CHUNK_FIELDS})
-    except Exception:
-        return None
 
 
 __all__ = ["PAPER_CHUNKS_COLLECTION", "PaperChunkStore"]

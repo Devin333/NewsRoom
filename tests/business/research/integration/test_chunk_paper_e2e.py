@@ -17,6 +17,10 @@ from infrastructure.storage.postgres.migrations import load_migration_sql
 from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
+from business.research.document.chunk_storage import (
+    PaperChunkRepositoryAdapter,
+    PaperChunkStoreAdapter,
+)
 from business.research.document.latex_compiler import LatexSourceParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 
@@ -34,7 +38,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def chunk_store():
-    store = PaperChunkStore(qdrant_store_from_env())
+    store = PaperChunkStoreAdapter(PaperChunkStore(qdrant_store_from_env()))
     store.ensure_collection()
     return store
 
@@ -47,7 +51,7 @@ def chunk_repo():
         with conn.cursor() as cur:
             cur.execute(load_migration_sql())
         conn.commit()
-    return PaperChunkRepository(dsn)
+    return PaperChunkRepositoryAdapter(PaperChunkRepository(dsn))
 
 
 @pytest.fixture(scope="module")

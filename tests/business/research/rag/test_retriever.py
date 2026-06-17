@@ -8,12 +8,13 @@ from business.research.rag.retriever import (
     RetrievalPolicy,
     RetrievalRequest,
 )
+from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from infrastructure.storage.vector.fake_store import InMemoryVectorStore
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 
 
-def _make_store() -> PaperChunkStore:
-    return PaperChunkStore(InMemoryVectorStore())  # type: ignore[arg-type]
+def _make_store() -> PaperChunkStoreAdapter:
+    return PaperChunkStoreAdapter(PaperChunkStore(InMemoryVectorStore()))  # type: ignore[arg-type]
 
 
 def _chunk(
