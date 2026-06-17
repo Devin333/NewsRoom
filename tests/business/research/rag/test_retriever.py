@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 
 from business.research.document.models import PaperChunk
-from business.research.rag.retriever import ResearchRetriever, RetrievalRequest
+from business.research.rag.retriever import (
+    ResearchRetriever,
+    RetrievalPolicy,
+    RetrievalRequest,
+)
 from infrastructure.storage.vector.fake_store import InMemoryVectorStore
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 
@@ -115,3 +119,71 @@ def test_empty_paper_returns_empty():
     result = retriever.retrieve(RetrievalRequest(paper_id="nonexistent", question="anything"))
     assert result.child_chunks == []
     assert result.parent_chunks == []
+
+
+# ── RetrievalPolicy ────────────────────────────────────────────────────────────
+
+def test_policy_position_weight_decays_with_distance():
+    policy = RetrievalPolicy()
+    near = policy.position_weight("concept_method", section_index=2, current=2)
+    mid = policy.position_weight("concept_method", section_index=4, current=2)
+    far = policy.position_weight("concept_method", section_index=8, current=2)
+    assert near > mid > far
+    assert near == pytest.approx(0.2)  # exp(0) * 0.2
+
+
+def test_policy_zero_alpha_intents_no_position_bias():
+    policy = RetrievalPolicy()
+    # figure/formula queries should never get a position bonus
+    assert policy.position_weight("figure_query", 0, 5) == 0.0
+    assert policy.position_weight("formula_query", 10, 0) == 0.0
+
+
+def test_policy_default_alpha_for_unknown_intent():
+    policy = RetrievalPolicy(default_alpha=0.5)
+    # unlisted intent falls back to default_alpha
+    assert policy.alpha_for("totally_unknown_intent") == 0.5
+
+
+def test_custom_policy_injected():
+    store = _make_store()
+    _seed_store(store)
+    custom = RetrievalPolicy(overfetch_multiplier=1, sigma=1.0)
+    retriever = ResearchRetriever(store, policy=custom)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="attention", limit=2))
+    assert isinstance(result.child_chunks, list)
+
+
+# ── cross-reference expansion ──────────────────────────────────────────────────
+
+def test_cross_reference_expansion():
+    store = _make_store()
+    referenced = _chunk("sec-bg", section_index=0, section_title="Background",
+                        section_role=["background"], content="Background definitions.")
+    child = _chunk("para-x", section_index=2, parent_chunk_id="sec-1",
+                   content="As defined earlier, attention scales queries.")
+    child = child.model_copy(update={"references": ["sec-bg"]})
+    parent = _chunk("sec-1", section_index=2, content="Method section.")
+    store.ensure_collection()
+    store.index_chunks([parent, child, referenced])
+    retriever = ResearchRetriever(store)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="attention scales queries", limit=1))
+    # with limit=1 only para-x matches; its cross-ref target sec-bg should surface in ref_chunks
+    if any(c.chunk_id == "para-x" for c in result.child_chunks):
+        assert any(r.chunk_id == "sec-bg" for r in result.ref_chunks)
+
+
+# ── parent fallback (abstract has no parent) ───────────────────────────────────
+
+def test_parent_fallback_to_children_when_no_parent():
+    store = _make_store()
+    abstract = _chunk("abs-1", chunk_type="abstract", section_title="Abstract",
+                      section_role=["background"], section_index=0,
+                      parent_chunk_id=None, content="We propose a new attention model.")
+    store.ensure_collection()
+    store.index_chunks([abstract])
+    retriever = ResearchRetriever(store)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="what is proposed"))
+    # no parent_chunk_id → falls back to returning the matched children themselves
+    assert result.parent_chunks
+    assert result.parent_chunks[0].chunk_id == "abs-1"

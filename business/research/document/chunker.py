@@ -104,6 +104,8 @@ class PaperDocumentChunker:
 
     def _add_section_chunks(self, doc, parse_source, structure_detected, sections, elements, out):
         for idx, section in enumerate(sections):
+            if not section.text.strip():
+                continue  # skip blank sections — no chunk to emit
             snippet = " ".join(section.text.split()[:60])
             roles: list[SectionRole] = classify_section_role(section.title, snippet)
             cross_refs = elements.section_cross_refs.get(section.section_id, [])

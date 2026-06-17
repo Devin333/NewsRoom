@@ -226,3 +226,56 @@ def test_build_retrieval_route_experiment():
     route = build_retrieval_route("在GLUE上准确率是多少？")
     assert route.intent == "numerical_result"
     assert route.use_propositions
+
+
+# ── edge cases ─────────────────────────────────────────────────────────────────
+
+def test_empty_document_produces_no_chunks():
+    doc = make_doc(sections=[])
+    chunks = CHUNKER.chunk(doc, "latex")
+    assert chunks == []
+
+
+def test_sections_with_blank_text_handled():
+    doc = make_doc(sections=[
+        make_section("s0", "Abstract", "   "),
+        make_section("s1", "Introduction", ""),
+        make_section("s2", "Method", "Real method content here."),
+        make_section("s3", "Experiments", "Real experiment content."),
+    ])
+    # should not raise; only non-empty sections yield content chunks
+    chunks = CHUNKER.chunk(doc, "latex")
+    assert all(c.content.strip() for c in chunks)
+
+
+def test_long_unstructured_doc_triggers_token_fallback():
+    long_text = " ".join(f"word{i}" for i in range(4000))
+    doc = make_doc(sections=[
+        make_section("s0", "Body", long_text),
+        make_section("s1", "More", long_text),
+    ])
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+    assert chunks
+    assert all(not c.structure_detected for c in chunks)
+    # fallback splits into multiple fixed-window chunks
+    assert len(chunks) > 1
+
+
+def test_cross_section_reference_recorded():
+    doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        make_section("s1", "Introduction", "Intro."),
+        make_section("s2", "Method", "As shown in 公式(1), the loss is computed. 详见第3节。"),
+        make_section("s3", "Experiments", "Experiment results."),
+    ])
+    chunks = CHUNKER.chunk(doc, "latex")
+    method_chunks = [c for c in chunks if "Method" in c.section_title]
+    # at least one method chunk should carry recorded cross-references
+    assert any(c.references for c in method_chunks)
+
+
+def test_chunk_ids_unique():
+    doc = _structured_doc()
+    chunks = CHUNKER.chunk(doc, "latex")
+    ids = [c.chunk_id for c in chunks]
+    assert len(ids) == len(set(ids))

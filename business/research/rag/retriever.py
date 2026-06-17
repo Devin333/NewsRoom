@@ -8,8 +8,8 @@ from business.research.document.models import PaperChunk
 from business.research.rag.routing import QueryIntent, RetrievalRoute, build_retrieval_route
 from business.research.ports.chunk_store import ChunkStorePort
 
-# Position weight α per intent (0 = no position bias)
-_ALPHA: dict[str, float] = {
+# Default position weight α per intent (0 = no position bias)
+_DEFAULT_ALPHA: dict[str, float] = {
     "figure_query":    0.0,
     "formula_query":   0.0,
     "contribution":    0.05,
@@ -17,13 +17,24 @@ _ALPHA: dict[str, float] = {
     "numerical_result": 0.2,
     "comparison":      0.2,
 }
-_SIGMA = 3.0  # decay rate in sections
 
 
-def _position_weight(alpha: float, section_index: int, current: int) -> float:
-    if alpha == 0.0:
-        return 0.0
-    return alpha * math.exp(-abs(section_index - current) / _SIGMA)
+@dataclass(frozen=True)
+class RetrievalPolicy:
+    """Tunable retrieval parameters (position weighting + over-fetch)."""
+    position_alpha: dict[str, float] = field(default_factory=lambda: dict(_DEFAULT_ALPHA))
+    default_alpha: float = 0.2          # fallback α for unlisted intents
+    sigma: float = 3.0                  # position decay rate, in sections
+    overfetch_multiplier: int = 3       # fetch limit*N candidates before re-rank
+
+    def alpha_for(self, intent: str) -> float:
+        return self.position_alpha.get(intent, self.default_alpha)
+
+    def position_weight(self, intent: str, section_index: int, current: int) -> float:
+        alpha = self.alpha_for(intent)
+        if alpha == 0.0:
+            return 0.0
+        return alpha * math.exp(-abs(section_index - current) / self.sigma)
 
 
 @dataclass
@@ -74,25 +85,30 @@ class ResearchRetriever:
           position-aware re-rank → parent expansion → cross-ref expansion
     """
 
-    def __init__(self, chunk_store: ChunkStorePort) -> None:
+    def __init__(self, chunk_store: ChunkStorePort, *, policy: RetrievalPolicy | None = None) -> None:
         self._store = chunk_store
+        self._policy = policy or RetrievalPolicy()
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         route = build_retrieval_route(request.question)
         filters = self._build_filters(route)
-        alpha = _ALPHA.get(route.intent, 0.2)
 
         # ── 1. vector search (over-fetch for re-ranking) ──────────────────────
         candidates = self._store.search_with_scores(
             request.paper_id,
             request.question,
             filters=filters,
-            limit=request.limit * 3,
+            limit=request.limit * self._policy.overfetch_multiplier,
         )
 
         # ── 2. position-aware re-rank ─────────────────────────────────────────
         scored = [
-            (chunk, sem + _position_weight(alpha, chunk.section_index, request.current_section_index))
+            (
+                chunk,
+                sem + self._policy.position_weight(
+                    route.intent, chunk.section_index, request.current_section_index
+                ),
+            )
             for chunk, sem in candidates
         ]
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -155,4 +171,4 @@ class ResearchRetriever:
         return result
 
 
-__all__ = ["ResearchRetriever", "RetrievalRequest", "RetrievalResult"]
+__all__ = ["ResearchRetriever", "RetrievalPolicy", "RetrievalRequest", "RetrievalResult"]
