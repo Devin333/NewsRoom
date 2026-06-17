@@ -31,4 +31,33 @@ def is_abstract_section(title: str) -> bool:
     return title.strip().lower() in ("abstract", "摘要", "summary")
 
 
-__all__ = ["SectionRole", "classify_section_role", "is_abstract_section"]
+# Non-content sections that pollute retrieval (acknowledgments, funding, refs, etc.)
+_BOILERPLATE_KEYWORDS: tuple[str, ...] = (
+    "acknowledg",          # acknowledgment / acknowledgement / acknowledgments
+    "funding",
+    "author contribution",
+    "conflict of interest",
+    "declaration",
+    "ethics statement",
+    "reproducibility statement",
+    "references",
+    "bibliography",
+    "appendix",            # appendices are supplementary, excluded from core retrieval
+    "supplementary",
+    "broader impact",
+    "致谢", "参考文献", "附录",
+)
+
+
+def is_boilerplate_section(title: str) -> bool:
+    """True for non-content sections (acknowledgments/funding/refs/appendix/...)."""
+    normalized = title.strip().lower()
+    return any(keyword in normalized for keyword in _BOILERPLATE_KEYWORDS)
+
+
+__all__ = [
+    "SectionRole",
+    "classify_section_role",
+    "is_abstract_section",
+    "is_boilerplate_section",
+]

@@ -279,3 +279,31 @@ def test_chunk_ids_unique():
     chunks = CHUNKER.chunk(doc, "latex")
     ids = [c.chunk_id for c in chunks]
     assert len(ids) == len(set(ids))
+
+
+# ── boilerplate section filtering ──────────────────────────────────────────────
+
+def test_is_boilerplate_section():
+    from business.research.document.section_detector import is_boilerplate_section
+    assert is_boilerplate_section("Acknowledgments")
+    assert is_boilerplate_section("Acknowledgements")
+    assert is_boilerplate_section("Funding")
+    assert is_boilerplate_section("References")
+    assert is_boilerplate_section("Appendix A")
+    assert is_boilerplate_section("Broader Impact")
+    assert is_boilerplate_section("致谢")
+    assert is_boilerplate_section("参考文献")
+    # content sections are NOT boilerplate
+    assert not is_boilerplate_section("Method")
+    assert not is_boilerplate_section("Experiments")
+    assert not is_boilerplate_section("Introduction")
+
+
+def test_boilerplate_content_and_meta_question_guards():
+    from business.research.rag.eval import _is_boilerplate_content, _is_meta_question
+    assert _is_boilerplate_content("This work was supported by grant no. 12345")
+    assert _is_boilerplate_content("We thank the reviewers for their feedback")
+    assert not _is_boilerplate_content("The model uses multi-head attention")
+    assert _is_meta_question("Which section presents the BERT results?")
+    assert _is_meta_question("What are the exact names after the funding statement?")
+    assert not _is_meta_question("How does multi-head attention scale queries?")

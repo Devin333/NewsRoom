@@ -8,6 +8,7 @@ from hashlib import sha256
 from typing import IO
 
 from business.foundation import build_stable_id
+from business.research.document.section_detector import is_boilerplate_section
 from business.research.domain.common import SourceLineage
 from business.research.domain.document import (
     ResearchDocument,
@@ -153,6 +154,8 @@ def _parse_sections(tex: str, source_ref: str, paper_id: str) -> list[ResearchSe
         title = _clean_text(m.group(2))
         if not title:
             continue
+        if is_boilerplate_section(title):
+            continue  # acknowledgments / funding / references / appendix → not retrieval content
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(tex_clean)
         body = tex_clean[start:end]
