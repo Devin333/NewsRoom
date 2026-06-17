@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from business.research.document.models import PaperChunk
 from business.research.rag.routing import QueryIntent, RetrievalRoute, build_retrieval_route
 from business.research.ports.chunk_store import ChunkStorePort
+
+if TYPE_CHECKING:
+    from business.research.ports.reranker import RerankerPort
 
 # Default position weight α per intent (0 = no position bias)
 _DEFAULT_ALPHA: dict[str, float] = {
@@ -85,9 +88,16 @@ class ResearchRetriever:
           position-aware re-rank → parent expansion → cross-ref expansion
     """
 
-    def __init__(self, chunk_store: ChunkStorePort, *, policy: RetrievalPolicy | None = None) -> None:
+    def __init__(
+        self,
+        chunk_store: ChunkStorePort,
+        *,
+        policy: RetrievalPolicy | None = None,
+        reranker: "RerankerPort | None" = None,
+    ) -> None:
         self._store = chunk_store
         self._policy = policy or RetrievalPolicy()
+        self._reranker = reranker
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         route = build_retrieval_route(request.question)
@@ -101,15 +111,18 @@ class ResearchRetriever:
             limit=request.limit * self._policy.overfetch_multiplier,
         )
 
-        # ── 2. position-aware re-rank ─────────────────────────────────────────
+        # ── 2. base relevance: reranker (if available) else vector score ──────
+        base_scores = self._base_scores(request.question, candidates)
+
+        # ── 3. position-aware re-rank ─────────────────────────────────────────
         scored = [
             (
                 chunk,
-                sem + self._policy.position_weight(
+                base + self._policy.position_weight(
                     route.intent, chunk.section_index, request.current_section_index
                 ),
             )
-            for chunk, sem in candidates
+            for (chunk, _sem), base in zip(candidates, base_scores)
         ]
         scored.sort(key=lambda x: x[1], reverse=True)
         child_chunks = [c for c, _ in scored[: request.limit]]
@@ -128,6 +141,22 @@ class ResearchRetriever:
         )
 
     # ── private ───────────────────────────────────────────────────────────────
+
+    def _base_scores(
+        self, question: str, candidates: list[tuple[PaperChunk, float]]
+    ) -> list[float]:
+        """Base relevance per candidate: reranker cross-encoder score if available,
+        else the vector semantic score. Reranker scores replace (not add to) vector
+        scores since the cross-encoder is a stronger relevance signal."""
+        if self._reranker is None or not candidates:
+            return [sem for _chunk, sem in candidates]
+        passages = [chunk.content for chunk, _ in candidates]
+        try:
+            return self._reranker.score(question, passages)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("reranker failed, falling back to vector scores")
+            return [sem for _chunk, sem in candidates]
 
     def _build_filters(self, route: RetrievalRoute) -> dict[str, Any]:
         filters: dict[str, Any] = {}
