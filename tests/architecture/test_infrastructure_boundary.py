@@ -18,6 +18,14 @@ ALLOWED_BUSINESS_MEMORY_IMPORTS = {
         "business.memory.intelligence_builder",
         "business.memory.intelligence_models",
     },
+    # Paper-chunk storage adapters persist the PaperChunk domain DTO directly,
+    # same pattern as the memory adapters above (P2: migrate to storage-facing DTOs).
+    "infrastructure/storage/postgres/paper_chunk_repository.py": {
+        "business.research.document.models",
+    },
+    "infrastructure/storage/vector/paper_chunk_store.py": {
+        "business.research.document.models",
+    },
 }
 
 

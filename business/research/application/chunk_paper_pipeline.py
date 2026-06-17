@@ -10,12 +10,13 @@ from framework.llm.clients.openai_compatible import (
 from framework.llm.models.request import LLMRequest
 from framework.shared.env import load_root_env
 
-from infrastructure.document.latex_parser import LatexDocumentParser
-from infrastructure.external.sources.arxiv import ArxivSourceConnector
-from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
-from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 from business.research.document.async_preprocessor import AsyncChunkPreprocessor
 from business.research.document.chunker import PaperDocumentChunker
+from business.research.ports.chunk_indexer import ChunkIndexerPort
+from business.research.ports.chunk_repository import ChunkRepositoryPort
+from business.research.ports.chunk_store import ChunkStorePort
+from business.research.ports.document_parser import DocumentParserPort
+from business.research.ports.source_fetcher import SourceFetcherPort
 
 
 @dataclass
@@ -75,18 +76,20 @@ class ChunkPaperPipeline:
 
     def __init__(
         self,
-        chunk_store: PaperChunkStore,
-        chunk_repo: PaperChunkRepository,
+        chunk_store: ChunkStorePort,
+        chunk_repo: ChunkRepositoryPort,
+        source_fetcher: SourceFetcherPort,
+        document_parser: DocumentParserPort,
         *,
-        arxiv_connector: ArxivSourceConnector | None = None,
-        latex_parser: LatexDocumentParser | None = None,
+        chunk_indexer: ChunkIndexerPort | None = None,
         chunker: PaperDocumentChunker | None = None,
         with_propositions: bool = True,
     ) -> None:
         self._store = chunk_store
         self._repo = chunk_repo
-        self._arxiv = arxiv_connector or ArxivSourceConnector()
-        self._parser = latex_parser or LatexDocumentParser()
+        self._fetcher = source_fetcher
+        self._parser = document_parser
+        self._indexer = chunk_indexer or chunk_store  # PaperChunkStore satisfies both
         self._chunker = chunker or PaperDocumentChunker()
         self._with_propositions = with_propositions
 
@@ -94,7 +97,7 @@ class ChunkPaperPipeline:
         import logging
         paper_id = arxiv_id.replace("/", "_")
 
-        pkg = self._arxiv.fetch_source_package(arxiv_id)
+        pkg = self._fetcher.fetch_source_package(arxiv_id)
         doc = self._parser.parse(paper_id, pkg.content)
         chunks = self._chunker.chunk(doc, "latex")
 
@@ -106,7 +109,7 @@ class ChunkPaperPipeline:
                 logging.getLogger(__name__).warning("proposition preprocess skipped: %s", exc)
 
         self._store.ensure_collection()
-        self._store.index_chunks(chunks)
+        self._indexer.index_chunks(chunks)
         self._repo.save_chunks(chunks)
 
         by_type: dict[str, int] = {}

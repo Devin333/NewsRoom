@@ -6,7 +6,7 @@ from typing import Any
 
 from business.research.document.models import PaperChunk
 from business.research.rag.routing import QueryIntent, RetrievalRoute, build_retrieval_route
-from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
+from business.research.ports.chunk_store import ChunkStorePort
 
 # Position weight α per intent (0 = no position bias)
 _ALPHA: dict[str, float] = {
@@ -74,7 +74,7 @@ class ResearchRetriever:
           position-aware re-rank → parent expansion → cross-ref expansion
     """
 
-    def __init__(self, chunk_store: PaperChunkStore) -> None:
+    def __init__(self, chunk_store: ChunkStorePort) -> None:
         self._store = chunk_store
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:

@@ -223,52 +223,76 @@ def _parse_tables(tex: str, source_ref: str, paper_id: str) -> list[ResearchTabl
     return tables
 
 
-class ArxivLatexDocumentCompiler:
-    """
-    Implements DocumentCompilerPort for arXiv LaTeX sources.
-    Fetches the .tar.gz source via ArxivSourceConnector, then parses LaTeX
-    into a ResearchDocument.
-    """
+def _normalize_arxiv_id(value: str) -> str:
+    """Extract a bare arXiv id from a URL or raw id (no infrastructure dependency)."""
+    text = value.strip().rstrip(".,;:)]}>'\"")
+    for marker in ("arxiv.org/abs/", "arxiv.org/pdf/", "arxiv.org/e-print/", "arxiv.org/src/"):
+        if marker in text:
+            text = text.rsplit(marker, 1)[-1]
+            break
+    if text.endswith(".pdf"):
+        text = text[:-4]
+    return text.split("?", 1)[0].split("#", 1)[0].strip("/")
 
-    def __init__(self, source_connector=None) -> None:  # ArxivSourceConnector | None
-        self._connector = source_connector
 
-    def compile(self, source: PaperSourceRecord) -> ResearchDocument:
-        from infrastructure.external.sources.arxiv import ArxivSourceConnector, normalize_arxiv_id
+def _build_document(paper_id: str, source_ref: str, source_hash: str, content: bytes, *, arxiv_id: str | None = None) -> ResearchDocument:
+    files = _read_tex_files(content)
+    if not files:
+        raise ValueError(f"no .tex files found in LaTeX source package for {paper_id}")
+    main_tex = _find_main_tex(files)
+    if not main_tex:
+        raise ValueError(f"could not identify main .tex file for {paper_id}")
+    resolved = _resolve_inputs(_strip_comments(main_tex), files)
+    meta = {"parse_source": "latex"}
+    if arxiv_id:
+        meta["arxiv_id"] = arxiv_id
+    return ResearchDocument(
+        paper_id=paper_id,
+        source_hash=source_hash,
+        sections=_parse_sections(resolved, source_ref, paper_id),
+        equations=_parse_equations(resolved, source_ref, paper_id),
+        figures=_parse_figures(resolved, source_ref, paper_id),
+        tables=_parse_tables(resolved, source_ref, paper_id),
+        lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
+        metadata=meta,
+    )
 
-        connector = self._connector or ArxivSourceConnector()
-        arxiv_id = normalize_arxiv_id(source.source_url)
-        if not arxiv_id:
-            raise ValueError(f"cannot derive arxiv id from source_url: {source.source_url}")
 
-        pkg = connector.fetch_source_package(arxiv_id)
-        source_ref = f"arxiv://{arxiv_id}"
-        source_hash = pkg.checksum
+class LatexSourceParser:
+    """Implements DocumentParserPort: parse raw LaTeX tarball bytes → ResearchDocument."""
 
-        files = _read_tex_files(pkg.content)
-        if not files:
-            raise ValueError(f"no .tex files found in arXiv source package for {arxiv_id}")
-
-        main_tex = _find_main_tex(files)
-        if not main_tex:
-            raise ValueError(f"could not identify main .tex file for {arxiv_id}")
-
-        # inline \input / \include
-        resolved = _resolve_inputs(_strip_comments(main_tex), files)
-
-        return ResearchDocument(
-            paper_id=source.paper_id,
-            source_hash=source_hash,
-            sections=_parse_sections(resolved, source_ref, source.paper_id),
-            equations=_parse_equations(resolved, source_ref, source.paper_id),
-            figures=_parse_figures(resolved, source_ref, source.paper_id),
-            tables=_parse_tables(resolved, source_ref, source.paper_id),
-            lineage=SourceLineage(
-                source_refs=[source_ref],
-                source_hash=source_hash,
-            ),
-            metadata={"parse_source": "latex", "arxiv_id": arxiv_id},
+    def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
+        return _build_document(
+            paper_id=paper_id,
+            source_ref=f"arxiv://{paper_id}/latex",
+            source_hash=sha256(source_bytes).hexdigest(),
+            content=source_bytes,
         )
 
 
-__all__ = ["ArxivLatexDocumentCompiler"]
+class ArxivLatexDocumentCompiler:
+    """
+    Implements DocumentCompilerPort for arXiv LaTeX sources.
+    Fetches the .tar.gz source via an injected SourceFetcherPort, then parses
+    LaTeX into a ResearchDocument.
+    """
+
+    def __init__(self, source_fetcher) -> None:  # SourceFetcherPort
+        self._fetcher = source_fetcher
+
+    def compile(self, source: PaperSourceRecord) -> ResearchDocument:
+        arxiv_id = _normalize_arxiv_id(source.source_url)
+        if not arxiv_id:
+            raise ValueError(f"cannot derive arxiv id from source_url: {source.source_url}")
+
+        pkg = self._fetcher.fetch_source_package(arxiv_id)
+        return _build_document(
+            paper_id=source.paper_id,
+            source_ref=f"arxiv://{arxiv_id}",
+            source_hash=pkg.checksum,
+            content=pkg.content,
+            arxiv_id=arxiv_id,
+        )
+
+
+__all__ = ["ArxivLatexDocumentCompiler", "LatexSourceParser"]

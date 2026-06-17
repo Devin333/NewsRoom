@@ -13,8 +13,8 @@ ConnectionFactory = Callable[[], Any]
 
 class PaperChunkRepository:
     def __init__(self, dsn: str, *, connection_factory: ConnectionFactory | None = None) -> None:
-        self._dsn = dsn
-        self._conn = connection_factory or (lambda: psycopg.connect(dsn))
+        self._dsn = dsn.removeprefix("jdbc:")
+        self._conn = connection_factory or (lambda: psycopg.connect(self._dsn))
 
     def save_chunks(self, chunks: list[PaperChunk]) -> None:
         if not chunks:

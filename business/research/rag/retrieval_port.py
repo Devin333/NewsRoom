@@ -8,6 +8,16 @@ from business.research.document.models import PaperChunk
 from business.research.rag.retriever import ResearchRetriever, RetrievalRequest as ResearchRetrievalRequest
 
 
+def _extract_paper_id(request: RetrievalRequest) -> str:
+    """Extract paper_id from context_refs (arxiv://id/...) or fall back to scope."""
+    for ref in request.context_refs:
+        if ref.startswith("arxiv://"):
+            part = ref.removeprefix("arxiv://").split("/")[0]
+            if part:
+                return part
+    return request.scope
+
+
 class PaperChunkRetrievalPort:
     """
     Adapter: framework RetrievalPort → ResearchRetriever.
@@ -21,7 +31,7 @@ class PaperChunkRetrievalPort:
         self._retriever = retriever
 
     def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection:
-        paper_id = request.scope or (request.context_refs[0] if request.context_refs else "")
+        paper_id = _extract_paper_id(request)
         if not paper_id:
             return EvidencePackCollection(packs=(), metadata={"error": "no paper_id in scope"})
 

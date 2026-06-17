@@ -12,12 +12,12 @@ from __future__ import annotations
 import os
 import pytest
 
-from infrastructure.document.latex_parser import LatexDocumentParser
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.storage.postgres.migrations import load_migration_sql
 from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
+from business.research.document.latex_compiler import LatexSourceParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 
 ARXIV_ID = "1706.03762"
@@ -41,7 +41,7 @@ def chunk_store():
 
 @pytest.fixture(scope="module")
 def chunk_repo():
-    dsn = os.environ["NEWS_DATABASE_DSN"]
+    dsn = os.environ["NEWS_DATABASE_DSN"].removeprefix("jdbc:")
     import psycopg
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -52,7 +52,12 @@ def chunk_repo():
 
 @pytest.fixture(scope="module")
 def pipeline_result(chunk_store, chunk_repo):
-    pipeline = ChunkPaperPipeline(chunk_store, chunk_repo)
+    pipeline = ChunkPaperPipeline(
+        chunk_store,
+        chunk_repo,
+        ArxivSourceConnector(),
+        LatexSourceParser(),
+    )
     result = pipeline.run(ARXIV_ID)
     yield result
     # cleanup

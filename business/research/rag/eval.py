@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from business.research.document.models import PaperChunk
 from business.research.rag.retriever import ResearchRetriever, RetrievalRequest
-from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
+from business.research.ports.chunk_store import ChunkStorePort
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class RecallEvaluator:
     def __init__(
         self,
         retriever: ResearchRetriever,
-        chunk_store: PaperChunkStore,
+        chunk_store: ChunkStorePort,
         llm_call,                       # Callable[[str], Awaitable[str]]
         *,
         questions_per_chunk: int = 2,
