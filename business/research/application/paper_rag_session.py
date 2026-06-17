@@ -26,9 +26,7 @@ class PaperRAGSession:
         *,
         budget: RAGBudget | None = None,
     ) -> None:
-        retriever = ResearchRetriever(chunk_store)
-        retrieval_port = PaperChunkRetrievalPort(retriever)
-        self._controller = BoundedRAGSessionController(retrieval=retrieval_port)
+        self._chunk_store = chunk_store
         self._policy_builder = ResearchRAGPolicyBuilder()
         self._budget = budget or RAGBudget.safe_default()
 
@@ -40,7 +38,14 @@ class PaperRAGSession:
         workflow_id: str,
         step_id: str,
         session_id: str,
+        current_section_index: int = 0,
     ) -> RAGSessionResult:
+        # per-run controller + port so reader position stays request-scoped (no shared mutable state)
+        retriever = ResearchRetriever(self._chunk_store)
+        retrieval_port = PaperChunkRetrievalPort(
+            retriever, default_section_index=current_section_index
+        )
+        controller = BoundedRAGSessionController(retrieval=retrieval_port)
         spec = self._policy_builder.build_session_spec(
             goal=goal,
             run_id=run_id,
@@ -49,7 +54,7 @@ class PaperRAGSession:
             session_id=session_id,
             budget=self._budget,
         )
-        return self._controller.run(spec)
+        return controller.run(spec)
 
 
 __all__ = ["PaperRAGSession"]

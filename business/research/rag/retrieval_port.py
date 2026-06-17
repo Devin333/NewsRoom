@@ -25,17 +25,23 @@ class PaperChunkRetrievalPort:
     Convention:
       RetrievalRequest.scope     = paper_id
       RetrievalRequest.metadata  may include current_section_index (int)
+
+    The reader's position is resolved with this precedence:
+      1. request.metadata["current_section_index"]  (per-query override)
+      2. default_section_index                       (per-session, from ReadingSession)
+      3. 0                                           (reader hasn't picked a section)
     """
 
-    def __init__(self, retriever: ResearchRetriever) -> None:
+    def __init__(self, retriever: ResearchRetriever, *, default_section_index: int = 0) -> None:
         self._retriever = retriever
+        self._default_section_index = max(0, default_section_index)
 
     def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection:
         paper_id = _extract_paper_id(request)
         if not paper_id:
             return EvidencePackCollection(packs=(), metadata={"error": "no paper_id in scope"})
 
-        section_index = int(request.metadata.get("current_section_index", 0))
+        section_index = self._resolve_section_index(request)
         result = self._retriever.retrieve(ResearchRetrievalRequest(
             paper_id=paper_id,
             question=request.query,
@@ -53,8 +59,19 @@ class PaperChunkRetrievalPort:
                 "intent": result.intent,
                 "child_count": len(result.child_chunks),
                 "ref_count": len(result.ref_chunks),
+                "section_index": section_index,
             },
         )
+
+    def _resolve_section_index(self, request: RetrievalRequest) -> int:
+        raw = request.metadata.get("current_section_index")
+        if raw is None:
+            return self._default_section_index
+        try:
+            index = int(raw)
+        except (TypeError, ValueError):
+            return self._default_section_index
+        return index if index >= 0 else self._default_section_index
 
 
 def _chunk_to_evidence_pack(chunk: PaperChunk) -> EvidencePack:
