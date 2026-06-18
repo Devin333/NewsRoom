@@ -34,6 +34,23 @@ def _dsn() -> str:
     return dsn.removeprefix("jdbc:")
 
 
+# Process-wide singleton: loading the cross-encoder weights costs ~18s, so the
+# reranker is built once and reused across requests (kept resident in memory).
+_RERANKER_SINGLETON: CrossEncoderReranker | None = None
+
+
+def get_reranker() -> CrossEncoderReranker:
+    global _RERANKER_SINGLETON
+    if _RERANKER_SINGLETON is None:
+        _RERANKER_SINGLETON = CrossEncoderReranker()
+    return _RERANKER_SINGLETON
+
+
+def preload_reranker() -> None:
+    """Warm the reranker weights at service startup so the first request is fast."""
+    get_reranker().score("warmup", ["warmup passage"])
+
+
 def build_chunk_store() -> PaperChunkStoreAdapter:
     store = PaperChunkStoreAdapter(PaperChunkStore(qdrant_store_from_env()))
     store.ensure_collection()
@@ -55,12 +72,12 @@ def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeli
 
 
 def build_research_retriever(*, with_reranker: bool = True) -> ResearchRetriever:
-    reranker = CrossEncoderReranker() if with_reranker else None
+    reranker = get_reranker() if with_reranker else None
     return ResearchRetriever(build_chunk_store(), reranker=reranker)
 
 
 def build_paper_rag_session(*, with_reranker: bool = True) -> PaperRAGSession:
-    reranker = CrossEncoderReranker() if with_reranker else None
+    reranker = get_reranker() if with_reranker else None
     return PaperRAGSession(build_chunk_store(), reranker=reranker)
 
 
@@ -70,4 +87,6 @@ __all__ = [
     "build_chunk_store",
     "build_paper_rag_session",
     "build_research_retriever",
+    "get_reranker",
+    "preload_reranker",
 ]

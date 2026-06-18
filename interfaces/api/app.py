@@ -267,6 +267,21 @@ def create_app(
     )
     include_routers(api, services=services, helpers=helpers)
     configure_openapi_contract(api)
+
+    @api.on_event("startup")
+    def _preload_reranker() -> None:
+        # Warm the cross-encoder weights so the first /rag-ask is fast (~18s cold load).
+        # Opt-out via NEWS_PRELOAD_RERANKER=0 (tests/CI). Failure is non-fatal.
+        import os
+        if os.getenv("NEWS_PRELOAD_RERANKER", "1") not in ("1", "true", "yes"):
+            return
+        try:
+            from interfaces.services.paper_rag_factory import preload_reranker
+            preload_reranker()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("reranker preload skipped", exc_info=True)
+
     return api
 
 
