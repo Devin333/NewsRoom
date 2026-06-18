@@ -24,11 +24,12 @@ _DEFAULT_ALPHA: dict[str, float] = {
 
 @dataclass(frozen=True)
 class RetrievalPolicy:
-    """Tunable retrieval parameters (position weighting + over-fetch)."""
+    """Tunable retrieval parameters (position weighting + over-fetch + rerank filter)."""
     position_alpha: dict[str, float] = field(default_factory=lambda: dict(_DEFAULT_ALPHA))
     default_alpha: float = 0.2          # fallback α for unlisted intents
     sigma: float = 3.0                  # position decay rate, in sections
     overfetch_multiplier: int = 3       # fetch limit*N candidates before re-rank
+    rerank_score_threshold: float = 0.3  # drop candidates below this reranker score (0 = off)
 
     def alpha_for(self, intent: str) -> float:
         return self.position_alpha.get(intent, self.default_alpha)
@@ -114,6 +115,12 @@ class ResearchRetriever:
         # ── 2. base relevance: reranker (if available) else vector score ──────
         base_scores = self._base_scores(request.question, candidates)
 
+        # ── 2b. rerank score threshold: drop low-relevance candidates (reranker only) ──
+        pairs = list(zip(candidates, base_scores))
+        if self._reranker is not None and self._policy.rerank_score_threshold > 0.0:
+            kept = [(c, b) for (c, b) in pairs if b >= self._policy.rerank_score_threshold]
+            pairs = kept or pairs[:1]  # never drop everything — keep top-1 as fallback
+
         # ── 3. position-aware re-rank ─────────────────────────────────────────
         scored = [
             (
@@ -122,7 +129,7 @@ class ResearchRetriever:
                     route.intent, chunk.section_index, request.current_section_index
                 ),
             )
-            for (chunk, _sem), base in zip(candidates, base_scores)
+            for (chunk, _sem), base in pairs
         ]
         scored.sort(key=lambda x: x[1], reverse=True)
         child_chunks = [c for c, _ in scored[: request.limit]]
