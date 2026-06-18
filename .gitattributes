@@ -1,0 +1,19 @@
+# 统一行尾：仓库内文本文件一律 LF，消除 Windows autocrlf 反复显示行尾差异的问题。
+* text=auto eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.whl binary
+*.parquet binary
+*.bin binary
+*.pt binary
+*.pth binary
+*.safetensors binary
