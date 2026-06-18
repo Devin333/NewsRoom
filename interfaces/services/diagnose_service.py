@@ -245,7 +245,9 @@ class DiagnosticApplicationService:
 
         import psycopg
 
-        with psycopg.connect(dsn, connect_timeout=2) as connection:
+        from infrastructure.storage.postgres.dsn import normalize_dsn
+
+        with psycopg.connect(normalize_dsn(dsn), connect_timeout=2) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
                 cursor.fetchone()

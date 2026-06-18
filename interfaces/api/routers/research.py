@@ -26,6 +26,25 @@ class ResearchAskRequest(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+class ResearchRagAskRequest(BaseModel):
+    question: str = Field(min_length=1)
+    sectionIndex: int = 0
+    limit: int = Field(default=5, ge=1, le=20)
+    generate: bool = False
+
+
+# Process-wide singleton: the chunk-RAG service holds the resident reranker.
+_RAG_SERVICE = None
+
+
+def _rag_service():
+    global _RAG_SERVICE
+    if _RAG_SERVICE is None:
+        from interfaces.services.paper_rag_service import PaperRagApplicationService
+        _RAG_SERVICE = PaperRagApplicationService()
+    return _RAG_SERVICE
+
+
 def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     router = APIRouter()
 
@@ -69,6 +88,21 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             ),
         )
 
+    @router.post("/api/v1/research/papers/{paper_id}/rag-ask")
+    def rag_ask_paper(paper_id: str, request: ResearchRagAskRequest):
+        # chunk-based RAG (vector recall → rerank → position-aware → parent expansion),
+        # distinct from the legacy /ask endpoint.
+        return _service_response(
+            helpers,
+            lambda: _rag_service().rag_ask(
+                paper_id,
+                request.question,
+                section_index=request.sectionIndex,
+                limit=request.limit,
+                generate=request.generate,
+            ),
+        )
+
     @router.get("/api/v1/research/runs/{run_id}/trace")
     def get_trace(run_id: str):
         return _service_response(helpers, lambda: services.research_service_factory().get_trace(run_id))
@@ -92,4 +126,4 @@ def _service_response(helpers: ApiRouteHelpers, call):
         return helpers.error(status_code=400, code="invalid_request", message=str(exc), user_action_required=True)
 
 
-__all__ = ["ResearchAnalyzeRequest", "ResearchAskRequest", "create_router"]
+__all__ = ["ResearchAnalyzeRequest", "ResearchAskRequest", "ResearchRagAskRequest", "create_router"]

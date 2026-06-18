@@ -51,6 +51,9 @@ class InMemoryVectorStore:
         scored.sort(key=lambda result: result.score, reverse=True)
         return scored[: query.limit]
 
+    def ensure_payload_indexes(self, collections: list[str], payload_indexes=None) -> list:
+        return []
+
     def get_document(self, collection: str, document_id: str) -> VectorSearchResult | None:
         doc = self._collections.get(collection, {}).get(document_id)
         if doc is None:

@@ -244,3 +244,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# eval runtime artifacts (keep scripts + golden_set, drop logs/reports)
+data/eval/*.log
+data/eval/ingest_report.json
+data/eval/*.whl

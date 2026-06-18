@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+from uuid import uuid4
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.memory.ports import MemoryPort
@@ -63,6 +64,7 @@ class RAGSessionState:
     conflicting_evidence: list[EvidenceCandidate] = field(default_factory=list)
     memory_context: list[dict[str, Any]] = field(default_factory=list)
     gap_report: dict[str, Any] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class BoundedRAGSessionController(RAGSessionController):
@@ -84,18 +86,16 @@ class BoundedRAGSessionController(RAGSessionController):
         self.source_verifier = source_verifier or SourceVerifier()
         self.context_pack_assembler = context_pack_assembler or RAGContextPackAssembler()
         self.gates = gates or RAGGateSuite()
-        self.events: list[dict[str, Any]] = []
-        self.transcripts: list[RAGTranscript] = []
 
     def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
         spec = _spec_from_legacy_request(request)
         return self.run(spec).context_pack or _empty_context_pack(spec)
 
     def run(self, spec: RAGSessionSpec) -> RAGSessionResult:
-        self.events = []
         policy = RAGExecutionPolicy.from_session_spec(spec)
         state = RAGSessionState(spec=spec, gap_report={"missing_evidence_types": list(spec.goal.required_evidence_types)})
         self._event(
+            state,
             "rag_session_started",
             {
                 "session": spec.to_dict(),
@@ -115,7 +115,7 @@ class BoundedRAGSessionController(RAGSessionController):
                 break
 
             plan = self.planner.plan(spec, round_index=round_index, gap_report=state.gap_report)
-            self._event("rag_plan_candidate_created", {"round_index": round_index, "plan": plan.to_dict()})
+            self._event(state, "rag_plan_candidate_created", {"round_index": round_index, "plan": plan.to_dict()})
             projected = _add_snapshots(state.budget_snapshot, policy.projected_usage(plan))
             plan_results = self.gates.verify_plan(
                 plan,
@@ -124,7 +124,7 @@ class BoundedRAGSessionController(RAGSessionController):
                 executed_queries=state.executed_queries,
                 projected_snapshot=projected,
             )
-            self._event("rag_plan_verified", {"round_index": round_index, "gate_results": _results(plan_results)})
+            self._event(state, "rag_plan_verified", {"round_index": round_index, "gate_results": _results(plan_results)})
             if any(result.passed is False for result in plan_results):
                 decision = self._handle_plan_failure(state, plan_results)
                 if decision.decision_type == RAGDecisionType.REPLAN_QUERIES:
@@ -134,12 +134,12 @@ class BoundedRAGSessionController(RAGSessionController):
 
             step_results = self._execute_plan(plan, state, policy)
             for step_result in step_results:
-                self._event("rag_step_executed", step_result.to_dict())
+                self._event(state, "rag_step_executed", step_result.to_dict())
             verification = self.source_verifier.verify(tuple(_result_evidence(step_results)), policy=policy)
             state.accepted_evidence.extend(_dedupe_evidence(verification.accepted, state.accepted_evidence))
             state.rejected_evidence.extend(_dedupe_evidence(verification.rejected, state.rejected_evidence))
             state.conflicting_evidence.extend(_dedupe_evidence(verification.conflicting, state.conflicting_evidence))
-            self._event("rag_source_verified", verification.to_dict())
+            self._event(state, "rag_source_verified", verification.to_dict())
 
             source_results = self.gates.verify_sources(
                 tuple(state.accepted_evidence),
@@ -147,7 +147,7 @@ class BoundedRAGSessionController(RAGSessionController):
                 policy=policy,
                 memory_context=tuple(state.memory_context),
             )
-            self._record_gate_failures(source_results)
+            self._record_gate_failures(state, source_results)
             state.gap_report = _gap_report(spec, tuple(state.accepted_evidence), source_results)
             if _coverage_passed(source_results):
                 decision = RAGDecision(
@@ -166,7 +166,7 @@ class BoundedRAGSessionController(RAGSessionController):
                     budget_snapshot=state.budget_snapshot,
                     metadata={"gap_report": to_jsonable(state.gap_report)},
                 )
-                self._event("rag_replanned", decision.to_dict())
+                self._event(state, "rag_replanned", decision.to_dict())
                 continue
             decision = RAGDecision(
                 RAGDecisionType.INSUFFICIENT_EVIDENCE,
@@ -190,8 +190,8 @@ class BoundedRAGSessionController(RAGSessionController):
                 policy=policy,
             )
             pack_results = self.gates.verify_context_pack(pack, policy=policy)
-            self._event("rag_context_pack_assembled", {"pack": pack.to_dict(), "gate_results": _results(pack_results)})
-            self._record_gate_failures(pack_results)
+            self._event(state, "rag_context_pack_assembled", {"pack": pack.to_dict(), "gate_results": _results(pack_results)})
+            self._record_gate_failures(state, pack_results)
             if all(result.passed for result in pack_results):
                 decision = RAGDecision(
                     RAGDecisionType.RETURN_CONTEXT_PACK,
@@ -201,7 +201,7 @@ class BoundedRAGSessionController(RAGSessionController):
                     metadata={"context_pack_id": pack.pack_id},
                 )
                 status = RAGSessionStatus.SUCCEEDED
-                self._event("rag_context_pack_returned", decision.to_dict())
+                self._event(state, "rag_context_pack_returned", decision.to_dict())
             else:
                 decision = self._halt(state, "context pack gate failed", pack_results)
                 status = RAGSessionStatus.HALTED
@@ -209,15 +209,14 @@ class BoundedRAGSessionController(RAGSessionController):
         elif decision.decision_type == RAGDecisionType.HALTED:
             status = RAGSessionStatus.HALTED
         else:
-            self._event("rag_halted", decision.to_dict())
+            self._event(state, "rag_halted", decision.to_dict())
 
         transcript = RAGTranscript(
-            transcript_id=f"rag-transcript://{spec.session_id}/{len(self.transcripts) + 1}",
+            transcript_id=f"rag-transcript://{spec.session_id}/{uuid4().hex[:8]}",
             session_id=spec.session_id,
-            events=tuple(self.events),
+            events=tuple(state.events),
             status=status,
         )
-        self.transcripts.append(transcript)
         return RAGSessionResult(status=status, context_pack=pack, transcript=transcript, decision=decision)
 
     def _execute_plan(
@@ -252,7 +251,7 @@ class BoundedRAGSessionController(RAGSessionController):
             budget_result = self.gates.budget.evaluate(state.budget_snapshot, policy)
             results.append(result)
             if not budget_result.passed:
-                self._event("rag_gate_failed", budget_result.to_dict())
+                self._event(state, "rag_gate_failed", budget_result.to_dict())
                 break
         return tuple(results)
 
@@ -338,7 +337,7 @@ class BoundedRAGSessionController(RAGSessionController):
         )
 
     def _handle_plan_failure(self, state: RAGSessionState, results: tuple[RAGGateResult, ...]) -> RAGDecision:
-        self._record_gate_failures(results)
+        self._record_gate_failures(state, results)
         if state.budget_snapshot.replans_used < state.spec.budget.max_replans:
             state.budget_snapshot = state.budget_snapshot.with_usage(replans=1)
             decision = RAGDecision(
@@ -347,7 +346,7 @@ class BoundedRAGSessionController(RAGSessionController):
                 gate_results=failed_gate_dicts(results),
                 budget_snapshot=state.budget_snapshot,
             )
-            self._event("rag_replanned", decision.to_dict())
+            self._event(state, "rag_replanned", decision.to_dict())
             return decision
         return self._halt(state, "plan gate failed and no replan budget remains", results)
 
@@ -364,16 +363,16 @@ class BoundedRAGSessionController(RAGSessionController):
             gate_results=failed_gate_dicts(results) or _results(results),
             budget_snapshot=state.budget_snapshot,
         )
-        self._event("rag_halted", decision.to_dict())
+        self._event(state, "rag_halted", decision.to_dict())
         return decision
 
-    def _record_gate_failures(self, results: tuple[RAGGateResult, ...]) -> None:
+    def _record_gate_failures(self, state: RAGSessionState, results: tuple[RAGGateResult, ...]) -> None:
         for result in results:
             if not result.passed:
-                self._event("rag_gate_failed", result.to_dict())
+                self._event(state, "rag_gate_failed", result.to_dict())
 
-    def _event(self, event_type: str, payload: dict[str, Any]) -> None:
-        self.events.append({"event_type": event_type, "payload": to_jsonable(payload)})
+    def _event(self, state: RAGSessionState, event_type: str, payload: dict[str, Any]) -> None:
+        state.events.append({"event_type": event_type, "payload": to_jsonable(payload)})
 
 
 def _spec_from_legacy_request(request: RAGSessionRequest) -> RAGSessionSpec:

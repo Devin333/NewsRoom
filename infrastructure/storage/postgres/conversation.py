@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 import psycopg
 
+from infrastructure.storage.postgres.dsn import normalize_dsn
+
 from infrastructure.storage.conversation.models import (
     AgentIterationCheckpoint,
     AgentMessageRecord,
@@ -29,7 +31,7 @@ class PostgresConversationStore:
         redactor: StorageRedactor | None = None,
     ) -> None:
         self.dsn = dsn
-        self._connection_factory = connection_factory or (lambda: psycopg.connect(dsn))
+        self._connection_factory = connection_factory or (lambda: psycopg.connect(normalize_dsn(dsn)))
         self.redactor = redactor or StorageRedactor()
 
     def append_message(self, conversation_id: str, message: AgentMessageRecord) -> None:

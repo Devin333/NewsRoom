@@ -7,6 +7,8 @@ from typing import Any, Callable
 
 import psycopg
 
+from infrastructure.storage.postgres.dsn import normalize_dsn
+
 from infrastructure.external.sources.models import SourceError, SourceHealth, SourceHealthStatus
 from infrastructure.storage.local_json import ReportNotFoundError
 from infrastructure.storage.postgres.migrations import load_migration_sql
@@ -20,7 +22,7 @@ ConnectionFactory = Callable[[], Any]
 class PostgresRepository:
     def __init__(self, dsn: str, *, connection_factory: ConnectionFactory | None = None) -> None:
         self.dsn = dsn
-        self._connection_factory = connection_factory or (lambda: psycopg.connect(dsn))
+        self._connection_factory = connection_factory or (lambda: psycopg.connect(normalize_dsn(dsn)))
 
     def migrate(self) -> None:
         sql = load_migration_sql()

@@ -71,6 +71,27 @@ class ReadingSession(PrimitiveModel):
                 raise ValueError("reading session events must match session paper and user")
         return self
 
+    def current_section_index(self) -> int:
+        """
+        Derive the reader's current section position from the event stream.
+
+        Returns the section_index of the most recent `section_selected` event
+        (read from its metadata), or 0 if the reader has not selected a section.
+        Position is derived, never stored, to stay consistent with event sourcing.
+        """
+        for event in reversed(self.events):
+            if event.event_type != "section_selected":
+                continue
+            raw = event.metadata.get("section_index")
+            if raw is None:
+                continue
+            try:
+                index = int(raw)
+            except (TypeError, ValueError):
+                continue
+            return index if index >= 0 else 0
+        return 0
+
 
 class ReadingNote(PrimitiveModel):
     reading_note_id: str
