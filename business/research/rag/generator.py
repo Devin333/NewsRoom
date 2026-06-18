@@ -39,7 +39,7 @@ class AnswerGenerator:
         self,
         llm_call: Callable[[str], Awaitable[str]],
         *,
-        max_context_chunks: int = 6,
+        max_context_chunks: int = 3,
         max_chars_per_chunk: int = 1000,
     ) -> None:
         self._llm = llm_call
@@ -64,9 +64,10 @@ class AnswerGenerator:
         )
 
     def _select_context(self, retrieval: RetrievalResult) -> list[PaperChunk]:
-        # parent chunks are the section-level context the retriever returns for the LLM;
-        # fall back to child chunks if no parents were expanded.
-        chunks = retrieval.parent_chunks or retrieval.child_chunks
+        # Feed the reranker-ranked paragraph (child) chunks — they are the highest-precision
+        # unit. Parent (section) chunks carry too much off-topic text and hurt Context Precision.
+        # Fall back to parents only when no children were matched.
+        chunks = retrieval.child_chunks or retrieval.parent_chunks
         return chunks[: self._max_chunks]
 
     def _build_prompt(self, question: str, contexts: list[str]) -> str:
