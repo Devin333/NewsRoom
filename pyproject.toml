@@ -31,6 +31,9 @@ redis = [
 qdrant = [
   "qdrant-client>=1.8",
 ]
+rerank = [
+  "sentence-transformers>=3.0",
+]
 dev = [
   "fastapi>=0.110",
   "httpx>=0.27",
@@ -38,6 +41,7 @@ dev = [
   "pytest>=8.0",
   "qdrant-client>=1.8",
   "redis>=5.0",
+  "sentence-transformers>=3.0",
   "uvicorn[standard]>=0.27",
 ]
 all = [
@@ -47,6 +51,7 @@ all = [
   "pytest>=8.0",
   "qdrant-client>=1.8",
   "redis>=5.0",
+  "sentence-transformers>=3.0",
   "uvicorn[standard]>=0.27",
 ]
 
