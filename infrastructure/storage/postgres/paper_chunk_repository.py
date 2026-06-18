@@ -5,6 +5,8 @@ from typing import Any, Callable
 
 import psycopg
 
+from infrastructure.storage.postgres.dsn import normalize_dsn
+
 
 ConnectionFactory = Callable[[], Any]
 
@@ -33,7 +35,7 @@ class PaperChunkRepository:
     """
 
     def __init__(self, dsn: str, *, connection_factory: ConnectionFactory | None = None) -> None:
-        self._dsn = dsn.removeprefix("jdbc:")
+        self._dsn = normalize_dsn(dsn)
         self._conn = connection_factory or (lambda: psycopg.connect(self._dsn))
 
     def save_payloads(self, payloads: list[dict[str, Any]]) -> None:

@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 import psycopg
 
+from infrastructure.storage.postgres.dsn import normalize_dsn
+
 from infrastructure.storage.lineage.models import LineageRef
 
 
@@ -17,7 +19,7 @@ ConnectionFactory = Callable[[], Any]
 class PostgresLineageStore:
     def __init__(self, dsn: str, *, connection_factory: ConnectionFactory | None = None) -> None:
         self.dsn = dsn
-        self._connection_factory = connection_factory or (lambda: psycopg.connect(dsn))
+        self._connection_factory = connection_factory or (lambda: psycopg.connect(normalize_dsn(dsn)))
 
     def record(self, ref: LineageRef) -> None:
         _validate_ref(ref)

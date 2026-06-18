@@ -4,6 +4,8 @@ from typing import Any, Callable
 
 import psycopg
 
+from infrastructure.storage.postgres.dsn import normalize_dsn
+
 from infrastructure.storage.metrics.models import StorageMetrics
 
 
@@ -13,7 +15,7 @@ ConnectionFactory = Callable[[], Any]
 class PostgresStorageMetricsCollector:
     def __init__(self, dsn: str, *, connection_factory: ConnectionFactory | None = None) -> None:
         self.dsn = dsn
-        self._connection_factory = connection_factory or (lambda: psycopg.connect(dsn))
+        self._connection_factory = connection_factory or (lambda: psycopg.connect(normalize_dsn(dsn)))
 
     def collect(self) -> StorageMetrics:
         sql = """

@@ -9,6 +9,8 @@ from typing import Any, Callable
 
 import psycopg
 
+from infrastructure.storage.postgres.dsn import normalize_dsn
+
 from infrastructure.storage.events.models import EventRecord
 
 
@@ -18,7 +20,7 @@ ConnectionFactory = Callable[[], Any]
 class PostgresEventStore:
     def __init__(self, dsn: str, *, connection_factory: ConnectionFactory | None = None) -> None:
         self.dsn = dsn
-        self._connection_factory = connection_factory or (lambda: psycopg.connect(dsn))
+        self._connection_factory = connection_factory or (lambda: psycopg.connect(normalize_dsn(dsn)))
 
     def append_event(self, event: EventRecord) -> int:
         _validate_event(event)

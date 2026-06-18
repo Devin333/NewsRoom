@@ -28,10 +28,11 @@ from business.research.rag.retriever import ResearchRetriever
 
 
 def _dsn() -> str:
+    from infrastructure.storage.postgres.dsn import normalize_dsn
     dsn = os.environ.get("NEWS_DATABASE_DSN", "")
     if not dsn:
         raise RuntimeError("NEWS_DATABASE_DSN is not set")
-    return dsn.removeprefix("jdbc:")
+    return normalize_dsn(dsn)
 
 
 # Process-wide singleton: loading the cross-encoder weights costs ~18s, so the
