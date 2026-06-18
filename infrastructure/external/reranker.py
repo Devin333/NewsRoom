@@ -7,6 +7,15 @@ from typing import Any
 DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 
 
+def _auto_device() -> str:
+    """Pick cuda when a compatible GPU is available, else cpu. Failure → cpu."""
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
 class CrossEncoderReranker:
     """sentence-transformers CrossEncoder reranker. Implements RerankerPort.
 
@@ -23,8 +32,8 @@ class CrossEncoderReranker:
         batch_size: int = 16,
     ) -> None:
         self._model_name = model_name or os.getenv("NEWS_RERANKER_MODEL", DEFAULT_RERANKER_MODEL)
-        # CUDA kernels on this host are incompatible; default to CPU unless overridden.
-        self._device = device or os.getenv("NEWS_RERANKER_DEVICE", "cpu")
+        # device precedence: explicit arg > NEWS_RERANKER_DEVICE env > auto-detect (cuda if available)
+        self._device = device or os.getenv("NEWS_RERANKER_DEVICE") or _auto_device()
         self._max_length = max_length
         self._batch_size = batch_size
         self._model: Any | None = None
