@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
@@ -101,6 +102,8 @@ class ResearchRetriever:
         self._reranker = reranker
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
+        import time
+        t0 = time.perf_counter()
         route = build_retrieval_route(request.question)
         filters = self._build_filters(route)
 
@@ -111,15 +114,18 @@ class ResearchRetriever:
             filters=filters,
             limit=request.limit * self._policy.overfetch_multiplier,
         )
+        n_recalled = len(candidates)
 
         # ── 2. base relevance: reranker (if available) else vector score ──────
         base_scores = self._base_scores(request.question, candidates)
 
         # ── 2b. rerank score threshold: drop low-relevance candidates (reranker only) ──
         pairs = list(zip(candidates, base_scores))
+        n_before_filter = len(pairs)
         if self._reranker is not None and self._policy.rerank_score_threshold > 0.0:
             kept = [(c, b) for (c, b) in pairs if b >= self._policy.rerank_score_threshold]
             pairs = kept or pairs[:1]  # never drop everything — keep top-1 as fallback
+        n_filtered = n_before_filter - len(pairs)
 
         # ── 3. position-aware re-rank ─────────────────────────────────────────
         scored = [
@@ -133,6 +139,7 @@ class ResearchRetriever:
         ]
         scored.sort(key=lambda x: x[1], reverse=True)
         child_chunks = [c for c, _ in scored[: request.limit]]
+        top_score = scored[0][1] if scored else 0.0
 
         # ── 3. parent expansion ───────────────────────────────────────────────
         parent_chunks = self._fetch_parents(child_chunks, request.paper_id)
@@ -140,11 +147,26 @@ class ResearchRetriever:
         # ── 4. cross-reference expansion ──────────────────────────────────────
         ref_chunks = self._fetch_refs(child_chunks, request.paper_id)
 
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        metrics = {
+            "intent": route.intent,
+            "reranker": self._reranker is not None,
+            "recalled": n_recalled,
+            "threshold_filtered": n_filtered,
+            "child_returned": len(child_chunks),
+            "parent_returned": len(parent_chunks),
+            "ref_returned": len(ref_chunks),
+            "top_score": round(top_score, 4),
+            "elapsed_ms": elapsed_ms,
+        }
+        logging.getLogger(__name__).info("retrieval %s", metrics)
+
         return RetrievalResult(
             parent_chunks=parent_chunks,
             child_chunks=child_chunks,
             ref_chunks=ref_chunks,
             intent=route.intent,
+            metadata=metrics,
         )
 
     # ── private ───────────────────────────────────────────────────────────────

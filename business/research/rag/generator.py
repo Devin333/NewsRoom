@@ -47,15 +47,22 @@ class AnswerGenerator:
         self._max_chars = max_chars_per_chunk
 
     async def generate(self, question: str, retrieval: RetrievalResult) -> GeneratedAnswer:
+        import time
+        import logging
+        t0 = time.perf_counter()
         chunks = self._select_context(retrieval)
         contexts = [c.content[: self._max_chars] for c in chunks]
         prompt = self._build_prompt(question, contexts)
         try:
             answer = (await self._llm(prompt)).strip()
         except Exception as exc:
-            import logging
             logging.getLogger(__name__).warning("generation failed, using empty answer: %s", exc)
             answer = ""
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        logging.getLogger(__name__).info(
+            "generation %s",
+            {"context_chunks": len(chunks), "answer_chars": len(answer), "elapsed_ms": elapsed_ms},
+        )
         return GeneratedAnswer(
             question=question,
             answer=answer,
