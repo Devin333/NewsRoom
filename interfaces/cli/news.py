@@ -12,6 +12,7 @@ from interfaces.cli.commands import (
     entities,
     mcp,
     memory,
+    paper,
     reports,
     runs,
     schedules,
@@ -39,6 +40,7 @@ COMMAND_MODULES = (
     artifacts,
     tools,
     mcp,
+    paper,
 )
 
 
