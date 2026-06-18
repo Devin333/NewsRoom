@@ -50,7 +50,12 @@ class AnswerGenerator:
         chunks = self._select_context(retrieval)
         contexts = [c.content[: self._max_chars] for c in chunks]
         prompt = self._build_prompt(question, contexts)
-        answer = (await self._llm(prompt)).strip()
+        try:
+            answer = (await self._llm(prompt)).strip()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("generation failed, using empty answer: %s", exc)
+            answer = ""
         return GeneratedAnswer(
             question=question,
             answer=answer,

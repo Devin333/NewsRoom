@@ -4,7 +4,11 @@ import asyncio
 import os
 from urllib.request import Request, urlopen
 
-from framework.llm.clients.openai_compatible import OpenAICompatibleClient, OpenAICompatibleConfig
+from framework.llm.clients.openai_compatible import (
+    OpenAICompatibleClient,
+    OpenAICompatibleConfig,
+    LLMRetryPolicy,
+)
 from framework.llm.models.request import LLMRequest
 from framework.shared.env import load_root_env
 
@@ -34,7 +38,11 @@ def build_unity_llm_call(*, max_tokens: int = 1024, temperature: float | None = 
         model=os.environ.get("OPENAI_MODEL", "gpt-5.4-mini"),
         api_key_env="OPENAI_API_KEY",
     )
-    client = OpenAICompatibleClient(config, transport=_browser_ua_transport)
+    client = OpenAICompatibleClient(
+        config,
+        transport=_browser_ua_transport,
+        retry_policy=LLMRetryPolicy(max_attempts=3, retry_delay_seconds=(1.5, 3.0)),
+    )
 
     async def llm_call(prompt: str) -> str:
         request = LLMRequest(
