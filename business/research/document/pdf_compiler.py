@@ -52,6 +52,50 @@ def _page_is_header_footer(blk: dict[str, Any], page_height: float) -> bool:
     return y0 < page_height * 0.07 or y1 > page_height * 0.93
 
 
+
+def _figures_dir(paper_id: str) -> str:
+    import os
+    root = os.environ.get("NEWS_ARTIFACT_ROOT", ".newsroom/runs")
+    return os.path.join(os.path.dirname(root), "papers", paper_id, "figures")
+
+
+def _extract_pdf_images(
+    pdf_doc: fitz.Document, paper_id: str
+) -> dict[int, list[str]]:
+    """Extract images from each PDF page, save to figures dir.
+
+    Returns {page_num: [saved_paths]}. Skips images smaller than 5 KB.
+    """
+    import os
+    figs = _figures_dir(paper_id)
+    page_images: dict[int, list[str]] = {}
+    seen_xrefs: set[int] = set()
+    for page_num, page in enumerate(pdf_doc):
+        saved: list[str] = []
+        for img_info in page.get_images(full=True):
+            xref = img_info[0]
+            if xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
+            try:
+                base_image = pdf_doc.extract_image(xref)
+                img_bytes: bytes = base_image["image"]
+                if len(img_bytes) < 5000:   # skip decorative / tiny images
+                    continue
+                ext: str = base_image.get("ext", "png")
+                os.makedirs(figs, exist_ok=True)
+                name = f"page{page_num + 1}_img{len(saved) + 1}.{ext}"
+                path = os.path.join(figs, name)
+                with open(path, "wb") as out:
+                    out.write(img_bytes)
+                saved.append(path)
+            except Exception:
+                continue
+        if saved:
+            page_images[page_num] = saved
+    return page_images
+
+
 def _extract_via_text(
     pdf_bytes: bytes, paper_id: str, source_ref: str
 ) -> tuple[list[ResearchSection], list[ResearchFigure]]:
@@ -117,6 +161,18 @@ def _extract_via_text(
                 source_ref=source_ref,
             ))
 
+    # Associate figure images: open once more to extract page images
+    try:
+        _pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page_imgs = _extract_pdf_images(_pdf, paper_id)
+        _pdf.close()
+        # Assign first available image per page to figures that have a page_start set
+        img_pool = [p for paths in page_imgs.values() for p in paths]
+        for idx, fig in enumerate(figures):
+            if fig.image_ref is None and idx < len(img_pool):
+                figures[idx] = fig.model_copy(update={"image_ref": img_pool[idx]})
+    except Exception:
+        pass
     return sections, figures
 
 

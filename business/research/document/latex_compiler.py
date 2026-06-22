@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import os
 import re
 import tarfile
 from hashlib import sha256
@@ -51,6 +52,43 @@ _BRACES_RE = re.compile(r"\\[a-zA-Z]+\{([^}]*)\}")
 _BACKSLASH_CMD_RE = re.compile(r"\\[a-zA-Z]+\s*")
 _MULTI_WS_RE = re.compile(r"[ \t]{2,}")
 _INPUT_RE = re.compile(r"\\(?:input|include)\{([^}]+)\}")
+
+
+
+def _figures_dir(paper_id: str) -> str:
+    root = os.environ.get("NEWS_ARTIFACT_ROOT", ".newsroom/runs")
+    return os.path.join(os.path.dirname(root), "papers", paper_id, "figures")
+
+
+def _extract_latex_images(data: bytes, paper_id: str) -> dict[str, str]:
+    """Extract image files from LaTeX tar.gz, save to figures dir, return {name_stem: path}."""
+    result: dict[str, str] = {}
+    figs = _figures_dir(paper_id)
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+            for member in tf.getmembers():
+                if not member.isfile():
+                    continue
+                _, ext = os.path.splitext(member.name)
+                if ext.lower() not in _IMAGE_EXTS:
+                    continue
+                f_obj = tf.extractfile(member)
+                if not f_obj:
+                    continue
+                img_bytes = f_obj.read()
+                if len(img_bytes) < 1000:   # skip tiny placeholder files
+                    continue
+                os.makedirs(figs, exist_ok=True)
+                safe_name = re.sub(r"[^\w.\-]", "_", os.path.basename(member.name))
+                path = os.path.join(figs, safe_name)
+                with open(path, "wb") as out:
+                    out.write(img_bytes)
+                stem = os.path.splitext(os.path.basename(member.name))[0]
+                result[stem] = path
+                result[os.path.basename(member.name)] = path
+    except Exception:
+        pass
+    return result
 
 
 def _strip_comments(tex: str) -> str:
@@ -190,7 +228,10 @@ def _parse_equations(tex: str, source_ref: str, paper_id: str) -> list[ResearchE
     return equations
 
 
-def _parse_figures(tex: str, source_ref: str, paper_id: str) -> list[ResearchFigure]:
+def _parse_figures(
+    tex: str, source_ref: str, paper_id: str,
+    image_map: dict[str, str] | None = None,
+) -> list[ResearchFigure]:
     tex_clean = _strip_comments(tex)
     figures: list[ResearchFigure] = []
     for i, m in enumerate(_ENV_RE.finditer(tex_clean)):
@@ -204,10 +245,18 @@ def _parse_figures(tex: str, source_ref: str, paper_id: str) -> list[ResearchFig
         if not caption:
             continue
         fig_id = label_m.group(1) if label_m else f"fig_{i}"
+        image_ref: str | None = None
+        if image_map:
+            ig_m = _INCLUDEGRAPHICS_RE.search(m.group(2))
+            if ig_m:
+                name = ig_m.group(1).strip()
+                stem = os.path.splitext(name)[0]
+                image_ref = image_map.get(name) or image_map.get(stem)
         figures.append(ResearchFigure(
             figure_id=build_stable_id("fig", paper_id, fig_id),
             caption=caption,
             source_ref=source_ref,
+            image_ref=image_ref,
         ))
     return figures
 
@@ -254,6 +303,7 @@ def _build_document(paper_id: str, source_ref: str, source_hash: str, content: b
     if not main_tex:
         raise ValueError(f"could not identify main .tex file for {paper_id}")
     resolved = _resolve_inputs(_strip_comments(main_tex), files)
+    image_map = _extract_latex_images(content, paper_id)
     meta = {"parse_source": "latex"}
     if arxiv_id:
         meta["arxiv_id"] = arxiv_id
@@ -262,7 +312,7 @@ def _build_document(paper_id: str, source_ref: str, source_hash: str, content: b
         source_hash=source_hash,
         sections=_parse_sections(resolved, source_ref, paper_id),
         equations=_parse_equations(resolved, source_ref, paper_id),
-        figures=_parse_figures(resolved, source_ref, paper_id),
+        figures=_parse_figures(resolved, source_ref, paper_id, image_map),
         tables=_parse_tables(resolved, source_ref, paper_id),
         lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
         metadata=meta,

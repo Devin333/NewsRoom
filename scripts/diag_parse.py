@@ -31,7 +31,7 @@ def diagnose(arxiv_id: str) -> None:
     print(f"  parse_source     : {doc.metadata.get('parse_source')}")
     print(f"  ocr_used         : {doc.metadata.get('ocr_used', 'n/a')}")
     print(f"  sections         : {len(doc.sections)}")
-    print(f"  figures          : {len(doc.figures)}")
+    print(f"  figures          : {len(doc.figures)}  (with image: {sum(1 for f in doc.figures if f.image_ref)})")
     print(f"  equations        : {len(doc.equations)}")
     print(f"  tables           : {len(doc.tables)}")
 
