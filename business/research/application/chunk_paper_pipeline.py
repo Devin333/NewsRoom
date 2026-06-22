@@ -99,7 +99,8 @@ class ChunkPaperPipeline:
 
         pkg = self._fetcher.fetch_source_package(arxiv_id)
         doc = self._parser.parse(paper_id, pkg.content)
-        chunks = self._chunker.chunk(doc, "latex")
+        parse_source = doc.metadata.get("parse_source", "latex")
+        chunks = self._chunker.chunk(doc, parse_source)
 
         if self._with_propositions:
             try:
@@ -122,7 +123,7 @@ class ChunkPaperPipeline:
             total_chunks=len(chunks),
             by_type=by_type,
             structure_detected=any(c.structure_detected for c in chunks),
-            parse_source="latex",
+            parse_source=parse_source,
         )
 
 

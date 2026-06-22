@@ -34,6 +34,10 @@ qdrant = [
 rerank = [
   "sentence-transformers>=3.0",
 ]
+ocr = [
+  "surya-ocr>=0.5",
+  "Pillow>=10.0",
+]
 dev = [
   "fastapi>=0.110",
   "httpx>=0.27",
