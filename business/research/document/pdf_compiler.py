@@ -55,7 +55,7 @@ def _extract_pdf_images(pdf_doc: fitz.Document, paper_id: str) -> list[str]:
     return paths
 
 
-# ── nougat (docker compose) ────────────────────────────────────────────────────
+# ── nougat (docker compose) ───────────────────────────────────────────────────
 
 _SECTION_RE = re.compile(r"^(#{1,3})\s+(.+)", re.MULTILINE)
 _EQUATION_ENV_RE = re.compile(
@@ -83,8 +83,7 @@ def _project_root() -> str:
             return cur
         cur = os.path.dirname(cur)
     raise RuntimeError(
-        "could not locate project root (docker-compose.yml not found) — "
-        "the nougat container is launched from there"
+        "could not locate project root (docker-compose.yml not found)"
     )
 
 
@@ -116,25 +115,28 @@ def _run_nougat(pdf_bytes: bytes, paper_id: str) -> str:
                     "-o", _NOUGAT_CONTAINER_WORK,
                 ],
                 check=True,
-                capture_output=True,
                 timeout=1800,
                 cwd=root,
             )
         except subprocess.CalledProcessError as exc:
-            stderr = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
             raise RuntimeError(
-                f"nougat docker run failed (exit {exc.returncode}): {stderr[:1000]}"
+                f"nougat docker run failed (exit {exc.returncode})"
             ) from exc
 
         mmd_path = os.path.join(work_dir, f"{safe_id}.mmd")
+        if not os.path.exists(mmd_path):
+            actual = os.listdir(work_dir)
+            raise FileNotFoundError(
+                f"nougat did not produce {mmd_path}\n"
+                f"files in {work_dir}: {actual}"
+            )
         with open(mmd_path, encoding="utf-8") as f:
             return f.read()
     finally:
-        for path in (pdf_path,):
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        try:
+            os.unlink(pdf_path)
+        except OSError:
+            pass
 
 
 def _parse_mmd(
@@ -174,7 +176,6 @@ def _parse_mmd(
     sections: list[ResearchSection] = []
     matches = list(_SECTION_RE.finditer(text))
 
-    # text before the first heading becomes the abstract / preamble
     preamble = text[: matches[0].start()].strip() if matches else text.strip()
     if preamble:
         sections.append(ResearchSection(
@@ -216,7 +217,6 @@ def _parse_pdf(
 
     sections, equations, figures = _parse_mmd(mmd, paper_id, source_ref)
 
-    # associate image files from PDF with figures by appearance order
     pdf_doc: fitz.Document = fitz.open(stream=pdf_bytes, filetype="pdf")
     image_paths = _extract_pdf_images(pdf_doc, paper_id)
     pdf_doc.close()
