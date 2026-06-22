@@ -3,20 +3,19 @@ from __future__ import annotations
 import gzip
 import io
 import tarfile
+from unittest.mock import patch
 
 import fitz
 import pytest
 
 from business.research.document.arxiv_parser import ArxivDocumentParser
-from business.research.document.pdf_compiler import PdfDocumentParser
+from business.research.document.pdf_compiler import PdfDocumentParser, _parse_mmd
 from business.research.document.source_format import SourceFormat, detect_source_format
 
-
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 
 def _make_pdf(text_pages: list[str]) -> bytes:
-    """Build a minimal in-memory PDF with given text on successive pages."""
     doc = fitz.open()
     for text in text_pages:
         page = doc.new_page()
@@ -34,6 +33,26 @@ def _make_latex_targz(tex_content: str) -> bytes:
         info.size = len(encoded)
         tf.addfile(info, io.BytesIO(encoded))
     return buf.getvalue()
+
+
+_SAMPLE_MMD = r"""
+This is the preamble abstract text.
+
+# Introduction
+
+Deep learning has advanced many fields.
+
+## Method
+
+We use a transformer-based approach.
+
+\begin{equation}
+\mathcal{L} = \sum_{i=1}^{N} \ell_i
+\label{eq:loss}
+\end{equation}
+
+Figure 1: Architecture of our proposed model.
+"""
 
 
 # ── detect_source_format ──────────────────────────────────────────────────────
@@ -58,7 +77,6 @@ def test_detect_latex_targz():
     tgz = _make_latex_targz(r"\documentclass{article}\begin{document}hi\end{document}")
     fmt, canonical = detect_source_format(tgz)
     assert fmt is SourceFormat.LATEX
-    # original bytes returned unchanged so LatexSourceParser can handle its own decompression
     assert canonical == tgz
 
 
@@ -67,48 +85,94 @@ def test_detect_raw_bytes_treated_as_latex():
     assert fmt is SourceFormat.LATEX
 
 
-# ── PdfDocumentParser ─────────────────────────────────────────────────────────
+# ── _parse_mmd (unit, no nougat needed) ──────────────────────────────────────
 
 
-def test_pdf_parser_extracts_sections():
-    pdf_bytes = _make_pdf([
-        "Abstract\n\nThis paper presents a new method.",
-        "Introduction\n\nDeep learning has advanced many fields.",
-        "Method\n\nWe use a transformer-based approach.",
-    ])
-    parser = PdfDocumentParser()
-    doc = parser.parse("2501_12345", pdf_bytes)
+def test_parse_mmd_sections():
+    sections, _, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    titles = [s.title for s in sections]
+    assert "Abstract" in titles
+    assert "Introduction" in titles
+    assert "Method" in titles
+
+
+def test_parse_mmd_section_levels():
+    sections, _, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    by_title = {s.title: s.level for s in sections}
+    assert by_title["Introduction"] == 1
+    assert by_title["Method"] == 2
+
+
+def test_parse_mmd_equations():
+    _, equations, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    assert len(equations) == 1
+    assert "eq:loss" in equations[0].equation_id
+    assert r"\mathcal{L}" in equations[0].latex
+
+
+def test_parse_mmd_figures():
+    _, _, figures = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    assert len(figures) == 1
+    assert "Architecture" in figures[0].caption
+
+
+def test_parse_mmd_source_ref_propagated():
+    sections, equations, figures = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    assert all(s.source_ref == "arxiv://test_id/pdf" for s in sections)
+    assert all(e.source_ref == "arxiv://test_id/pdf" for e in equations)
+    assert all(f.source_ref == "arxiv://test_id/pdf" for f in figures)
+
+
+# ── PdfDocumentParser (nougat mocked) ────────────────────────────────────────
+
+
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_pdf_parser_returns_document(mock_nougat):
+    pdf_bytes = _make_pdf(["placeholder"])
+    doc = PdfDocumentParser().parse("2501_12345", pdf_bytes)
     assert doc.paper_id == "2501_12345"
+    assert doc.metadata.get("parse_source") == "nougat"
     assert len(doc.sections) >= 1
-    assert doc.metadata.get("parse_source") == "pymupdf"
-    assert doc.metadata.get("ocr_used") is False
 
 
-def test_pdf_parser_figure_captions():
-    pdf_bytes = _make_pdf([
-        "Results\n\nSee Figure 1: Architecture of our model. We evaluated on three benchmarks.",
-    ])
-    parser = PdfDocumentParser()
-    doc = parser.parse("test_fig", pdf_bytes)
-    # figure caption extraction may or may not fire depending on regex match in single-page PDF
-    assert doc.paper_id == "test_fig"
-
-
-def test_pdf_parser_source_ref_contains_paper_id():
-    pdf_bytes = _make_pdf(["Introduction\n\nSome content here."])
-    parser = PdfDocumentParser()
-    doc = parser.parse("2501_99999", pdf_bytes)
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_pdf_parser_source_ref_contains_paper_id(mock_nougat):
+    pdf_bytes = _make_pdf(["placeholder"])
+    doc = PdfDocumentParser().parse("2501_99999", pdf_bytes)
     assert any("2501_99999" in s.source_ref for s in doc.sections)
+
+
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_pdf_parser_extracts_equations(mock_nougat):
+    pdf_bytes = _make_pdf(["placeholder"])
+    doc = PdfDocumentParser().parse("2501_eq", pdf_bytes)
+    assert len(doc.equations) == 1
+
+
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_pdf_parser_extracts_figures(mock_nougat):
+    pdf_bytes = _make_pdf(["placeholder"])
+    doc = PdfDocumentParser().parse("2501_fig", pdf_bytes)
+    assert len(doc.figures) == 1
+    assert "Architecture" in doc.figures[0].caption
 
 
 # ── ArxivDocumentParser dispatcher ───────────────────────────────────────────
 
 
-def test_dispatcher_routes_pdf():
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_dispatcher_routes_pdf(mock_nougat):
     pdf_bytes = _make_pdf(["Abstract\n\nThis is an abstract."])
-    parser = ArxivDocumentParser()
-    doc = parser.parse("2501_11111", pdf_bytes)
-    assert doc.metadata.get("parse_source") == "pymupdf"
+    doc = ArxivDocumentParser().parse("2501_11111", pdf_bytes)
+    assert doc.metadata.get("parse_source") == "nougat"
+
+
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_dispatcher_routes_gzipped_pdf(mock_nougat):
+    pdf_bytes = _make_pdf(["Introduction\n\nContent."])
+    gzipped = gzip.compress(pdf_bytes)
+    doc = ArxivDocumentParser().parse("2501_33333", gzipped)
+    assert doc.metadata.get("parse_source") == "nougat"
 
 
 def test_dispatcher_routes_latex():
@@ -121,16 +185,7 @@ def test_dispatcher_routes_latex():
         r"\end{document}"
     )
     tgz = _make_latex_targz(tex)
-    parser = ArxivDocumentParser()
-    doc = parser.parse("2501_22222", tgz)
+    doc = ArxivDocumentParser().parse("2501_22222", tgz)
     assert doc.metadata.get("parse_source") == "latex"
     titles = [s.title for s in doc.sections]
     assert any("Introduction" in t for t in titles)
-
-
-def test_dispatcher_routes_gzipped_pdf():
-    pdf_bytes = _make_pdf(["Introduction\n\nContent."])
-    gzipped = gzip.compress(pdf_bytes)
-    parser = ArxivDocumentParser()
-    doc = parser.parse("2501_33333", gzipped)
-    assert doc.metadata.get("parse_source") == "pymupdf"
