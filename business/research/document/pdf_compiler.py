@@ -140,45 +140,61 @@ def _extract_via_text(
 def _extract_via_ocr(
     pdf_bytes: bytes, paper_id: str, source_ref: str
 ) -> tuple[list[ResearchSection], list[ResearchFigure]]:
-    """OCR using surya-ocr when pymupdf text extraction yields insufficient content.
+    """OCR using remote surya-ocr API when pymupdf text extraction yields insufficient content.
 
-    surya-ocr is an optional dependency. Install with:  pip install surya-ocr
+    Requires SURYA_OCR_ENDPOINT in environment (e.g., http://localhost:8000/ocr).
     """
-    try:
-        from PIL import Image  # type: ignore[import-untyped]
-        from surya.model.detection.model import load_model as load_det_model  # type: ignore[import-untyped]
-        from surya.model.detection.model import load_processor as load_det_processor  # type: ignore[import-untyped]
-        from surya.model.recognition.model import load_model as load_rec_model  # type: ignore[import-untyped]
-        from surya.model.recognition.model import load_processor as load_rec_processor  # type: ignore[import-untyped]
-        from surya.ocr import run_ocr  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise RuntimeError(
-            "surya-ocr is required for scanned-PDF OCR. "
-            "Install it with:  pip install surya-ocr"
-        ) from exc
+    import base64
+    import json
+    import os
+    import urllib.request
 
+    endpoint = os.environ.get("SURYA_OCR_ENDPOINT", "").strip()
+    if not endpoint:
+        raise RuntimeError(
+            "SURYA_OCR_ENDPOINT not set. Set it to your surya Docker API endpoint "
+            "(e.g., http://localhost:8000/ocr) in .env"
+        )
+
+    # Convert PDF pages to PNG base64
     pdf_doc: fitz.Document = fitz.open(stream=pdf_bytes, filetype="pdf")
-    images: list[Any] = []
+    images_b64: list[str] = []
     for page in pdf_doc:
         pix = page.get_pixmap(dpi=150)
-        images.append(Image.frombytes("RGB", [pix.width, pix.height], pix.samples))
+        png_bytes = pix.pil_tobytes(format="PNG")
+        images_b64.append(base64.b64encode(png_bytes).decode("utf-8"))
     pdf_doc.close()
 
-    det_processor, det_model = load_det_processor(), load_det_model()
-    rec_model, rec_processor = load_rec_model(), load_rec_processor()
-    predictions = run_ocr(
-        images,
-        [["en"]] * len(images),
-        det_model,
-        det_processor,
-        rec_model,
-        rec_processor,
+    # Call surya API
+    request_body = json.dumps({"images": images_b64}).encode("utf-8")
+    req = urllib.request.Request(
+        endpoint,
+        data=request_body,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "NewsRoom/0.1.0",
+        },
+        method="POST",
     )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"Surya OCR API returned {exc.code}: {exc.read().decode('utf-8', errors='replace')}"
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to call surya OCR API at {endpoint}: {exc}") from exc
 
+    # Parse response (expected: {"results": [{"text_lines": [{"text": "..."}]}]})
     sections: list[ResearchSection] = []
+    predictions = result.get("results", [])
     for page_num, pred in enumerate(predictions):
+        text_lines = pred.get("text_lines", [])
         page_text = "\n".join(
-            line.text for line in pred.text_lines if line.text.strip()
+            line.get("text", "").strip()
+            for line in text_lines
+            if isinstance(line, dict) and line.get("text", "").strip()
         )
         if page_text.strip():
             sections.append(
@@ -227,9 +243,9 @@ def _parse_pdf(
 
 
 class PdfDocumentParser:
-    """Implements DocumentParserPort: parse raw PDF bytes → ResearchDocument.
+    """Implements DocumentParserPort: parse raw PDF bytes to ResearchDocument.
 
-    Uses PyMuPDF for text extraction.  Falls back to surya-ocr when the
+    Uses PyMuPDF for text extraction. Falls back to surya-ocr API when the
     extracted text density indicates a scanned document.
     """
 
