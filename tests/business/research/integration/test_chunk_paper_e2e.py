@@ -21,7 +21,7 @@ from business.research.document.chunk_storage import (
     PaperChunkRepositoryAdapter,
     PaperChunkStoreAdapter,
 )
-from business.research.document.latex_compiler import LatexSourceParser
+from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 
 ARXIV_ID = "1706.03762"
@@ -60,7 +60,7 @@ def pipeline_result(chunk_store, chunk_repo):
         chunk_store,
         chunk_repo,
         ArxivSourceConnector(),
-        LatexSourceParser(),
+        ArxivDocumentParser(),
     )
     result = pipeline.run(ARXIV_ID)
     yield result

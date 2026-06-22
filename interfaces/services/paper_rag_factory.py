@@ -21,7 +21,7 @@ from business.research.document.chunk_storage import (
     PaperChunkRepositoryAdapter,
     PaperChunkStoreAdapter,
 )
-from business.research.document.latex_compiler import LatexSourceParser
+from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 from business.research.application.paper_rag_session import PaperRAGSession
 from business.research.rag.retriever import ResearchRetriever
@@ -67,7 +67,7 @@ def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeli
         build_chunk_store(),
         build_chunk_repository(),
         ArxivSourceConnector(),
-        LatexSourceParser(),
+        ArxivDocumentParser(),
         with_propositions=with_propositions,
     )
 
@@ -90,4 +90,4 @@ __all__ = [
     "build_research_retriever",
     "get_reranker",
     "preload_reranker",
-]
+]

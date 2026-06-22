@@ -184,7 +184,6 @@ def test_dispatcher_routes_pdf(mock_nougat):
     doc = ArxivDocumentParser().parse("2501_11111", pdf_bytes)
     assert doc.metadata.get("parse_source") == "nougat"
 
-
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
 def test_dispatcher_routes_gzipped_pdf(mock_nougat):
     pdf_bytes = _make_pdf(["Introduction\n\nContent."])
@@ -196,8 +195,8 @@ def test_dispatcher_routes_gzipped_pdf(mock_nougat):
 def test_dispatcher_routes_latex():
     tex = (
         r"\documentclass{article}"
-        r"\begin{document}"
-        r"\begin{abstract}We propose a method.\end{abstract}"
+        r"egin{document}"
+        r"egin{abstract}We propose a method.\end{abstract}"
         r"\section{Introduction}This is the introduction."
         r"\section{Method}This is the method."
         r"\end{document}"
