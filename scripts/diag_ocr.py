@@ -5,6 +5,7 @@ Usage:
     python scripts/diag_ocr.py 2307.03109 --pages 3   # first 3 pages only
 """
 from __future__ import annotations
+import sys, pathlib; sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))  # noqa: E702
 
 import argparse
 import base64
@@ -68,9 +69,4 @@ def main() -> int:
     ap.add_argument("arxiv_id")
     ap.add_argument("--pages", type=int, default=None, help="Limit to first N pages")
     args = ap.parse_args()
-    ocr_paper(args.arxiv_id, args.pages)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    o
