@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import re
 from collections import Counter
 from hashlib import sha256
@@ -108,6 +109,7 @@ def _extract_via_text(
     current_page: int = 1
     sec_idx = 0
     all_lines: list[str] = []
+    line_pages: list[int] = []  # page number for each line in all_lines
 
     def _flush() -> None:
         nonlocal sec_idx
@@ -138,6 +140,7 @@ def _extract_via_text(
                 if not line_text:
                     continue
                 all_lines.append(line_text)
+                line_pages.append(page.number + 1)  # type: ignore[attr-defined]
                 is_heading = any(_span_is_heading(s, body_size, line_text) for s in spans)
                 if is_heading:
                     _flush()
@@ -151,15 +154,22 @@ def _extract_via_text(
     pdf_doc.close()
 
     full_text = "\n".join(all_lines)
+    _line_offsets: list[int] = [0]
+    for _l in all_lines[:-1]:
+        _line_offsets.append(_line_offsets[-1] + len(_l) + 1)
     figures: list[ResearchFigure] = []
     for i, m in enumerate(_FIGURE_CAPTION_RE.finditer(full_text)):
         caption = m.group(1).strip().replace("\n", " ")
-        if caption:
-            figures.append(ResearchFigure(
-                figure_id=build_stable_id("fig", paper_id, f"pdf_fig_{i}"),
-                caption=caption[:500],
-                source_ref=source_ref,
-            ))
+        if not caption:
+            continue
+        line_idx = bisect.bisect_right(_line_offsets, m.start()) - 1
+        fig_page = line_pages[line_idx] if 0 <= line_idx < len(line_pages) else 1
+        figures.append(ResearchFigure(
+            figure_id=build_stable_id("fig", paper_id, f"pdf_fig_{i}"),
+            caption=caption[:500],
+            source_ref=source_ref,
+            page=fig_page,
+        ))
 
     # Associate figure images: open once more to extract page images
     try:
@@ -167,10 +177,15 @@ def _extract_via_text(
         page_imgs = _extract_pdf_images(_pdf, paper_id)
         _pdf.close()
         # Assign first available image per page to figures that have a page_start set
-        img_pool = [p for paths in page_imgs.values() for p in paths]
         for idx, fig in enumerate(figures):
-            if fig.image_ref is None and idx < len(img_pool):
-                figures[idx] = fig.model_copy(update={"image_ref": img_pool[idx]})
+            if fig.image_ref is not None or fig.page is None:
+                continue
+            # prefer same page, fall back to adjacent pages ±1
+            for delta in (0, -1, 1):
+                imgs = page_imgs.get(fig.page - 1 + delta, [])  # page_imgs is 0-indexed
+                if imgs:
+                    figures[idx] = fig.model_copy(update={"image_ref": imgs[0]})
+                    break
     except Exception:
         pass
     return sections, figures

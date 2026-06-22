@@ -27,6 +27,11 @@ class ArxivDocumentParser:
         fmt, canonical = detect_source_format(source_bytes)
         if fmt is SourceFormat.PDF:
             return self._pdf.parse(paper_id, canonical)
+        if fmt in (SourceFormat.HTML, SourceFormat.ZIP, SourceFormat.UNKNOWN):
+            raise NotImplementedError(
+                f"ArxivDocumentParser does not support format '{fmt.value}' — "
+                "add a dedicated parser for this source type."
+            )
         return self._latex.parse(paper_id, source_bytes)
 
 

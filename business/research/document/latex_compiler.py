@@ -145,8 +145,12 @@ def _find_main_tex(files: dict[str, str]) -> str | None:
     return max(tex_files.values(), key=len)
 
 
-def _read_tex_files(data: bytes) -> dict[str, str] | None:
-    """Extract all .tex files from a tar.gz (or raw .tex) archive."""
+def _read_tex_files(data: bytes) -> tuple[dict[str, str], str] | tuple[None, None]:
+    """Extract all .tex files from a tar.gz (or raw .tex) archive.
+
+    Returns (files_dict, strategy) where strategy is one of:
+    "tar_gz", "single_gz", "raw_tex", or (None, None) on failure.
+    """
     files: dict[str, str] = {}
     try:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
@@ -155,20 +159,23 @@ def _read_tex_files(data: bytes) -> dict[str, str] | None:
                     f: IO[bytes] | None = tf.extractfile(member)
                     if f:
                         files[member.name.lstrip("./")] = f.read().decode("utf-8", errors="replace")
+        if files:
+            return files, "tar_gz"
     except (tarfile.TarError, gzip.BadGzipFile, EOFError):
-        # maybe it's a raw .tex file or a plain gzip
-        try:
-            text = gzip.decompress(data).decode("utf-8", errors="replace")
-            if r"\documentclass" in text or r"\section" in text:
-                files["main.tex"] = text
-        except Exception:
-            try:
-                text = data.decode("utf-8", errors="replace")
-                if r"\section" in text:
-                    files["main.tex"] = text
-            except Exception:
-                return None
-    return files or None
+        pass
+    try:
+        text = gzip.decompress(data).decode("utf-8", errors="replace")
+        if r"\documentclass" in text or r"\section" in text:
+            return {"main.tex": text}, "single_gz"
+    except Exception:
+        pass
+    try:
+        text = data.decode("utf-8", errors="replace")
+        if r"\section" in text:
+            return {"main.tex": text}, "raw_tex"
+    except Exception:
+        pass
+    return None, None
 
 
 def _parse_sections(tex: str, source_ref: str, paper_id: str) -> list[ResearchSection]:
@@ -296,7 +303,7 @@ def _normalize_arxiv_id(value: str) -> str:
 
 
 def _build_document(paper_id: str, source_ref: str, source_hash: str, content: bytes, *, arxiv_id: str | None = None) -> ResearchDocument:
-    files = _read_tex_files(content)
+    files, tex_strategy = _read_tex_files(content)
     if not files:
         raise ValueError(f"no .tex files found in LaTeX source package for {paper_id}")
     main_tex = _find_main_tex(files)
@@ -304,7 +311,7 @@ def _build_document(paper_id: str, source_ref: str, source_hash: str, content: b
         raise ValueError(f"could not identify main .tex file for {paper_id}")
     resolved = _resolve_inputs(_strip_comments(main_tex), files)
     image_map = _extract_latex_images(content, paper_id)
-    meta = {"parse_source": "latex"}
+    meta = {"parse_source": "latex", "tex_strategy": tex_strategy}
     if arxiv_id:
         meta["arxiv_id"] = arxiv_id
     return ResearchDocument(

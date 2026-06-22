@@ -1,36 +1,56 @@
 from __future__ import annotations
 
 import gzip
+import logging
 from enum import Enum
+
+_log = logging.getLogger(__name__)
 
 
 class SourceFormat(str, Enum):
-    LATEX = "latex"
-    PDF = "pdf"
+    PDF     = "pdf"      # raw PDF or gzip-wrapped PDF
+    LATEX   = "latex"    # arXiv tar.gz / single .tex.gz / raw .tex
+    HTML    = "html"     # web page
+    ZIP     = "zip"      # zip archive (non-arXiv submission, datasets, etc.)
+    UNKNOWN = "unknown"  # unrecognised format
 
 
-_PDF_MAGIC = b"%PDF"
-_GZIP_MAGIC = b"\x1f\x8b"
+_PDF_MAGIC   = b"%PDF"
+_GZIP_MAGIC  = b"\x1f\x8b"
+_ZIP_MAGIC   = b"PK\x03\x04"
+_HTML_TAGS   = (b"<!doctype", b"<html")
+
+
+def _sniff(data: bytes) -> SourceFormat:
+    head = data[:16].lower()
+    if data[:4] == _PDF_MAGIC:
+        return SourceFormat.PDF
+    if data[:4] == _ZIP_MAGIC:
+        return SourceFormat.ZIP
+    if any(head.startswith(t) for t in _HTML_TAGS):
+        return SourceFormat.HTML
+    return SourceFormat.LATEX  # tar.gz / single-tex / raw-tex handled by latex parser
 
 
 def detect_source_format(data: bytes) -> tuple[SourceFormat, bytes]:
     """Detect arXiv source package format from magic bytes.
 
     Returns (format, canonical_bytes):
-    - PDF:   canonical_bytes is raw PDF bytes (gzip wrapper is stripped).
-    - LATEX: canonical_bytes is the original bytes unchanged; LatexSourceParser
-             handles its own tar.gz / gzip decompression internally.
+    - PDF:   canonical_bytes is raw PDF bytes (gzip wrapper stripped).
+    - LATEX: canonical_bytes is the original bytes unchanged.
+    - HTML / ZIP / UNKNOWN: canonical_bytes is the original bytes.
     """
     if data[:2] == _GZIP_MAGIC:
         try:
             inner = gzip.decompress(data)
-            if inner[:4] == _PDF_MAGIC:
+            fmt = _sniff(inner)
+            if fmt is SourceFormat.PDF:
                 return SourceFormat.PDF, inner
-        except Exception:
-            pass  # corrupt gzip; let LaTeX parser try
-    if data[:4] == _PDF_MAGIC:
-        return SourceFormat.PDF, data
-    return SourceFormat.LATEX, data
+            # gzip-wrapped tar / single .tex — keep original so LatexSourceParser
+            # can handle its own tar/gzip decompression
+        except Exception as exc:
+            _log.debug("gzip decompress failed for source package: %s", exc)
+    return _sniff(data), data
 
 
 __all__ = ["SourceFormat", "detect_source_format"]
