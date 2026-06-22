@@ -75,6 +75,17 @@ _NOUGAT_WORK_REL = os.path.join(".newsroom", "nougat")
 _NOUGAT_CONTAINER_WORK = "/workspace/.newsroom/nougat"
 
 
+def _nougat_timeout_seconds() -> int:
+    raw = os.environ.get("NOUGAT_TIMEOUT_SECONDS", "3600")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("NOUGAT_TIMEOUT_SECONDS must be an integer") from exc
+    if value <= 0:
+        raise ValueError("NOUGAT_TIMEOUT_SECONDS must be positive")
+    return value
+
+
 def _project_root() -> str:
     """Locate the project root by walking up to the docker-compose.yml."""
     cur = os.path.abspath(os.path.dirname(__file__))
@@ -106,6 +117,12 @@ def _run_nougat(pdf_bytes: bytes, paper_id: str) -> str:
     with open(pdf_path, "wb") as f:
         f.write(pdf_bytes)
 
+    mmd_path = os.path.join(work_dir, f"{safe_id}.mmd")
+    try:
+        os.unlink(mmd_path)
+    except FileNotFoundError:
+        pass
+
     try:
         try:
             subprocess.run(
@@ -113,9 +130,10 @@ def _run_nougat(pdf_bytes: bytes, paper_id: str) -> str:
                     "docker", "compose", "run", "--rm", "nougat",
                     f"{_NOUGAT_CONTAINER_WORK}/{pdf_name}",
                     "-o", _NOUGAT_CONTAINER_WORK,
+                    "--recompute",
                 ],
                 check=True,
-                timeout=1800,
+                timeout=_nougat_timeout_seconds(),
                 cwd=root,
             )
         except subprocess.CalledProcessError as exc:
@@ -123,7 +141,6 @@ def _run_nougat(pdf_bytes: bytes, paper_id: str) -> str:
                 f"nougat docker run failed (exit {exc.returncode})"
             ) from exc
 
-        mmd_path = os.path.join(work_dir, f"{safe_id}.mmd")
         if not os.path.exists(mmd_path):
             actual = os.listdir(work_dir)
             raise FileNotFoundError(

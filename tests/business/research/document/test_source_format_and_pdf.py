@@ -8,6 +8,7 @@ from unittest.mock import patch
 import fitz
 import pytest
 
+from business.foundation import build_stable_id
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.document.pdf_compiler import PdfDocumentParser, _parse_mmd, _run_nougat
 from business.research.document.source_format import SourceFormat, detect_source_format
@@ -106,7 +107,7 @@ def test_parse_mmd_section_levels():
 def test_parse_mmd_equations():
     _, equations, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
     assert len(equations) == 1
-    assert "eq:loss" in equations[0].equation_id
+    assert equations[0].equation_id == build_stable_id("eq", "test_id", "eq:loss")
     assert r"\mathcal{L}" in equations[0].latex
 
 
@@ -135,11 +136,15 @@ def test_run_nougat_invokes_docker_compose(monkeypatch, tmp_path):
         lambda: str(tmp_path),
     )
     commands = []
+    work = tmp_path / ".newsroom" / "nougat"
+    work.mkdir(parents=True)
+    (work / "paper.mmd").write_text("stale output", encoding="utf-8")
 
     def fake_run(cmd, **kwargs):
         commands.append(cmd)
+        assert kwargs["timeout"] == 3600
+        assert not (work / "paper.mmd").exists()
         # emulate nougat writing <id>.mmd into the host work dir
-        work = tmp_path / ".newsroom" / "nougat"
         (work / "paper.mmd").write_text(_SAMPLE_MMD, encoding="utf-8")
         return None
 
@@ -151,6 +156,7 @@ def test_run_nougat_invokes_docker_compose(monkeypatch, tmp_path):
     assert cmd[:5] == ["docker", "compose", "run", "--rm", "nougat"]
     assert cmd[5] == "/workspace/.newsroom/nougat/paper.pdf"
     assert cmd[cmd.index("-o") + 1] == "/workspace/.newsroom/nougat"
+    assert "--recompute" in cmd
 
 
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)

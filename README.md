@@ -60,6 +60,13 @@ Build the Nougat OCR image:
 docker compose build nougat
 ```
 
+The `nougat` service requests all available NVIDIA GPUs and uses a CUDA 12.9
+PyTorch runtime base. Verify Docker GPU access before conversion:
+
+```powershell
+docker compose run --rm --entrypoint python nougat -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no cuda')"
+```
+
 Check the CLI:
 
 ```powershell

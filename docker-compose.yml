@@ -10,7 +10,10 @@ services:
       NOUGAT_MODEL: ${NOUGAT_MODEL:-0.1.0-base}
       HF_HOME: /home/app/.cache/huggingface
       TORCH_HOME: /home/app/.cache/torch
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
     working_dir: /workspace
+    gpus: all
     volumes:
       - ./:/workspace
       - nougat-cache:/home/app/.cache
