@@ -9,7 +9,7 @@ import fitz
 import pytest
 
 from business.research.document.arxiv_parser import ArxivDocumentParser
-from business.research.document.pdf_compiler import PdfDocumentParser, _parse_mmd
+from business.research.document.pdf_compiler import PdfDocumentParser, _parse_mmd, _run_nougat
 from business.research.document.source_format import SourceFormat, detect_source_format
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -124,6 +124,24 @@ def test_parse_mmd_source_ref_propagated():
 
 
 # ── PdfDocumentParser (nougat mocked) ────────────────────────────────────────
+
+
+def test_run_nougat_defaults_to_base_model(monkeypatch, tmp_path):
+    monkeypatch.delenv("NOUGAT_MODEL", raising=False)
+    commands = []
+    pdf_path = tmp_path / "paper.pdf"
+    pdf_path.write_bytes(b"%PDF placeholder")
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        output_dir = cmd[cmd.index("-o") + 1]
+        with open(f"{output_dir}/paper.mmd", "w", encoding="utf-8") as out:
+            out.write(_SAMPLE_MMD)
+
+    with patch("business.research.document.pdf_compiler.subprocess.run", side_effect=fake_run):
+        assert _run_nougat(str(pdf_path)) == _SAMPLE_MMD
+
+    assert commands[0][commands[0].index("--model") + 1] == "0.1.0-base"
 
 
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)

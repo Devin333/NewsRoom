@@ -73,9 +73,9 @@ _FIGURE_CAPTION_RE = re.compile(
 def _run_nougat(pdf_path: str) -> str:
     """Run Nougat CLI on a PDF file and return the .mmd content.
 
-    Model is controlled via NOUGAT_MODEL env var (default: 0.1.0-small).
+    Model is controlled via NOUGAT_MODEL env var (default: 0.1.0-base).
     """
-    model = os.environ.get("NOUGAT_MODEL", "0.1.0-small")
+    model = os.environ.get("NOUGAT_MODEL", "0.1.0-base")
     with tempfile.TemporaryDirectory() as tmpdir:
         subprocess.run(
             ["nougat", pdf_path, "-o", tmpdir, "--model", model, "--no-skipping"],

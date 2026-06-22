@@ -45,6 +45,40 @@ python -m pip install -e ".[dev]"
 - Full local development environment.
 - Includes `pytest`, `qdrant-client`, API/runtime extras, and the tooling used by the documented smoke and test commands.
 
+```powershell
+python -m pip install -e ".[ocr]"
+```
+
+- Enables the local Nougat CLI used by the PDF document parser.
+- Prefer the Docker path below for repeatable Nougat installs, because the OCR stack pulls PyTorch and large model/runtime dependencies.
+
+## Nougat OCR Docker
+
+Build the Nougat OCR image:
+
+```powershell
+docker compose build nougat
+```
+
+Check the CLI:
+
+```powershell
+docker compose run --rm nougat --help
+```
+
+Convert a PDF into Nougat `.mmd` output:
+
+```powershell
+docker compose run --rm nougat path/to/file.pdf -o .newsroom/nougat
+```
+
+The first conversion downloads the configured Nougat model into the `nougat-cache` Docker volume. The Docker default is `0.1.0-base`; use a different model tag when needed:
+
+```powershell
+$env:NOUGAT_MODEL = "0.1.0-small"
+docker compose run --rm nougat path/to/file.pdf -o .newsroom/nougat
+```
+
 ## Dependency Troubleshooting
 
 If you see `ModuleNotFoundError` for `pydantic`, `pytest`, or `qdrant_client`:

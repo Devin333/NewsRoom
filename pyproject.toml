@@ -35,8 +35,8 @@ rerank = [
   "sentence-transformers>=3.0",
 ]
 ocr = [
-  "surya-ocr>=0.5",
-  "Pillow>=10.0",
+  # Provides the `nougat` CLI used by business.research.document.pdf_compiler.
+  "nougat-ocr==0.1.17",
 ]
 dev = [
   "fastapi>=0.110",

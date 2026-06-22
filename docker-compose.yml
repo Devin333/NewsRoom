@@ -1,0 +1,21 @@
+name: newsroom
+
+services:
+  nougat:
+    image: newsroom-nougat:local
+    build:
+      context: .
+      dockerfile: docker/nougat/Dockerfile
+    environment:
+      NOUGAT_MODEL: ${NOUGAT_MODEL:-0.1.0-base}
+      HF_HOME: /home/app/.cache/huggingface
+      TORCH_HOME: /home/app/.cache/torch
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - nougat-cache:/home/app/.cache
+    entrypoint: ["newsroom-nougat"]
+    command: ["--help"]
+
+volumes:
+  nougat-cache:
