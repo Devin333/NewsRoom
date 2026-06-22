@@ -126,22 +126,31 @@ def test_parse_mmd_source_ref_propagated():
 # ── PdfDocumentParser (nougat mocked) ────────────────────────────────────────
 
 
-def test_run_nougat_defaults_to_base_model(monkeypatch, tmp_path):
-    monkeypatch.delenv("NOUGAT_MODEL", raising=False)
+def test_run_nougat_invokes_docker_compose(monkeypatch, tmp_path):
+    """_run_nougat shells out to `docker compose run --rm nougat` with the PDF
+    staged inside the project tree and mapped to /workspace. The --model flag
+    is injected by the container entrypoint (compose), not by Python."""
+    monkeypatch.setattr(
+        "business.research.document.pdf_compiler._project_root",
+        lambda: str(tmp_path),
+    )
     commands = []
-    pdf_path = tmp_path / "paper.pdf"
-    pdf_path.write_bytes(b"%PDF placeholder")
 
     def fake_run(cmd, **kwargs):
         commands.append(cmd)
-        output_dir = cmd[cmd.index("-o") + 1]
-        with open(f"{output_dir}/paper.mmd", "w", encoding="utf-8") as out:
-            out.write(_SAMPLE_MMD)
+        # emulate nougat writing <id>.mmd into the host work dir
+        work = tmp_path / ".newsroom" / "nougat"
+        (work / "paper.mmd").write_text(_SAMPLE_MMD, encoding="utf-8")
+        return None
 
     with patch("business.research.document.pdf_compiler.subprocess.run", side_effect=fake_run):
-        assert _run_nougat(str(pdf_path)) == _SAMPLE_MMD
+        result = _run_nougat(b"%PDF placeholder", "paper")
 
-    assert commands[0][commands[0].index("--model") + 1] == "0.1.0-base"
+    assert result == _SAMPLE_MMD
+    cmd = commands[0]
+    assert cmd[:5] == ["docker", "compose", "run", "--rm", "nougat"]
+    assert cmd[5] == "/workspace/.newsroom/nougat/paper.pdf"
+    assert cmd[cmd.index("-o") + 1] == "/workspace/.newsroom/nougat"
 
 
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
