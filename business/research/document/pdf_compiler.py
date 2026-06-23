@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import io
 import json
 import os
 import re
@@ -437,6 +439,8 @@ def _extract_surya_layout_artifacts(
             if table_text:
                 metadata["table_text"] = table_text
                 metadata["table_text_source"] = "pymupdf_bbox"
+            if region["label"] in _SURYA_TABLE_LABELS:
+                metadata.update(_extract_table_structure_metadata(page, rect))
             target_paths.append(FigureImageRef(
                 image_ref=path,
                 page=page_index,
@@ -474,6 +478,149 @@ def _rect_from_list(values: Any) -> fitz.Rect | None:
     if bbox is None:
         return None
     return fitz.Rect(*bbox)
+
+
+def _extract_table_structure_metadata(
+    page: fitz.Page,
+    rect: fitz.Rect,
+) -> dict[str, Any]:
+    try:
+        columns, rows = _extract_table_structure_with_find_tables(page, rect)
+        if columns and rows:
+            return {
+                "table_columns": columns,
+                "table_rows": rows,
+                "table_structure_source": "pymupdf_find_tables",
+            }
+    except Exception:
+        pass
+
+    try:
+        columns, rows = _extract_table_structure_from_words(page, rect)
+        if columns and rows:
+            return {
+                "table_columns": columns,
+                "table_rows": rows,
+                "table_structure_source": "pymupdf_word_bbox",
+            }
+    except Exception:
+        pass
+    return {}
+
+
+def _extract_table_structure_with_find_tables(
+    page: fitz.Page,
+    rect: fitz.Rect,
+) -> tuple[list[str], list[dict[str, str]]]:
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        finder = page.find_tables(clip=rect)
+    tables = list(getattr(finder, "tables", []) or [])
+    for table in tables:
+        matrix = table.extract()
+        columns, rows = _matrix_to_table_rows(matrix)
+        if columns and rows:
+            return columns, rows
+    return [], []
+
+
+def _extract_table_structure_from_words(
+    page: fitz.Page,
+    rect: fitz.Rect,
+) -> tuple[list[str], list[dict[str, str]]]:
+    words = page.get_text("words", clip=rect)
+    if not words:
+        return [], []
+    rows = _group_table_words_by_row(words)
+    matrix = [_table_cells_from_row(row) for row in rows]
+    return _matrix_to_table_rows(matrix)
+
+
+def _group_table_words_by_row(words: list[Any]) -> list[list[Any]]:
+    sorted_words = sorted(words, key=lambda word: ((_word_y0(word) + _word_y1(word)) / 2, _word_x0(word)))
+    rows: list[list[Any]] = []
+    centers: list[float] = []
+    for word in sorted_words:
+        center = (_word_y0(word) + _word_y1(word)) / 2
+        height = max(1.0, _word_y1(word) - _word_y0(word))
+        tolerance = max(3.0, height * 0.65)
+        target_index: int | None = None
+        for index, row_center in enumerate(centers):
+            if abs(center - row_center) <= tolerance:
+                target_index = index
+                break
+        if target_index is None:
+            rows.append([word])
+            centers.append(center)
+        else:
+            rows[target_index].append(word)
+            centers[target_index] = (
+                centers[target_index] * (len(rows[target_index]) - 1) + center
+            ) / len(rows[target_index])
+    return [sorted(row, key=_word_x0) for row in rows]
+
+
+def _table_cells_from_row(row_words: list[Any]) -> list[str]:
+    if not row_words:
+        return []
+    cells: list[str] = []
+    current: list[str] = [str(row_words[0][4])]
+    last_x1 = _word_x1(row_words[0])
+    heights = [max(1.0, _word_y1(word) - _word_y0(word)) for word in row_words]
+    median_height = sorted(heights)[len(heights) // 2]
+    gap_threshold = max(6.0, median_height * 0.65)
+    for word in row_words[1:]:
+        gap = _word_x0(word) - last_x1
+        if gap > gap_threshold:
+            cells.append(_clean_plain_table_cell(" ".join(current)))
+            current = [str(word[4])]
+        else:
+            current.append(str(word[4]))
+        last_x1 = _word_x1(word)
+    cells.append(_clean_plain_table_cell(" ".join(current)))
+    return [cell for cell in cells if cell]
+
+
+def _matrix_to_table_rows(
+    matrix: list[list[Any]],
+) -> tuple[list[str], list[dict[str, str]]]:
+    cleaned = [
+        [_clean_plain_table_cell(str(cell or "")) for cell in row]
+        for row in matrix
+    ]
+    cleaned = [[cell for cell in row if cell] for row in cleaned]
+    cleaned = [row for row in cleaned if len(row) >= 2]
+    if len(cleaned) < 2:
+        return [], []
+    width = max(len(row) for row in cleaned)
+    if width < 2:
+        return [], []
+    header = cleaned[0] + [f"column_{index + 1}" for index in range(len(cleaned[0]), width)]
+    columns = _unique_column_names(header[:width])
+    rows: list[dict[str, str]] = []
+    for raw_cells in cleaned[1:]:
+        padded = raw_cells + [""] * max(0, len(columns) - len(raw_cells))
+        rows.append(dict(zip(columns, padded[:len(columns)])))
+    return columns, rows
+
+
+def _word_x0(word: Any) -> float:
+    return float(word[0])
+
+
+def _word_y0(word: Any) -> float:
+    return float(word[1])
+
+
+def _word_x1(word: Any) -> float:
+    return float(word[2])
+
+
+def _word_y1(word: Any) -> float:
+    return float(word[3])
+
+
+def _clean_plain_table_cell(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _horizontal_overlap_ratio(a: fitz.Rect, b: fitz.Rect) -> float:
@@ -687,7 +834,10 @@ def _attach_table_images(
             "page": image.page,
             "metadata": metadata,
         }
-        if (not table.columns or not table.rows) and metadata.get("table_text"):
+        if (not table.columns or not table.rows) and metadata.get("table_columns") and metadata.get("table_rows"):
+            update["columns"] = list(metadata["table_columns"])
+            update["rows"] = list(metadata["table_rows"])
+        elif (not table.columns or not table.rows) and metadata.get("table_text"):
             columns, rows = _parse_table_text_rows(str(metadata["table_text"]))
             if columns and rows:
                 metadata["table_structure_source"] = "pymupdf_bbox_text"

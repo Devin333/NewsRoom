@@ -20,6 +20,7 @@ from business.research.document.pdf_compiler import (
     _attach_figure_images,
     _bbox_to_page_rect,
     _extract_missing_pages,
+    _extract_table_structure_from_words,
     _parse_mmd,
     _parse_surya_layout_response,
     _run_nougat,
@@ -314,6 +315,32 @@ def test_surya_caption_region_attaches_to_nearest_crop():
     assert attached[0].metadata["caption_region_index"] == 2
     assert attached[0].metadata["caption_pdf_rect"] == [95.0, 210.0, 305.0, 240.0]
     assert attached[0].metadata["caption_match_strategy"] == "same_page_nearest_caption_region"
+
+
+def test_extract_table_structure_from_word_coordinates():
+    doc = fitz.open()
+    page = doc.new_page()
+    for x, y, text in [
+        (50, 70, "Name"),
+        (150, 70, "Score"),
+        (50, 90, "u-net"),
+        (150, 90, "0.92"),
+        (50, 110, "baseline"),
+        (150, 110, "0.83"),
+    ]:
+        page.insert_text((x, y), text)
+
+    columns, rows = _extract_table_structure_from_words(
+        page,
+        fitz.Rect(40, 50, 220, 130),
+    )
+    doc.close()
+
+    assert columns == ["Name", "Score"]
+    assert rows == [
+        {"Name": "u-net", "Score": "0.92"},
+        {"Name": "baseline", "Score": "0.83"},
+    ]
 
 
 def test_figure_image_alignment_prefers_caption_text_page():
@@ -649,6 +676,48 @@ def test_pdf_parser_builds_table_rows_from_bbox_text_when_mmd_has_no_tabular(
     ]
     assert doc.tables[0].metadata["table_structure_source"] == "pymupdf_bbox_text"
     assert doc.tables[0].metadata["table_text_source"] == "pymupdf_bbox"
+
+
+@patch(
+    "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
+    return_value=SuryaLayoutArtifacts(
+        figure_images=[],
+        table_images=[
+            FigureImageRef(
+                image_ref="tables/surya_table_p002_001.png",
+                page=2,
+                metadata={
+                    "image_source": "surya_table_layout",
+                    "layout_label": "table",
+                    "table_columns": ["Name", "Score"],
+                    "table_rows": [
+                        {"Name": "u-net", "Score": "0.92"},
+                        {"Name": "baseline", "Score": "0.83"},
+                    ],
+                    "table_structure_source": "pymupdf_word_bbox",
+                    "table_text": "this should not be needed",
+                },
+            )
+        ],
+        layout_ref="surya_layout.json",
+        region_count=1,
+    ),
+)
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_MMD_WITH_TABLE_CAPTION_ONLY)
+def test_pdf_parser_prefers_structured_table_metadata_over_text_fallback(
+    mock_nougat,
+    mock_surya_artifacts,
+):
+    pdf_bytes = _make_pdf(["placeholder"])
+
+    doc = PdfDocumentParser().parse("2501_table_words", pdf_bytes)
+
+    assert doc.tables[0].columns == ["Name", "Score"]
+    assert doc.tables[0].rows == [
+        {"Name": "u-net", "Score": "0.92"},
+        {"Name": "baseline", "Score": "0.83"},
+    ]
+    assert doc.tables[0].metadata["table_structure_source"] == "pymupdf_word_bbox"
 
 
 @patch(
