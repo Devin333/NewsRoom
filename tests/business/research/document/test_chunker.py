@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from business.research.document.chunk_manifest import ChunkManifestManager
 from business.research.document.chunker import PaperDocumentChunker
 from business.research.document.models import PaperChunk
 from business.research.document.section_detector import classify_section_role, is_abstract_section
@@ -279,6 +282,72 @@ def test_chunk_ids_unique():
     chunks = CHUNKER.chunk(doc, "latex")
     ids = [c.chunk_id for c in chunks]
     assert len(ids) == len(set(ids))
+
+
+def test_chunks_include_semantic_key_metadata():
+    doc = _structured_doc()
+    chunks = CHUNKER.chunk(doc, "latex")
+
+    assert chunks
+    assert all(c.metadata.get("semantic_key") for c in chunks)
+    assert all(c.metadata.get("content_hash") for c in chunks)
+    assert all(c.metadata.get("source_locator") for c in chunks)
+
+
+def test_chunk_manifest_reuses_id_when_paragraph_index_shifts(tmp_path):
+    first_doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        make_section("s1", "Introduction", "Intro."),
+        make_section(
+            "s2",
+            "Method",
+            "First method paragraph.\n\nTarget paragraph should keep its identity.",
+        ),
+        make_section("s3", "Experiments", "Experiment results."),
+    ])
+    second_doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        make_section("s1", "Introduction", "Intro."),
+        make_section(
+            "s2",
+            "Method",
+            "Inserted parser recovery paragraph.\n\n"
+            "First method paragraph.\n\n"
+            "Target paragraph should keep its identity.",
+        ),
+        make_section("s3", "Experiments", "Experiment results."),
+    ])
+    manager = ChunkManifestManager(tmp_path / "chunk_manifest.json")
+
+    first_chunks = manager.resolve_chunk_ids(
+        first_doc.paper_id,
+        CHUNKER.chunk(first_doc, "latex"),
+    )
+    manager.write(first_doc.paper_id, first_chunks)
+    first_target = _find_chunk(first_chunks, "Target paragraph should keep its identity.")
+
+    second_generated = CHUNKER.chunk(second_doc, "latex")
+    second_generated_target = _find_chunk(
+        second_generated,
+        "Target paragraph should keep its identity.",
+    )
+    assert second_generated_target.chunk_id != first_target.chunk_id
+
+    second_chunks = manager.resolve_chunk_ids(second_doc.paper_id, second_generated)
+    second_target = _find_chunk(second_chunks, "Target paragraph should keep its identity.")
+
+    assert second_target.chunk_id == first_target.chunk_id
+    assert second_target.metadata["semantic_key"] == first_target.metadata["semantic_key"]
+    manifest = json.loads((tmp_path / "chunk_manifest.json").read_text(encoding="utf-8"))
+    entries = {entry["semantic_key"]: entry for entry in manifest["chunks"]}
+    assert entries[first_target.metadata["semantic_key"]]["chunk_id"] == first_target.chunk_id
+
+
+def _find_chunk(chunks: list[PaperChunk], text: str) -> PaperChunk:
+    return next(
+        chunk for chunk in chunks
+        if not chunk.metadata.get("is_parent") and text in chunk.content
+    )
 
 
 # ── boilerplate section filtering ──────────────────────────────────────────────

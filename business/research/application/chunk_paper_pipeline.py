@@ -11,6 +11,7 @@ from framework.llm.models.request import LLMRequest
 from framework.shared.env import load_root_env
 
 from business.research.document.async_preprocessor import AsyncChunkPreprocessor
+from business.research.document.chunk_manifest import ChunkManifestManager
 from business.research.document.chunker import PaperDocumentChunker
 from business.research.ports.chunk_indexer import ChunkIndexerPort
 from business.research.ports.chunk_repository import ChunkRepositoryPort
@@ -27,6 +28,7 @@ class ChunkPipelineResult:
     by_type: dict[str, int]
     structure_detected: bool
     parse_source: str
+    chunk_manifest_path: str = ""
 
 
 _BROWSER_UA = (
@@ -83,6 +85,7 @@ class ChunkPaperPipeline:
         *,
         chunk_indexer: ChunkIndexerPort | None = None,
         chunker: PaperDocumentChunker | None = None,
+        chunk_manifest: ChunkManifestManager | None = None,
         with_propositions: bool = True,
     ) -> None:
         self._store = chunk_store
@@ -91,6 +94,7 @@ class ChunkPaperPipeline:
         self._parser = document_parser
         self._indexer = chunk_indexer or chunk_store  # PaperChunkStore satisfies both
         self._chunker = chunker or PaperDocumentChunker()
+        self._chunk_manifest = chunk_manifest or ChunkManifestManager()
         self._with_propositions = with_propositions
 
     def run(self, arxiv_id: str) -> ChunkPipelineResult:
@@ -101,6 +105,7 @@ class ChunkPaperPipeline:
         doc = self._parser.parse(paper_id, pkg.content)
         parse_source = doc.metadata.get("parse_source", "latex")
         chunks = self._chunker.chunk(doc, parse_source)
+        chunks = self._chunk_manifest.resolve_chunk_ids(paper_id, chunks)
 
         if self._with_propositions:
             try:
@@ -109,9 +114,11 @@ class ChunkPaperPipeline:
             except Exception as exc:
                 logging.getLogger(__name__).warning("proposition preprocess skipped: %s", exc)
 
+        chunks = self._chunk_manifest.resolve_chunk_ids(paper_id, chunks)
         self._store.ensure_collection()
         self._indexer.index_chunks(chunks)
         self._repo.save_chunks(chunks)
+        manifest_path = self._chunk_manifest.write(paper_id, chunks)
 
         by_type: dict[str, int] = {}
         for c in chunks:
@@ -124,6 +131,7 @@ class ChunkPaperPipeline:
             by_type=by_type,
             structure_detected=any(c.structure_detected for c in chunks),
             parse_source=parse_source,
+            chunk_manifest_path=str(manifest_path),
         )
 
 

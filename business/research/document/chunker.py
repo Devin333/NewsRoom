@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from hashlib import sha256
+from typing import Any
 
 from business.foundation import build_stable_id
 from business.research.domain.document import ResearchDocument, ResearchTable
@@ -55,6 +57,75 @@ def _stable_chunk_id(paper_id: str, *parts: str) -> str:
     return build_stable_id("chunk", paper_id, *parts)
 
 
+def _normalize_semantic_text(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", text.casefold()).strip()
+    return normalized
+
+
+def _content_hash(text: str) -> str:
+    normalized = _normalize_semantic_text(text)
+    return sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _semantic_key(
+    *,
+    paper_id: str,
+    chunk_type: ChunkType,
+    section_title: str,
+    source_locator: str,
+    semantic_text: str,
+) -> tuple[str, str, dict[str, str]]:
+    title_key = _normalize_semantic_text(section_title)
+    content_hash = _content_hash(semantic_text)
+    parts = {
+        "chunk_type": chunk_type,
+        "section_title": title_key,
+        "source_locator": source_locator,
+        "content_hash": content_hash,
+    }
+    return (
+        build_stable_id(
+            "chunk_semantic",
+            paper_id,
+            chunk_type,
+            title_key,
+            source_locator,
+            content_hash,
+        ),
+        content_hash,
+        parts,
+    )
+
+
+def _chunk_metadata(
+    *,
+    paper_id: str,
+    chunk_type: ChunkType,
+    section_title: str,
+    source_ref: str,
+    semantic_text: str,
+    source_locator: str | None = None,
+    base: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    metadata = dict(base or {})
+    locator = str(source_locator or metadata.get("source_locator") or source_ref)
+    semantic_key, content_hash, parts = _semantic_key(
+        paper_id=paper_id,
+        chunk_type=chunk_type,
+        section_title=section_title,
+        source_locator=locator,
+        semantic_text=semantic_text,
+    )
+    metadata.update({
+        "source_ref": source_ref,
+        "source_locator": locator,
+        "semantic_key": semantic_key,
+        "semantic_key_parts": parts,
+        "content_hash": content_hash,
+    })
+    return metadata
+
+
 class PaperDocumentChunker:
     """
     Converts a ResearchDocument into a three-level PaperChunk hierarchy:
@@ -99,7 +170,14 @@ class PaperDocumentChunker:
             section_index=0,
             propositions_generated=False,
             content=abstract.text,
-            metadata={"source_ref": abstract.source_ref},
+            metadata=_chunk_metadata(
+                paper_id=doc.paper_id,
+                chunk_type="abstract",
+                section_title=abstract.title,
+                source_ref=abstract.source_ref,
+                source_locator=abstract.metadata.get("source_locator"),
+                semantic_text=abstract.text,
+            ),
         ))
 
     def _add_section_chunks(self, doc, parse_source, structure_detected, sections, elements, out):
@@ -124,7 +202,15 @@ class PaperDocumentChunker:
                 section_index=idx,
                 references=cross_refs,
                 content=section.text,
-                metadata={"is_parent": True, "source_ref": section.source_ref, "level": section.level},
+                metadata=_chunk_metadata(
+                    paper_id=doc.paper_id,
+                    chunk_type="paragraph",
+                    section_title=section.title,
+                    source_ref=section.source_ref,
+                    source_locator=section.metadata.get("source_locator"),
+                    semantic_text=section.text,
+                    base={"is_parent": True, "level": section.level},
+                ),
             ))
 
             # paragraph-level child chunks
@@ -169,16 +255,24 @@ class PaperDocumentChunker:
                     references=cross_refs,
                     propositions_generated=False if need_propositions else True,
                     content=para_text,
-                    metadata={
-                        "is_parent": False,
-                        "para_index": para_idx,
-                        "source_ref": section.source_ref,
-                        "needs_proposition_decomposition": need_propositions,
-                    },
+                    metadata=_chunk_metadata(
+                        paper_id=doc.paper_id,
+                        chunk_type="paragraph",
+                        section_title=section.title,
+                        source_ref=section.source_ref,
+                        source_locator=section.metadata.get("source_locator"),
+                        semantic_text=raw_para,
+                        base={
+                            "is_parent": False,
+                            "para_index": para_idx,
+                            "needs_proposition_decomposition": need_propositions,
+                        },
+                    ),
                 ))
 
     def _add_figure_chunks(self, doc, parse_source, structure_detected, out):
         for fig in doc.figures:
+            figure_text = f"{fig.figure_id}\n{fig.caption}"
             out.append(PaperChunk(
                 chunk_id=_stable_chunk_id(doc.paper_id, "fig", fig.figure_id),
                 paper_id=doc.paper_id,
@@ -188,14 +282,23 @@ class PaperDocumentChunker:
                 has_figure=True,
                 figure_id=fig.figure_id,
                 content=f"[{fig.figure_id}: {fig.caption}]",
-                metadata={
-                    "source_ref": fig.source_ref,
-                    "image_ref": fig.image_ref or "",
-                },
+                metadata=_chunk_metadata(
+                    paper_id=doc.paper_id,
+                    chunk_type="figure",
+                    section_title="figure",
+                    source_ref=fig.source_ref,
+                    source_locator=fig.metadata.get("source_locator"),
+                    semantic_text=figure_text,
+                    base={
+                        **fig.metadata,
+                        "image_ref": fig.image_ref or "",
+                    },
+                ),
             ))
 
     def _add_table_chunks(self, doc, parse_source, structure_detected, out):
         for tbl in doc.tables:
+            table_text = _table_to_text(tbl)
             out.append(PaperChunk(
                 chunk_id=_stable_chunk_id(doc.paper_id, "tbl", tbl.table_id),
                 paper_id=doc.paper_id,
@@ -203,8 +306,16 @@ class PaperDocumentChunker:
                 structure_detected=structure_detected,
                 chunk_type="table",
                 has_table=True,
-                content=_table_to_text(tbl),
-                metadata={"source_ref": tbl.source_ref, "table_id": tbl.table_id},
+                content=table_text,
+                metadata=_chunk_metadata(
+                    paper_id=doc.paper_id,
+                    chunk_type="table",
+                    section_title="table",
+                    source_ref=tbl.source_ref,
+                    source_locator=tbl.metadata.get("source_locator"),
+                    semantic_text=table_text,
+                    base={**tbl.metadata, "table_id": tbl.table_id},
+                ),
             ))
 
     def _fallback_fixed_token_chunks(
@@ -214,6 +325,11 @@ class PaperDocumentChunker:
         full_text = "\n\n".join(s.text for s in doc.sections)
         words = full_text.split()
         chunks: list[PaperChunk] = []
+        source_ref = (
+            doc.lineage.source_refs[0]
+            if doc.lineage.source_refs
+            else f"paper://{doc.paper_id}"
+        )
         for chunk_idx in range(0, len(words), token_limit):
             content = " ".join(words[chunk_idx : chunk_idx + token_limit])
             chunks.append(PaperChunk(
@@ -223,7 +339,14 @@ class PaperDocumentChunker:
                 structure_detected=False,
                 chunk_type="paragraph",
                 content=content,
-                metadata={"fallback": True, "chunk_index": chunk_idx // token_limit},
+                metadata=_chunk_metadata(
+                    paper_id=doc.paper_id,
+                    chunk_type="paragraph",
+                    section_title="fallback",
+                    source_ref=source_ref,
+                    semantic_text=content,
+                    base={"fallback": True, "chunk_index": chunk_idx // token_limit},
+                ),
             ))
         return chunks
 
