@@ -86,6 +86,12 @@ baseline & 0.83 \\
 Table 1: Segmentation results.
 """
 
+_MMD_WITH_TABLE_CAPTION_ONLY = r"""
+# Results
+
+Table 1: Segmentation results.
+"""
+
 _MMD_WITH_CAPTION_BOUNDARY = r"""
 # Intro
 
@@ -181,6 +187,8 @@ def test_parse_mmd_display_equations():
     assert equations[0].equation_id == build_stable_id("eq", "math_id", "7")
     assert r"E=mc^2" in equations[0].latex
     assert equations[0].metadata["parse_source"] == "nougat_mmd"
+    assert equations[0].metadata["equation_number"] == "7"
+    assert equations[0].metadata["equation_label"] == "7"
 
 
 def test_parse_mmd_tables():
@@ -338,6 +346,50 @@ def test_figure_image_alignment_prefers_caption_text_page():
     assert attached[0].page == 2
     assert attached[0].image_ref == "figures/right.png"
     assert attached[0].metadata["alignment_strategy"] == "caption_text_page_match"
+
+
+def test_figure_image_alignment_uses_caption_token_overlap():
+    mmd = """
+Figure 3: HeLa cells on glass recorded with DIC (differential interference contrast)
+microscopy. (**a**) raw image. (**b**) overlay with ground truth segmentation.
+"""
+    figures = [_parse_mmd(mmd, "fuzzy_id", "arxiv://fuzzy_id/pdf")[2][0]]
+    refs = [
+        FigureImageRef(image_ref="figures/wrong.png", page=1, metadata={}),
+        FigureImageRef(image_ref="figures/right.png", page=5, metadata={}),
+    ]
+    page_texts = [
+        PageTextEvidence(
+            page=1,
+            native_text="Figure 2: Another caption.",
+            selected_text="Figure 2: Another caption.",
+            selected_source="pymupdf_text",
+            native_chars=26,
+            native_words=4,
+        ),
+        PageTextEvidence(
+            page=5,
+            native_text=(
+                "Figure 3 HeLa cells on glass recorded with DIC differential "
+                "interference contrast microscopy raw image overlay with "
+                "ground truth segmentation"
+            ),
+            selected_text=(
+                "Figure 3 HeLa cells on glass recorded with DIC differential "
+                "interference contrast microscopy raw image overlay with "
+                "ground truth segmentation"
+            ),
+            selected_source="pymupdf_text",
+            native_chars=132,
+            native_words=19,
+        ),
+    ]
+
+    attached = _attach_figure_images(figures, refs, page_texts)
+
+    assert attached[0].page == 5
+    assert attached[0].image_ref == "figures/right.png"
+    assert attached[0].metadata["caption_text_match_score"] > 0.65
 
 
 def test_extract_missing_pages_from_nougat_markers():
@@ -526,6 +578,45 @@ def test_pdf_parser_attaches_surya_table_images(
     "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
     return_value=SuryaLayoutArtifacts(
         figure_images=[],
+        table_images=[
+            FigureImageRef(
+                image_ref="tables/surya_table_p002_001.png",
+                page=2,
+                metadata={
+                    "image_source": "surya_table_layout",
+                    "bbox": [100, 200, 900, 400],
+                    "layout_label": "table",
+                    "table_text": "Name  Score\nu-net  0.92\nbaseline  0.83",
+                    "table_text_source": "pymupdf_bbox",
+                },
+            )
+        ],
+        layout_ref="surya_layout.json",
+        region_count=1,
+    ),
+)
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_MMD_WITH_TABLE_CAPTION_ONLY)
+def test_pdf_parser_builds_table_rows_from_bbox_text_when_mmd_has_no_tabular(
+    mock_nougat,
+    mock_surya_artifacts,
+):
+    pdf_bytes = _make_pdf(["placeholder"])
+
+    doc = PdfDocumentParser().parse("2501_table_text", pdf_bytes)
+
+    assert doc.tables[0].columns == ["Name", "Score"]
+    assert doc.tables[0].rows == [
+        {"Name": "u-net", "Score": "0.92"},
+        {"Name": "baseline", "Score": "0.83"},
+    ]
+    assert doc.tables[0].metadata["table_structure_source"] == "pymupdf_bbox_text"
+    assert doc.tables[0].metadata["table_text_source"] == "pymupdf_bbox"
+
+
+@patch(
+    "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
+    return_value=SuryaLayoutArtifacts(
+        figure_images=[],
         table_images=[],
         layout_ref="surya_layout.json",
         region_count=0,
@@ -540,19 +631,52 @@ def test_pdf_parser_ocr_fallback_for_missing_nougat_page(
     monkeypatch,
 ):
     monkeypatch.setenv("SURYA_INFERENCE_URL", "http://surya.test/v1")
-    pdf_bytes = _make_pdf(["This page has native text.", ""])
+    pdf_bytes = _make_pdf(["This page has native text. " * 10, ""])
 
     doc = PdfDocumentParser().parse("2501_missing_page", pdf_bytes)
 
     mock_ocr.assert_called_once()
     assert doc.metadata["nougat_missing_pages"] == [2]
     assert doc.metadata["ocr_used"] is True
+    assert doc.metadata["ocr_attempted_pages"] == [2]
     assert doc.metadata["ocr_pages"] == [2]
     assert doc.metadata["text_fallback_pages"] == [2]
     assert any(section.title == "OCR Page 2" for section in doc.sections)
     fallback = next(section for section in doc.sections if section.title == "OCR Page 2")
     assert fallback.text == "Recovered OCR text from page two."
     assert fallback.metadata["fallback_reason"] == "nougat_missing_page"
+
+
+@patch(
+    "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
+    return_value=SuryaLayoutArtifacts(
+        figure_images=[],
+        table_images=[],
+        layout_ref="surya_layout.json",
+        region_count=0,
+    ),
+)
+@patch("business.research.document.pdf_compiler._ocr_page", return_value="OCR text from a sparse native page.")
+@patch("business.research.document.pdf_compiler._run_nougat", return_value="# Intro\n\nParsed content.")
+def test_pdf_parser_ocr_fallback_for_low_native_text_page(
+    mock_nougat,
+    mock_ocr,
+    mock_surya_artifacts,
+    monkeypatch,
+):
+    monkeypatch.setenv("SURYA_INFERENCE_URL", "http://surya.test/v1")
+    pdf_bytes = _make_pdf(["tiny"])
+
+    doc = PdfDocumentParser().parse("2501_low_text", pdf_bytes)
+
+    mock_ocr.assert_called_once()
+    assert doc.metadata["low_native_text_pages"] == [1]
+    assert doc.metadata["ocr_attempted_pages"] == [1]
+    assert doc.metadata["ocr_pages"] == [1]
+    assert doc.metadata["text_fallback_pages"] == [1]
+    fallback = next(section for section in doc.sections if section.title == "OCR Page 1")
+    assert fallback.text == "OCR text from a sparse native page."
+    assert fallback.metadata["fallback_reason"] == "low_native_text"
 
 
 @patch(

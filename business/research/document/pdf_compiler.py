@@ -49,6 +49,7 @@ class PageTextEvidence:
     selected_source: str
     native_chars: int
     native_words: int
+    ocr_attempted: bool = False
     ocr_chars: int = 0
     ocr_error: str | None = None
 
@@ -406,11 +407,16 @@ def _extract_surya_layout_artifacts(
             if rect.is_empty or rect.width < 4 or rect.height < 4:
                 continue
             crop = page.get_pixmap(clip=rect, dpi=dpi, alpha=False)
+            table_text = ""
             if region["label"] in _SURYA_TABLE_LABELS:
                 target_paths = table_paths
                 output_dir = tables_dir
                 filename = f"surya_table_p{page_index:03d}_{len(target_paths) + 1:03d}.png"
                 image_source = "surya_table_layout"
+                try:
+                    table_text = page.get_text("text", clip=rect).strip()
+                except Exception:
+                    table_text = ""
             else:
                 target_paths = figure_paths
                 output_dir = figs
@@ -418,19 +424,23 @@ def _extract_surya_layout_artifacts(
                 image_source = "surya_layout"
             path = os.path.join(output_dir, filename)
             crop.save(path)
+            metadata = {
+                "image_source": image_source,
+                "bbox": region["bbox"],
+                "bbox_coordinate_system": enriched_region["bbox_coordinate_system"],
+                "layout_label": region["label"],
+                "layout_region_index": region["index"],
+                "pdf_rect": enriched_region["pdf_rect"],
+                "surya_caption": region["caption"],
+                "confidence": region["confidence"],
+            }
+            if table_text:
+                metadata["table_text"] = table_text
+                metadata["table_text_source"] = "pymupdf_bbox"
             target_paths.append(FigureImageRef(
                 image_ref=path,
                 page=page_index,
-                metadata={
-                    "image_source": image_source,
-                    "bbox": region["bbox"],
-                    "bbox_coordinate_system": enriched_region["bbox_coordinate_system"],
-                    "layout_label": region["label"],
-                    "layout_region_index": region["index"],
-                    "pdf_rect": enriched_region["pdf_rect"],
-                    "surya_caption": region["caption"],
-                    "confidence": region["confidence"],
-                },
+                metadata=metadata,
             ))
     figure_paths = _with_nearest_caption_region(figure_paths, all_regions)
     table_paths = _with_nearest_caption_region(table_paths, all_regions)
@@ -537,8 +547,11 @@ def _normalize_search_text(value: str) -> str:
 
 
 def _caption_query(caption: str, *, max_words: int = 14) -> str:
-    words = _SEARCH_WORD_RE.findall(caption.lower())
-    return " ".join(words[:max_words])
+    return " ".join(_caption_query_words(caption, max_words=max_words))
+
+
+def _caption_query_words(caption: str, *, max_words: int = 18) -> list[str]:
+    return _SEARCH_WORD_RE.findall(caption.lower())[:max_words]
 
 
 def _find_caption_page(
@@ -548,7 +561,8 @@ def _find_caption_page(
     caption: str,
     page_texts: list[PageTextEvidence],
 ) -> tuple[int | None, float]:
-    query = _caption_query(caption)
+    query_words = _caption_query_words(caption)
+    query = " ".join(query_words)
     if not query:
         return None, 0.0
     label = f"{kind.lower()} {number}" if number is not None else ""
@@ -557,11 +571,21 @@ def _find_caption_page(
         haystack = _normalize_search_text(
             evidence.selected_text or evidence.native_text
         )
+        haystack_words = set(_SEARCH_WORD_RE.findall(haystack))
+        query_unique = set(query_words)
+        overlap = (
+            len(query_unique & haystack_words) / len(query_unique)
+            if query_unique else 0.0
+        )
         score = 0.0
         if label and f"{label} {query}" in haystack:
             score = 1.0
         elif query in haystack:
             score = 0.85
+        elif label and label in haystack and overlap >= 0.35:
+            score = round(0.65 + (0.25 * overlap), 4)
+        elif overlap >= 0.8:
+            score = round(0.55 + (0.25 * overlap), 4)
         elif label and label in haystack:
             score = 0.55
         if score and (best is None or score > best[1]):
@@ -659,10 +683,17 @@ def _attach_table_images(
         if expected_page is not None:
             metadata["caption_text_page"] = expected_page
             metadata["caption_text_match_score"] = caption_score
-        out.append(table.model_copy(update={
+        update: dict[str, Any] = {
             "page": image.page,
             "metadata": metadata,
-        }))
+        }
+        if (not table.columns or not table.rows) and metadata.get("table_text"):
+            columns, rows = _parse_table_text_rows(str(metadata["table_text"]))
+            if columns and rows:
+                metadata["table_structure_source"] = "pymupdf_bbox_text"
+                update["columns"] = columns
+                update["rows"] = rows
+        out.append(table.model_copy(update=update))
     return out
 
 
@@ -854,11 +885,19 @@ def _parse_mmd(
         label_m = _LABEL_RE.search(m.group(1))
         tag_m = _TAG_RE.search(m.group(1))
         eq_id = label_m.group(1) if label_m else tag_m.group(1) if tag_m else f"eq_{eq_idx}"
+        metadata = {
+            "parse_source": "nougat_mmd",
+            "equation_label": eq_id,
+        }
+        if label_m:
+            metadata["latex_label"] = label_m.group(1)
+        if tag_m:
+            metadata["equation_number"] = tag_m.group(1)
         equations.append(ResearchEquation(
             equation_id=build_stable_id("eq", paper_id, eq_id),
             latex=m.group(1).strip(),
             source_ref=source_ref,
-            metadata={"parse_source": "nougat_mmd"},
+            metadata=metadata,
         ))
         eq_idx += 1
         return m.group(1)  # keep verbatim
@@ -987,6 +1026,37 @@ def _parse_tabular_rows(table_body: str) -> tuple[list[str], list[dict[str, str]
     return columns, rows
 
 
+def _parse_table_text_rows(table_text: str) -> tuple[list[str], list[dict[str, str]]]:
+    lines = [line.strip() for line in table_text.splitlines() if line.strip()]
+    matrix = [_split_table_text_line(line) for line in lines]
+    matrix = [cells for cells in matrix if len(cells) >= 2]
+    if len(matrix) < 2:
+        return [], []
+
+    width = max(len(cells) for cells in matrix)
+    if width < 2:
+        return [], []
+
+    columns = _unique_column_names(
+        matrix[0] + [f"column_{i + 1}" for i in range(len(matrix[0]), width)]
+    )
+    rows: list[dict[str, str]] = []
+    for raw_cells in matrix[1:]:
+        padded = raw_cells + [""] * max(0, len(columns) - len(raw_cells))
+        rows.append(dict(zip(columns, padded[:len(columns)])))
+    return columns, rows
+
+
+def _split_table_text_line(line: str) -> list[str]:
+    if "|" in line:
+        cells = [part.strip() for part in line.split("|")]
+    elif "\t" in line:
+        cells = [part.strip() for part in line.split("\t")]
+    else:
+        cells = [part.strip() for part in re.split(r"\s{2,}", line)]
+    return [re.sub(r"\s+", " ", cell) for cell in cells if cell]
+
+
 def _clean_table_cell(value: str) -> str:
     text = _MULTICOLUMN_RE.sub(r"\1", value)
     text = re.sub(r"\\hline", " ", text)
@@ -1010,11 +1080,7 @@ def _extract_missing_pages(mmd: str) -> set[int]:
     return {int(match.group(1)) for match in _MISSING_PAGE_RE.finditer(mmd)}
 
 
-def _extract_page_text_evidence(
-    pdf_doc: fitz.Document,
-    *,
-    pages_requiring_fallback: set[int],
-) -> list[PageTextEvidence]:
+def _extract_page_text_evidence(pdf_doc: fitz.Document) -> list[PageTextEvidence]:
     min_chars = _pdf_text_min_chars()
     ocr_dpi = _pdf_ocr_dpi()
     base_url = _surya_base_url()
@@ -1027,15 +1093,13 @@ def _extract_page_text_evidence(
         native_words = len(native_text.split())
         selected_text = native_text
         selected_source = "pymupdf_text" if native_text else "none"
+        ocr_attempted = False
         ocr_chars = 0
         ocr_error: str | None = None
 
-        should_ocr = (
-            page_index in pages_requiring_fallback
-            and native_chars < min_chars
-            and bool(base_url)
-        )
+        should_ocr = native_chars < min_chars and bool(base_url)
         if should_ocr:
+            ocr_attempted = True
             try:
                 pix = page.get_pixmap(dpi=ocr_dpi, alpha=False)
                 image_b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
@@ -1054,6 +1118,7 @@ def _extract_page_text_evidence(
             selected_source=selected_source,
             native_chars=native_chars,
             native_words=native_words,
+            ocr_attempted=ocr_attempted,
             ocr_chars=ocr_chars,
             ocr_error=ocr_error,
         ))
@@ -1071,6 +1136,7 @@ def _page_text_evidence_summary(
             "native_words": evidence.native_words,
             "selected_source": evidence.selected_source,
             "selected_chars": len(evidence.selected_text),
+            "ocr_attempted": evidence.ocr_attempted,
             "ocr_chars": evidence.ocr_chars,
             **({"ocr_error": evidence.ocr_error} if evidence.ocr_error else {}),
         }
@@ -1087,6 +1153,10 @@ def _append_text_fallback_sections(
     missing_pages: set[int],
 ) -> tuple[list[ResearchSection], list[int]]:
     fallback_pages = set(missing_pages)
+    fallback_pages.update(
+        evidence.page for evidence in page_texts
+        if evidence.selected_source == "surya_ocr"
+    )
     if not any(section.text.strip() for section in sections):
         fallback_pages.update(evidence.page for evidence in page_texts)
 
@@ -1102,7 +1172,12 @@ def _append_text_fallback_sections(
             continue
         source_name = evidence.selected_source
         title = "OCR Page" if source_name == "surya_ocr" else "PDF Text Page"
-        reason = "nougat_missing_page" if page_number in missing_pages else "nougat_empty_output"
+        if page_number in missing_pages:
+            reason = "nougat_missing_page"
+        elif source_name == "surya_ocr":
+            reason = "low_native_text"
+        else:
+            reason = "nougat_empty_output"
         out.append(ResearchSection(
             section_id=build_stable_id("sec", paper_id, f"fallback_page_{page_number}"),
             title=f"{title} {page_number}",
@@ -1145,13 +1220,7 @@ def _parse_pdf(
     image_refs: list[FigureImageRef] = []
     image_source = "none"
     try:
-        pages_requiring_fallback = set(missing_pages)
-        if not any(section.text.strip() for section in sections):
-            pages_requiring_fallback.update(range(1, pdf_doc.page_count + 1))
-        page_texts = _extract_page_text_evidence(
-            pdf_doc,
-            pages_requiring_fallback=pages_requiring_fallback,
-        )
+        page_texts = _extract_page_text_evidence(pdf_doc)
         sections, text_fallback_pages = _append_text_fallback_sections(
             sections,
             paper_id=paper_id,
@@ -1180,6 +1249,14 @@ def _parse_pdf(
         evidence.page for evidence in page_texts
         if evidence.selected_source == "surya_ocr"
     ]
+    ocr_attempted_pages = [
+        evidence.page for evidence in page_texts
+        if evidence.ocr_attempted
+    ]
+    low_native_text_pages = [
+        evidence.page for evidence in page_texts
+        if evidence.native_chars < _pdf_text_min_chars()
+    ]
     ocr_errors = [
         {"page": evidence.page, "error": evidence.ocr_error}
         for evidence in page_texts
@@ -1194,7 +1271,9 @@ def _parse_pdf(
         "nougat_missing_pages": sorted(missing_pages),
         "text_fallback_pages": text_fallback_pages,
         "ocr_used": bool(ocr_pages),
+        "ocr_attempted_pages": ocr_attempted_pages,
         "ocr_pages": ocr_pages,
+        "low_native_text_pages": low_native_text_pages,
         "page_text_evidence": _page_text_evidence_summary(page_texts),
     }
     if ocr_errors:
