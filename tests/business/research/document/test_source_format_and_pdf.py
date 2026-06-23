@@ -9,12 +9,14 @@ import fitz
 import pytest
 
 from business.foundation import build_stable_id
+from business.research.domain.document import ResearchEquation
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.document.pdf_compiler import (
     FigureImageRef,
     PageTextEvidence,
     PdfDocumentParser,
     SuryaLayoutArtifacts,
+    _attach_equation_positions,
     _attach_figure_images,
     _bbox_to_page_rect,
     _extract_missing_pages,
@@ -394,6 +396,42 @@ microscopy. (**a**) raw image. (**b**) overlay with ground truth segmentation.
 
 def test_extract_missing_pages_from_nougat_markers():
     assert _extract_missing_pages(_MMD_WITH_MISSING_PAGE) == {2}
+
+
+def test_equation_position_falls_back_to_page_text_overlap():
+    equation = ResearchEquation(
+        equation_id="eq_lrate",
+        latex=(
+            r"\[\small\mathit{lrate}=d_{\text{model}}^{-0.5}"
+            r"\cdot\min(\mathit{step\_num}^{-0.5},"
+            r"\mathit{step\_num}\cdot warmup\_steps^{-1.5}) \tag{3}\]"
+        ),
+        source_ref="arxiv://paper/pdf",
+        metadata={"parse_source": "nougat_mmd", "equation_number": "3"},
+    )
+    page_texts = [
+        PageTextEvidence(
+            page=8,
+            native_text=(
+                "The learning rate schedule uses lrate d model step num "
+                "warmup steps during optimization."
+            ),
+            selected_text=(
+                "The learning rate schedule uses lrate d model step num "
+                "warmup steps during optimization."
+            ),
+            selected_source="pymupdf_text",
+            native_chars=90,
+            native_words=14,
+        )
+    ]
+
+    attached = _attach_equation_positions([equation], [], page_texts)
+
+    assert attached[0].page == 8
+    assert attached[0].metadata["position_source"] == "pymupdf_text_search"
+    assert attached[0].metadata["position_match_strategy"] == "equation_token_overlap"
+    assert attached[0].metadata["position_match_score"] > 0.6
 
 
 def test_parse_mmd_source_ref_propagated():

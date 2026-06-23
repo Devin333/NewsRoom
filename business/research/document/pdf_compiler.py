@@ -700,18 +700,33 @@ def _attach_table_images(
 def _attach_equation_positions(
     equations: list[ResearchEquation],
     regions: list[dict[str, Any]],
+    page_texts: list[PageTextEvidence] | None = None,
 ) -> list[ResearchEquation]:
     equation_regions = [
         region for region in regions
         if region.get("label") in _SURYA_EQUATION_LABELS
     ]
-    if not equation_regions:
-        return equations
 
     out: list[ResearchEquation] = []
     for index, equation in enumerate(equations):
         if index >= len(equation_regions):
-            out.append(equation)
+            fallback_page, fallback_score = _find_equation_page(
+                equation,
+                page_texts or [],
+            )
+            if fallback_page is None:
+                out.append(equation)
+                continue
+            metadata = dict(equation.metadata)
+            metadata.update({
+                "position_source": "pymupdf_text_search",
+                "position_match_strategy": "equation_token_overlap",
+                "position_match_score": fallback_score,
+            })
+            out.append(equation.model_copy(update={
+                "page": fallback_page,
+                "metadata": metadata,
+            }))
             continue
         region = equation_regions[index]
         metadata = dict(equation.metadata)
@@ -729,6 +744,42 @@ def _attach_equation_positions(
             "metadata": metadata,
         }))
     return out
+
+
+def _find_equation_page(
+    equation: ResearchEquation,
+    page_texts: list[PageTextEvidence],
+) -> tuple[int | None, float]:
+    query_words = _equation_query_words(equation.latex)
+    if len(query_words) < 3:
+        return None, 0.0
+    query_unique = set(query_words)
+    best: tuple[int, float] | None = None
+    for evidence in page_texts:
+        haystack_words = set(_SEARCH_WORD_RE.findall(
+            (evidence.selected_text or evidence.native_text).lower()
+        ))
+        overlap = len(query_unique & haystack_words) / len(query_unique)
+        if overlap < 0.45:
+            continue
+        score = round(0.55 + (0.35 * overlap), 4)
+        if best is None or score > best[1]:
+            best = (evidence.page, score)
+    if best is None:
+        return None, 0.0
+    return best
+
+
+def _equation_query_words(latex: str, *, max_words: int = 18) -> list[str]:
+    words = _SEARCH_WORD_RE.findall(latex.lower())
+    result: list[str] = []
+    for word in words:
+        if len(word) < 2 or word in _EQUATION_QUERY_STOP_WORDS:
+            continue
+        result.append(word)
+        if len(result) >= max_words:
+            break
+    return result
 
 
 _SECTION_RE = re.compile(r"^(#{1,3})\s+(.+)", re.MULTILINE)
@@ -756,6 +807,26 @@ _TABULAR_RE = re.compile(
 _MULTICOLUMN_RE = re.compile(r"\\multicolumn\{[^}]+\}\{[^}]+\}\{([^}]*)\}")
 _MISSING_PAGE_RE = re.compile(r"\[MISSING_PAGE_FAIL:(\d+)\]")
 _SEARCH_WORD_RE = re.compile(r"[a-z0-9]+")
+_EQUATION_QUERY_STOP_WORDS = {
+    "align",
+    "begin",
+    "cdot",
+    "cos",
+    "end",
+    "equation",
+    "frac",
+    "gather",
+    "left",
+    "mathit",
+    "mathrm",
+    "right",
+    "sin",
+    "small",
+    "sqrt",
+    "tag",
+    "text",
+    "where",
+}
 
 # Directory (relative to project root) where PDFs are staged for the nougat
 # container and where .mmd output lands. The compose file mounts the project
@@ -1244,7 +1315,7 @@ def _parse_pdf(
 
     figures = _attach_figure_images(figures, image_refs, page_texts)
     tables = _attach_table_images(tables, surya_artifacts.table_images, page_texts)
-    equations = _attach_equation_positions(equations, surya_artifacts.regions)
+    equations = _attach_equation_positions(equations, surya_artifacts.regions, page_texts)
     ocr_pages = [
         evidence.page for evidence in page_texts
         if evidence.selected_source == "surya_ocr"
