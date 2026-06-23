@@ -10,7 +10,13 @@ import pytest
 
 from business.foundation import build_stable_id
 from business.research.document.arxiv_parser import ArxivDocumentParser
-from business.research.document.pdf_compiler import PdfDocumentParser, _parse_mmd, _run_nougat
+from business.research.document.pdf_compiler import (
+    FigureImageRef,
+    PdfDocumentParser,
+    _parse_mmd,
+    _parse_surya_layout_response,
+    _run_nougat,
+)
 from business.research.document.source_format import SourceFormat, detect_source_format
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -54,6 +60,11 @@ We use a transformer-based approach.
 
 Figure 1: Architecture of our proposed model.
 """
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_surya(monkeypatch):
+    monkeypatch.delenv("SURYA_INFERENCE_URL", raising=False)
 
 
 # ── detect_source_format ──────────────────────────────────────────────────────
@@ -115,6 +126,43 @@ def test_parse_mmd_figures():
     _, _, figures = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
     assert len(figures) == 1
     assert "Architecture" in figures[0].caption
+    assert figures[0].metadata["figure_number"] == 1
+
+
+def test_parse_surya_layout_response_extracts_regions():
+    response = """Here is the layout JSON:
+    ```json
+    {"figures":[
+      {"label":"figure","bbox":[0.1,0.2,0.8,0.7],"caption":"Architecture","confidence":0.9},
+      {"label":"table","bbox":[0.1,0.75,0.8,0.9]},
+      {"label":"paragraph","bbox":[0.0,0.0,1.0,0.1]}
+    ]}
+    ```
+    Done."""
+    regions = _parse_surya_layout_response(response, page_number=3)
+
+    assert regions == [{
+        "page": 3,
+        "index": 0,
+        "label": "figure",
+        "bbox": [0.1, 0.2, 0.8, 0.7],
+        "caption": "Architecture",
+        "confidence": 0.9,
+    }]
+
+
+def test_parse_surya_layout_response_accepts_surya_bbox_strings():
+    response = '[{"label":"Diagram","bbox":"314 88 680 497","count":1670}]'
+    regions = _parse_surya_layout_response(response, page_number=3)
+
+    assert regions == [{
+        "page": 3,
+        "index": 0,
+        "label": "diagram",
+        "bbox": [314.0, 88.0, 680.0, 497.0],
+        "caption": "",
+        "confidence": None,
+    }]
 
 
 def test_parse_mmd_source_ref_propagated():
@@ -188,6 +236,66 @@ def test_pdf_parser_extracts_figures(mock_nougat):
     doc = PdfDocumentParser().parse("2501_fig", pdf_bytes)
     assert len(doc.figures) == 1
     assert "Architecture" in doc.figures[0].caption
+
+
+@patch("business.research.document.pdf_compiler._extract_pdf_images")
+@patch(
+    "business.research.document.pdf_compiler._extract_surya_figure_images",
+    return_value=[
+        FigureImageRef(
+            image_ref="figures/surya_p001_fig001.png",
+            page=1,
+            metadata={"image_source": "surya_layout", "bbox": [0.1, 0.2, 0.8, 0.7]},
+        )
+    ],
+)
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_pdf_parser_prefers_surya_figure_images(
+    mock_nougat,
+    mock_surya_images,
+    mock_pdf_images,
+):
+    pdf_bytes = _make_pdf(["placeholder"])
+    doc = PdfDocumentParser().parse("2501_surya_fig", pdf_bytes)
+
+    mock_pdf_images.assert_not_called()
+    assert doc.metadata["figure_image_source"] == "surya_layout"
+    assert doc.metadata["figure_images"] == 1
+    assert doc.figures[0].image_ref == "figures/surya_p001_fig001.png"
+    assert doc.figures[0].page == 1
+    assert doc.figures[0].metadata["image_source"] == "surya_layout"
+    assert doc.figures[0].metadata["figure_number"] == 1
+
+
+@patch(
+    "business.research.document.pdf_compiler._extract_pdf_images",
+    return_value=[
+        FigureImageRef(
+            image_ref="figures/img1.png",
+            page=1,
+            metadata={"image_source": "pdf_embedded", "xref": 12},
+        )
+    ],
+)
+@patch(
+    "business.research.document.pdf_compiler._extract_surya_figure_images",
+    side_effect=RuntimeError("surya unavailable"),
+)
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_pdf_parser_falls_back_when_surya_fails(
+    mock_nougat,
+    mock_surya_images,
+    mock_pdf_images,
+):
+    pdf_bytes = _make_pdf(["placeholder"])
+    doc = PdfDocumentParser().parse("2501_surya_fallback", pdf_bytes)
+
+    mock_pdf_images.assert_called_once()
+    assert doc.metadata["figure_image_source"] == "pdf_embedded"
+    assert doc.metadata["figure_images"] == 1
+    assert doc.metadata["surya_layout_error"] == "RuntimeError: surya unavailable"
+    assert doc.figures[0].image_ref == "figures/img1.png"
+    assert doc.figures[0].metadata["image_source"] == "pdf_embedded"
 
 
 # ── ArxivDocumentParser dispatcher ───────────────────────────────────────────

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
 import re
 import subprocess
+import urllib.request
+from dataclasses import dataclass
 from hashlib import sha256
+from typing import Any
 
 import fitz  # PyMuPDF
 
@@ -19,21 +24,31 @@ from business.research.domain.document import (
 # ── figures ───────────────────────────────────────────────────────────────────
 
 
+@dataclass(frozen=True)
+class FigureImageRef:
+    image_ref: str
+    page: int | None = None
+    metadata: dict[str, Any] | None = None
+
+
+_SURYA_FIGURE_LABELS = {"figure", "fig", "chart", "diagram", "image", "picture"}
+
+
 def _figures_dir(paper_id: str) -> str:
     root = os.environ.get("NEWS_ARTIFACT_ROOT", ".newsroom/runs")
     return os.path.join(os.path.dirname(root), "papers", paper_id, "figures")
 
 
-def _extract_pdf_images(pdf_doc: fitz.Document, paper_id: str) -> list[str]:
+def _extract_pdf_images(pdf_doc: fitz.Document, paper_id: str) -> list[FigureImageRef]:
     """Extract images from PDF pages, save to figures dir.
 
     Returns paths in appearance order (page order, deduplicated by xref).
     Skips images smaller than 5 KB.
     """
     figs = _figures_dir(paper_id)
-    paths: list[str] = []
+    paths: list[FigureImageRef] = []
     seen_xrefs: set[int] = set()
-    for page in pdf_doc:
+    for page_index, page in enumerate(pdf_doc, start=1):
         for img_info in page.get_images(full=True):
             xref = img_info[0]
             if xref in seen_xrefs:
@@ -49,13 +64,272 @@ def _extract_pdf_images(pdf_doc: fitz.Document, paper_id: str) -> list[str]:
                 path = os.path.join(figs, f"img{len(paths) + 1}.{ext}")
                 with open(path, "wb") as out:
                     out.write(img_bytes)
-                paths.append(path)
+                paths.append(FigureImageRef(
+                    image_ref=path,
+                    page=page_index,
+                    metadata={"image_source": "pdf_embedded", "xref": xref},
+                ))
             except Exception:
                 continue
     return paths
 
 
 # ── nougat (docker compose) ───────────────────────────────────────────────────
+
+def _surya_base_url() -> str:
+    return os.environ.get("SURYA_INFERENCE_URL", "").strip()
+
+
+def _surya_model() -> str:
+    return os.environ.get("SURYA_INFERENCE_MODEL", "datalab-to/surya-ocr-2")
+
+
+def _surya_layout_dpi() -> int:
+    raw = os.environ.get("SURYA_LAYOUT_DPI", "150")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("SURYA_LAYOUT_DPI must be an integer") from exc
+    if value <= 0:
+        raise ValueError("SURYA_LAYOUT_DPI must be positive")
+    return value
+
+
+def _ocr_page(base_url: str, model: str, image_b64: str) -> str:
+    """Run a Surya/vLLM vision request for compatibility with diag_ocr.py."""
+    response = _call_surya_vision(
+        base_url=base_url,
+        model=model,
+        image_b64=image_b64,
+        prompt="Read this page and return the OCR text only.",
+    )
+    return response.strip()
+
+
+def _call_surya_vision(
+    *,
+    base_url: str,
+    model: str,
+    image_b64: str,
+    prompt: str,
+) -> str:
+    payload: dict[str, Any] = {
+        "model": model,
+        "temperature": 0,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_b64}"
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    api_key = os.environ.get("SURYA_INFERENCE_API_KEY", "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/chat/completions",
+        data=data,
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    return str(body["choices"][0]["message"]["content"])
+
+
+def _run_surya_layout(page_png: bytes, page_number: int) -> list[dict[str, Any]]:
+    base_url = _surya_base_url()
+    if not base_url:
+        return []
+    prompt = (
+        "Detect the visible figure, chart, image, and diagram regions on this "
+        "research paper page. Return only JSON with this schema: "
+        '{"figures":[{"label":"figure","bbox":[x0,y0,x1,y1],'
+        '"caption":"","confidence":0.0}]}. Use normalized bbox '
+        "coordinates in reading order, with values between 0 and 1. "
+        "Do not include tables, normal paragraphs, headers, footers, or page numbers."
+    )
+    image_b64 = base64.b64encode(page_png).decode("utf-8")
+    content = _call_surya_vision(
+        base_url=base_url,
+        model=_surya_model(),
+        image_b64=image_b64,
+        prompt=prompt,
+    )
+    return _parse_surya_layout_response(content, page_number=page_number)
+
+
+def _parse_surya_layout_response(
+    content: str,
+    *,
+    page_number: int,
+) -> list[dict[str, Any]]:
+    payload_text = content.strip()
+    if payload_text.startswith("```"):
+        payload_text = re.sub(r"^```(?:json)?\s*", "", payload_text)
+        payload_text = re.sub(r"\s*```$", "", payload_text)
+    payload_text = _extract_json_payload_text(payload_text)
+    try:
+        payload = json.loads(payload_text)
+    except json.JSONDecodeError:
+        return []
+
+    raw_regions = payload.get("figures") if isinstance(payload, dict) else payload
+    if not isinstance(raw_regions, list):
+        return []
+
+    regions: list[dict[str, Any]] = []
+    for index, raw in enumerate(raw_regions):
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label") or raw.get("type") or "figure").lower()
+        if label not in _SURYA_FIGURE_LABELS:
+            continue
+        bbox = _coerce_bbox(raw.get("bbox") or raw.get("box"))
+        if bbox is None:
+            continue
+        regions.append({
+            "page": page_number,
+            "index": index,
+            "label": label,
+            "bbox": bbox,
+            "caption": str(raw.get("caption") or "").strip(),
+            "confidence": raw.get("confidence"),
+        })
+    return regions
+
+
+def _extract_json_payload_text(content: str) -> str:
+    decoder = json.JSONDecoder()
+    start_candidates = sorted(
+        idx for idx in (content.find("{"), content.find("[")) if idx >= 0
+    )
+    for start in start_candidates:
+        try:
+            _, end = decoder.raw_decode(content[start:])
+        except json.JSONDecodeError:
+            continue
+        return content[start:start + end]
+    return content
+
+
+def _valid_bbox(value: Any) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return False
+    try:
+        x0, y0, x1, y1 = (float(v) for v in value)
+    except (TypeError, ValueError):
+        return False
+    return x1 > x0 and y1 > y0
+
+
+def _coerce_bbox(value: Any) -> list[float] | None:
+    if isinstance(value, str):
+        value = [part for part in re.split(r"[\s,]+", value.strip()) if part]
+    elif isinstance(value, dict):
+        for keys in (("x0", "y0", "x1", "y1"), ("left", "top", "right", "bottom")):
+            if all(key in value for key in keys):
+                value = [value[key] for key in keys]
+                break
+    if not _valid_bbox(value):
+        return None
+    return [float(v) for v in value]
+
+
+def _bbox_to_page_rect(
+    bbox: list[float],
+    *,
+    page_rect: fitz.Rect,
+    pix_width: int,
+    pix_height: int,
+) -> fitz.Rect:
+    x0, y0, x1, y1 = bbox
+    if max(abs(v) for v in bbox) <= 1.5:
+        return fitz.Rect(
+            page_rect.x0 + x0 * page_rect.width,
+            page_rect.y0 + y0 * page_rect.height,
+            page_rect.x0 + x1 * page_rect.width,
+            page_rect.y0 + y1 * page_rect.height,
+        ) & page_rect
+    return fitz.Rect(
+        page_rect.x0 + (x0 / pix_width) * page_rect.width,
+        page_rect.y0 + (y0 / pix_height) * page_rect.height,
+        page_rect.x0 + (x1 / pix_width) * page_rect.width,
+        page_rect.y0 + (y1 / pix_height) * page_rect.height,
+    ) & page_rect
+
+
+def _extract_surya_figure_images(
+    pdf_doc: fitz.Document,
+    paper_id: str,
+) -> list[FigureImageRef]:
+    if not _surya_base_url():
+        return []
+    figs = _figures_dir(paper_id)
+    os.makedirs(figs, exist_ok=True)
+    dpi = _surya_layout_dpi()
+    paths: list[FigureImageRef] = []
+    for page_index, page in enumerate(pdf_doc, start=1):
+        page_pix = page.get_pixmap(dpi=dpi, alpha=False)
+        regions = _run_surya_layout(page_pix.tobytes("png"), page_index)
+        for region in regions:
+            rect = _bbox_to_page_rect(
+                region["bbox"],
+                page_rect=page.rect,
+                pix_width=page_pix.width,
+                pix_height=page_pix.height,
+            )
+            if rect.is_empty or rect.width < 4 or rect.height < 4:
+                continue
+            crop = page.get_pixmap(clip=rect, dpi=dpi, alpha=False)
+            path = os.path.join(
+                figs,
+                f"surya_p{page_index:03d}_fig{len(paths) + 1:03d}.png",
+            )
+            crop.save(path)
+            paths.append(FigureImageRef(
+                image_ref=path,
+                page=page_index,
+                metadata={
+                    "image_source": "surya_layout",
+                    "bbox": region["bbox"],
+                    "layout_label": region["label"],
+                    "surya_caption": region["caption"],
+                    "confidence": region["confidence"],
+                },
+            ))
+    return paths
+
+
+def _attach_figure_images(
+    figures: list[ResearchFigure],
+    image_refs: list[FigureImageRef],
+) -> list[ResearchFigure]:
+    out: list[ResearchFigure] = []
+    for index, fig in enumerate(figures):
+        if index >= len(image_refs):
+            out.append(fig)
+            continue
+        image = image_refs[index]
+        metadata = dict(fig.metadata)
+        metadata.update(image.metadata or {})
+        out.append(fig.model_copy(update={
+            "image_ref": image.image_ref,
+            "page": image.page,
+            "metadata": metadata,
+        }))
+    return out
+
 
 _SECTION_RE = re.compile(r"^(#{1,3})\s+(.+)", re.MULTILINE)
 _EQUATION_ENV_RE = re.compile(
@@ -64,7 +338,7 @@ _EQUATION_ENV_RE = re.compile(
 )
 _LABEL_RE = re.compile(r"\\label\{([^}]+)\}")
 _FIGURE_CAPTION_RE = re.compile(
-    r"^(?:Figure|Fig\.?)\s*\d+[.:]\s*(.+?)(?=\n(?:Figure|Fig\.?)\s*\d+[.:]|\Z)",
+    r"^(?:Figure|Fig\.?)\s*(\d+)[.:]\s*(.+?)(?=\n(?:Figure|Fig\.?)\s*\d+[.:]|\Z)",
     re.MULTILINE | re.IGNORECASE | re.DOTALL,
 )
 
@@ -181,12 +455,14 @@ def _parse_mmd(
     # ── figures: extract captions ───────────────────────────────────────────
     figures: list[ResearchFigure] = []
     for i, m in enumerate(_FIGURE_CAPTION_RE.finditer(text)):
-        caption = m.group(1).strip().replace("\n", " ")
+        figure_number = int(m.group(1))
+        caption = m.group(2).strip().replace("\n", " ")
         if caption:
             figures.append(ResearchFigure(
                 figure_id=build_stable_id("fig", paper_id, f"fig_{i}"),
                 caption=caption[:500],
                 source_ref=source_ref,
+                metadata={"figure_number": figure_number},
             ))
 
     # ── sections: split by headings ─────────────────────────────────────────
@@ -235,14 +511,29 @@ def _parse_pdf(
     sections, equations, figures = _parse_mmd(mmd, paper_id, source_ref)
 
     pdf_doc: fitz.Document = fitz.open(stream=pdf_bytes, filetype="pdf")
-    image_paths = _extract_pdf_images(pdf_doc, paper_id)
-    pdf_doc.close()
+    surya_error: str | None = None
+    try:
+        try:
+            image_refs = _extract_surya_figure_images(pdf_doc, paper_id)
+        except Exception as exc:
+            image_refs = []
+            surya_error = f"{type(exc).__name__}: {exc}"
+        image_source = "surya_layout" if image_refs else "pdf_embedded"
+        if not image_refs:
+            image_refs = _extract_pdf_images(pdf_doc, paper_id)
+            if not image_refs:
+                image_source = "none"
+    finally:
+        pdf_doc.close()
 
-    figures = [
-        fig.model_copy(update={"image_ref": image_paths[i]})
-        if i < len(image_paths) else fig
-        for i, fig in enumerate(figures)
-    ]
+    figures = _attach_figure_images(figures, image_refs)
+    metadata = {
+        "parse_source": "nougat",
+        "figure_image_source": image_source,
+        "figure_images": len(image_refs),
+    }
+    if surya_error:
+        metadata["surya_layout_error"] = surya_error
 
     return ResearchDocument(
         paper_id=paper_id,
@@ -251,7 +542,7 @@ def _parse_pdf(
         equations=equations,
         figures=figures,
         lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
-        metadata={"parse_source": "nougat"},
+        metadata=metadata,
     )
 
 
