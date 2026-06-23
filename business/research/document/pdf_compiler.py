@@ -87,6 +87,11 @@ def _surya_layout_path(paper_id: str) -> str:
     return os.path.join(_paper_artifact_dir(paper_id), "surya_layout.json")
 
 
+def _pdf_parse_artifacts_enabled() -> bool:
+    value = os.environ.get("NEWSROOM_PDF_WRITE_ARTIFACTS", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def _extract_pdf_images(pdf_doc: fitz.Document, paper_id: str) -> list[FigureImageRef]:
     """Extract images from PDF pages, save to figures dir.
 
@@ -1706,6 +1711,137 @@ def _count_metadata_values(items: list[Any], key: str) -> dict[str, int]:
     return counts
 
 
+def _write_pdf_parse_artifacts(document: ResearchDocument, mmd: str) -> None:
+    if not _pdf_parse_artifacts_enabled():
+        return
+
+    artifact_dir = _paper_artifact_dir(document.paper_id)
+    os.makedirs(artifact_dir, exist_ok=True)
+    artifact_paths = {
+        "research_document": os.path.join(artifact_dir, "research_document.json"),
+        "sections_markdown": os.path.join(artifact_dir, "sections.md"),
+        "parse_summary": os.path.join(artifact_dir, "parse_summary.txt"),
+        "nougat_mmd": os.path.join(artifact_dir, "nougat.mmd"),
+        "figures_json": os.path.join(artifact_dir, "figures.json"),
+        "tables_json": os.path.join(artifact_dir, "tables.json"),
+        "equations_json": os.path.join(artifact_dir, "equations.json"),
+    }
+    document.metadata["parse_artifact_dir"] = artifact_dir
+    document.metadata["parse_artifacts"] = artifact_paths
+
+    _write_json_file(
+        artifact_paths["research_document"],
+        document.model_dump(mode="json", exclude_none=True),
+    )
+    _write_json_file(
+        artifact_paths["figures_json"],
+        [figure.model_dump(mode="json", exclude_none=True) for figure in document.figures],
+    )
+    _write_json_file(
+        artifact_paths["tables_json"],
+        [table.model_dump(mode="json", exclude_none=True) for table in document.tables],
+    )
+    _write_json_file(
+        artifact_paths["equations_json"],
+        [equation.model_dump(mode="json", exclude_none=True) for equation in document.equations],
+    )
+    _write_text_file(artifact_paths["sections_markdown"], _sections_markdown(document))
+    _write_text_file(artifact_paths["parse_summary"], _parse_summary_text(document))
+    _write_text_file(artifact_paths["nougat_mmd"], mmd)
+
+
+def _write_json_file(path: str, payload: Any) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
+def _write_text_file(path: str, text: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+        if text and not text.endswith("\n"):
+            f.write("\n")
+
+
+def _sections_markdown(document: ResearchDocument) -> str:
+    lines = [f"# {document.paper_id}", ""]
+    if not document.sections:
+        lines.append("_No sections extracted._")
+        return "\n".join(lines)
+
+    for section in document.sections:
+        heading_level = min(max(section.level + 1, 2), 6)
+        lines.append(f"{'#' * heading_level} {section.title}")
+        lines.append("")
+        lines.append(f"- section_id: {section.section_id}")
+        lines.append(f"- source_ref: {section.source_ref}")
+        page_range = _format_page_range(section.page_start, section.page_end)
+        if page_range:
+            lines.append(f"- pages: {page_range}")
+        source_locator = section.metadata.get("source_locator")
+        if source_locator:
+            lines.append(f"- source_locator: {source_locator}")
+        lines.append("")
+        if section.text:
+            lines.append(section.text.strip())
+            lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _parse_summary_text(document: ResearchDocument) -> str:
+    quality = document.metadata.get("parse_quality") or {}
+    lines = [
+        "PDF Parse Summary",
+        f"paper_id: {document.paper_id}",
+        f"source_hash: {document.source_hash}",
+        f"parse_source: {document.metadata.get('parse_source', 'unknown')}",
+        "",
+        _quality_summary_line("sections", quality.get("sections", {})),
+        _quality_summary_line("figures", quality.get("figures", {})),
+        _quality_summary_line("tables", quality.get("tables", {})),
+        _quality_summary_line("equations", quality.get("equations", {})),
+    ]
+    fallbacks = quality.get("fallbacks")
+    if isinstance(fallbacks, dict):
+        lines.extend(["", "fallbacks:"])
+        for key in sorted(fallbacks):
+            lines.append(f"- {key}: {fallbacks[key]}")
+    artifacts = document.metadata.get("parse_artifacts")
+    if isinstance(artifacts, dict):
+        lines.extend(["", "artifacts:"])
+        for key in sorted(artifacts):
+            lines.append(f"- {key}: {artifacts[key]}")
+    return "\n".join(lines)
+
+
+def _quality_summary_line(label: str, payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return f"{label}: unavailable"
+    total = payload.get("total", 0)
+    details = [
+        f"{key}={value}"
+        for key, value in payload.items()
+        if key != "total" and not isinstance(value, dict)
+    ]
+    nested = [
+        f"{key}={json.dumps(value, ensure_ascii=False, sort_keys=True)}"
+        for key, value in payload.items()
+        if isinstance(value, dict) and value
+    ]
+    suffix = ", ".join(details + nested)
+    return f"{label}: total={total}" + (f", {suffix}" if suffix else "")
+
+
+def _format_page_range(page_start: int | None, page_end: int | None) -> str | None:
+    if page_start is None and page_end is None:
+        return None
+    if page_start is None:
+        return str(page_end)
+    if page_end is None or page_end == page_start:
+        return str(page_start)
+    return f"{page_start}-{page_end}"
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
@@ -1803,7 +1939,7 @@ def _parse_pdf(
     if surya_error:
         metadata["surya_layout_error"] = surya_error
 
-    return ResearchDocument(
+    document = ResearchDocument(
         paper_id=paper_id,
         source_hash=source_hash,
         sections=sections,
@@ -1813,6 +1949,8 @@ def _parse_pdf(
         lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
         metadata=metadata,
     )
+    _write_pdf_parse_artifacts(document, mmd)
+    return document
 
 
 class PdfDocumentParser:

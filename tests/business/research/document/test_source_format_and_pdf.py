@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import json
 import tarfile
 from unittest.mock import patch
 
@@ -139,6 +140,7 @@ Distinct method phrase appears on the second page.
 @pytest.fixture(autouse=True)
 def _disable_live_surya(monkeypatch):
     monkeypatch.delenv("SURYA_INFERENCE_URL", raising=False)
+    monkeypatch.setenv("NEWSROOM_PDF_WRITE_ARTIFACTS", "0")
 
 
 # ── detect_source_format ──────────────────────────────────────────────────────
@@ -945,6 +947,38 @@ def test_pdf_parser_attaches_surya_equation_positions(
 
 
 # ── ArxivDocumentParser dispatcher ───────────────────────────────────────────
+
+
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
+def test_pdf_parser_writes_parse_artifact_bundle(mock_nougat, monkeypatch, tmp_path):
+    artifact_root = tmp_path / ".newsroom" / "runs"
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(artifact_root))
+    monkeypatch.setenv("NEWSROOM_PDF_WRITE_ARTIFACTS", "1")
+    pdf_bytes = _make_pdf(["Introduction\n\nDeep learning has advanced many fields."])
+
+    doc = PdfDocumentParser().parse("2501_artifacts", pdf_bytes)
+
+    paper_dir = tmp_path / ".newsroom" / "papers" / "2501_artifacts"
+    expected_files = {
+        "research_document.json",
+        "sections.md",
+        "parse_summary.txt",
+        "nougat.mmd",
+        "figures.json",
+        "tables.json",
+        "equations.json",
+    }
+    assert {path.name for path in paper_dir.iterdir()} >= expected_files
+
+    payload = json.loads((paper_dir / "research_document.json").read_text(encoding="utf-8"))
+    assert payload["paper_id"] == "2501_artifacts"
+    assert payload["metadata"]["parse_quality"]["sections"]["total"] == len(doc.sections)
+    assert payload["metadata"]["parse_artifacts"]["research_document"].endswith(
+        "research_document.json"
+    )
+    assert "Introduction" in (paper_dir / "sections.md").read_text(encoding="utf-8")
+    assert "figures: total=1" in (paper_dir / "parse_summary.txt").read_text(encoding="utf-8")
+    assert (paper_dir / "nougat.mmd").read_text(encoding="utf-8").strip() == _SAMPLE_MMD.strip()
 
 
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
