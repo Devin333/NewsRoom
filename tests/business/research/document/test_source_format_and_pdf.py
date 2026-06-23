@@ -383,6 +383,40 @@ def test_figure_image_alignment_prefers_caption_text_page():
     assert attached[0].metadata["alignment_strategy"] == "caption_text_page_match"
 
 
+def test_figure_image_alignment_prefers_caption_region_number():
+    figures = [
+        _parse_mmd(_SAMPLE_MMD, "number_id", "arxiv://number_id/pdf")[2][0]
+    ]
+    refs = [
+        FigureImageRef(
+            image_ref="figures/figure2.png",
+            page=2,
+            metadata={"caption_text": "Figure 2: Different architecture."},
+        ),
+        FigureImageRef(
+            image_ref="figures/figure1.png",
+            page=2,
+            metadata={"caption_text": "Figure 1: Architecture of our proposed model."},
+        ),
+    ]
+    page_texts = [
+        PageTextEvidence(
+            page=2,
+            native_text="Figure 1: Architecture of our proposed model.",
+            selected_text="Figure 1: Architecture of our proposed model.",
+            selected_source="pymupdf_text",
+            native_chars=46,
+            native_words=7,
+        )
+    ]
+
+    attached = _attach_figure_images(figures, refs, page_texts)
+
+    assert attached[0].page == 2
+    assert attached[0].image_ref == "figures/figure1.png"
+    assert attached[0].metadata["alignment_strategy"] == "caption_region_number_match"
+
+
 def test_figure_image_alignment_uses_caption_token_overlap():
     mmd = """
 Figure 3: HeLa cells on glass recorded with DIC (differential interference contrast)

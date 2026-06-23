@@ -794,7 +794,30 @@ def _select_image_ref(
     image_refs: list[FigureImageRef],
     used_indices: set[int],
     expected_page: int | None,
+    *,
+    kind: str,
+    expected_number: Any,
 ) -> tuple[int | None, FigureImageRef | None, str, float]:
+    expected_number = _coerce_int(expected_number)
+    if expected_number is not None:
+        numbered_candidates: list[tuple[int, FigureImageRef]] = []
+        for index, image in enumerate(image_refs):
+            if index in used_indices:
+                continue
+            metadata = image.metadata or {}
+            caption_number = _caption_region_number(
+                kind,
+                str(metadata.get("caption_text") or metadata.get("surya_caption") or ""),
+            )
+            if caption_number == expected_number:
+                numbered_candidates.append((index, image))
+        for index, image in numbered_candidates:
+            if expected_page is None or image.page == expected_page:
+                return index, image, "caption_region_number_match", 0.98
+        if numbered_candidates:
+            index, image = numbered_candidates[0]
+            return index, image, "caption_region_number_match", 0.92
+
     if expected_page is not None:
         for index, image in enumerate(image_refs):
             if index not in used_indices and image.page == expected_page:
@@ -803,6 +826,28 @@ def _select_image_ref(
         if index not in used_indices:
             return index, image, "layout_order", 0.5
     return None, None, "unmatched", 0.0
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _caption_region_number(kind: str, caption_text: str) -> int | None:
+    if not caption_text.strip():
+        return None
+    if kind.lower() == "figure":
+        pattern = r"\b(?:figure|fig\.?)\s*(\d+)\b"
+    elif kind.lower() == "table":
+        pattern = r"\btable\s*(\d+)\b"
+    else:
+        return None
+    match = re.search(pattern, caption_text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
 
 
 def _attach_figure_images(
@@ -823,6 +868,8 @@ def _attach_figure_images(
             image_refs,
             used_indices,
             expected_page,
+            kind="figure",
+            expected_number=fig.metadata.get("figure_number"),
         )
         if image is None or index is None:
             out.append(fig)
@@ -874,6 +921,8 @@ def _attach_table_images(
             image_refs,
             used_indices,
             expected_page,
+            kind="table",
+            expected_number=table.metadata.get("table_number"),
         )
         if image is None or index is None:
             out.append(table)
