@@ -307,12 +307,18 @@ def test_surya_caption_region_attaches_to_nearest_crop():
             "label": "caption",
             "bbox": [0.1, 0.3, 0.5, 0.4],
             "pdf_rect": [95.0, 210.0, 305.0, 240.0],
+            "layout_region_ref": "surya_layout.json#page=1&region=2",
+            "text": "Figure 1: Architecture.",
+            "text_source": "pymupdf_bbox",
         }
     ]
 
     attached = _with_nearest_caption_region(refs, regions)
 
     assert attached[0].metadata["caption_region_index"] == 2
+    assert attached[0].metadata["caption_region_ref"] == "surya_layout.json#page=1&region=2"
+    assert attached[0].metadata["caption_text"] == "Figure 1: Architecture."
+    assert attached[0].metadata["caption_text_source"] == "pymupdf_bbox"
     assert attached[0].metadata["caption_pdf_rect"] == [95.0, 210.0, 305.0, 240.0]
     assert attached[0].metadata["caption_match_strategy"] == "same_page_nearest_caption_region"
 
@@ -459,6 +465,7 @@ def test_equation_position_falls_back_to_page_text_overlap():
     assert attached[0].metadata["position_source"] == "pymupdf_text_search"
     assert attached[0].metadata["position_match_strategy"] == "equation_token_overlap"
     assert attached[0].metadata["position_match_score"] > 0.6
+    assert attached[0].metadata["source_locator"] == "arxiv://paper/pdf#page=8"
 
 
 def test_parse_mmd_source_ref_propagated():
@@ -569,6 +576,7 @@ def test_pdf_parser_prefers_surya_figure_images(
     assert doc.figures[0].page == 1
     assert doc.figures[0].metadata["image_source"] == "surya_layout"
     assert doc.figures[0].metadata["figure_number"] == 1
+    assert doc.figures[0].metadata["source_locator"] == "arxiv://2501_surya_fig/pdf#page=1"
 
 
 @patch(
@@ -637,6 +645,9 @@ def test_pdf_parser_attaches_surya_table_images(
     assert doc.tables[0].metadata["image_source"] == "surya_table_layout"
     assert doc.tables[0].metadata["bbox"] == [100, 200, 900, 400]
     assert doc.tables[0].metadata["layout_label"] == "table"
+    assert doc.tables[0].metadata["source_locator"] == (
+        "arxiv://2501_table/pdf#page=2&pdf_rect=61.200,158.400,550.800,316.800"
+    )
 
 
 @patch(
@@ -819,6 +830,9 @@ def test_pdf_parser_attaches_surya_equation_positions(
     assert doc.equations[0].metadata["position_source"] == "surya_equation_layout"
     assert doc.equations[0].metadata["bbox"] == [327.0, 497.0, 787.0, 537.0]
     assert doc.equations[0].metadata["pdf_rect"] == [192.1, 385.6, 489.6, 433.3]
+    assert doc.equations[0].metadata["source_locator"] == (
+        "arxiv://2501_equation_layout/pdf#page=4&pdf_rect=192.100,385.600,489.600,433.300"
+    )
 
 
 # ── ArxivDocumentParser dispatcher ───────────────────────────────────────────

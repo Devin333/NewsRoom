@@ -403,22 +403,27 @@ def _extract_surya_layout_artifacts(
             enriched_region = dict(region)
             enriched_region["bbox_coordinate_system"] = _bbox_coordinate_system(region["bbox"])
             enriched_region["pdf_rect"] = _rect_to_list(rect)
+            enriched_region["layout_region_ref"] = _layout_region_ref(
+                layout_path,
+                page=page_index,
+                region_index=region["index"],
+            )
+            region_text = _extract_region_text(page, rect)
+            if region_text:
+                enriched_region["text"] = region_text
+                enriched_region["text_source"] = "pymupdf_bbox"
             all_regions.append(enriched_region)
             if region["label"] not in (_SURYA_FIGURE_LABELS | _SURYA_TABLE_LABELS):
                 continue
             if rect.is_empty or rect.width < 4 or rect.height < 4:
                 continue
             crop = page.get_pixmap(clip=rect, dpi=dpi, alpha=False)
-            table_text = ""
+            table_text = region_text if region["label"] in _SURYA_TABLE_LABELS else ""
             if region["label"] in _SURYA_TABLE_LABELS:
                 target_paths = table_paths
                 output_dir = tables_dir
                 filename = f"surya_table_p{page_index:03d}_{len(target_paths) + 1:03d}.png"
                 image_source = "surya_table_layout"
-                try:
-                    table_text = page.get_text("text", clip=rect).strip()
-                except Exception:
-                    table_text = ""
             else:
                 target_paths = figure_paths
                 output_dir = figs
@@ -432,6 +437,7 @@ def _extract_surya_layout_artifacts(
                 "bbox_coordinate_system": enriched_region["bbox_coordinate_system"],
                 "layout_label": region["label"],
                 "layout_region_index": region["index"],
+                "layout_region_ref": enriched_region["layout_region_ref"],
                 "pdf_rect": enriched_region["pdf_rect"],
                 "surya_caption": region["caption"],
                 "confidence": region["confidence"],
@@ -478,6 +484,41 @@ def _rect_from_list(values: Any) -> fitz.Rect | None:
     if bbox is None:
         return None
     return fitz.Rect(*bbox)
+
+
+def _extract_region_text(page: fitz.Page, rect: fitz.Rect) -> str:
+    try:
+        return page.get_text("text", clip=rect).strip()
+    except Exception:
+        return ""
+
+
+def _layout_region_ref(
+    layout_path: str,
+    *,
+    page: int,
+    region_index: int,
+) -> str:
+    return f"{layout_path}#page={page}&region={region_index}"
+
+
+def _source_locator(
+    source_ref: str,
+    *,
+    page: int | None,
+    pdf_rect: Any = None,
+) -> str:
+    if page is None:
+        return source_ref
+    locator = f"{source_ref}#page={page}"
+    rect = _coerce_bbox(pdf_rect)
+    if rect is not None:
+        locator = f"{locator}&pdf_rect={_format_rect_fragment(rect)}"
+    return locator
+
+
+def _format_rect_fragment(rect: list[float]) -> str:
+    return ",".join(f"{value:.3f}" for value in rect)
 
 
 def _extract_table_structure_metadata(
@@ -674,13 +715,20 @@ def _with_nearest_caption_region(
 
         if best is not None:
             score, caption = best
-            metadata.update({
+            caption_metadata = {
                 "caption_bbox": caption.get("bbox"),
                 "caption_pdf_rect": caption.get("pdf_rect"),
                 "caption_region_index": caption.get("index"),
                 "caption_match_score": score,
                 "caption_match_strategy": "same_page_nearest_caption_region",
-            })
+            }
+            if caption.get("layout_region_ref"):
+                caption_metadata["caption_region_ref"] = caption["layout_region_ref"]
+            if caption.get("text"):
+                caption_metadata["caption_text"] = caption["text"]
+            if caption.get("text_source"):
+                caption_metadata["caption_text_source"] = caption["text_source"]
+            metadata.update(caption_metadata)
         out.append(FigureImageRef(
             image_ref=image.image_ref,
             page=image.page,
@@ -786,6 +834,17 @@ def _attach_figure_images(
             "alignment_strategy": strategy,
             "alignment_score": alignment_score,
         })
+        metadata["source_locator"] = _source_locator(
+            fig.source_ref,
+            page=image.page,
+            pdf_rect=metadata.get("pdf_rect"),
+        )
+        if metadata.get("caption_pdf_rect"):
+            metadata["caption_source_locator"] = _source_locator(
+                fig.source_ref,
+                page=image.page,
+                pdf_rect=metadata.get("caption_pdf_rect"),
+            )
         if expected_page is not None:
             metadata["caption_text_page"] = expected_page
             metadata["caption_text_match_score"] = caption_score
@@ -827,6 +886,17 @@ def _attach_table_images(
             "alignment_strategy": strategy,
             "alignment_score": alignment_score,
         })
+        metadata["source_locator"] = _source_locator(
+            table.source_ref,
+            page=image.page,
+            pdf_rect=metadata.get("pdf_rect"),
+        )
+        if metadata.get("caption_pdf_rect"):
+            metadata["caption_source_locator"] = _source_locator(
+                table.source_ref,
+                page=image.page,
+                pdf_rect=metadata.get("caption_pdf_rect"),
+            )
         if expected_page is not None:
             metadata["caption_text_page"] = expected_page
             metadata["caption_text_match_score"] = caption_score
@@ -872,6 +942,10 @@ def _attach_equation_positions(
                 "position_source": "pymupdf_text_search",
                 "position_match_strategy": "equation_token_overlap",
                 "position_match_score": fallback_score,
+                "source_locator": _source_locator(
+                    equation.source_ref,
+                    page=fallback_page,
+                ),
             })
             out.append(equation.model_copy(update={
                 "page": fallback_page,
@@ -888,7 +962,14 @@ def _attach_equation_positions(
             "bbox_coordinate_system": region.get("bbox_coordinate_system"),
             "pdf_rect": region.get("pdf_rect"),
             "layout_region_index": region.get("index"),
+            "source_locator": _source_locator(
+                equation.source_ref,
+                page=region.get("page"),
+                pdf_rect=region.get("pdf_rect"),
+            ),
         })
+        if region.get("layout_region_ref"):
+            metadata["layout_region_ref"] = region["layout_region_ref"]
         out.append(equation.model_copy(update={
             "page": region.get("page"),
             "metadata": metadata,
