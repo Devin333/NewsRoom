@@ -32,6 +32,8 @@ class FigureImageRef:
 
 
 _SURYA_FIGURE_LABELS = {"figure", "fig", "chart", "diagram", "image", "picture"}
+_SURYA_BBOX_SCALE = 1000.0
+_FIGURE_CROP_PADDING_POINTS = 8.0
 
 
 def _figures_dir(paper_id: str) -> str:
@@ -255,17 +257,35 @@ def _bbox_to_page_rect(
 ) -> fitz.Rect:
     x0, y0, x1, y1 = bbox
     if max(abs(v) for v in bbox) <= 1.5:
-        return fitz.Rect(
+        rect = fitz.Rect(
             page_rect.x0 + x0 * page_rect.width,
             page_rect.y0 + y0 * page_rect.height,
             page_rect.x0 + x1 * page_rect.width,
             page_rect.y0 + y1 * page_rect.height,
-        ) & page_rect
+        )
+        return _pad_rect(rect, page_rect, _FIGURE_CROP_PADDING_POINTS)
+    if max(abs(v) for v in bbox) <= _SURYA_BBOX_SCALE:
+        rect = fitz.Rect(
+            page_rect.x0 + (x0 / _SURYA_BBOX_SCALE) * page_rect.width,
+            page_rect.y0 + (y0 / _SURYA_BBOX_SCALE) * page_rect.height,
+            page_rect.x0 + (x1 / _SURYA_BBOX_SCALE) * page_rect.width,
+            page_rect.y0 + (y1 / _SURYA_BBOX_SCALE) * page_rect.height,
+        )
+        return _pad_rect(rect, page_rect, _FIGURE_CROP_PADDING_POINTS)
     return fitz.Rect(
         page_rect.x0 + (x0 / pix_width) * page_rect.width,
         page_rect.y0 + (y0 / pix_height) * page_rect.height,
         page_rect.x0 + (x1 / pix_width) * page_rect.width,
         page_rect.y0 + (y1 / pix_height) * page_rect.height,
+    ) & page_rect
+
+
+def _pad_rect(rect: fitz.Rect, page_rect: fitz.Rect, padding: float) -> fitz.Rect:
+    return fitz.Rect(
+        rect.x0 - padding,
+        rect.y0 - padding,
+        rect.x1 + padding,
+        rect.y1 + padding,
     ) & page_rect
 
 

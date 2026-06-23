@@ -13,6 +13,7 @@ from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.document.pdf_compiler import (
     FigureImageRef,
     PdfDocumentParser,
+    _bbox_to_page_rect,
     _parse_mmd,
     _parse_surya_layout_response,
     _run_nougat,
@@ -163,6 +164,20 @@ def test_parse_surya_layout_response_accepts_surya_bbox_strings():
         "caption": "",
         "confidence": None,
     }]
+
+
+def test_surya_bbox_conversion_uses_thousand_point_page_scale():
+    rect = _bbox_to_page_rect(
+        [314.0, 88.0, 680.0, 497.0],
+        page_rect=fitz.Rect(0, 0, 612, 792),
+        pix_width=1275,
+        pix_height=1650,
+    )
+
+    assert rect.x0 == pytest.approx(184.168)
+    assert rect.y0 == pytest.approx(61.696)
+    assert rect.x1 == pytest.approx(424.16)
+    assert rect.y1 == pytest.approx(401.624)
 
 
 def test_parse_mmd_source_ref_propagated():
