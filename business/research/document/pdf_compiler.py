@@ -19,6 +19,7 @@ from business.research.domain.document import (
     ResearchEquation,
     ResearchFigure,
     ResearchSection,
+    ResearchTable,
 )
 
 # ── figures ───────────────────────────────────────────────────────────────────
@@ -352,15 +353,28 @@ def _attach_figure_images(
 
 
 _SECTION_RE = re.compile(r"^(#{1,3})\s+(.+)", re.MULTILINE)
-_EQUATION_ENV_RE = re.compile(
-    r"(\\begin\{(?:equation|align|gather)\*?\}.*?\\end\{(?:equation|align|gather)\*?\})",
+_EQUATION_RE = re.compile(
+    r"(\\begin\{(?:equation|align|gather)\*?\}.*?\\end\{(?:equation|align|gather)\*?\}"
+    r"|\\\[.*?\\\]"
+    r"|\$\$.*?\$\$)",
     re.DOTALL,
 )
 _LABEL_RE = re.compile(r"\\label\{([^}]+)\}")
+_TAG_RE = re.compile(r"\\tag\{([^}]+)\}")
 _FIGURE_CAPTION_RE = re.compile(
-    r"^(?:Figure|Fig\.?)\s*(\d+)[.:]\s*(.+?)(?=\n(?:Figure|Fig\.?)\s*\d+[.:]|\Z)",
+    r"^(?:Figure|Fig\.?)\s*(\d+)[.:]\s*(.+?)(?=\n\s*\n|\n(?:Figure|Fig\.?|Table)\s*\d+[.:]|\n#{1,6}\s+|\Z)",
     re.MULTILINE | re.IGNORECASE | re.DOTALL,
 )
+_TABLE_CAPTION_RE = re.compile(
+    r"^Table\s*(\d+)[.:]\s*(.+?)(?=\n\s*\n|\n(?:Figure|Fig\.?|Table)\s*\d+[.:]|\n#{1,6}\s+|\Z)",
+    re.MULTILINE | re.IGNORECASE | re.DOTALL,
+)
+_TABLE_ENV_RE = re.compile(r"\\begin\{table\}(.*?)\\end\{table\}", re.DOTALL)
+_TABULAR_RE = re.compile(
+    r"\\begin\{tabular\}\{[^}]*\}(.*?)\\end\{tabular\}",
+    re.DOTALL,
+)
+_MULTICOLUMN_RE = re.compile(r"\\multicolumn\{[^}]+\}\{[^}]+\}\{([^}]*)\}")
 
 # Directory (relative to project root) where PDFs are staged for the nougat
 # container and where .mmd output lands. The compose file mounts the project
@@ -452,7 +466,12 @@ def _run_nougat(pdf_bytes: bytes, paper_id: str) -> str:
 
 def _parse_mmd(
     mmd: str, paper_id: str, source_ref: str
-) -> tuple[list[ResearchSection], list[ResearchEquation], list[ResearchFigure]]:
+) -> tuple[
+    list[ResearchSection],
+    list[ResearchEquation],
+    list[ResearchFigure],
+    list[ResearchTable],
+]:
     """Parse Nougat .mmd output into ResearchDocument components."""
     # ── equations: collect, keep in-place so chunker can detect has_formula ─
     equations: list[ResearchEquation] = []
@@ -461,16 +480,18 @@ def _parse_mmd(
     def _collect_equation(m: re.Match) -> str:  # type: ignore[type-arg]
         nonlocal eq_idx
         label_m = _LABEL_RE.search(m.group(1))
-        eq_id = label_m.group(1) if label_m else f"eq_{eq_idx}"
+        tag_m = _TAG_RE.search(m.group(1))
+        eq_id = label_m.group(1) if label_m else tag_m.group(1) if tag_m else f"eq_{eq_idx}"
         equations.append(ResearchEquation(
             equation_id=build_stable_id("eq", paper_id, eq_id),
             latex=m.group(1).strip(),
             source_ref=source_ref,
+            metadata={"parse_source": "nougat_mmd"},
         ))
         eq_idx += 1
         return m.group(1)  # keep verbatim
 
-    text = _EQUATION_ENV_RE.sub(_collect_equation, mmd)
+    text = _EQUATION_RE.sub(_collect_equation, mmd)
 
     # ── figures: extract captions ───────────────────────────────────────────
     figures: list[ResearchFigure] = []
@@ -484,6 +505,9 @@ def _parse_mmd(
                 source_ref=source_ref,
                 metadata={"figure_number": figure_number},
             ))
+
+    # ── tables: extract captions plus tabular rows when Nougat preserves them ─
+    tables = _parse_mmd_tables(text, paper_id, source_ref)
 
     # ── sections: split by headings ─────────────────────────────────────────
     sections: list[ResearchSection] = []
@@ -514,7 +538,100 @@ def _parse_mmd(
             source_ref=source_ref,
         ))
 
-    return sections, equations, figures
+    return sections, equations, figures, tables
+
+
+def _parse_mmd_tables(
+    text: str,
+    paper_id: str,
+    source_ref: str,
+) -> list[ResearchTable]:
+    table_blocks = list(_TABLE_ENV_RE.finditer(text))
+    used_blocks: set[int] = set()
+    tables: list[ResearchTable] = []
+    for i, caption_match in enumerate(_TABLE_CAPTION_RE.finditer(text)):
+        table_number = int(caption_match.group(1))
+        caption = caption_match.group(2).strip().replace("\n", " ")
+        if not caption:
+            continue
+
+        block_index = _nearest_table_block_before(
+            table_blocks,
+            caption_match.start(),
+            used_blocks,
+        )
+        columns: list[str] = []
+        rows: list[dict[str, str]] = []
+        if block_index is not None:
+            used_blocks.add(block_index)
+            columns, rows = _parse_tabular_rows(table_blocks[block_index].group(1))
+
+        tables.append(ResearchTable(
+            table_id=build_stable_id("tbl", paper_id, f"table_{table_number}_{i}"),
+            caption=caption[:500],
+            source_ref=source_ref,
+            columns=columns,
+            rows=rows,
+            metadata={
+                "table_number": table_number,
+                "parse_source": "nougat_mmd",
+            },
+        ))
+    return tables
+
+
+def _nearest_table_block_before(
+    table_blocks: list[re.Match],  # type: ignore[type-arg]
+    caption_start: int,
+    used_blocks: set[int],
+) -> int | None:
+    candidates = [
+        index for index, block in enumerate(table_blocks)
+        if index not in used_blocks and block.end() <= caption_start
+    ]
+    return candidates[-1] if candidates else None
+
+
+def _parse_tabular_rows(table_body: str) -> tuple[list[str], list[dict[str, str]]]:
+    tabular_match = _TABULAR_RE.search(table_body)
+    if not tabular_match:
+        return [], []
+
+    raw_rows = re.split(r"\\\\", tabular_match.group(1))
+    matrix: list[list[str]] = []
+    for raw_row in raw_rows:
+        cells = [_clean_table_cell(cell) for cell in raw_row.split("&")]
+        cells = [cell for cell in cells if cell]
+        if len(cells) >= 2:
+            matrix.append(cells)
+    if not matrix:
+        return [], []
+
+    columns = _unique_column_names(matrix[0])
+    rows = []
+    for raw_cells in matrix[1:]:
+        padded = raw_cells + [""] * max(0, len(columns) - len(raw_cells))
+        rows.append(dict(zip(columns, padded[:len(columns)])))
+    return columns, rows
+
+
+def _clean_table_cell(value: str) -> str:
+    text = _MULTICOLUMN_RE.sub(r"\1", value)
+    text = re.sub(r"\\hline", " ", text)
+    text = text.replace("{", "").replace("}", "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _unique_column_names(columns: list[str]) -> list[str]:
+    counts: dict[str, int] = {}
+    result: list[str] = []
+    for index, raw in enumerate(columns):
+        name = raw.strip() or f"column_{index + 1}"
+        counts[name] = counts.get(name, 0) + 1
+        if counts[name] > 1:
+            name = f"{name}_{counts[name]}"
+        result.append(name)
+    return result
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -528,7 +645,7 @@ def _parse_pdf(
 ) -> ResearchDocument:
     mmd = _run_nougat(pdf_bytes, paper_id)
 
-    sections, equations, figures = _parse_mmd(mmd, paper_id, source_ref)
+    sections, equations, figures, tables = _parse_mmd(mmd, paper_id, source_ref)
 
     pdf_doc: fitz.Document = fitz.open(stream=pdf_bytes, filetype="pdf")
     surya_error: str | None = None
@@ -561,6 +678,7 @@ def _parse_pdf(
         sections=sections,
         equations=equations,
         figures=figures,
+        tables=tables,
         lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
         metadata=metadata,
     )

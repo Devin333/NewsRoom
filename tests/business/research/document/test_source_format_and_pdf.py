@@ -62,6 +62,33 @@ We use a transformer-based approach.
 Figure 1: Architecture of our proposed model.
 """
 
+_MMD_WITH_DISPLAY_MATH = r"""
+# Method
+
+\[E=mc^2 \tag{7}\]
+"""
+
+_MMD_WITH_TABLE = r"""
+# Results
+
+\begin{table}
+\begin{tabular}{l c}
+Name & Score \\
+u-net & 0.92 \\
+baseline & 0.83 \\
+\end{tabular}
+\end{table}
+Table 1: Segmentation results.
+"""
+
+_MMD_WITH_CAPTION_BOUNDARY = r"""
+# Intro
+
+Figure 1: Architecture.
+
+This sentence is normal body text and should not be part of the caption.
+"""
+
 
 @pytest.fixture(autouse=True)
 def _disable_live_surya(monkeypatch):
@@ -102,7 +129,7 @@ def test_detect_raw_bytes_treated_as_latex():
 
 
 def test_parse_mmd_sections():
-    sections, _, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    sections, _, _, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
     titles = [s.title for s in sections]
     assert "Abstract" in titles
     assert "Introduction" in titles
@@ -110,24 +137,65 @@ def test_parse_mmd_sections():
 
 
 def test_parse_mmd_section_levels():
-    sections, _, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    sections, _, _, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
     by_title = {s.title: s.level for s in sections}
     assert by_title["Introduction"] == 1
     assert by_title["Method"] == 2
 
 
 def test_parse_mmd_equations():
-    _, equations, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    _, equations, _, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
     assert len(equations) == 1
     assert equations[0].equation_id == build_stable_id("eq", "test_id", "eq:loss")
     assert r"\mathcal{L}" in equations[0].latex
 
 
 def test_parse_mmd_figures():
-    _, _, figures = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    _, _, figures, _ = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
     assert len(figures) == 1
     assert "Architecture" in figures[0].caption
     assert figures[0].metadata["figure_number"] == 1
+
+
+def test_parse_mmd_display_equations():
+    _, equations, _, _ = _parse_mmd(
+        _MMD_WITH_DISPLAY_MATH,
+        "math_id",
+        "arxiv://math_id/pdf",
+    )
+
+    assert len(equations) == 1
+    assert equations[0].equation_id == build_stable_id("eq", "math_id", "7")
+    assert r"E=mc^2" in equations[0].latex
+    assert equations[0].metadata["parse_source"] == "nougat_mmd"
+
+
+def test_parse_mmd_tables():
+    _, _, _, tables = _parse_mmd(
+        _MMD_WITH_TABLE,
+        "table_id",
+        "arxiv://table_id/pdf",
+    )
+
+    assert len(tables) == 1
+    assert tables[0].caption == "Segmentation results."
+    assert tables[0].columns == ["Name", "Score"]
+    assert tables[0].rows == [
+        {"Name": "u-net", "Score": "0.92"},
+        {"Name": "baseline", "Score": "0.83"},
+    ]
+    assert tables[0].metadata["table_number"] == 1
+
+
+def test_parse_mmd_figure_caption_stops_at_blank_line():
+    _, _, figures, _ = _parse_mmd(
+        _MMD_WITH_CAPTION_BOUNDARY,
+        "caption_id",
+        "arxiv://caption_id/pdf",
+    )
+
+    assert len(figures) == 1
+    assert figures[0].caption == "Architecture."
 
 
 def test_parse_surya_layout_response_extracts_regions():
@@ -181,10 +249,11 @@ def test_surya_bbox_conversion_uses_thousand_point_page_scale():
 
 
 def test_parse_mmd_source_ref_propagated():
-    sections, equations, figures = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
+    sections, equations, figures, tables = _parse_mmd(_SAMPLE_MMD, "test_id", "arxiv://test_id/pdf")
     assert all(s.source_ref == "arxiv://test_id/pdf" for s in sections)
     assert all(e.source_ref == "arxiv://test_id/pdf" for e in equations)
     assert all(f.source_ref == "arxiv://test_id/pdf" for f in figures)
+    assert all(t.source_ref == "arxiv://test_id/pdf" for t in tables)
 
 
 # ── PdfDocumentParser (nougat mocked) ────────────────────────────────────────
