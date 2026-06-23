@@ -1637,6 +1637,75 @@ def _section_query_words(text: str, *, max_words: int = 18) -> list[str]:
     ][:max_words]
 
 
+def _build_parse_quality(
+    *,
+    sections: list[ResearchSection],
+    figures: list[ResearchFigure],
+    tables: list[ResearchTable],
+    equations: list[ResearchEquation],
+    missing_pages: set[int],
+    text_fallback_pages: list[int],
+    ocr_pages: list[int],
+    ocr_attempted_pages: list[int],
+    low_native_text_pages: list[int],
+) -> dict[str, Any]:
+    return {
+        "sections": {
+            "total": len(sections),
+            "with_page_bounds": _count(sections, lambda section: section.page_start is not None),
+            "with_source_locator": _count(sections, lambda section: bool(section.metadata.get("source_locator"))),
+        },
+        "figures": {
+            "total": len(figures),
+            "with_image": _count(figures, lambda figure: bool(figure.image_ref)),
+            "with_page": _count(figures, lambda figure: figure.page is not None),
+            "with_bbox": _count(figures, lambda figure: bool(figure.metadata.get("pdf_rect"))),
+            "with_caption_bbox": _count(figures, lambda figure: bool(figure.metadata.get("caption_pdf_rect"))),
+            "with_source_locator": _count(figures, lambda figure: bool(figure.metadata.get("source_locator"))),
+            "alignment_strategies": _count_metadata_values(figures, "alignment_strategy"),
+        },
+        "tables": {
+            "total": len(tables),
+            "with_rows": _count(tables, lambda table: bool(table.rows)),
+            "with_image": _count(tables, lambda table: bool(table.metadata.get("image_ref"))),
+            "with_bbox": _count(tables, lambda table: bool(table.metadata.get("pdf_rect"))),
+            "with_caption_bbox": _count(tables, lambda table: bool(table.metadata.get("caption_pdf_rect"))),
+            "with_source_locator": _count(tables, lambda table: bool(table.metadata.get("source_locator"))),
+            "structure_sources": _count_metadata_values(tables, "table_structure_source"),
+            "alignment_strategies": _count_metadata_values(tables, "alignment_strategy"),
+        },
+        "equations": {
+            "total": len(equations),
+            "with_page": _count(equations, lambda equation: equation.page is not None),
+            "with_bbox": _count(equations, lambda equation: bool(equation.metadata.get("pdf_rect"))),
+            "with_source_locator": _count(equations, lambda equation: bool(equation.metadata.get("source_locator"))),
+            "position_sources": _count_metadata_values(equations, "position_source"),
+        },
+        "fallbacks": {
+            "nougat_missing_pages": sorted(missing_pages),
+            "text_fallback_pages": text_fallback_pages,
+            "ocr_attempted_pages": ocr_attempted_pages,
+            "ocr_pages": ocr_pages,
+            "low_native_text_pages": low_native_text_pages,
+        },
+    }
+
+
+def _count(items: list[Any], predicate: Any) -> int:
+    return sum(1 for item in items if predicate(item))
+
+
+def _count_metadata_values(items: list[Any], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = item.metadata.get(key)
+        if not value:
+            continue
+        label = str(value)
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
@@ -1715,6 +1784,17 @@ def _parse_pdf(
         "ocr_pages": ocr_pages,
         "low_native_text_pages": low_native_text_pages,
         "page_text_evidence": _page_text_evidence_summary(page_texts),
+        "parse_quality": _build_parse_quality(
+            sections=sections,
+            figures=figures,
+            tables=tables,
+            equations=equations,
+            missing_pages=missing_pages,
+            text_fallback_pages=text_fallback_pages,
+            ocr_pages=ocr_pages,
+            ocr_attempted_pages=ocr_attempted_pages,
+            low_native_text_pages=low_native_text_pages,
+        ),
     }
     if ocr_errors:
         metadata["ocr_errors"] = ocr_errors

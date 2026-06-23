@@ -617,6 +617,8 @@ def test_pdf_parser_attaches_section_page_bounds(mock_nougat):
     assert by_title["2 Method"].page_start == 2
     assert by_title["2 Method"].page_end == 2
     assert by_title["2 Method"].metadata["source_locator"] == "arxiv://2501_sections/pdf#page=2"
+    assert doc.metadata["parse_quality"]["sections"]["with_page_bounds"] == 2
+    assert doc.metadata["parse_quality"]["sections"]["with_source_locator"] == 2
 
 
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_MMD_WITH_PREAMBLE_AND_SECTION)
@@ -670,6 +672,10 @@ def test_pdf_parser_prefers_surya_figure_images(
     assert doc.metadata["figure_images"] == 1
     assert doc.metadata["surya_layout_ref"] == "surya_layout.json"
     assert doc.metadata["surya_layout_regions"] == 1
+    assert doc.metadata["parse_quality"]["figures"]["with_image"] == 1
+    assert doc.metadata["parse_quality"]["figures"]["alignment_strategies"] == {
+        "layout_order": 1
+    }
     assert doc.figures[0].image_ref == "figures/surya_p001_fig001.png"
     assert doc.figures[0].page == 1
     assert doc.figures[0].metadata["image_source"] == "surya_layout"
@@ -738,6 +744,7 @@ def test_pdf_parser_attaches_surya_table_images(
 
     assert len(doc.tables) == 1
     assert doc.metadata["table_images"] == 1
+    assert doc.metadata["parse_quality"]["tables"]["with_image"] == 1
     assert doc.tables[0].page == 2
     assert doc.tables[0].metadata["image_ref"] == "tables/surya_table_p002_001.png"
     assert doc.tables[0].metadata["image_source"] == "surya_table_layout"
@@ -926,6 +933,10 @@ def test_pdf_parser_attaches_surya_equation_positions(
     assert len(doc.equations) == 1
     assert doc.equations[0].page == 4
     assert doc.equations[0].metadata["position_source"] == "surya_equation_layout"
+    assert doc.metadata["parse_quality"]["equations"]["with_bbox"] == 1
+    assert doc.metadata["parse_quality"]["equations"]["position_sources"] == {
+        "surya_equation_layout": 1
+    }
     assert doc.equations[0].metadata["bbox"] == [327.0, 497.0, 787.0, 537.0]
     assert doc.equations[0].metadata["pdf_rect"] == [192.1, 385.6, 489.6, 433.3]
     assert doc.equations[0].metadata["source_locator"] == (
