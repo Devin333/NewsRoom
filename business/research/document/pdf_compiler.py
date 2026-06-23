@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any
 
@@ -32,14 +32,56 @@ class FigureImageRef:
     metadata: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class SuryaLayoutArtifacts:
+    figure_images: list[FigureImageRef]
+    table_images: list[FigureImageRef]
+    layout_ref: str | None = None
+    region_count: int = 0
+    regions: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PageTextEvidence:
+    page: int
+    native_text: str
+    selected_text: str
+    selected_source: str
+    native_chars: int
+    native_words: int
+    ocr_chars: int = 0
+    ocr_error: str | None = None
+
+
 _SURYA_FIGURE_LABELS = {"figure", "fig", "chart", "diagram", "image", "picture"}
+_SURYA_TABLE_LABELS = {"table"}
+_SURYA_CAPTION_LABELS = {"caption"}
+_SURYA_EQUATION_LABELS = {"equation", "equation-block", "formula"}
+_SURYA_EVIDENCE_LABELS = (
+    _SURYA_FIGURE_LABELS
+    | _SURYA_TABLE_LABELS
+    | _SURYA_CAPTION_LABELS
+    | _SURYA_EQUATION_LABELS
+)
 _SURYA_BBOX_SCALE = 1000.0
 _FIGURE_CROP_PADDING_POINTS = 8.0
 
 
-def _figures_dir(paper_id: str) -> str:
+def _paper_artifact_dir(paper_id: str) -> str:
     root = os.environ.get("NEWS_ARTIFACT_ROOT", ".newsroom/runs")
-    return os.path.join(os.path.dirname(root), "papers", paper_id, "figures")
+    return os.path.join(os.path.dirname(root), "papers", paper_id)
+
+
+def _figures_dir(paper_id: str) -> str:
+    return os.path.join(_paper_artifact_dir(paper_id), "figures")
+
+
+def _tables_dir(paper_id: str) -> str:
+    return os.path.join(_paper_artifact_dir(paper_id), "tables")
+
+
+def _surya_layout_path(paper_id: str) -> str:
+    return os.path.join(_paper_artifact_dir(paper_id), "surya_layout.json")
 
 
 def _extract_pdf_images(pdf_doc: fitz.Document, paper_id: str) -> list[FigureImageRef]:
@@ -150,17 +192,23 @@ def _call_surya_vision(
     return str(body["choices"][0]["message"]["content"])
 
 
-def _run_surya_layout(page_png: bytes, page_number: int) -> list[dict[str, Any]]:
+def _run_surya_layout(
+    page_png: bytes,
+    page_number: int,
+    *,
+    allowed_labels: set[str] | None = None,
+) -> list[dict[str, Any]]:
     base_url = _surya_base_url()
     if not base_url:
         return []
     prompt = (
-        "Detect the visible figure, chart, image, and diagram regions on this "
+        "Detect the visible figure, chart, image, diagram, table, caption, "
+        "and equation-block regions on this "
         "research paper page. Return only JSON with this schema: "
-        '{"figures":[{"label":"figure","bbox":[x0,y0,x1,y1],'
+        '{"regions":[{"label":"figure","bbox":[x0,y0,x1,y1],'
         '"caption":"","confidence":0.0}]}. Use normalized bbox '
         "coordinates in reading order, with values between 0 and 1. "
-        "Do not include tables, normal paragraphs, headers, footers, or page numbers."
+        "Do not include normal paragraphs, headers, footers, or page numbers."
     )
     image_b64 = base64.b64encode(page_png).decode("utf-8")
     content = _call_surya_vision(
@@ -169,13 +217,18 @@ def _run_surya_layout(page_png: bytes, page_number: int) -> list[dict[str, Any]]
         image_b64=image_b64,
         prompt=prompt,
     )
-    return _parse_surya_layout_response(content, page_number=page_number)
+    return _parse_surya_layout_response(
+        content,
+        page_number=page_number,
+        allowed_labels=allowed_labels,
+    )
 
 
 def _parse_surya_layout_response(
     content: str,
     *,
     page_number: int,
+    allowed_labels: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     payload_text = content.strip()
     if payload_text.startswith("```"):
@@ -187,16 +240,20 @@ def _parse_surya_layout_response(
     except json.JSONDecodeError:
         return []
 
-    raw_regions = payload.get("figures") if isinstance(payload, dict) else payload
+    if isinstance(payload, dict):
+        raw_regions = payload.get("regions") or payload.get("figures")
+    else:
+        raw_regions = payload
     if not isinstance(raw_regions, list):
         return []
 
+    labels = allowed_labels or _SURYA_FIGURE_LABELS
     regions: list[dict[str, Any]] = []
     for index, raw in enumerate(raw_regions):
         if not isinstance(raw, dict):
             continue
-        label = str(raw.get("label") or raw.get("type") or "figure").lower()
-        if label not in _SURYA_FIGURE_LABELS:
+        label = _normalize_layout_label(raw.get("label") or raw.get("type") or "figure")
+        if label not in labels:
             continue
         bbox = _coerce_bbox(raw.get("bbox") or raw.get("box"))
         if bbox is None:
@@ -210,6 +267,10 @@ def _parse_surya_layout_response(
             "confidence": raw.get("confidence"),
         })
     return regions
+
+
+def _normalize_layout_label(value: Any) -> str:
+    return str(value).strip().lower().replace("_", "-")
 
 
 def _extract_json_payload_text(content: str) -> str:
@@ -281,6 +342,15 @@ def _bbox_to_page_rect(
     ) & page_rect
 
 
+def _bbox_coordinate_system(bbox: list[float]) -> str:
+    max_value = max(abs(v) for v in bbox)
+    if max_value <= 1.5:
+        return "normalized"
+    if max_value <= _SURYA_BBOX_SCALE:
+        return "surya_1000"
+    return "render_pixels"
+
+
 def _pad_rect(rect: fitz.Rect, page_rect: fitz.Rect, padding: float) -> fitz.Rect:
     return fitz.Rect(
         rect.x0 - padding,
@@ -294,15 +364,32 @@ def _extract_surya_figure_images(
     pdf_doc: fitz.Document,
     paper_id: str,
 ) -> list[FigureImageRef]:
+    return _extract_surya_layout_artifacts(pdf_doc, paper_id).figure_images
+
+
+def _extract_surya_layout_artifacts(
+    pdf_doc: fitz.Document,
+    paper_id: str,
+) -> SuryaLayoutArtifacts:
     if not _surya_base_url():
-        return []
+        return SuryaLayoutArtifacts(figure_images=[], table_images=[])
     figs = _figures_dir(paper_id)
+    tables_dir = _tables_dir(paper_id)
+    layout_path = _surya_layout_path(paper_id)
     os.makedirs(figs, exist_ok=True)
+    os.makedirs(tables_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(layout_path), exist_ok=True)
     dpi = _surya_layout_dpi()
-    paths: list[FigureImageRef] = []
+    figure_paths: list[FigureImageRef] = []
+    table_paths: list[FigureImageRef] = []
+    all_regions: list[dict[str, Any]] = []
     for page_index, page in enumerate(pdf_doc, start=1):
         page_pix = page.get_pixmap(dpi=dpi, alpha=False)
-        regions = _run_surya_layout(page_pix.tobytes("png"), page_index)
+        regions = _run_surya_layout(
+            page_pix.tobytes("png"),
+            page_index,
+            allowed_labels=_SURYA_EVIDENCE_LABELS,
+        )
         for region in regions:
             rect = _bbox_to_page_rect(
                 region["bbox"],
@@ -310,43 +397,304 @@ def _extract_surya_figure_images(
                 pix_width=page_pix.width,
                 pix_height=page_pix.height,
             )
+            enriched_region = dict(region)
+            enriched_region["bbox_coordinate_system"] = _bbox_coordinate_system(region["bbox"])
+            enriched_region["pdf_rect"] = _rect_to_list(rect)
+            all_regions.append(enriched_region)
+            if region["label"] not in (_SURYA_FIGURE_LABELS | _SURYA_TABLE_LABELS):
+                continue
             if rect.is_empty or rect.width < 4 or rect.height < 4:
                 continue
             crop = page.get_pixmap(clip=rect, dpi=dpi, alpha=False)
-            path = os.path.join(
-                figs,
-                f"surya_p{page_index:03d}_fig{len(paths) + 1:03d}.png",
-            )
+            if region["label"] in _SURYA_TABLE_LABELS:
+                target_paths = table_paths
+                output_dir = tables_dir
+                filename = f"surya_table_p{page_index:03d}_{len(target_paths) + 1:03d}.png"
+                image_source = "surya_table_layout"
+            else:
+                target_paths = figure_paths
+                output_dir = figs
+                filename = f"surya_p{page_index:03d}_fig{len(target_paths) + 1:03d}.png"
+                image_source = "surya_layout"
+            path = os.path.join(output_dir, filename)
             crop.save(path)
-            paths.append(FigureImageRef(
+            target_paths.append(FigureImageRef(
                 image_ref=path,
                 page=page_index,
                 metadata={
-                    "image_source": "surya_layout",
+                    "image_source": image_source,
                     "bbox": region["bbox"],
+                    "bbox_coordinate_system": enriched_region["bbox_coordinate_system"],
                     "layout_label": region["label"],
+                    "layout_region_index": region["index"],
+                    "pdf_rect": enriched_region["pdf_rect"],
                     "surya_caption": region["caption"],
                     "confidence": region["confidence"],
                 },
             ))
-    return paths
+    figure_paths = _with_nearest_caption_region(figure_paths, all_regions)
+    table_paths = _with_nearest_caption_region(table_paths, all_regions)
+    with open(layout_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "paper_id": paper_id,
+                "coordinate_system": "per_region",
+                "dpi": dpi,
+                "regions": all_regions,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+    return SuryaLayoutArtifacts(
+        figure_images=figure_paths,
+        table_images=table_paths,
+        layout_ref=layout_path,
+        region_count=len(all_regions),
+        regions=all_regions,
+    )
+
+
+def _rect_to_list(rect: fitz.Rect) -> list[float]:
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+
+def _rect_from_list(values: Any) -> fitz.Rect | None:
+    bbox = _coerce_bbox(values)
+    if bbox is None:
+        return None
+    return fitz.Rect(*bbox)
+
+
+def _horizontal_overlap_ratio(a: fitz.Rect, b: fitz.Rect) -> float:
+    overlap = max(0.0, min(a.x1, b.x1) - max(a.x0, b.x0))
+    denominator = max(1.0, min(a.width, b.width))
+    return overlap / denominator
+
+
+def _caption_region_score(target_rect: fitz.Rect, caption_rect: fitz.Rect) -> float:
+    overlap = _horizontal_overlap_ratio(target_rect, caption_rect)
+    if overlap < 0.2:
+        return 0.0
+    if caption_rect.y0 >= target_rect.y1:
+        vertical_gap = caption_rect.y0 - target_rect.y1
+    elif target_rect.y0 >= caption_rect.y1:
+        vertical_gap = target_rect.y0 - caption_rect.y1
+    else:
+        vertical_gap = 0.0
+    proximity = 1.0 / (1.0 + vertical_gap / 72.0)
+    return round((0.75 * overlap) + (0.25 * proximity), 4)
+
+
+def _with_nearest_caption_region(
+    image_refs: list[FigureImageRef],
+    regions: list[dict[str, Any]],
+) -> list[FigureImageRef]:
+    caption_regions = [r for r in regions if r.get("label") in _SURYA_CAPTION_LABELS]
+    if not caption_regions:
+        return image_refs
+
+    out: list[FigureImageRef] = []
+    for image in image_refs:
+        metadata = dict(image.metadata or {})
+        image_rect = _rect_from_list(metadata.get("pdf_rect"))
+        if image.page is None or image_rect is None:
+            out.append(image)
+            continue
+
+        best: tuple[float, dict[str, Any]] | None = None
+        for caption in caption_regions:
+            if caption.get("page") != image.page:
+                continue
+            caption_rect = _rect_from_list(caption.get("pdf_rect"))
+            if caption_rect is None:
+                continue
+            score = _caption_region_score(image_rect, caption_rect)
+            if score <= 0:
+                continue
+            if best is None or score > best[0]:
+                best = (score, caption)
+
+        if best is not None:
+            score, caption = best
+            metadata.update({
+                "caption_bbox": caption.get("bbox"),
+                "caption_pdf_rect": caption.get("pdf_rect"),
+                "caption_region_index": caption.get("index"),
+                "caption_match_score": score,
+                "caption_match_strategy": "same_page_nearest_caption_region",
+            })
+        out.append(FigureImageRef(
+            image_ref=image.image_ref,
+            page=image.page,
+            metadata=metadata,
+        ))
+    return out
+
+
+def _normalize_search_text(value: str) -> str:
+    return " ".join(_SEARCH_WORD_RE.findall(value.lower()))
+
+
+def _caption_query(caption: str, *, max_words: int = 14) -> str:
+    words = _SEARCH_WORD_RE.findall(caption.lower())
+    return " ".join(words[:max_words])
+
+
+def _find_caption_page(
+    *,
+    kind: str,
+    number: int | None,
+    caption: str,
+    page_texts: list[PageTextEvidence],
+) -> tuple[int | None, float]:
+    query = _caption_query(caption)
+    if not query:
+        return None, 0.0
+    label = f"{kind.lower()} {number}" if number is not None else ""
+    best: tuple[int, float] | None = None
+    for evidence in page_texts:
+        haystack = _normalize_search_text(
+            evidence.selected_text or evidence.native_text
+        )
+        score = 0.0
+        if label and f"{label} {query}" in haystack:
+            score = 1.0
+        elif query in haystack:
+            score = 0.85
+        elif label and label in haystack:
+            score = 0.55
+        if score and (best is None or score > best[1]):
+            best = (evidence.page, score)
+    if best is None:
+        return None, 0.0
+    return best
+
+
+def _select_image_ref(
+    image_refs: list[FigureImageRef],
+    used_indices: set[int],
+    expected_page: int | None,
+) -> tuple[int | None, FigureImageRef | None, str, float]:
+    if expected_page is not None:
+        for index, image in enumerate(image_refs):
+            if index not in used_indices and image.page == expected_page:
+                return index, image, "caption_text_page_match", 0.9
+    for index, image in enumerate(image_refs):
+        if index not in used_indices:
+            return index, image, "layout_order", 0.5
+    return None, None, "unmatched", 0.0
 
 
 def _attach_figure_images(
     figures: list[ResearchFigure],
     image_refs: list[FigureImageRef],
+    page_texts: list[PageTextEvidence] | None = None,
 ) -> list[ResearchFigure]:
     out: list[ResearchFigure] = []
-    for index, fig in enumerate(figures):
-        if index >= len(image_refs):
+    used_indices: set[int] = set()
+    for fig in figures:
+        expected_page, caption_score = _find_caption_page(
+            kind="figure",
+            number=fig.metadata.get("figure_number"),
+            caption=fig.caption,
+            page_texts=page_texts or [],
+        )
+        index, image, strategy, alignment_score = _select_image_ref(
+            image_refs,
+            used_indices,
+            expected_page,
+        )
+        if image is None or index is None:
             out.append(fig)
             continue
-        image = image_refs[index]
+        used_indices.add(index)
         metadata = dict(fig.metadata)
         metadata.update(image.metadata or {})
+        metadata.update({
+            "alignment_strategy": strategy,
+            "alignment_score": alignment_score,
+        })
+        if expected_page is not None:
+            metadata["caption_text_page"] = expected_page
+            metadata["caption_text_match_score"] = caption_score
         out.append(fig.model_copy(update={
             "image_ref": image.image_ref,
             "page": image.page,
+            "metadata": metadata,
+        }))
+    return out
+
+
+def _attach_table_images(
+    tables: list[ResearchTable],
+    image_refs: list[FigureImageRef],
+    page_texts: list[PageTextEvidence] | None = None,
+) -> list[ResearchTable]:
+    out: list[ResearchTable] = []
+    used_indices: set[int] = set()
+    for table in tables:
+        expected_page, caption_score = _find_caption_page(
+            kind="table",
+            number=table.metadata.get("table_number"),
+            caption=table.caption,
+            page_texts=page_texts or [],
+        )
+        index, image, strategy, alignment_score = _select_image_ref(
+            image_refs,
+            used_indices,
+            expected_page,
+        )
+        if image is None or index is None:
+            out.append(table)
+            continue
+        used_indices.add(index)
+        metadata = dict(table.metadata)
+        metadata.update(image.metadata or {})
+        metadata["image_ref"] = image.image_ref
+        metadata.update({
+            "alignment_strategy": strategy,
+            "alignment_score": alignment_score,
+        })
+        if expected_page is not None:
+            metadata["caption_text_page"] = expected_page
+            metadata["caption_text_match_score"] = caption_score
+        out.append(table.model_copy(update={
+            "page": image.page,
+            "metadata": metadata,
+        }))
+    return out
+
+
+def _attach_equation_positions(
+    equations: list[ResearchEquation],
+    regions: list[dict[str, Any]],
+) -> list[ResearchEquation]:
+    equation_regions = [
+        region for region in regions
+        if region.get("label") in _SURYA_EQUATION_LABELS
+    ]
+    if not equation_regions:
+        return equations
+
+    out: list[ResearchEquation] = []
+    for index, equation in enumerate(equations):
+        if index >= len(equation_regions):
+            out.append(equation)
+            continue
+        region = equation_regions[index]
+        metadata = dict(equation.metadata)
+        metadata.update({
+            "position_source": "surya_equation_layout",
+            "position_match_strategy": "layout_order",
+            "layout_label": region.get("label"),
+            "bbox": region.get("bbox"),
+            "bbox_coordinate_system": region.get("bbox_coordinate_system"),
+            "pdf_rect": region.get("pdf_rect"),
+            "layout_region_index": region.get("index"),
+        })
+        out.append(equation.model_copy(update={
+            "page": region.get("page"),
             "metadata": metadata,
         }))
     return out
@@ -375,6 +723,8 @@ _TABULAR_RE = re.compile(
     re.DOTALL,
 )
 _MULTICOLUMN_RE = re.compile(r"\\multicolumn\{[^}]+\}\{[^}]+\}\{([^}]*)\}")
+_MISSING_PAGE_RE = re.compile(r"\[MISSING_PAGE_FAIL:(\d+)\]")
+_SEARCH_WORD_RE = re.compile(r"[a-z0-9]+")
 
 # Directory (relative to project root) where PDFs are staged for the nougat
 # container and where .mmd output lands. The compose file mounts the project
@@ -391,6 +741,28 @@ def _nougat_timeout_seconds() -> int:
         raise ValueError("NOUGAT_TIMEOUT_SECONDS must be an integer") from exc
     if value <= 0:
         raise ValueError("NOUGAT_TIMEOUT_SECONDS must be positive")
+    return value
+
+
+def _pdf_text_min_chars() -> int:
+    raw = os.environ.get("PDF_TEXT_MIN_CHARS", "100")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("PDF_TEXT_MIN_CHARS must be an integer") from exc
+    if value < 0:
+        raise ValueError("PDF_TEXT_MIN_CHARS must be non-negative")
+    return value
+
+
+def _pdf_ocr_dpi() -> int:
+    raw = os.environ.get("PDF_OCR_DPI", "150")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("PDF_OCR_DPI must be an integer") from exc
+    if value <= 0:
+        raise ValueError("PDF_OCR_DPI must be positive")
     return value
 
 
@@ -634,6 +1006,123 @@ def _unique_column_names(columns: list[str]) -> list[str]:
     return result
 
 
+def _extract_missing_pages(mmd: str) -> set[int]:
+    return {int(match.group(1)) for match in _MISSING_PAGE_RE.finditer(mmd)}
+
+
+def _extract_page_text_evidence(
+    pdf_doc: fitz.Document,
+    *,
+    pages_requiring_fallback: set[int],
+) -> list[PageTextEvidence]:
+    min_chars = _pdf_text_min_chars()
+    ocr_dpi = _pdf_ocr_dpi()
+    base_url = _surya_base_url()
+    model = _surya_model()
+    evidence: list[PageTextEvidence] = []
+
+    for page_index, page in enumerate(pdf_doc, start=1):
+        native_text = page.get_text("text").strip()
+        native_chars = len(native_text)
+        native_words = len(native_text.split())
+        selected_text = native_text
+        selected_source = "pymupdf_text" if native_text else "none"
+        ocr_chars = 0
+        ocr_error: str | None = None
+
+        should_ocr = (
+            page_index in pages_requiring_fallback
+            and native_chars < min_chars
+            and bool(base_url)
+        )
+        if should_ocr:
+            try:
+                pix = page.get_pixmap(dpi=ocr_dpi, alpha=False)
+                image_b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
+                ocr_text = _ocr_page(base_url, model, image_b64).strip()
+                ocr_chars = len(ocr_text)
+                if ocr_text:
+                    selected_text = ocr_text
+                    selected_source = "surya_ocr"
+            except Exception as exc:  # noqa: BLE001 - preserve diagnostics
+                ocr_error = f"{type(exc).__name__}: {exc}"
+
+        evidence.append(PageTextEvidence(
+            page=page_index,
+            native_text=native_text,
+            selected_text=selected_text,
+            selected_source=selected_source,
+            native_chars=native_chars,
+            native_words=native_words,
+            ocr_chars=ocr_chars,
+            ocr_error=ocr_error,
+        ))
+
+    return evidence
+
+
+def _page_text_evidence_summary(
+    page_texts: list[PageTextEvidence],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "page": evidence.page,
+            "native_chars": evidence.native_chars,
+            "native_words": evidence.native_words,
+            "selected_source": evidence.selected_source,
+            "selected_chars": len(evidence.selected_text),
+            "ocr_chars": evidence.ocr_chars,
+            **({"ocr_error": evidence.ocr_error} if evidence.ocr_error else {}),
+        }
+        for evidence in page_texts
+    ]
+
+
+def _append_text_fallback_sections(
+    sections: list[ResearchSection],
+    *,
+    paper_id: str,
+    source_ref: str,
+    page_texts: list[PageTextEvidence],
+    missing_pages: set[int],
+) -> tuple[list[ResearchSection], list[int]]:
+    fallback_pages = set(missing_pages)
+    if not any(section.text.strip() for section in sections):
+        fallback_pages.update(evidence.page for evidence in page_texts)
+
+    if not fallback_pages:
+        return sections, []
+
+    by_page = {evidence.page: evidence for evidence in page_texts}
+    out = list(sections)
+    appended_pages: list[int] = []
+    for page_number in sorted(fallback_pages):
+        evidence = by_page.get(page_number)
+        if evidence is None or not evidence.selected_text.strip():
+            continue
+        source_name = evidence.selected_source
+        title = "OCR Page" if source_name == "surya_ocr" else "PDF Text Page"
+        reason = "nougat_missing_page" if page_number in missing_pages else "nougat_empty_output"
+        out.append(ResearchSection(
+            section_id=build_stable_id("sec", paper_id, f"fallback_page_{page_number}"),
+            title=f"{title} {page_number}",
+            level=1,
+            text=evidence.selected_text,
+            page_start=page_number,
+            page_end=page_number,
+            source_ref=f"{source_ref}#page={page_number}",
+            metadata={
+                "parse_source": f"{source_name}_fallback",
+                "fallback_reason": reason,
+                "native_chars": evidence.native_chars,
+                "ocr_chars": evidence.ocr_chars,
+            },
+        ))
+        appended_pages.append(page_number)
+
+    return out, appended_pages
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
@@ -646,12 +1135,33 @@ def _parse_pdf(
     mmd = _run_nougat(pdf_bytes, paper_id)
 
     sections, equations, figures, tables = _parse_mmd(mmd, paper_id, source_ref)
+    missing_pages = _extract_missing_pages(mmd)
 
     pdf_doc: fitz.Document = fitz.open(stream=pdf_bytes, filetype="pdf")
     surya_error: str | None = None
+    surya_artifacts = SuryaLayoutArtifacts(figure_images=[], table_images=[])
+    page_texts: list[PageTextEvidence] = []
+    text_fallback_pages: list[int] = []
+    image_refs: list[FigureImageRef] = []
+    image_source = "none"
     try:
+        pages_requiring_fallback = set(missing_pages)
+        if not any(section.text.strip() for section in sections):
+            pages_requiring_fallback.update(range(1, pdf_doc.page_count + 1))
+        page_texts = _extract_page_text_evidence(
+            pdf_doc,
+            pages_requiring_fallback=pages_requiring_fallback,
+        )
+        sections, text_fallback_pages = _append_text_fallback_sections(
+            sections,
+            paper_id=paper_id,
+            source_ref=source_ref,
+            page_texts=page_texts,
+            missing_pages=missing_pages,
+        )
         try:
-            image_refs = _extract_surya_figure_images(pdf_doc, paper_id)
+            surya_artifacts = _extract_surya_layout_artifacts(pdf_doc, paper_id)
+            image_refs = surya_artifacts.figure_images
         except Exception as exc:
             image_refs = []
             surya_error = f"{type(exc).__name__}: {exc}"
@@ -663,12 +1173,34 @@ def _parse_pdf(
     finally:
         pdf_doc.close()
 
-    figures = _attach_figure_images(figures, image_refs)
+    figures = _attach_figure_images(figures, image_refs, page_texts)
+    tables = _attach_table_images(tables, surya_artifacts.table_images, page_texts)
+    equations = _attach_equation_positions(equations, surya_artifacts.regions)
+    ocr_pages = [
+        evidence.page for evidence in page_texts
+        if evidence.selected_source == "surya_ocr"
+    ]
+    ocr_errors = [
+        {"page": evidence.page, "error": evidence.ocr_error}
+        for evidence in page_texts
+        if evidence.ocr_error
+    ]
     metadata = {
         "parse_source": "nougat",
         "figure_image_source": image_source,
         "figure_images": len(image_refs),
+        "table_images": len(surya_artifacts.table_images),
+        "surya_layout_regions": surya_artifacts.region_count,
+        "nougat_missing_pages": sorted(missing_pages),
+        "text_fallback_pages": text_fallback_pages,
+        "ocr_used": bool(ocr_pages),
+        "ocr_pages": ocr_pages,
+        "page_text_evidence": _page_text_evidence_summary(page_texts),
     }
+    if ocr_errors:
+        metadata["ocr_errors"] = ocr_errors
+    if surya_artifacts.layout_ref:
+        metadata["surya_layout_ref"] = surya_artifacts.layout_ref
     if surya_error:
         metadata["surya_layout_error"] = surya_error
 

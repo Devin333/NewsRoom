@@ -12,11 +12,16 @@ from business.foundation import build_stable_id
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.document.pdf_compiler import (
     FigureImageRef,
+    PageTextEvidence,
     PdfDocumentParser,
+    SuryaLayoutArtifacts,
+    _attach_figure_images,
     _bbox_to_page_rect,
+    _extract_missing_pages,
     _parse_mmd,
     _parse_surya_layout_response,
     _run_nougat,
+    _with_nearest_caption_region,
 )
 from business.research.document.source_format import SourceFormat, detect_source_format
 
@@ -87,6 +92,14 @@ _MMD_WITH_CAPTION_BOUNDARY = r"""
 Figure 1: Architecture.
 
 This sentence is normal body text and should not be part of the caption.
+"""
+
+_MMD_WITH_MISSING_PAGE = r"""
+# Intro
+
+This page parsed correctly.
+
+[MISSING_PAGE_FAIL:2]
 """
 
 
@@ -234,6 +247,26 @@ def test_parse_surya_layout_response_accepts_surya_bbox_strings():
     }]
 
 
+def test_parse_surya_layout_response_accepts_evidence_labels():
+    response = """{"regions":[
+      {"label":"Table","bbox":[0.1,0.2,0.8,0.3]},
+      {"label":"Caption","bbox":[0.1,0.31,0.8,0.36]},
+      {"label":"Equation_Block","bbox":[0.2,0.5,0.7,0.55]},
+      {"label":"paragraph","bbox":[0.0,0.0,1.0,0.1]}
+    ]}"""
+    regions = _parse_surya_layout_response(
+        response,
+        page_number=4,
+        allowed_labels={"table", "caption", "equation-block"},
+    )
+
+    assert [region["label"] for region in regions] == [
+        "table",
+        "caption",
+        "equation-block",
+    ]
+
+
 def test_surya_bbox_conversion_uses_thousand_point_page_scale():
     rect = _bbox_to_page_rect(
         [314.0, 88.0, 680.0, 497.0],
@@ -246,6 +279,69 @@ def test_surya_bbox_conversion_uses_thousand_point_page_scale():
     assert rect.y0 == pytest.approx(61.696)
     assert rect.x1 == pytest.approx(424.16)
     assert rect.y1 == pytest.approx(401.624)
+
+
+def test_surya_caption_region_attaches_to_nearest_crop():
+    refs = [
+        FigureImageRef(
+            image_ref="figures/fig1.png",
+            page=1,
+            metadata={"pdf_rect": [100.0, 100.0, 300.0, 200.0]},
+        )
+    ]
+    regions = [
+        {
+            "page": 1,
+            "index": 2,
+            "label": "caption",
+            "bbox": [0.1, 0.3, 0.5, 0.4],
+            "pdf_rect": [95.0, 210.0, 305.0, 240.0],
+        }
+    ]
+
+    attached = _with_nearest_caption_region(refs, regions)
+
+    assert attached[0].metadata["caption_region_index"] == 2
+    assert attached[0].metadata["caption_pdf_rect"] == [95.0, 210.0, 305.0, 240.0]
+    assert attached[0].metadata["caption_match_strategy"] == "same_page_nearest_caption_region"
+
+
+def test_figure_image_alignment_prefers_caption_text_page():
+    figures = [
+        _parse_mmd(_SAMPLE_MMD, "align_id", "arxiv://align_id/pdf")[2][0]
+    ]
+    refs = [
+        FigureImageRef(image_ref="figures/wrong.png", page=1, metadata={}),
+        FigureImageRef(image_ref="figures/right.png", page=2, metadata={}),
+    ]
+    page_texts = [
+        PageTextEvidence(
+            page=1,
+            native_text="Body text only.",
+            selected_text="Body text only.",
+            selected_source="pymupdf_text",
+            native_chars=15,
+            native_words=3,
+        ),
+        PageTextEvidence(
+            page=2,
+            native_text="Figure 1: Architecture of our proposed model.",
+            selected_text="Figure 1: Architecture of our proposed model.",
+            selected_source="pymupdf_text",
+            native_chars=46,
+            native_words=7,
+        ),
+    ]
+
+    attached = _attach_figure_images(figures, refs, page_texts)
+
+    assert attached[0].page == 2
+    assert attached[0].image_ref == "figures/right.png"
+    assert attached[0].metadata["alignment_strategy"] == "caption_text_page_match"
+
+
+def test_extract_missing_pages_from_nougat_markers():
+    assert _extract_missing_pages(_MMD_WITH_MISSING_PAGE) == {2}
 
 
 def test_parse_mmd_source_ref_propagated():
@@ -324,14 +420,19 @@ def test_pdf_parser_extracts_figures(mock_nougat):
 
 @patch("business.research.document.pdf_compiler._extract_pdf_images")
 @patch(
-    "business.research.document.pdf_compiler._extract_surya_figure_images",
-    return_value=[
-        FigureImageRef(
-            image_ref="figures/surya_p001_fig001.png",
-            page=1,
-            metadata={"image_source": "surya_layout", "bbox": [0.1, 0.2, 0.8, 0.7]},
-        )
-    ],
+    "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
+    return_value=SuryaLayoutArtifacts(
+        figure_images=[
+            FigureImageRef(
+                image_ref="figures/surya_p001_fig001.png",
+                page=1,
+                metadata={"image_source": "surya_layout", "bbox": [0.1, 0.2, 0.8, 0.7]},
+            )
+        ],
+        table_images=[],
+        layout_ref="surya_layout.json",
+        region_count=1,
+    ),
 )
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
 def test_pdf_parser_prefers_surya_figure_images(
@@ -345,6 +446,8 @@ def test_pdf_parser_prefers_surya_figure_images(
     mock_pdf_images.assert_not_called()
     assert doc.metadata["figure_image_source"] == "surya_layout"
     assert doc.metadata["figure_images"] == 1
+    assert doc.metadata["surya_layout_ref"] == "surya_layout.json"
+    assert doc.metadata["surya_layout_regions"] == 1
     assert doc.figures[0].image_ref == "figures/surya_p001_fig001.png"
     assert doc.figures[0].page == 1
     assert doc.figures[0].metadata["image_source"] == "surya_layout"
@@ -362,7 +465,7 @@ def test_pdf_parser_prefers_surya_figure_images(
     ],
 )
 @patch(
-    "business.research.document.pdf_compiler._extract_surya_figure_images",
+    "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
     side_effect=RuntimeError("surya unavailable"),
 )
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
@@ -380,6 +483,111 @@ def test_pdf_parser_falls_back_when_surya_fails(
     assert doc.metadata["surya_layout_error"] == "RuntimeError: surya unavailable"
     assert doc.figures[0].image_ref == "figures/img1.png"
     assert doc.figures[0].metadata["image_source"] == "pdf_embedded"
+
+
+@patch(
+    "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
+    return_value=SuryaLayoutArtifacts(
+        figure_images=[],
+        table_images=[
+            FigureImageRef(
+                image_ref="tables/surya_table_p002_001.png",
+                page=2,
+                metadata={
+                    "image_source": "surya_table_layout",
+                    "bbox": [100, 200, 900, 400],
+                    "layout_label": "table",
+                    "pdf_rect": [61.2, 158.4, 550.8, 316.8],
+                },
+            )
+        ],
+        layout_ref="surya_layout.json",
+        region_count=1,
+    ),
+)
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_MMD_WITH_TABLE)
+def test_pdf_parser_attaches_surya_table_images(
+    mock_nougat,
+    mock_surya_artifacts,
+):
+    pdf_bytes = _make_pdf(["placeholder"])
+    doc = PdfDocumentParser().parse("2501_table", pdf_bytes)
+
+    assert len(doc.tables) == 1
+    assert doc.metadata["table_images"] == 1
+    assert doc.tables[0].page == 2
+    assert doc.tables[0].metadata["image_ref"] == "tables/surya_table_p002_001.png"
+    assert doc.tables[0].metadata["image_source"] == "surya_table_layout"
+    assert doc.tables[0].metadata["bbox"] == [100, 200, 900, 400]
+    assert doc.tables[0].metadata["layout_label"] == "table"
+
+
+@patch(
+    "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
+    return_value=SuryaLayoutArtifacts(
+        figure_images=[],
+        table_images=[],
+        layout_ref="surya_layout.json",
+        region_count=0,
+    ),
+)
+@patch("business.research.document.pdf_compiler._ocr_page", return_value="Recovered OCR text from page two.")
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_MMD_WITH_MISSING_PAGE)
+def test_pdf_parser_ocr_fallback_for_missing_nougat_page(
+    mock_nougat,
+    mock_ocr,
+    mock_surya_artifacts,
+    monkeypatch,
+):
+    monkeypatch.setenv("SURYA_INFERENCE_URL", "http://surya.test/v1")
+    pdf_bytes = _make_pdf(["This page has native text.", ""])
+
+    doc = PdfDocumentParser().parse("2501_missing_page", pdf_bytes)
+
+    mock_ocr.assert_called_once()
+    assert doc.metadata["nougat_missing_pages"] == [2]
+    assert doc.metadata["ocr_used"] is True
+    assert doc.metadata["ocr_pages"] == [2]
+    assert doc.metadata["text_fallback_pages"] == [2]
+    assert any(section.title == "OCR Page 2" for section in doc.sections)
+    fallback = next(section for section in doc.sections if section.title == "OCR Page 2")
+    assert fallback.text == "Recovered OCR text from page two."
+    assert fallback.metadata["fallback_reason"] == "nougat_missing_page"
+
+
+@patch(
+    "business.research.document.pdf_compiler._extract_surya_layout_artifacts",
+    return_value=SuryaLayoutArtifacts(
+        figure_images=[],
+        table_images=[],
+        layout_ref="surya_layout.json",
+        region_count=1,
+        regions=[
+            {
+                "page": 4,
+                "index": 6,
+                "label": "equation-block",
+                "bbox": [327.0, 497.0, 787.0, 537.0],
+                "bbox_coordinate_system": "surya_1000",
+                "pdf_rect": [192.1, 385.6, 489.6, 433.3],
+            }
+        ],
+    ),
+)
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_MMD_WITH_DISPLAY_MATH)
+def test_pdf_parser_attaches_surya_equation_positions(
+    mock_nougat,
+    mock_surya_artifacts,
+):
+    pdf_bytes = _make_pdf(["placeholder"])
+
+    doc = PdfDocumentParser().parse("2501_equation_layout", pdf_bytes)
+
+    assert len(doc.equations) == 1
+    assert doc.equations[0].page == 4
+    assert doc.equations[0].metadata["position_source"] == "surya_equation_layout"
+    assert doc.equations[0].metadata["bbox"] == [327.0, 497.0, 787.0, 537.0]
+    assert doc.equations[0].metadata["pdf_rect"] == [192.1, 385.6, 489.6, 433.3]
 
 
 # ── ArxivDocumentParser dispatcher ───────────────────────────────────────────
