@@ -111,6 +111,30 @@ This page parsed correctly.
 [MISSING_PAGE_FAIL:2]
 """
 
+_MMD_WITH_TWO_SECTIONS = r"""
+# 1 Introduction
+
+Unique introduction phrase appears on the first page.
+
+# 2 Method
+
+Distinct method phrase appears on the second page.
+"""
+
+_MMD_WITH_PREAMBLE_AND_SECTION = r"""
+Abstract
+
+Unique abstract phrase appears on the first page.
+
+# 1 Introduction
+
+Unique introduction phrase also starts on the first page.
+
+# 2 Method
+
+Distinct method phrase appears on the second page.
+"""
+
 
 @pytest.fixture(autouse=True)
 def _disable_live_surya(monkeypatch):
@@ -574,6 +598,46 @@ def test_pdf_parser_extracts_figures(mock_nougat):
     doc = PdfDocumentParser().parse("2501_fig", pdf_bytes)
     assert len(doc.figures) == 1
     assert "Architecture" in doc.figures[0].caption
+
+
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_MMD_WITH_TWO_SECTIONS)
+def test_pdf_parser_attaches_section_page_bounds(mock_nougat):
+    pdf_bytes = _make_pdf([
+        "1 Introduction\nUnique introduction phrase appears on the first page.",
+        "2 Method\nDistinct method phrase appears on the second page.",
+    ])
+
+    doc = PdfDocumentParser().parse("2501_sections", pdf_bytes)
+
+    by_title = {section.title: section for section in doc.sections}
+    assert by_title["1 Introduction"].page_start == 1
+    assert by_title["1 Introduction"].page_end == 1
+    assert by_title["1 Introduction"].metadata["source_locator"] == "arxiv://2501_sections/pdf#page=1"
+    assert by_title["1 Introduction"].metadata["page_match_strategy"] == "title+body_exact"
+    assert by_title["2 Method"].page_start == 2
+    assert by_title["2 Method"].page_end == 2
+    assert by_title["2 Method"].metadata["source_locator"] == "arxiv://2501_sections/pdf#page=2"
+
+
+@patch("business.research.document.pdf_compiler._run_nougat", return_value=_MMD_WITH_PREAMBLE_AND_SECTION)
+def test_pdf_parser_keeps_same_page_section_bounds_tight(mock_nougat):
+    pdf_bytes = _make_pdf([
+        (
+            "Abstract\nUnique abstract phrase appears on the first page.\n"
+            "1 Introduction\nUnique introduction phrase also starts on the first page."
+        ),
+        "2 Method\nDistinct method phrase appears on the second page.",
+    ])
+
+    doc = PdfDocumentParser().parse("2501_same_page_sections", pdf_bytes)
+
+    by_title = {section.title: section for section in doc.sections}
+    assert by_title["Abstract"].page_start == 1
+    assert by_title["Abstract"].page_end == 1
+    assert by_title["1 Introduction"].page_start == 1
+    assert by_title["1 Introduction"].page_end == 1
+    assert by_title["2 Method"].page_start == 2
+    assert by_title["2 Method"].page_end == 2
 
 
 @patch("business.research.document.pdf_compiler._extract_pdf_images")

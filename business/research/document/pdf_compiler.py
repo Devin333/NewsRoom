@@ -508,9 +508,10 @@ def _source_locator(
     page: int | None,
     pdf_rect: Any = None,
 ) -> str:
+    base_ref = source_ref.split("#", 1)[0]
     if page is None:
-        return source_ref
-    locator = f"{source_ref}#page={page}"
+        return base_ref
+    locator = f"{base_ref}#page={page}"
     rect = _coerce_bbox(pdf_rect)
     if rect is not None:
         locator = f"{locator}&pdf_rect={_format_rect_fragment(rect)}"
@@ -1549,6 +1550,93 @@ def _append_text_fallback_sections(
     return out, appended_pages
 
 
+def _attach_section_page_bounds(
+    sections: list[ResearchSection],
+    page_texts: list[PageTextEvidence],
+) -> list[ResearchSection]:
+    starts: list[int | None] = []
+    scores: list[float] = []
+    strategies: list[str | None] = []
+    for section in sections:
+        if section.page_start is not None:
+            starts.append(section.page_start)
+            scores.append(1.0)
+            strategies.append("existing_page_bounds")
+            continue
+        page, score, strategy = _find_section_start_page(section, page_texts)
+        starts.append(page)
+        scores.append(score)
+        strategies.append(strategy)
+
+    out: list[ResearchSection] = []
+    for index, section in enumerate(sections):
+        page_start = starts[index]
+        if page_start is None:
+            out.append(section)
+            continue
+        page_end = section.page_end if section.page_end is not None else page_start
+        for later_start in starts[index + 1:]:
+            if later_start is None:
+                continue
+            if later_start == page_start:
+                page_end = page_start
+                break
+            if later_start > page_start:
+                page_end = later_start - 1
+                break
+        metadata = dict(section.metadata)
+        metadata["source_locator"] = _source_locator(section.source_ref, page=page_start)
+        if strategies[index]:
+            metadata["page_match_strategy"] = strategies[index]
+            metadata["page_match_score"] = scores[index]
+        out.append(section.model_copy(update={
+            "page_start": page_start,
+            "page_end": page_end,
+            "metadata": metadata,
+        }))
+    return out
+
+
+def _find_section_start_page(
+    section: ResearchSection,
+    page_texts: list[PageTextEvidence],
+) -> tuple[int | None, float, str | None]:
+    title_query = _normalize_search_text(section.title)
+    body_words = _section_query_words(section.text)
+    body_query = " ".join(body_words)
+    body_unique = set(body_words)
+    best: tuple[int, float, str] | None = None
+    for evidence in page_texts:
+        haystack = _normalize_search_text(evidence.selected_text or evidence.native_text)
+        haystack_words = set(_SEARCH_WORD_RE.findall(haystack))
+        score = 0.0
+        strategy_parts: list[str] = []
+        if title_query and title_query in haystack:
+            score += 0.45
+            strategy_parts.append("title")
+        if body_query and body_query in haystack:
+            score += 0.55
+            strategy_parts.append("body_exact")
+        elif body_unique:
+            overlap = len(body_unique & haystack_words) / len(body_unique)
+            if overlap >= 0.55:
+                score += 0.35 * overlap
+                strategy_parts.append("body_overlap")
+        if score >= 0.45 and (best is None or score > best[1]):
+            best = (evidence.page, round(min(score, 1.0), 4), "+".join(strategy_parts))
+    if best is None:
+        return None, 0.0, None
+    return best
+
+
+def _section_query_words(text: str, *, max_words: int = 18) -> list[str]:
+    words = _SEARCH_WORD_RE.findall(text.lower())
+    return [
+        word for word in words
+        if len(word) > 1 and word not in {"missing", "page", "fail"}
+    ][:max_words]
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 
@@ -1579,6 +1667,7 @@ def _parse_pdf(
             page_texts=page_texts,
             missing_pages=missing_pages,
         )
+        sections = _attach_section_page_bounds(sections, page_texts)
         try:
             surya_artifacts = _extract_surya_layout_artifacts(pdf_doc, paper_id)
             image_refs = surya_artifacts.figure_images
