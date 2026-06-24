@@ -10,6 +10,7 @@ from business.research.rag.retrieval_port import PaperChunkRetrievalPort
 from business.research.rag.retriever import ResearchRetriever
 from business.research.services.rag_policy import ResearchRAGPolicyBuilder
 from business.research.ports.chunk_store import ChunkStorePort
+from business.research.ports.field_embedding_index import FieldEmbeddingSearchPort
 from business.research.ports.visual_chunk_index import VisualChunkSearchPort
 
 if TYPE_CHECKING:
@@ -32,12 +33,16 @@ class PaperRAGSession:
         *,
         budget: RAGBudget | None = None,
         reranker: "RerankerPort | None" = None,
+        field_index: FieldEmbeddingSearchPort | None = None,
+        field_reranker: "RerankerPort | None" = None,
         visual_store: VisualChunkSearchPort | None = None,
     ) -> None:
         self._chunk_store = chunk_store
         self._policy_builder = ResearchRAGPolicyBuilder()
         self._budget = budget or RAGBudget.safe_default()
         self._reranker = reranker
+        self._field_index = field_index
+        self._field_reranker = field_reranker
         self._visual_store = visual_store
 
     def run(
@@ -54,6 +59,8 @@ class PaperRAGSession:
         retriever = ResearchRetriever(
             self._chunk_store,
             reranker=self._reranker,
+            field_index=self._field_index,
+            field_reranker=self._field_reranker,
             visual_store=self._visual_store,
         )
         retrieval_port = PaperChunkRetrievalPort(

@@ -70,6 +70,10 @@ class _VisualChunkIndexer:
         self.chunks = [chunk for chunk in self.chunks if chunk.paper_id != paper_id]
 
 
+class _FieldChunkIndexer(_VisualChunkIndexer):
+    pass
+
+
 def test_chunk_pipeline_writes_chunk_manifest(tmp_path):
     store = _ChunkStore()
     repo = _ChunkRepository()
@@ -116,3 +120,23 @@ def test_chunk_pipeline_optionally_indexes_visual_chunks(tmp_path):
 
     assert visual_indexer.ensure_called is True
     assert visual_indexer.chunks == store.chunks
+
+
+def test_chunk_pipeline_optionally_indexes_field_chunks(tmp_path):
+    store = _ChunkStore()
+    repo = _ChunkRepository()
+    field_indexer = _FieldChunkIndexer()
+    pipeline = ChunkPaperPipeline(
+        store,  # type: ignore[arg-type]
+        repo,
+        _SourceFetcher(),
+        _DocumentParser(),
+        field_chunk_indexer=field_indexer,
+        chunk_manifest=ChunkManifestManager(tmp_path / "chunk_manifest.json"),
+        with_propositions=False,
+    )
+
+    pipeline.run("2501.00001")
+
+    assert field_indexer.ensure_called is True
+    assert field_indexer.chunks == store.chunks

@@ -138,6 +138,31 @@ def test_parent_context_metadata_exposed_in_evidence_pack():
                 "body": 0.3,
             },
             "field_score_strategy": "lexical_overlap",
+            "title_embedding_score": 0.72,
+            "abstract_embedding_score": 0.0,
+            "caption_embedding_score": 0.0,
+            "equation_embedding_score": 0.0,
+            "body_embedding_score": 0.4,
+            "field_embedding_score": 0.72,
+            "field_embedding_scores": {"title": 0.72, "body": 0.4},
+            "field_embedding_hits": [{"field_name": "title", "score": 0.72}],
+            "best_embedding_field": "title",
+            "field_embedding_strategy": "field_vector_search",
+            "field_rerank_score": 0.88,
+            "field_rerank_strategy": "cross_encoder_structured_fields",
+            "best_matching_field": "title",
+            "graph_score": 0.6,
+            "child_score_strategy": "semantic_field_embedding_rerank_fusion",
+            "child_score_components": {
+                "semantic": 0.8,
+                "deterministic_field": 0.52,
+                "field_embedding": 0.72,
+                "field_rerank": 0.88,
+                "position": 0.7,
+                "graph": 0.6,
+            },
+            "field_text_available_fields": ("title", "body"),
+            "field_text_sources": {"title": ("section_title",), "body": ("content",)},
             "child_semantic_score": 0.8,
             "child_position_score": 0.7,
             "child_final_score": 0.739,
@@ -177,6 +202,20 @@ def test_parent_context_metadata_exposed_in_evidence_pack():
     assert pack.metadata["field_score"] == 0.52
     assert pack.metadata["field_score_strategy"] == "lexical_overlap"
     assert pack.metadata["field_score_weights"]["title"] == 0.35
+    assert pack.metadata["title_embedding_score"] == 0.72
+    assert pack.metadata["field_embedding_score"] == 0.72
+    assert pack.metadata["field_embedding_scores"]["title"] == 0.72
+    assert pack.metadata["field_embedding_hits"][0]["field_name"] == "title"
+    assert pack.metadata["best_embedding_field"] == "title"
+    assert pack.metadata["field_embedding_strategy"] == "field_vector_search"
+    assert pack.metadata["field_rerank_score"] == 0.88
+    assert pack.metadata["field_rerank_strategy"] == "cross_encoder_structured_fields"
+    assert pack.metadata["best_matching_field"] == "title"
+    assert pack.metadata["graph_score"] == 0.6
+    assert pack.metadata["child_score_strategy"] == "semantic_field_embedding_rerank_fusion"
+    assert pack.metadata["child_score_components"]["field_rerank"] == 0.88
+    assert pack.metadata["field_text_available_fields"] == ("title", "body")
+    assert pack.metadata["field_text_sources"]["title"] == ("section_title",)
     assert pack.metadata["child_semantic_score"] == 0.8
     assert pack.metadata["child_position_score"] == 0.7
     assert pack.metadata["child_final_score"] == 0.739

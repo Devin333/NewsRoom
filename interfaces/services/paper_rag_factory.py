@@ -15,6 +15,7 @@ from infrastructure.external.reranker import CrossEncoderReranker
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
+from infrastructure.storage.vector.paper_field_chunk_store import PaperFieldChunkStore
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
 
 from business.research.document.chunk_storage import (
@@ -62,32 +63,50 @@ def build_chunk_repository() -> PaperChunkRepositoryAdapter:
     return PaperChunkRepositoryAdapter(PaperChunkRepository(_dsn()))
 
 
+def build_field_chunk_store() -> PaperFieldChunkStore:
+    store = PaperFieldChunkStore(qdrant_store_from_env())
+    store.ensure_collection()
+    return store
+
+
 def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeline:
     return ChunkPaperPipeline(
         build_chunk_store(),
         build_chunk_repository(),
         ArxivSourceConnector(),
         ArxivDocumentParser(),
+        field_chunk_indexer=build_field_chunk_store(),
         with_propositions=with_propositions,
     )
 
 
 def build_research_retriever(*, with_reranker: bool = True) -> ResearchRetriever:
     reranker = get_reranker() if with_reranker else None
-    return ResearchRetriever(build_chunk_store(), reranker=reranker)
+    return ResearchRetriever(
+        build_chunk_store(),
+        reranker=reranker,
+        field_index=build_field_chunk_store(),
+        field_reranker=reranker,
+    )
 
 
 def build_paper_rag_session(*, with_reranker: bool = True) -> PaperRAGSession:
     reranker = get_reranker() if with_reranker else None
-    return PaperRAGSession(build_chunk_store(), reranker=reranker)
+    return PaperRAGSession(
+        build_chunk_store(),
+        reranker=reranker,
+        field_index=build_field_chunk_store(),
+        field_reranker=reranker,
+    )
 
 
 __all__ = [
     "build_chunk_pipeline",
     "build_chunk_repository",
     "build_chunk_store",
+    "build_field_chunk_store",
     "build_paper_rag_session",
     "build_research_retriever",
     "get_reranker",
     "preload_reranker",
-]
+]

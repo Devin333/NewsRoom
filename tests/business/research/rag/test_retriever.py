@@ -10,6 +10,7 @@ from business.research.rag.retriever import (
     RetrievalPolicy,
     RetrievalRequest,
 )
+from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from infrastructure.storage.vector.fake_store import InMemoryVectorStore
@@ -135,6 +136,30 @@ class _KeywordReranker:
 class _FailingReranker:
     def score(self, query: str, passages: list[str]) -> list[float]:
         raise RuntimeError("reranker unavailable")
+
+
+class _FakeFieldIndex:
+    def __init__(self, hits: list[FieldEmbeddingHit]) -> None:
+        self.hits = hits
+        self.calls: list[dict[str, Any]] = []
+
+    def search_field_vectors(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        field_names: tuple[str, ...] | None = None,
+        filters: dict[str, Any] | None = None,
+        limit: int = 10,
+    ) -> list[FieldEmbeddingHit]:
+        self.calls.append({
+            "paper_id": paper_id,
+            "query_text": query_text,
+            "field_names": field_names,
+            "filters": filters or {},
+            "limit": limit,
+        })
+        return self.hits[:limit]
 
 
 # ── basic retrieval ───────────────────────────────────────────────────────────
@@ -337,6 +362,120 @@ def test_field_score_boosts_title_for_method_query():
     assert [chunk.chunk_id for chunk in result.child_chunks] == ["para-architecture", "para-background"]
     assert result.child_chunks[0].metadata["title_score"] > result.child_chunks[1].metadata["title_score"]
     assert result.child_chunks[0].metadata["field_score_weights"]["title"] == 0.35
+
+
+def test_field_embedding_hit_boosts_matching_caption_candidate():
+    weak = _chunk(
+        "fig-weak",
+        chunk_type="figure",
+        content="[Figure fig-weak]\nCaption:\nA baseline chart.",
+        metadata={"content_sources": ["caption"]},
+    )
+    strong = _chunk(
+        "fig-strong",
+        chunk_type="figure",
+        content="[Figure fig-strong]\nCaption:\nArchitecture overview.",
+        metadata={"content_sources": ["caption"]},
+    )
+    store = _ScriptedChunkStore([weak, strong], search_order=["fig-weak", "fig-strong"])
+    field_index = _FakeFieldIndex([
+        FieldEmbeddingHit(
+            chunk_id="fig-strong",
+            field_name="caption",
+            score=0.98,
+            field_text="Architecture overview.",
+            metadata={"source_locator": "paper://p1/pdf#page=3"},
+        )
+    ])
+
+    retriever = ResearchRetriever(
+        store,
+        policy=RetrievalPolicy(overfetch_multiplier=1),
+        field_index=field_index,
+    )
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Figure architecture overview", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["fig-strong", "fig-weak"]
+    top = result.child_chunks[0]
+    assert top.metadata["caption_embedding_score"] == 0.98
+    assert top.metadata["field_embedding_score"] == 0.98
+    assert top.metadata["best_embedding_field"] == "caption"
+    assert top.metadata["best_matching_field"] == "caption"
+    assert top.metadata["child_score_strategy"] == "semantic_field_embedding_rerank_fusion"
+    assert result.metadata["field_hits_count"] == 1
+    assert result.metadata["field_hits_by_name"] == {"caption": 1}
+
+
+def test_field_search_plan_depends_on_intent():
+    figure = _chunk(
+        "fig-1",
+        chunk_type="figure",
+        content="[Figure fig-1]\nCaption:\nArchitecture overview.",
+    )
+    store = _ScriptedChunkStore([figure], search_order=["fig-1"])
+    field_index = _FakeFieldIndex([])
+
+    retriever = ResearchRetriever(store, field_index=field_index)
+    retriever.retrieve(RetrievalRequest(paper_id="p1", question="What does Figure 1 show?", limit=1))
+
+    assert field_index.calls[0]["field_names"] == ("caption", "body")
+    assert field_index.calls[0]["filters"]["chunk_type"] == "figure"
+
+
+def test_structured_field_reranker_influences_child_ordering():
+    weak = _chunk(
+        "weak-child",
+        content="weak-field generic method details.",
+    )
+    strong = _chunk(
+        "strong-child",
+        content="strong-field exact method explanation.",
+    )
+    store = _ScriptedChunkStore([weak, strong], search_order=["weak-child", "strong-child"])
+    field_reranker = _KeywordReranker({"strong-field": 0.95, "weak-field": 0.0})
+
+    retriever = ResearchRetriever(
+        store,
+        policy=RetrievalPolicy(overfetch_multiplier=1),
+        field_reranker=field_reranker,
+    )
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="how does the exact method work?", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["strong-child", "weak-child"]
+    top = result.child_chunks[0]
+    assert top.metadata["field_rerank_score"] == 0.95
+    assert top.metadata["field_rerank_strategy"] == "cross_encoder_structured_fields"
+    assert top.metadata["child_score_strategy"] == "semantic_field_embedding_rerank_fusion"
+    assert "Body:" in field_reranker.calls[0][1][0]
+    assert result.metadata["field_reranker_enabled"] is True
+    assert result.metadata["field_rerank_top"] == 0.95
+
+
+def test_field_reranker_failure_keeps_deterministic_fallback():
+    child = _chunk(
+        "method-child",
+        section_title="Architecture",
+        content="The architecture uses attention.",
+    )
+    store = _ScriptedChunkStore([child], search_order=["method-child"])
+
+    retriever = ResearchRetriever(
+        store,
+        policy=RetrievalPolicy(overfetch_multiplier=1),
+        field_reranker=_FailingReranker(),
+    )
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="how does the architecture work?", limit=1)
+    )
+
+    top = result.child_chunks[0]
+    assert top.metadata["child_score_strategy"] == "semantic_lexical_field_fallback"
+    assert top.metadata["field_embedding_score"] == 0.0
+    assert top.metadata["field_rerank_score"] is None
 
 
 def test_position_weighting_prefers_nearby():

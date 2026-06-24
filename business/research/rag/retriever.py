@@ -7,9 +7,11 @@ from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 from business.research.document.models import PaperChunk
-from business.research.rag.routing import QueryIntent, RetrievalRoute, build_retrieval_route
 from business.research.ports.chunk_store import ChunkStorePort
+from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
 from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
+from business.research.rag.field_text import FIELD_NAMES, extract_field_texts
+from business.research.rag.routing import QueryIntent, RetrievalRoute, build_retrieval_route
 
 if TYPE_CHECKING:
     from business.research.ports.reranker import RerankerPort
@@ -61,8 +63,9 @@ _RESULT_QUESTION_KEYWORDS = (
     "\u8868\u660e",
 )
 _PARENT_SCORE_KEYS = ("child", "parent", "heading", "position")
-_FIELD_SCORE_KEYS = ("title", "abstract", "caption", "equation", "body")
-_CHILD_SCORE_KEYS = ("semantic", "field", "position")
+_FIELD_SCORE_KEYS = FIELD_NAMES
+_CHILD_FALLBACK_SCORE_KEYS = ("semantic", "field", "position", "graph")
+_CHILD_FINAL_SCORE_KEYS = ("semantic", "field_embedding", "field_rerank", "position", "graph")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 
 
@@ -107,9 +110,17 @@ class RetrievalPolicy:
     })
     field_scoring_enabled: bool = True
     child_score_weights: dict[str, float] = field(default_factory=lambda: {
-        "semantic": 0.75,
-        "field": 0.20,
+        "semantic": 0.60,
+        "field": 0.25,
+        "position": 0.10,
+        "graph": 0.05,
+    })
+    child_final_score_weights: dict[str, float] = field(default_factory=lambda: {
+        "semantic": 0.45,
+        "field_embedding": 0.25,
+        "field_rerank": 0.20,
         "position": 0.05,
+        "graph": 0.05,
     })
     field_default_score_weights: dict[str, float] = field(default_factory=lambda: {
         "title": 0.25,
@@ -126,6 +137,19 @@ class RetrievalPolicy:
         "formula_query": {"title": 0.10, "abstract": 0.05, "caption": 0.05, "equation": 0.60, "body": 0.20},
         "numerical_result": {"title": 0.20, "abstract": 0.05, "caption": 0.25, "equation": 0.05, "body": 0.45},
         "comparison": {"title": 0.20, "abstract": 0.05, "caption": 0.20, "equation": 0.05, "body": 0.50},
+    })
+    field_embedding_enabled: bool = True
+    field_reranking_enabled: bool = True
+    field_embedding_search_limit_multiplier: int = 2
+    field_default_search_fields: tuple[str, ...] = ("title", "abstract", "caption", "equation", "body")
+    field_intent_search_fields: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
+        "concept_method": ("title", "body"),
+        "contribution": ("abstract", "title", "body"),
+        "figure_query": ("caption", "body"),
+        "table_query": ("caption", "body"),
+        "formula_query": ("equation", "body"),
+        "numerical_result": ("caption", "body", "title"),
+        "comparison": ("caption", "body", "title"),
     })
 
     def alpha_for(self, intent: str) -> float:
@@ -158,7 +182,21 @@ class RetrievalPolicy:
         return _normalized_field_score_weights(weights)
 
     def normalized_child_score_weights(self) -> dict[str, float]:
-        return _normalized_child_score_weights(self.child_score_weights)
+        return _normalized_child_fallback_score_weights(self.child_score_weights)
+
+    def normalized_child_final_score_weights(self) -> dict[str, float]:
+        return _normalized_child_final_score_weights(self.child_final_score_weights)
+
+    def field_search_fields_for(self, intent: str) -> tuple[str, ...]:
+        fields = self.field_intent_search_fields.get(intent, self.field_default_search_fields)
+        seen: set[str] = set()
+        out: list[str] = []
+        for field_name in fields:
+            normalized = str(field_name).casefold()
+            if normalized in FIELD_NAMES and normalized not in seen:
+                out.append(normalized)
+                seen.add(normalized)
+        return tuple(out) if out else tuple(FIELD_NAMES)
 
 
 @dataclass(frozen=True)
@@ -187,6 +225,14 @@ class _FieldScores:
     field_score: float
     weights: dict[str, float]
     strategy: str = "lexical_overlap"
+
+
+@dataclass(frozen=True)
+class _FieldEmbeddingSummary:
+    scores: dict[str, float]
+    best_field: str = ""
+    best_score: float = 0.0
+    hits: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass
@@ -250,6 +296,24 @@ class RetrievalResult:
                     "field_score": chunk.metadata.get("field_score"),
                     "field_score_weights": chunk.metadata.get("field_score_weights", {}),
                     "field_score_strategy": chunk.metadata.get("field_score_strategy", ""),
+                    "title_embedding_score": chunk.metadata.get("title_embedding_score"),
+                    "abstract_embedding_score": chunk.metadata.get("abstract_embedding_score"),
+                    "caption_embedding_score": chunk.metadata.get("caption_embedding_score"),
+                    "equation_embedding_score": chunk.metadata.get("equation_embedding_score"),
+                    "body_embedding_score": chunk.metadata.get("body_embedding_score"),
+                    "field_embedding_score": chunk.metadata.get("field_embedding_score"),
+                    "field_embedding_scores": chunk.metadata.get("field_embedding_scores", {}),
+                    "field_embedding_hits": chunk.metadata.get("field_embedding_hits", []),
+                    "best_embedding_field": chunk.metadata.get("best_embedding_field", ""),
+                    "field_embedding_strategy": chunk.metadata.get("field_embedding_strategy", ""),
+                    "field_rerank_score": chunk.metadata.get("field_rerank_score"),
+                    "field_rerank_strategy": chunk.metadata.get("field_rerank_strategy", ""),
+                    "best_matching_field": chunk.metadata.get("best_matching_field", ""),
+                    "graph_score": chunk.metadata.get("graph_score"),
+                    "child_score_strategy": chunk.metadata.get("child_score_strategy", ""),
+                    "child_score_components": chunk.metadata.get("child_score_components", {}),
+                    "field_text_available_fields": chunk.metadata.get("field_text_available_fields", ()),
+                    "field_text_sources": chunk.metadata.get("field_text_sources", {}),
                     "child_semantic_score": chunk.metadata.get("child_semantic_score"),
                     "child_position_score": chunk.metadata.get("child_position_score"),
                     "child_final_score": chunk.metadata.get("child_final_score"),
@@ -273,11 +337,15 @@ class ResearchRetriever:
         *,
         policy: RetrievalPolicy | None = None,
         reranker: "RerankerPort | None" = None,
+        field_index: FieldEmbeddingSearchPort | None = None,
+        field_reranker: "RerankerPort | None" = None,
         visual_store: VisualChunkSearchPort | None = None,
     ) -> None:
         self._store = chunk_store
         self._policy = policy or RetrievalPolicy()
         self._reranker = reranker
+        self._field_index = field_index
+        self._field_reranker = field_reranker
         self._visual_store = visual_store
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
@@ -294,6 +362,8 @@ class ResearchRetriever:
             limit=request.limit * self._policy.overfetch_multiplier,
         )
         n_recalled = len(candidates)
+        field_hits = self._search_field_candidates(request, route, filters)
+        candidates = self._merge_field_hits(candidates, field_hits, request.paper_id)
         visual_hits = self._search_visual_candidates(request, route, filters)
         n_visual_recalled = len(visual_hits)
 
@@ -307,6 +377,10 @@ class ResearchRetriever:
             kept = [(c, b) for (c, b) in pairs if b >= self._policy.rerank_score_threshold]
             pairs = kept or pairs[:1]  # never drop everything — keep top-1 as fallback
         n_filtered = n_before_filter - len(pairs)
+        field_rerank_scores = self._field_rerank_scores(
+            request.question,
+            [chunk for (chunk, _sem), _base in pairs],
+        )
 
         # ── 3. position-aware re-rank ─────────────────────────────────────────
         scored = []
@@ -323,6 +397,7 @@ class ResearchRetriever:
                 request,
                 route,
                 semantic_score=base,
+                field_rerank_score=field_rerank_scores.get(chunk.chunk_id),
             ))
         if visual_hits:
             scored = self._fuse_visual_scores(
@@ -332,6 +407,7 @@ class ResearchRetriever:
                 query_text=request.question,
                 current_section_index=request.current_section_index,
                 intent=route.intent,
+                field_rerank_scores=field_rerank_scores,
             )
         scored.sort(key=lambda x: x[1], reverse=True)
         child_chunks = [c for c, _ in scored[: request.limit]]
@@ -354,6 +430,11 @@ class ResearchRetriever:
             "recalled": n_recalled,
             "visual_recalled": n_visual_recalled,
             "visual_fusion_enabled": self._visual_store is not None,
+            "field_embedding_enabled": self._field_index is not None and self._policy.field_embedding_enabled,
+            "field_reranker_enabled": self._field_reranker is not None and self._policy.field_reranking_enabled,
+            "field_search_fields": self._policy.field_search_fields_for(route.intent),
+            "field_hits_count": len(field_hits),
+            "field_hits_by_name": _field_hits_by_name(field_hits),
             "threshold_filtered": n_filtered,
             "child_returned": len(child_chunks),
             "parent_returned": len(parent_chunks),
@@ -368,6 +449,9 @@ class ResearchRetriever:
             "field_scored_count": len(scored),
             "field_score_top": _metadata_extreme(scored, "field_score", max),
             "field_score_min": _metadata_extreme(scored, "field_score", min),
+            "field_embedding_score_top": _metadata_extreme(scored, "field_embedding_score", max),
+            "field_rerank_top": _metadata_extreme(scored, "field_rerank_score", max),
+            "best_matching_fields": _best_matching_fields(scored),
         }
         metrics.update(parent_metrics)
         logging.getLogger(__name__).info("retrieval %s", metrics)
@@ -404,6 +488,80 @@ class ResearchRetriever:
             filters.update(route.extra_filters)
         return filters
 
+    def _search_field_candidates(
+        self,
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+        filters: dict[str, Any],
+    ) -> list[FieldEmbeddingHit]:
+        if self._field_index is None or not self._policy.field_embedding_enabled:
+            return []
+        limit = max(
+            request.limit,
+            request.limit
+            * self._policy.overfetch_multiplier
+            * max(1, self._policy.field_embedding_search_limit_multiplier),
+        )
+        try:
+            return self._field_index.search_field_vectors(
+                request.paper_id,
+                request.question,
+                field_names=self._policy.field_search_fields_for(route.intent),
+                filters=filters,
+                limit=limit,
+            )
+        except Exception:
+            logging.getLogger(__name__).warning("field embedding retrieval failed", exc_info=True)
+            return []
+
+    def _merge_field_hits(
+        self,
+        candidates: list[tuple[PaperChunk, float]],
+        field_hits: list[FieldEmbeddingHit],
+        paper_id: str,
+    ) -> list[tuple[PaperChunk, float]]:
+        if not field_hits:
+            return candidates
+
+        by_id: dict[str, tuple[PaperChunk, float]] = {
+            chunk.chunk_id: (chunk, score)
+            for chunk, score in candidates
+        }
+        for hit in field_hits:
+            existing = by_id.get(hit.chunk_id)
+            chunk = existing[0] if existing else self._store.get_chunk(hit.chunk_id)
+            if chunk is None or chunk.paper_id != paper_id:
+                continue
+            metadata = _merge_field_embedding_hit(chunk.metadata, hit)
+            merged_chunk = chunk.model_copy(update={"metadata": metadata})
+            by_id[merged_chunk.chunk_id] = (merged_chunk, existing[1] if existing else 0.0)
+        return list(by_id.values())
+
+    def _field_rerank_scores(self, question: str, chunks: list[PaperChunk]) -> dict[str, float]:
+        if (
+            self._field_reranker is None
+            or not self._policy.field_reranking_enabled
+            or not chunks
+        ):
+            return {}
+        passages = [_field_rerank_passage(chunk) for chunk in chunks]
+        try:
+            scores = self._field_reranker.score(question, passages)
+        except Exception:
+            logging.getLogger(__name__).warning("field reranker failed", exc_info=True)
+            return {}
+        if len(scores) != len(chunks):
+            logging.getLogger(__name__).warning(
+                "field reranker returned %s scores for %s candidates",
+                len(scores),
+                len(chunks),
+            )
+            return {}
+        return {
+            chunk.chunk_id: _clamp_score(float(score))
+            for chunk, score in zip(chunks, scores, strict=True)
+        }
+
     def _score_child_candidate(
         self,
         chunk: PaperChunk,
@@ -411,8 +569,8 @@ class ResearchRetriever:
         route: RetrievalRoute,
         *,
         semantic_score: float,
+        field_rerank_score: float | None = None,
     ) -> tuple[PaperChunk, float]:
-        child_weights = self._policy.normalized_child_score_weights()
         semantic = _clamp_score(semantic_score)
         position_score = _child_position_score(
             self._policy,
@@ -426,11 +584,31 @@ class ResearchRetriever:
             self._policy.field_score_weights_for(route.intent),
             enabled=self._policy.field_scoring_enabled,
         )
-        final_score = (
-            semantic * child_weights["semantic"]
-            + field_scores.field_score * child_weights["field"]
-            + position_score * child_weights["position"]
-        )
+        field_summary = _field_embedding_summary_from_metadata(chunk.metadata)
+        field_rerank = _clamp_score(field_rerank_score) if field_rerank_score is not None else 0.0
+        graph_score = _child_graph_score(chunk)
+        has_field_semantic = field_summary.best_score > 0.0 or field_rerank_score is not None
+        if has_field_semantic:
+            child_weights = self._policy.normalized_child_final_score_weights()
+            final_score = (
+                semantic * child_weights["semantic"]
+                + field_summary.best_score * child_weights["field_embedding"]
+                + field_rerank * child_weights["field_rerank"]
+                + position_score * child_weights["position"]
+                + graph_score * child_weights["graph"]
+            )
+            score_strategy = "semantic_field_embedding_rerank_fusion"
+        else:
+            child_weights = self._policy.normalized_child_score_weights()
+            final_score = (
+                semantic * child_weights["semantic"]
+                + field_scores.field_score * child_weights["field"]
+                + position_score * child_weights["position"]
+                + graph_score * child_weights["graph"]
+            )
+            score_strategy = "semantic_lexical_field_fallback"
+        field_texts = extract_field_texts(chunk)
+        best_matching_field = _best_matching_field(field_summary, field_scores)
         metadata = dict(chunk.metadata)
         metadata.update({
             "title_score": field_scores.title_score,
@@ -441,10 +619,37 @@ class ResearchRetriever:
             "field_score": field_scores.field_score,
             "field_score_weights": dict(field_scores.weights),
             "field_score_strategy": field_scores.strategy,
+            "title_embedding_score": field_summary.scores.get("title", 0.0),
+            "abstract_embedding_score": field_summary.scores.get("abstract", 0.0),
+            "caption_embedding_score": field_summary.scores.get("caption", 0.0),
+            "equation_embedding_score": field_summary.scores.get("equation", 0.0),
+            "body_embedding_score": field_summary.scores.get("body", 0.0),
+            "field_embedding_score": _round_score(field_summary.best_score),
+            "best_embedding_field": field_summary.best_field,
+            "field_embedding_hits": list(field_summary.hits),
+            "field_embedding_strategy": "field_vector_search" if field_summary.best_score > 0.0 else "",
+            "field_rerank_score": _round_score(field_rerank) if field_rerank_score is not None else None,
+            "field_rerank_strategy": "cross_encoder_structured_fields" if field_rerank_score is not None else "",
+            "best_matching_field": best_matching_field,
+            "graph_score": _round_score(graph_score),
+            "child_score_strategy": score_strategy,
+            "child_score_components": {
+                "semantic": _round_score(semantic),
+                "deterministic_field": field_scores.field_score,
+                "field_embedding": _round_score(field_summary.best_score),
+                "field_rerank": _round_score(field_rerank) if field_rerank_score is not None else None,
+                "position": _round_score(position_score),
+                "graph": _round_score(graph_score),
+            },
             "child_semantic_score": _round_score(semantic),
             "child_position_score": _round_score(position_score),
             "child_final_score": _round_score(final_score),
             "child_score_weights": dict(child_weights),
+            "field_text_available_fields": field_texts.available_fields(),
+            "field_text_sources": {
+                field_name: field_texts.sources_for(field_name)
+                for field_name in field_texts.available_fields()
+            },
         })
         return chunk.model_copy(update={"metadata": metadata}), _round_score(final_score)
 
@@ -476,6 +681,7 @@ class ResearchRetriever:
         query_text: str,
         current_section_index: int,
         intent: QueryIntent,
+        field_rerank_scores: dict[str, float] | None = None,
     ) -> list[tuple[PaperChunk, float]]:
         by_id: dict[str, tuple[PaperChunk, float, float | None]] = {}
         for chunk, score in scored:
@@ -517,6 +723,7 @@ class ResearchRetriever:
                 ),
                 RetrievalRoute(intent=intent),
                 semantic_score=fused_score,
+                field_rerank_score=(field_rerank_scores or {}).get(chunk.chunk_id),
             ))
         return fused
 
@@ -1028,6 +1235,148 @@ def _metadata_extreme(
     return _round_score(reducer(values))
 
 
+def _field_hits_by_name(hits: list[FieldEmbeddingHit]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for hit in hits:
+        counts[hit.field_name] = counts.get(hit.field_name, 0) + 1
+    return counts
+
+
+def _best_matching_fields(scored: list[tuple[PaperChunk, float]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for chunk, _score in scored:
+        field_name = str(chunk.metadata.get("best_matching_field") or "")
+        if not field_name:
+            continue
+        counts[field_name] = counts.get(field_name, 0) + 1
+    return counts
+
+
+def _merge_field_embedding_hit(
+    metadata: dict[str, Any],
+    hit: FieldEmbeddingHit,
+) -> dict[str, Any]:
+    out = dict(metadata)
+    field_name = str(hit.field_name).casefold()
+    if field_name not in FIELD_NAMES:
+        return out
+
+    raw_scores = out.get("field_embedding_scores")
+    scores = {
+        str(key): _clamp_score(float(value))
+        for key, value in (raw_scores.items() if isinstance(raw_scores, dict) else [])
+        if str(key) in FIELD_NAMES
+    }
+    scores[field_name] = max(scores.get(field_name, 0.0), _clamp_score(hit.score))
+
+    raw_hits = out.get("field_embedding_hits")
+    hit_records = [
+        dict(item)
+        for item in raw_hits
+        if isinstance(raw_hits, list) and isinstance(item, dict)
+    ] if isinstance(raw_hits, list) else []
+    hit_records.append({
+        "field_name": field_name,
+        "score": _round_score(_clamp_score(hit.score)),
+        "field_text_preview": " ".join(hit.field_text.split())[:240],
+        "source_locator": hit.metadata.get("source_locator", ""),
+        "caption_source_locator": hit.metadata.get("caption_source_locator", ""),
+    })
+    hit_records.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+
+    best_field, best_score = _best_score_item(scores)
+    out["field_embedding_scores"] = {name: _round_score(score) for name, score in scores.items()}
+    for name in FIELD_NAMES:
+        out[f"{name}_embedding_score"] = _round_score(scores.get(name, 0.0))
+    out["field_embedding_score"] = _round_score(best_score)
+    out["best_embedding_field"] = best_field
+    out["field_embedding_hits"] = hit_records[:8]
+    out["field_embedding_hit_count"] = len(hit_records)
+    return out
+
+
+def _field_embedding_summary_from_metadata(metadata: dict[str, Any]) -> _FieldEmbeddingSummary:
+    raw_scores = metadata.get("field_embedding_scores")
+    score_source = raw_scores if isinstance(raw_scores, dict) else {}
+    scores: dict[str, float] = {}
+    for name in FIELD_NAMES:
+        if name not in score_source and f"{name}_embedding_score" not in metadata:
+            continue
+        try:
+            scores[name] = _clamp_score(float(score_source.get(name, metadata.get(f"{name}_embedding_score", 0.0))))
+        except (TypeError, ValueError):
+            scores[name] = 0.0
+    best_field, best_score = _best_score_item(scores)
+    raw_hits = metadata.get("field_embedding_hits")
+    hits = tuple(
+        dict(item)
+        for item in raw_hits
+        if isinstance(raw_hits, list) and isinstance(item, dict)
+    ) if isinstance(raw_hits, list) else ()
+    return _FieldEmbeddingSummary(
+        scores={name: _round_score(score) for name, score in scores.items()},
+        best_field=best_field,
+        best_score=_round_score(best_score),
+        hits=hits,
+    )
+
+
+def _best_score_item(scores: dict[str, float]) -> tuple[str, float]:
+    if not scores:
+        return "", 0.0
+    field_name, score = max(scores.items(), key=lambda item: (item[1], -FIELD_NAMES.index(item[0])))
+    if score <= 0.0:
+        return "", 0.0
+    return field_name, _clamp_score(score)
+
+
+def _best_matching_field(field_summary: _FieldEmbeddingSummary, field_scores: _FieldScores) -> str:
+    if field_summary.best_field:
+        return field_summary.best_field
+    deterministic = {
+        "title": field_scores.title_score,
+        "abstract": field_scores.abstract_score,
+        "caption": field_scores.caption_score,
+        "equation": field_scores.equation_score,
+        "body": field_scores.body_score,
+    }
+    field_name, score = _best_score_item(deterministic)
+    return field_name if score > 0.0 else ""
+
+
+def _field_rerank_passage(chunk: PaperChunk) -> str:
+    field_texts = extract_field_texts(chunk)
+    labels = {
+        "title": "Title",
+        "abstract": "Abstract",
+        "caption": "Caption",
+        "equation": "Equation",
+        "body": "Body",
+    }
+    lines = []
+    for field_name in FIELD_NAMES:
+        text = field_texts.text_for(field_name)
+        if not text:
+            continue
+        lines.extend([f"{labels[field_name]}:", text[:1600], ""])
+    return "\n".join(lines).strip() or chunk.content[:2000]
+
+
+def _child_graph_score(chunk: PaperChunk) -> float:
+    metadata = chunk.metadata
+    if metadata.get("expansion_edge"):
+        return 1.0
+    if metadata.get("referenced_by_chunks"):
+        return 1.0
+    if metadata.get("nearby_context_chunk_id"):
+        return 0.8
+    if chunk.references:
+        return 0.6
+    if metadata.get("parent_table_chunk_id"):
+        return 0.5
+    return 0.0
+
+
 def _normalized_field_score_weights(weights: dict[str, float]) -> dict[str, float]:
     return _normalized_score_weights(weights, _FIELD_SCORE_KEYS, {
         "title": 0.25,
@@ -1038,11 +1387,22 @@ def _normalized_field_score_weights(weights: dict[str, float]) -> dict[str, floa
     })
 
 
-def _normalized_child_score_weights(weights: dict[str, float]) -> dict[str, float]:
-    return _normalized_score_weights(weights, _CHILD_SCORE_KEYS, {
-        "semantic": 0.75,
-        "field": 0.20,
+def _normalized_child_fallback_score_weights(weights: dict[str, float]) -> dict[str, float]:
+    return _normalized_score_weights(weights, _CHILD_FALLBACK_SCORE_KEYS, {
+        "semantic": 0.60,
+        "field": 0.25,
+        "position": 0.10,
+        "graph": 0.05,
+    })
+
+
+def _normalized_child_final_score_weights(weights: dict[str, float]) -> dict[str, float]:
+    return _normalized_score_weights(weights, _CHILD_FINAL_SCORE_KEYS, {
+        "semantic": 0.45,
+        "field_embedding": 0.25,
+        "field_rerank": 0.20,
         "position": 0.05,
+        "graph": 0.05,
     })
 
 
@@ -1079,11 +1439,12 @@ def _field_scores_for_chunk(
         return _FieldScores(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zero_weights, "disabled")
 
     normalized_weights = _normalized_field_score_weights(weights)
-    title_score = _lexical_match_score(query_text, chunk.section_title)
-    abstract_score = _lexical_match_score(query_text, _abstract_text(chunk))
-    caption_score = _lexical_match_score(query_text, _caption_text(chunk))
-    equation_score = _lexical_match_score(query_text, _equation_text(chunk))
-    body_score = _lexical_match_score(query_text, chunk.content)
+    field_texts = extract_field_texts(chunk)
+    title_score = _lexical_match_score(query_text, field_texts.title)
+    abstract_score = _lexical_match_score(query_text, field_texts.abstract)
+    caption_score = _lexical_match_score(query_text, field_texts.caption)
+    equation_score = _lexical_match_score(query_text, field_texts.equation)
+    body_score = _lexical_match_score(query_text, field_texts.body)
     field_score = (
         title_score * normalized_weights["title"]
         + abstract_score * normalized_weights["abstract"]

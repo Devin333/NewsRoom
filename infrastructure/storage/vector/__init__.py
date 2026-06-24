@@ -27,7 +27,9 @@ if TYPE_CHECKING:
 
 else:
     try:
+        _field_chunk_module = import_module("infrastructure.storage.vector.paper_field_chunk_store")
         _qdrant_module = import_module("infrastructure.storage.vector.qdrant_store")
+        PaperFieldChunkStore = _field_chunk_module.PaperFieldChunkStore
         QdrantVectorStore = _qdrant_module.QdrantVectorStore
         qdrant_store_from_env = _qdrant_module.qdrant_store_from_env
     except ModuleNotFoundError as exc:
@@ -43,6 +45,12 @@ else:
             raise ModuleNotFoundError(
                 "qdrant-client is required for memory/vector features. Install with `python -m pip install -e \".[qdrant]\"` or `python -m pip install -e \".[dev]\"`."
             ) from _QDRANT_IMPORT_ERROR
+
+        class PaperFieldChunkStore:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                raise ModuleNotFoundError(
+                    "qdrant-client is required for PaperFieldChunkStore. Install with `python -m pip install -e \".[qdrant]\"` or `python -m pip install -e \".[dev]\"`."
+                ) from _QDRANT_IMPORT_ERROR
 __all__ = [
     "DeterministicEmbeddingModel",
     "EmbeddingConfigurationError",
@@ -52,6 +60,7 @@ __all__ = [
     "InMemoryVectorStore",
     "OpenAICompatibleEmbeddingConfig",
     "OpenAICompatibleEmbeddingModel",
+    "PaperFieldChunkStore",
     "QdrantVectorStore",
     "VectorCollectionStatus",
     "VectorDocument",
