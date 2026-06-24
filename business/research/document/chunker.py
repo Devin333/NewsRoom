@@ -19,6 +19,8 @@ _LATEX_FORMULA = re.compile(r"\\begin\{(?:equation|align|gather)[^}]*\}.*?\\end\
 _INLINE_FORMULA = re.compile(r"\$\$[^$]+\$\$|\$[^$\n]+\$")
 _FIGURE_REF = re.compile(r"图\s*(\w+)|[Ff]ig(?:ure)?[.s]?\s*(\w+)")
 _LOCATOR_PAGE_RE = re.compile(r"(?:#|&)page=(\d+)")
+_FIGURE_BODY_REF = re.compile(r"\b(Fig(?:ure)?\.?\s*([A-Za-z0-9][A-Za-z0-9.\-]*))", re.IGNORECASE)
+_TABLE_BODY_REF = re.compile(r"\b(Table\s+([A-Za-z0-9][A-Za-z0-9.\-]*))", re.IGNORECASE)
 
 # Minimum sections to count as "structure detected" (PRD §3)
 _MIN_STRUCTURED_SECTIONS = 3
@@ -47,6 +49,64 @@ def _find_figure_ref(text: str) -> tuple[bool, str]:
     return True, (m.group(1) or m.group(2) or "").strip()
 
 
+def _normalize_ref_label(value: Any) -> str:
+    text = re.sub(r"[^a-z0-9]+", "", str(value).casefold())
+    text = re.sub(r"^(?:figures?|fig|tables?|tab)", "", text)
+    if text.isdigit():
+        return str(int(text))
+    return text
+
+
+def _body_visual_references(text: str) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
+    for kind, pattern in (("figure", _FIGURE_BODY_REF), ("table", _TABLE_BODY_REF)):
+        for match in pattern.finditer(text):
+            label = _normalize_ref_label(match.group(2))
+            if not label:
+                continue
+            refs.append({
+                "kind": kind,
+                "label": label,
+                "text_ref": match.group(1).strip(),
+            })
+    return refs
+
+
+def _caption_ref_label(kind: str, text: str) -> str:
+    pattern = _FIGURE_BODY_REF if kind == "figure" else _TABLE_BODY_REF
+    match = pattern.search(text)
+    return _normalize_ref_label(match.group(2)) if match else ""
+
+
+def _visual_reference_keys(
+    kind: str,
+    element_id: str,
+    caption: str,
+    metadata: dict[str, Any],
+) -> set[str]:
+    return {
+        key for key in (
+            _normalize_ref_label(element_id),
+            _caption_ref_label(kind, caption),
+            _caption_ref_label(kind, _metadata_text(metadata, "caption_text", "surya_caption")),
+            _normalize_ref_label(metadata.get(f"{kind}_number", "")),
+            _normalize_ref_label(metadata.get("caption_number", "")),
+        )
+        if key
+    }
+
+
+def _visual_lookup(
+    kind: str,
+    elements: dict[str, ResearchFigure] | dict[str, ResearchTable],
+) -> dict[str, ResearchFigure | ResearchTable]:
+    lookup: dict[str, ResearchFigure | ResearchTable] = {}
+    for element_id, element in elements.items():
+        for key in _visual_reference_keys(kind, element_id, element.caption, element.metadata):
+            lookup.setdefault(key, element)
+    return lookup
+
+
 def _table_rows_to_lines(rows: list[dict[str, Any]], columns: list[str]) -> list[str]:
     lines: list[str] = []
     for row in rows:
@@ -72,6 +132,91 @@ def _metadata_text(metadata: dict[str, Any], *keys: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _region_metadata(
+    *,
+    page: int | None,
+    source_locator: str,
+    rect: Any,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    if page is not None:
+        out["page"] = page
+    if source_locator:
+        out["source_locator"] = source_locator
+    if rect:
+        out["pdf_rect"] = rect
+    return out
+
+
+def _caption_alignment_metadata(
+    *,
+    caption: str,
+    page: int | None,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    caption_text = _metadata_text(metadata, "caption_text", "surya_caption") or caption
+    caption_locator = str(metadata.get("caption_source_locator") or "")
+    caption_page = (
+        _coerce_page(metadata.get("caption_text_page"))
+        or _locator_page(caption_locator)
+        or page
+    )
+    out: dict[str, Any] = {
+        "caption_text": caption_text,
+        "caption_region": _region_metadata(
+            page=caption_page,
+            source_locator=caption_locator,
+            rect=metadata.get("caption_pdf_rect"),
+        ),
+        "caption_match_strategy": str(
+            metadata.get("alignment_strategy")
+            or metadata.get("caption_match_strategy")
+            or "unknown"
+        ),
+    }
+    score = metadata.get("alignment_score", metadata.get("caption_match_score"))
+    if score is not None:
+        out["caption_match_confidence"] = score
+    return out
+
+
+def _visual_alignment_metadata(
+    *,
+    kind: str,
+    element_id: str,
+    caption: str,
+    page: int | None,
+    source_ref: str,
+    metadata: dict[str, Any],
+    parent: PaperChunk | None,
+    parent_strategy: str,
+    references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_locator = _element_source_locator(source_ref, metadata)
+    visual_region = _region_metadata(
+        page=page or _metadata_page(metadata),
+        source_locator=source_locator,
+        rect=metadata.get("pdf_rect"),
+    )
+    base: dict[str, Any] = {
+        "visual_element_kind": kind,
+        "visual_element_id": element_id,
+        "visual_region": visual_region,
+        "caption_alignment": _caption_alignment_metadata(
+            caption=caption,
+            page=page,
+            metadata=metadata,
+        ),
+        "nearby_context_chunk_id": parent.chunk_id if parent else "",
+        "nearby_context_match_strategy": parent_strategy,
+        "referenced_by_chunks": references,
+    }
+    ref_labels = sorted(_visual_reference_keys(kind, element_id, caption, metadata))
+    if ref_labels:
+        base["reference_labels"] = ref_labels
+    return base
 
 
 def _table_to_text(
@@ -274,6 +419,32 @@ def _find_visual_parent(
     return paragraph_chunks[0], "first_paragraph_fallback"
 
 
+def _visual_references_by_element(
+    chunks: list[PaperChunk],
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    out: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for chunk in _paragraph_child_chunks(chunks):
+        refs = chunk.metadata.get("visual_references")
+        if not isinstance(refs, list):
+            continue
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            kind = str(ref.get("kind") or "")
+            element_id = str(ref.get("element_id") or "")
+            if not kind or not element_id:
+                continue
+            entry = {
+                "chunk_id": chunk.chunk_id,
+                "section_title": chunk.section_title,
+                "page": _chunk_page(chunk),
+                "source_locator": chunk.metadata.get("source_locator", ""),
+                "text_ref": str(ref.get("text_ref") or ""),
+            }
+            out.setdefault((kind, element_id), []).append(entry)
+    return out
+
+
 def _stable_chunk_id(paper_id: str, *parts: str) -> str:
     return build_stable_id("chunk", paper_id, *parts)
 
@@ -407,6 +578,8 @@ class PaperDocumentChunker:
         ))
 
     def _add_section_chunks(self, doc, parse_source, structure_detected, sections, elements, out):
+        figure_lookup = _visual_lookup("figure", elements.figures)
+        table_lookup = _visual_lookup("table", elements.tables)
         for idx, section in enumerate(sections):
             if not section.text.strip():
                 continue  # skip blank sections — no chunk to emit
@@ -454,6 +627,7 @@ class PaperDocumentChunker:
 
                 has_figure, fig_key = _find_figure_ref(para_text)
                 figure_id = ""
+                visual_references: list[dict[str, Any]] = []
                 if has_figure and fig_key:
                     figure_id = next(
                         (fid for fid in elements.figures if fig_key.lower() in fid.lower()), ""
@@ -461,6 +635,17 @@ class PaperDocumentChunker:
                     if figure_id:
                         fig = elements.figures[figure_id]
                         para_text = para_text + f"\n[{fig.figure_id}: {fig.caption}]"
+                for ref in _body_visual_references(raw_para):
+                    lookup = figure_lookup if ref["kind"] == "figure" else table_lookup
+                    element = lookup.get(ref["label"])
+                    if element is None:
+                        continue
+                    visual_references.append({
+                        **ref,
+                        "element_id": element.figure_id if ref["kind"] == "figure" else element.table_id,
+                    })
+                    if ref["kind"] == "figure" and not figure_id:
+                        figure_id = element.figure_id
 
                 chunk_type: ChunkType = "paragraph"
 
@@ -492,6 +677,7 @@ class PaperDocumentChunker:
                             "is_parent": False,
                             "para_index": para_idx,
                             "needs_proposition_decomposition": need_propositions,
+                            "visual_references": visual_references,
                         },
                     ),
                 ))
@@ -533,6 +719,7 @@ class PaperDocumentChunker:
             ))
 
     def _add_figure_chunks(self, doc, parse_source, structure_detected, out):
+        references_by_element = _visual_references_by_element(out)
         for fig in doc.figures:
             parent, match_strategy = _find_visual_parent(
                 caption=fig.caption,
@@ -545,6 +732,17 @@ class PaperDocumentChunker:
             section_index = parent.section_index if parent else 0
             figure_text = f"{fig.figure_id}\n{fig.caption}"
             content, content_sources = _figure_to_text(fig, parent)
+            alignment_metadata = _visual_alignment_metadata(
+                kind="figure",
+                element_id=fig.figure_id,
+                caption=fig.caption,
+                page=fig.page,
+                source_ref=fig.source_ref,
+                metadata=fig.metadata,
+                parent=parent,
+                parent_strategy=match_strategy,
+                references=references_by_element.get(("figure", fig.figure_id), []),
+            )
             out.append(PaperChunk(
                 chunk_id=_stable_chunk_id(doc.paper_id, "fig", fig.figure_id),
                 paper_id=doc.paper_id,
@@ -567,6 +765,7 @@ class PaperDocumentChunker:
                     semantic_text=figure_text,
                     base={
                         **fig.metadata,
+                        **alignment_metadata,
                         "image_ref": fig.image_ref or "",
                         "page": fig.page,
                         "figure_parent_match_strategy": match_strategy,
@@ -576,6 +775,7 @@ class PaperDocumentChunker:
             ))
 
     def _add_table_chunks(self, doc, parse_source, structure_detected, out):
+        references_by_element = _visual_references_by_element(out)
         for tbl in doc.tables:
             parent, match_strategy = _find_visual_parent(
                 caption=tbl.caption,
@@ -592,6 +792,17 @@ class PaperDocumentChunker:
                 tbl.rows[:_TABLE_PARENT_ROW_LIMIT],
             )
             table_chunk_id = _stable_chunk_id(doc.paper_id, "tbl", tbl.table_id)
+            alignment_metadata = _visual_alignment_metadata(
+                kind="table",
+                element_id=tbl.table_id,
+                caption=tbl.caption,
+                page=tbl.page,
+                source_ref=tbl.source_ref,
+                metadata=tbl.metadata,
+                parent=parent,
+                parent_strategy=match_strategy,
+                references=references_by_element.get(("table", tbl.table_id), []),
+            )
             out.append(PaperChunk(
                 chunk_id=table_chunk_id,
                 paper_id=doc.paper_id,
@@ -613,6 +824,7 @@ class PaperDocumentChunker:
                     semantic_text=table_semantic_text,
                     base={
                         **tbl.metadata,
+                        **alignment_metadata,
                         "table_id": tbl.table_id,
                         "page": tbl.page,
                         "table_parent_match_strategy": match_strategy,
@@ -662,6 +874,7 @@ class PaperDocumentChunker:
                         semantic_text=group_semantic_text,
                         base={
                             **tbl.metadata,
+                            **alignment_metadata,
                             "table_id": tbl.table_id,
                             "page": tbl.page,
                             "table_parent_match_strategy": match_strategy,

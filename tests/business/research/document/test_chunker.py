@@ -243,8 +243,69 @@ def test_figure_chunk_includes_context_and_trace_metadata():
     assert figure.metadata["pdf_rect"] == [10, 20, 30, 40]
     assert figure.metadata["caption_pdf_rect"] == [10, 42, 30, 50]
     assert figure.metadata["figure_parent_match_strategy"] == "caption_text"
+    assert figure.metadata["visual_region"]["source_locator"] == "paper://paper-1/pdf#page=3&pdf_rect=10,20,30,40"
+    assert figure.metadata["visual_region"]["pdf_rect"] == [10, 20, 30, 40]
+    assert figure.metadata["caption_alignment"]["caption_text"] == "Figure 1: Performance improvement over baselines."
+    assert figure.metadata["caption_alignment"]["caption_region"]["source_locator"] == (
+        "paper://paper-1/pdf#page=3&pdf_rect=10,42,30,50"
+    )
+    assert figure.metadata["nearby_context_chunk_id"] == figure.parent_chunk_id
     assert "nearby_context" in figure.metadata["content_sources"]
     assert "ocr" in figure.metadata["content_sources"]
+
+
+def test_cross_page_figure_reference_does_not_replace_visual_locator():
+    intro = make_section(
+        "s1",
+        "Introduction",
+        "The architecture is summarized in Figure 1 before the image appears.",
+    ).model_copy(update={"metadata": {"source_locator": "paper://paper-1/pdf#page=1"}})
+    method = make_section(
+        "s2",
+        "Method",
+        "The caption is on the visual page.\n\nMore method details.",
+    ).model_copy(update={"metadata": {"source_locator": "paper://paper-1/pdf#page=2"}})
+    fig = make_figure("fig_1", "U-Net architecture.").model_copy(update={
+        "image_ref": "figures/fig1.png",
+        "page": 2,
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=2&pdf_rect=10,20,30,40",
+            "caption_source_locator": "paper://paper-1/pdf#page=2&pdf_rect=10,42,30,50",
+            "pdf_rect": [10, 20, 30, 40],
+            "caption_pdf_rect": [10, 42, 30, 50],
+            "caption_text": "Figure 1: U-Net architecture.",
+            "alignment_strategy": "caption_region_number_match",
+            "alignment_score": 0.98,
+        },
+    })
+    doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        intro,
+        method,
+        make_section("s3", "Experiments", "Experiment text."),
+    ]).model_copy(update={"figures": [fig]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    figure = next(c for c in chunks if c.chunk_type == "figure")
+    intro_ref = next(c for c in chunks if c.section_title == "Introduction" and not c.metadata.get("is_parent"))
+    assert figure.metadata["source_locator"] == "paper://paper-1/pdf#page=2&pdf_rect=10,20,30,40"
+    assert figure.metadata["visual_region"]["page"] == 2
+    assert figure.metadata["caption_alignment"]["caption_match_strategy"] == "caption_region_number_match"
+    assert figure.metadata["caption_alignment"]["caption_match_confidence"] == 0.98
+    assert figure.metadata["referenced_by_chunks"] == [{
+        "chunk_id": intro_ref.chunk_id,
+        "section_title": "Introduction",
+        "page": 1,
+        "source_locator": "paper://paper-1/pdf#page=1",
+        "text_ref": "Figure 1",
+    }]
+    assert intro_ref.metadata["visual_references"] == [{
+        "kind": "figure",
+        "label": "1",
+        "text_ref": "Figure 1",
+        "element_id": "fig_1",
+    }]
 
 
 def test_table_chunk_produced():
@@ -302,7 +363,59 @@ def test_table_chunk_includes_context_rows_and_trace_metadata():
     assert table_chunk.metadata["page"] == 6
     assert table_chunk.metadata["image_ref"] == "tables/tab1.png"
     assert table_chunk.metadata["table_parent_match_strategy"] == "page_nearest"
+    assert table_chunk.metadata["visual_region"]["source_locator"] == (
+        "paper://paper-1/pdf#page=6&pdf_rect=50,60,300,200"
+    )
+    assert table_chunk.metadata["caption_alignment"]["caption_region"]["pdf_rect"] == [50, 40, 300, 55]
+    assert table_chunk.metadata["nearby_context_chunk_id"] == table_chunk.parent_chunk_id
     assert "rows" in table_chunk.metadata["content_sources"]
+
+
+def test_table_chunk_records_explicit_body_references():
+    intro = make_section(
+        "s1",
+        "Introduction",
+        "The main results are reported in Table 1 before the table appears.",
+    ).model_copy(update={"metadata": {"source_locator": "paper://paper-1/pdf#page=2"}})
+    table_section = make_section(
+        "s2",
+        "Experiments",
+        "The table is rendered on this page.",
+    ).model_copy(update={"metadata": {"source_locator": "paper://paper-1/pdf#page=6"}})
+    table = make_table("tab1", "Main ablation results", ["Model", "F1"]).model_copy(update={
+        "page": 6,
+        "rows": [{"Model": "base", "F1": "91.0"}],
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=6&pdf_rect=50,60,300,200",
+            "caption_source_locator": "paper://paper-1/pdf#page=6&pdf_rect=50,40,300,55",
+            "caption_text": "Table 1: Main ablation results.",
+            "pdf_rect": [50, 60, 300, 200],
+            "caption_pdf_rect": [50, 40, 300, 55],
+            "alignment_strategy": "caption_region_number_match",
+            "alignment_score": 0.92,
+        },
+    })
+    doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        intro,
+        table_section,
+        make_section("s3", "Conclusion", "Conclusion."),
+    ]).model_copy(update={"tables": [table]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    table_chunk = next(c for c in chunks if c.chunk_type == "table")
+    intro_ref = next(c for c in chunks if c.section_title == "Introduction" and not c.metadata.get("is_parent"))
+    assert table_chunk.metadata["source_locator"] == "paper://paper-1/pdf#page=6&pdf_rect=50,60,300,200"
+    assert table_chunk.metadata["caption_alignment"]["caption_match_strategy"] == "caption_region_number_match"
+    assert table_chunk.metadata["caption_alignment"]["caption_match_confidence"] == 0.92
+    assert table_chunk.metadata["referenced_by_chunks"] == [{
+        "chunk_id": intro_ref.chunk_id,
+        "section_title": "Introduction",
+        "page": 2,
+        "source_locator": "paper://paper-1/pdf#page=2",
+        "text_ref": "Table 1",
+    }]
 
 
 def test_long_table_emits_row_group_chunks():
