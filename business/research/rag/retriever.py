@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
@@ -60,6 +61,9 @@ _RESULT_QUESTION_KEYWORDS = (
     "\u8868\u660e",
 )
 _PARENT_SCORE_KEYS = ("child", "parent", "heading", "position")
+_FIELD_SCORE_KEYS = ("title", "abstract", "caption", "equation", "body")
+_CHILD_SCORE_KEYS = ("semantic", "field", "position")
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,28 @@ class RetrievalPolicy:
         "table_query": {"child": 0.45, "parent": 0.25, "heading": 0.20, "position": 0.10},
         "formula_query": {"child": 0.45, "parent": 0.25, "heading": 0.20, "position": 0.10},
     })
+    field_scoring_enabled: bool = True
+    child_score_weights: dict[str, float] = field(default_factory=lambda: {
+        "semantic": 0.75,
+        "field": 0.20,
+        "position": 0.05,
+    })
+    field_default_score_weights: dict[str, float] = field(default_factory=lambda: {
+        "title": 0.25,
+        "abstract": 0.15,
+        "caption": 0.15,
+        "equation": 0.15,
+        "body": 0.30,
+    })
+    field_intent_score_weights: dict[str, dict[str, float]] = field(default_factory=lambda: {
+        "concept_method": {"title": 0.35, "abstract": 0.15, "caption": 0.10, "equation": 0.10, "body": 0.30},
+        "contribution": {"title": 0.30, "abstract": 0.40, "caption": 0.05, "equation": 0.05, "body": 0.20},
+        "figure_query": {"title": 0.10, "abstract": 0.05, "caption": 0.60, "equation": 0.05, "body": 0.20},
+        "table_query": {"title": 0.10, "abstract": 0.05, "caption": 0.40, "equation": 0.05, "body": 0.40},
+        "formula_query": {"title": 0.10, "abstract": 0.05, "caption": 0.05, "equation": 0.60, "body": 0.20},
+        "numerical_result": {"title": 0.20, "abstract": 0.05, "caption": 0.25, "equation": 0.05, "body": 0.45},
+        "comparison": {"title": 0.20, "abstract": 0.05, "caption": 0.20, "equation": 0.05, "body": 0.50},
+    })
 
     def alpha_for(self, intent: str) -> float:
         return self.position_alpha.get(intent, self.default_alpha)
@@ -126,6 +152,14 @@ class RetrievalPolicy:
         weights.update(self.parent_intent_score_weights.get(intent, {}))
         return _normalized_parent_score_weights(weights)
 
+    def field_score_weights_for(self, intent: str) -> dict[str, float]:
+        weights = dict(self.field_default_score_weights)
+        weights.update(self.field_intent_score_weights.get(intent, {}))
+        return _normalized_field_score_weights(weights)
+
+    def normalized_child_score_weights(self) -> dict[str, float]:
+        return _normalized_child_score_weights(self.child_score_weights)
+
 
 @dataclass(frozen=True)
 class _ParentCandidate:
@@ -141,6 +175,18 @@ class _ParentCandidate:
     score_weights: dict[str, float] = field(default_factory=dict)
     rerank_score: float | None = None
     rerank_query: str = ""
+
+
+@dataclass(frozen=True)
+class _FieldScores:
+    title_score: float
+    abstract_score: float
+    caption_score: float
+    equation_score: float
+    body_score: float
+    field_score: float
+    weights: dict[str, float]
+    strategy: str = "lexical_overlap"
 
 
 @dataclass
@@ -196,6 +242,18 @@ class RetrievalResult:
                     "parent_final_score": chunk.metadata.get("parent_final_score"),
                     "parent_score_strategy": chunk.metadata.get("parent_score_strategy", ""),
                     "parent_score_weights": chunk.metadata.get("parent_score_weights", {}),
+                    "title_score": chunk.metadata.get("title_score"),
+                    "abstract_score": chunk.metadata.get("abstract_score"),
+                    "caption_score": chunk.metadata.get("caption_score"),
+                    "equation_score": chunk.metadata.get("equation_score"),
+                    "body_score": chunk.metadata.get("body_score"),
+                    "field_score": chunk.metadata.get("field_score"),
+                    "field_score_weights": chunk.metadata.get("field_score_weights", {}),
+                    "field_score_strategy": chunk.metadata.get("field_score_strategy", ""),
+                    "child_semantic_score": chunk.metadata.get("child_semantic_score"),
+                    "child_position_score": chunk.metadata.get("child_position_score"),
+                    "child_final_score": chunk.metadata.get("child_final_score"),
+                    "child_score_weights": chunk.metadata.get("child_score_weights", {}),
                 },
             })
         return out
@@ -251,26 +309,27 @@ class ResearchRetriever:
         n_filtered = n_before_filter - len(pairs)
 
         # ── 3. position-aware re-rank ─────────────────────────────────────────
-        scored = [
-            (
-                _with_retrieval_scores(
-                    chunk,
-                    text_score=base,
-                    visual_score=None,
-                    fused_score=base,
-                    strategy="text",
-                ),
-                base + self._policy.position_weight(
-                    route.intent, chunk.section_index, request.current_section_index
-                ),
+        scored = []
+        for (chunk, _sem), base in pairs:
+            retrieved = _with_retrieval_scores(
+                chunk,
+                text_score=base,
+                visual_score=None,
+                fused_score=base,
+                strategy="text",
             )
-            for (chunk, _sem), base in pairs
-        ]
+            scored.append(self._score_child_candidate(
+                retrieved,
+                request,
+                route,
+                semantic_score=base,
+            ))
         if visual_hits:
             scored = self._fuse_visual_scores(
                 scored,
                 visual_hits,
                 paper_id=request.paper_id,
+                query_text=request.question,
                 current_section_index=request.current_section_index,
                 intent=route.intent,
             )
@@ -303,6 +362,12 @@ class ResearchRetriever:
             "table_context_returned": len(table_context_chunks),
             "top_score": round(top_score, 4),
             "elapsed_ms": elapsed_ms,
+            "field_scoring_enabled": self._policy.field_scoring_enabled,
+            "field_score_weights": self._policy.field_score_weights_for(route.intent),
+            "child_score_weights": self._policy.normalized_child_score_weights(),
+            "field_scored_count": len(scored),
+            "field_score_top": _metadata_extreme(scored, "field_score", max),
+            "field_score_min": _metadata_extreme(scored, "field_score", min),
         }
         metrics.update(parent_metrics)
         logging.getLogger(__name__).info("retrieval %s", metrics)
@@ -339,6 +404,50 @@ class ResearchRetriever:
             filters.update(route.extra_filters)
         return filters
 
+    def _score_child_candidate(
+        self,
+        chunk: PaperChunk,
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+        *,
+        semantic_score: float,
+    ) -> tuple[PaperChunk, float]:
+        child_weights = self._policy.normalized_child_score_weights()
+        semantic = _clamp_score(semantic_score)
+        position_score = _child_position_score(
+            self._policy,
+            route.intent,
+            chunk.section_index,
+            request.current_section_index,
+        )
+        field_scores = _field_scores_for_chunk(
+            request.question,
+            chunk,
+            self._policy.field_score_weights_for(route.intent),
+            enabled=self._policy.field_scoring_enabled,
+        )
+        final_score = (
+            semantic * child_weights["semantic"]
+            + field_scores.field_score * child_weights["field"]
+            + position_score * child_weights["position"]
+        )
+        metadata = dict(chunk.metadata)
+        metadata.update({
+            "title_score": field_scores.title_score,
+            "abstract_score": field_scores.abstract_score,
+            "caption_score": field_scores.caption_score,
+            "equation_score": field_scores.equation_score,
+            "body_score": field_scores.body_score,
+            "field_score": field_scores.field_score,
+            "field_score_weights": dict(field_scores.weights),
+            "field_score_strategy": field_scores.strategy,
+            "child_semantic_score": _round_score(semantic),
+            "child_position_score": _round_score(position_score),
+            "child_final_score": _round_score(final_score),
+            "child_score_weights": dict(child_weights),
+        })
+        return chunk.model_copy(update={"metadata": metadata}), _round_score(final_score)
+
     def _search_visual_candidates(
         self,
         request: RetrievalRequest,
@@ -364,6 +473,7 @@ class ResearchRetriever:
         visual_hits: list[VisualChunkHit],
         *,
         paper_id: str,
+        query_text: str,
         current_section_index: int,
         intent: QueryIntent,
     ) -> list[tuple[PaperChunk, float]]:
@@ -398,14 +508,16 @@ class ResearchRetriever:
                 fused_score=fused_score,
                 strategy=strategy,
             )
-            fused.append(
-                (
-                    fused_chunk,
-                    fused_score + self._policy.position_weight(
-                        intent, chunk.section_index, current_section_index
-                    ),
-                )
-            )
+            fused.append(self._score_child_candidate(
+                fused_chunk,
+                RetrievalRequest(
+                    paper_id=paper_id,
+                    question=query_text,
+                    current_section_index=current_section_index,
+                ),
+                RetrievalRoute(intent=intent),
+                semantic_score=fused_score,
+            ))
         return fused
 
     def _fusion_score(self, *, text_score: float, visual_score: float | None) -> tuple[float, str]:
@@ -453,6 +565,12 @@ class ResearchRetriever:
                 visual_score=None,
                 fused_score=score,
                 strategy="supplemental_table_text",
+            )
+            scored, _final_score = self._score_child_candidate(
+                scored,
+                request,
+                route,
+                semantic_score=score,
             )
             metadata = dict(scored.metadata)
             metadata["supplemental_reason"] = "result_intent_table_search"
@@ -895,17 +1013,178 @@ def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float
         return default
 
 
+def _metadata_extreme(
+    scored: list[tuple[PaperChunk, float]],
+    key: str,
+    reducer: Any,
+) -> float | None:
+    values = [
+        _metadata_float(chunk.metadata, key, 0.0)
+        for chunk, _score in scored
+        if key in chunk.metadata
+    ]
+    if not values:
+        return None
+    return _round_score(reducer(values))
+
+
+def _normalized_field_score_weights(weights: dict[str, float]) -> dict[str, float]:
+    return _normalized_score_weights(weights, _FIELD_SCORE_KEYS, {
+        "title": 0.25,
+        "abstract": 0.15,
+        "caption": 0.15,
+        "equation": 0.15,
+        "body": 0.30,
+    })
+
+
+def _normalized_child_score_weights(weights: dict[str, float]) -> dict[str, float]:
+    return _normalized_score_weights(weights, _CHILD_SCORE_KEYS, {
+        "semantic": 0.75,
+        "field": 0.20,
+        "position": 0.05,
+    })
+
+
 def _normalized_parent_score_weights(weights: dict[str, float]) -> dict[str, float]:
-    normalized = {key: max(0.0, float(weights.get(key, 0.0))) for key in _PARENT_SCORE_KEYS}
+    return _normalized_score_weights(weights, _PARENT_SCORE_KEYS, {
+        "child": 0.45,
+        "parent": 0.35,
+        "heading": 0.15,
+        "position": 0.05,
+    })
+
+
+def _normalized_score_weights(
+    weights: dict[str, float],
+    keys: tuple[str, ...],
+    fallback: dict[str, float],
+) -> dict[str, float]:
+    normalized = {key: max(0.0, float(weights.get(key, 0.0))) for key in keys}
     total = sum(normalized.values())
     if total <= 0.0:
-        return {"child": 0.45, "parent": 0.35, "heading": 0.15, "position": 0.05}
+        return dict(fallback)
     return {key: round(value / total, 6) for key, value in normalized.items()}
+
+
+def _field_scores_for_chunk(
+    query_text: str,
+    chunk: PaperChunk,
+    weights: dict[str, float],
+    *,
+    enabled: bool,
+) -> _FieldScores:
+    if not enabled:
+        zero_weights = _normalized_field_score_weights(weights)
+        return _FieldScores(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, zero_weights, "disabled")
+
+    normalized_weights = _normalized_field_score_weights(weights)
+    title_score = _lexical_match_score(query_text, chunk.section_title)
+    abstract_score = _lexical_match_score(query_text, _abstract_text(chunk))
+    caption_score = _lexical_match_score(query_text, _caption_text(chunk))
+    equation_score = _lexical_match_score(query_text, _equation_text(chunk))
+    body_score = _lexical_match_score(query_text, chunk.content)
+    field_score = (
+        title_score * normalized_weights["title"]
+        + abstract_score * normalized_weights["abstract"]
+        + caption_score * normalized_weights["caption"]
+        + equation_score * normalized_weights["equation"]
+        + body_score * normalized_weights["body"]
+    )
+    return _FieldScores(
+        title_score=_round_score(title_score),
+        abstract_score=_round_score(abstract_score),
+        caption_score=_round_score(caption_score),
+        equation_score=_round_score(equation_score),
+        body_score=_round_score(body_score),
+        field_score=_round_score(field_score),
+        weights=normalized_weights,
+    )
+
+
+def _child_position_score(
+    policy: RetrievalPolicy,
+    intent: str,
+    section_index: int,
+    current_section_index: int,
+) -> float:
+    alpha = policy.alpha_for(intent)
+    if alpha <= 0.0:
+        return 0.0
+    raw = policy.position_weight(intent, section_index, current_section_index)
+    return _clamp_score(raw / alpha)
+
+
+def _lexical_match_score(query_text: str, field_text: str) -> float:
+    query_tokens = _query_tokens(query_text)
+    if not query_tokens or not field_text.strip():
+        return 0.0
+    field_tokens = set(_query_tokens(field_text))
+    if not field_tokens:
+        return 0.0
+    overlap = len(set(query_tokens) & field_tokens) / len(set(query_tokens))
+    query_phrase = " ".join(query_tokens)
+    field_phrase = " ".join(_query_tokens(field_text))
+    if query_phrase and query_phrase in field_phrase:
+        overlap = max(overlap, 0.95)
+    return _clamp_score(overlap)
+
+
+def _query_tokens(text: str) -> list[str]:
+    return [match.group(0).casefold() for match in _TOKEN_RE.finditer(text)]
+
+
+def _abstract_text(chunk: PaperChunk) -> str:
+    if chunk.chunk_type == "abstract" or chunk.section_title.casefold() == "abstract":
+        return chunk.content
+    return ""
+
+
+def _caption_text(chunk: PaperChunk) -> str:
+    candidates = [
+        str(chunk.metadata.get("caption_text") or ""),
+        str(chunk.metadata.get("surya_caption") or ""),
+    ]
+    if chunk.chunk_type in {"figure", "table"} or "caption" in chunk.metadata.get("content_sources", []):
+        candidates.append(_caption_block(chunk.content))
+    return "\n".join(candidate for candidate in candidates if candidate.strip())
+
+
+def _caption_block(content: str) -> str:
+    marker = "caption:"
+    normalized = content.casefold()
+    index = normalized.find(marker)
+    if index < 0:
+        return ""
+    start = index + len(marker)
+    tail = content[start:]
+    lines: list[str] = []
+    for line in tail.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if lines:
+                break
+            continue
+        if stripped.endswith(":") and lines:
+            break
+        lines.append(stripped)
+    return " ".join(lines)
+
+
+def _equation_text(chunk: PaperChunk) -> str:
+    parts = [chunk.formula_latex, chunk.formula_description]
+    if chunk.has_formula or chunk.chunk_type == "formula":
+        parts.append(chunk.content)
+    return "\n".join(part for part in parts if part.strip())
 
 
 def _child_relevance_score(child: PaperChunk, child_rank: int) -> float:
     fallback = 1.0 / max(1, child_rank + 1)
-    score = _metadata_float(child.metadata, "fused_score", _metadata_float(child.metadata, "text_score", fallback))
+    score = _metadata_float(
+        child.metadata,
+        "child_final_score",
+        _metadata_float(child.metadata, "fused_score", _metadata_float(child.metadata, "text_score", fallback)),
+    )
     return _round_score(_clamp_score(score))
 
 

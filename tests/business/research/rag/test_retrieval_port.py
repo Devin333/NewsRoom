@@ -124,6 +124,28 @@ def test_parent_context_metadata_exposed_in_evidence_pack():
                 "heading": 0.2,
                 "position": 0.1,
             },
+            "title_score": 0.6,
+            "abstract_score": 0.0,
+            "caption_score": 0.0,
+            "equation_score": 0.0,
+            "body_score": 0.4,
+            "field_score": 0.52,
+            "field_score_weights": {
+                "title": 0.35,
+                "abstract": 0.15,
+                "caption": 0.1,
+                "equation": 0.1,
+                "body": 0.3,
+            },
+            "field_score_strategy": "lexical_overlap",
+            "child_semantic_score": 0.8,
+            "child_position_score": 0.7,
+            "child_final_score": 0.739,
+            "child_score_weights": {
+                "semantic": 0.75,
+                "field": 0.2,
+                "position": 0.05,
+            },
         },
     )
     spy = _SpyRetriever(result=RetrievalResult(
@@ -151,6 +173,14 @@ def test_parent_context_metadata_exposed_in_evidence_pack():
     assert pack.metadata["parent_final_score"] == 0.875
     assert pack.metadata["parent_score_strategy"] == "cross_encoder"
     assert pack.metadata["parent_score_weights"]["heading"] == 0.2
+    assert pack.metadata["title_score"] == 0.6
+    assert pack.metadata["field_score"] == 0.52
+    assert pack.metadata["field_score_strategy"] == "lexical_overlap"
+    assert pack.metadata["field_score_weights"]["title"] == 0.35
+    assert pack.metadata["child_semantic_score"] == 0.8
+    assert pack.metadata["child_position_score"] == 0.7
+    assert pack.metadata["child_final_score"] == 0.739
+    assert pack.metadata["child_score_weights"]["field"] == 0.2
 
 
 def test_formula_child_is_emitted_as_evidence_before_parent_context():

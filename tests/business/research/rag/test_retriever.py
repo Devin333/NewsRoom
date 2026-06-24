@@ -236,6 +236,109 @@ def test_parent_final_score_can_override_child_rank_with_method_heading():
     assert first.metadata["parent_score_strategy"] == "deterministic"
 
 
+def test_field_score_boosts_caption_match_for_figure_query():
+    weak = _chunk(
+        "fig-weak",
+        chunk_type="figure",
+        content="[Figure fig-weak]\nCaption:\nA baseline chart.",
+        metadata={"content_sources": ["caption"]},
+    )
+    strong = _chunk(
+        "fig-strong",
+        chunk_type="figure",
+        content="[Figure fig-strong]\nCaption:\nArchitecture overview.",
+        metadata={"content_sources": ["caption"]},
+    )
+    store = _ScriptedChunkStore([weak, strong], search_order=["fig-weak", "fig-strong"])
+
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Figure architecture overview", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["fig-strong", "fig-weak"]
+    assert result.child_chunks[0].metadata["caption_score"] > result.child_chunks[1].metadata["caption_score"]
+    assert result.child_chunks[0].metadata["field_score_weights"]["caption"] == 0.6
+    assert result.child_chunks[0].metadata["child_final_score"] > result.child_chunks[1].metadata["child_final_score"]
+    assert result.metadata["field_scored_count"] == 2
+    assert result.metadata["field_score_top"] >= result.metadata["field_score_min"]
+
+
+def test_field_score_boosts_equation_match_for_formula_query():
+    weak = _chunk(
+        "eq-weak",
+        chunk_type="formula",
+        content="[Equation]\nLaTeX:\nE = mc^2",
+    ).model_copy(update={"has_formula": True, "formula_latex": "E = mc^2"})
+    strong = _chunk(
+        "eq-strong",
+        chunk_type="formula",
+        content="[Equation]\nLaTeX:\n\\operatorname{Attention}(Q,K,V)",
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": r"\operatorname{Attention}(Q,K,V)",
+        "formula_description": "Attention computes query key value scores.",
+    })
+    store = _ScriptedChunkStore([weak, strong], search_order=["eq-weak", "eq-strong"])
+
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Attention Q K V equation", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["eq-strong", "eq-weak"]
+    assert result.child_chunks[0].metadata["equation_score"] > result.child_chunks[1].metadata["equation_score"]
+    assert result.child_chunks[0].metadata["field_score_weights"]["equation"] == 0.6
+
+
+def test_field_score_boosts_abstract_for_contribution_query():
+    weak = _chunk(
+        "para-generic",
+        section_title="Method",
+        content="Implementation details describe the training loop.",
+    )
+    abstract = _chunk(
+        "abs-paper",
+        chunk_type="abstract",
+        section_title="Abstract",
+        section_role=["background"],
+        content="We propose a novel retrieval contribution for paper understanding.",
+    )
+    store = _ScriptedChunkStore([weak, abstract], search_order=["para-generic", "abs-paper"])
+
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="what contribution does the paper propose", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["abs-paper", "para-generic"]
+    assert result.child_chunks[0].metadata["abstract_score"] > 0.0
+    assert result.child_chunks[0].metadata["field_score_weights"]["abstract"] == 0.4
+
+
+def test_field_score_boosts_title_for_method_query():
+    weak = _chunk(
+        "para-background",
+        section_title="Background",
+        content="General context mentions neural networks.",
+    )
+    strong = _chunk(
+        "para-architecture",
+        section_title="Architecture",
+        content="The model block details are described here.",
+    )
+    store = _ScriptedChunkStore([weak, strong], search_order=["para-background", "para-architecture"])
+
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="how does the architecture work", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["para-architecture", "para-background"]
+    assert result.child_chunks[0].metadata["title_score"] > result.child_chunks[1].metadata["title_score"]
+    assert result.child_chunks[0].metadata["field_score_weights"]["title"] == 0.35
+
+
 def test_position_weighting_prefers_nearby():
     store = _make_store()
     _seed_store(store)
