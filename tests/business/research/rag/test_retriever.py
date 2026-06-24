@@ -135,8 +135,9 @@ def test_policy_position_weight_decays_with_distance():
 
 def test_policy_zero_alpha_intents_no_position_bias():
     policy = RetrievalPolicy()
-    # figure/formula queries should never get a position bonus
+    # figure/table/formula queries should never get a position bonus
     assert policy.position_weight("figure_query", 0, 5) == 0.0
+    assert policy.position_weight("table_query", 0, 5) == 0.0
     assert policy.position_weight("formula_query", 10, 0) == 0.0
 
 

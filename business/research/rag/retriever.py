@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 # Default position weight α per intent (0 = no position bias)
 _DEFAULT_ALPHA: dict[str, float] = {
     "figure_query":    0.0,
+    "table_query":     0.0,
     "formula_query":   0.0,
     "contribution":    0.05,
     "concept_method":  0.2,

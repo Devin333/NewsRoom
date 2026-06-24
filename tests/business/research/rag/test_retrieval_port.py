@@ -151,3 +151,69 @@ def test_formula_child_is_emitted_as_evidence_before_parent_context():
     assert formula_pack.metadata["page"] == 5
     assert formula_pack.metadata["pdf_rect"] == [10, 20, 30, 40]
     assert "LaTeX:" in formula_pack.summary
+
+
+def test_table_row_group_evidence_exposes_visual_metadata():
+    row_group = PaperChunk(
+        chunk_id="tbl-1-rows-20-39",
+        paper_id="1706.03762",
+        parse_source="latex",
+        chunk_type="table",
+        parent_chunk_id="tbl-1",
+        section_title="Experiments",
+        section_role=["experiment"],
+        section_index=4,
+        has_table=True,
+        content="[Table tab1]\nRows:\nrow_range=20-39\nmodel | 93.2",
+        metadata={
+            "source_ref": "arxiv://1706.03762/tbl-1-rows-20-39",
+            "source_locator": "paper://1706.03762/pdf#page=8&pdf_rect=10,20,300,400",
+            "caption_source_locator": "paper://1706.03762/pdf#page=8&pdf_rect=10,5,300,18",
+            "page": 8,
+            "pdf_rect": [10, 20, 300, 400],
+            "caption_pdf_rect": [10, 5, 300, 18],
+            "image_ref": "tables/table1.png",
+            "table_id": "tab1",
+            "content_sources": ["caption", "columns", "rows", "nearby_context"],
+            "row_start": 20,
+            "row_end": 39,
+            "parent_table_chunk_id": "tbl-1",
+            "is_table_row_group": True,
+        },
+    )
+    parent = PaperChunk(
+        chunk_id="tbl-1",
+        paper_id="1706.03762",
+        parse_source="latex",
+        chunk_type="table",
+        section_title="Experiments",
+        section_role=["experiment"],
+        section_index=4,
+        has_table=True,
+        content="[Table tab1]\nCaption:\nMain results.",
+        metadata={
+            "source_ref": "arxiv://1706.03762/tbl-1",
+            "table_id": "tab1",
+        },
+    )
+    spy = _SpyRetriever(result=RetrievalResult(
+        child_chunks=[row_group],
+        parent_chunks=[parent],
+        ref_chunks=[],
+        intent="table_query",
+    ))
+
+    port = PaperChunkRetrievalPort(spy)  # type: ignore[arg-type]
+    result = port.retrieve(_request({}))
+
+    assert [pack.evidence_id for pack in result.packs] == ["tbl-1-rows-20-39", "tbl-1"]
+    table_pack = result.packs[0]
+    assert table_pack.metadata["chunk_type"] == "table"
+    assert table_pack.metadata["has_table"] is True
+    assert table_pack.metadata["table_id"] == "tab1"
+    assert table_pack.metadata["image_ref"] == "tables/table1.png"
+    assert table_pack.metadata["row_start"] == 20
+    assert table_pack.metadata["row_end"] == 39
+    assert table_pack.metadata["is_table_row_group"] is True
+    assert table_pack.metadata["parent_table_chunk_id"] == "tbl-1"
+    assert table_pack.metadata["caption_pdf_rect"] == [10, 5, 300, 18]

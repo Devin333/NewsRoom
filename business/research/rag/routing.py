@@ -10,10 +10,12 @@ QueryIntent = Literal[
     "contribution",
     "comparison",
     "figure_query",
+    "table_query",
     "formula_query",
 ]
 
 _INTENT_SIGNALS: list[tuple[QueryIntent, list[str]]] = [
+    ("table_query",      ["table", "tab.", "tab ", "row", "column"]),
     ("figure_query",     ["图", "figure", "fig", "图表"]),
     ("formula_query",    ["公式", "formula", "equation", "符号", "变量"]),
     ("comparison",       ["相比", "对比", "compared to", "versus", " vs ", "prior work", "baseline", "相关工作"]),
@@ -53,6 +55,13 @@ def build_retrieval_route(question: str) -> RetrievalRoute:
             intent=intent,
             chunk_type_filter=["figure"],
             extra_filters={"chunk_type": "figure"},
+        )
+
+    if intent == "table_query":
+        return RetrievalRoute(
+            intent=intent,
+            chunk_type_filter=["table"],
+            extra_filters={"chunk_type": "table"},
         )
 
     if intent == "formula_query":

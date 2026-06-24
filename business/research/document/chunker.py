@@ -5,7 +5,7 @@ from hashlib import sha256
 from typing import Any
 
 from business.foundation import build_stable_id
-from business.research.domain.document import ResearchDocument, ResearchEquation, ResearchTable
+from business.research.domain.document import ResearchDocument, ResearchEquation, ResearchFigure, ResearchTable
 from business.research.document.models import ChunkType, PaperChunk, ParseSource, SectionRole
 from business.research.document.section_detector import classify_section_role, is_abstract_section
 from business.research.document.special_element_scanner import ScannedElements, scan_special_elements
@@ -22,6 +22,8 @@ _LOCATOR_PAGE_RE = re.compile(r"(?:#|&)page=(\d+)")
 
 # Minimum sections to count as "structure detected" (PRD §3)
 _MIN_STRUCTURED_SECTIONS = 3
+_TABLE_PARENT_ROW_LIMIT = 20
+_TABLE_ROW_GROUP_SIZE = 20
 
 
 def _split_paragraphs(text: str) -> list[str]:
@@ -45,12 +47,72 @@ def _find_figure_ref(text: str) -> tuple[bool, str]:
     return True, (m.group(1) or m.group(2) or "").strip()
 
 
-def _table_to_text(tbl: ResearchTable) -> str:
-    lines = [f"[Table {tbl.table_id}: {tbl.caption}]"]
+def _table_rows_to_lines(rows: list[dict[str, Any]], columns: list[str]) -> list[str]:
+    lines: list[str] = []
+    for row in rows:
+        if columns:
+            values = [str(row.get(column, "")) for column in columns]
+        else:
+            values = [str(value) for value in row.values()]
+        lines.append(" | ".join(values))
+    return lines
+
+
+def _element_source_locator(source_ref: str, metadata: dict[str, Any]) -> str:
+    return str(metadata.get("source_locator") or source_ref)
+
+
+def _content_sources(*items: tuple[str, Any]) -> list[str]:
+    return [name for name, value in items if bool(value)]
+
+
+def _metadata_text(metadata: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _table_to_text(
+    tbl: ResearchTable,
+    *,
+    parent: PaperChunk | None = None,
+    rows: list[dict[str, Any]] | None = None,
+    row_start: int | None = None,
+    row_end: int | None = None,
+) -> tuple[str, list[str]]:
+    selected_rows = rows if rows is not None else tbl.rows[:_TABLE_PARENT_ROW_LIMIT]
+    lines = [f"[Table {tbl.table_id}]", "Caption:", tbl.caption]
+    if tbl.columns:
+        lines.extend(["", "Columns:", " | ".join(tbl.columns)])
+    if selected_rows:
+        lines.extend(["", "Rows:"])
+        if row_start is not None and row_end is not None:
+            lines.append(f"row_range={row_start}-{row_end}")
+        lines.extend(_table_rows_to_lines(selected_rows, tbl.columns))
+    if parent is not None:
+        lines.extend(["", "Nearby Context:", _context_excerpt(parent.content)])
+        if parent.section_title:
+            lines.extend(["", f"Section: {parent.section_title}"])
+    source_locator = _element_source_locator(tbl.source_ref, tbl.metadata)
+    if source_locator:
+        lines.extend(["", f"Source: {source_locator}"])
+    sources = _content_sources(
+        ("caption", tbl.caption),
+        ("columns", tbl.columns),
+        ("rows", selected_rows),
+        ("nearby_context", parent),
+        ("source_locator", source_locator),
+    )
+    return "\n".join(lines), sources
+
+
+def _table_semantic_text(tbl: ResearchTable, rows: list[dict[str, Any]]) -> str:
+    lines = [tbl.table_id, tbl.caption]
     if tbl.columns:
         lines.append(" | ".join(tbl.columns))
-    for row in tbl.rows[:20]:
-        lines.append(" | ".join(str(v) for v in row.values()))
+    lines.extend(_table_rows_to_lines(rows, tbl.columns))
     return "\n".join(lines)
 
 
@@ -72,6 +134,37 @@ def _formula_to_text(eq: ResearchEquation, parent: PaperChunk | None) -> str:
     if source_locator:
         lines.extend(["", f"Source: {source_locator}"])
     return "\n".join(lines)
+
+
+def _figure_to_text(fig: ResearchFigure, parent: PaperChunk | None) -> tuple[str, list[str]]:
+    caption_region_text = _metadata_text(fig.metadata, "caption_text", "surya_caption")
+    ocr_text = _metadata_text(
+        fig.metadata,
+        "ocr_text",
+        "figure_ocr_text",
+        "crop_ocr_text",
+        "image_ocr_text",
+    )
+    lines = [f"[Figure {fig.figure_id}]", "Caption:", fig.caption]
+    if caption_region_text and _normalize_semantic_text(caption_region_text) != _normalize_semantic_text(fig.caption):
+        lines.extend(["", "Caption Region Text:", caption_region_text])
+    if parent is not None:
+        lines.extend(["", "Nearby Context:", _context_excerpt(parent.content)])
+        if parent.section_title:
+            lines.extend(["", f"Section: {parent.section_title}"])
+    if ocr_text:
+        lines.extend(["", "OCR Text:", ocr_text])
+    source_locator = _element_source_locator(fig.source_ref, fig.metadata)
+    if source_locator:
+        lines.extend(["", f"Source: {source_locator}"])
+    sources = _content_sources(
+        ("caption", fig.caption),
+        ("caption_region_text", caption_region_text),
+        ("nearby_context", parent),
+        ("ocr", ocr_text),
+        ("source_locator", source_locator),
+    )
+    return "\n".join(lines), sources
 
 
 def _context_excerpt(text: str, *, max_chars: int = 900) -> str:
@@ -97,11 +190,37 @@ def _locator_page(locator: Any) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _find_formula_parent(eq: ResearchEquation, chunks: list[PaperChunk]) -> tuple[PaperChunk | None, str]:
-    paragraph_chunks = [
+def _coerce_page(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_page(metadata: dict[str, Any]) -> int | None:
+    return (
+        _coerce_page(metadata.get("page"))
+        or _coerce_page(metadata.get("caption_text_page"))
+        or _locator_page(metadata.get("source_locator"))
+        or _locator_page(metadata.get("caption_source_locator"))
+    )
+
+
+def _chunk_page(chunk: PaperChunk) -> int | None:
+    return _metadata_page(chunk.metadata)
+
+
+def _paragraph_child_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:
+    return [
         chunk for chunk in chunks
         if chunk.chunk_type == "paragraph" and not chunk.metadata.get("is_parent")
     ]
+
+
+def _find_formula_parent(eq: ResearchEquation, chunks: list[PaperChunk]) -> tuple[PaperChunk | None, str]:
+    paragraph_chunks = _paragraph_child_chunks(chunks)
     if not paragraph_chunks:
         return None, "none"
 
@@ -118,6 +237,39 @@ def _find_formula_parent(eq: ResearchEquation, chunks: list[PaperChunk]) -> tupl
         for chunk in paragraph_chunks:
             if _locator_page(chunk.metadata.get("source_locator")) == eq_page:
                 return chunk, "page_locator"
+
+    return paragraph_chunks[0], "first_paragraph_fallback"
+
+
+def _find_visual_parent(
+    *,
+    caption: str,
+    page: int | None,
+    metadata: dict[str, Any],
+    chunks: list[PaperChunk],
+) -> tuple[PaperChunk | None, str]:
+    paragraph_chunks = _paragraph_child_chunks(chunks)
+    if not paragraph_chunks:
+        return None, "none"
+
+    caption_candidates = [
+        caption,
+        _metadata_text(metadata, "caption_text", "surya_caption"),
+    ]
+    normalized_captions = [
+        normalized for text in caption_candidates
+        if (normalized := _normalize_semantic_text(text))
+    ]
+    for chunk in paragraph_chunks:
+        haystack = _normalize_semantic_text(chunk.content)
+        if any(caption_text and caption_text in haystack for caption_text in normalized_captions):
+            return chunk, "caption_text"
+
+    element_page = _coerce_page(page) or _metadata_page(metadata)
+    if element_page is not None:
+        for chunk in paragraph_chunks:
+            if _chunk_page(chunk) == element_page:
+                return chunk, "page_nearest"
 
     return paragraph_chunks[0], "first_paragraph_fallback"
 
@@ -382,51 +534,146 @@ class PaperDocumentChunker:
 
     def _add_figure_chunks(self, doc, parse_source, structure_detected, out):
         for fig in doc.figures:
+            parent, match_strategy = _find_visual_parent(
+                caption=fig.caption,
+                page=fig.page,
+                metadata=fig.metadata,
+                chunks=out,
+            )
+            section_title = parent.section_title if parent else "figure"
+            section_role = parent.section_role if parent else []
+            section_index = parent.section_index if parent else 0
             figure_text = f"{fig.figure_id}\n{fig.caption}"
+            content, content_sources = _figure_to_text(fig, parent)
             out.append(PaperChunk(
                 chunk_id=_stable_chunk_id(doc.paper_id, "fig", fig.figure_id),
                 paper_id=doc.paper_id,
                 parse_source=parse_source,
                 structure_detected=structure_detected,
                 chunk_type="figure",
+                parent_chunk_id=parent.chunk_id if parent else None,
+                section_title=section_title,
+                section_role=section_role,
+                section_index=section_index,
                 has_figure=True,
                 figure_id=fig.figure_id,
-                content=f"[{fig.figure_id}: {fig.caption}]",
+                content=content,
                 metadata=_chunk_metadata(
                     paper_id=doc.paper_id,
                     chunk_type="figure",
-                    section_title="figure",
+                    section_title=section_title,
                     source_ref=fig.source_ref,
                     source_locator=fig.metadata.get("source_locator"),
                     semantic_text=figure_text,
                     base={
                         **fig.metadata,
                         "image_ref": fig.image_ref or "",
+                        "page": fig.page,
+                        "figure_parent_match_strategy": match_strategy,
+                        "content_sources": content_sources,
                     },
                 ),
             ))
 
     def _add_table_chunks(self, doc, parse_source, structure_detected, out):
         for tbl in doc.tables:
-            table_text = _table_to_text(tbl)
+            parent, match_strategy = _find_visual_parent(
+                caption=tbl.caption,
+                page=tbl.page,
+                metadata=tbl.metadata,
+                chunks=out,
+            )
+            section_title = parent.section_title if parent else "table"
+            section_role = parent.section_role if parent else []
+            section_index = parent.section_index if parent else 0
+            table_text, content_sources = _table_to_text(tbl, parent=parent)
+            table_semantic_text = _table_semantic_text(
+                tbl,
+                tbl.rows[:_TABLE_PARENT_ROW_LIMIT],
+            )
+            table_chunk_id = _stable_chunk_id(doc.paper_id, "tbl", tbl.table_id)
             out.append(PaperChunk(
-                chunk_id=_stable_chunk_id(doc.paper_id, "tbl", tbl.table_id),
+                chunk_id=table_chunk_id,
                 paper_id=doc.paper_id,
                 parse_source=parse_source,
                 structure_detected=structure_detected,
                 chunk_type="table",
+                parent_chunk_id=parent.chunk_id if parent else None,
+                section_title=section_title,
+                section_role=section_role,
+                section_index=section_index,
                 has_table=True,
                 content=table_text,
                 metadata=_chunk_metadata(
                     paper_id=doc.paper_id,
                     chunk_type="table",
-                    section_title="table",
+                    section_title=section_title,
                     source_ref=tbl.source_ref,
                     source_locator=tbl.metadata.get("source_locator"),
-                    semantic_text=table_text,
-                    base={**tbl.metadata, "table_id": tbl.table_id},
+                    semantic_text=table_semantic_text,
+                    base={
+                        **tbl.metadata,
+                        "table_id": tbl.table_id,
+                        "page": tbl.page,
+                        "table_parent_match_strategy": match_strategy,
+                        "content_sources": content_sources,
+                        "row_count": len(tbl.rows),
+                    },
                 ),
             ))
+            if len(tbl.rows) <= _TABLE_PARENT_ROW_LIMIT:
+                continue
+            for row_start in range(0, len(tbl.rows), _TABLE_ROW_GROUP_SIZE):
+                row_end = min(row_start + _TABLE_ROW_GROUP_SIZE, len(tbl.rows))
+                group_rows = tbl.rows[row_start:row_end]
+                group_text, group_sources = _table_to_text(
+                    tbl,
+                    parent=parent,
+                    rows=group_rows,
+                    row_start=row_start,
+                    row_end=row_end - 1,
+                )
+                group_semantic_text = _table_semantic_text(tbl, group_rows)
+                out.append(PaperChunk(
+                    chunk_id=_stable_chunk_id(
+                        doc.paper_id,
+                        "tbl",
+                        tbl.table_id,
+                        "rows",
+                        str(row_start),
+                        str(row_end - 1),
+                    ),
+                    paper_id=doc.paper_id,
+                    parse_source=parse_source,
+                    structure_detected=structure_detected,
+                    chunk_type="table",
+                    parent_chunk_id=table_chunk_id,
+                    section_title=section_title,
+                    section_role=section_role,
+                    section_index=section_index,
+                    has_table=True,
+                    content=group_text,
+                    metadata=_chunk_metadata(
+                        paper_id=doc.paper_id,
+                        chunk_type="table",
+                        section_title=section_title,
+                        source_ref=tbl.source_ref,
+                        source_locator=tbl.metadata.get("source_locator"),
+                        semantic_text=group_semantic_text,
+                        base={
+                            **tbl.metadata,
+                            "table_id": tbl.table_id,
+                            "page": tbl.page,
+                            "table_parent_match_strategy": match_strategy,
+                            "content_sources": group_sources,
+                            "row_count": len(tbl.rows),
+                            "row_start": row_start,
+                            "row_end": row_end - 1,
+                            "parent_table_chunk_id": table_chunk_id,
+                            "is_table_row_group": True,
+                        },
+                    ),
+                ))
 
     def _fallback_fixed_token_chunks(
         self, doc: ResearchDocument, parse_source: ParseSource, token_limit: int = 1500

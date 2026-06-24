@@ -204,6 +204,42 @@ def test_figure_caption_embedded():
     assert fig_ref_chunks
 
 
+def test_figure_chunk_includes_context_and_trace_metadata():
+    fig = make_figure("fig_1", "Performance improvement over baselines.").model_copy(update={
+        "image_ref": "figures/fig1.png",
+        "page": 3,
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=3&pdf_rect=10,20,30,40",
+            "caption_source_locator": "paper://paper-1/pdf#page=3&pdf_rect=10,42,30,50",
+            "pdf_rect": [10, 20, 30, 40],
+            "caption_pdf_rect": [10, 42, 30, 50],
+            "caption_text": "Figure 1: Performance improvement over baselines.",
+        },
+    })
+    doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        make_section("s1", "Introduction", "Intro."),
+        make_section("s2", "Method", "As shown in Fig. 1, performance improves.\n\nMore details."),
+        make_section("s3", "Experiments", "Experiment text."),
+    ]).model_copy(update={"figures": [fig]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    figure = next(c for c in chunks if c.chunk_type == "figure")
+    assert "[Figure fig_1]" in figure.content
+    assert "Caption:" in figure.content
+    assert "Nearby Context:" in figure.content
+    assert "Section: Method" in figure.content
+    assert "Source: paper://paper-1/pdf#page=3&pdf_rect=10,20,30,40" in figure.content
+    assert figure.parent_chunk_id
+    assert figure.metadata["image_ref"] == "figures/fig1.png"
+    assert figure.metadata["page"] == 3
+    assert figure.metadata["pdf_rect"] == [10, 20, 30, 40]
+    assert figure.metadata["caption_pdf_rect"] == [10, 42, 30, 50]
+    assert figure.metadata["figure_parent_match_strategy"] == "caption_text"
+    assert "nearby_context" in figure.metadata["content_sources"]
+
+
 def test_table_chunk_produced():
     doc = make_doc(sections=[
         make_section("s0", "Abstract", "Abstract."),
@@ -218,6 +254,75 @@ def test_table_chunk_produced():
     table_chunks = [c for c in chunks if c.chunk_type == "table"]
     assert table_chunks
     assert "tab1" in table_chunks[0].content
+
+
+def test_table_chunk_includes_context_rows_and_trace_metadata():
+    section = make_section(
+        "s2",
+        "Experiments",
+        "The ablation numbers are summarized on this page.",
+    ).model_copy(update={
+        "metadata": {"source_locator": "paper://paper-1/pdf#page=6"},
+    })
+    table = make_table("tab1", "Main ablation results", ["Model", "F1"]).model_copy(update={
+        "page": 6,
+        "rows": [{"Model": "base", "F1": "91.0"}, {"Model": "large", "F1": "93.2"}],
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=6&pdf_rect=50,60,300,200",
+            "image_ref": "tables/tab1.png",
+            "pdf_rect": [50, 60, 300, 200],
+            "caption_pdf_rect": [50, 40, 300, 55],
+        },
+    })
+    doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        make_section("s1", "Introduction", "Intro."),
+        section,
+        make_section("s3", "Conclusion", "Conclusion."),
+    ]).model_copy(update={"tables": [table]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    table_chunk = next(c for c in chunks if c.chunk_type == "table")
+    assert "[Table tab1]" in table_chunk.content
+    assert "Caption:" in table_chunk.content
+    assert "Columns:" in table_chunk.content
+    assert "Rows:" in table_chunk.content
+    assert "base | 91.0" in table_chunk.content
+    assert "Nearby Context:" in table_chunk.content
+    assert table_chunk.parent_chunk_id
+    assert table_chunk.metadata["table_id"] == "tab1"
+    assert table_chunk.metadata["page"] == 6
+    assert table_chunk.metadata["image_ref"] == "tables/tab1.png"
+    assert table_chunk.metadata["table_parent_match_strategy"] == "page_nearest"
+    assert "rows" in table_chunk.metadata["content_sources"]
+
+
+def test_long_table_emits_row_group_chunks():
+    rows = [{"Model": f"model-{index}", "F1": str(80 + index)} for index in range(45)]
+    table = make_table("tab-long", "Long benchmark results", ["Model", "F1"]).model_copy(update={
+        "rows": rows,
+        "metadata": {"source_locator": "paper://paper-1/pdf#page=7"},
+    })
+    doc = _structured_doc().model_copy(update={"tables": [table]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    table_chunks = [
+        c for c in chunks
+        if c.chunk_type == "table" and c.metadata.get("table_id") == "tab-long"
+    ]
+    row_groups = [c for c in table_chunks if c.metadata.get("is_table_row_group")]
+    parent = next(c for c in table_chunks if not c.metadata.get("is_table_row_group"))
+    assert len(row_groups) == 3
+    assert [(c.metadata["row_start"], c.metadata["row_end"]) for c in row_groups] == [
+        (0, 19),
+        (20, 39),
+        (40, 44),
+    ]
+    assert all(c.parent_chunk_id == parent.chunk_id for c in row_groups)
+    assert "model-44 | 124" in row_groups[-1].content
+    assert "model-44 | 124" not in parent.content
 
 
 def test_fallback_for_unstructured_doc():
@@ -257,6 +362,7 @@ def test_chunk_model_required_fields():
 @pytest.mark.parametrize("question,expected_intent", [
     ("图3说明了什么？", "figure_query"),
     ("What does Figure 3 show?", "figure_query"),
+    ("What does Table 2 report?", "table_query"),
     ("这个公式的含义是什么？", "formula_query"),
     ("在GLUE基准上F1达到了多少？", "numerical_result"),
     ("这篇论文的主要贡献是什么？", "contribution"),
@@ -271,6 +377,13 @@ def test_build_retrieval_route_figure():
     route = build_retrieval_route("图3展示了什么？")
     assert route.intent == "figure_query"
     assert "figure" in route.chunk_type_filter
+
+
+def test_build_retrieval_route_table():
+    route = build_retrieval_route("What does Table 2 report?")
+    assert route.intent == "table_query"
+    assert "table" in route.chunk_type_filter
+    assert route.extra_filters["chunk_type"] == "table"
 
 
 def test_build_retrieval_route_method():
