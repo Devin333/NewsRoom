@@ -21,6 +21,7 @@ from business.research.document.pdf_compiler import (
     _attach_figure_images,
     _bbox_to_page_rect,
     _extract_missing_pages,
+    _extract_surya_layout_artifacts,
     _extract_table_structure_from_words,
     _parse_mmd,
     _parse_surya_layout_response,
@@ -373,6 +374,117 @@ def test_extract_table_structure_from_word_coordinates():
         {"Name": "u-net", "Score": "0.92"},
         {"Name": "baseline", "Score": "0.83"},
     ]
+
+
+@patch(
+    "business.research.document.pdf_compiler._run_surya_layout",
+    return_value=[
+        {
+            "page": 1,
+            "index": 0,
+            "label": "figure",
+            "bbox": [100.0, 100.0, 900.0, 700.0],
+            "caption": "Architecture",
+            "confidence": 0.95,
+        }
+    ],
+)
+@patch("business.research.document.pdf_compiler._ocr_page", return_value="Encoder Decoder Attention")
+def test_surya_figure_crop_ocr_is_disabled_by_default(
+    mock_ocr,
+    mock_layout,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("SURYA_INFERENCE_URL", "http://surya.test/v1")
+    monkeypatch.delenv("NEWSROOM_PDF_FIGURE_OCR", raising=False)
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / "runs"))
+    pdf_doc = fitz.open(stream=_make_pdf(["Figure 1: Architecture"]), filetype="pdf")
+    try:
+        artifacts = _extract_surya_layout_artifacts(pdf_doc, "2501_fig_ocr_disabled")
+    finally:
+        pdf_doc.close()
+
+    assert len(artifacts.figure_images) == 1
+    assert "ocr_text" not in artifacts.figure_images[0].metadata
+    mock_ocr.assert_not_called()
+
+
+@patch(
+    "business.research.document.pdf_compiler._run_surya_layout",
+    return_value=[
+        {
+            "page": 1,
+            "index": 0,
+            "label": "figure",
+            "bbox": [100.0, 100.0, 900.0, 700.0],
+            "caption": "Architecture",
+            "confidence": 0.95,
+        }
+    ],
+)
+@patch("business.research.document.pdf_compiler._ocr_page", return_value="Encoder Decoder Attention")
+def test_surya_figure_crop_ocr_metadata_when_enabled(
+    mock_ocr,
+    mock_layout,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("SURYA_INFERENCE_URL", "http://surya.test/v1")
+    monkeypatch.setenv("NEWSROOM_PDF_FIGURE_OCR", "1")
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / "runs"))
+    pdf_doc = fitz.open(stream=_make_pdf(["Figure 1: Architecture"]), filetype="pdf")
+    try:
+        artifacts = _extract_surya_layout_artifacts(pdf_doc, "2501_fig_ocr_enabled")
+    finally:
+        pdf_doc.close()
+
+    assert len(artifacts.figure_images) == 1
+    metadata = artifacts.figure_images[0].metadata
+    assert metadata["ocr_attempted"] is True
+    assert metadata["ocr_text_source"] == "surya_ocr_crop"
+    assert metadata["ocr_chars"] == len("Encoder Decoder Attention")
+    assert metadata["ocr_text"] == "Encoder Decoder Attention"
+    assert metadata["ocr_truncated"] is False
+    mock_ocr.assert_called_once()
+
+
+@patch(
+    "business.research.document.pdf_compiler._run_surya_layout",
+    return_value=[
+        {
+            "page": 1,
+            "index": 0,
+            "label": "figure",
+            "bbox": [100.0, 100.0, 900.0, 700.0],
+            "caption": "Architecture",
+            "confidence": 0.95,
+        }
+    ],
+)
+@patch("business.research.document.pdf_compiler._ocr_page", side_effect=RuntimeError("ocr down"))
+def test_surya_figure_crop_ocr_failure_keeps_figure_metadata(
+    mock_ocr,
+    mock_layout,
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("SURYA_INFERENCE_URL", "http://surya.test/v1")
+    monkeypatch.setenv("NEWSROOM_PDF_FIGURE_OCR", "1")
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / "runs"))
+    pdf_doc = fitz.open(stream=_make_pdf(["Figure 1: Architecture"]), filetype="pdf")
+    try:
+        artifacts = _extract_surya_layout_artifacts(pdf_doc, "2501_fig_ocr_error")
+    finally:
+        pdf_doc.close()
+
+    assert len(artifacts.figure_images) == 1
+    metadata = artifacts.figure_images[0].metadata
+    assert metadata["ocr_attempted"] is True
+    assert metadata["ocr_chars"] == 0
+    assert metadata["ocr_error"] == "RuntimeError: ocr down"
+    assert "ocr_text" not in metadata
+    mock_ocr.assert_called_once()
 
 
 def test_figure_image_alignment_prefers_caption_text_page():

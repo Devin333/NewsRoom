@@ -214,6 +214,10 @@ def test_figure_chunk_includes_context_and_trace_metadata():
             "pdf_rect": [10, 20, 30, 40],
             "caption_pdf_rect": [10, 42, 30, 50],
             "caption_text": "Figure 1: Performance improvement over baselines.",
+            "ocr_text": "Encoder Decoder Attention",
+            "ocr_text_source": "surya_ocr_crop",
+            "ocr_attempted": True,
+            "ocr_chars": 25,
         },
     })
     doc = make_doc(sections=[
@@ -230,6 +234,8 @@ def test_figure_chunk_includes_context_and_trace_metadata():
     assert "Caption:" in figure.content
     assert "Nearby Context:" in figure.content
     assert "Section: Method" in figure.content
+    assert "OCR Text:" in figure.content
+    assert "Encoder Decoder Attention" in figure.content
     assert "Source: paper://paper-1/pdf#page=3&pdf_rect=10,20,30,40" in figure.content
     assert figure.parent_chunk_id
     assert figure.metadata["image_ref"] == "figures/fig1.png"
@@ -238,6 +244,7 @@ def test_figure_chunk_includes_context_and_trace_metadata():
     assert figure.metadata["caption_pdf_rect"] == [10, 42, 30, 50]
     assert figure.metadata["figure_parent_match_strategy"] == "caption_text"
     assert "nearby_context" in figure.metadata["content_sources"]
+    assert "ocr" in figure.metadata["content_sources"]
 
 
 def test_table_chunk_produced():

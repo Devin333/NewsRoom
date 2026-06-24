@@ -217,3 +217,56 @@ def test_table_row_group_evidence_exposes_visual_metadata():
     assert table_pack.metadata["is_table_row_group"] is True
     assert table_pack.metadata["parent_table_chunk_id"] == "tbl-1"
     assert table_pack.metadata["caption_pdf_rect"] == [10, 5, 300, 18]
+
+
+def test_figure_evidence_exposes_ocr_diagnostics():
+    figure = PaperChunk(
+        chunk_id="fig-1",
+        paper_id="1706.03762",
+        parse_source="latex",
+        chunk_type="figure",
+        parent_chunk_id="para-fig",
+        section_title="Model Architecture",
+        section_role=["method"],
+        section_index=2,
+        has_figure=True,
+        figure_id="fig1",
+        content="[Figure fig1]\nCaption:\nArchitecture.\n\nOCR Text:\nEncoder Decoder Attention",
+        metadata={
+            "source_ref": "arxiv://1706.03762/fig-1",
+            "source_locator": "paper://1706.03762/pdf#page=3&pdf_rect=10,20,300,400",
+            "image_ref": "figures/fig1.png",
+            "ocr_attempted": True,
+            "ocr_chars": 25,
+            "ocr_text_source": "surya_ocr_crop",
+            "content_sources": ["caption", "nearby_context", "ocr"],
+        },
+    )
+    parent = PaperChunk(
+        chunk_id="para-fig",
+        paper_id="1706.03762",
+        parse_source="latex",
+        chunk_type="paragraph",
+        section_title="Model Architecture",
+        section_role=["method"],
+        section_index=2,
+        content="The paragraph explains the architecture.",
+        metadata={"source_ref": "arxiv://1706.03762/para-fig"},
+    )
+    spy = _SpyRetriever(result=RetrievalResult(
+        child_chunks=[figure],
+        parent_chunks=[parent],
+        ref_chunks=[],
+        intent="figure_query",
+    ))
+
+    port = PaperChunkRetrievalPort(spy)  # type: ignore[arg-type]
+    result = port.retrieve(_request({}))
+
+    figure_pack = result.packs[0]
+    assert figure_pack.metadata["chunk_type"] == "figure"
+    assert figure_pack.metadata["image_ref"] == "figures/fig1.png"
+    assert figure_pack.metadata["ocr_attempted"] is True
+    assert figure_pack.metadata["ocr_chars"] == 25
+    assert figure_pack.metadata["ocr_text_source"] == "surya_ocr_crop"
+    assert "OCR Text:" in figure_pack.summary

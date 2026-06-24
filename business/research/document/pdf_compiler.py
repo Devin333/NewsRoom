@@ -148,6 +148,22 @@ def _surya_layout_dpi() -> int:
     return value
 
 
+def _figure_crop_ocr_enabled() -> bool:
+    value = os.environ.get("NEWSROOM_PDF_FIGURE_OCR", "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _figure_crop_ocr_max_chars() -> int:
+    raw = os.environ.get("NEWSROOM_PDF_FIGURE_OCR_MAX_CHARS", "2000")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("NEWSROOM_PDF_FIGURE_OCR_MAX_CHARS must be an integer") from exc
+    if value <= 0:
+        raise ValueError("NEWSROOM_PDF_FIGURE_OCR_MAX_CHARS must be positive")
+    return value
+
+
 def _ocr_page(base_url: str, model: str, image_b64: str) -> str:
     """Run a Surya/vLLM vision request for compatibility with diag_ocr.py."""
     response = _call_surya_vision(
@@ -368,6 +384,30 @@ def _pad_rect(rect: fitz.Rect, page_rect: fitz.Rect, padding: float) -> fitz.Rec
     ) & page_rect
 
 
+def _ocr_figure_crop_metadata(
+    *,
+    base_url: str,
+    model: str,
+    image_bytes: bytes,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "ocr_attempted": True,
+        "ocr_text_source": "surya_ocr_crop",
+    }
+    try:
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        ocr_text = _ocr_page(base_url, model, image_b64).strip()
+        max_chars = _figure_crop_ocr_max_chars()
+        metadata["ocr_chars"] = len(ocr_text)
+        if ocr_text:
+            metadata["ocr_text"] = ocr_text[:max_chars]
+            metadata["ocr_truncated"] = len(ocr_text) > max_chars
+    except Exception as exc:  # noqa: BLE001 - preserve diagnostics in figure metadata
+        metadata["ocr_chars"] = 0
+        metadata["ocr_error"] = f"{type(exc).__name__}: {exc}"
+    return metadata
+
+
 def _extract_surya_figure_images(
     pdf_doc: fitz.Document,
     paper_id: str,
@@ -379,8 +419,11 @@ def _extract_surya_layout_artifacts(
     pdf_doc: fitz.Document,
     paper_id: str,
 ) -> SuryaLayoutArtifacts:
-    if not _surya_base_url():
+    base_url = _surya_base_url()
+    if not base_url:
         return SuryaLayoutArtifacts(figure_images=[], table_images=[])
+    model = _surya_model()
+    figure_crop_ocr_enabled = _figure_crop_ocr_enabled()
     figs = _figures_dir(paper_id)
     tables_dir = _tables_dir(paper_id)
     layout_path = _surya_layout_path(paper_id)
@@ -452,6 +495,12 @@ def _extract_surya_layout_artifacts(
                 metadata["table_text_source"] = "pymupdf_bbox"
             if region["label"] in _SURYA_TABLE_LABELS:
                 metadata.update(_extract_table_structure_metadata(page, rect))
+            elif figure_crop_ocr_enabled:
+                metadata.update(_ocr_figure_crop_metadata(
+                    base_url=base_url,
+                    model=model,
+                    image_bytes=crop.tobytes("png"),
+                ))
             target_paths.append(FigureImageRef(
                 image_ref=path,
                 page=page_index,
