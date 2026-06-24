@@ -27,6 +27,7 @@ _DEFAULT_ALPHA: dict[str, float] = {
 _TABLE_EXPANSION_INTENTS = frozenset({"table_query", "numerical_result", "comparison"})
 _RESULT_SECTION_ROLES = frozenset({"experiment", "analysis", "conclusion"})
 _RESULT_CONTEXT_KEYWORDS = (
+    "sample quality",
     "result",
     "results",
     "experiment",
@@ -36,6 +37,14 @@ _RESULT_CONTEXT_KEYWORDS = (
     "analysis",
     "conclusion",
     "benchmark",
+    "quality",
+    "accuracy",
+    "fid",
+    "inception score",
+    "likelihood",
+    "codelength",
+    "bits/dim",
+    "score",
 )
 _RESULT_QUESTION_KEYWORDS = (
     "result",
@@ -566,12 +575,13 @@ def _result_context_priority(chunk: PaperChunk, table: PaperChunk) -> tuple[int,
     role_rank = _result_role_rank(chunk)
     title_rank = _result_title_rank(chunk.section_title)
     content_rank = _result_title_rank(chunk.content[:240])
-    best_rank = min(role_rank, title_rank, content_rank)
-    if best_rank >= 100:
+    semantic_rank = min(title_rank, content_rank)
+    if semantic_rank >= 100:
         return None
     section_distance = abs(chunk.section_index - table.section_index)
     proximity_rank = 0 if section_distance == 0 else 1 if section_distance == 1 else 2
-    return proximity_rank, best_rank, section_distance
+    role_bonus = 0 if role_rank < 100 else 1
+    return proximity_rank, semantic_rank + role_bonus, section_distance
 
 
 def _result_role_rank(chunk: PaperChunk) -> int:

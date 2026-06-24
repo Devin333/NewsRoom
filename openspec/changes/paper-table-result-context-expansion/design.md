@@ -60,6 +60,8 @@ V1 should use deterministic ordering instead of a new reranker:
 
 The expansion should use a small budget, for example `max_table_context_chunks=4`, so a single table does not flood the prompt.
 
+Heuristic result/conclusion chunks must pass a result-signal gate. Section role can improve ranking, but it cannot be the only reason to include a paragraph; the title or content must contain a result, evaluation, conclusion, quality, benchmark, or score signal. Deterministic edges such as `referenced_by_chunks` and `nearby_context_chunk_id` remain eligible without this heuristic gate.
+
 ## Failure Modes
 
 - If a table has no references, still include nearby/parent context.

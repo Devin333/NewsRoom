@@ -24,3 +24,8 @@
 - [x] 4.2 Run compile check.
 - [x] 4.3 Validate OpenSpec strict.
 - [x] 4.4 Re-run a real parsed paper with tables and print final evidence order for a result-oriented question.
+
+## 5. Result Context Quality
+
+- [x] 5.1 Require heuristic result-context chunks to have title/content result signals, not only experiment-like section roles.
+- [x] 5.2 Cover generic experiment paragraph exclusion with a retriever regression test.

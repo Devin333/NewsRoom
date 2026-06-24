@@ -28,3 +28,7 @@ Research retrieval SHALL prefer result-bearing sections while keeping table evid
 #### Scenario: Expansion budget is exhausted
 - **WHEN** candidate context chunks exceed the configured expansion budget
 - **THEN** retrieval MUST keep explicit table-reference and nearby-context chunks before heuristic result/conclusion chunks
+
+#### Scenario: Generic experiment paragraph has no result signal
+- **WHEN** a candidate paragraph only has an experiment-like section role but no result, evaluation, conclusion, quality, benchmark, or score signal in title or content
+- **THEN** retrieval MUST NOT include it as heuristic table result context

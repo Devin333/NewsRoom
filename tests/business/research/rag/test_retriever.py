@@ -452,3 +452,42 @@ def test_result_question_supplements_table_and_keeps_result_paragraph():
     assert "result-para" in child_ids
     assert "tbl-results" in child_ids
     assert result.metadata["supplemental_table_returned"] == 1
+
+
+def test_table_result_context_skips_generic_experiment_paragraphs():
+    table = _chunk(
+        "tbl-results",
+        chunk_type="table",
+        section_title="Sample Quality",
+        section_role=["experiment"],
+        section_index=4,
+        content="[Table 4]\nSample quality scores.",
+        metadata={"table_id": "tbl-results"},
+    )
+    generic_experiment = _chunk(
+        "generic-experiment",
+        section_title="Reverse Process",
+        section_role=["experiment"],
+        section_index=4,
+        content="Algorithm details describe the sampling loop without interpreting the table.",
+    )
+    conclusion = _chunk(
+        "result-conclusion",
+        section_title="Conclusion",
+        section_role=["conclusion"],
+        section_index=5,
+        content="Conclusion: the results show better sample quality and FID scores.",
+    )
+    store = _ScriptedChunkStore(
+        [table, generic_experiment, conclusion],
+        search_order=["tbl-results", "generic-experiment", "result-conclusion"],
+    )
+
+    retriever = ResearchRetriever(store)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="What do the results show?", limit=1))
+
+    ref_ids = {chunk.chunk_id for chunk in result.ref_chunks}
+    assert "result-conclusion" in ref_ids
+    assert "generic-experiment" not in ref_ids
+    result_context = next(chunk for chunk in result.ref_chunks if chunk.chunk_id == "result-conclusion")
+    assert result_context.metadata["expansion_reason"] == "table_result_context"
