@@ -15,6 +15,13 @@ QueryIntent = Literal[
 ]
 
 _INTENT_SIGNALS: list[tuple[QueryIntent, list[str]]] = [
+    ("numerical_result", [
+        "\u5b9e\u9a8c\u7ed3\u679c",
+        "\u7ed3\u679c",
+        "\u8868\u660e",
+        "experiment results",
+        "results show",
+    ]),
     ("table_query",      ["table", "tab.", "tab ", "row", "column"]),
     ("figure_query",     ["图", "figure", "fig", "图表"]),
     ("formula_query",    ["公式", "formula", "equation", "符号", "变量"]),

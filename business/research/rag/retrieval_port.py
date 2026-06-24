@@ -49,7 +49,7 @@ class PaperChunkRetrievalPort:
             limit=request.limit,
         ))
 
-        evidence_chunks = _dedupe_chunks((*result.child_chunks, *result.parent_chunks))
+        evidence_chunks = _dedupe_chunks((*result.child_chunks, *result.ref_chunks, *result.parent_chunks))
         packs = tuple(_chunk_to_evidence_pack(chunk) for chunk in evidence_chunks)
         return EvidencePackCollection(
             packs=packs,
@@ -120,6 +120,10 @@ def _chunk_to_evidence_pack(chunk: PaperChunk) -> EvidencePack:
             "fused_score": chunk.metadata.get("fused_score"),
             "fusion_strategy": chunk.metadata.get("fusion_strategy", ""),
             "visual_hit": chunk.metadata.get("visual_hit", False),
+            "expanded_from_chunk_id": chunk.metadata.get("expanded_from_chunk_id", ""),
+            "expansion_reason": chunk.metadata.get("expansion_reason", ""),
+            "expansion_edge": chunk.metadata.get("expansion_edge", ""),
+            "expansion_rank": chunk.metadata.get("expansion_rank"),
             "row_start": chunk.metadata.get("row_start"),
             "row_end": chunk.metadata.get("row_end"),
             "parent_table_chunk_id": chunk.metadata.get("parent_table_chunk_id", ""),

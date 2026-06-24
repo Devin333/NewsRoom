@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from business.research.document.models import PaperChunk
@@ -28,7 +30,11 @@ def _chunk(
     section_index: int = 2,
     parent_chunk_id: str | None = None,
     content: str = "The model uses multi-head attention.",
+    metadata: dict[str, Any] | None = None,
 ) -> PaperChunk:
+    chunk_metadata = {"is_parent": parent_chunk_id is None, "source_ref": f"arxiv://p1/{chunk_id}"}
+    if metadata:
+        chunk_metadata.update(metadata)
     return PaperChunk(
         chunk_id=chunk_id,
         paper_id=paper_id,
@@ -39,7 +45,7 @@ def _chunk(
         section_index=section_index,
         parent_chunk_id=parent_chunk_id,
         content=content,
-        metadata={"is_parent": parent_chunk_id is None, "source_ref": f"arxiv://p1/{chunk_id}"},
+        metadata=chunk_metadata,
     )
 
 
@@ -52,6 +58,62 @@ def _seed_store(store: PaperChunkStore) -> tuple[PaperChunk, PaperChunk, PaperCh
     store.ensure_collection()
     store.index_chunks([parent, child1, child2])
     return parent, child1, child2
+
+
+class _ScriptedChunkStore:
+    def __init__(self, chunks: list[PaperChunk], search_order: list[str] | None = None) -> None:
+        self.chunks = {chunk.chunk_id: chunk for chunk in chunks}
+        self.search_order = search_order or [chunk.chunk_id for chunk in chunks]
+
+    def ensure_collection(self) -> None:
+        return None
+
+    def search_chunks(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 10,
+        score_threshold: float | None = None,
+    ) -> list[PaperChunk]:
+        return [chunk for chunk, _score in self.search_with_scores(
+            paper_id,
+            query_text,
+            filters=filters,
+            limit=limit,
+        )]
+
+    def search_with_scores(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 30,
+    ) -> list[tuple[PaperChunk, float]]:
+        out: list[tuple[PaperChunk, float]] = []
+        for index, chunk_id in enumerate(self.search_order):
+            chunk = self.chunks[chunk_id]
+            if chunk.paper_id != paper_id or not _matches_filters(chunk, filters or {}):
+                continue
+            out.append((chunk, 1.0 - (index / 100)))
+            if len(out) >= limit:
+                break
+        return out
+
+    def get_chunk(self, chunk_id: str) -> PaperChunk | None:
+        return self.chunks.get(chunk_id)
+
+    def get_parent_chunk(self, chunk: PaperChunk) -> PaperChunk | None:
+        return self.get_chunk(chunk.parent_chunk_id) if chunk.parent_chunk_id else None
+
+
+def _matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
+    for key, value in filters.items():
+        if getattr(chunk, key, chunk.metadata.get(key)) != value:
+            return False
+    return True
 
 
 # ── basic retrieval ───────────────────────────────────────────────────────────
@@ -268,3 +330,125 @@ def test_visual_store_is_not_called_for_table_query():
     assert visual_store.calls == []
     assert result.intent == "table_query"
     assert result.metadata["visual_recalled"] == 0
+
+
+def test_table_hit_expands_nearby_and_referenced_context():
+    table = _chunk(
+        "tbl-1",
+        chunk_type="table",
+        section_title="Experiments",
+        section_role=["experiment"],
+        section_index=4,
+        content="[Table 1]\nCaption:\nMain benchmark results.",
+        metadata={
+            "table_id": "tbl-1",
+            "source_locator": "paper://p1/pdf#page=6&pdf_rect=1,2,3,4",
+            "nearby_context_chunk_id": "near-table",
+            "referenced_by_chunks": [
+                {"chunk_id": "result-ref", "text_ref": "Table 1"},
+                {"chunk_id": "missing-ref", "text_ref": "Table 1"},
+                {"chunk_id": "foreign-ref", "text_ref": "Table 1"},
+            ],
+        },
+    )
+    nearby = _chunk(
+        "near-table",
+        section_title="Experiments",
+        section_role=["experiment"],
+        section_index=4,
+        content="Nearby paragraph explains that Table 1 improves F1.",
+    )
+    referenced = _chunk(
+        "result-ref",
+        section_title="Results",
+        section_role=["analysis"],
+        section_index=5,
+        content="As shown in Table 1, the new model wins.",
+    )
+    foreign = _chunk(
+        "foreign-ref",
+        paper_id="p2",
+        section_title="Results",
+        section_role=["analysis"],
+        section_index=5,
+        content="Foreign paper should never be included.",
+    )
+    store = _ScriptedChunkStore(
+        [table, nearby, referenced, foreign],
+        search_order=["tbl-1", "near-table", "result-ref", "foreign-ref"],
+    )
+
+    retriever = ResearchRetriever(store)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="What does Table 1 show?", limit=1))
+
+    ref_by_id = {chunk.chunk_id: chunk for chunk in result.ref_chunks}
+    assert result.intent == "table_query"
+    assert result.child_chunks[0].chunk_id == "tbl-1"
+    assert table.metadata["source_locator"] == "paper://p1/pdf#page=6&pdf_rect=1,2,3,4"
+    assert ref_by_id["near-table"].metadata["expansion_reason"] == "table_nearby_context"
+    assert ref_by_id["near-table"].metadata["expansion_edge"] == "nearby_context_chunk_id"
+    assert ref_by_id["result-ref"].metadata["expansion_reason"] == "table_body_reference"
+    assert ref_by_id["result-ref"].metadata["expanded_from_chunk_id"] == "tbl-1"
+    assert "missing-ref" not in ref_by_id
+    assert "foreign-ref" not in ref_by_id
+    assert result.metadata["table_context_returned"] == 2
+
+
+def test_table_row_group_hit_expands_parent_table_chunk():
+    parent_table = _chunk(
+        "tbl-parent",
+        chunk_type="table",
+        content="[Table 2]\nCaption:\nFull ablation table.",
+        metadata={"table_id": "tbl-2"},
+    )
+    row_group = _chunk(
+        "tbl-row-20",
+        chunk_type="table",
+        content="rare-row-token rows 20 to 39.",
+        metadata={
+            "table_id": "tbl-2",
+            "is_table_row_group": True,
+            "parent_table_chunk_id": "tbl-parent",
+        },
+    )
+    store = _ScriptedChunkStore([row_group, parent_table], search_order=["tbl-row-20", "tbl-parent"])
+
+    retriever = ResearchRetriever(store)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="table rare-row-token", limit=1))
+
+    parent = next(chunk for chunk in result.ref_chunks if chunk.chunk_id == "tbl-parent")
+    assert result.child_chunks[0].chunk_id == "tbl-row-20"
+    assert parent.metadata["expansion_reason"] == "table_row_group_parent"
+    assert parent.metadata["expansion_edge"] == "parent_table_chunk_id"
+
+
+def test_result_question_supplements_table_and_keeps_result_paragraph():
+    result_para = _chunk(
+        "result-para",
+        section_title="Experimental Results",
+        section_role=["experiment"],
+        section_index=4,
+        content="实验结果表明 the method improves accuracy.",
+    )
+    table = _chunk(
+        "tbl-results",
+        chunk_type="table",
+        section_title="Experimental Results",
+        section_role=["experiment"],
+        section_index=4,
+        content="[Table 3]\nAccuracy and F1 scores.",
+        metadata={
+            "table_id": "tbl-results",
+            "referenced_by_chunks": [{"chunk_id": "result-para", "text_ref": "Table 3"}],
+        },
+    )
+    store = _ScriptedChunkStore([result_para, table], search_order=["result-para", "tbl-results"])
+
+    retriever = ResearchRetriever(store)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="实验结果表明什么", limit=1))
+
+    child_ids = {chunk.chunk_id for chunk in result.child_chunks}
+    assert result.intent == "numerical_result"
+    assert "result-para" in child_ids
+    assert "tbl-results" in child_ids
+    assert result.metadata["supplemental_table_returned"] == 1
