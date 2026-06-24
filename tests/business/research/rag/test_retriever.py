@@ -162,6 +162,33 @@ def test_parent_expansion():
     assert "sec-1" in parent_ids or result.parent_chunks
 
 
+def test_parent_expansion_respects_count_budget():
+    children = [
+        _chunk(f"para-{index}", parent_chunk_id=f"sec-{index}", content=f"method anchor {index}")
+        for index in range(1, 4)
+    ]
+    parents = [
+        _chunk(f"sec-{index}", content=f"Full method parent {index}.")
+        for index in range(1, 4)
+    ]
+    store = _ScriptedChunkStore(
+        [*children, *parents],
+        search_order=[child.chunk_id for child in children],
+    )
+    policy = RetrievalPolicy(
+        max_parent_chunks=2,
+        max_parent_tokens=9999,
+        parent_intent_budgets={},
+    )
+
+    retriever = ResearchRetriever(store, policy=policy)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="how does the method work?", limit=3))
+
+    assert [chunk.chunk_id for chunk in result.parent_chunks] == ["sec-1", "sec-2"]
+    assert result.metadata["parent_budget_chunks"] == 2
+    assert result.metadata["parent_budget_exhausted"] is True
+
+
 def test_position_weighting_prefers_nearby():
     store = _make_store()
     _seed_store(store)
@@ -268,6 +295,99 @@ def test_parent_fallback_to_children_when_no_parent():
     # no parent_chunk_id → falls back to returning the matched children themselves
     assert result.parent_chunks
     assert result.parent_chunks[0].chunk_id == "abs-1"
+
+
+def test_long_parent_expansion_returns_child_anchored_snippet():
+    anchor = "The attention block mixes local and global features for stability."
+    parent_content = " ".join(["intro"] * 80 + [anchor] + ["tail"] * 80)
+    parent = _chunk("sec-long", content=parent_content)
+    child = _chunk("para-anchor", parent_chunk_id="sec-long", content=anchor)
+    store = _ScriptedChunkStore([child, parent], search_order=["para-anchor"])
+    policy = RetrievalPolicy(
+        max_parent_tokens=500,
+        long_parent_token_threshold=10,
+        parent_snippet_token_window=40,
+        parent_intent_budgets={},
+    )
+
+    retriever = ResearchRetriever(store, policy=policy)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="how does attention work?", limit=1))
+
+    snippet = result.parent_chunks[0]
+    assert snippet.chunk_id == "sec-long"
+    assert snippet.content != parent_content
+    assert anchor in snippet.content
+    assert snippet.metadata["parent_snippet"] is True
+    assert snippet.metadata["parent_snippet_strategy"] == "child_anchor_window"
+    assert snippet.metadata["source_parent_chunk_id"] == "sec-long"
+    assert snippet.metadata["parent_anchor_child_id"] == "para-anchor"
+    assert result.metadata["parent_snippets_returned"] == 1
+
+
+def test_parent_reranker_orders_and_filters_parent_candidates():
+    weak_child = _chunk("weak-child", parent_chunk_id="sec-weak", content="weak child anchor")
+    strong_child = _chunk("strong-child", parent_chunk_id="sec-strong", content="strong child anchor")
+    weak_parent = _chunk("sec-weak", content="weak-parent gives generic background.")
+    strong_parent = _chunk("sec-strong", content="strong-parent explains the exact mechanism.")
+    store = _ScriptedChunkStore(
+        [weak_child, strong_child, weak_parent, strong_parent],
+        search_order=["weak-child", "strong-child"],
+    )
+    policy = RetrievalPolicy(
+        overfetch_multiplier=1,
+        max_parent_chunks=2,
+        max_parent_tokens=9999,
+        parent_rerank_score_threshold=0.5,
+        parent_intent_budgets={},
+    )
+    reranker = _KeywordReranker({"strong-parent": 0.95, "weak-parent": 0.2})
+
+    retriever = ResearchRetriever(store, policy=policy, reranker=reranker)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="how does the method work?", limit=2))
+
+    assert [chunk.chunk_id for chunk in result.parent_chunks] == ["sec-strong"]
+    parent = result.parent_chunks[0]
+    assert parent.metadata["parent_rerank_score"] == 0.95
+    assert parent.metadata["parent_rerank_strategy"] == "cross_encoder"
+    assert "Matched child evidence:" in parent.metadata["parent_rerank_query"]
+
+
+def test_parent_budget_depends_on_query_intent():
+    children = [
+        _chunk(
+            f"para-{index}",
+            parent_chunk_id=f"sec-{index}",
+            content=f"experiment result anchor {index}",
+            section_role=["experiment"],
+        )
+        for index in range(1, 4)
+    ]
+    parents = [
+        _chunk(f"sec-{index}", content=f"Experiment parent {index}.")
+        for index in range(1, 4)
+    ]
+    store = _ScriptedChunkStore(
+        [*children, *parents],
+        search_order=[child.chunk_id for child in children],
+    )
+    policy = RetrievalPolicy(
+        overfetch_multiplier=1,
+        max_parent_chunks=3,
+        max_parent_tokens=9999,
+    )
+
+    retriever = ResearchRetriever(store, policy=policy)
+    method_result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="how does the method work?", limit=3)
+    )
+    numerical_result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="experiment results show", limit=3)
+    )
+
+    assert len(method_result.parent_chunks) == 3
+    assert method_result.metadata["parent_budget_chunks"] == 3
+    assert len(numerical_result.parent_chunks) == 2
+    assert numerical_result.metadata["parent_budget_chunks"] == 2
 
 
 class _VisualHitStore:

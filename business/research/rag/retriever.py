@@ -75,6 +75,17 @@ class RetrievalPolicy:
     table_result_context_search_limit: int = 12
     supplemental_table_result_limit: int = 2
     table_context_rerank_score_threshold: float = 0.0
+    max_parent_chunks: int = 3
+    max_parent_tokens: int = 1800
+    long_parent_token_threshold: int = 900
+    parent_snippet_token_window: int = 450
+    parent_rerank_score_threshold: float = 0.0
+    parent_intent_budgets: dict[str, tuple[int, int]] = field(default_factory=lambda: {
+        "table_query": (1, 700),
+        "formula_query": (1, 700),
+        "numerical_result": (2, 1000),
+        "comparison": (2, 1000),
+    })
 
     def alpha_for(self, intent: str) -> float:
         return self.position_alpha.get(intent, self.default_alpha)
@@ -84,6 +95,25 @@ class RetrievalPolicy:
         if alpha == 0.0:
             return 0.0
         return alpha * math.exp(-abs(section_index - current) / self.sigma)
+
+    def parent_budget_for(self, intent: str) -> tuple[int, int]:
+        count, tokens = self.parent_intent_budgets.get(
+            intent,
+            (self.max_parent_chunks, self.max_parent_tokens),
+        )
+        return (
+            max(0, min(self.max_parent_chunks, int(count))),
+            max(0, min(self.max_parent_tokens, int(tokens))),
+        )
+
+
+@dataclass(frozen=True)
+class _ParentCandidate:
+    parent: PaperChunk
+    child: PaperChunk
+    child_rank: int
+    rerank_score: float | None = None
+    rerank_query: str = ""
 
 
 @dataclass
@@ -126,6 +156,12 @@ class RetrievalResult:
                     "expansion_edge": chunk.metadata.get("expansion_edge", ""),
                     "table_context_rerank_score": chunk.metadata.get("table_context_rerank_score"),
                     "table_context_rerank_strategy": chunk.metadata.get("table_context_rerank_strategy", ""),
+                    "parent_expansion_reason": chunk.metadata.get("parent_expansion_reason", ""),
+                    "parent_anchor_child_id": chunk.metadata.get("parent_anchor_child_id", ""),
+                    "parent_snippet": chunk.metadata.get("parent_snippet", False),
+                    "source_parent_chunk_id": chunk.metadata.get("source_parent_chunk_id", ""),
+                    "parent_rerank_score": chunk.metadata.get("parent_rerank_score"),
+                    "parent_rerank_strategy": chunk.metadata.get("parent_rerank_strategy", ""),
                 },
             })
         return out
@@ -211,7 +247,7 @@ class ResearchRetriever:
         top_score = scored[0][1] if scored else 0.0
 
         # ── 3. parent expansion ───────────────────────────────────────────────
-        parent_chunks = self._fetch_parents(child_chunks, request.paper_id)
+        parent_chunks, parent_metrics = self._fetch_parents(child_chunks, request, route)
 
         # ── 4. cross-reference expansion ──────────────────────────────────────
         cross_ref_chunks = self._fetch_refs(child_chunks, request.paper_id)
@@ -234,6 +270,7 @@ class ResearchRetriever:
             "top_score": round(top_score, 4),
             "elapsed_ms": elapsed_ms,
         }
+        metrics.update(parent_metrics)
         logging.getLogger(__name__).info("retrieval %s", metrics)
 
         return RetrievalResult(
@@ -552,22 +589,184 @@ class ResearchRetriever:
         return [chunk for _rerank, _priority, _vector_score, chunk in ranked[:limit]]
 
     def _fetch_parents(
-        self, children: list[PaperChunk], paper_id: str
-    ) -> list[PaperChunk]:
-        seen: set[str] = set()
-        parents: list[PaperChunk] = []
-        for child in children:
-            pid = child.parent_chunk_id
-            if not pid or pid in seen:
-                continue
-            seen.add(pid)
-            parent = self._store.get_chunk(pid)
-            if parent:
-                parents.append(parent)
+        self,
+        children: list[PaperChunk],
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+    ) -> tuple[list[PaperChunk], dict[str, Any]]:
+        candidates = self._parent_candidates(children, request.paper_id)
+        max_chunks, max_tokens = self._policy.parent_budget_for(route.intent)
+        metrics: dict[str, Any] = {
+            "parent_budget_chunks": max_chunks,
+            "parent_budget_tokens": max_tokens,
+            "parent_tokens_used": 0,
+            "parent_snippets_returned": 0,
+            "parent_budget_exhausted": False,
+        }
         # fall back to children themselves if no parents found (e.g. abstract)
-        if not parents:
-            return list(children)
-        return parents
+        if not candidates:
+            return list(children), metrics
+        if max_chunks <= 0 or max_tokens <= 0:
+            metrics["parent_budget_exhausted"] = True
+            return [], metrics
+
+        ranked = self._rank_parent_candidates(candidates, request, route)
+        parents: list[PaperChunk] = []
+        tokens_used = 0
+        snippets = 0
+        exhausted = False
+
+        for candidate in ranked:
+            if len(parents) >= max_chunks:
+                exhausted = True
+                break
+            remaining_tokens = max_tokens - tokens_used
+            if remaining_tokens <= 0:
+                exhausted = True
+                break
+            chunk = self._parent_context_chunk(
+                candidate,
+                rank=len(parents) + 1,
+                token_window=min(self._policy.parent_snippet_token_window, remaining_tokens),
+            )
+            token_estimate = _estimate_tokens(chunk.content)
+            if token_estimate > remaining_tokens:
+                chunk = self._parent_context_chunk(
+                    candidate,
+                    rank=len(parents) + 1,
+                    token_window=remaining_tokens,
+                    force_snippet=True,
+                )
+                token_estimate = _estimate_tokens(chunk.content)
+            if token_estimate <= 0:
+                continue
+            if token_estimate > remaining_tokens:
+                exhausted = True
+                continue
+            parents.append(chunk)
+            tokens_used += token_estimate
+            if chunk.metadata.get("parent_snippet"):
+                snippets += 1
+
+        metrics.update({
+            "parent_tokens_used": tokens_used,
+            "parent_snippets_returned": snippets,
+            "parent_budget_exhausted": exhausted,
+        })
+        return parents, metrics
+
+    def _parent_candidates(self, children: list[PaperChunk], paper_id: str) -> list[_ParentCandidate]:
+        seen: set[str] = set()
+        candidates: list[_ParentCandidate] = []
+        for child_rank, child in enumerate(children):
+            parent_id = child.parent_chunk_id
+            if not parent_id or parent_id in seen:
+                continue
+            parent = self._store.get_chunk(parent_id)
+            if parent is None or parent.paper_id != paper_id:
+                continue
+            seen.add(parent.chunk_id)
+            candidates.append(_ParentCandidate(parent=parent, child=child, child_rank=child_rank))
+        return candidates
+
+    def _rank_parent_candidates(
+        self,
+        candidates: list[_ParentCandidate],
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+    ) -> list[_ParentCandidate]:
+        if self._reranker is None or not candidates:
+            return sorted(candidates, key=lambda candidate: candidate.child_rank)
+
+        query_text = _parent_context_rerank_query(request, route, candidates)
+        passages = [_parent_context_rerank_passage(candidate) for candidate in candidates]
+        try:
+            scores = self._reranker.score(query_text, passages)  # type: ignore[union-attr]
+        except Exception:
+            logging.getLogger(__name__).warning("parent context reranker failed", exc_info=True)
+            return sorted(candidates, key=lambda candidate: candidate.child_rank)
+        if len(scores) != len(candidates):
+            logging.getLogger(__name__).warning(
+                "parent context reranker returned %s scores for %s candidates",
+                len(scores),
+                len(candidates),
+            )
+            return sorted(candidates, key=lambda candidate: candidate.child_rank)
+
+        ranked = [
+            _ParentCandidate(
+                parent=candidate.parent,
+                child=candidate.child,
+                child_rank=candidate.child_rank,
+                rerank_score=float(score),
+                rerank_query=query_text,
+            )
+            for candidate, score in zip(candidates, scores, strict=True)
+        ]
+        ranked.sort(key=lambda candidate: (-(candidate.rerank_score or 0.0), candidate.child_rank))
+        threshold = self._policy.parent_rerank_score_threshold
+        if threshold <= 0.0:
+            return ranked
+        filtered = [
+            candidate for candidate in ranked
+            if candidate.rerank_score is not None and candidate.rerank_score >= threshold
+        ]
+        return filtered or ranked[:1]
+
+    def _parent_context_chunk(
+        self,
+        candidate: _ParentCandidate,
+        *,
+        rank: int,
+        token_window: int,
+        force_snippet: bool = False,
+    ) -> PaperChunk:
+        parent = candidate.parent
+        original_token_estimate = _estimate_tokens(parent.content)
+        should_snippet = (
+            force_snippet
+            or original_token_estimate > self._policy.long_parent_token_threshold
+        )
+        content = parent.content
+        snippet_metadata: dict[str, Any] = {
+            "parent_snippet": False,
+            "parent_snippet_strategy": "full_parent",
+        }
+        if should_snippet:
+            snippet, start, end, strategy = _child_anchor_snippet(
+                parent.content,
+                candidate.child.content,
+                max(1, token_window),
+            )
+            content = snippet
+            snippet_metadata = {
+                "parent_snippet": True,
+                "parent_snippet_strategy": strategy,
+                "parent_snippet_char_start": start,
+                "parent_snippet_char_end": end,
+            }
+
+        metadata = dict(parent.metadata)
+        metadata.update({
+            "expanded_from_chunk_id": candidate.child.chunk_id,
+            "expansion_reason": "child_parent_context",
+            "expansion_edge": "parent_chunk_id",
+            "expansion_rank": rank,
+            "parent_expansion_reason": "child_parent_context",
+            "parent_anchor_child_id": candidate.child.chunk_id,
+            "parent_rank": rank,
+            "parent_token_estimate": _estimate_tokens(content),
+            "parent_original_token_estimate": original_token_estimate,
+            "source_parent_chunk_id": parent.chunk_id,
+        })
+        metadata.update(snippet_metadata)
+        if candidate.rerank_score is not None:
+            metadata.update({
+                "parent_rerank_score": round(candidate.rerank_score, 6),
+                "parent_rerank_strategy": "cross_encoder",
+                "parent_rerank_query": candidate.rerank_query[:400],
+            })
+        return parent.model_copy(update={"content": content, "metadata": metadata})
 
     def _fetch_refs(
         self, children: list[PaperChunk], paper_id: str
@@ -662,6 +861,77 @@ def _table_context_rerank_query(table: PaperChunk, request: RetrievalRequest) ->
         f"Table section: {table.section_title}",
         f"Table evidence: {table_text[:1000]}",
     ]).strip()
+
+
+def _estimate_tokens(text: str) -> int:
+    compact = " ".join(text.split())
+    if not compact:
+        return 0
+    return max(1, math.ceil(len(compact) / 4))
+
+
+def _parent_context_rerank_query(
+    request: RetrievalRequest,
+    route: RetrievalRoute,
+    candidates: list[_ParentCandidate],
+) -> str:
+    anchors = []
+    seen: set[str] = set()
+    for candidate in candidates[:5]:
+        if candidate.child.chunk_id in seen:
+            continue
+        seen.add(candidate.child.chunk_id)
+        anchors.append(f"- {candidate.child.content[:240]}")
+    return "\n".join([
+        request.question.strip(),
+        f"Intent: {route.intent}",
+        "Matched child evidence:",
+        *anchors,
+    ]).strip()
+
+
+def _parent_context_rerank_passage(candidate: _ParentCandidate) -> str:
+    return "\n".join([
+        f"Parent section: {candidate.parent.section_title}",
+        f"Child anchor: {candidate.child.content[:500]}",
+        f"Parent context: {candidate.parent.content[:1500]}",
+    ]).strip()
+
+
+def _child_anchor_snippet(parent_text: str, child_text: str, token_window: int) -> tuple[str, int, int, str]:
+    char_window = max(80, token_window * 4)
+    if len(parent_text) <= char_window:
+        return parent_text.strip(), 0, len(parent_text), "full_parent_under_window"
+
+    anchor_start = _find_child_anchor(parent_text, child_text)
+    if anchor_start < 0:
+        end = min(len(parent_text), char_window)
+        return parent_text[:end].strip(), 0, end, "leading_window"
+
+    child_len = min(max(len(child_text.strip()), 1), char_window // 2)
+    start = max(0, anchor_start - (char_window - child_len) // 2)
+    end = min(len(parent_text), start + char_window)
+    if end - start < char_window:
+        start = max(0, end - char_window)
+    return parent_text[start:end].strip(), start, end, "child_anchor_window"
+
+
+def _find_child_anchor(parent_text: str, child_text: str) -> int:
+    parent_lower = parent_text.casefold()
+    normalized_child = " ".join(child_text.split())
+    candidates = [
+        child_text.strip(),
+        normalized_child,
+        normalized_child[:300],
+        normalized_child[:160],
+    ]
+    for candidate in candidates:
+        if len(candidate) < 24:
+            continue
+        index = parent_lower.find(candidate.casefold())
+        if index >= 0:
+            return index
+    return -1
 
 
 def _with_expansion_metadata(

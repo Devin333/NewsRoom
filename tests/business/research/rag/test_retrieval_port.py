@@ -93,6 +93,47 @@ def test_section_index_echoed_in_collection_metadata():
     assert result.metadata["section_index"] == 5
 
 
+def test_parent_context_metadata_exposed_in_evidence_pack():
+    parent = PaperChunk(
+        chunk_id="sec-method",
+        paper_id="1706.03762",
+        parse_source="latex",
+        chunk_type="paragraph",
+        section_title="Method",
+        section_role=["method"],
+        section_index=2,
+        content="Snippet around a matched child.",
+        metadata={
+            "source_ref": "arxiv://1706.03762/sec-method",
+            "parent_expansion_reason": "child_parent_context",
+            "parent_anchor_child_id": "para-method",
+            "parent_snippet": True,
+            "parent_snippet_strategy": "child_anchor_window",
+            "source_parent_chunk_id": "sec-method",
+            "parent_rerank_score": 0.91,
+            "parent_rerank_strategy": "cross_encoder",
+        },
+    )
+    spy = _SpyRetriever(result=RetrievalResult(
+        child_chunks=[],
+        parent_chunks=[parent],
+        ref_chunks=[],
+        intent="concept_method",
+    ))
+
+    port = PaperChunkRetrievalPort(spy)  # type: ignore[arg-type]
+    result = port.retrieve(_request({}))
+
+    pack = result.packs[0]
+    assert pack.metadata["parent_expansion_reason"] == "child_parent_context"
+    assert pack.metadata["parent_anchor_child_id"] == "para-method"
+    assert pack.metadata["parent_snippet"] is True
+    assert pack.metadata["parent_snippet_strategy"] == "child_anchor_window"
+    assert pack.metadata["source_parent_chunk_id"] == "sec-method"
+    assert pack.metadata["parent_rerank_score"] == 0.91
+    assert pack.metadata["parent_rerank_strategy"] == "cross_encoder"
+
+
 def test_formula_child_is_emitted_as_evidence_before_parent_context():
     formula = PaperChunk(
         chunk_id="eq-1",
