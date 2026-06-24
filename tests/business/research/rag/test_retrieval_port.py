@@ -240,6 +240,11 @@ def test_figure_evidence_exposes_ocr_diagnostics():
             "ocr_chars": 25,
             "ocr_text_source": "surya_ocr_crop",
             "content_sources": ["caption", "nearby_context", "ocr"],
+            "text_score": 0.24,
+            "visual_score": 0.91,
+            "fused_score": 0.47,
+            "fusion_strategy": "text_image_fusion",
+            "visual_hit": True,
         },
     )
     parent = PaperChunk(
@@ -269,4 +274,9 @@ def test_figure_evidence_exposes_ocr_diagnostics():
     assert figure_pack.metadata["ocr_attempted"] is True
     assert figure_pack.metadata["ocr_chars"] == 25
     assert figure_pack.metadata["ocr_text_source"] == "surya_ocr_crop"
+    assert figure_pack.metadata["text_score"] == 0.24
+    assert figure_pack.metadata["visual_score"] == 0.91
+    assert figure_pack.metadata["fused_score"] == 0.47
+    assert figure_pack.metadata["fusion_strategy"] == "text_image_fusion"
+    assert figure_pack.metadata["visual_hit"] is True
     assert "OCR Text:" in figure_pack.summary

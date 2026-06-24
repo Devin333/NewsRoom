@@ -55,6 +55,21 @@ class _ChunkRepository:
         self.chunks = [chunk for chunk in self.chunks if chunk.paper_id != paper_id]
 
 
+class _VisualChunkIndexer:
+    def __init__(self) -> None:
+        self.ensure_called = False
+        self.chunks: list[PaperChunk] = []
+
+    def ensure_collection(self) -> None:
+        self.ensure_called = True
+
+    def index_chunks(self, chunks: list[PaperChunk]) -> None:
+        self.chunks = list(chunks)
+
+    def delete_paper_chunks(self, paper_id: str) -> None:
+        self.chunks = [chunk for chunk in self.chunks if chunk.paper_id != paper_id]
+
+
 def test_chunk_pipeline_writes_chunk_manifest(tmp_path):
     store = _ChunkStore()
     repo = _ChunkRepository()
@@ -81,3 +96,23 @@ def test_chunk_pipeline_writes_chunk_manifest(tmp_path):
     assert {entry["chunk_id"] for entry in payload["chunks"]} == {
         chunk.chunk_id for chunk in store.chunks
     }
+
+
+def test_chunk_pipeline_optionally_indexes_visual_chunks(tmp_path):
+    store = _ChunkStore()
+    repo = _ChunkRepository()
+    visual_indexer = _VisualChunkIndexer()
+    pipeline = ChunkPaperPipeline(
+        store,  # type: ignore[arg-type]
+        repo,
+        _SourceFetcher(),
+        _DocumentParser(),
+        visual_chunk_indexer=visual_indexer,
+        chunk_manifest=ChunkManifestManager(tmp_path / "chunk_manifest.json"),
+        with_propositions=False,
+    )
+
+    pipeline.run("2501.00001")
+
+    assert visual_indexer.ensure_called is True
+    assert visual_indexer.chunks == store.chunks

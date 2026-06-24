@@ -8,6 +8,7 @@ from business.research.rag.retriever import (
     RetrievalPolicy,
     RetrievalRequest,
 )
+from business.research.ports.visual_chunk_index import VisualChunkHit
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from infrastructure.storage.vector.fake_store import InMemoryVectorStore
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
@@ -189,3 +190,81 @@ def test_parent_fallback_to_children_when_no_parent():
     # no parent_chunk_id → falls back to returning the matched children themselves
     assert result.parent_chunks
     assert result.parent_chunks[0].chunk_id == "abs-1"
+
+
+class _VisualHitStore:
+    def __init__(self, hits: list[VisualChunkHit]) -> None:
+        self.hits = hits
+        self.calls: list[dict] = []
+
+    def search_visual_chunks(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        filters: dict | None = None,
+        limit: int = 10,
+    ) -> list[VisualChunkHit]:
+        self.calls.append({
+            "paper_id": paper_id,
+            "query_text": query_text,
+            "filters": filters or {},
+            "limit": limit,
+        })
+        return self.hits[:limit]
+
+
+def test_figure_query_fuses_visual_hits_with_text_results():
+    store = _make_store()
+    parent = _chunk("sec-fig", section_index=2, content="Visual section.")
+    text_figure = _chunk(
+        "fig-text",
+        chunk_type="figure",
+        parent_chunk_id="sec-fig",
+        content="[Figure fig-text]\nCaption:\nA baseline chart.",
+    )
+    visual_figure = _chunk(
+        "fig-visual",
+        chunk_type="figure",
+        parent_chunk_id="sec-fig",
+        content="[Figure fig-visual]\nCaption:\nArchitecture overview.",
+    )
+    store.ensure_collection()
+    store.index_chunks([parent, text_figure, visual_figure])
+    visual_store = _VisualHitStore([VisualChunkHit(chunk_id="fig-visual", score=0.95)])
+
+    retriever = ResearchRetriever(store, visual_store=visual_store)
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Figure 2 architecture show?", limit=2)
+    )
+
+    assert visual_store.calls
+    assert visual_store.calls[0]["filters"]["chunk_type"] == "figure"
+    assert any(chunk.chunk_id == "fig-visual" for chunk in result.child_chunks)
+    visual_hit = next(chunk for chunk in result.child_chunks if chunk.chunk_id == "fig-visual")
+    assert visual_hit.metadata["visual_hit"] is True
+    assert visual_hit.metadata["visual_score"] == 0.95
+    assert visual_hit.metadata["fusion_strategy"] in {"image_only", "text_image_fusion"}
+    assert result.metadata["visual_recalled"] == 1
+    assert result.metadata["visual_fusion_enabled"] is True
+
+
+def test_visual_store_is_not_called_for_table_query():
+    store = _make_store()
+    table = _chunk(
+        "tbl-1",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nMain benchmark results.",
+    )
+    store.ensure_collection()
+    store.index_chunks([table])
+    visual_store = _VisualHitStore([VisualChunkHit(chunk_id="tbl-1", score=0.99)])
+
+    retriever = ResearchRetriever(store, visual_store=visual_store)
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Table 1 show?", limit=2)
+    )
+
+    assert visual_store.calls == []
+    assert result.intent == "table_query"
+    assert result.metadata["visual_recalled"] == 0

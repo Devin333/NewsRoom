@@ -34,6 +34,10 @@ qdrant = [
 rerank = [
   "sentence-transformers>=3.0",
 ]
+vision = [
+  "Pillow>=10.0",
+  "sentence-transformers>=3.0",
+]
 ocr = [
   # Provides the `nougat` CLI used by business.research.document.pdf_compiler.
   "nougat-ocr==0.1.17",
@@ -41,6 +45,7 @@ ocr = [
 dev = [
   "fastapi>=0.110",
   "httpx>=0.27",
+  "Pillow>=10.0",
   "psycopg[binary]>=3.1",
   "pytest>=8.0",
   "qdrant-client>=1.8",
@@ -51,6 +56,7 @@ dev = [
 all = [
   "fastapi>=0.110",
   "httpx>=0.27",
+  "Pillow>=10.0",
   "psycopg[binary]>=3.1",
   "pytest>=8.0",
   "qdrant-client>=1.8",
@@ -92,4 +98,3 @@ addopts = ["--import-mode=importlib"]
 
 [tool.pyright]
 extraPaths = ["sdk/python"]
-

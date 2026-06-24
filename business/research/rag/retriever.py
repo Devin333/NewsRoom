@@ -8,6 +8,7 @@ from typing import Any, TYPE_CHECKING
 from business.research.document.models import PaperChunk
 from business.research.rag.routing import QueryIntent, RetrievalRoute, build_retrieval_route
 from business.research.ports.chunk_store import ChunkStorePort
+from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
 
 if TYPE_CHECKING:
     from business.research.ports.reranker import RerankerPort
@@ -32,6 +33,8 @@ class RetrievalPolicy:
     sigma: float = 3.0                  # position decay rate, in sections
     overfetch_multiplier: int = 3       # fetch limit*N candidates before re-rank
     rerank_score_threshold: float = 0.3  # drop candidates below this reranker score (0 = off)
+    visual_fusion_text_weight: float = 0.65
+    visual_fusion_visual_weight: float = 0.35
 
     def alpha_for(self, intent: str) -> float:
         return self.position_alpha.get(intent, self.default_alpha)
@@ -97,10 +100,12 @@ class ResearchRetriever:
         *,
         policy: RetrievalPolicy | None = None,
         reranker: "RerankerPort | None" = None,
+        visual_store: VisualChunkSearchPort | None = None,
     ) -> None:
         self._store = chunk_store
         self._policy = policy or RetrievalPolicy()
         self._reranker = reranker
+        self._visual_store = visual_store
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         import time
@@ -116,6 +121,8 @@ class ResearchRetriever:
             limit=request.limit * self._policy.overfetch_multiplier,
         )
         n_recalled = len(candidates)
+        visual_hits = self._search_visual_candidates(request, route, filters)
+        n_visual_recalled = len(visual_hits)
 
         # ── 2. base relevance: reranker (if available) else vector score ──────
         base_scores = self._base_scores(request.question, candidates)
@@ -131,13 +138,27 @@ class ResearchRetriever:
         # ── 3. position-aware re-rank ─────────────────────────────────────────
         scored = [
             (
-                chunk,
+                _with_retrieval_scores(
+                    chunk,
+                    text_score=base,
+                    visual_score=None,
+                    fused_score=base,
+                    strategy="text",
+                ),
                 base + self._policy.position_weight(
                     route.intent, chunk.section_index, request.current_section_index
                 ),
             )
             for (chunk, _sem), base in pairs
         ]
+        if visual_hits:
+            scored = self._fuse_visual_scores(
+                scored,
+                visual_hits,
+                paper_id=request.paper_id,
+                current_section_index=request.current_section_index,
+                intent=route.intent,
+            )
         scored.sort(key=lambda x: x[1], reverse=True)
         child_chunks = [c for c, _ in scored[: request.limit]]
         top_score = scored[0][1] if scored else 0.0
@@ -153,6 +174,8 @@ class ResearchRetriever:
             "intent": route.intent,
             "reranker": self._reranker is not None,
             "recalled": n_recalled,
+            "visual_recalled": n_visual_recalled,
+            "visual_fusion_enabled": self._visual_store is not None,
             "threshold_filtered": n_filtered,
             "child_returned": len(child_chunks),
             "parent_returned": len(parent_chunks),
@@ -194,6 +217,88 @@ class ResearchRetriever:
             filters.update(route.extra_filters)
         return filters
 
+    def _search_visual_candidates(
+        self,
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+        filters: dict[str, Any],
+    ) -> list[VisualChunkHit]:
+        if self._visual_store is None or route.intent != "figure_query":
+            return []
+        try:
+            return self._visual_store.search_visual_chunks(
+                request.paper_id,
+                request.question,
+                filters=filters,
+                limit=request.limit * self._policy.overfetch_multiplier,
+            )
+        except Exception:
+            logging.getLogger(__name__).warning("visual retrieval failed", exc_info=True)
+            return []
+
+    def _fuse_visual_scores(
+        self,
+        scored: list[tuple[PaperChunk, float]],
+        visual_hits: list[VisualChunkHit],
+        *,
+        paper_id: str,
+        current_section_index: int,
+        intent: QueryIntent,
+    ) -> list[tuple[PaperChunk, float]]:
+        by_id: dict[str, tuple[PaperChunk, float, float | None]] = {}
+        for chunk, score in scored:
+            by_id[chunk.chunk_id] = (
+                chunk,
+                _metadata_float(chunk.metadata, "text_score", score),
+                None,
+            )
+
+        for hit in visual_hits:
+            existing = by_id.get(hit.chunk_id)
+            chunk = existing[0] if existing else None
+            if chunk is None:
+                chunk = self._store.get_chunk(hit.chunk_id)
+            if chunk is None or chunk.paper_id != paper_id:
+                continue
+            text_score = existing[1] if existing else 0.0
+            by_id[chunk.chunk_id] = (chunk, text_score, hit.score)
+
+        fused: list[tuple[PaperChunk, float]] = []
+        for chunk, text_score, visual_score in by_id.values():
+            fused_score, strategy = self._fusion_score(
+                text_score=text_score,
+                visual_score=visual_score,
+            )
+            fused_chunk = _with_retrieval_scores(
+                chunk,
+                text_score=text_score,
+                visual_score=visual_score,
+                fused_score=fused_score,
+                strategy=strategy,
+            )
+            fused.append(
+                (
+                    fused_chunk,
+                    fused_score + self._policy.position_weight(
+                        intent, chunk.section_index, current_section_index
+                    ),
+                )
+            )
+        return fused
+
+    def _fusion_score(self, *, text_score: float, visual_score: float | None) -> tuple[float, str]:
+        text = max(0.0, text_score)
+        if visual_score is None:
+            return text_score, "text"
+        visual = max(0.0, visual_score)
+        if text:
+            score = (
+                self._policy.visual_fusion_text_weight * text
+                + self._policy.visual_fusion_visual_weight * visual
+            )
+            return score, "text_image_fusion"
+        return visual * self._policy.visual_fusion_visual_weight, "image_only"
+
     def _fetch_parents(
         self, children: list[PaperChunk], paper_id: str
     ) -> list[PaperChunk]:
@@ -228,6 +333,32 @@ class ResearchRetriever:
             if chunk:
                 result.append(chunk)
         return result
+
+
+def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float:
+    value = metadata.get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _with_retrieval_scores(
+    chunk: PaperChunk,
+    *,
+    text_score: float,
+    visual_score: float | None,
+    fused_score: float,
+    strategy: str,
+) -> PaperChunk:
+    metadata = dict(chunk.metadata)
+    metadata["text_score"] = round(float(text_score), 6)
+    metadata["fused_score"] = round(float(fused_score), 6)
+    metadata["fusion_strategy"] = strategy
+    metadata["visual_hit"] = visual_score is not None
+    if visual_score is not None:
+        metadata["visual_score"] = round(float(visual_score), 6)
+    return chunk.model_copy(update={"metadata": metadata})
 
 
 __all__ = ["ResearchRetriever", "RetrievalPolicy", "RetrievalRequest", "RetrievalResult"]
