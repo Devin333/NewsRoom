@@ -17,8 +17,17 @@ _PARAGRAPH_SEP = re.compile(r"\n\n+")
 _SENTENCE_END = re.compile(r"(?<=[.!?。！？])\s+")
 _LATEX_FORMULA = re.compile(r"\\begin\{(?:equation|align|gather)[^}]*\}.*?\\end\{[^}]+\}", re.DOTALL)
 _INLINE_FORMULA = re.compile(r"\$\$[^$]+\$\$|\$[^$\n]+\$")
+_LATEX_TAG = re.compile(r"\\tag\{([^}]+)\}")
 _FIGURE_REF = re.compile(r"图\s*(\w+)|[Ff]ig(?:ure)?[.s]?\s*(\w+)")
 _LOCATOR_PAGE_RE = re.compile(r"(?:#|&)page=(\d+)")
+_EQUATION_BODY_REF = re.compile(
+    r"\b((?:Equation|Eq)(?:\.|\b)\s*[\(\[]?\s*([A-Za-z0-9][A-Za-z0-9.\-_:]*)\s*[\)\]]?)",
+    re.IGNORECASE,
+)
+_CHINESE_FORMULA_BODY_REF = re.compile(
+    r"((?:\u516c\u5f0f)\s*[\(（]?\s*([A-Za-z0-9][A-Za-z0-9.\-_:]*)\s*[\)）]?)"
+)
+_LATEX_EQUATION_REF = re.compile(r"(\\(?:eq)?ref\{([^}]+)\})")
 _FIGURE_BODY_REF = re.compile(r"\b(Fig(?:ure)?\.?\s*([A-Za-z0-9][A-Za-z0-9.\-]*))", re.IGNORECASE)
 _TABLE_BODY_REF = re.compile(r"\b(Table\s+([A-Za-z0-9][A-Za-z0-9.\-]*))", re.IGNORECASE)
 
@@ -55,6 +64,113 @@ def _normalize_ref_label(value: Any) -> str:
     if text.isdigit():
         return str(int(text))
     return text
+
+
+def _compact_formula_label(value: Any) -> str:
+    if value is None or isinstance(value, bool):
+        return ""
+    raw = str(value).strip()
+    if not raw:
+        return ""
+    text = re.sub(r"[^a-z0-9]+", "", raw.casefold())
+    if text.isdigit():
+        return str(int(text))
+    return text
+
+
+def _normalize_formula_label(value: Any) -> str:
+    text = _compact_formula_label(value)
+    text = re.sub(r"^(?:equations?|eq|formula)", "", text)
+    if text.isdigit():
+        return str(int(text))
+    return text
+
+
+def _formula_label_aliases(value: Any) -> set[str]:
+    return {
+        alias for alias in (
+            _compact_formula_label(value),
+            _normalize_formula_label(value),
+        )
+        if alias
+    }
+
+
+def _latex_equation_tag(latex: str) -> str:
+    match = _LATEX_TAG.search(latex)
+    return match.group(1).strip() if match else ""
+
+
+def _formula_reference_keys(eq: ResearchEquation) -> set[str]:
+    values = [
+        eq.equation_id,
+        eq.metadata.get("equation_id"),
+        eq.metadata.get("equation_number"),
+        eq.metadata.get("equation_label"),
+        eq.metadata.get("label"),
+        _latex_equation_tag(eq.latex),
+    ]
+    keys: set[str] = set()
+    for value in values:
+        keys.update(_formula_label_aliases(value))
+    return keys
+
+
+def _body_formula_references(text: str) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    patterns = (
+        _EQUATION_BODY_REF,
+        _CHINESE_FORMULA_BODY_REF,
+        _LATEX_EQUATION_REF,
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            label = _normalize_formula_label(match.group(2))
+            text_ref = match.group(1).strip()
+            if not label or not text_ref:
+                continue
+            key = (label, text_ref)
+            if key in seen:
+                continue
+            seen.add(key)
+            refs.append({
+                "kind": "formula",
+                "label": label,
+                "text_ref": text_ref,
+            })
+    return refs
+
+
+def _formula_lookup(
+    equations: dict[str, ResearchEquation],
+) -> dict[str, ResearchEquation]:
+    lookup: dict[str, ResearchEquation] = {}
+    for eq in equations.values():
+        for key in _formula_reference_keys(eq):
+            lookup.setdefault(key, eq)
+    return lookup
+
+
+def _matched_formula_references(
+    text: str,
+    formula_lookup: dict[str, ResearchEquation],
+) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for ref in _body_formula_references(text):
+        eq = formula_lookup.get(ref["label"])
+        if eq is None:
+            continue
+        key = (eq.equation_id, ref["text_ref"])
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({
+            **ref,
+            "equation_id": eq.equation_id,
+        })
+    return refs
 
 
 def _body_visual_references(text: str) -> list[dict[str, str]]:
@@ -445,6 +561,35 @@ def _visual_references_by_element(
     return out
 
 
+def _formula_references_by_equation(chunks: list[PaperChunk]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {}
+    seen: set[tuple[str, str, str]] = set()
+    for chunk in _paragraph_child_chunks(chunks):
+        refs = chunk.metadata.get("formula_references")
+        if not isinstance(refs, list):
+            continue
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            equation_id = str(ref.get("equation_id") or "")
+            text_ref = str(ref.get("text_ref") or "")
+            if not equation_id or not text_ref:
+                continue
+            key = (equation_id, chunk.chunk_id, text_ref)
+            if key in seen:
+                continue
+            seen.add(key)
+            entry = {
+                "chunk_id": chunk.chunk_id,
+                "section_title": chunk.section_title,
+                "page": _chunk_page(chunk),
+                "source_locator": chunk.metadata.get("source_locator", ""),
+                "text_ref": text_ref,
+            }
+            out.setdefault(equation_id, []).append(entry)
+    return out
+
+
 def _stable_chunk_id(paper_id: str, *parts: str) -> str:
     return build_stable_id("chunk", paper_id, *parts)
 
@@ -536,7 +681,7 @@ class PaperDocumentChunker:
 
         chunks: list[PaperChunk] = []
         if not structure_detected:
-            chunks = self._fallback_fixed_token_chunks(doc, parse_source)
+            chunks = self._fallback_fixed_token_chunks(doc, parse_source, elements)
             self._add_formula_chunks(doc, parse_source, structure_detected, chunks)
             self._add_figure_chunks(doc, parse_source, structure_detected, chunks)
             self._add_table_chunks(doc, parse_source, structure_detected, chunks)
@@ -580,6 +725,7 @@ class PaperDocumentChunker:
     def _add_section_chunks(self, doc, parse_source, structure_detected, sections, elements, out):
         figure_lookup = _visual_lookup("figure", elements.figures)
         table_lookup = _visual_lookup("table", elements.tables)
+        formula_lookup = _formula_lookup(elements.equations)
         for idx, section in enumerate(sections):
             if not section.text.strip():
                 continue  # skip blank sections — no chunk to emit
@@ -624,6 +770,7 @@ class PaperDocumentChunker:
 
                 has_formula = bool(_LATEX_FORMULA.search(para_text) or _INLINE_FORMULA.search(para_text))
                 formula_latex = _extract_formula_latex(para_text) if has_formula else ""
+                formula_references = _matched_formula_references(raw_para, formula_lookup)
 
                 has_figure, fig_key = _find_figure_ref(para_text)
                 figure_id = ""
@@ -677,12 +824,14 @@ class PaperDocumentChunker:
                             "is_parent": False,
                             "para_index": para_idx,
                             "needs_proposition_decomposition": need_propositions,
+                            "formula_references": formula_references,
                             "visual_references": visual_references,
                         },
                     ),
                 ))
 
     def _add_formula_chunks(self, doc, parse_source, structure_detected, out):
+        references_by_equation = _formula_references_by_equation(out)
         for eq in doc.equations:
             parent, match_strategy = _find_formula_parent(eq, out)
             section_title = parent.section_title if parent else "formula"
@@ -713,6 +862,8 @@ class PaperDocumentChunker:
                         **eq.metadata,
                         "equation_id": eq.equation_id,
                         "page": eq.page,
+                        "reference_labels": sorted(_formula_reference_keys(eq)),
+                        "referenced_by_chunks": references_by_equation.get(eq.equation_id, []),
                         "formula_parent_match_strategy": match_strategy,
                     },
                 ),
@@ -889,12 +1040,17 @@ class PaperDocumentChunker:
                 ))
 
     def _fallback_fixed_token_chunks(
-        self, doc: ResearchDocument, parse_source: ParseSource, token_limit: int = 1500
+        self,
+        doc: ResearchDocument,
+        parse_source: ParseSource,
+        elements: ScannedElements,
+        token_limit: int = 1500,
     ) -> list[PaperChunk]:
         """Fixed token-window chunking for poorly structured documents (PRD §3 fallback)."""
         full_text = "\n\n".join(s.text for s in doc.sections)
         words = full_text.split()
         chunks: list[PaperChunk] = []
+        formula_lookup = _formula_lookup(elements.equations)
         source_ref = (
             doc.lineage.source_refs[0]
             if doc.lineage.source_refs
@@ -902,6 +1058,7 @@ class PaperDocumentChunker:
         )
         for chunk_idx in range(0, len(words), token_limit):
             content = " ".join(words[chunk_idx : chunk_idx + token_limit])
+            formula_references = _matched_formula_references(content, formula_lookup)
             chunks.append(PaperChunk(
                 chunk_id=_stable_chunk_id(doc.paper_id, "fallback", str(chunk_idx // token_limit)),
                 paper_id=doc.paper_id,
@@ -915,7 +1072,11 @@ class PaperDocumentChunker:
                     section_title="fallback",
                     source_ref=source_ref,
                     semantic_text=content,
-                    base={"fallback": True, "chunk_index": chunk_idx // token_limit},
+                    base={
+                        "fallback": True,
+                        "chunk_index": chunk_idx // token_limit,
+                        "formula_references": formula_references,
+                    },
                 ),
             ))
         return chunks

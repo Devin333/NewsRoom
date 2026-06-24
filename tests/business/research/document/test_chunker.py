@@ -141,11 +141,115 @@ def test_formula_chunk_produced_with_context_and_parent():
     assert formula.metadata["page"] == 3
     assert formula.metadata["source_locator"] == "paper://paper-1/pdf#page=3&pdf_rect=1,2,3,4"
     assert formula.metadata["formula_parent_match_strategy"] == "latex_text"
+    assert "eq1" in formula.metadata["reference_labels"]
+    assert "1" in formula.metadata["reference_labels"]
+    assert formula.metadata["referenced_by_chunks"] == []
 
     parent = next(c for c in chunks if c.chunk_id == formula.parent_chunk_id)
     assert parent.chunk_type == "paragraph"
     assert not parent.metadata.get("is_parent")
     assert parent.has_formula
+
+
+def test_formula_chunk_records_multiple_explicit_references():
+    eq = make_equation("eq_loss", r"\[L=x \tag{1}\]").model_copy(update={
+        "page": 2,
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=2&pdf_rect=1,2,3,4",
+            "equation_number": "1",
+            "equation_label": "1",
+        },
+    })
+    method = make_section(
+        "s1",
+        "Method",
+        r"The objective is \[L=x \tag{1}\] for training.",
+    ).model_copy(update={"metadata": {"source_locator": "paper://paper-1/pdf#page=2"}})
+    analysis = make_section(
+        "s2",
+        "Analysis",
+        "The loss behavior follows Eq. (1) under noisy labels.",
+    ).model_copy(update={"metadata": {"source_locator": "paper://paper-1/pdf#page=3"}})
+    experiments = make_section(
+        "s3",
+        "Experiments",
+        "Equation 1 is reused in the ablation study.",
+    ).model_copy(update={"metadata": {"source_locator": "paper://paper-1/pdf#page=4"}})
+    doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        method,
+        analysis,
+        experiments,
+    ]).model_copy(update={"equations": [eq]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    formula = next(c for c in chunks if c.chunk_type == "formula")
+    method_child = next(c for c in chunks if c.section_title == "Method" and not c.metadata.get("is_parent"))
+    analysis_ref = next(c for c in chunks if c.section_title == "Analysis" and not c.metadata.get("is_parent"))
+    experiments_ref = next(c for c in chunks if c.section_title == "Experiments" and not c.metadata.get("is_parent"))
+
+    assert formula.parent_chunk_id == method_child.chunk_id
+    assert formula.metadata["source_locator"] == "paper://paper-1/pdf#page=2&pdf_rect=1,2,3,4"
+    assert formula.metadata["formula_parent_match_strategy"] == "latex_text"
+    assert "1" in formula.metadata["reference_labels"]
+    assert "loss" in formula.metadata["reference_labels"]
+    assert formula.metadata["referenced_by_chunks"] == [
+        {
+            "chunk_id": analysis_ref.chunk_id,
+            "section_title": "Analysis",
+            "page": 3,
+            "source_locator": "paper://paper-1/pdf#page=3",
+            "text_ref": "Eq. (1)",
+        },
+        {
+            "chunk_id": experiments_ref.chunk_id,
+            "section_title": "Experiments",
+            "page": 4,
+            "source_locator": "paper://paper-1/pdf#page=4",
+            "text_ref": "Equation 1",
+        },
+    ]
+    assert analysis_ref.metadata["formula_references"] == [{
+        "kind": "formula",
+        "label": "1",
+        "text_ref": "Eq. (1)",
+        "equation_id": "eq_loss",
+    }]
+    assert experiments_ref.metadata["formula_references"] == [{
+        "kind": "formula",
+        "label": "1",
+        "text_ref": "Equation 1",
+        "equation_id": "eq_loss",
+    }]
+
+
+def test_unknown_formula_reference_is_not_linked():
+    eq = make_equation("eq_loss", r"\[L=x \tag{1}\]").model_copy(update={
+        "page": 2,
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=2&pdf_rect=1,2,3,4",
+            "equation_number": "1",
+        },
+    })
+    analysis = make_section(
+        "s2",
+        "Analysis",
+        "The loss behavior is unrelated to Eq. (99).",
+    ).model_copy(update={"metadata": {"source_locator": "paper://paper-1/pdf#page=3"}})
+    doc = make_doc(sections=[
+        make_section("s0", "Abstract", "Abstract."),
+        make_section("s1", "Method", r"The objective is \[L=x \tag{1}\]."),
+        analysis,
+        make_section("s3", "Experiments", "Experiment text."),
+    ]).model_copy(update={"equations": [eq]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    formula = next(c for c in chunks if c.chunk_type == "formula")
+    analysis_ref = next(c for c in chunks if c.section_title == "Analysis" and not c.metadata.get("is_parent"))
+    assert formula.metadata["referenced_by_chunks"] == []
+    assert analysis_ref.metadata["formula_references"] == []
 
 
 def test_formula_chunk_survives_unstructured_fallback():
