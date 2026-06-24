@@ -38,12 +38,13 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python -m pip install "numpy==1.26.4" \
     && python -m pip install \
         --constraint /tmp/nougat-constraints.txt \
-        -e ".[ocr]" \
+        -e ".[ocr,vision]" \
     && mkdir -p /workspace/.newsroom /home/app/.cache \
     && chown -R app:app /workspace /home/app
 
+COPY docker/nougat/preload_visual_model.py /usr/local/bin/newsroom-preload-visual-model
 COPY docker/nougat/entrypoint.sh /usr/local/bin/newsroom-nougat
-RUN chmod +x /usr/local/bin/newsroom-nougat
+RUN chmod +x /usr/local/bin/newsroom-nougat /usr/local/bin/newsroom-preload-visual-model
 
 USER app
 
