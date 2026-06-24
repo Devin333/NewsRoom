@@ -116,6 +116,60 @@ def test_formula_detected_in_paragraph():
     assert formula_chunks, "expected at least one chunk with formula detected"
 
 
+def test_formula_chunk_produced_with_context_and_parent():
+    eq = make_equation("eq1", "$W_q$").model_copy(update={
+        "page": 3,
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=3&pdf_rect=1,2,3,4",
+            "pdf_rect": [1, 2, 3, 4],
+        },
+    })
+    doc = _structured_doc().model_copy(update={"equations": [eq]})
+
+    chunks = CHUNKER.chunk(doc, "latex")
+
+    formula_chunks = [c for c in chunks if c.chunk_type == "formula"]
+    assert len(formula_chunks) == 1
+    formula = formula_chunks[0]
+    assert formula.has_formula
+    assert formula.formula_latex == "$W_q$"
+    assert "LaTeX:" in formula.content
+    assert "$W_q$" in formula.content
+    assert "Context:" in formula.content
+    assert "Specifically, we apply $W_q$ to queries." in formula.content
+    assert formula.metadata["equation_id"] == "eq1"
+    assert formula.metadata["page"] == 3
+    assert formula.metadata["source_locator"] == "paper://paper-1/pdf#page=3&pdf_rect=1,2,3,4"
+    assert formula.metadata["formula_parent_match_strategy"] == "latex_text"
+
+    parent = next(c for c in chunks if c.chunk_id == formula.parent_chunk_id)
+    assert parent.chunk_type == "paragraph"
+    assert not parent.metadata.get("is_parent")
+    assert parent.has_formula
+
+
+def test_formula_chunk_survives_unstructured_fallback():
+    eq = make_equation("eq1", "$E=mc^2$").model_copy(update={
+        "page": 2,
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=2&pdf_rect=4,5,6,7",
+            "pdf_rect": [4, 5, 6, 7],
+        },
+    })
+    doc = make_doc(sections=[
+        make_section("s0", "Body", "The derivation depends on $E=mc^2$ in this paragraph."),
+        make_section("s1", "More", "Additional unstructured text."),
+    ]).model_copy(update={"equations": [eq]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    formula = next(c for c in chunks if c.chunk_type == "formula")
+    assert formula.structure_detected is False
+    assert formula.parent_chunk_id
+    assert formula.metadata["formula_parent_match_strategy"] == "latex_text"
+    assert formula.metadata["source_locator"] == "paper://paper-1/pdf#page=2&pdf_rect=4,5,6,7"
+
+
 def test_overlap_applied():
     text = "First sentence ends here.\n\nSecond paragraph starts here and continues on."
     doc = make_doc(sections=[

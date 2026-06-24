@@ -49,10 +49,8 @@ class PaperChunkRetrievalPort:
             limit=request.limit,
         ))
 
-        packs = tuple(
-            _chunk_to_evidence_pack(chunk)
-            for chunk in result.parent_chunks
-        )
+        evidence_chunks = _dedupe_chunks((*result.child_chunks, *result.parent_chunks))
+        packs = tuple(_chunk_to_evidence_pack(chunk) for chunk in evidence_chunks)
         return EvidencePackCollection(
             packs=packs,
             metadata={
@@ -74,6 +72,17 @@ class PaperChunkRetrievalPort:
         return index if index >= 0 else self._default_section_index
 
 
+def _dedupe_chunks(chunks: tuple[PaperChunk, ...]) -> tuple[PaperChunk, ...]:
+    seen: set[str] = set()
+    result: list[PaperChunk] = []
+    for chunk in chunks:
+        if chunk.chunk_id in seen:
+            continue
+        seen.add(chunk.chunk_id)
+        result.append(chunk)
+    return tuple(result)
+
+
 def _chunk_to_evidence_pack(chunk: PaperChunk) -> EvidencePack:
     source_ref = chunk.metadata.get("source_ref") or f"arxiv://{chunk.paper_id}/{chunk.chunk_id}"
     return EvidencePack(
@@ -88,8 +97,13 @@ def _chunk_to_evidence_pack(chunk: PaperChunk) -> EvidencePack:
             "section_role": chunk.section_role,
             "section_index": chunk.section_index,
             "chunk_type": chunk.chunk_type,
+            "parent_chunk_id": chunk.parent_chunk_id,
             "has_formula": chunk.has_formula,
+            "formula_latex": chunk.formula_latex,
             "has_figure": chunk.has_figure,
+            "source_locator": chunk.metadata.get("source_locator", ""),
+            "page": chunk.metadata.get("page"),
+            "pdf_rect": chunk.metadata.get("pdf_rect"),
         },
     )
 

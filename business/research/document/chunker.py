@@ -5,7 +5,7 @@ from hashlib import sha256
 from typing import Any
 
 from business.foundation import build_stable_id
-from business.research.domain.document import ResearchDocument, ResearchTable
+from business.research.domain.document import ResearchDocument, ResearchEquation, ResearchTable
 from business.research.document.models import ChunkType, PaperChunk, ParseSource, SectionRole
 from business.research.document.section_detector import classify_section_role, is_abstract_section
 from business.research.document.special_element_scanner import ScannedElements, scan_special_elements
@@ -18,6 +18,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?。！？])\s+")
 _LATEX_FORMULA = re.compile(r"\\begin\{(?:equation|align|gather)[^}]*\}.*?\\end\{[^}]+\}", re.DOTALL)
 _INLINE_FORMULA = re.compile(r"\$\$[^$]+\$\$|\$[^$\n]+\$")
 _FIGURE_REF = re.compile(r"图\s*(\w+)|[Ff]ig(?:ure)?[.s]?\s*(\w+)")
+_LOCATOR_PAGE_RE = re.compile(r"(?:#|&)page=(\d+)")
 
 # Minimum sections to count as "structure detected" (PRD §3)
 _MIN_STRUCTURED_SECTIONS = 3
@@ -51,6 +52,74 @@ def _table_to_text(tbl: ResearchTable) -> str:
     for row in tbl.rows[:20]:
         lines.append(" | ".join(str(v) for v in row.values()))
     return "\n".join(lines)
+
+
+def _formula_to_text(eq: ResearchEquation, parent: PaperChunk | None) -> str:
+    lines = [
+        f"[Equation {eq.equation_id}]",
+        "LaTeX:",
+        eq.latex,
+    ]
+    if parent is not None:
+        lines.extend([
+            "",
+            "Context:",
+            _context_excerpt(parent.content),
+        ])
+        if parent.section_title:
+            lines.extend(["", f"Section: {parent.section_title}"])
+    source_locator = eq.metadata.get("source_locator")
+    if source_locator:
+        lines.extend(["", f"Source: {source_locator}"])
+    return "\n".join(lines)
+
+
+def _context_excerpt(text: str, *, max_chars: int = 900) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= max_chars:
+        return compact
+    return compact[:max_chars].rstrip() + "..."
+
+
+def _normalize_formula_text(text: str) -> str:
+    stripped = text.strip()
+    for prefix, suffix in (("\\[", "\\]"), ("$$", "$$"), ("$", "$")):
+        if stripped.startswith(prefix) and stripped.endswith(suffix):
+            stripped = stripped[len(prefix):-len(suffix)]
+            break
+    return re.sub(r"\s+", "", stripped).casefold()
+
+
+def _locator_page(locator: Any) -> int | None:
+    if not locator:
+        return None
+    match = _LOCATOR_PAGE_RE.search(str(locator))
+    return int(match.group(1)) if match else None
+
+
+def _find_formula_parent(eq: ResearchEquation, chunks: list[PaperChunk]) -> tuple[PaperChunk | None, str]:
+    paragraph_chunks = [
+        chunk for chunk in chunks
+        if chunk.chunk_type == "paragraph" and not chunk.metadata.get("is_parent")
+    ]
+    if not paragraph_chunks:
+        return None, "none"
+
+    eq_latex = _normalize_formula_text(eq.latex)
+    for chunk in paragraph_chunks:
+        if eq_latex and (
+            eq_latex == _normalize_formula_text(chunk.formula_latex)
+            or eq_latex in _normalize_formula_text(chunk.content)
+        ):
+            return chunk, "latex_text"
+
+    eq_page = eq.page or _locator_page(eq.metadata.get("source_locator"))
+    if eq_page is not None:
+        for chunk in paragraph_chunks:
+            if _locator_page(chunk.metadata.get("source_locator")) == eq_page:
+                return chunk, "page_locator"
+
+    return paragraph_chunks[0], "first_paragraph_fallback"
 
 
 def _stable_chunk_id(paper_id: str, *parts: str) -> str:
@@ -143,13 +212,18 @@ class PaperDocumentChunker:
         structure_detected = len(non_abstract) >= _MIN_STRUCTURED_SECTIONS
 
         chunks: list[PaperChunk] = []
+        if not structure_detected:
+            chunks = self._fallback_fixed_token_chunks(doc, parse_source)
+            self._add_formula_chunks(doc, parse_source, structure_detected, chunks)
+            self._add_figure_chunks(doc, parse_source, structure_detected, chunks)
+            self._add_table_chunks(doc, parse_source, structure_detected, chunks)
+            return chunks
+
         self._add_abstract_chunk(doc, parse_source, structure_detected, chunks)
         self._add_section_chunks(doc, parse_source, structure_detected, non_abstract, elements, chunks)
+        self._add_formula_chunks(doc, parse_source, structure_detected, chunks)
         self._add_figure_chunks(doc, parse_source, structure_detected, chunks)
         self._add_table_chunks(doc, parse_source, structure_detected, chunks)
-
-        if not structure_detected:
-            return self._fallback_fixed_token_chunks(doc, parse_source)
 
         return chunks
 
@@ -269,6 +343,42 @@ class PaperDocumentChunker:
                         },
                     ),
                 ))
+
+    def _add_formula_chunks(self, doc, parse_source, structure_detected, out):
+        for eq in doc.equations:
+            parent, match_strategy = _find_formula_parent(eq, out)
+            section_title = parent.section_title if parent else "formula"
+            section_role = parent.section_role if parent else []
+            section_index = parent.section_index if parent else 0
+            formula_text = _formula_to_text(eq, parent)
+            out.append(PaperChunk(
+                chunk_id=_stable_chunk_id(doc.paper_id, "eq", eq.equation_id),
+                paper_id=doc.paper_id,
+                parse_source=parse_source,
+                structure_detected=structure_detected,
+                chunk_type="formula",
+                parent_chunk_id=parent.chunk_id if parent else None,
+                section_title=section_title,
+                section_role=section_role,
+                section_index=section_index,
+                has_formula=True,
+                formula_latex=eq.latex,
+                content=formula_text,
+                metadata=_chunk_metadata(
+                    paper_id=doc.paper_id,
+                    chunk_type="formula",
+                    section_title=section_title,
+                    source_ref=eq.source_ref,
+                    source_locator=eq.metadata.get("source_locator"),
+                    semantic_text=f"{eq.equation_id}\n{eq.latex}",
+                    base={
+                        **eq.metadata,
+                        "equation_id": eq.equation_id,
+                        "page": eq.page,
+                        "formula_parent_match_strategy": match_strategy,
+                    },
+                ),
+            ))
 
     def _add_figure_chunks(self, doc, parse_source, structure_detected, out):
         for fig in doc.figures:
