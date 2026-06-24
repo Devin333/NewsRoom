@@ -74,6 +74,7 @@ class RetrievalPolicy:
     max_table_context_chunks: int = 4
     table_result_context_search_limit: int = 12
     supplemental_table_result_limit: int = 2
+    table_context_rerank_score_threshold: float = 0.0
 
     def alpha_for(self, intent: str) -> float:
         return self.position_alpha.get(intent, self.default_alpha)
@@ -123,6 +124,8 @@ class RetrievalResult:
                     "expansion_reason": chunk.metadata.get("expansion_reason", ""),
                     "expanded_from_chunk_id": chunk.metadata.get("expanded_from_chunk_id", ""),
                     "expansion_edge": chunk.metadata.get("expansion_edge", ""),
+                    "table_context_rerank_score": chunk.metadata.get("table_context_rerank_score"),
+                    "table_context_rerank_strategy": chunk.metadata.get("table_context_rerank_strategy", ""),
                 },
             })
         return out
@@ -487,16 +490,66 @@ class ResearchRetriever:
             logging.getLogger(__name__).warning("table result context retrieval failed", exc_info=True)
             return []
 
-        candidates: list[tuple[tuple[int, int, int, float], PaperChunk]] = []
+        candidates: list[tuple[tuple[int, int, int], float, PaperChunk]] = []
         for chunk, score in scored:
             if chunk.paper_id != request.paper_id or chunk.chunk_id in seen:
                 continue
             priority = _result_context_priority(chunk, table)
             if priority is None:
                 continue
-            candidates.append(((*priority, -score), chunk))
-        candidates.sort(key=lambda item: item[0])
-        return [chunk for _priority, chunk in candidates[:limit]]
+            candidates.append((priority, score, chunk))
+        if self._reranker is not None:
+            reranked = self._rerank_table_result_context(table, request, candidates, limit=limit)
+            if reranked:
+                return reranked
+        candidates.sort(key=lambda item: (*item[0], -item[1]))
+        return [chunk for _priority, _score, chunk in candidates[:limit]]
+
+    def _rerank_table_result_context(
+        self,
+        table: PaperChunk,
+        request: RetrievalRequest,
+        candidates: list[tuple[tuple[int, int, int], float, PaperChunk]],
+        *,
+        limit: int,
+    ) -> list[PaperChunk]:
+        if not candidates:
+            return []
+        query_text = _table_context_rerank_query(table, request)
+        try:
+            scores = self._reranker.score(  # type: ignore[union-attr]
+                query_text,
+                [chunk.content for _priority, _vector_score, chunk in candidates],
+            )
+        except Exception:
+            logging.getLogger(__name__).warning("table context reranker failed", exc_info=True)
+            return []
+        if len(scores) != len(candidates):
+            logging.getLogger(__name__).warning(
+                "table context reranker returned %s scores for %s candidates",
+                len(scores),
+                len(candidates),
+            )
+            return []
+
+        ranked: list[tuple[float, tuple[int, int, int], float, PaperChunk]] = []
+        for rerank_score, (priority, vector_score, chunk) in zip(scores, candidates, strict=True):
+            if rerank_score < self._policy.table_context_rerank_score_threshold:
+                continue
+            metadata = dict(chunk.metadata)
+            metadata.update({
+                "table_context_rerank_score": round(float(rerank_score), 6),
+                "table_context_rerank_strategy": "cross_encoder",
+                "table_context_rerank_query": query_text[:400],
+            })
+            ranked.append((
+                float(rerank_score),
+                priority,
+                vector_score,
+                chunk.model_copy(update={"metadata": metadata}),
+            ))
+        ranked.sort(key=lambda item: (-item[0], *item[1], -item[2]))
+        return [chunk for _rerank, _priority, _vector_score, chunk in ranked[:limit]]
 
     def _fetch_parents(
         self, children: list[PaperChunk], paper_id: str
@@ -600,6 +653,15 @@ def _result_title_rank(text: str) -> int:
         if keyword in normalized:
             return index
     return 100
+
+
+def _table_context_rerank_query(table: PaperChunk, request: RetrievalRequest) -> str:
+    table_text = " ".join(table.content.split())
+    return "\n".join([
+        request.question.strip(),
+        f"Table section: {table.section_title}",
+        f"Table evidence: {table_text[:1000]}",
+    ]).strip()
 
 
 def _with_expansion_metadata(

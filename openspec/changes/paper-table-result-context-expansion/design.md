@@ -50,17 +50,20 @@ The missing piece is retrieval-time graph expansion. Current retrieval can fetch
 
 ## Ranking Policy
 
-V1 should use deterministic ordering instead of a new reranker:
+V1 should use deterministic ordering for graph edges and optional reranking for heuristic result context:
 
 1. Direct retrieved table chunk
 2. Explicit `referenced_by_chunks`
 3. `nearby_context_chunk_id`
 4. `parent_chunk_id` / `parent_table_chunk_id`
-5. Role-prioritized result/conclusion chunks
+5. Reranker-ranked result/conclusion chunks when a reranker is configured
+6. Role/title-prioritized result/conclusion chunks when no reranker is configured or reranking fails
 
 The expansion should use a small budget, for example `max_table_context_chunks=4`, so a single table does not flood the prompt.
 
 Heuristic result/conclusion chunks must pass a result-signal gate. Section role can improve ranking, but it cannot be the only reason to include a paragraph; the title or content must contain a result, evaluation, conclusion, quality, benchmark, or score signal. Deterministic edges such as `referenced_by_chunks` and `nearby_context_chunk_id` remain eligible without this heuristic gate.
+
+The reranker query should combine the user question with table evidence, including section title, caption/rows preview, and other table chunk content. Reranker scores are recorded on expanded context metadata and only affect heuristic result/conclusion chunks; deterministic graph edges keep their priority.
 
 ## Failure Modes
 

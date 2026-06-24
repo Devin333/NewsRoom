@@ -29,3 +29,10 @@
 
 - [x] 5.1 Require heuristic result-context chunks to have title/content result signals, not only experiment-like section roles.
 - [x] 5.2 Cover generic experiment paragraph exclusion with a retriever regression test.
+
+## 6. Table Context Reranking
+
+- [x] 6.1 Reuse `RerankerPort` to score heuristic table result-context candidates with question + table evidence.
+- [x] 6.2 Keep deterministic table graph edges ahead of reranked heuristic context.
+- [x] 6.3 Record table context rerank score metadata on expanded chunks.
+- [x] 6.4 Cover reranker ordering with a fake reranker regression test.

@@ -32,3 +32,13 @@ Research retrieval SHALL prefer result-bearing sections while keeping table evid
 #### Scenario: Generic experiment paragraph has no result signal
 - **WHEN** a candidate paragraph only has an experiment-like section role but no result, evaluation, conclusion, quality, benchmark, or score signal in title or content
 - **THEN** retrieval MUST NOT include it as heuristic table result context
+
+#### Scenario: Reranker is available for heuristic result context
+- **WHEN** a reranker is configured and heuristic table result-context candidates pass the result-signal gate
+- **THEN** retrieval MUST score those candidates with a query that includes the user question and table evidence
+- **AND** reranker scores MUST affect only heuristic result/conclusion ordering, not deterministic table graph edges
+- **AND** expanded chunks MUST expose rerank score metadata
+
+#### Scenario: Reranker is unavailable or fails
+- **WHEN** no reranker is configured or reranking fails
+- **THEN** retrieval MUST fall back to deterministic role/title/proximity ordering

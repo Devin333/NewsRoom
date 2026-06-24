@@ -116,6 +116,22 @@ def _matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
     return True
 
 
+class _KeywordReranker:
+    def __init__(self, scores: dict[str, float]) -> None:
+        self.scores = scores
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def score(self, query: str, passages: list[str]) -> list[float]:
+        self.calls.append((query, passages))
+        out: list[float] = []
+        for passage in passages:
+            out.append(max(
+                (score for keyword, score in self.scores.items() if keyword in passage),
+                default=0.5,
+            ))
+        return out
+
+
 # ── basic retrieval ───────────────────────────────────────────────────────────
 
 def test_retrieve_returns_result():
@@ -484,10 +500,54 @@ def test_table_result_context_skips_generic_experiment_paragraphs():
     )
 
     retriever = ResearchRetriever(store)
-    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="What do the results show?", limit=1))
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="What does Table 4 show?", limit=1))
 
     ref_ids = {chunk.chunk_id for chunk in result.ref_chunks}
     assert "result-conclusion" in ref_ids
     assert "generic-experiment" not in ref_ids
     result_context = next(chunk for chunk in result.ref_chunks if chunk.chunk_id == "result-conclusion")
     assert result_context.metadata["expansion_reason"] == "table_result_context"
+
+
+def test_table_result_context_reranker_orders_heuristic_candidates():
+    table = _chunk(
+        "tbl-results",
+        chunk_type="table",
+        section_title="Sample Quality",
+        section_role=["experiment"],
+        section_index=4,
+        content="[Table 4]\nSample quality FID scores.",
+        metadata={"table_id": "tbl-results"},
+    )
+    weak = _chunk(
+        "weak-result",
+        section_title="Results",
+        section_role=["analysis"],
+        section_index=4,
+        content="Results mention the table but do not explain the key improvement.",
+    )
+    strong = _chunk(
+        "strong-result",
+        section_title="Results",
+        section_role=["analysis"],
+        section_index=4,
+        content="Results show the strong-result model improves FID and sample quality.",
+    )
+    store = _ScriptedChunkStore(
+        [table, weak, strong],
+        search_order=["tbl-results", "weak-result", "strong-result"],
+    )
+    reranker = _KeywordReranker({"strong-result": 0.95, "weak-result": 0.2})
+
+    retriever = ResearchRetriever(store, reranker=reranker)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="What does Table 4 show?", limit=1))
+
+    assert reranker.calls
+    heuristic_refs = [
+        chunk for chunk in result.ref_chunks
+        if chunk.metadata.get("expansion_reason") == "table_result_context"
+    ]
+    assert [chunk.chunk_id for chunk in heuristic_refs] == ["strong-result", "weak-result"]
+    assert heuristic_refs[0].metadata["table_context_rerank_score"] == 0.95
+    assert heuristic_refs[0].metadata["table_context_rerank_strategy"] == "cross_encoder"
+    assert "Table evidence:" in heuristic_refs[0].metadata["table_context_rerank_query"]

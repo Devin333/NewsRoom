@@ -124,6 +124,8 @@ def _chunk_to_evidence_pack(chunk: PaperChunk) -> EvidencePack:
             "expansion_reason": chunk.metadata.get("expansion_reason", ""),
             "expansion_edge": chunk.metadata.get("expansion_edge", ""),
             "expansion_rank": chunk.metadata.get("expansion_rank"),
+            "table_context_rerank_score": chunk.metadata.get("table_context_rerank_score"),
+            "table_context_rerank_strategy": chunk.metadata.get("table_context_rerank_strategy", ""),
             "row_start": chunk.metadata.get("row_start"),
             "row_end": chunk.metadata.get("row_end"),
             "parent_table_chunk_id": chunk.metadata.get("parent_table_chunk_id", ""),
