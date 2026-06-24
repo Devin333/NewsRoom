@@ -683,6 +683,32 @@ def test_run_nougat_invokes_docker_compose(monkeypatch, tmp_path):
     assert "--recompute" in cmd
 
 
+def test_run_nougat_invokes_container_entrypoint_in_direct_mode(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "business.research.document.pdf_compiler._project_root",
+        lambda: str(tmp_path),
+    )
+    monkeypatch.setenv("NEWSROOM_NOUGAT_DIRECT", "1")
+    commands = []
+    work = tmp_path / ".newsroom" / "nougat"
+    work.mkdir(parents=True)
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        assert kwargs["timeout"] == 3600
+        (work / "paper.mmd").write_text(_SAMPLE_MMD, encoding="utf-8")
+        return None
+
+    with patch("business.research.document.pdf_compiler.subprocess.run", side_effect=fake_run):
+        result = _run_nougat(b"%PDF placeholder", "paper")
+
+    assert result == _SAMPLE_MMD
+    cmd = commands[0]
+    assert cmd[:2] == ["newsroom-nougat", "/workspace/.newsroom/nougat/paper.pdf"]
+    assert cmd[cmd.index("-o") + 1] == "/workspace/.newsroom/nougat"
+    assert "--recompute" in cmd
+
+
 @patch("business.research.document.pdf_compiler._run_nougat", return_value=_SAMPLE_MMD)
 def test_pdf_parser_returns_document(mock_nougat):
     pdf_bytes = _make_pdf(["placeholder"])

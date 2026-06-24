@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python -m pip install "numpy==1.26.4" \
     && python -m pip install \
         --constraint /tmp/nougat-constraints.txt \
-        -e ".[ocr,vision]" \
+        -e ".[ocr,vision,postgres,qdrant]" \
     && mkdir -p /workspace/.newsroom /home/app/.cache \
     && chown -R app:app /workspace /home/app
 

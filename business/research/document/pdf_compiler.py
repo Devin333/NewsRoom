@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import urllib.request
 from dataclasses import dataclass, field
@@ -1203,6 +1204,13 @@ def _pdf_ocr_dpi() -> int:
     return value
 
 
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _project_root() -> str:
     """Locate the project root by walking up to the docker-compose.yml."""
     cur = os.path.abspath(os.path.dirname(__file__))
@@ -1213,6 +1221,34 @@ def _project_root() -> str:
     raise RuntimeError(
         "could not locate project root (docker-compose.yml not found)"
     )
+
+
+def _run_nougat_directly() -> bool:
+    if "NEWSROOM_NOUGAT_DIRECT" in os.environ:
+        return _env_flag("NEWSROOM_NOUGAT_DIRECT")
+    return bool(os.path.exists("/.dockerenv") and shutil.which("newsroom-nougat"))
+
+
+def _nougat_command(pdf_name: str) -> list[str]:
+    if _run_nougat_directly():
+        return [
+            "newsroom-nougat",
+            f"{_NOUGAT_CONTAINER_WORK}/{pdf_name}",
+            "-o",
+            _NOUGAT_CONTAINER_WORK,
+            "--recompute",
+        ]
+    return [
+        "docker",
+        "compose",
+        "run",
+        "--rm",
+        "nougat",
+        f"{_NOUGAT_CONTAINER_WORK}/{pdf_name}",
+        "-o",
+        _NOUGAT_CONTAINER_WORK,
+        "--recompute",
+    ]
 
 
 def _run_nougat(pdf_bytes: bytes, paper_id: str) -> str:
@@ -1243,12 +1279,7 @@ def _run_nougat(pdf_bytes: bytes, paper_id: str) -> str:
     try:
         try:
             subprocess.run(
-                [
-                    "docker", "compose", "run", "--rm", "nougat",
-                    f"{_NOUGAT_CONTAINER_WORK}/{pdf_name}",
-                    "-o", _NOUGAT_CONTAINER_WORK,
-                    "--recompute",
-                ],
+                _nougat_command(pdf_name),
                 check=True,
                 timeout=_nougat_timeout_seconds(),
                 cwd=root,
