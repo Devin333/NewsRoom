@@ -132,6 +132,11 @@ class _KeywordReranker:
         return out
 
 
+class _FailingReranker:
+    def score(self, query: str, passages: list[str]) -> list[float]:
+        raise RuntimeError("reranker unavailable")
+
+
 # ── basic retrieval ───────────────────────────────────────────────────────────
 
 def test_retrieve_returns_result():
@@ -187,6 +192,48 @@ def test_parent_expansion_respects_count_budget():
     assert [chunk.chunk_id for chunk in result.parent_chunks] == ["sec-1", "sec-2"]
     assert result.metadata["parent_budget_chunks"] == 2
     assert result.metadata["parent_budget_exhausted"] is True
+
+
+def test_parent_final_score_can_override_child_rank_with_method_heading():
+    early_child = _chunk(
+        "early-child",
+        parent_chunk_id="sec-background",
+        section_role=["method"],
+        content="method anchor with generic background",
+    )
+    later_child = _chunk(
+        "later-child",
+        parent_chunk_id="sec-architecture",
+        section_role=["method"],
+        content="method anchor with architecture details",
+    )
+    background_parent = _chunk(
+        "sec-background",
+        section_title="Background",
+        section_role=["background"],
+        content="Background context.",
+    )
+    architecture_parent = _chunk(
+        "sec-architecture",
+        section_title="Model Architecture",
+        section_role=["method"],
+        content="Architecture context.",
+    )
+    store = _ScriptedChunkStore(
+        [early_child, later_child, background_parent, architecture_parent],
+        search_order=["early-child", "later-child"],
+    )
+    policy = RetrievalPolicy(overfetch_multiplier=1, max_parent_tokens=9999, parent_intent_budgets={})
+
+    retriever = ResearchRetriever(store, policy=policy)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="how does the architecture work?", limit=2))
+
+    assert [chunk.chunk_id for chunk in result.parent_chunks] == ["sec-architecture", "sec-background"]
+    first = result.parent_chunks[0]
+    second = result.parent_chunks[1]
+    assert first.metadata["parent_section_heading_score"] == 1.0
+    assert first.metadata["parent_final_score"] > second.metadata["parent_final_score"]
+    assert first.metadata["parent_score_strategy"] == "deterministic"
 
 
 def test_position_weighting_prefers_nearby():
@@ -350,6 +397,10 @@ def test_parent_reranker_orders_and_filters_parent_candidates():
     assert parent.metadata["parent_rerank_score"] == 0.95
     assert parent.metadata["parent_rerank_strategy"] == "cross_encoder"
     assert "Matched child evidence:" in parent.metadata["parent_rerank_query"]
+    assert parent.metadata["parent_relevance_score"] == 0.95
+    assert parent.metadata["parent_final_score"] > 0.0
+    assert parent.metadata["parent_score_strategy"] == "cross_encoder"
+    assert parent.metadata["parent_score_weights"]["parent"] > 0.0
 
 
 def test_parent_budget_depends_on_query_intent():
@@ -388,6 +439,74 @@ def test_parent_budget_depends_on_query_intent():
     assert method_result.metadata["parent_budget_chunks"] == 3
     assert len(numerical_result.parent_chunks) == 2
     assert numerical_result.metadata["parent_budget_chunks"] == 2
+
+
+def test_numerical_result_parent_score_prefers_result_heading():
+    generic_child = _chunk(
+        "generic-child",
+        parent_chunk_id="sec-generic",
+        section_role=["experiment"],
+        content="experiment result anchor generic",
+    )
+    result_child = _chunk(
+        "result-child",
+        parent_chunk_id="sec-results",
+        section_role=["experiment"],
+        content="experiment result anchor detailed",
+    )
+    generic_parent = _chunk(
+        "sec-generic",
+        section_title="Sampling Procedure",
+        section_role=["method"],
+        content="Procedure context.",
+    )
+    result_parent = _chunk(
+        "sec-results",
+        section_title="Experimental Results",
+        section_role=["experiment"],
+        content="Result context.",
+    )
+    store = _ScriptedChunkStore(
+        [generic_child, result_child, generic_parent, result_parent],
+        search_order=["generic-child", "result-child"],
+    )
+    policy = RetrievalPolicy(overfetch_multiplier=1, max_parent_tokens=9999, parent_intent_budgets={})
+
+    retriever = ResearchRetriever(store, policy=policy)
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="experiment results show", limit=2))
+
+    assert [chunk.chunk_id for chunk in result.parent_chunks] == ["sec-results", "sec-generic"]
+    top = result.parent_chunks[0]
+    assert top.metadata["parent_section_heading_score"] == 1.0
+    assert result.metadata["parent_scoring_enabled"] is True
+    assert result.metadata["parent_candidates_scored"] == 2
+    assert result.metadata["parent_score_top"] == top.metadata["parent_final_score"]
+    assert result.metadata["parent_score_min"] <= result.metadata["parent_score_top"]
+
+
+def test_parent_reranker_failure_falls_back_to_deterministic_score_metadata():
+    child = _chunk("child", parent_chunk_id="sec-method", content="method anchor")
+    parent = _chunk(
+        "sec-method",
+        section_title="Method",
+        section_role=["method"],
+        content="Method context.",
+    )
+    store = _ScriptedChunkStore([child, parent], search_order=["child"])
+
+    retriever = ResearchRetriever(
+        store,
+        policy=RetrievalPolicy(overfetch_multiplier=1, parent_intent_budgets={}),
+        reranker=_FailingReranker(),
+    )
+    result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="how does the method work?", limit=1))
+
+    scored_parent = result.parent_chunks[0]
+    assert scored_parent.metadata["parent_score_strategy"] == "deterministic"
+    assert scored_parent.metadata["parent_final_score"] > 0.0
+    assert scored_parent.metadata["parent_child_relevance_score"] > 0.0
+    assert scored_parent.metadata["parent_relevance_score"] > 0.0
+    assert "parent_rerank_score" not in scored_parent.metadata
 
 
 class _VisualHitStore:

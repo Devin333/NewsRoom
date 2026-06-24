@@ -59,6 +59,7 @@ _RESULT_QUESTION_KEYWORDS = (
     "\u7ed3\u679c",
     "\u8868\u660e",
 )
+_PARENT_SCORE_KEYS = ("child", "parent", "heading", "position")
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,20 @@ class RetrievalPolicy:
         "numerical_result": (2, 1000),
         "comparison": (2, 1000),
     })
+    parent_default_score_weights: dict[str, float] = field(default_factory=lambda: {
+        "child": 0.45,
+        "parent": 0.35,
+        "heading": 0.15,
+        "position": 0.05,
+    })
+    parent_intent_score_weights: dict[str, dict[str, float]] = field(default_factory=lambda: {
+        "concept_method": {"child": 0.40, "parent": 0.30, "heading": 0.20, "position": 0.10},
+        "contribution": {"child": 0.40, "parent": 0.30, "heading": 0.20, "position": 0.10},
+        "numerical_result": {"child": 0.35, "parent": 0.40, "heading": 0.20, "position": 0.05},
+        "comparison": {"child": 0.35, "parent": 0.40, "heading": 0.20, "position": 0.05},
+        "table_query": {"child": 0.45, "parent": 0.25, "heading": 0.20, "position": 0.10},
+        "formula_query": {"child": 0.45, "parent": 0.25, "heading": 0.20, "position": 0.10},
+    })
 
     def alpha_for(self, intent: str) -> float:
         return self.position_alpha.get(intent, self.default_alpha)
@@ -106,12 +121,24 @@ class RetrievalPolicy:
             max(0, min(self.max_parent_tokens, int(tokens))),
         )
 
+    def parent_score_weights_for(self, intent: str) -> dict[str, float]:
+        weights = dict(self.parent_default_score_weights)
+        weights.update(self.parent_intent_score_weights.get(intent, {}))
+        return _normalized_parent_score_weights(weights)
+
 
 @dataclass(frozen=True)
 class _ParentCandidate:
     parent: PaperChunk
     child: PaperChunk
     child_rank: int
+    child_relevance_score: float = 0.0
+    parent_relevance_score: float = 0.0
+    section_heading_score: float = 0.0
+    position_score: float = 0.0
+    final_score: float = 0.0
+    score_strategy: str = "deterministic"
+    score_weights: dict[str, float] = field(default_factory=dict)
     rerank_score: float | None = None
     rerank_query: str = ""
 
@@ -162,6 +189,13 @@ class RetrievalResult:
                     "source_parent_chunk_id": chunk.metadata.get("source_parent_chunk_id", ""),
                     "parent_rerank_score": chunk.metadata.get("parent_rerank_score"),
                     "parent_rerank_strategy": chunk.metadata.get("parent_rerank_strategy", ""),
+                    "parent_child_relevance_score": chunk.metadata.get("parent_child_relevance_score"),
+                    "parent_relevance_score": chunk.metadata.get("parent_relevance_score"),
+                    "parent_section_heading_score": chunk.metadata.get("parent_section_heading_score"),
+                    "parent_position_score": chunk.metadata.get("parent_position_score"),
+                    "parent_final_score": chunk.metadata.get("parent_final_score"),
+                    "parent_score_strategy": chunk.metadata.get("parent_score_strategy", ""),
+                    "parent_score_weights": chunk.metadata.get("parent_score_weights", {}),
                 },
             })
         return out
@@ -596,12 +630,18 @@ class ResearchRetriever:
     ) -> tuple[list[PaperChunk], dict[str, Any]]:
         candidates = self._parent_candidates(children, request.paper_id)
         max_chunks, max_tokens = self._policy.parent_budget_for(route.intent)
+        score_weights = self._policy.parent_score_weights_for(route.intent)
         metrics: dict[str, Any] = {
             "parent_budget_chunks": max_chunks,
             "parent_budget_tokens": max_tokens,
             "parent_tokens_used": 0,
             "parent_snippets_returned": 0,
             "parent_budget_exhausted": False,
+            "parent_scoring_enabled": bool(candidates),
+            "parent_score_weights": score_weights,
+            "parent_candidates_scored": 0,
+            "parent_score_top": None,
+            "parent_score_min": None,
         }
         # fall back to children themselves if no parents found (e.g. abstract)
         if not candidates:
@@ -610,7 +650,14 @@ class ResearchRetriever:
             metrics["parent_budget_exhausted"] = True
             return [], metrics
 
-        ranked = self._rank_parent_candidates(candidates, request, route)
+        ranked = self._rank_parent_candidates(candidates, request, route, score_weights)
+        if ranked:
+            final_scores = [candidate.final_score for candidate in ranked]
+            metrics.update({
+                "parent_candidates_scored": len(ranked),
+                "parent_score_top": round(max(final_scores), 6),
+                "parent_score_min": round(min(final_scores), 6),
+            })
         parents: list[PaperChunk] = []
         tokens_used = 0
         snippets = 0
@@ -666,7 +713,12 @@ class ResearchRetriever:
             if parent is None or parent.paper_id != paper_id:
                 continue
             seen.add(parent.chunk_id)
-            candidates.append(_ParentCandidate(parent=parent, child=child, child_rank=child_rank))
+            candidates.append(_ParentCandidate(
+                parent=parent,
+                child=child,
+                child_rank=child_rank,
+                child_relevance_score=_child_relevance_score(child, child_rank),
+            ))
         return candidates
 
     def _rank_parent_candidates(
@@ -674,44 +726,86 @@ class ResearchRetriever:
         candidates: list[_ParentCandidate],
         request: RetrievalRequest,
         route: RetrievalRoute,
+        score_weights: dict[str, float],
     ) -> list[_ParentCandidate]:
-        if self._reranker is None or not candidates:
-            return sorted(candidates, key=lambda candidate: candidate.child_rank)
-
-        query_text = _parent_context_rerank_query(request, route, candidates)
-        passages = [_parent_context_rerank_passage(candidate) for candidate in candidates]
-        try:
-            scores = self._reranker.score(query_text, passages)  # type: ignore[union-attr]
-        except Exception:
-            logging.getLogger(__name__).warning("parent context reranker failed", exc_info=True)
-            return sorted(candidates, key=lambda candidate: candidate.child_rank)
-        if len(scores) != len(candidates):
-            logging.getLogger(__name__).warning(
-                "parent context reranker returned %s scores for %s candidates",
-                len(scores),
-                len(candidates),
-            )
-            return sorted(candidates, key=lambda candidate: candidate.child_rank)
+        if not candidates:
+            return []
+        rerank_query = ""
+        rerank_scores: list[float] | None = None
+        if self._reranker is not None:
+            rerank_query = _parent_context_rerank_query(request, route, candidates)
+            passages = [_parent_context_rerank_passage(candidate) for candidate in candidates]
+            try:
+                scores = self._reranker.score(rerank_query, passages)  # type: ignore[union-attr]
+                if len(scores) == len(candidates):
+                    rerank_scores = [float(score) for score in scores]
+                else:
+                    logging.getLogger(__name__).warning(
+                        "parent context reranker returned %s scores for %s candidates",
+                        len(scores),
+                        len(candidates),
+                    )
+            except Exception:
+                logging.getLogger(__name__).warning("parent context reranker failed", exc_info=True)
 
         ranked = [
-            _ParentCandidate(
-                parent=candidate.parent,
-                child=candidate.child,
-                child_rank=candidate.child_rank,
-                rerank_score=float(score),
-                rerank_query=query_text,
+            self._score_parent_candidate(
+                candidate,
+                request,
+                route,
+                score_weights,
+                rerank_score=rerank_scores[index] if rerank_scores is not None else None,
+                rerank_query=rerank_query if rerank_scores is not None else "",
             )
-            for candidate, score in zip(candidates, scores, strict=True)
+            for index, candidate in enumerate(candidates)
         ]
-        ranked.sort(key=lambda candidate: (-(candidate.rerank_score or 0.0), candidate.child_rank))
+        ranked.sort(key=lambda candidate: (-candidate.final_score, candidate.child_rank, candidate.parent.chunk_id))
         threshold = self._policy.parent_rerank_score_threshold
-        if threshold <= 0.0:
+        if threshold <= 0.0 or rerank_scores is None:
             return ranked
         filtered = [
             candidate for candidate in ranked
             if candidate.rerank_score is not None and candidate.rerank_score >= threshold
         ]
         return filtered or ranked[:1]
+
+    def _score_parent_candidate(
+        self,
+        candidate: _ParentCandidate,
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+        score_weights: dict[str, float],
+        *,
+        rerank_score: float | None,
+        rerank_query: str,
+    ) -> _ParentCandidate:
+        heading_score = _parent_section_heading_score(route.intent, candidate.parent)
+        position_score = _parent_position_score(self._policy, route.intent, candidate.parent, request)
+        parent_relevance_score = (
+            _clamp_score(rerank_score)
+            if rerank_score is not None
+            else _deterministic_parent_relevance(candidate.child_relevance_score, heading_score)
+        )
+        final_score = (
+            candidate.child_relevance_score * score_weights["child"]
+            + parent_relevance_score * score_weights["parent"]
+            + heading_score * score_weights["heading"]
+            + position_score * score_weights["position"]
+        )
+        return _ParentCandidate(
+            parent=candidate.parent,
+            child=candidate.child,
+            child_rank=candidate.child_rank,
+            child_relevance_score=_round_score(candidate.child_relevance_score),
+            parent_relevance_score=_round_score(parent_relevance_score),
+            section_heading_score=_round_score(heading_score),
+            position_score=_round_score(position_score),
+            final_score=_round_score(final_score),
+            score_strategy="cross_encoder" if rerank_score is not None else "deterministic",
+            score_weights=score_weights,
+            rerank_score=rerank_score,
+            rerank_query=rerank_query,
+        )
 
     def _parent_context_chunk(
         self,
@@ -758,6 +852,13 @@ class ResearchRetriever:
             "parent_token_estimate": _estimate_tokens(content),
             "parent_original_token_estimate": original_token_estimate,
             "source_parent_chunk_id": parent.chunk_id,
+            "parent_child_relevance_score": candidate.child_relevance_score,
+            "parent_relevance_score": candidate.parent_relevance_score,
+            "parent_section_heading_score": candidate.section_heading_score,
+            "parent_position_score": candidate.position_score,
+            "parent_final_score": candidate.final_score,
+            "parent_score_strategy": candidate.score_strategy,
+            "parent_score_weights": dict(candidate.score_weights),
         })
         metadata.update(snippet_metadata)
         if candidate.rerank_score is not None:
@@ -792,6 +893,92 @@ def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalized_parent_score_weights(weights: dict[str, float]) -> dict[str, float]:
+    normalized = {key: max(0.0, float(weights.get(key, 0.0))) for key in _PARENT_SCORE_KEYS}
+    total = sum(normalized.values())
+    if total <= 0.0:
+        return {"child": 0.45, "parent": 0.35, "heading": 0.15, "position": 0.05}
+    return {key: round(value / total, 6) for key, value in normalized.items()}
+
+
+def _child_relevance_score(child: PaperChunk, child_rank: int) -> float:
+    fallback = 1.0 / max(1, child_rank + 1)
+    score = _metadata_float(child.metadata, "fused_score", _metadata_float(child.metadata, "text_score", fallback))
+    return _round_score(_clamp_score(score))
+
+
+def _deterministic_parent_relevance(child_relevance_score: float, heading_score: float) -> float:
+    return _clamp_score((child_relevance_score * 0.65) + (heading_score * 0.35))
+
+
+def _parent_position_score(
+    policy: RetrievalPolicy,
+    intent: str,
+    parent: PaperChunk,
+    request: RetrievalRequest,
+) -> float:
+    alpha = policy.alpha_for(intent)
+    if alpha <= 0.0:
+        return 0.0
+    raw = policy.position_weight(intent, parent.section_index, request.current_section_index)
+    return _clamp_score(raw / alpha)
+
+
+def _parent_section_heading_score(intent: str, parent: PaperChunk) -> float:
+    role_keywords: dict[str, tuple[set[str], tuple[str, ...]]] = {
+        "concept_method": (
+            {"method"},
+            ("method", "approach", "architecture", "model", "algorithm", "design", "encoder", "decoder"),
+        ),
+        "contribution": (
+            {"background", "method"},
+            ("abstract", "introduction", "contribution", "novel", "propose", "overview", "summary"),
+        ),
+        "numerical_result": (
+            {"experiment", "analysis", "conclusion"},
+            (
+                "result", "results", "experiment", "experiments", "evaluation", "benchmark",
+                "ablation", "analysis", "conclusion", "performance", "accuracy", "score",
+            ),
+        ),
+        "comparison": (
+            {"related_work", "experiment", "analysis"},
+            ("comparison", "compare", "baseline", "versus", "related work", "prior work", "result", "results"),
+        ),
+        "table_query": (
+            {"experiment", "analysis"},
+            ("table", "result", "results", "experiment", "evaluation", "benchmark", "ablation"),
+        ),
+        "formula_query": (
+            {"method"},
+            ("formula", "equation", "method", "model", "objective", "loss", "derivation"),
+        ),
+    }
+    roles, keywords = role_keywords.get(intent, (set(), ()))
+    normalized_roles = {str(role).casefold() for role in parent.section_role}
+    title = parent.section_title.casefold()
+    score = 0.0
+    if normalized_roles & roles:
+        score = max(score, 0.75)
+    if any(keyword in title for keyword in keywords):
+        score = max(score, 1.0)
+    elif any(keyword.replace("_", " ") in title for keyword in roles):
+        score = max(score, 0.85)
+    return score
+
+
+def _clamp_score(value: float | None) -> float:
+    if value is None:
+        return 0.0
+    if math.isnan(value) or math.isinf(value):
+        return 0.0
+    return max(0.0, min(1.0, float(value)))
+
+
+def _round_score(value: float) -> float:
+    return round(float(value), 6)
 
 
 def _dedupe_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:

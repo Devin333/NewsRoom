@@ -112,6 +112,18 @@ def test_parent_context_metadata_exposed_in_evidence_pack():
             "source_parent_chunk_id": "sec-method",
             "parent_rerank_score": 0.91,
             "parent_rerank_strategy": "cross_encoder",
+            "parent_child_relevance_score": 0.8,
+            "parent_relevance_score": 0.91,
+            "parent_section_heading_score": 1.0,
+            "parent_position_score": 0.7,
+            "parent_final_score": 0.875,
+            "parent_score_strategy": "cross_encoder",
+            "parent_score_weights": {
+                "child": 0.4,
+                "parent": 0.3,
+                "heading": 0.2,
+                "position": 0.1,
+            },
         },
     )
     spy = _SpyRetriever(result=RetrievalResult(
@@ -132,6 +144,13 @@ def test_parent_context_metadata_exposed_in_evidence_pack():
     assert pack.metadata["source_parent_chunk_id"] == "sec-method"
     assert pack.metadata["parent_rerank_score"] == 0.91
     assert pack.metadata["parent_rerank_strategy"] == "cross_encoder"
+    assert pack.metadata["parent_child_relevance_score"] == 0.8
+    assert pack.metadata["parent_relevance_score"] == 0.91
+    assert pack.metadata["parent_section_heading_score"] == 1.0
+    assert pack.metadata["parent_position_score"] == 0.7
+    assert pack.metadata["parent_final_score"] == 0.875
+    assert pack.metadata["parent_score_strategy"] == "cross_encoder"
+    assert pack.metadata["parent_score_weights"]["heading"] == 0.2
 
 
 def test_formula_child_is_emitted_as_evidence_before_parent_context():
