@@ -288,9 +288,27 @@ def test_overlap_applied():
         if not c.metadata.get("is_parent") and c.metadata.get("para_index") == 1
         and "Introduction" in c.section_title
     ]
+    first_child = [
+        c for c in chunks
+        if not c.metadata.get("is_parent") and c.metadata.get("para_index") == 0
+        and "Introduction" in c.section_title
+    ]
     assert second_child
+    assert first_child
     # second paragraph should contain trailing sentence from first as overlap
-    assert "First sentence ends here" in second_child[0].content
+    second = second_child[0]
+    first = first_child[0]
+    assert "First sentence ends here" in second.content
+    assert second.metadata["content_span_unit"] == "char_offset"
+    assert second.metadata["overlap_spans"] == [{
+        "start": 0,
+        "end": len("First sentence ends here."),
+        "origin_chunk_id": first.chunk_id,
+        "origin_source_locator": first.metadata["source_locator"],
+        "overlap_type": "previous_paragraph_trailing_sentence",
+    }]
+    assert second.metadata["main_span"]["start"] == len("First sentence ends here.") + 1
+    assert second.metadata["main_span"]["end"] == len(second.content)
 
 
 def test_figure_caption_embedded():
@@ -716,19 +734,23 @@ def test_chunk_manifest_reuses_id_when_paragraph_index_shifts(tmp_path):
     )
     manager.write(first_doc.paper_id, first_chunks)
     first_target = _find_chunk(first_chunks, "Target paragraph should keep its identity.")
+    first_source = _find_chunk(first_chunks, "First method paragraph.")
 
     second_generated = CHUNKER.chunk(second_doc, "latex")
     second_generated_target = _find_chunk(
         second_generated,
         "Target paragraph should keep its identity.",
     )
+    second_generated_source = _find_chunk(second_generated, "First method paragraph.")
     assert second_generated_target.chunk_id != first_target.chunk_id
+    assert second_generated_target.metadata["overlap_spans"][0]["origin_chunk_id"] == second_generated_source.chunk_id
 
     second_chunks = manager.resolve_chunk_ids(second_doc.paper_id, second_generated)
     second_target = _find_chunk(second_chunks, "Target paragraph should keep its identity.")
 
     assert second_target.chunk_id == first_target.chunk_id
     assert second_target.metadata["semantic_key"] == first_target.metadata["semantic_key"]
+    assert second_target.metadata["overlap_spans"][0]["origin_chunk_id"] == first_source.chunk_id
     manifest = json.loads((tmp_path / "chunk_manifest.json").read_text(encoding="utf-8"))
     entries = {entry["semantic_key"]: entry for entry in manifest["chunks"]}
     assert entries[first_target.metadata["semantic_key"]]["chunk_id"] == first_target.chunk_id

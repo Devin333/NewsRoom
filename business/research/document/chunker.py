@@ -6,6 +6,7 @@ from typing import Any
 
 from business.foundation import build_stable_id
 from business.research.domain.document import ResearchDocument, ResearchEquation, ResearchFigure, ResearchTable
+from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import ChunkType, PaperChunk, ParseSource, SectionRole
 from business.research.document.section_detector import classify_section_role, is_abstract_section
 from business.research.document.special_element_scanner import ScannedElements, scan_special_elements
@@ -762,11 +763,30 @@ class PaperDocumentChunker:
             paragraphs = _split_paragraphs(section.text)
             for para_idx, raw_para in enumerate(paragraphs):
                 para_text = raw_para
+                overlap_text = ""
+                overlap_origin_chunk_id = ""
+                overlap_origin_source_locator = ""
                 # prepend 1-sentence overlap from previous paragraph
                 if para_idx > 0:
-                    overlap = _trailing_sentences(paragraphs[para_idx - 1], 1)
-                    if overlap and not para_text.startswith(overlap):
-                        para_text = overlap + "\n" + para_text
+                    overlap_text = _trailing_sentences(paragraphs[para_idx - 1], 1)
+                    if overlap_text and not para_text.startswith(overlap_text):
+                        para_text = overlap_text + "\n" + para_text
+                        previous_chunk = out[-1] if out else None
+                        overlap_origin_chunk_id = (
+                            previous_chunk.chunk_id
+                            if previous_chunk is not None
+                            else _stable_chunk_id(doc.paper_id, section.section_id, str(para_idx - 1))
+                        )
+                        overlap_origin_source_locator = str(
+                            (
+                                previous_chunk.metadata.get("source_locator")
+                                if previous_chunk is not None
+                                else section.metadata.get("source_locator")
+                            )
+                            or section.source_ref
+                        )
+                    else:
+                        overlap_text = ""
 
                 has_formula = bool(_LATEX_FORMULA.search(para_text) or _INLINE_FORMULA.search(para_text))
                 formula_latex = _extract_formula_latex(para_text) if has_formula else ""
@@ -826,6 +846,12 @@ class PaperDocumentChunker:
                             "needs_proposition_decomposition": need_propositions,
                             "formula_references": formula_references,
                             "visual_references": visual_references,
+                            **build_paragraph_span_metadata(
+                                content=para_text,
+                                overlap_text=overlap_text,
+                                overlap_origin_chunk_id=overlap_origin_chunk_id,
+                                overlap_origin_source_locator=overlap_origin_source_locator,
+                            ),
                         },
                     ),
                 ))

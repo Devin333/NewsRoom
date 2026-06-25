@@ -4,11 +4,13 @@ from typing import Any
 
 import pytest
 
+from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
 from business.research.rag.retriever import (
     ResearchRetriever,
     RetrievalPolicy,
     RetrievalRequest,
+    RetrievalResult,
 )
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
@@ -506,6 +508,40 @@ def test_as_evidence_candidates():
         assert c["evidence_id"]
         assert c["span_refs"]
         assert c["lineage"]
+
+
+def test_as_evidence_candidates_preserves_span_metadata():
+    content = "Borrowed sentence.\nCurrent body."
+    chunk = PaperChunk(
+        chunk_id="para-1",
+        paper_id="p1",
+        parse_source="latex",
+        chunk_type="paragraph",
+        section_title="Method",
+        section_role=["method"],
+        section_index=1,
+        content=content,
+        metadata={
+            "source_ref": "arxiv://p1/para-1",
+            "source_locator": "paper://p1/pdf#page=2",
+            **build_paragraph_span_metadata(
+                content=content,
+                overlap_text="Borrowed sentence.",
+                overlap_origin_chunk_id="para-0",
+                overlap_origin_source_locator="paper://p1/pdf#page=1",
+            ),
+        },
+    )
+    candidates = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[chunk],
+        ref_chunks=[],
+        intent="concept_method",
+    ).as_evidence_candidates()
+
+    assert candidates[0]["metadata"]["content_span_unit"] == "char_offset"
+    assert candidates[0]["metadata"]["main_span"]["start"] > 0
+    assert candidates[0]["metadata"]["overlap_spans"][0]["origin_chunk_id"] == "para-0"
 
 
 def test_empty_paper_returns_empty():

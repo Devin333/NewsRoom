@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from framework.harness.retrieval.request import RetrievalRequest
 
+from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
 from business.research.rag.retrieval_port import PaperChunkRetrievalPort
 from business.research.rag.retriever import RetrievalResult
@@ -346,6 +347,53 @@ def test_table_row_group_evidence_exposes_visual_metadata():
     assert table_pack.metadata["is_table_row_group"] is True
     assert table_pack.metadata["parent_table_chunk_id"] == "tbl-1"
     assert table_pack.metadata["caption_pdf_rect"] == [10, 5, 300, 18]
+
+
+def test_paragraph_overlap_span_metadata_exposed_in_evidence_pack():
+    content = "Borrowed sentence.\nCurrent body keeps the main content."
+    child = PaperChunk(
+        chunk_id="para-1",
+        paper_id="1706.03762",
+        parse_source="latex",
+        chunk_type="paragraph",
+        parent_chunk_id="sec-method",
+        section_title="Method",
+        section_role=["method"],
+        section_index=2,
+        content=content,
+        metadata={
+            "source_ref": "arxiv://1706.03762/para-1",
+            "source_locator": "paper://1706.03762/pdf#page=4",
+            **build_paragraph_span_metadata(
+                content=content,
+                overlap_text="Borrowed sentence.",
+                overlap_origin_chunk_id="para-0",
+                overlap_origin_source_locator="paper://1706.03762/pdf#page=3",
+            ),
+        },
+    )
+    spy = _SpyRetriever(result=RetrievalResult(
+        child_chunks=[child],
+        parent_chunks=[],
+        ref_chunks=[],
+        intent="concept_method",
+    ))
+
+    port = PaperChunkRetrievalPort(spy)  # type: ignore[arg-type]
+    result = port.retrieve(_request({}))
+
+    assert [pack.evidence_id for pack in result.packs] == ["para-1"]
+    pack = result.packs[0]
+    assert pack.metadata["content_span_unit"] == "char_offset"
+    assert pack.metadata["main_span"]["start"] > 0
+    assert pack.metadata["main_span"]["end"] == len(content)
+    assert pack.metadata["overlap_spans"] == [{
+        "start": 0,
+        "end": len("Borrowed sentence."),
+        "origin_chunk_id": "para-0",
+        "origin_source_locator": "paper://1706.03762/pdf#page=3",
+        "overlap_type": "previous_paragraph_trailing_sentence",
+    }]
 
 
 def test_figure_evidence_exposes_ocr_diagnostics():

@@ -9,6 +9,7 @@ from typing import Any
 
 from business.foundation import build_stable_id
 from business.research.document.models import PaperChunk
+from business.research.document.citation_spans import remap_span_origin_ids
 
 
 _MANIFEST_VERSION = 1
@@ -181,6 +182,7 @@ def _ensure_semantic_metadata(
 
 def _remap_chunk_identity(chunk: PaperChunk, id_map: dict[str, str]) -> PaperChunk:
     metadata = dict(chunk.metadata)
+    metadata = remap_span_origin_ids(metadata, id_map)
     updates: dict[str, Any] = {}
     resolved_id = id_map.get(chunk.chunk_id, chunk.chunk_id)
     if resolved_id != chunk.chunk_id:
