@@ -5,6 +5,7 @@ import pytest
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
 from business.research.rag.evidence_eval import (
+    EvidenceGoldenSetBuilder,
     EvidenceQAPair,
     EvidenceRetrievalEvaluator,
     build_evidence_pairs_from_chunks,
@@ -305,3 +306,52 @@ def test_retrieval_evaluator_scores_image_recall_for_visual_chunks() -> None:
 
     assert result.image_recall(1) == 1.0
     assert result.visual_evidence_coverage(1) == 1.0
+
+
+def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
+    formula = _chunk(
+        "eq-1",
+        chunk_type="formula",
+        content="[Equation]\nLaTeX:\na=b",
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": "a=b",
+        "formula_description": "The equation defines a relation between a and b.",
+    })
+    table = _chunk(
+        "tbl-1",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nMain results.",
+        metadata={
+            "table_id": "table-1",
+            "nearby_context_chunk_id": "para-result",
+            "image_ref": "tables/table1.png",
+        },
+    )
+    result_para = _chunk("para-result", content="The results show improved accuracy.")
+    figure = _chunk(
+        "fig-1",
+        chunk_type="figure",
+        content="[Figure 1]\nCaption:\nArchitecture overview.",
+        metadata={"figure_id": "fig-1", "image_ref": "figures/fig1.png"},
+    )
+    citation = _chunk(
+        "para-cite",
+        content="The method uses attention for sequence modeling.",
+        metadata={"source_locator": "paper://p1/pdf#page=2"},
+    )
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=2).build(
+        [formula, table, result_para, figure, citation],
+        domain="nlp",
+    )
+
+    by_type = {pair.qa_type: pair for pair in pairs}
+    assert by_type["formula_qa"].answer_facts == ["The equation defines a relation between a and b."]
+    assert by_type["table_qa"].gold_chunk_ids == ["tbl-1", "para-result"]
+    assert by_type["table_qa"].required_evidence_types == ["table", "paragraph"]
+    assert by_type["table_qa"].gold_image_refs == ["tables/table1.png"]
+    assert by_type["figure_qa"].gold_image_refs == ["figures/fig1.png"]
+    assert by_type["citation_qa"].gold_source_locators == ["paper://p1/pdf#page=2"]
+    assert by_type["negative_qa"].expected_behavior == "abstain"
+    assert all(pair.domain == "nlp" for pair in pairs)

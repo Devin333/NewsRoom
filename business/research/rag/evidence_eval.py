@@ -16,6 +16,7 @@ EvidenceBehavior = Literal["answer", "abstain"]
 _DEFAULT_KS = (1, 3, 5, 10)
 _ANSWER_BEHAVIOR: EvidenceBehavior = "answer"
 _ABSTAIN_BEHAVIOR: EvidenceBehavior = "abstain"
+_DEFAULT_MAX_PAIRS_PER_TYPE = 20
 
 
 @dataclass
@@ -350,6 +351,57 @@ class EvidenceRetrievalEvaluator:
         )
 
 
+class EvidenceGoldenSetBuilder:
+    """Builds typed evidence QA pairs from parsed paper chunks."""
+
+    def __init__(
+        self,
+        *,
+        max_pairs_per_type: int = _DEFAULT_MAX_PAIRS_PER_TYPE,
+        include_negative: bool = True,
+    ) -> None:
+        self._max_pairs_per_type = max(1, int(max_pairs_per_type))
+        self._include_negative = include_negative
+
+    def build(self, chunks: list[PaperChunk], *, domain: str = "") -> list[EvidenceQAPair]:
+        chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
+        pairs: list[EvidenceQAPair] = []
+        pairs.extend(self._build_type(chunks, "formula_qa", domain=domain))
+        pairs.extend(self._build_type(chunks, "table_qa", domain=domain, chunks_by_id=chunks_by_id))
+        pairs.extend(self._build_type(chunks, "figure_qa", domain=domain, chunks_by_id=chunks_by_id))
+        pairs.extend(self._build_type(chunks, "citation_qa", domain=domain))
+        if self._include_negative:
+            paper_ids = sorted({chunk.paper_id for chunk in chunks})
+            for paper_id in paper_ids:
+                pairs.append(EvidenceQAPair.negative(
+                    question="Does this paper discuss an unrelated future model not present in the text?",
+                    paper_id=paper_id,
+                    difficulty="easy",
+                    domain=domain,
+                    metadata={"builder": "deterministic_template"},
+                ))
+        return pairs
+
+    def _build_type(
+        self,
+        chunks: list[PaperChunk],
+        qa_type: str,
+        *,
+        domain: str,
+        chunks_by_id: dict[str, PaperChunk] | None = None,
+    ) -> list[EvidenceQAPair]:
+        out: list[EvidenceQAPair] = []
+        for chunk in chunks:
+            if len(out) >= self._max_pairs_per_type:
+                break
+            if _qa_type_for_chunk(chunk) != qa_type:
+                continue
+            pair = _template_pair_for_chunk(chunk, qa_type, domain=domain, chunks_by_id=chunks_by_id or {})
+            if pair is not None:
+                out.append(pair)
+        return out
+
+
 def save_evidence_golden_set(pairs: list[EvidenceQAPair], path: str | Path) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -384,6 +436,109 @@ def build_evidence_pairs_from_chunks(
                 domain=domain,
             ))
     return pairs
+
+
+def _template_pair_for_chunk(
+    chunk: PaperChunk,
+    qa_type: str,
+    *,
+    domain: str,
+    chunks_by_id: dict[str, PaperChunk],
+) -> EvidenceQAPair | None:
+    if qa_type == "formula_qa":
+        return _formula_pair(chunk, domain=domain)
+    if qa_type == "table_qa":
+        return _visual_or_table_pair(chunk, qa_type="table_qa", domain=domain, chunks_by_id=chunks_by_id)
+    if qa_type == "figure_qa":
+        return _visual_or_table_pair(chunk, qa_type="figure_qa", domain=domain, chunks_by_id=chunks_by_id)
+    if qa_type == "citation_qa":
+        return _citation_pair(chunk, domain=domain)
+    return None
+
+
+def _formula_pair(chunk: PaperChunk, *, domain: str) -> EvidenceQAPair:
+    label = _element_label(chunk, fallback="the formula")
+    answer_facts = [chunk.formula_description] if chunk.formula_description else []
+    if not answer_facts and chunk.formula_latex:
+        answer_facts = [chunk.formula_latex]
+    return EvidenceQAPair.from_source_chunk(
+        question=f"What does {label} mean in this paper?",
+        chunk=chunk,
+        qa_type="formula_qa",
+        required_evidence_types=["formula"],
+        answer_facts=answer_facts,
+        difficulty="medium",
+        domain=domain,
+        metadata={"builder": "deterministic_template"},
+    )
+
+
+def _visual_or_table_pair(
+    chunk: PaperChunk,
+    *,
+    qa_type: str,
+    domain: str,
+    chunks_by_id: dict[str, PaperChunk],
+) -> EvidenceQAPair:
+    is_table = qa_type == "table_qa"
+    label = _element_label(chunk, fallback="the table" if is_table else "the figure")
+    question = (
+        f"What do the experimental results around {label} show?"
+        if is_table
+        else f"What does {label} show?"
+    )
+    gold_ids = [chunk.chunk_id]
+    required_types = ["table" if is_table else "figure"]
+    for related_id in _related_context_ids(chunk):
+        related = chunks_by_id.get(related_id)
+        if related is None:
+            continue
+        gold_ids.append(related.chunk_id)
+        evidence_type = _evidence_type_for_chunk(related)
+        if evidence_type not in required_types:
+            required_types.append(evidence_type)
+    return EvidenceQAPair(
+        question=question,
+        paper_id=chunk.paper_id,
+        qa_type=qa_type,
+        gold_chunk_ids=gold_ids,
+        required_evidence_types=required_types,
+        gold_source_locators=_unique_texts([_source_locator_for_chunk(chunk)]),
+        gold_image_refs=_unique_texts([_image_ref_for_chunk(chunk)]),
+        answer_facts=_answer_facts_from_chunk(chunk),
+        expected_behavior=_ANSWER_BEHAVIOR,
+        difficulty="medium",
+        domain=domain,
+        metadata={"builder": "deterministic_template"},
+    )
+
+
+def _citation_pair(chunk: PaperChunk, *, domain: str) -> EvidenceQAPair | None:
+    source_locator = _source_locator_for_chunk(chunk)
+    if not source_locator:
+        return None
+    snippet = _snippet_from_content(chunk.content)
+    citation_span = {
+        "chunk_id": chunk.chunk_id,
+        "snippet": snippet,
+        "span_kind": "main",
+        "resolved_chunk_id": chunk.chunk_id,
+        "resolved_source_locator": source_locator,
+    }
+    return EvidenceQAPair(
+        question=f"Which evidence supports the claim: {snippet}",
+        paper_id=chunk.paper_id,
+        qa_type="citation_qa",
+        gold_chunk_ids=[chunk.chunk_id],
+        required_evidence_types=[_evidence_type_for_chunk(chunk)],
+        gold_source_locators=[source_locator],
+        gold_citation_spans=[citation_span],
+        answer_facts=[snippet],
+        expected_behavior=_ANSWER_BEHAVIOR,
+        difficulty="easy",
+        domain=domain,
+        metadata={"builder": "deterministic_template"},
+    )
 
 
 def _aggregate_samples(
@@ -479,6 +634,64 @@ def _multi_gold_ndcg(ranked_ids: list[str], gold_ids: list[str]) -> float:
 def _over_retrieval_count(retrieved: list[str], gold_ids: list[str]) -> int:
     gold = set(gold_ids)
     return sum(1 for chunk_id in retrieved if chunk_id not in gold)
+
+
+def _related_context_ids(chunk: PaperChunk) -> list[str]:
+    related: list[str] = []
+    nearby = str(chunk.metadata.get("nearby_context_chunk_id") or "")
+    if nearby:
+        related.append(nearby)
+    for ref in chunk.metadata.get("referenced_by_chunks", []):
+        if isinstance(ref, dict):
+            chunk_id = str(ref.get("chunk_id") or "")
+            if chunk_id:
+                related.append(chunk_id)
+    parent_table = str(chunk.metadata.get("parent_table_chunk_id") or "")
+    if parent_table:
+        related.append(parent_table)
+    return _unique_texts(related)
+
+
+def _answer_facts_from_chunk(chunk: PaperChunk) -> list[str]:
+    candidates = [
+        str(chunk.metadata.get("caption_text") or ""),
+        str(chunk.metadata.get("surya_caption") or ""),
+        _caption_from_content(chunk.content),
+        _snippet_from_content(chunk.content),
+    ]
+    return _unique_texts([candidate for candidate in candidates if candidate])[:2]
+
+
+def _caption_from_content(content: str) -> str:
+    lines = [line.strip() for line in content.splitlines()]
+    for index, line in enumerate(lines):
+        if line.casefold().startswith("caption"):
+            suffix = line.split(":", 1)[1].strip() if ":" in line else ""
+            if suffix:
+                return suffix
+            for next_line in lines[index + 1:]:
+                if next_line:
+                    return next_line
+    return ""
+
+
+def _snippet_from_content(content: str, *, max_chars: int = 180) -> str:
+    text = " ".join(str(content or "").split())
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0].strip() or text[:max_chars].strip()
+
+
+def _element_label(chunk: PaperChunk, *, fallback: str) -> str:
+    for key in ("reference_labels", "table_id", "figure_id", "equation_id"):
+        value = chunk.metadata.get(key)
+        if isinstance(value, list) and value:
+            return str(value[0])
+        if value:
+            return str(value)
+    if chunk.figure_id:
+        return chunk.figure_id
+    return fallback
 
 
 def _visual_evidence_coverage(retrieved: list[PaperChunk], gold_image_refs: list[str]) -> float:
@@ -643,6 +856,7 @@ def _average(values: list[float]) -> float:
 
 __all__ = [
     "EvidenceEvalResult",
+    "EvidenceGoldenSetBuilder",
     "EvidenceQAPair",
     "EvidenceRetrievalEvaluator",
     "EvidenceSampleResult",

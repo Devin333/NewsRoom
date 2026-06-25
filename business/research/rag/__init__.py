@@ -8,6 +8,7 @@ from business.research.rag.answer_eval import (
 )
 from business.research.rag.evidence_eval import (
     EvidenceEvalResult,
+    EvidenceGoldenSetBuilder,
     EvidenceQAPair,
     EvidenceRetrievalEvaluator,
     EvidenceSampleResult,
@@ -22,6 +23,7 @@ from business.research.rag.evaluation_compare import (
     compare_evidence_results,
 )
 from business.research.rag.evaluation_report import EvidenceRegressionReport
+from business.research.rag.fixed_window_baseline import FixedWindowBaselineChunker, FixedWindowChunkerConfig
 from business.research.rag.models import ResearchRAGContext, ResearchRAGGapReport, ResearchRetrievalGoal
 
 __all__ = [
@@ -33,7 +35,10 @@ __all__ = [
     "EvidenceABDelta",
     "EvidenceABResult",
     "EvidenceRegressionReport",
+    "FixedWindowBaselineChunker",
+    "FixedWindowChunkerConfig",
     "EvidenceEvalResult",
+    "EvidenceGoldenSetBuilder",
     "EvidenceQAPair",
     "EvidenceRetrievalEvaluator",
     "EvidenceSampleResult",

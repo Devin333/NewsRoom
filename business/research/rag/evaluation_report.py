@@ -15,11 +15,15 @@ class EvidenceRegressionReport:
     retrieval: EvidenceEvalResult | None = None
     answer: EvidenceAnswerEvalResult | None = None
     ab: EvidenceABResult | None = None
+    thresholds: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "metadata": dict(self.metadata),
+            "thresholds": dict(self.thresholds),
+            "passed": self.passed(),
+            "issues": self.issues(),
         }
         if self.retrieval is not None:
             payload["retrieval"] = _retrieval_result_to_dict(self.retrieval)
@@ -31,6 +35,21 @@ class EvidenceRegressionReport:
 
     def to_markdown(self) -> str:
         lines = ["# Paper RAG Evidence Regression Report", ""]
+        lines.extend([
+            f"**Status:** {'PASS' if self.passed() else 'FAIL'}",
+            "",
+        ])
+        if self.thresholds:
+            lines.extend(["## Thresholds", ""])
+            for key in sorted(self.thresholds):
+                lines.append(f"- `{key}` >= {self.thresholds[key]:.3f}")
+            lines.append("")
+        issues = self.issues()
+        if issues:
+            lines.extend(["## Issues", ""])
+            for issue in issues:
+                lines.append(f"- {issue}")
+            lines.append("")
         if self.metadata:
             lines.extend(["## Metadata", ""])
             for key in sorted(self.metadata):
@@ -55,6 +74,21 @@ class EvidenceRegressionReport:
             self.to_markdown(),
             encoding="utf-8",
         )
+
+    def passed(self) -> bool:
+        return not self.issues()
+
+    def issues(self) -> list[str]:
+        issues: list[str] = []
+        values = _threshold_values(self)
+        for metric, threshold in self.thresholds.items():
+            actual = values.get(metric)
+            if actual is None:
+                issues.append(f"threshold metric {metric!r} is unavailable")
+                continue
+            if actual < threshold:
+                issues.append(f"{metric}={actual:.3f} is below threshold {threshold:.3f}")
+        return issues
 
 
 def _retrieval_result_to_dict(result: EvidenceEvalResult) -> dict[str, Any]:
@@ -114,6 +148,35 @@ def _ab_result_to_dict(result: EvidenceABResult) -> dict[str, Any]:
             for delta in result.deltas
         ],
     }
+
+
+def _threshold_values(report: EvidenceRegressionReport) -> dict[str, float]:
+    values: dict[str, float] = {}
+    if report.retrieval is not None:
+        best_k = max(report.retrieval.ks) if report.retrieval.ks else 0
+        if best_k:
+            values.update({
+                "retrieval.hit_rate": report.retrieval.hit_rate(best_k),
+                "retrieval.evidence_coverage": report.retrieval.evidence_coverage(best_k),
+                "retrieval.required_type_coverage": report.retrieval.required_type_coverage(best_k),
+                "retrieval.source_locator_coverage": report.retrieval.source_locator_coverage(best_k),
+                "retrieval.citation_accuracy": report.retrieval.citation_accuracy(best_k),
+                "retrieval.image_recall": report.retrieval.image_recall(best_k),
+            })
+        values["retrieval.mrr"] = report.retrieval.mrr()
+    if report.answer is not None:
+        values.update({
+            "answer.fact_coverage": report.answer.answer_fact_coverage(),
+            "answer.citation_grounding": report.answer.citation_grounding_score(),
+            "answer.source_locator_grounding": report.answer.source_locator_grounding_score(),
+            "answer.abstention_accuracy": report.answer.abstention_accuracy(),
+            "answer.success_rate": report.answer.success_rate(),
+        })
+    if report.ab is not None:
+        for delta in report.ab.deltas:
+            suffix = f"@{delta.k}" if delta.k is not None else ""
+            values[f"ab.{delta.metric}{suffix}.delta"] = delta.delta
+    return values
 
 
 def _code_block(text: str) -> str:
