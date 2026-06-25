@@ -57,7 +57,7 @@ class PaperVisualChunkStore:
         docs: list[VectorDocument] = []
         for chunk in visual_chunks:
             image_ref = str(chunk.metadata.get("image_ref") or "")
-            image_path = self._resolve_image_path(image_ref)
+            image_path = self._resolve_image_path(image_ref, paper_id=chunk.paper_id)
             if not image_path.exists():
                 logging.getLogger(__name__).warning(
                     "visual chunk image missing, skipped: %s", image_path
@@ -125,13 +125,29 @@ class PaperVisualChunkStore:
                 )
         return hits
 
-    def _resolve_image_path(self, image_ref: str) -> Path:
-        path = Path(image_ref)
+    def _resolve_image_path(self, image_ref: str, *, paper_id: str = "") -> Path:
+        normalized = image_ref.replace("\\", "/")
+        path = Path(normalized)
         if path.is_absolute():
             return path
+
+        candidates = []
         if self._image_root is not None:
-            return self._image_root / path
-        return Path.cwd() / path
+            candidates.extend([
+                self._image_root / path,
+                self._image_root / paper_id / path,
+            ])
+            if path.parts and path.parts[0] == ".newsroom":
+                candidates.append(Path.cwd() / path)
+            newsroom_index = normalized.find(".newsroom/")
+            if newsroom_index > 0:
+                candidates.append(Path.cwd() / normalized[newsroom_index:])
+        candidates.append(Path.cwd() / path)
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
 
 
 def paper_visual_chunk_store_from_env(
