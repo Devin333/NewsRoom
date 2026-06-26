@@ -59,3 +59,32 @@ def test_extract_field_texts_omits_missing_abstract_field():
     assert "abstract" not in fields.available_fields()
     assert fields.abstract == ""
     assert fields.body == "Method body."
+
+
+def test_extract_field_texts_includes_formula_structure_metadata():
+    chunk = PaperChunk(
+        chunk_id="eq-1",
+        paper_id="p1",
+        parse_source="latex",
+        chunk_type="formula",
+        section_title="Method",
+        section_role=["method"],
+        section_index=2,
+        has_formula=True,
+        formula_latex=r"\operatorname{Attention}(Q,K,V)",
+        content="Formula content.",
+        metadata={
+            "formula_normalized_latex": r"\operatorname{attention}(q,k,v)",
+            "formula_symbols": ["Q", "K", "V"],
+            "formula_operators": ["operatorname", "Attention"],
+            "formula_referenced_text": ["The paragraph explains query key value attention."],
+        },
+    )
+
+    fields = extract_field_texts(chunk)
+
+    assert "metadata.formula_normalized_latex" in fields.sources_for("equation")
+    assert "metadata.formula_symbols" in fields.sources_for("equation")
+    assert "metadata.formula_operators" in fields.sources_for("equation")
+    assert "metadata.formula_referenced_text" in fields.sources_for("equation")
+    assert "query key value attention" in fields.equation

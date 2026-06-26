@@ -313,11 +313,19 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
         "eq-1",
         chunk_type="formula",
         content="[Equation]\nLaTeX:\na=b",
+        metadata={
+            "referenced_by_chunks": [{"chunk_id": "para-formula"}],
+        },
     ).model_copy(update={
         "has_formula": True,
         "formula_latex": "a=b",
         "formula_description": "The equation defines a relation between a and b.",
     })
+    formula_para = _chunk(
+        "para-formula",
+        content="The equation is explained as a relation between variables.",
+        metadata={"source_ref": ""},
+    )
     table = _chunk(
         "tbl-1",
         chunk_type="table",
@@ -342,12 +350,18 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
     )
 
     pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=2).build(
-        [formula, table, result_para, figure, citation],
+        [formula, formula_para, table, result_para, figure, citation],
         domain="nlp",
     )
 
     by_type = {pair.qa_type: pair for pair in pairs}
     assert by_type["formula_qa"].answer_facts == ["The equation defines a relation between a and b."]
+    assert by_type["formula_explanation_qa"].gold_chunk_ids == ["eq-1", "para-formula"]
+    assert by_type["formula_explanation_qa"].required_evidence_types == ["formula", "paragraph"]
+    assert any(
+        token in by_type["formula_explanation_qa"].question.lower()
+        for token in ("equation", "formula")
+    )
     assert by_type["table_qa"].gold_chunk_ids == ["tbl-1", "para-result"]
     assert by_type["table_qa"].required_evidence_types == ["table", "paragraph"]
     assert by_type["experiment_result_qa"].gold_chunk_ids == ["tbl-1", "para-result"]
@@ -355,6 +369,10 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
     assert "experiment results" in by_type["experiment_result_qa"].question.lower()
     assert by_type["table_qa"].gold_image_refs == ["tables/table1.png"]
     assert by_type["figure_qa"].gold_image_refs == ["figures/fig1.png"]
-    assert by_type["citation_qa"].gold_source_locators == ["paper://p1/pdf#page=2"]
+    assert any(
+        pair.qa_type == "citation_qa"
+        and pair.gold_source_locators == ["paper://p1/pdf#page=2"]
+        for pair in pairs
+    )
     assert by_type["negative_qa"].expected_behavior == "abstain"
     assert all(pair.domain == "nlp" for pair in pairs)

@@ -87,6 +87,10 @@ def _equation_text(chunk: PaperChunk) -> tuple[str, list[str]]:
     values = [
         ("formula_latex", chunk.formula_latex),
         ("formula_description", chunk.formula_description),
+        ("metadata.formula_normalized_latex", str(chunk.metadata.get("formula_normalized_latex") or "")),
+        ("metadata.formula_symbols", _metadata_list_text(chunk.metadata.get("formula_symbols"))),
+        ("metadata.formula_operators", _metadata_list_text(chunk.metadata.get("formula_operators"))),
+        ("metadata.formula_referenced_text", _metadata_list_text(chunk.metadata.get("formula_referenced_text"))),
     ]
     if chunk.has_formula or chunk.chunk_type == "formula":
         values.append(("content", chunk.content))
@@ -138,6 +142,12 @@ def _caption_block(content: str) -> str:
 
 def _normalize_text(text: str) -> str:
     return " ".join(str(text or "").split())
+
+
+def _metadata_list_text(value: object) -> str:
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value if str(item).strip())
+    return str(value or "")
 
 
 __all__ = ["FIELD_NAMES", "PaperChunkFieldText", "extract_field_texts"]

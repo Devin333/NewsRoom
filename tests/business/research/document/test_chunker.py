@@ -194,6 +194,12 @@ def test_formula_chunk_records_multiple_explicit_references():
     assert formula.metadata["formula_parent_match_strategy"] == "latex_text"
     assert "1" in formula.metadata["reference_labels"]
     assert "loss" in formula.metadata["reference_labels"]
+    assert formula.metadata["formula_normalized_latex"] == "l=x\\tag{1}"
+    assert formula.metadata["formula_symbols"] == ["L", "x"]
+    assert set(formula.metadata["formula_operators"]) >= {"=", "tag"}
+    assert "loss behavior follows Eq. (1)" in formula.metadata["formula_referenced_text"][0]
+    assert "Referenced By:" in formula.content
+    assert "Equation 1 is reused in the ablation study." in formula.content
     assert formula.metadata["referenced_by_chunks"] == [
         {
             "chunk_id": analysis_ref.chunk_id,
@@ -201,6 +207,7 @@ def test_formula_chunk_records_multiple_explicit_references():
             "page": 3,
             "source_locator": "paper://paper-1/pdf#page=3",
             "text_ref": "Eq. (1)",
+            "text": "The loss behavior follows Eq. (1) under noisy labels.",
         },
         {
             "chunk_id": experiments_ref.chunk_id,
@@ -208,6 +215,7 @@ def test_formula_chunk_records_multiple_explicit_references():
             "page": 4,
             "source_locator": "paper://paper-1/pdf#page=4",
             "text_ref": "Equation 1",
+            "text": "Equation 1 is reused in the ablation study.",
         },
     ]
     assert analysis_ref.metadata["formula_references"] == [{

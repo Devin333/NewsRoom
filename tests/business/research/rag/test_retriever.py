@@ -324,6 +324,45 @@ def test_field_score_boosts_equation_match_for_formula_query():
     assert result.child_chunks[0].metadata["field_score_weights"]["equation"] == 0.6
 
 
+def test_formula_hit_expands_referenced_explanation_context():
+    parent = _chunk(
+        "para-parent",
+        content="The attention equation maps queries keys and values.",
+    )
+    explanation = _chunk(
+        "para-explain",
+        section_title="Analysis",
+        section_role=["analysis"],
+        content="Equation 1 explains how query key value attention is computed.",
+    )
+    formula = _chunk(
+        "eq-attn",
+        chunk_type="formula",
+        parent_chunk_id="para-parent",
+        content="[Equation 1]\nLaTeX:\n\\operatorname{Attention}(Q,K,V)",
+        metadata={
+            "referenced_by_chunks": [{"chunk_id": "para-explain"}],
+        },
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": r"\operatorname{Attention}(Q,K,V)",
+    })
+    store = _ScriptedChunkStore(
+        [formula, explanation, parent],
+        search_order=["eq-attn"],
+    )
+
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Equation 1 mean?", limit=1)
+    )
+
+    ref_by_id = {chunk.chunk_id: chunk for chunk in result.ref_chunks}
+    assert set(ref_by_id) == {"para-explain", "para-parent"}
+    assert ref_by_id["para-explain"].metadata["expansion_reason"] == "formula_body_reference"
+    assert ref_by_id["para-parent"].metadata["expansion_reason"] == "formula_parent_context"
+
+
 def test_field_score_boosts_abstract_for_contribution_query():
     weak = _chunk(
         "para-generic",

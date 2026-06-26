@@ -367,6 +367,7 @@ class EvidenceGoldenSetBuilder:
         chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
         pairs: list[EvidenceQAPair] = []
         pairs.extend(self._build_type(chunks, "formula_qa", domain=domain))
+        pairs.extend(self._build_formula_explanation_pairs(chunks, domain=domain, chunks_by_id=chunks_by_id))
         pairs.extend(self._build_type(chunks, "table_qa", domain=domain, chunks_by_id=chunks_by_id))
         pairs.extend(self._build_experiment_result_pairs(chunks, domain=domain, chunks_by_id=chunks_by_id))
         pairs.extend(self._build_type(chunks, "figure_qa", domain=domain, chunks_by_id=chunks_by_id))
@@ -416,6 +417,24 @@ class EvidenceGoldenSetBuilder:
             if _evidence_type_for_chunk(chunk) != "table":
                 continue
             pair = _experiment_result_pair(chunk, domain=domain, chunks_by_id=chunks_by_id)
+            if pair is not None:
+                out.append(pair)
+        return out
+
+    def _build_formula_explanation_pairs(
+        self,
+        chunks: list[PaperChunk],
+        *,
+        domain: str,
+        chunks_by_id: dict[str, PaperChunk],
+    ) -> list[EvidenceQAPair]:
+        out: list[EvidenceQAPair] = []
+        for chunk in chunks:
+            if len(out) >= self._max_pairs_per_type:
+                break
+            if _evidence_type_for_chunk(chunk) != "formula":
+                continue
+            pair = _formula_explanation_pair(chunk, domain=domain, chunks_by_id=chunks_by_id)
             if pair is not None:
                 out.append(pair)
         return out
@@ -490,6 +509,53 @@ def _formula_pair(chunk: PaperChunk, *, domain: str) -> EvidenceQAPair:
         domain=domain,
         metadata={"builder": "deterministic_template"},
     )
+
+
+def _formula_explanation_pair(
+    chunk: PaperChunk,
+    *,
+    domain: str,
+    chunks_by_id: dict[str, PaperChunk],
+) -> EvidenceQAPair | None:
+    context_chunks = _referenced_context_chunks(chunk, chunks_by_id)
+    if not context_chunks:
+        return None
+    label = _element_label(chunk, fallback="the formula")
+    equation_label = _formula_question_label(label)
+    return EvidenceQAPair(
+        question=f"How is {equation_label} explained in the surrounding text?",
+        paper_id=chunk.paper_id,
+        qa_type="formula_explanation_qa",
+        gold_chunk_ids=_unique_texts([chunk.chunk_id, *(context.chunk_id for context in context_chunks)]),
+        required_evidence_types=_unique_texts([
+            "formula",
+            *(_evidence_type_for_chunk(context) for context in context_chunks),
+        ]),
+        gold_source_locators=_unique_texts([
+            _source_locator_for_chunk(chunk),
+            *(_source_locator_for_chunk(context) for context in context_chunks),
+        ]),
+        answer_facts=_unique_texts([
+            *_answer_facts_from_chunk(chunk),
+            *(_snippet_from_content(context.content) for context in context_chunks[:2]),
+        ])[:3],
+        expected_behavior=_ANSWER_BEHAVIOR,
+        difficulty="medium",
+        domain=domain,
+        metadata={
+            "builder": "deterministic_template",
+            "source_qa_type": "formula_explanation_context",
+        },
+    )
+
+
+def _formula_question_label(label: str) -> str:
+    normalized = label.strip()
+    if not normalized:
+        return "the formula"
+    if any(token in normalized.casefold() for token in ("equation", "formula")):
+        return normalized
+    return f"Equation {normalized}"
 
 
 def _visual_or_table_pair(
@@ -711,6 +777,22 @@ def _related_context_ids(chunk: PaperChunk) -> list[str]:
     if parent_table:
         related.append(parent_table)
     return _unique_texts(related)
+
+
+def _referenced_context_chunks(chunk: PaperChunk, chunks_by_id: dict[str, PaperChunk]) -> list[PaperChunk]:
+    out: list[PaperChunk] = []
+    for ref in chunk.metadata.get("referenced_by_chunks", []):
+        if not isinstance(ref, dict):
+            continue
+        chunk_id = str(ref.get("chunk_id") or "")
+        context = chunks_by_id.get(chunk_id)
+        if context is not None:
+            out.append(context)
+    if chunk.parent_chunk_id:
+        parent = chunks_by_id.get(chunk.parent_chunk_id)
+        if parent is not None:
+            out.append(parent)
+    return _ranked_unique_chunks(out)
 
 
 def _answer_facts_from_chunk(chunk: PaperChunk) -> list[str]:

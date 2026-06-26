@@ -19,6 +19,9 @@ _SENTENCE_END = re.compile(r"(?<=[.!?。！？])\s+")
 _LATEX_FORMULA = re.compile(r"\\begin\{(?:equation|align|gather)[^}]*\}.*?\\end\{[^}]+\}", re.DOTALL)
 _INLINE_FORMULA = re.compile(r"\$\$[^$]+\$\$|\$[^$\n]+\$")
 _LATEX_TAG = re.compile(r"\\tag\{([^}]+)\}")
+_LATEX_COMMAND = re.compile(r"\\[A-Za-z]+")
+_FORMULA_SYMBOL = re.compile(r"[A-Za-z](?:_[A-Za-z0-9]+|\^[A-Za-z0-9]+)?|[A-Za-z]")
+_FORMULA_OPERATOR = re.compile(r"\\(?:operatorname|mathrm|text)\{([^}]+)\}|\\([A-Za-z]+)|([+\-*/=<>≤≥≈∑∏∫])")
 _FIGURE_REF = re.compile(r"图\s*(\w+)|[Ff]ig(?:ure)?[.s]?\s*(\w+)")
 _LOCATOR_PAGE_RE = re.compile(r"(?:#|&)page=(\d+)")
 _EQUATION_BODY_REF = re.compile(
@@ -379,11 +382,21 @@ def _table_semantic_text(tbl: ResearchTable, rows: list[dict[str, Any]]) -> str:
 
 
 def _formula_to_text(eq: ResearchEquation, parent: PaperChunk | None) -> str:
+    referenced_texts = _formula_referenced_texts(eq)
     lines = [
         f"[Equation {eq.equation_id}]",
         "LaTeX:",
         eq.latex,
     ]
+    normalized = _normalize_formula_text(eq.latex)
+    if normalized and normalized != eq.latex:
+        lines.extend(["", "Normalized LaTeX:", normalized])
+    symbols = _formula_symbols(eq.latex)
+    if symbols:
+        lines.extend(["", "Symbols:", " ".join(symbols)])
+    operators = _formula_operators(eq.latex)
+    if operators:
+        lines.extend(["", "Operators:", " ".join(operators)])
     if parent is not None:
         lines.extend([
             "",
@@ -392,6 +405,9 @@ def _formula_to_text(eq: ResearchEquation, parent: PaperChunk | None) -> str:
         ])
         if parent.section_title:
             lines.extend(["", f"Section: {parent.section_title}"])
+    if referenced_texts:
+        lines.extend(["", "Referenced By:"])
+        lines.extend(referenced_texts)
     source_locator = eq.metadata.get("source_locator")
     if source_locator:
         lines.extend(["", f"Source: {source_locator}"])
@@ -443,6 +459,40 @@ def _normalize_formula_text(text: str) -> str:
             stripped = stripped[len(prefix):-len(suffix)]
             break
     return re.sub(r"\s+", "", stripped).casefold()
+
+
+def _formula_symbols(latex: str) -> list[str]:
+    normalized = _LATEX_COMMAND.sub(" ", latex)
+    return sorted({match.group(0) for match in _FORMULA_SYMBOL.finditer(normalized)})
+
+
+def _formula_operators(latex: str) -> list[str]:
+    operators: set[str] = set()
+    for match in _FORMULA_OPERATOR.finditer(latex):
+        value = next((group for group in match.groups() if group), "")
+        if value:
+            operators.add(value)
+    return sorted(operators)
+
+
+def _formula_referenced_texts(eq: ResearchEquation, *, max_items: int = 4) -> list[str]:
+    refs = eq.metadata.get("referenced_by_chunks")
+    if not isinstance(refs, list):
+        return []
+    texts: list[str] = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        text = str(ref.get("text") or ref.get("snippet") or ref.get("context") or "")
+        if not text:
+            text_ref = str(ref.get("text_ref") or "")
+            section_title = str(ref.get("section_title") or "")
+            text = " ".join(part for part in (section_title, text_ref) if part)
+        if text:
+            texts.append(_context_excerpt(text, max_chars=280))
+        if len(texts) >= max_items:
+            break
+    return texts
 
 
 def _locator_page(locator: Any) -> int | None:
@@ -586,6 +636,7 @@ def _formula_references_by_equation(chunks: list[PaperChunk]) -> dict[str, list[
                 "page": _chunk_page(chunk),
                 "source_locator": chunk.metadata.get("source_locator", ""),
                 "text_ref": text_ref,
+                "text": _context_excerpt(chunk.content, max_chars=360),
             }
             out.setdefault(equation_id, []).append(entry)
     return out
@@ -863,7 +914,17 @@ class PaperDocumentChunker:
             section_title = parent.section_title if parent else "formula"
             section_role = parent.section_role if parent else []
             section_index = parent.section_index if parent else 0
-            formula_text = _formula_to_text(eq, parent)
+            referenced_by_chunks = references_by_equation.get(eq.equation_id, [])
+            formula_metadata = {
+                **eq.metadata,
+                "referenced_by_chunks": referenced_by_chunks,
+            }
+            enriched_eq = eq.model_copy(update={"metadata": formula_metadata})
+            normalized_latex = _normalize_formula_text(eq.latex)
+            formula_symbols = _formula_symbols(eq.latex)
+            formula_operators = _formula_operators(eq.latex)
+            formula_referenced_text = _formula_referenced_texts(enriched_eq)
+            formula_text = _formula_to_text(enriched_eq, parent)
             out.append(PaperChunk(
                 chunk_id=_stable_chunk_id(doc.paper_id, "eq", eq.equation_id),
                 paper_id=doc.paper_id,
@@ -885,11 +946,14 @@ class PaperDocumentChunker:
                     source_locator=eq.metadata.get("source_locator"),
                     semantic_text=f"{eq.equation_id}\n{eq.latex}",
                     base={
-                        **eq.metadata,
+                        **formula_metadata,
                         "equation_id": eq.equation_id,
                         "page": eq.page,
+                        "formula_normalized_latex": normalized_latex,
+                        "formula_symbols": formula_symbols,
+                        "formula_operators": formula_operators,
+                        "formula_referenced_text": formula_referenced_text,
                         "reference_labels": sorted(_formula_reference_keys(eq)),
-                        "referenced_by_chunks": references_by_equation.get(eq.equation_id, []),
                         "formula_parent_match_strategy": match_strategy,
                     },
                 ),

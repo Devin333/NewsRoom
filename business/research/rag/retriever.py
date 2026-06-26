@@ -1300,18 +1300,36 @@ class ResearchRetriever:
     def _fetch_refs(
         self, children: list[PaperChunk], paper_id: str
     ) -> list[PaperChunk]:
-        ref_ids: list[str] = []
+        refs: list[tuple[str, str, str]] = []
         seen = {c.chunk_id for c in children}
         for child in children:
             for ref_id in child.references[:1]:   # first-level only per PRD
                 if ref_id not in seen:
-                    ref_ids.append(ref_id)
+                    refs.append((ref_id, child.chunk_id, "chunk_reference"))
                     seen.add(ref_id)
+            if _is_formula_chunk(child):
+                for ref in child.metadata.get("referenced_by_chunks", []):
+                    if not isinstance(ref, dict):
+                        continue
+                    ref_id = str(ref.get("chunk_id") or "")
+                    if ref_id and ref_id not in seen:
+                        refs.append((ref_id, child.chunk_id, "formula_body_reference"))
+                        seen.add(ref_id)
+                parent_id = child.parent_chunk_id or ""
+                if parent_id and parent_id not in seen:
+                    refs.append((parent_id, child.chunk_id, "formula_parent_context"))
+                    seen.add(parent_id)
         result: list[PaperChunk] = []
-        for ref_id in ref_ids:
+        for ref_id, source_id, reason in refs:
             chunk = self._store.get_chunk(ref_id)
             if chunk:
-                result.append(chunk)
+                result.append(_with_expansion_metadata(
+                    chunk,
+                    expanded_from_chunk_id=source_id,
+                    reason=reason,
+                    edge="referenced_by_chunks" if reason == "formula_body_reference" else reason,
+                    rank=len(result) + 1,
+                ))
         return result
 
 
@@ -1746,6 +1764,10 @@ def _is_table_chunk(chunk: PaperChunk) -> bool:
         or bool(chunk.metadata.get("table_id"))
         or bool(chunk.metadata.get("parent_table_chunk_id"))
     )
+
+
+def _is_formula_chunk(chunk: PaperChunk) -> bool:
+    return chunk.chunk_type == "formula" or chunk.has_formula or bool(chunk.formula_latex)
 
 
 def _should_expand_result_context(intent: str, question: str) -> bool:
