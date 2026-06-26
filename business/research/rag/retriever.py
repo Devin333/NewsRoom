@@ -377,6 +377,8 @@ class RetrievalResult:
                     "field_rerank_score": chunk.metadata.get("field_rerank_score"),
                     "field_rerank_strategy": chunk.metadata.get("field_rerank_strategy", ""),
                     "best_matching_field": chunk.metadata.get("best_matching_field", ""),
+                    "element_label_score": chunk.metadata.get("element_label_score"),
+                    "element_label_match": chunk.metadata.get("element_label_match", False),
                     "graph_score": chunk.metadata.get("graph_score"),
                     "child_score_strategy": chunk.metadata.get("child_score_strategy", ""),
                     "child_score_components": chunk.metadata.get("child_score_components", {}),
@@ -690,6 +692,8 @@ class ResearchRetriever:
         field_summary = _field_embedding_summary_from_metadata(chunk.metadata)
         field_rerank = _clamp_score(field_rerank_score) if field_rerank_score is not None else 0.0
         graph_score = _child_graph_score(chunk)
+        element_label_score = _element_label_match_score(request.question, route.intent, chunk)
+        graph_score = max(graph_score, element_label_score)
         has_field_semantic = field_summary.best_score > 0.0 or field_rerank_score is not None
         if has_field_semantic:
             child_weights = self._policy.normalized_child_final_score_weights()
@@ -734,6 +738,8 @@ class ResearchRetriever:
             "field_rerank_score": _round_score(field_rerank) if field_rerank_score is not None else None,
             "field_rerank_strategy": "cross_encoder_structured_fields" if field_rerank_score is not None else "",
             "best_matching_field": best_matching_field,
+            "element_label_score": _round_score(element_label_score),
+            "element_label_match": element_label_score > 0.0,
             "graph_score": _round_score(graph_score),
             "child_score_strategy": score_strategy,
             "child_score_components": {
@@ -743,6 +749,7 @@ class ResearchRetriever:
                 "field_rerank": _round_score(field_rerank) if field_rerank_score is not None else None,
                 "position": _round_score(position_score),
                 "graph": _round_score(graph_score),
+                "element_label": _round_score(element_label_score),
             },
             "child_semantic_score": _round_score(semantic),
             "child_position_score": _round_score(position_score),
@@ -1504,6 +1511,65 @@ def _child_graph_score(chunk: PaperChunk) -> float:
     if metadata.get("parent_table_chunk_id"):
         return 0.5
     return 0.0
+
+
+def _element_label_match_score(query_text: str, intent: str, chunk: PaperChunk) -> float:
+    labels = _element_query_labels(query_text, intent)
+    if not labels:
+        return 0.0
+    chunk_labels = _chunk_reference_labels(chunk)
+    if not chunk_labels:
+        return 0.0
+    return 1.0 if labels & chunk_labels else 0.0
+
+
+def _element_query_labels(query_text: str, intent: str) -> set[str]:
+    prefixes_by_intent: dict[str, tuple[str, ...]] = {
+        "formula_query": ("equation", "formula", "eq"),
+        "table_query": ("table", "tab"),
+        "figure_query": ("figure", "fig"),
+        "numerical_result": ("table", "tab", "figure", "fig"),
+    }
+    prefixes = prefixes_by_intent.get(intent, ())
+    if not prefixes:
+        return set()
+    normalized = query_text.casefold()
+    labels: set[str] = set()
+    for prefix in prefixes:
+        pattern = rf"\b{re.escape(prefix)}\.?\s*([a-z0-9][a-z0-9._-]*)"
+        for match in re.finditer(pattern, normalized):
+            labels.add(_normalize_element_label(match.group(1)))
+    return {label for label in labels if label}
+
+
+def _chunk_reference_labels(chunk: PaperChunk) -> set[str]:
+    values: list[Any] = [
+        chunk.metadata.get("reference_labels"),
+        chunk.metadata.get("equation_number"),
+        chunk.metadata.get("equation_id"),
+        chunk.metadata.get("table_id"),
+        chunk.metadata.get("figure_id"),
+        chunk.figure_id,
+    ]
+    labels: set[str] = set()
+    for value in values:
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            text = str(item or "").casefold().strip()
+            if not text:
+                continue
+            labels.add(_normalize_element_label(text))
+            for prefix in ("eq_", "eq", "tbl_", "tbl", "fig_", "fig"):
+                if text.startswith(prefix):
+                    labels.add(_normalize_element_label(text[len(prefix):]))
+    return {label for label in labels if label}
+
+
+def _normalize_element_label(value: str) -> str:
+    text = str(value or "").casefold().strip()
+    text = re.sub(r"^(?:equation|formula|eq|table|tab|figure|fig)\.?\s*", "", text)
+    text = re.sub(r"[^a-z0-9]+", "", text)
+    return text
 
 
 def _normalized_field_score_weights(weights: dict[str, float]) -> dict[str, float]:

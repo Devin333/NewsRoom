@@ -324,6 +324,32 @@ def test_field_score_boosts_equation_match_for_formula_query():
     assert result.child_chunks[0].metadata["field_score_weights"]["equation"] == 0.6
 
 
+def test_element_label_score_boosts_exact_equation_reference():
+    weak = _chunk(
+        "eq-1",
+        chunk_type="formula",
+        content="[Equation eq_a]\nLaTeX:\nE = mc^2",
+        metadata={"reference_labels": ["1"], "equation_id": "eq_a"},
+    ).model_copy(update={"has_formula": True, "formula_latex": "E = mc^2"})
+    strong = _chunk(
+        "eq-2",
+        chunk_type="formula",
+        content="[Equation eq_b]\nLaTeX:\nL = x + y",
+        metadata={"reference_labels": ["2"], "equation_id": "eq_b"},
+    ).model_copy(update={"has_formula": True, "formula_latex": "L = x + y"})
+    store = _ScriptedChunkStore([weak, strong], search_order=["eq-1", "eq-2"])
+
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Equation 2 mean?", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["eq-2", "eq-1"]
+    assert result.child_chunks[0].metadata["element_label_match"] is True
+    assert result.child_chunks[0].metadata["element_label_score"] == 1.0
+    assert result.child_chunks[0].metadata["child_score_components"]["element_label"] == 1.0
+
+
 def test_formula_hit_expands_referenced_explanation_context():
     parent = _chunk(
         "para-parent",
