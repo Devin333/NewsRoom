@@ -376,3 +376,36 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
     )
     assert by_type["negative_qa"].expected_behavior == "abstain"
     assert all(pair.domain == "nlp" for pair in pairs)
+
+
+def test_golden_set_builder_uses_standalone_visual_and_formula_chunks_for_special_qa() -> None:
+    paragraph_with_figure = _chunk(
+        "para-mentions-figure",
+        content="Figure 1 shows the architecture.",
+    ).model_copy(update={"has_figure": True, "figure_id": "fig-1"})
+    standalone_figure = _chunk(
+        "fig-1",
+        chunk_type="figure",
+        content="[Figure 1]\nCaption:\nArchitecture.",
+        metadata={"figure_id": "fig-1"},
+    )
+    paragraph_with_formula = _chunk(
+        "para-mentions-formula",
+        content="The objective uses $L=x$.",
+    ).model_copy(update={"has_formula": True, "formula_latex": "$L=x$"})
+    standalone_formula = _chunk(
+        "eq-1",
+        chunk_type="formula",
+        content="[Equation]\nLaTeX:\n$L=x$",
+    ).model_copy(update={"has_formula": True, "formula_latex": "$L=x$"})
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=5, include_negative=False).build([
+        paragraph_with_figure,
+        standalone_figure,
+        paragraph_with_formula,
+        standalone_formula,
+    ])
+
+    by_type = {pair.qa_type: pair for pair in pairs}
+    assert by_type["figure_qa"].gold_chunk_ids == ["fig-1"]
+    assert by_type["formula_qa"].gold_chunk_ids == ["eq-1"]

@@ -1307,6 +1307,14 @@ class ResearchRetriever:
                 if ref_id not in seen:
                     refs.append((ref_id, child.chunk_id, "chunk_reference"))
                     seen.add(ref_id)
+            if child.metadata.get("page_visual"):
+                for ref in child.metadata.get("related_visual_chunks", []):
+                    if not isinstance(ref, dict):
+                        continue
+                    ref_id = str(ref.get("chunk_id") or "")
+                    if ref_id and ref_id not in seen:
+                        refs.append((ref_id, child.chunk_id, "page_visual_related_chunk"))
+                        seen.add(ref_id)
             if _is_formula_chunk(child):
                 for ref in child.metadata.get("referenced_by_chunks", []):
                     if not isinstance(ref, dict):

@@ -28,6 +28,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     visual_store = None
     if args.papers_dir:
         chunks = _load_chunks_from_papers_dir(Path(args.papers_dir))
+        if args.page_visual:
+            from business.research.rag.page_visual_chunks import build_page_visual_chunks
+
+            chunks.extend(build_page_visual_chunks(
+                chunks,
+                papers_dir=Path(args.papers_dir),
+                render_pages=not args.no_render_page_visual,
+            ))
         if args.vision_descriptions:
             chunks = _describe_visual_chunks(
                 chunks,
@@ -57,6 +65,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata["chunks_total"] = len(chunks)
         metadata["visual_descriptions_enabled"] = bool(args.vision_descriptions)
         metadata["visual_described_chunks"] = _visual_described_count(chunks)
+        metadata["page_visual_enabled"] = bool(args.page_visual)
+        metadata["page_visual_chunks"] = _page_visual_count(chunks)
     qa_type_counts = Counter(pair.qa_type for pair in pairs)
     behavior_counts = Counter(pair.expected_behavior for pair in pairs)
     metadata["qa_type_counts"] = dict(sorted(qa_type_counts.items()))
@@ -139,6 +149,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--visual",
         action="store_true",
         help="Enable in-memory visual indexing for figure chunks during --live-retrieval.",
+    )
+    parser.add_argument(
+        "--page-visual",
+        action="store_true",
+        help="Add PDF page-level visual chunks to live retrieval/evaluation.",
+    )
+    parser.add_argument(
+        "--no-render-page-visual",
+        action="store_true",
+        help="Do not render missing PDF page images when --page-visual is used.",
     )
     parser.add_argument(
         "--vision-descriptions",
@@ -230,6 +250,10 @@ def _visual_indexed_count(visual_store) -> int:
 
 def _visual_described_count(chunks: list[PaperChunk]) -> int:
     return sum(1 for chunk in chunks if chunk.metadata.get("visual_description"))
+
+
+def _page_visual_count(chunks: list[PaperChunk]) -> int:
+    return sum(1 for chunk in chunks if chunk.metadata.get("page_visual"))
 
 
 class _InMemoryChunkStore:

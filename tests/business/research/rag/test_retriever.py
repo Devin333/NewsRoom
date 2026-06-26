@@ -1002,6 +1002,38 @@ def test_figure_query_fuses_visual_hits_with_text_results():
     assert result.metadata["visual_fusion_enabled"] is True
 
 
+def test_page_visual_hit_expands_related_visual_chunks():
+    store = _make_store()
+    page = _chunk(
+        "page-2",
+        chunk_type="figure",
+        content="[Page 2]\nVisual page containing architecture figure.",
+        metadata={
+            "page_visual": True,
+            "image_ref": "page_images/p1_page_002.png",
+            "related_visual_chunks": [{"chunk_id": "fig-1"}],
+        },
+    )
+    figure = _chunk(
+        "fig-1",
+        chunk_type="paragraph",
+        content="[Figure 1]\nCaption:\nArchitecture overview.",
+    )
+    store.ensure_collection()
+    store.index_chunks([page, figure])
+    visual_store = _VisualHitStore([VisualChunkHit(chunk_id="page-2", score=0.95)])
+
+    retriever = ResearchRetriever(store, visual_store=visual_store)
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Figure 1 architecture show?", limit=1)
+    )
+
+    assert any(chunk.chunk_id == "page-2" for chunk in result.child_chunks)
+    assert any(chunk.chunk_id == "fig-1" for chunk in result.ref_chunks)
+    related = next(chunk for chunk in result.ref_chunks if chunk.chunk_id == "fig-1")
+    assert related.metadata["expansion_reason"] == "page_visual_related_chunk"
+
+
 def test_visual_store_is_not_called_for_table_query():
     store = _make_store()
     table = _chunk(

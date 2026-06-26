@@ -959,12 +959,11 @@ def _evidence_type_for_chunk(chunk: PaperChunk) -> str:
 
 
 def _qa_type_for_chunk(chunk: PaperChunk) -> str:
-    evidence_type = _evidence_type_for_chunk(chunk)
-    if evidence_type == "formula":
+    if chunk.chunk_type == "formula":
         return "formula_qa"
-    if evidence_type == "figure":
+    if chunk.chunk_type == "figure":
         return "figure_qa"
-    if evidence_type == "table":
+    if chunk.chunk_type == "table":
         return "table_qa"
     return "citation_qa" if _source_locator_for_chunk(chunk) else "paragraph_qa"
 

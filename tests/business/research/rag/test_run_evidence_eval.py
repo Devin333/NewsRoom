@@ -120,6 +120,44 @@ def test_run_evidence_eval_live_retrieval_can_enable_visual_index(tmp_path) -> N
     assert report["metadata"]["visual_indexed_chunks"] == 1
 
 
+def test_run_evidence_eval_can_add_page_visual_chunks(tmp_path) -> None:
+    papers_dir = tmp_path / "papers"
+    paper_dir = papers_dir / "p1"
+    image_dir = paper_dir / "figures"
+    page_dir = paper_dir / "page_images"
+    image_dir.mkdir(parents=True)
+    page_dir.mkdir(parents=True)
+    (image_dir / "arch.png").write_bytes(b"not-a-real-image")
+    (page_dir / "p1_page_001.png").write_bytes(b"fake-page-image")
+    payload = _research_document_payload()
+    payload["figures"][0]["image_ref"] = "figures/arch.png"
+    (paper_dir / "research_document.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output = tmp_path / "report"
+
+    exit_code = main([
+        "--papers-dir",
+        str(papers_dir),
+        "--build-golden-set",
+        "--live-retrieval",
+        "--visual",
+        "--page-visual",
+        "--no-render-page-visual",
+        "--image-root",
+        str(papers_dir),
+        "--output-dir",
+        str(output),
+    ])
+
+    assert exit_code == 0
+    report = json.loads((output / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    assert report["metadata"]["page_visual_enabled"] is True
+    assert report["metadata"]["page_visual_chunks"] == 1
+    assert report["metadata"]["visual_indexed_chunks"] == 2
+
+
 def test_run_evidence_eval_records_retrieval_policy_metadata(tmp_path) -> None:
     papers_dir = tmp_path / "papers"
     paper_dir = papers_dir / "p1"
