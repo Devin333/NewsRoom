@@ -411,14 +411,12 @@ class EvidenceGoldenSetBuilder:
     ) -> list[EvidenceQAPair]:
         out: list[EvidenceQAPair] = []
         for chunk in chunks:
-            if len(out) >= self._max_pairs_per_type:
-                break
             if _qa_type_for_chunk(chunk) != qa_type:
                 continue
             pair = _template_pair_for_chunk(chunk, qa_type, domain=domain, chunks_by_id=chunks_by_id or {})
             if pair is not None:
                 out.append(pair)
-        return out
+        return _balanced_by_paper(out, self._max_pairs_per_type)
 
     def _build_experiment_result_pairs(
         self,
@@ -429,14 +427,12 @@ class EvidenceGoldenSetBuilder:
     ) -> list[EvidenceQAPair]:
         out: list[EvidenceQAPair] = []
         for chunk in chunks:
-            if len(out) >= self._max_pairs_per_type:
-                break
             if _evidence_type_for_chunk(chunk) != "table":
                 continue
             pair = _experiment_result_pair(chunk, domain=domain, chunks_by_id=chunks_by_id)
             if pair is not None:
                 out.append(pair)
-        return out
+        return _balanced_by_paper(out, self._max_pairs_per_type)
 
     def _build_formula_explanation_pairs(
         self,
@@ -447,14 +443,12 @@ class EvidenceGoldenSetBuilder:
     ) -> list[EvidenceQAPair]:
         out: list[EvidenceQAPair] = []
         for chunk in chunks:
-            if len(out) >= self._max_pairs_per_type:
-                break
             if _evidence_type_for_chunk(chunk) != "formula":
                 continue
             pair = _formula_explanation_pair(chunk, domain=domain, chunks_by_id=chunks_by_id)
             if pair is not None:
                 out.append(pair)
-        return out
+        return _balanced_by_paper(out, self._max_pairs_per_type)
 
 
 def save_evidence_golden_set(pairs: list[EvidenceQAPair], path: str | Path) -> None:
@@ -635,19 +629,20 @@ def _experiment_result_pair(
     domain: str,
     chunks_by_id: dict[str, PaperChunk],
 ) -> EvidenceQAPair | None:
-    context_ids = _related_context_ids(chunk)
-    context_chunks = [
-        chunks_by_id[chunk_id]
-        for chunk_id in context_ids
-        if chunk_id in chunks_by_id and _is_result_context_chunk(chunks_by_id[chunk_id])
-    ]
-    if not context_chunks:
+    if not _is_experiment_result_table(chunk):
         return None
+    context_chunks = _explicit_result_reference_chunks(chunk, chunks_by_id)
     label = _typed_element_label(_element_label(chunk, fallback="the table"), element_type="table")
+    topic = _experiment_table_topic(chunk)
+    question = (
+        f"What do the experiment results around {label} show overall?"
+        if not topic
+        else f"What do the experiment results around {label}, about {topic}, show overall?"
+    )
     gold_ids = _unique_texts([chunk.chunk_id, *(context.chunk_id for context in context_chunks)])
     required_types = _unique_texts(["table", *(_evidence_type_for_chunk(context) for context in context_chunks)])
     return EvidenceQAPair(
-        question=f"What do the experiment results around {label} show overall?",
+        question=question,
         paper_id=chunk.paper_id,
         qa_type="experiment_result_qa",
         gold_chunk_ids=gold_ids,
@@ -667,8 +662,33 @@ def _experiment_result_pair(
         metadata={
             "builder": "deterministic_template",
             "source_qa_type": "table_result_context",
+            "context_source": "explicit_reference" if context_chunks else "table_only",
+            "table_topic": topic,
         },
     )
+
+
+def _balanced_by_paper(pairs: list[EvidenceQAPair], max_count: int) -> list[EvidenceQAPair]:
+    if len(pairs) <= max_count:
+        return pairs
+    buckets: dict[str, list[EvidenceQAPair]] = {}
+    for pair in pairs:
+        buckets.setdefault(pair.paper_id, []).append(pair)
+    selected: list[EvidenceQAPair] = []
+    paper_ids = sorted(buckets)
+    while len(selected) < max_count:
+        progressed = False
+        for paper_id in paper_ids:
+            bucket = buckets[paper_id]
+            if not bucket:
+                continue
+            selected.append(bucket.pop(0))
+            progressed = True
+            if len(selected) >= max_count:
+                break
+        if not progressed:
+            break
+    return selected
 
 
 def _citation_pair(chunk: PaperChunk, *, domain: str) -> EvidenceQAPair | None:
@@ -856,6 +876,18 @@ def _referenced_context_chunks(chunk: PaperChunk, chunks_by_id: dict[str, PaperC
     return _ranked_unique_chunks(out)
 
 
+def _explicit_result_reference_chunks(chunk: PaperChunk, chunks_by_id: dict[str, PaperChunk]) -> list[PaperChunk]:
+    out: list[PaperChunk] = []
+    for ref in chunk.metadata.get("referenced_by_chunks", []):
+        if not isinstance(ref, dict):
+            continue
+        chunk_id = str(ref.get("chunk_id") or "")
+        context = chunks_by_id.get(chunk_id)
+        if context is not None and _is_result_context_chunk(context):
+            out.append(context)
+    return _ranked_unique_chunks(out)
+
+
 def _answer_facts_from_chunk(chunk: PaperChunk) -> list[str]:
     candidates = [
         str(chunk.metadata.get("caption_text") or ""),
@@ -890,6 +922,122 @@ def _is_result_context_chunk(chunk: PaperChunk) -> bool:
             "f1",
         )
     )
+
+
+def _is_experiment_result_table(chunk: PaperChunk) -> bool:
+    if _evidence_type_for_chunk(chunk) != "table":
+        return False
+    roles = {str(role).casefold() for role in chunk.section_role}
+    if roles & {"experiment", "analysis"}:
+        role_score = 1
+    elif roles & {"conclusion"}:
+        role_score = 0
+    else:
+        role_score = 0
+    text = _table_quality_text(chunk)
+    lowered = text.casefold()
+    negative_hits = _keyword_hits(lowered, _NON_RESULT_TABLE_TOKENS)
+    positive_hits = _keyword_hits(lowered, _RESULT_TABLE_TOKENS)
+    metric_hits = _keyword_hits(lowered, _RESULT_METRIC_TOKENS)
+    comparison_hit = bool(re.search(r"\b(vs\.?|versus|compare[sd]?|comparison|baseline|sota|state-of-the-art)\b", lowered))
+    semantic_score = positive_hits + metric_hits + int(comparison_hit)
+    result_score = semantic_score + role_score
+    if semantic_score <= 0:
+        return False
+    if negative_hits and semantic_score < 2:
+        return False
+    return True
+
+
+def _keyword_hits(text: str, keywords: tuple[str, ...]) -> int:
+    return sum(1 for keyword in keywords if _keyword_in_text(text, keyword))
+
+
+def _keyword_in_text(text: str, keyword: str) -> bool:
+    token = keyword.casefold().strip()
+    if not token:
+        return False
+    if len(token) <= 3 and re.fullmatch(r"[a-z0-9]+", token):
+        return re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", text) is not None
+    return token in text
+
+
+def _table_quality_text(chunk: PaperChunk) -> str:
+    parts = [
+        str(chunk.metadata.get("caption_text") or ""),
+        str(chunk.metadata.get("surya_caption") or ""),
+        str(chunk.metadata.get("semantic_text") or ""),
+        str(chunk.metadata.get("table_text") or ""),
+        _caption_from_content(chunk.content),
+        _table_body_without_nearby_context(chunk.content),
+    ]
+    return " ".join(part for part in parts if part)
+
+
+def _table_body_without_nearby_context(content: str) -> str:
+    text = str(content or "")
+    if not text.strip():
+        return ""
+    return re.split(r"\bNearby Context\s*:", text, maxsplit=1, flags=re.IGNORECASE)[0]
+
+
+def _experiment_table_topic(chunk: PaperChunk) -> str:
+    topic = _caption_from_content(chunk.content)
+    if not topic:
+        topic = str(chunk.metadata.get("caption_text") or chunk.metadata.get("surya_caption") or "")
+    topic = " ".join(topic.split())
+    if len(topic) > 140:
+        topic = topic[:140].rsplit(" ", 1)[0].strip()
+    return topic
+
+
+_RESULT_TABLE_TOKENS = (
+    "result",
+    "results",
+    "evaluation",
+    "benchmark",
+    "performance",
+    "accuracy",
+    "score",
+    "error",
+    "loss",
+    "metric",
+    "ablation",
+    "leaderboard",
+)
+
+
+_RESULT_METRIC_TOKENS = (
+    "bleu",
+    "rouge",
+    "f1",
+    "em",
+    "map",
+    "auc",
+    "mrr",
+    "ndcg",
+    "fid",
+    "wer",
+    "perplexity",
+    "ppl",
+    "superglue",
+    "glue",
+    "gsm8k",
+)
+
+
+_NON_RESULT_TABLE_TOKENS = (
+    "architecture detail",
+    "model architecture",
+    "hyperparameter",
+    "training dataset",
+    "data source",
+    "data from each source",
+    "proportion of data",
+    "amount of code tokens",
+    "statistics of",
+    "dataset statistics",
+)
 
 
 def _caption_from_content(content: str) -> str:

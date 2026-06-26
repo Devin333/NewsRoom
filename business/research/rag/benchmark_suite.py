@@ -81,6 +81,7 @@ class GoldEvidenceAuditReport:
     passed: int
     warning: int
     failed: int
+    by_qa_type: dict[str, dict[str, int]] = field(default_factory=dict)
     items: tuple[GoldEvidenceAuditItem, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,6 +90,10 @@ class GoldEvidenceAuditReport:
             "passed": self.passed,
             "warning": self.warning,
             "failed": self.failed,
+            "by_qa_type": {
+                qa_type: dict(counts)
+                for qa_type, counts in sorted(self.by_qa_type.items())
+            },
             "items": [item.to_dict() for item in self.items],
         }
 
@@ -419,11 +424,20 @@ def audit_gold_evidence(
     sample = _stable_sample(list(pairs), sample_size=max(0, sample_size), seed=seed)
     items = tuple(_audit_pair(pair, chunks_by_id) for pair in sample)
     counts = Counter(item.status for item in items)
+    by_qa_type: dict[str, dict[str, int]] = {}
+    for qa_type in sorted({item.qa_type for item in items}):
+        type_counts = Counter(item.status for item in items if item.qa_type == qa_type)
+        by_qa_type[qa_type] = {
+            "pass": type_counts.get("pass", 0),
+            "warning": type_counts.get("warning", 0),
+            "fail": type_counts.get("fail", 0),
+        }
     return GoldEvidenceAuditReport(
         sample_size=len(items),
         passed=counts.get("pass", 0),
         warning=counts.get("warning", 0),
         failed=counts.get("fail", 0),
+        by_qa_type=by_qa_type,
         items=items,
     )
 
@@ -535,6 +549,7 @@ def _compare_reports(candidate_report: dict[str, Any], baseline_report: dict[str
         "candidate_name": "paper_visual_rag_tuned",
         "baseline": _summary_from_report(baseline_report),
         "candidate": _summary_from_report(candidate_report),
+        "macro_by_qa_type": _macro_by_qa_type(candidate, baseline),
         "deltas": deltas,
         "relative_improvement": relative,
     }
@@ -624,6 +639,7 @@ def _suite_warnings(
     for name in ("train", "dev", "test"):
         if not splits.get(name) or splits[name].pair_count == 0:
             warnings.append(f"empty_split:{name}")
+    warnings.extend(_split_distribution_warnings(splits))
     if audit.failed:
         warnings.append(f"gold_audit_failed:{audit.failed}")
     if audit.warning:
@@ -635,6 +651,26 @@ def _suite_warnings(
             warnings.append(f"gold_judge_warning:{judge_report.warning}")
         if judge_report.error:
             warnings.append(f"gold_judge_error:{judge_report.error}")
+    return warnings
+
+
+def _split_distribution_warnings(splits: dict[str, BenchmarkSplit]) -> list[str]:
+    test = splits.get("test")
+    if test is None or test.pair_count <= 0:
+        return []
+    warnings: list[str] = []
+    answerable_count = sum(
+        count for qa_type, count in test.qa_type_counts.items()
+        if qa_type != "negative_qa"
+    )
+    if answerable_count <= 0:
+        return warnings
+    for qa_type, count in sorted(test.qa_type_counts.items()):
+        if qa_type == "negative_qa":
+            continue
+        share = count / answerable_count
+        if share >= 0.45:
+            warnings.append(f"test_split_qa_type_dominates:{qa_type}:{share:.2f}")
     return warnings
 
 
@@ -651,6 +687,7 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
     candidate = payload["candidate_test_report"]["retrieval"]
     baseline = payload["baseline_test_report"]["retrieval"]
     relative_mrr = payload["ab_report"]["relative_improvement"]["mrr"]
+    macro = payload["ab_report"].get("macro_by_qa_type") or {}
     lines = [
         "# Paper RAG Benchmark Suite",
         "",
@@ -668,9 +705,24 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
         f"- fixed-window MRR: `{baseline['mrr']:.3f}`",
         f"- MRR delta: `{payload['ab_report']['deltas']['mrr']:.3f}`",
         f"- MRR relative improvement: `{_format_optional_ratio(relative_mrr)}`",
+    ]
+    if macro:
+        lines.extend([
+            f"- candidate macro Hit@10: `{macro['candidate']['macro_hit_at_10']:.3f}`",
+            f"- candidate macro MRR: `{macro['candidate']['macro_mrr']:.3f}`",
+            f"- fixed-window macro Hit@10: `{macro['baseline']['macro_hit_at_10']:.3f}`",
+            f"- fixed-window macro MRR: `{macro['baseline']['macro_mrr']:.3f}`",
+        ])
+    lines.extend([
+        "",
+        "## Test Metrics By QA Type",
+        "",
+        "| QA type | n | candidate Hit@10 | candidate MRR | fixed-window Hit@10 | fixed-window MRR |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        *_qa_type_metric_rows(candidate, baseline),
         "",
         "## QA Type Counts",
-    ]
+    ])
     for qa_type, count in payload["target_qa_counts"].items():
         lines.append(f"- {qa_type}: `{count}`")
     lines.extend([
@@ -679,6 +731,20 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
     ])
     for name, split in payload["splits"].items():
         lines.append(f"- {name}: `{len(split['paper_ids'])}` papers, `{split['pair_count']}` pairs")
+    audit_by_type = (payload.get("gold_audit") or {}).get("by_qa_type") or {}
+    if audit_by_type:
+        lines.extend([
+            "",
+            "## Gold Audit By QA Type",
+            "",
+            "| QA type | pass | warning | fail |",
+            "| --- | ---: | ---: | ---: |",
+        ])
+        for qa_type, counts in sorted(audit_by_type.items()):
+            lines.append(
+                f"| {qa_type} | {counts.get('pass', 0)} | "
+                f"{counts.get('warning', 0)} | {counts.get('fail', 0)} |"
+            )
     if payload.get("gold_judge"):
         judge = payload["gold_judge"]
         lines.extend([
@@ -693,6 +759,58 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
     if payload["warnings"]:
         lines.extend(["", "## Warnings", *[f"- `{warning}`" for warning in payload["warnings"]]])
     return "\n".join(lines) + "\n"
+
+
+def _qa_type_metric_rows(candidate: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
+    rows: list[str] = []
+    candidate_by_type = candidate.get("by_qa_type") or {}
+    baseline_by_type = baseline.get("by_qa_type") or {}
+    for qa_type in sorted(set(candidate_by_type) | set(baseline_by_type)):
+        current = candidate_by_type.get(qa_type) or {}
+        base = baseline_by_type.get(qa_type) or {}
+        answerable_total = int(current.get("answerable_total") or base.get("answerable_total") or 0)
+        if answerable_total <= 0:
+            continue
+        rows.append(
+            "| "
+            + " | ".join([
+                qa_type,
+                str(answerable_total),
+                f"{_hit_at_10(current):.3f}",
+                f"{_metric(current, 'mrr'):.3f}",
+                f"{_hit_at_10(base):.3f}",
+                f"{_metric(base, 'mrr'):.3f}",
+            ])
+            + " |"
+        )
+    return rows or ["| none | 0 | 0.000 | 0.000 | 0.000 | 0.000 |"]
+
+
+def _macro_by_qa_type(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "candidate": _macro_summary(candidate),
+        "baseline": _macro_summary(baseline),
+    }
+
+
+def _macro_summary(retrieval: dict[str, Any]) -> dict[str, Any]:
+    values = [
+        item for item in (retrieval.get("by_qa_type") or {}).values()
+        if int(item.get("answerable_total") or 0) > 0
+    ]
+    return {
+        "qa_types": len(values),
+        "macro_hit_at_10": _average([_hit_at_10(item) for item in values]),
+        "macro_mrr": _average([_metric(item, "mrr") for item in values]),
+    }
+
+
+def _hit_at_10(retrieval: dict[str, Any]) -> float:
+    return _metric(((retrieval.get("by_k") or {}).get("10") or {}), "hit_rate")
+
+
+def _average(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
 
 
 def _summary_from_report(report: dict[str, Any]) -> dict[str, Any]:

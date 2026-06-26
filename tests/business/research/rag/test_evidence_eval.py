@@ -413,10 +413,11 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
     assert by_type["table_qa"].gold_chunk_ids == ["tbl-1", "para-result"]
     assert by_type["table_qa"].required_evidence_types == ["table", "paragraph"]
     assert "table" in by_type["table_qa"].question.lower()
-    assert by_type["experiment_result_qa"].gold_chunk_ids == ["tbl-1", "para-result"]
-    assert by_type["experiment_result_qa"].required_evidence_types == ["table", "paragraph"]
+    assert by_type["experiment_result_qa"].gold_chunk_ids == ["tbl-1"]
+    assert by_type["experiment_result_qa"].required_evidence_types == ["table"]
     assert "experiment results" in by_type["experiment_result_qa"].question.lower()
     assert "table" in by_type["experiment_result_qa"].question.lower()
+    assert "main results" in by_type["experiment_result_qa"].question.lower()
     assert by_type["table_qa"].gold_image_refs == ["tables/table1.png"]
     assert by_type["figure_qa"].gold_image_refs == ["figures/fig1.png"]
     assert "figure" in by_type["figure_qa"].question.lower()
@@ -427,6 +428,78 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
     )
     assert by_type["negative_qa"].expected_behavior == "abstain"
     assert all(pair.domain == "nlp" for pair in pairs)
+
+
+def test_experiment_result_pairs_require_result_like_table() -> None:
+    architecture_table = _chunk(
+        "tbl-architecture",
+        chunk_type="table",
+        content=(
+            "[Table 1]\nCaption:\nModel architecture details.\n"
+            "Nearby Context: The introduction mentions astonishing results."
+        ),
+        metadata={
+            "table_id": "tbl-architecture",
+            "nearby_context_chunk_id": "para-result",
+        },
+    )
+    result_para = _chunk("para-result", content="The results show better accuracy.")
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=5, include_negative=False).build([
+        architecture_table,
+        result_para,
+    ])
+
+    assert "experiment_result_qa" not in {pair.qa_type for pair in pairs}
+
+
+def test_experiment_result_pair_keeps_explicit_result_reference_context() -> None:
+    table = _chunk(
+        "tbl-results",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nBenchmark results on SuperGLUE.",
+        metadata={
+            "table_id": "tbl-results",
+            "referenced_by_chunks": [{"chunk_id": "para-result", "text_ref": "Table 1"}],
+        },
+    )
+    result_para = _chunk("para-result", content="Table 1 shows the model improves accuracy.")
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=5, include_negative=False).build([
+        table,
+        result_para,
+    ])
+    result_pair = next(pair for pair in pairs if pair.qa_type == "experiment_result_qa")
+
+    assert result_pair.gold_chunk_ids == ["tbl-results", "para-result"]
+    assert result_pair.required_evidence_types == ["table", "paragraph"]
+    assert result_pair.metadata["context_source"] == "explicit_reference"
+
+
+def test_golden_set_builder_samples_table_result_pairs_across_papers() -> None:
+    chunks: list[PaperChunk] = []
+    for paper_id in ("p1", "p2", "p3"):
+        for index in range(3):
+            table = _chunk(
+                f"{paper_id}-tbl-{index}",
+                chunk_type="table",
+                content=f"[Table {index}]\nCaption:\nBenchmark results for {paper_id}.",
+                metadata={
+                    "table_id": f"{paper_id}-tbl-{index}",
+                    "nearby_context_chunk_id": f"{paper_id}-para-result",
+                },
+            ).model_copy(update={"paper_id": paper_id})
+            para = _chunk(
+                f"{paper_id}-para-result",
+                content=f"The experimental results show improved accuracy for {paper_id}.",
+            ).model_copy(update={"paper_id": paper_id})
+            chunks.extend([table, para])
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=3, include_negative=False).build(chunks)
+    result_pairs = [pair for pair in pairs if pair.qa_type == "experiment_result_qa"]
+
+    assert len(result_pairs) == 3
+    assert {pair.paper_id for pair in result_pairs} == {"p1", "p2", "p3"}
 
 
 def test_golden_set_builder_uses_standalone_visual_and_formula_chunks_for_special_qa() -> None:
