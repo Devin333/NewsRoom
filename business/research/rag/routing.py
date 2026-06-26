@@ -23,6 +23,7 @@ _INTENT_SIGNALS: list[tuple[QueryIntent, list[str]]] = [
         "results show",
     ]),
     ("table_query",      ["table", "tab.", "tab ", "row", "column"]),
+    ("formula_query",    ["formula", "equation", "eq.", " eq ", "latex", "symbol", "variable"]),
     ("figure_query",     ["图", "figure", "fig", "图表"]),
     ("formula_query",    ["公式", "formula", "equation", "符号", "变量"]),
     ("comparison",       ["相比", "对比", "compared to", "versus", " vs ", "prior work", "baseline", "相关工作"]),

@@ -496,11 +496,12 @@ def _template_pair_for_chunk(
 
 def _formula_pair(chunk: PaperChunk, *, domain: str) -> EvidenceQAPair:
     label = _element_label(chunk, fallback="the formula")
+    question_label = _formula_question_label(label)
     answer_facts = [chunk.formula_description] if chunk.formula_description else []
     if not answer_facts and chunk.formula_latex:
         answer_facts = [chunk.formula_latex]
     return EvidenceQAPair.from_source_chunk(
-        question=f"What does {label} mean in this paper?",
+        question=f"What does {question_label} mean in this paper?",
         chunk=chunk,
         qa_type="formula_qa",
         required_evidence_types=["formula"],

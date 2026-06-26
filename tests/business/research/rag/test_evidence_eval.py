@@ -356,6 +356,10 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
 
     by_type = {pair.qa_type: pair for pair in pairs}
     assert by_type["formula_qa"].answer_facts == ["The equation defines a relation between a and b."]
+    assert any(
+        token in by_type["formula_qa"].question.lower()
+        for token in ("equation", "formula")
+    )
     assert by_type["formula_explanation_qa"].gold_chunk_ids == ["eq-1", "para-formula"]
     assert by_type["formula_explanation_qa"].required_evidence_types == ["formula", "paragraph"]
     assert any(
