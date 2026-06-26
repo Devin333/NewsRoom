@@ -99,6 +99,13 @@ def _equation_text(chunk: PaperChunk) -> tuple[str, list[str]]:
 
 def _body_text(chunk: PaperChunk) -> tuple[str, list[str]]:
     values = [("content", chunk.content)]
+    if chunk.chunk_type == "table" or chunk.has_table or chunk.metadata.get("table_id"):
+        values.extend([
+            ("metadata.semantic_text", str(chunk.metadata.get("semantic_text") or "")),
+            ("metadata.table_text", str(chunk.metadata.get("table_text") or "")),
+            ("metadata.table_columns", _metadata_list_text(chunk.metadata.get("columns"))),
+            ("metadata.table_rows", _metadata_rows_text(chunk.metadata.get("rows"))),
+        ])
     visual_description = str(chunk.metadata.get("visual_description") or "")
     if visual_description and visual_description not in chunk.content:
         values.append(("metadata.visual_description", visual_description))
@@ -148,6 +155,22 @@ def _metadata_list_text(value: object) -> str:
     if isinstance(value, list):
         return "\n".join(str(item) for item in value if str(item).strip())
     return str(value or "")
+
+
+def _metadata_rows_text(value: object) -> str:
+    if not isinstance(value, list):
+        return str(value or "")
+    rows: list[str] = []
+    for row in value:
+        if isinstance(row, dict):
+            cells = [str(cell) for cell in row.values() if str(cell).strip()]
+            if cells:
+                rows.append(" | ".join(cells))
+            continue
+        text = str(row).strip()
+        if text:
+            rows.append(text)
+    return "\n".join(rows)
 
 
 __all__ = ["FIELD_NAMES", "PaperChunkFieldText", "extract_field_texts"]

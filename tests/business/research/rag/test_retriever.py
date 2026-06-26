@@ -324,6 +324,60 @@ def test_field_score_boosts_equation_match_for_formula_query():
     assert result.child_chunks[0].metadata["field_score_weights"]["equation"] == 0.6
 
 
+def test_field_score_uses_table_semantic_text_for_table_query():
+    weak = _chunk(
+        "tbl-weak",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nDataset statistics.",
+        metadata={"table_id": "tbl-weak"},
+    )
+    strong = _chunk(
+        "tbl-strong",
+        chunk_type="table",
+        content="[Table 2]\nCaption:\nAblation summary.",
+        metadata={
+            "table_id": "tbl-strong",
+            "semantic_text": "Table 2 reports FID sample quality and benchmark accuracy improvements.",
+        },
+    )
+    store = _ScriptedChunkStore([weak, strong], search_order=["tbl-weak", "tbl-strong"])
+
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Which table reports FID sample quality accuracy?", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["tbl-strong", "tbl-weak"]
+    assert result.child_chunks[0].metadata["body_score"] > result.child_chunks[1].metadata["body_score"]
+    assert "metadata.semantic_text" in result.child_chunks[0].metadata["field_text_sources"]["body"]
+
+
+def test_tuned_policy_boosts_exact_table_label_match():
+    wrong = _chunk(
+        "tbl-wrong",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nExperimental results show strong accuracy.",
+        metadata={"reference_labels": ["1"], "table_id": "tbl-wrong"},
+    )
+    exact = _chunk(
+        "tbl-exact",
+        chunk_type="table",
+        content="[Table 2]\nCaption:\nAblation details.",
+        metadata={"reference_labels": ["2"], "table_id": "tbl-exact"},
+    )
+    store = _ScriptedChunkStore([wrong, exact], search_order=["tbl-wrong", "tbl-exact"])
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What do the experimental results around Table 2 show?", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["tbl-exact", "tbl-wrong"]
+    assert result.child_chunks[0].metadata["element_label_match"] is True
+    assert result.child_chunks[0].metadata["element_label_boost"] == 0.18
+    assert result.child_chunks[0].metadata["child_score_components"]["element_label_boost"] == 0.18
+
+
 def test_element_label_score_boosts_exact_equation_reference():
     weak = _chunk(
         "eq-1",
@@ -743,9 +797,15 @@ def test_build_retrieval_policy_visual_tuned_uses_benchmark_weights():
     assert policy.field_score_weights_for("table_query") == {
         "title": 0.05,
         "abstract": 0.0,
-        "caption": 0.5,
+        "caption": 0.45,
         "equation": 0.0,
-        "body": 0.45,
+        "body": 0.5,
+    }
+    assert policy.element_label_boosts == {
+        "formula_query": 0.18,
+        "table_query": 0.18,
+        "figure_query": 0.12,
+        "numerical_result": 0.12,
     }
 
 

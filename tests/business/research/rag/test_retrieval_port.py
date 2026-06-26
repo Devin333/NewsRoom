@@ -152,6 +152,7 @@ def test_parent_context_metadata_exposed_in_evidence_pack():
             "field_rerank_score": 0.88,
             "field_rerank_strategy": "cross_encoder_structured_fields",
             "best_matching_field": "title",
+            "element_label_boost": 0.18,
             "graph_score": 0.6,
             "child_score_strategy": "semantic_field_embedding_rerank_fusion",
             "child_score_components": {
@@ -212,6 +213,7 @@ def test_parent_context_metadata_exposed_in_evidence_pack():
     assert pack.metadata["field_rerank_score"] == 0.88
     assert pack.metadata["field_rerank_strategy"] == "cross_encoder_structured_fields"
     assert pack.metadata["best_matching_field"] == "title"
+    assert pack.metadata["element_label_boost"] == 0.18
     assert pack.metadata["graph_score"] == 0.6
     assert pack.metadata["child_score_strategy"] == "semantic_field_embedding_rerank_fusion"
     assert pack.metadata["child_score_components"]["field_rerank"] == 0.88

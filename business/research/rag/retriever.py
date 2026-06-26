@@ -128,6 +128,7 @@ class RetrievalPolicy:
         "position": 0.05,
         "graph": 0.05,
     })
+    element_label_boosts: dict[str, float] = field(default_factory=dict)
     field_default_score_weights: dict[str, float] = field(default_factory=lambda: {
         "title": 0.25,
         "abstract": 0.15,
@@ -239,9 +240,9 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
     field_intent_score_weights["table_query"] = {
         "title": 0.05,
         "abstract": 0.00,
-        "caption": 0.50,
+        "caption": 0.45,
         "equation": 0.00,
-        "body": 0.45,
+        "body": 0.50,
     }
     return RetrievalPolicy(
         name=PAPER_VISUAL_RAG_TUNED_POLICY,
@@ -250,6 +251,12 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         visual_fusion_visual_weight=0.15,
         reranking_intents=HIGH_VALUE_VISUAL_RESULT_INTENTS,
         field_reranking_intents=HIGH_VALUE_VISUAL_RESULT_INTENTS,
+        element_label_boosts={
+            "formula_query": 0.18,
+            "table_query": 0.18,
+            "figure_query": 0.12,
+            "numerical_result": 0.12,
+        },
         child_score_weights={
             "semantic": 0.45,
             "field": 0.40,
@@ -694,6 +701,9 @@ class ResearchRetriever:
         graph_score = _child_graph_score(chunk)
         element_label_score = _element_label_match_score(request.question, route.intent, chunk)
         graph_score = max(graph_score, element_label_score)
+        element_label_boost = _clamp_score(
+            element_label_score * max(0.0, self._policy.element_label_boosts.get(route.intent, 0.0))
+        )
         has_field_semantic = field_summary.best_score > 0.0 or field_rerank_score is not None
         if has_field_semantic:
             child_weights = self._policy.normalized_child_final_score_weights()
@@ -714,6 +724,7 @@ class ResearchRetriever:
                 + graph_score * child_weights["graph"]
             )
             score_strategy = "semantic_lexical_field_fallback"
+        final_score = _clamp_score(final_score + element_label_boost)
         field_texts = extract_field_texts(chunk)
         best_matching_field = _best_matching_field(field_summary, field_scores)
         metadata = dict(chunk.metadata)
@@ -740,6 +751,7 @@ class ResearchRetriever:
             "best_matching_field": best_matching_field,
             "element_label_score": _round_score(element_label_score),
             "element_label_match": element_label_score > 0.0,
+            "element_label_boost": _round_score(element_label_boost),
             "graph_score": _round_score(graph_score),
             "child_score_strategy": score_strategy,
             "child_score_components": {
@@ -750,6 +762,7 @@ class ResearchRetriever:
                 "position": _round_score(position_score),
                 "graph": _round_score(graph_score),
                 "element_label": _round_score(element_label_score),
+                "element_label_boost": _round_score(element_label_boost),
             },
             "child_semantic_score": _round_score(semantic),
             "child_position_score": _round_score(position_score),

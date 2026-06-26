@@ -88,3 +88,36 @@ def test_extract_field_texts_includes_formula_structure_metadata():
     assert "metadata.formula_operators" in fields.sources_for("equation")
     assert "metadata.formula_referenced_text" in fields.sources_for("equation")
     assert "query key value attention" in fields.equation
+
+
+def test_extract_field_texts_includes_table_structure_metadata():
+    chunk = PaperChunk(
+        chunk_id="tbl-1",
+        paper_id="p1",
+        parse_source="latex",
+        chunk_type="table",
+        section_title="Experiments",
+        section_role=["experiment"],
+        section_index=3,
+        has_table=True,
+        content="[Table 1]\nCaption:\nMain benchmark results.",
+        metadata={
+            "table_id": "tbl-1",
+            "semantic_text": "Table 1 reports BLEU and accuracy for the proposed model.",
+            "table_text": "Model | BLEU | Accuracy",
+            "columns": ["Model", "BLEU", "Accuracy"],
+            "rows": [
+                {"model": "baseline", "bleu": "26.1", "accuracy": "72.0"},
+                {"model": "ours", "bleu": "29.4", "accuracy": "76.5"},
+            ],
+        },
+    )
+
+    fields = extract_field_texts(chunk)
+
+    assert "metadata.semantic_text" in fields.sources_for("body")
+    assert "metadata.table_text" in fields.sources_for("body")
+    assert "metadata.table_columns" in fields.sources_for("body")
+    assert "metadata.table_rows" in fields.sources_for("body")
+    assert "proposed model" in fields.body
+    assert "baseline | 26.1 | 72.0" in fields.body

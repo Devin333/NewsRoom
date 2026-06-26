@@ -161,6 +161,7 @@ def _chunk_to_evidence_pack(chunk: PaperChunk) -> EvidencePack:
             "field_rerank_score": chunk.metadata.get("field_rerank_score"),
             "field_rerank_strategy": chunk.metadata.get("field_rerank_strategy", ""),
             "best_matching_field": chunk.metadata.get("best_matching_field", ""),
+            "element_label_boost": chunk.metadata.get("element_label_boost"),
             "graph_score": chunk.metadata.get("graph_score"),
             "child_score_strategy": chunk.metadata.get("child_score_strategy", ""),
             "child_score_components": chunk.metadata.get("child_score_components", {}),
