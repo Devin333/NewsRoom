@@ -100,6 +100,8 @@ class _VisualDescriber:
                 "metadata": {
                     **chunk.metadata,
                     "visual_description": "The image shows encoder decoder blocks.",
+                    "visual_description_status": "ok",
+                    "visual_description_model": "fake-vision",
                 },
                 "content": f"{chunk.content}\n\nVisual Description:\nThe image shows encoder decoder blocks.",
             })
@@ -197,3 +199,10 @@ def test_chunk_pipeline_describes_visual_chunks_before_indexing(tmp_path):
     assert result.visual_described_chunks == 1
     assert stored_figure.metadata["visual_description"] == "The image shows encoder decoder blocks."
     assert repo_figure.metadata["visual_description"] == "The image shows encoder decoder blocks."
+    document_payload = json.loads(
+        (tmp_path / "research_document.json").read_text(encoding="utf-8")
+    )
+    figure_metadata = document_payload["figures"][0]["metadata"]
+    assert figure_metadata["visual_description"] == "The image shows encoder decoder blocks."
+    assert figure_metadata["visual_description_status"] == "ok"
+    assert document_payload["metadata"]["visual_described_figures"] == 1

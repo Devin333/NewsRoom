@@ -51,6 +51,8 @@ def test_visual_describer_enriches_image_backed_figure_chunk(tmp_path: Path) -> 
     [updated] = describer.describe_chunks([chunk])
 
     assert updated.metadata["visual_description"].startswith("The figure shows")
+    assert updated.metadata["visual_description_status"] == "ok"
+    assert updated.metadata["visual_description_generated_at"]
     assert updated.metadata["visual_description_model"] == "gpt-5.4-mini"
     assert updated.metadata["visual_description_source"] == "openai-compatible-vision"
     assert "Visual Description:" in updated.content
@@ -82,4 +84,5 @@ def test_visual_describer_skips_missing_images() -> None:
 
     assert updated.metadata["visual_description_skipped"] is True
     assert updated.metadata["visual_description_skip_reason"] == "image_missing"
+    assert updated.metadata["visual_description_status"] == "missing_image"
     assert "visual_description" not in updated.metadata

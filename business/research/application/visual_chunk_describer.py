@@ -14,6 +14,7 @@ from framework.llm.clients.openai_compatible import (
     OpenAICompatibleConfig,
 )
 from framework.llm.models.request import LLMRequest
+from framework.shared.time import format_datetime, utc_now
 from framework.shared.env import load_root_env
 
 from business.research.application.llm_client import _browser_ua_transport
@@ -233,6 +234,8 @@ def _with_visual_description(
         "visual_description": description,
         "visual_description_model": model,
         "visual_description_source": "openai-compatible-vision",
+        "visual_description_status": "ok",
+        "visual_description_generated_at": format_datetime(utc_now()),
         "visual_description_image_path": str(image_path),
     })
     content = chunk.content
@@ -246,6 +249,8 @@ def _mark_description_skipped(chunk: PaperChunk, *, reason: str, image_path: Pat
     metadata.update({
         "visual_description_skipped": True,
         "visual_description_skip_reason": reason,
+        "visual_description_status": "missing_image" if reason == "image_missing" else "model_error",
+        "visual_description_error_type": reason,
         "visual_description_image_path": str(image_path),
     })
     return chunk.model_copy(update={"metadata": metadata})

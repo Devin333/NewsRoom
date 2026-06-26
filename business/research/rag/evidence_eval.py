@@ -368,6 +368,7 @@ class EvidenceGoldenSetBuilder:
         pairs: list[EvidenceQAPair] = []
         pairs.extend(self._build_type(chunks, "formula_qa", domain=domain))
         pairs.extend(self._build_type(chunks, "table_qa", domain=domain, chunks_by_id=chunks_by_id))
+        pairs.extend(self._build_experiment_result_pairs(chunks, domain=domain, chunks_by_id=chunks_by_id))
         pairs.extend(self._build_type(chunks, "figure_qa", domain=domain, chunks_by_id=chunks_by_id))
         pairs.extend(self._build_type(chunks, "citation_qa", domain=domain))
         if self._include_negative:
@@ -397,6 +398,24 @@ class EvidenceGoldenSetBuilder:
             if _qa_type_for_chunk(chunk) != qa_type:
                 continue
             pair = _template_pair_for_chunk(chunk, qa_type, domain=domain, chunks_by_id=chunks_by_id or {})
+            if pair is not None:
+                out.append(pair)
+        return out
+
+    def _build_experiment_result_pairs(
+        self,
+        chunks: list[PaperChunk],
+        *,
+        domain: str,
+        chunks_by_id: dict[str, PaperChunk],
+    ) -> list[EvidenceQAPair]:
+        out: list[EvidenceQAPair] = []
+        for chunk in chunks:
+            if len(out) >= self._max_pairs_per_type:
+                break
+            if _evidence_type_for_chunk(chunk) != "table":
+                continue
+            pair = _experiment_result_pair(chunk, domain=domain, chunks_by_id=chunks_by_id)
             if pair is not None:
                 out.append(pair)
         return out
@@ -510,6 +529,48 @@ def _visual_or_table_pair(
         difficulty="medium",
         domain=domain,
         metadata={"builder": "deterministic_template"},
+    )
+
+
+def _experiment_result_pair(
+    chunk: PaperChunk,
+    *,
+    domain: str,
+    chunks_by_id: dict[str, PaperChunk],
+) -> EvidenceQAPair | None:
+    context_ids = _related_context_ids(chunk)
+    context_chunks = [
+        chunks_by_id[chunk_id]
+        for chunk_id in context_ids
+        if chunk_id in chunks_by_id and _is_result_context_chunk(chunks_by_id[chunk_id])
+    ]
+    if not context_chunks:
+        return None
+    label = _element_label(chunk, fallback="the table")
+    gold_ids = _unique_texts([chunk.chunk_id, *(context.chunk_id for context in context_chunks)])
+    required_types = _unique_texts(["table", *(_evidence_type_for_chunk(context) for context in context_chunks)])
+    return EvidenceQAPair(
+        question=f"What do the experiment results around {label} show overall?",
+        paper_id=chunk.paper_id,
+        qa_type="experiment_result_qa",
+        gold_chunk_ids=gold_ids,
+        required_evidence_types=required_types,
+        gold_source_locators=_unique_texts([
+            _source_locator_for_chunk(chunk),
+            *(_source_locator_for_chunk(context) for context in context_chunks),
+        ]),
+        gold_image_refs=_unique_texts([_image_ref_for_chunk(chunk)]),
+        answer_facts=_unique_texts([
+            *_answer_facts_from_chunk(chunk),
+            *(_snippet_from_content(context.content) for context in context_chunks[:2]),
+        ])[:3],
+        expected_behavior=_ANSWER_BEHAVIOR,
+        difficulty="medium",
+        domain=domain,
+        metadata={
+            "builder": "deterministic_template",
+            "source_qa_type": "table_result_context",
+        },
     )
 
 
@@ -660,6 +721,32 @@ def _answer_facts_from_chunk(chunk: PaperChunk) -> list[str]:
         _snippet_from_content(chunk.content),
     ]
     return _unique_texts([candidate for candidate in candidates if candidate])[:2]
+
+
+def _is_result_context_chunk(chunk: PaperChunk) -> bool:
+    if chunk.chunk_type != "paragraph":
+        return False
+    roles = {str(role).casefold() for role in chunk.section_role}
+    if roles & {"experiment", "analysis", "conclusion"}:
+        return True
+    text = f"{chunk.section_title}\n{chunk.content[:400]}".casefold()
+    return any(
+        keyword in text
+        for keyword in (
+            "result",
+            "results",
+            "experiment",
+            "evaluation",
+            "analysis",
+            "conclusion",
+            "benchmark",
+            "accuracy",
+            "score",
+            "fid",
+            "bleu",
+            "f1",
+        )
+    )
 
 
 def _caption_from_content(content: str) -> str:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from framework.llm.clients.openai_compatible import (
     OpenAICompatibleClient,
@@ -13,6 +15,7 @@ from framework.shared.env import load_root_env
 from business.research.document.async_preprocessor import AsyncChunkPreprocessor
 from business.research.document.chunk_manifest import ChunkManifestManager
 from business.research.document.chunker import PaperDocumentChunker
+from business.research.document.visual_document_sync import sync_visual_descriptions_to_document
 from business.research.ports.chunk_indexer import ChunkIndexerPort
 from business.research.ports.chunk_repository import ChunkRepositoryPort
 from business.research.ports.chunk_store import ChunkStorePort
@@ -132,11 +135,16 @@ class ChunkPaperPipeline:
                 for chunk in chunks
             }
             chunks = self._visual_describer.describe_chunks(chunks)
+            doc = sync_visual_descriptions_to_document(doc, chunks)
             visual_described_chunks = sum(
                 1
                 for chunk in chunks
                 if str(chunk.metadata.get("visual_description") or "")
                 and str(chunk.metadata.get("visual_description") or "") != before.get(chunk.chunk_id, "")
+            )
+            _write_research_document_artifact(
+                doc,
+                self._chunk_manifest.path_for(paper_id).with_name("research_document.json"),
             )
         self._store.ensure_collection()
         self._indexer.index_chunks(chunks)
@@ -166,3 +174,11 @@ class ChunkPaperPipeline:
 
 
 __all__ = ["ChunkPaperPipeline", "ChunkPipelineResult"]
+
+
+def _write_research_document_artifact(doc, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(doc.model_dump(mode="json", exclude_none=True), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )

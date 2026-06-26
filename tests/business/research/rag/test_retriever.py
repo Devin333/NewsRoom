@@ -8,6 +8,7 @@ from business.research.document.citation_spans import build_paragraph_span_metad
 from business.research.document.models import PaperChunk
 from business.research.rag.retriever import (
     DEFAULT_RETRIEVAL_POLICY,
+    HIGH_VALUE_VISUAL_RESULT_INTENTS,
     NEWS_PAPER_RAG_POLICY_ENV,
     PAPER_VISUAL_RAG_TUNED_POLICY,
     ResearchRetriever,
@@ -462,6 +463,66 @@ def test_structured_field_reranker_influences_child_ordering():
     assert result.metadata["field_rerank_top"] == 0.95
 
 
+def test_visual_tuned_policy_skips_rerankers_for_method_intent():
+    weak = _chunk("weak-child", content="weak-field generic method details.")
+    strong = _chunk("strong-child", content="strong-field exact method explanation.")
+    store = _ScriptedChunkStore([weak, strong], search_order=["weak-child", "strong-child"])
+    reranker = _KeywordReranker({"strong-field": 0.95, "weak-field": 0.0})
+    field_reranker = _KeywordReranker({"strong-field": 0.95, "weak-field": 0.0})
+
+    retriever = ResearchRetriever(
+        store,
+        policy=build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY),
+        reranker=reranker,
+        field_reranker=field_reranker,
+    )
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="how does the exact method work?", limit=2)
+    )
+
+    assert result.intent == "concept_method"
+    assert reranker.calls == []
+    assert field_reranker.calls == []
+    assert result.metadata["reranker"] is True
+    assert result.metadata["reranker_enabled_for_intent"] is False
+    assert result.metadata["field_reranker_enabled"] is True
+    assert result.metadata["field_reranker_enabled_for_intent"] is False
+    assert result.child_chunks[0].metadata["field_rerank_strategy"] == ""
+
+
+def test_visual_tuned_policy_runs_rerankers_for_figure_intent():
+    weak = _chunk(
+        "weak-figure",
+        chunk_type="figure",
+        content="[Figure 1]\nCaption: weak-field architecture.",
+    )
+    strong = _chunk(
+        "strong-figure",
+        chunk_type="figure",
+        content="[Figure 2]\nCaption: strong-field architecture.",
+    )
+    store = _ScriptedChunkStore([weak, strong], search_order=["weak-figure", "strong-figure"])
+    reranker = _KeywordReranker({"strong-field": 0.95, "weak-field": 0.0})
+    field_reranker = _KeywordReranker({"strong-field": 0.95, "weak-field": 0.0})
+
+    retriever = ResearchRetriever(
+        store,
+        policy=build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY),
+        reranker=reranker,
+        field_reranker=field_reranker,
+    )
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Figure 2 show?", limit=2)
+    )
+
+    assert result.intent == "figure_query"
+    assert reranker.calls
+    assert field_reranker.calls
+    assert result.metadata["reranker_enabled_for_intent"] is True
+    assert result.metadata["field_reranker_enabled_for_intent"] is True
+    assert result.metadata["field_rerank_top"] == 0.95
+
+
 def test_field_reranker_failure_keeps_deterministic_fallback():
     child = _chunk(
         "method-child",
@@ -599,6 +660,8 @@ def test_build_retrieval_policy_visual_tuned_uses_benchmark_weights():
     assert policy.overfetch_multiplier == 5
     assert policy.visual_fusion_text_weight == pytest.approx(0.85)
     assert policy.visual_fusion_visual_weight == pytest.approx(0.15)
+    assert policy.reranking_intents == HIGH_VALUE_VISUAL_RESULT_INTENTS
+    assert policy.field_reranking_intents == HIGH_VALUE_VISUAL_RESULT_INTENTS
     assert policy.normalized_child_score_weights() == {
         "semantic": 0.45,
         "field": 0.4,

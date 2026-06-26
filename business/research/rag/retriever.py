@@ -71,6 +71,7 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 DEFAULT_RETRIEVAL_POLICY = "default"
 PAPER_VISUAL_RAG_TUNED_POLICY = "paper_visual_rag_tuned"
 NEWS_PAPER_RAG_POLICY_ENV = "NEWS_PAPER_RAG_POLICY"
+HIGH_VALUE_VISUAL_RESULT_INTENTS = ("figure_query", "table_query", "numerical_result", "comparison")
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,8 @@ class RetrievalPolicy:
     })
     field_embedding_enabled: bool = True
     field_reranking_enabled: bool = True
+    reranking_intents: tuple[str, ...] = ()
+    field_reranking_intents: tuple[str, ...] = ()
     field_embedding_search_limit_multiplier: int = 2
     field_default_search_fields: tuple[str, ...] = ("title", "abstract", "caption", "equation", "body")
     field_intent_search_fields: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
@@ -203,6 +206,12 @@ class RetrievalPolicy:
                 seen.add(normalized)
         return tuple(out) if out else tuple(FIELD_NAMES)
 
+    def reranker_enabled_for(self, intent: str) -> bool:
+        return _intent_allowed(intent, self.reranking_intents)
+
+    def field_reranker_enabled_for(self, intent: str) -> bool:
+        return self.field_reranking_enabled and _intent_allowed(intent, self.field_reranking_intents)
+
 
 def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
     """Build a named retrieval policy without changing the default behavior."""
@@ -239,6 +248,8 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         overfetch_multiplier=5,
         visual_fusion_text_weight=0.85,
         visual_fusion_visual_weight=0.15,
+        reranking_intents=HIGH_VALUE_VISUAL_RESULT_INTENTS,
+        field_reranking_intents=HIGH_VALUE_VISUAL_RESULT_INTENTS,
         child_score_weights={
             "semantic": 0.45,
             "field": 0.40,
@@ -432,18 +443,21 @@ class ResearchRetriever:
         n_visual_recalled = len(visual_hits)
 
         # ── 2. base relevance: reranker (if available) else vector score ──────
-        base_scores = self._base_scores(request.question, candidates)
+        base_reranker_enabled = self._base_reranker_enabled(route.intent)
+        field_reranker_enabled = self._field_reranker_enabled(route.intent)
+        base_scores = self._base_scores(request.question, candidates, intent=route.intent)
 
         # ── 2b. rerank score threshold: drop low-relevance candidates (reranker only) ──
         pairs = list(zip(candidates, base_scores))
         n_before_filter = len(pairs)
-        if self._reranker is not None and self._policy.rerank_score_threshold > 0.0:
+        if base_reranker_enabled and self._policy.rerank_score_threshold > 0.0:
             kept = [(c, b) for (c, b) in pairs if b >= self._policy.rerank_score_threshold]
             pairs = kept or pairs[:1]  # never drop everything — keep top-1 as fallback
         n_filtered = n_before_filter - len(pairs)
         field_rerank_scores = self._field_rerank_scores(
             request.question,
             [chunk for (chunk, _sem), _base in pairs],
+            intent=route.intent,
         )
 
         # ── 3. position-aware re-rank ─────────────────────────────────────────
@@ -497,11 +511,15 @@ class ResearchRetriever:
             },
             "intent": route.intent,
             "reranker": self._reranker is not None,
+            "reranker_enabled_for_intent": base_reranker_enabled,
+            "reranker_intent_scope": self._policy.reranking_intents,
             "recalled": n_recalled,
             "visual_recalled": n_visual_recalled,
             "visual_fusion_enabled": self._visual_store is not None,
             "field_embedding_enabled": self._field_index is not None and self._policy.field_embedding_enabled,
             "field_reranker_enabled": self._field_reranker is not None and self._policy.field_reranking_enabled,
+            "field_reranker_enabled_for_intent": field_reranker_enabled,
+            "field_reranker_intent_scope": self._policy.field_reranking_intents,
             "field_search_fields": self._policy.field_search_fields_for(route.intent),
             "field_hits_count": len(field_hits),
             "field_hits_by_name": _field_hits_by_name(field_hits),
@@ -537,12 +555,16 @@ class ResearchRetriever:
     # ── private ───────────────────────────────────────────────────────────────
 
     def _base_scores(
-        self, question: str, candidates: list[tuple[PaperChunk, float]]
+        self,
+        question: str,
+        candidates: list[tuple[PaperChunk, float]],
+        *,
+        intent: str,
     ) -> list[float]:
         """Base relevance per candidate: reranker cross-encoder score if available,
         else the vector semantic score. Reranker scores replace (not add to) vector
         scores since the cross-encoder is a stronger relevance signal."""
-        if self._reranker is None or not candidates:
+        if self._reranker is None or not candidates or not self._policy.reranker_enabled_for(intent):
             return [sem for _chunk, sem in candidates]
         passages = [chunk.content for chunk, _ in candidates]
         try:
@@ -607,10 +629,21 @@ class ResearchRetriever:
             by_id[merged_chunk.chunk_id] = (merged_chunk, existing[1] if existing else 0.0)
         return list(by_id.values())
 
-    def _field_rerank_scores(self, question: str, chunks: list[PaperChunk]) -> dict[str, float]:
+    def _base_reranker_enabled(self, intent: str) -> bool:
+        return self._reranker is not None and self._policy.reranker_enabled_for(intent)
+
+    def _field_reranker_enabled(self, intent: str) -> bool:
+        return self._field_reranker is not None and self._policy.field_reranker_enabled_for(intent)
+
+    def _field_rerank_scores(
+        self,
+        question: str,
+        chunks: list[PaperChunk],
+        *,
+        intent: str,
+    ) -> dict[str, float]:
         if (
-            self._field_reranker is None
-            or not self._policy.field_reranking_enabled
+            not self._field_reranker_enabled(intent)
             or not chunks
         ):
             return {}
@@ -1127,7 +1160,7 @@ class ResearchRetriever:
             return []
         rerank_query = ""
         rerank_scores: list[float] | None = None
-        if self._reranker is not None:
+        if self._base_reranker_enabled(route.intent):
             rerank_query = _parent_context_rerank_query(request, route, candidates)
             passages = [_parent_context_rerank_passage(candidate) for candidate in candidates]
             try:
@@ -1474,6 +1507,10 @@ def _normalized_child_final_score_weights(weights: dict[str, float]) -> dict[str
         "position": 0.05,
         "graph": 0.05,
     })
+
+
+def _intent_allowed(intent: str, allowed_intents: tuple[str, ...]) -> bool:
+    return not allowed_intents or intent in allowed_intents
 
 
 def _normalized_parent_score_weights(weights: dict[str, float]) -> dict[str, float]:
