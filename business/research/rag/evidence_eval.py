@@ -143,9 +143,13 @@ class EvidenceQAPair:
 class EvidenceSampleResult:
     pair: EvidenceQAPair
     ranked_chunk_ids: list[str]
+    ranked_match_chunk_ids: list[list[str]]
     ranked_evidence_types: list[str]
+    ranked_evidence_type_candidates: list[list[str]]
     ranked_source_locators: list[str]
+    ranked_source_locator_candidates: list[list[str]]
     ranked_image_refs: list[str]
+    ranked_image_ref_candidates: list[list[str]]
     first_rank: int = 0
     coverage_by_k: dict[int, float] = field(default_factory=dict)
     type_coverage_by_k: dict[int, float] = field(default_factory=dict)
@@ -277,9 +281,13 @@ class EvidenceRetrievalEvaluator:
             return EvidenceSampleResult(
                 pair=pair,
                 ranked_chunk_ids=[],
+                ranked_match_chunk_ids=[],
                 ranked_evidence_types=[],
+                ranked_evidence_type_candidates=[],
                 ranked_source_locators=[],
+                ranked_source_locator_candidates=[],
                 ranked_image_refs=[],
+                ranked_image_ref_candidates=[],
                 first_rank=0,
                 coverage_by_k={k: 0.0 for k in ks},
                 type_coverage_by_k={k: 0.0 for k in ks},
@@ -302,31 +310,39 @@ class EvidenceRetrievalEvaluator:
             *retrieved.parent_chunks,
         ])
         ranked_ids = [chunk.chunk_id for chunk in ranked_chunks]
+        ranked_match_ids = [_chunk_match_ids(chunk) for chunk in ranked_chunks]
         ranked_types = [_evidence_type_for_chunk(chunk) for chunk in ranked_chunks]
+        ranked_type_candidates = [_evidence_type_candidates_for_chunk(chunk) for chunk in ranked_chunks]
         ranked_locators = [_source_locator_for_chunk(chunk) for chunk in ranked_chunks]
+        ranked_locator_candidates = [_source_locator_candidates_for_chunk(chunk) for chunk in ranked_chunks]
         ranked_images = [_image_ref_for_chunk(chunk) for chunk in ranked_chunks]
-        first_rank = _first_gold_rank(ranked_ids, pair.gold_chunk_ids)
+        ranked_image_candidates = [_image_ref_candidates_for_chunk(chunk) for chunk in ranked_chunks]
+        first_rank = _first_gold_rank(ranked_match_ids, pair.gold_chunk_ids)
         return EvidenceSampleResult(
             pair=pair,
             ranked_chunk_ids=ranked_ids,
+            ranked_match_chunk_ids=ranked_match_ids,
             ranked_evidence_types=ranked_types,
+            ranked_evidence_type_candidates=ranked_type_candidates,
             ranked_source_locators=ranked_locators,
+            ranked_source_locator_candidates=ranked_locator_candidates,
             ranked_image_refs=ranked_images,
+            ranked_image_ref_candidates=ranked_image_candidates,
             first_rank=first_rank,
             coverage_by_k={
-                k: _coverage(ranked_ids[:k], pair.gold_chunk_ids)
+                k: _candidate_coverage(ranked_match_ids[:k], pair.gold_chunk_ids)
                 for k in ks
             },
             type_coverage_by_k={
-                k: _coverage(ranked_types[:k], pair.required_evidence_types)
+                k: _candidate_coverage(ranked_type_candidates[:k], pair.required_evidence_types)
                 for k in ks
             },
             source_locator_coverage_by_k={
-                k: _locator_coverage(ranked_locators[:k], pair.gold_source_locators)
+                k: _candidate_locator_coverage(ranked_locator_candidates[:k], pair.gold_source_locators)
                 for k in ks
             },
             image_recall_by_k={
-                k: _coverage(ranked_images[:k], pair.gold_image_refs)
+                k: _candidate_coverage(ranked_image_candidates[:k], pair.gold_image_refs)
                 for k in ks
             },
             visual_evidence_coverage_by_k={
@@ -346,7 +362,7 @@ class EvidenceRetrievalEvaluator:
                 for k in ks
             },
             over_retrieval_by_k={
-                k: _over_retrieval_count(ranked_ids[:k], pair.gold_chunk_ids)
+                k: _candidate_over_retrieval_count(ranked_match_ids[:k], pair.gold_chunk_ids)
                 for k in ks
             },
         )
@@ -724,7 +740,7 @@ def _aggregate_samples(
             if overlap_accuracy is not None:
                 result.overlap_citation_accuracy_at[k].append(overlap_accuracy)
             result.over_retrieval_at[k].append(sample.over_retrieval_by_k[k])
-            result.ndcg_at[k].append(_multi_gold_ndcg(sample.ranked_chunk_ids[:k], sample.pair.gold_chunk_ids))
+            result.ndcg_at[k].append(_multi_gold_ndcg(sample.ranked_match_chunk_ids[:k], sample.pair.gold_chunk_ids))
     return result
 
 
@@ -733,6 +749,16 @@ def _coverage(retrieved: list[str], required: list[str]) -> float:
     if not required_set:
         return 0.0
     return len(required_set.intersection(retrieved)) / len(required_set)
+
+
+def _candidate_coverage(retrieved: list[list[str]], required: list[str]) -> float:
+    required_set = set(_unique_texts(required))
+    if not required_set:
+        return 0.0
+    covered: set[str] = set()
+    for candidates in retrieved:
+        covered.update(required_set.intersection(candidates))
+    return len(covered) / len(required_set)
 
 
 def _locator_coverage(retrieved: list[str], required: list[str]) -> float:
@@ -746,28 +772,43 @@ def _locator_coverage(retrieved: list[str], required: list[str]) -> float:
     return hits / len(required_locators)
 
 
+def _candidate_locator_coverage(retrieved: list[list[str]], required: list[str]) -> float:
+    required_locators = _unique_texts(required)
+    if not required_locators:
+        return 0.0
+    candidates = [locator for locators in retrieved for locator in locators]
+    hits = 0
+    for locator in required_locators:
+        if any(_locator_matches(candidate, locator) for candidate in candidates):
+            hits += 1
+    return hits / len(required_locators)
+
+
 def _locator_matches(candidate: str, required: str) -> bool:
     if not candidate or not required:
         return False
     return candidate == required or candidate.startswith(required) or required.startswith(candidate)
 
 
-def _first_gold_rank(ranked_ids: list[str], gold_ids: list[str]) -> int:
+def _first_gold_rank(ranked_ids: list[list[str]], gold_ids: list[str]) -> int:
     gold = set(gold_ids)
-    for index, chunk_id in enumerate(ranked_ids, start=1):
-        if chunk_id in gold:
+    for index, chunk_ids in enumerate(ranked_ids, start=1):
+        if gold.intersection(chunk_ids):
             return index
     return 0
 
 
-def _multi_gold_ndcg(ranked_ids: list[str], gold_ids: list[str]) -> float:
+def _multi_gold_ndcg(ranked_ids: list[list[str]], gold_ids: list[str]) -> float:
     gold = set(gold_ids)
     if not gold:
         return 0.0
+    seen_hits: set[str] = set()
     dcg = 0.0
-    for index, chunk_id in enumerate(ranked_ids, start=1):
-        if chunk_id in gold:
+    for index, chunk_ids in enumerate(ranked_ids, start=1):
+        new_hits = gold.intersection(chunk_ids) - seen_hits
+        if new_hits:
             dcg += 1.0 / math.log2(index + 1)
+            seen_hits.add(sorted(new_hits)[0])
     ideal_hits = min(len(gold), len(ranked_ids))
     ideal = sum(1.0 / math.log2(index + 1) for index in range(1, ideal_hits + 1))
     return dcg / ideal if ideal else 0.0
@@ -776,6 +817,11 @@ def _multi_gold_ndcg(ranked_ids: list[str], gold_ids: list[str]) -> float:
 def _over_retrieval_count(retrieved: list[str], gold_ids: list[str]) -> int:
     gold = set(gold_ids)
     return sum(1 for chunk_id in retrieved if chunk_id not in gold)
+
+
+def _candidate_over_retrieval_count(retrieved: list[list[str]], gold_ids: list[str]) -> int:
+    gold = set(gold_ids)
+    return sum(1 for chunk_ids in retrieved if not gold.intersection(chunk_ids))
 
 
 def _related_context_ids(chunk: PaperChunk) -> list[str]:
@@ -882,8 +928,8 @@ def _visual_evidence_coverage(retrieved: list[PaperChunk], gold_image_refs: list
     required_images = _unique_texts(gold_image_refs)
     if not required_images:
         return 0.0
-    retrieved_images = [_image_ref_for_chunk(chunk) for chunk in retrieved]
-    return _coverage(retrieved_images, required_images)
+    retrieved_images = [_image_ref_candidates_for_chunk(chunk) for chunk in retrieved]
+    return _candidate_coverage(retrieved_images, required_images)
 
 
 def _citation_accuracy(
@@ -961,6 +1007,45 @@ def _source_locator_for_chunk(chunk: PaperChunk) -> str:
 
 def _image_ref_for_chunk(chunk: PaperChunk) -> str:
     return str(chunk.metadata.get("image_ref") or "")
+
+
+def _chunk_match_ids(chunk: PaperChunk) -> list[str]:
+    return _unique_texts([
+        chunk.chunk_id,
+        *_metadata_text_list(chunk.metadata.get("source_chunk_ids")),
+        *_metadata_text_list(chunk.metadata.get("covered_chunk_ids")),
+    ])
+
+
+def _evidence_type_candidates_for_chunk(chunk: PaperChunk) -> list[str]:
+    return _unique_texts([
+        _evidence_type_for_chunk(chunk),
+        *_metadata_text_list(chunk.metadata.get("source_evidence_types")),
+    ])
+
+
+def _source_locator_candidates_for_chunk(chunk: PaperChunk) -> list[str]:
+    return _unique_texts([
+        _source_locator_for_chunk(chunk),
+        *_metadata_text_list(chunk.metadata.get("source_locators")),
+    ])
+
+
+def _image_ref_candidates_for_chunk(chunk: PaperChunk) -> list[str]:
+    return _unique_texts([
+        _image_ref_for_chunk(chunk),
+        *_metadata_text_list(chunk.metadata.get("source_image_refs")),
+    ])
+
+
+def _metadata_text_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item or "").strip()]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item or "").strip()]
+    if isinstance(value, str) and value.strip():
+        return [value]
+    return []
 
 
 def _evidence_type_for_chunk(chunk: PaperChunk) -> str:

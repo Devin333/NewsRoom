@@ -36,7 +36,7 @@ class FixedWindowBaselineChunker:
     def chunk(self, chunks: list[PaperChunk]) -> list[PaperChunk]:
         by_paper: dict[str, list[PaperChunk]] = {}
         for chunk in chunks:
-            if chunk.chunk_type in {"figure", "table"}:
+            if chunk.metadata.get("page_visual"):
                 continue
             by_paper.setdefault(chunk.paper_id, []).append(chunk)
 
@@ -46,7 +46,7 @@ class FixedWindowBaselineChunker:
         return out
 
     def _chunk_paper(self, paper_id: str, chunks: list[PaperChunk]) -> list[PaperChunk]:
-        ordered = sorted(chunks, key=lambda chunk: (chunk.section_index, chunk.chunk_id))
+        ordered = chunks
         tokens: list[str] = []
         token_sources: list[PaperChunk] = []
         for chunk in ordered:
@@ -65,6 +65,15 @@ class FixedWindowBaselineChunker:
             source_slice = token_sources[start:end]
             anchor = source_slice[0]
             source_chunk_ids = _unique_texts([source.chunk_id for source in source_slice])
+            source_evidence_types = _unique_texts([_evidence_type(source) for source in source_slice])
+            source_locators = _unique_texts([
+                str(source.metadata.get("source_locator") or source.metadata.get("source_ref") or "")
+                for source in source_slice
+            ])
+            source_image_refs = _unique_texts([
+                str(source.metadata.get("image_ref") or "")
+                for source in source_slice
+            ])
             content = " ".join(tokens[start:end])
             windows.append(PaperChunk(
                 chunk_id=build_stable_id("fixed_window", paper_id, window_index, content[:240]),
@@ -83,6 +92,9 @@ class FixedWindowBaselineChunker:
                     "window_token_start": start,
                     "window_token_end": end,
                     "source_chunk_ids": source_chunk_ids,
+                    "source_evidence_types": source_evidence_types,
+                    "source_locators": source_locators,
+                    "source_image_refs": source_image_refs,
                 },
             ))
             if end >= len(tokens):
@@ -94,6 +106,16 @@ class FixedWindowBaselineChunker:
 
 def _tokenize(text: str) -> list[str]:
     return [token for token in str(text or "").split() if token]
+
+
+def _evidence_type(chunk: PaperChunk) -> str:
+    if chunk.chunk_type == "formula" or chunk.has_formula:
+        return "formula"
+    if chunk.chunk_type == "figure" or chunk.has_figure:
+        return "figure"
+    if chunk.chunk_type == "table" or chunk.has_table:
+        return "table"
+    return chunk.chunk_type
 
 
 def _unique_texts(values: list[str]) -> list[str]:

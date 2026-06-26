@@ -379,6 +379,8 @@ def _matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
             continue
         if chunk.metadata.get(key) == value:
             continue
+        if key == "chunk_type" and value in set(chunk.metadata.get("source_evidence_types") or []):
+            continue
         return False
     return True
 

@@ -145,6 +145,50 @@ def test_retrieval_evaluator_scores_multi_evidence_coverage_and_types() -> None:
     assert result.by_qa_type["table_qa"].evidence_coverage(2) == 1.0
 
 
+def test_retrieval_evaluator_counts_source_chunk_mapping_as_gold_hit() -> None:
+    fixed_window = _chunk(
+        "fixed-window-1",
+        content="A fixed token window containing the table and its conclusion.",
+        metadata={
+            "source_chunk_ids": ["tbl-results", "para-conclusion"],
+            "source_evidence_types": ["table", "paragraph"],
+            "source_locators": [
+                "paper://p1/pdf#page=6&pdf_rect=1,2,3,4",
+                "paper://p1/pdf#page=7",
+            ],
+            "source_image_refs": ["tables/table1.png"],
+        },
+    )
+    retriever = _FakeRetriever(RetrievalResult(
+        child_chunks=[fixed_window],
+        ref_chunks=[],
+        parent_chunks=[],
+        intent="table_query",
+    ))
+    pair = EvidenceQAPair(
+        question="What do the experimental results show?",
+        paper_id="p1",
+        qa_type="table_qa",
+        gold_chunk_ids=["tbl-results", "para-conclusion"],
+        required_evidence_types=["table", "paragraph"],
+        gold_source_locators=[
+            "paper://p1/pdf#page=6",
+            "paper://p1/pdf#page=7",
+        ],
+        gold_image_refs=["tables/table1.png"],
+    )
+
+    result = EvidenceRetrievalEvaluator(retriever).evaluate([pair], ks=(1,))
+
+    assert result.hit_rate(1) == 1.0
+    assert result.evidence_coverage(1) == 1.0
+    assert result.required_type_coverage(1) == 1.0
+    assert result.source_locator_coverage(1) == 1.0
+    assert result.image_recall(1) == 1.0
+    assert result.visual_evidence_coverage(1) == 1.0
+    assert result.over_retrieval_rate(1) == 0.0
+
+
 def test_retrieval_evaluator_scores_main_citation_accuracy() -> None:
     content = "The main claim is grounded here."
     paragraph = _chunk(

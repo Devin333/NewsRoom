@@ -4,6 +4,7 @@ import pytest
 
 from business.research.document.models import PaperChunk
 from business.research.rag.fixed_window_baseline import FixedWindowBaselineChunker, FixedWindowChunkerConfig
+from business.research.rag.run_evidence_eval import _matches_filters
 
 
 def _chunk(chunk_id: str, content: str, *, chunk_type: str = "paragraph", section_index: int = 1) -> PaperChunk:
@@ -41,17 +42,25 @@ def test_fixed_window_baseline_chunks_text_with_overlap_and_source_mapping() -> 
     assert windows[1].metadata["baseline"] == "fixed_window"
 
 
-def test_fixed_window_baseline_skips_visual_chunks() -> None:
+def test_fixed_window_baseline_includes_visual_text_but_skips_page_visual_chunks() -> None:
     chunks = [
         _chunk("fig-1", "figure caption", chunk_type="figure"),
         _chunk("tbl-1", "table rows", chunk_type="table"),
         _chunk("para-1", "body text"),
+        _chunk(
+            "page-1",
+            "rendered page visual",
+            chunk_type="figure",
+        ).model_copy(update={"metadata": {"page_visual": True}}),
     ]
 
     windows = FixedWindowBaselineChunker(FixedWindowChunkerConfig(window_tokens=10)).chunk(chunks)
 
     assert len(windows) == 1
-    assert windows[0].metadata["source_chunk_ids"] == ["para-1"]
+    assert windows[0].metadata["source_chunk_ids"] == ["fig-1", "tbl-1", "para-1"]
+    assert windows[0].metadata["source_evidence_types"] == ["figure", "table", "paragraph"]
+    assert _matches_filters(windows[0], {"chunk_type": "table"}) is True
+    assert _matches_filters(windows[0], {"chunk_type": "figure"}) is True
 
 
 def test_fixed_window_config_rejects_invalid_overlap() -> None:
