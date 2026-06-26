@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -559,6 +560,16 @@ def _formula_question_label(label: str) -> str:
     return f"Equation {normalized}"
 
 
+def _typed_element_label(label: str, *, element_type: str) -> str:
+    normalized = label.strip()
+    if not normalized:
+        return f"the {element_type}"
+    lowered = normalized.casefold()
+    if re.search(rf"\b{re.escape(element_type)}\.?\b", lowered):
+        return normalized
+    return f"{element_type.title()} {normalized}"
+
+
 def _visual_or_table_pair(
     chunk: PaperChunk,
     *,
@@ -567,7 +578,10 @@ def _visual_or_table_pair(
     chunks_by_id: dict[str, PaperChunk],
 ) -> EvidenceQAPair:
     is_table = qa_type == "table_qa"
-    label = _element_label(chunk, fallback="the table" if is_table else "the figure")
+    label = _typed_element_label(
+        _element_label(chunk, fallback="the table" if is_table else "the figure"),
+        element_type="table" if is_table else "figure",
+    )
     question = (
         f"What do the experimental results around {label} show?"
         if is_table
@@ -613,7 +627,7 @@ def _experiment_result_pair(
     ]
     if not context_chunks:
         return None
-    label = _element_label(chunk, fallback="the table")
+    label = _typed_element_label(_element_label(chunk, fallback="the table"), element_type="table")
     gold_ids = _unique_texts([chunk.chunk_id, *(context.chunk_id for context in context_chunks)])
     required_types = _unique_texts(["table", *(_evidence_type_for_chunk(context) for context in context_chunks)])
     return EvidenceQAPair(

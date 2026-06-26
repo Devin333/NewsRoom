@@ -368,11 +368,14 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
     )
     assert by_type["table_qa"].gold_chunk_ids == ["tbl-1", "para-result"]
     assert by_type["table_qa"].required_evidence_types == ["table", "paragraph"]
+    assert "table" in by_type["table_qa"].question.lower()
     assert by_type["experiment_result_qa"].gold_chunk_ids == ["tbl-1", "para-result"]
     assert by_type["experiment_result_qa"].required_evidence_types == ["table", "paragraph"]
     assert "experiment results" in by_type["experiment_result_qa"].question.lower()
+    assert "table" in by_type["experiment_result_qa"].question.lower()
     assert by_type["table_qa"].gold_image_refs == ["tables/table1.png"]
     assert by_type["figure_qa"].gold_image_refs == ["figures/fig1.png"]
+    assert "figure" in by_type["figure_qa"].question.lower()
     assert any(
         pair.qa_type == "citation_qa"
         and pair.gold_source_locators == ["paper://p1/pdf#page=2"]
