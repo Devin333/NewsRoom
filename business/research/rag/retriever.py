@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import Any, Mapping, TYPE_CHECKING
 
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
@@ -67,11 +68,15 @@ _FIELD_SCORE_KEYS = FIELD_NAMES
 _CHILD_FALLBACK_SCORE_KEYS = ("semantic", "field", "position", "graph")
 _CHILD_FINAL_SCORE_KEYS = ("semantic", "field_embedding", "field_rerank", "position", "graph")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
+DEFAULT_RETRIEVAL_POLICY = "default"
+PAPER_VISUAL_RAG_TUNED_POLICY = "paper_visual_rag_tuned"
+NEWS_PAPER_RAG_POLICY_ENV = "NEWS_PAPER_RAG_POLICY"
 
 
 @dataclass(frozen=True)
 class RetrievalPolicy:
     """Tunable retrieval parameters (position weighting + over-fetch + rerank filter)."""
+    name: str = DEFAULT_RETRIEVAL_POLICY
     position_alpha: dict[str, float] = field(default_factory=lambda: dict(_DEFAULT_ALPHA))
     default_alpha: float = 0.2          # fallback α for unlisted intents
     sigma: float = 3.0                  # position decay rate, in sections
@@ -197,6 +202,58 @@ class RetrievalPolicy:
                 out.append(normalized)
                 seen.add(normalized)
         return tuple(out) if out else tuple(FIELD_NAMES)
+
+
+def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
+    """Build a named retrieval policy without changing the default behavior."""
+    normalized = (policy_name or DEFAULT_RETRIEVAL_POLICY).strip().casefold()
+    if not normalized or normalized == DEFAULT_RETRIEVAL_POLICY:
+        return RetrievalPolicy()
+    if normalized != PAPER_VISUAL_RAG_TUNED_POLICY:
+        raise ValueError(
+            f"unknown retrieval policy {policy_name!r}; expected "
+            f"{DEFAULT_RETRIEVAL_POLICY!r} or {PAPER_VISUAL_RAG_TUNED_POLICY!r}"
+        )
+
+    defaults = RetrievalPolicy()
+    field_intent_score_weights = {
+        intent: dict(weights)
+        for intent, weights in defaults.field_intent_score_weights.items()
+    }
+    field_intent_score_weights["figure_query"] = {
+        "title": 0.05,
+        "abstract": 0.00,
+        "caption": 0.75,
+        "equation": 0.00,
+        "body": 0.20,
+    }
+    field_intent_score_weights["table_query"] = {
+        "title": 0.05,
+        "abstract": 0.00,
+        "caption": 0.50,
+        "equation": 0.00,
+        "body": 0.45,
+    }
+    return RetrievalPolicy(
+        name=PAPER_VISUAL_RAG_TUNED_POLICY,
+        overfetch_multiplier=5,
+        visual_fusion_text_weight=0.85,
+        visual_fusion_visual_weight=0.15,
+        child_score_weights={
+            "semantic": 0.45,
+            "field": 0.40,
+            "position": 0.05,
+            "graph": 0.10,
+        },
+        field_intent_score_weights=field_intent_score_weights,
+    )
+
+
+def build_retrieval_policy_from_env(
+    env: Mapping[str, str] | None = None,
+) -> RetrievalPolicy:
+    values = env if env is not None else os.environ
+    return build_retrieval_policy(values.get(NEWS_PAPER_RAG_POLICY_ENV))
 
 
 @dataclass(frozen=True)
@@ -351,6 +408,10 @@ class ResearchRetriever:
         self._field_reranker = field_reranker
         self._visual_store = visual_store
 
+    @property
+    def policy(self) -> RetrievalPolicy:
+        return self._policy
+
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         import time
         t0 = time.perf_counter()
@@ -428,6 +489,12 @@ class ResearchRetriever:
 
         elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
         metrics = {
+            "retrieval_policy": self._policy.name,
+            "retrieval_policy_overfetch_multiplier": self._policy.overfetch_multiplier,
+            "retrieval_policy_visual_fusion_weights": {
+                "text": self._policy.visual_fusion_text_weight,
+                "visual": self._policy.visual_fusion_visual_weight,
+            },
             "intent": route.intent,
             "reranker": self._reranker is not None,
             "recalled": n_recalled,
@@ -1800,4 +1867,14 @@ def _with_retrieval_scores(
     return chunk.model_copy(update={"metadata": metadata})
 
 
-__all__ = ["ResearchRetriever", "RetrievalPolicy", "RetrievalRequest", "RetrievalResult"]
+__all__ = [
+    "DEFAULT_RETRIEVAL_POLICY",
+    "NEWS_PAPER_RAG_POLICY_ENV",
+    "PAPER_VISUAL_RAG_TUNED_POLICY",
+    "ResearchRetriever",
+    "RetrievalPolicy",
+    "RetrievalRequest",
+    "RetrievalResult",
+    "build_retrieval_policy",
+    "build_retrieval_policy_from_env",
+]

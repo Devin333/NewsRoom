@@ -71,8 +71,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             chunks,
             visual_enabled=args.visual,
             image_root=Path(args.image_root) if args.image_root else None,
+            retrieval_policy=args.retrieval_policy,
         )
         retrieval = EvidenceRetrievalEvaluator(retriever).evaluate(pairs)
+        policy = retriever.policy
+        metadata["retrieval_policy"] = policy.name
+        metadata["retrieval_policy_overfetch_multiplier"] = policy.overfetch_multiplier
+        metadata["retrieval_policy_child_score_weights"] = policy.normalized_child_score_weights()
+        metadata["retrieval_policy_visual_fusion_weights"] = {
+            "text": policy.visual_fusion_text_weight,
+            "visual": policy.visual_fusion_visual_weight,
+        }
         metadata["visual_fusion_enabled"] = visual_store is not None
         metadata["visual_indexed_chunks"] = _visual_indexed_count(visual_store)
     report = EvidenceRegressionReport(
@@ -141,6 +150,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Root used to resolve relative figure image refs for --visual.",
     )
     parser.add_argument(
+        "--retrieval-policy",
+        default="",
+        help="Named retrieval policy for --live-retrieval, for example paper_visual_rag_tuned.",
+    )
+    parser.add_argument(
         "--threshold",
         action="append",
         default=[],
@@ -170,8 +184,9 @@ def _build_live_retriever(
     *,
     visual_enabled: bool,
     image_root: Path | None,
+    retrieval_policy: str | None = None,
 ):
-    from business.research.rag.retriever import ResearchRetriever
+    from business.research.rag.retriever import ResearchRetriever, build_retrieval_policy
 
     chunk_store = _InMemoryChunkStore()
     chunk_store.ensure_collection()
@@ -185,7 +200,11 @@ def _build_live_retriever(
         )
         visual_store.ensure_collection()
         visual_store.index_chunks(chunks)
-    return ResearchRetriever(chunk_store, visual_store=visual_store), visual_store
+    return ResearchRetriever(
+        chunk_store,
+        policy=build_retrieval_policy(retrieval_policy),
+        visual_store=visual_store,
+    ), visual_store
 
 
 def _describe_visual_chunks(chunks: list[PaperChunk], *, image_root: Path) -> list[PaperChunk]:

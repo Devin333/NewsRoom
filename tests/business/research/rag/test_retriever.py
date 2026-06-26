@@ -7,10 +7,15 @@ import pytest
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
 from business.research.rag.retriever import (
+    DEFAULT_RETRIEVAL_POLICY,
+    NEWS_PAPER_RAG_POLICY_ENV,
+    PAPER_VISUAL_RAG_TUNED_POLICY,
     ResearchRetriever,
     RetrievalPolicy,
     RetrievalRequest,
     RetrievalResult,
+    build_retrieval_policy,
+    build_retrieval_policy_from_env,
 )
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
@@ -576,6 +581,57 @@ def test_policy_default_alpha_for_unknown_intent():
     policy = RetrievalPolicy(default_alpha=0.5)
     # unlisted intent falls back to default_alpha
     assert policy.alpha_for("totally_unknown_intent") == 0.5
+
+
+def test_build_retrieval_policy_default_matches_current_defaults():
+    default = RetrievalPolicy()
+    built = build_retrieval_policy(DEFAULT_RETRIEVAL_POLICY)
+
+    assert built == default
+    assert build_retrieval_policy(None) == default
+    assert built.name == DEFAULT_RETRIEVAL_POLICY
+
+
+def test_build_retrieval_policy_visual_tuned_uses_benchmark_weights():
+    policy = build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY)
+
+    assert policy.name == PAPER_VISUAL_RAG_TUNED_POLICY
+    assert policy.overfetch_multiplier == 5
+    assert policy.visual_fusion_text_weight == pytest.approx(0.85)
+    assert policy.visual_fusion_visual_weight == pytest.approx(0.15)
+    assert policy.normalized_child_score_weights() == {
+        "semantic": 0.45,
+        "field": 0.4,
+        "position": 0.05,
+        "graph": 0.1,
+    }
+    assert policy.field_score_weights_for("figure_query") == {
+        "title": 0.05,
+        "abstract": 0.0,
+        "caption": 0.75,
+        "equation": 0.0,
+        "body": 0.2,
+    }
+    assert policy.field_score_weights_for("table_query") == {
+        "title": 0.05,
+        "abstract": 0.0,
+        "caption": 0.5,
+        "equation": 0.0,
+        "body": 0.45,
+    }
+
+
+def test_build_retrieval_policy_from_env_reads_policy_name():
+    policy = build_retrieval_policy_from_env({
+        NEWS_PAPER_RAG_POLICY_ENV: PAPER_VISUAL_RAG_TUNED_POLICY,
+    })
+
+    assert policy.name == PAPER_VISUAL_RAG_TUNED_POLICY
+
+
+def test_build_retrieval_policy_rejects_unknown_name():
+    with pytest.raises(ValueError, match="unknown retrieval policy"):
+        build_retrieval_policy("made_up_policy")
 
 
 def test_custom_policy_injected():

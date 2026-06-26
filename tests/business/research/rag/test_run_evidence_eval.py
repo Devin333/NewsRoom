@@ -120,6 +120,44 @@ def test_run_evidence_eval_live_retrieval_can_enable_visual_index(tmp_path) -> N
     assert report["metadata"]["visual_indexed_chunks"] == 1
 
 
+def test_run_evidence_eval_records_retrieval_policy_metadata(tmp_path) -> None:
+    papers_dir = tmp_path / "papers"
+    paper_dir = papers_dir / "p1"
+    paper_dir.mkdir(parents=True)
+    (paper_dir / "research_document.json").write_text(
+        json.dumps(_research_document_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output = tmp_path / "report"
+
+    exit_code = main([
+        "--papers-dir",
+        str(papers_dir),
+        "--build-golden-set",
+        "--live-retrieval",
+        "--retrieval-policy",
+        "paper_visual_rag_tuned",
+        "--output-dir",
+        str(output),
+    ])
+
+    assert exit_code == 0
+    report = json.loads((output / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    metadata = report["metadata"]
+    assert metadata["retrieval_policy"] == "paper_visual_rag_tuned"
+    assert metadata["retrieval_policy_overfetch_multiplier"] == 5
+    assert metadata["retrieval_policy_child_score_weights"] == {
+        "semantic": 0.45,
+        "field": 0.4,
+        "position": 0.05,
+        "graph": 0.1,
+    }
+    assert metadata["retrieval_policy_visual_fusion_weights"] == {
+        "text": 0.85,
+        "visual": 0.15,
+    }
+
+
 def _research_document_payload() -> dict:
     return {
         "paper_id": "p1",

@@ -7,7 +7,7 @@ from framework.harness.rag.models import RAGBudget
 
 from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.retrieval_port import PaperChunkRetrievalPort
-from business.research.rag.retriever import ResearchRetriever
+from business.research.rag.retriever import ResearchRetriever, RetrievalPolicy
 from business.research.services.rag_policy import ResearchRAGPolicyBuilder
 from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingSearchPort
@@ -36,6 +36,7 @@ class PaperRAGSession:
         field_index: FieldEmbeddingSearchPort | None = None,
         field_reranker: "RerankerPort | None" = None,
         visual_store: VisualChunkSearchPort | None = None,
+        retrieval_policy: RetrievalPolicy | None = None,
     ) -> None:
         self._chunk_store = chunk_store
         self._policy_builder = ResearchRAGPolicyBuilder()
@@ -44,6 +45,7 @@ class PaperRAGSession:
         self._field_index = field_index
         self._field_reranker = field_reranker
         self._visual_store = visual_store
+        self._retrieval_policy = retrieval_policy
 
     def run(
         self,
@@ -62,6 +64,7 @@ class PaperRAGSession:
             field_index=self._field_index,
             field_reranker=self._field_reranker,
             visual_store=self._visual_store,
+            policy=self._retrieval_policy,
         )
         retrieval_port = PaperChunkRetrievalPort(
             retriever, default_section_index=current_section_index

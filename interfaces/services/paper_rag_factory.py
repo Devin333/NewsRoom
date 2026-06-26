@@ -30,7 +30,10 @@ from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 from business.research.application.visual_chunk_describer import build_visual_chunk_describer_from_env
 from business.research.application.paper_rag_session import PaperRAGSession
-from business.research.rag.retriever import ResearchRetriever
+from business.research.rag.retriever import (
+    ResearchRetriever,
+    build_retrieval_policy_from_env,
+)
 
 
 def _dsn() -> str:
@@ -96,8 +99,10 @@ def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeli
 
 def build_research_retriever(*, with_reranker: bool = True) -> ResearchRetriever:
     reranker = get_reranker() if with_reranker else None
+    retrieval_policy = build_retrieval_policy_from_env()
     return ResearchRetriever(
         build_chunk_store(),
+        policy=retrieval_policy,
         reranker=reranker,
         field_index=build_field_chunk_store(),
         field_reranker=reranker,
@@ -107,12 +112,14 @@ def build_research_retriever(*, with_reranker: bool = True) -> ResearchRetriever
 
 def build_paper_rag_session(*, with_reranker: bool = True) -> PaperRAGSession:
     reranker = get_reranker() if with_reranker else None
+    retrieval_policy = build_retrieval_policy_from_env()
     return PaperRAGSession(
         build_chunk_store(),
         reranker=reranker,
         field_index=build_field_chunk_store(),
         field_reranker=reranker,
         visual_store=build_visual_chunk_store(),
+        retrieval_policy=retrieval_policy,
     )
 
 
