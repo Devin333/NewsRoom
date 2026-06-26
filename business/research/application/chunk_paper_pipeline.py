@@ -19,6 +19,7 @@ from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.document_parser import DocumentParserPort
 from business.research.ports.field_embedding_index import FieldEmbeddingIndexerPort
 from business.research.ports.source_fetcher import SourceFetcherPort
+from business.research.ports.visual_description import VisualChunkDescriptionPort
 from business.research.ports.visual_chunk_index import VisualChunkIndexerPort
 
 
@@ -31,6 +32,7 @@ class ChunkPipelineResult:
     structure_detected: bool
     parse_source: str
     chunk_manifest_path: str = ""
+    visual_described_chunks: int = 0
 
 
 _BROWSER_UA = (
@@ -88,6 +90,7 @@ class ChunkPaperPipeline:
         chunk_indexer: ChunkIndexerPort | None = None,
         visual_chunk_indexer: VisualChunkIndexerPort | None = None,
         field_chunk_indexer: FieldEmbeddingIndexerPort | None = None,
+        visual_chunk_describer: VisualChunkDescriptionPort | None = None,
         chunker: PaperDocumentChunker | None = None,
         chunk_manifest: ChunkManifestManager | None = None,
         with_propositions: bool = True,
@@ -99,6 +102,7 @@ class ChunkPaperPipeline:
         self._indexer = chunk_indexer or chunk_store  # PaperChunkStore satisfies both
         self._visual_indexer = visual_chunk_indexer
         self._field_indexer = field_chunk_indexer
+        self._visual_describer = visual_chunk_describer
         self._chunker = chunker or PaperDocumentChunker()
         self._chunk_manifest = chunk_manifest or ChunkManifestManager()
         self._with_propositions = with_propositions
@@ -121,6 +125,19 @@ class ChunkPaperPipeline:
                 logging.getLogger(__name__).warning("proposition preprocess skipped: %s", exc)
 
         chunks = self._chunk_manifest.resolve_chunk_ids(paper_id, chunks)
+        visual_described_chunks = 0
+        if self._visual_describer is not None:
+            before = {
+                chunk.chunk_id: str(chunk.metadata.get("visual_description") or "")
+                for chunk in chunks
+            }
+            chunks = self._visual_describer.describe_chunks(chunks)
+            visual_described_chunks = sum(
+                1
+                for chunk in chunks
+                if str(chunk.metadata.get("visual_description") or "")
+                and str(chunk.metadata.get("visual_description") or "") != before.get(chunk.chunk_id, "")
+            )
         self._store.ensure_collection()
         self._indexer.index_chunks(chunks)
         if self._field_indexer is not None:
@@ -144,6 +161,7 @@ class ChunkPaperPipeline:
             structure_detected=any(c.structure_detected for c in chunks),
             parse_source=parse_source,
             chunk_manifest_path=str(manifest_path),
+            visual_described_chunks=visual_described_chunks,
         )
 
 

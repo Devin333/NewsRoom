@@ -28,6 +28,7 @@ from business.research.document.chunk_storage import (
 )
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
+from business.research.application.visual_chunk_describer import build_visual_chunk_describer_from_env
 from business.research.application.paper_rag_session import PaperRAGSession
 from business.research.rag.retriever import ResearchRetriever
 
@@ -88,6 +89,7 @@ def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeli
         ArxivDocumentParser(),
         field_chunk_indexer=build_field_chunk_store(),
         visual_chunk_indexer=build_visual_chunk_store(),
+        visual_chunk_describer=build_visual_chunk_describer_from_env(),
         with_propositions=with_propositions,
     )
 

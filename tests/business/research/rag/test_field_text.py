@@ -24,6 +24,7 @@ def test_extract_field_texts_returns_available_fields_and_sources():
         ),
         metadata={
             "caption_text": "Transformer architecture overview.",
+            "visual_description": "The image shows stacked encoder and decoder blocks with attention arrows.",
             "content_sources": ["caption", "nearby_context"],
         },
     )
@@ -35,6 +36,8 @@ def test_extract_field_texts_returns_available_fields_and_sources():
     assert "equation" in fields.available_fields()
     assert fields.sources_for("title") == ("section_title",)
     assert "metadata.caption_text" in fields.sources_for("caption")
+    assert "metadata.visual_description" in fields.sources_for("caption")
+    assert "attention arrows" in fields.caption
     assert "formula_latex" in fields.sources_for("equation")
     assert fields.text_for("missing") == ""
 

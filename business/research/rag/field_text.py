@@ -74,6 +74,9 @@ def _caption_text(chunk: PaperChunk) -> tuple[str, list[str]]:
         ("metadata.caption_text", str(chunk.metadata.get("caption_text") or "")),
         ("metadata.surya_caption", str(chunk.metadata.get("surya_caption") or "")),
     ]
+    visual_description = str(chunk.metadata.get("visual_description") or "")
+    if visual_description:
+        values.append(("metadata.visual_description", visual_description))
     content_sources = chunk.metadata.get("content_sources", [])
     if chunk.chunk_type in {"figure", "table"} or "caption" in content_sources:
         values.append(("content.caption_block", _caption_block(chunk.content)))
@@ -91,8 +94,11 @@ def _equation_text(chunk: PaperChunk) -> tuple[str, list[str]]:
 
 
 def _body_text(chunk: PaperChunk) -> tuple[str, list[str]]:
-    text = _normalize_text(chunk.content)
-    return text, ["content"] if text else []
+    values = [("content", chunk.content)]
+    visual_description = str(chunk.metadata.get("visual_description") or "")
+    if visual_description and visual_description not in chunk.content:
+        values.append(("metadata.visual_description", visual_description))
+    return _join_sourced_values(values)
 
 
 def _join_sourced_values(values: list[tuple[str, str]]) -> tuple[str, list[str]]:

@@ -80,12 +80,29 @@ def test_chunk_pipeline_receives_visual_chunk_indexer(monkeypatch):
     monkeypatch.setattr(paper_rag_factory, "build_chunk_repository", lambda: _FakeRepo())
     monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
     monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: visual_store)
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_describer_from_env", lambda: None)
     monkeypatch.setattr(paper_rag_factory, "ArxivSourceConnector", _FakeFetcher)
     monkeypatch.setattr(paper_rag_factory, "ArxivDocumentParser", _FakeParser)
 
     paper_rag_factory.build_chunk_pipeline()
 
     assert _FakePipeline.last_kwargs["visual_chunk_indexer"] is visual_store
+
+
+def test_chunk_pipeline_receives_visual_chunk_describer(monkeypatch):
+    describer = object()
+    monkeypatch.setattr(paper_rag_factory, "ChunkPaperPipeline", _FakePipeline)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_repository", lambda: _FakeRepo())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_describer_from_env", lambda: describer)
+    monkeypatch.setattr(paper_rag_factory, "ArxivSourceConnector", _FakeFetcher)
+    monkeypatch.setattr(paper_rag_factory, "ArxivDocumentParser", _FakeParser)
+
+    paper_rag_factory.build_chunk_pipeline()
+
+    assert _FakePipeline.last_kwargs["visual_chunk_describer"] is describer
 
 
 def test_retriever_and_session_receive_visual_store(monkeypatch):

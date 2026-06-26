@@ -4,7 +4,9 @@ import argparse
 import json
 import math
 import hashlib
+import os
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -26,6 +28,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     visual_store = None
     if args.papers_dir:
         chunks = _load_chunks_from_papers_dir(Path(args.papers_dir))
+        if args.vision_descriptions:
+            chunks = _describe_visual_chunks(
+                chunks,
+                image_root=Path(args.image_root) if args.image_root else Path(args.papers_dir),
+            )
     if args.build_golden_set:
         if not chunks:
             raise ValueError("--build-golden-set requires --papers-dir")
@@ -48,6 +55,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.papers_dir:
         metadata["papers_dir"] = str(Path(args.papers_dir))
         metadata["chunks_total"] = len(chunks)
+        metadata["visual_descriptions_enabled"] = bool(args.vision_descriptions)
+        metadata["visual_described_chunks"] = _visual_described_count(chunks)
     qa_type_counts = Counter(pair.qa_type for pair in pairs)
     behavior_counts = Counter(pair.expected_behavior for pair in pairs)
     metadata["qa_type_counts"] = dict(sorted(qa_type_counts.items()))
@@ -123,6 +132,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable in-memory visual indexing for figure chunks during --live-retrieval.",
     )
     parser.add_argument(
+        "--vision-descriptions",
+        action="store_true",
+        help="Use OPENAI_*-configured multimodal model to describe figure/table images before indexing.",
+    )
+    parser.add_argument(
         "--image-root",
         help="Root used to resolve relative figure image refs for --visual.",
     )
@@ -174,10 +188,29 @@ def _build_live_retriever(
     return ResearchRetriever(chunk_store, visual_store=visual_store), visual_store
 
 
+def _describe_visual_chunks(chunks: list[PaperChunk], *, image_root: Path) -> list[PaperChunk]:
+    from business.research.application.visual_chunk_describer import (
+        VisualChunkDescriptionConfig,
+        OpenAICompatibleVisualChunkDescriber,
+    )
+
+    config = replace(VisualChunkDescriptionConfig.from_env(image_root=image_root), enabled=True)
+    if not config.base_url:
+        raise ValueError("--vision-descriptions requires OPENAI_BASE_URL or NEWS_VISUAL_DESCRIPTION_BASE_URL")
+    if not os.environ.get(config.api_key_env):
+        raise ValueError(f"--vision-descriptions requires {config.api_key_env}")
+    describer = OpenAICompatibleVisualChunkDescriber(config)
+    return describer.describe_chunks(chunks)
+
+
 def _visual_indexed_count(visual_store) -> int:
     if visual_store is None:
         return 0
     return len(getattr(visual_store, "_vectors", {}))
+
+
+def _visual_described_count(chunks: list[PaperChunk]) -> int:
+    return sum(1 for chunk in chunks if chunk.metadata.get("visual_description"))
 
 
 class _InMemoryChunkStore:
