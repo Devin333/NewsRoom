@@ -73,7 +73,14 @@ def test_evidence_regression_report_writes_json_and_markdown(tmp_path) -> None:
     assert payload["retrieval"]["by_k"]["1"]["hit_rate"] == 1.0
     assert payload["answer"]["success_rate"] == 1.0
     assert payload["generation"]["faithfulness"] == 1.0
+    scorecard = payload["rag_evaluation_report"]["scorecard"]
+    metrics = {metric["name"]: metric["value"] for metric in scorecard["metrics"]}
+    assert metrics["retrieval.mrr"] == 1.0
+    assert metrics["retrieval.hit_at_1"] == 1.0
+    assert metrics["answer.success_rate"] == 1.0
+    assert metrics["generation.faithfulness"] == 1.0
     assert "Paper RAG Evidence Regression Report" in markdown
+    assert "RAG Scorecard" in markdown
     assert "Evidence Retrieval Eval" in markdown
     assert "Evidence Answer Eval" in markdown
     assert "Generation" in markdown
@@ -104,3 +111,32 @@ def test_evidence_regression_report_records_threshold_failures() -> None:
     assert report.passed() is False
     assert report.issues() == ["retrieval.evidence_coverage=0.000 is below threshold 0.800"]
     assert "**Status:** FAIL" in report.to_markdown()
+
+
+def test_evidence_regression_report_maps_answer_failures_to_rag_scorecard() -> None:
+    pair = EvidenceQAPair(
+        question="What is missing?",
+        paper_id="p1",
+        qa_type="table_qa",
+        gold_chunk_ids=["tbl-1"],
+    )
+    answer = EvidenceAnswerEvalResult(scores=[
+        EvidenceAnswerScores(
+            sample=EvidenceAnswerSample(pair=pair, answer="The answer missed the table."),
+            fact_coverage=1.0,
+            citation_grounding=0.0,
+            source_locator_grounding=None,
+            abstention_correct=None,
+            answer_success=False,
+            retrieval_context_coverage=0.0,
+            citation_gold_coverage=0.0,
+            failure_reason="missing_gold_in_llm_context",
+        )
+    ])
+    report = EvidenceRegressionReport(answer=answer, metadata={"split": "test"})
+
+    scorecard = report.to_dict()["rag_evaluation_report"]["scorecard"]
+
+    assert scorecard["failure_reasons"] == ["context_missing_gold"]
+    assert scorecard["metadata"]["raw_failure_reason_counts"] == {"missing_gold_in_llm_context": 1}
+    assert scorecard["metadata"]["split"] == "test"

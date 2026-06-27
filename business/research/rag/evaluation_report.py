@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from framework.rag.evaluation import RAGEvaluationReport
+
+from business.research.rag.adapters.evaluation_scorecard_adapter import evidence_results_to_rag_report
 from business.research.rag.answer_eval import EvidenceAnswerEvalResult
 from business.research.rag.evaluation_compare import EvidenceABResult
 from business.research.rag.evidence_eval import EvidenceEvalResult
@@ -26,6 +29,7 @@ class EvidenceRegressionReport:
             "thresholds": dict(self.thresholds),
             "passed": self.passed(),
             "issues": self.issues(),
+            "rag_evaluation_report": self.to_rag_evaluation_report().to_dict(),
         }
         if self.retrieval is not None:
             payload["retrieval"] = _retrieval_result_to_dict(self.retrieval)
@@ -59,6 +63,7 @@ class EvidenceRegressionReport:
             for key in sorted(self.metadata):
                 lines.append(f"- `{key}`: {self.metadata[key]}")
             lines.append("")
+        lines.extend(["## RAG Scorecard", "", _code_block(self.to_rag_evaluation_report().to_markdown()), ""])
         if self.retrieval is not None:
             lines.extend(["## Retrieval", "", _code_block(self.retrieval.report()), ""])
         if self.answer is not None:
@@ -79,6 +84,15 @@ class EvidenceRegressionReport:
         (target / "evidence_regression_report.md").write_text(
             self.to_markdown(),
             encoding="utf-8",
+        )
+
+    def to_rag_evaluation_report(self) -> RAGEvaluationReport:
+        return evidence_results_to_rag_report(
+            retrieval=self.retrieval,
+            answer=self.answer,
+            generation=self.generation,
+            thresholds=self.thresholds,
+            metadata=self.metadata,
         )
 
     def passed(self) -> bool:
