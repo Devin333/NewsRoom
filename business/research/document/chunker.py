@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import re
-from hashlib import sha256
 from typing import Any
 
-from business.foundation import build_stable_id
 from business.research.domain.document import ResearchDocument, ResearchEquation, ResearchFigure, ResearchTable
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import ChunkType, PaperChunk, ParseSource, SectionRole
 from business.research.document.section_detector import classify_section_role, is_abstract_section
 from business.research.document.special_element_scanner import ScannedElements, scan_special_elements
+from framework.rag.core import build_chunk_semantic_key, build_rag_stable_id, content_fingerprint, normalize_semantic_text
 
 # Roles that support proposition decomposition (PRD §5)
 _PROPOSITION_ROLES: frozenset[str] = frozenset(["related_work", "experiment", "conclusion"])
@@ -643,17 +642,15 @@ def _formula_references_by_equation(chunks: list[PaperChunk]) -> dict[str, list[
 
 
 def _stable_chunk_id(paper_id: str, *parts: str) -> str:
-    return build_stable_id("chunk", paper_id, *parts)
+    return build_rag_stable_id("chunk", paper_id, *parts)
 
 
 def _normalize_semantic_text(text: str) -> str:
-    normalized = re.sub(r"\s+", " ", text.casefold()).strip()
-    return normalized
+    return normalize_semantic_text(text)
 
 
 def _content_hash(text: str) -> str:
-    normalized = _normalize_semantic_text(text)
-    return sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return content_fingerprint(text)
 
 
 def _semantic_key(
@@ -664,26 +661,14 @@ def _semantic_key(
     source_locator: str,
     semantic_text: str,
 ) -> tuple[str, str, dict[str, str]]:
-    title_key = _normalize_semantic_text(section_title)
-    content_hash = _content_hash(semantic_text)
-    parts = {
-        "chunk_type": chunk_type,
-        "section_title": title_key,
-        "source_locator": source_locator,
-        "content_hash": content_hash,
-    }
-    return (
-        build_stable_id(
-            "chunk_semantic",
-            paper_id,
-            chunk_type,
-            title_key,
-            source_locator,
-            content_hash,
-        ),
-        content_hash,
-        parts,
+    semantic = build_chunk_semantic_key(
+        document_id=paper_id,
+        chunk_type=chunk_type,
+        section_title=section_title,
+        source_locator=source_locator,
+        content=semantic_text,
     )
+    return semantic.key, semantic.content_hash, dict(semantic.parts)
 
 
 def _chunk_metadata(

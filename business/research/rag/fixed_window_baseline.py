@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from business.foundation import build_stable_id
 from business.research.document.models import PaperChunk
+from framework.rag.core import build_rag_stable_id
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ class FixedWindowBaselineChunker:
             ])
             content = " ".join(tokens[start:end])
             windows.append(PaperChunk(
-                chunk_id=build_stable_id("fixed_window", paper_id, window_index, content[:240]),
+                chunk_id=build_rag_stable_id("fixed_window", paper_id, window_index, content[:240]),
                 paper_id=paper_id,
                 parse_source=anchor.parse_source,
                 chunk_type="paragraph",

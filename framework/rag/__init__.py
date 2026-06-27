@@ -9,7 +9,13 @@ from framework.rag.core import (
     RAGRerankerPort,
     RAGRetrieverPort,
     RAGScoreBreakdown,
+    RAGSemanticKey,
     SourceLocator,
+    build_chunk_semantic_key,
+    build_rag_stable_id,
+    content_fingerprint,
+    normalize_rag_key,
+    normalize_semantic_text,
 )
 
 __all__ = [
@@ -21,5 +27,11 @@ __all__ = [
     "RAGRerankerPort",
     "RAGRetrieverPort",
     "RAGScoreBreakdown",
+    "RAGSemanticKey",
     "SourceLocator",
+    "build_chunk_semantic_key",
+    "build_rag_stable_id",
+    "content_fingerprint",
+    "normalize_rag_key",
+    "normalize_semantic_text",
 ]

@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from business.foundation import build_stable_id
 from business.research.document.models import PaperChunk
+from framework.rag.core import build_rag_stable_id
 
 
 def build_page_visual_chunks(
@@ -63,7 +63,7 @@ def _page_visual_chunk(
         "Visual page containing paper figures/tables.",
         *(_page_chunk_summary(chunk) for chunk in page_chunks),
     ])
-    chunk_id = build_stable_id("chunk", paper_id, "page_visual", str(page))
+    chunk_id = build_rag_stable_id("chunk", paper_id, "page_visual", str(page))
     return PaperChunk(
         chunk_id=chunk_id,
         paper_id=paper_id,

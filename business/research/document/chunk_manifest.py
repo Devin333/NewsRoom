@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-import re
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from business.foundation import build_stable_id
 from business.research.document.models import PaperChunk
 from business.research.document.citation_spans import remap_span_origin_ids
+from framework.rag.core import build_chunk_semantic_key, build_rag_stable_id, content_fingerprint
 
 
 _MANIFEST_VERSION = 1
@@ -43,7 +41,7 @@ class ChunkManifestManager:
             resolved_id = previous_by_key.get(semantic_key)
             if resolved_id is None:
                 resolved_id = (
-                    build_stable_id("chunk", paper_id, "new", semantic_key)
+                    build_rag_stable_id("chunk", paper_id, "new", semantic_key)
                     if old_id in previous_ids
                     else old_id
                 )
@@ -51,7 +49,7 @@ class ChunkManifestManager:
                 if old_id not in used_ids and old_id not in previous_ids:
                     resolved_id = old_id
                 else:
-                    resolved_id = build_stable_id(
+                    resolved_id = build_rag_stable_id(
                         "chunk",
                         paper_id,
                         "manifest",
@@ -155,24 +153,20 @@ def _ensure_semantic_metadata(
         or (anchor.metadata.get("source_locator") if anchor else "")
         or source_ref
     )
-    content_hash = str(metadata.get("content_hash") or _content_hash(chunk.content))
+    content_hash = str(metadata.get("content_hash") or content_fingerprint(chunk.content))
     semantic_key = metadata.get("semantic_key")
     if not semantic_key:
-        title = _normalize_text(chunk.section_title or (anchor.section_title if anchor else ""))
-        semantic_key = build_stable_id(
-            "chunk_semantic",
-            paper_id,
-            chunk.chunk_type,
-            title,
-            source_locator,
-            content_hash,
+        semantic = build_chunk_semantic_key(
+            document_id=paper_id,
+            chunk_type=chunk.chunk_type,
+            section_title=chunk.section_title or (anchor.section_title if anchor else ""),
+            source_locator=source_locator,
+            content=chunk.content,
+            content_hash=content_hash,
         )
-        metadata["semantic_key_parts"] = {
-            "chunk_type": chunk.chunk_type,
-            "section_title": title,
-            "source_locator": source_locator,
-            "content_hash": content_hash,
-        }
+        semantic_key = semantic.key
+        content_hash = semantic.content_hash
+        metadata["semantic_key_parts"] = dict(semantic.parts)
     metadata["source_ref"] = source_ref
     metadata["source_locator"] = source_locator
     metadata["content_hash"] = content_hash
@@ -221,14 +215,6 @@ def _manifest_entry(chunk: PaperChunk) -> dict[str, Any]:
         "source_locator": chunk.metadata.get("source_locator"),
         "source_ref": chunk.metadata.get("source_ref"),
     }
-
-
-def _content_hash(text: str) -> str:
-    return sha256(_normalize_text(text).encode("utf-8")).hexdigest()[:16]
-
-
-def _normalize_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text.casefold()).strip()
 
 
 __all__ = ["ChunkManifestManager", "default_chunk_manifest_path"]
