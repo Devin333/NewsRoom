@@ -9,7 +9,7 @@ from business.research.document.chunker import PaperDocumentChunker
 from business.research.document.models import PaperChunk
 from business.research.document.section_detector import classify_section_role, is_abstract_section
 from business.research.document.special_element_scanner import scan_special_elements
-from business.research.rag.routing import build_retrieval_route, classify_query_intent
+from business.research.rag.retrieval.paper_policy import build_retrieval_route, classify_query_intent
 from tests.business.research.document.helpers import (
     make_doc,
     make_equation,
@@ -790,7 +790,7 @@ def test_is_boilerplate_section():
 
 
 def test_boilerplate_content_and_meta_question_guards():
-    from business.research.rag.eval import _is_boilerplate_content, _is_meta_question
+    from business.research.rag.evaluation.paper_gold_builder import _is_boilerplate_content, _is_meta_question
     assert _is_boilerplate_content("This work was supported by grant no. 12345")
     assert _is_boilerplate_content("We thank the reviewers for their feedback")
     assert not _is_boilerplate_content("The model uses multi-head attention")

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from business.research.rag.benchmark_suite import BenchmarkSuiteConfig, run_benchmark_suite
+from business.research.rag.evaluation.paper_benchmark_suite import BenchmarkSuiteConfig, run_benchmark_suite
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -46,7 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m business.research.rag.run_benchmark_suite",
+        prog="python -m business.research.rag.cli.run_benchmark_suite",
         description="Run train/dev/test paper RAG benchmark with gold evidence audit.",
     )
     parser.add_argument("--papers-dir", required=True, help="Directory containing per-paper research_document.json files.")

@@ -12,8 +12,8 @@ from typing import Any, Sequence
 
 from business.research.document.models import PaperChunk
 from business.research.ports.visual_chunk_index import VisualChunkHit
-from business.research.rag.evaluation_report import EvidenceRegressionReport
-from business.research.rag.evidence_eval import (
+from business.research.rag.evaluation.paper_evaluation_report import EvidenceRegressionReport
+from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceRetrievalEvaluator,
     load_evidence_golden_set,
@@ -29,7 +29,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.papers_dir:
         chunks = _load_chunks_from_papers_dir(Path(args.papers_dir))
         if args.page_visual:
-            from business.research.rag.page_visual_chunks import build_page_visual_chunks
+            from business.research.rag.visual.page_visual_chunks import build_page_visual_chunks
 
             chunks.extend(build_page_visual_chunks(
                 chunks,
@@ -106,7 +106,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m business.research.rag.run_evidence_eval",
+        prog="python -m business.research.rag.cli.run_evidence_eval",
         description="Write a paper RAG evidence benchmark summary/report from a golden set.",
     )
     parser.add_argument("--golden-set", help="Path to EvidenceQAPair JSON golden set.")
@@ -206,7 +206,7 @@ def _build_live_retriever(
     image_root: Path | None,
     retrieval_policy: str | None = None,
 ):
-    from business.research.rag.retriever import ResearchRetriever, build_retrieval_policy
+    from business.research.rag.retrieval.paper_retriever import ResearchRetriever, build_retrieval_policy
 
     chunk_store = _InMemoryChunkStore()
     chunk_store.ensure_collection()

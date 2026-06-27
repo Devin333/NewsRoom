@@ -216,7 +216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m business.research.rag.benchmark_paper_ingest",
+        prog="python -m business.research.rag.evaluation.paper_benchmark_ingest",
         description="Fetch and parse real arXiv papers into .newsroom/papers for the RAG benchmark suite.",
     )
     parser.add_argument("arxiv_id", nargs="*", help="arXiv ids or URLs. Defaults to a mixed-domain seed set.")

@@ -7,7 +7,7 @@ from framework.harness.rag.models import RAGBudget
 
 from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.retrieval_port import PaperChunkRetrievalPort
-from business.research.rag.retriever import ResearchRetriever, RetrievalPolicy
+from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalPolicy
 from business.research.services.rag_policy import ResearchRAGPolicyBuilder
 from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingSearchPort

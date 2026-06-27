@@ -8,7 +8,7 @@ from framework.rag.core import RAGEvidence, RAGQuery
 
 from business.research.document.models import PaperChunk
 from business.research.rag.adapters import PaperChunkAdapter
-from business.research.rag.retriever import ResearchRetriever, RetrievalRequest as ResearchRetrievalRequest
+from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest as ResearchRetrievalRequest
 
 
 def _extract_paper_id(request: RetrievalRequest) -> str:

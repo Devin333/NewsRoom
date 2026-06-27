@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from business.research.reading_session.models import ReadingEvent, ReadingSession
-from business.research.rag.replay import ReplayHarvester
+from business.research.rag.evaluation.paper_replay import ReplayHarvester
 from tests.business.research.helpers import FIXED_NOW
 
 

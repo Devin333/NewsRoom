@@ -13,20 +13,20 @@ from typing import Any, Iterable, Protocol, Sequence
 
 from business.research.document.models import PaperChunk
 from business.research.application.llm_client import _browser_ua_transport
-from business.research.rag.answer_eval import EvidenceAnswerEvaluator, EvidenceAnswerSample
-from business.research.rag.evidence_eval import (
+from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvaluator, EvidenceAnswerSample
+from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
     EvidenceRetrievalEvaluator,
     save_evidence_golden_set,
 )
-from business.research.rag.evaluation_report import EvidenceRegressionReport
-from business.research.rag.fixed_window_baseline import FixedWindowBaselineChunker, FixedWindowChunkerConfig
-from business.research.rag.generation_eval import GenerationEvaluator, GenerationEvalResult
-from business.research.rag.generator import AnswerGenerator, GeneratedAnswer
-from business.research.rag.page_visual_chunks import build_page_visual_chunks
-from business.research.rag.run_evidence_eval import _build_live_retriever, _load_chunks_from_papers_dir
-from business.research.rag.retriever import RetrievalRequest
+from business.research.rag.evaluation.paper_evaluation_report import EvidenceRegressionReport
+from business.research.rag.evaluation.paper_fixed_window_baseline import FixedWindowBaselineChunker, FixedWindowChunkerConfig
+from business.research.rag.evaluation.paper_generation_eval import GenerationEvaluator, GenerationEvalResult
+from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator, GeneratedAnswer
+from business.research.rag.visual.page_visual_chunks import build_page_visual_chunks
+from business.research.rag.cli.run_evidence_eval import _build_live_retriever, _load_chunks_from_papers_dir
+from business.research.rag.retrieval.paper_retriever import RetrievalRequest
 from framework.llm.clients.openai_compatible import LLMRetryPolicy, OpenAICompatibleClient, OpenAICompatibleConfig
 from framework.llm.models.request import LLMRequest
 from framework.shared.env import load_root_env

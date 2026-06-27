@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 
-from business.research.rag.answer_eval import (
+from business.research.rag.evaluation.paper_answer_eval import (
     EvidenceAnswerEvalResult,
     EvidenceAnswerSample,
     EvidenceAnswerScores,
 )
-from business.research.rag.evaluation_report import EvidenceRegressionReport
-from business.research.rag.evidence_eval import EvidenceEvalResult, EvidenceQAPair
-from business.research.rag.generation_eval import GenerationEvalResult, GenerationScores
+from business.research.rag.evaluation.paper_evaluation_report import EvidenceRegressionReport
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult, EvidenceQAPair
+from business.research.rag.evaluation.paper_generation_eval import GenerationEvalResult, GenerationScores
 
 
 def test_evidence_regression_report_writes_json_and_markdown(tmp_path) -> None:

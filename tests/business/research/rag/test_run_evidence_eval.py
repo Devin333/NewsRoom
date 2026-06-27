@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from business.research.rag.evidence_eval import EvidenceQAPair, save_evidence_golden_set
-from business.research.rag.run_evidence_eval import main
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair, save_evidence_golden_set
+from business.research.rag.cli.run_evidence_eval import main
 
 
 def test_run_evidence_eval_writes_summary_report(tmp_path) -> None:

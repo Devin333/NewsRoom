@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from business.research.document.models import PaperChunk
-from business.research.rag.generator import AnswerContextAssembler
-from business.research.rag.retriever import RetrievalResult
+from business.research.rag.retrieval.paper_answer_generator import AnswerContextAssembler
+from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
 
 def test_answer_context_assembler_interleaves_related_context() -> None:

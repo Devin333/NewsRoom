@@ -7,7 +7,7 @@ from framework.harness import BoundedRAGSessionController, RAGBudget, RAGSession
 from business.research.document.models import PaperChunk
 from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.retrieval_port import PaperChunkRetrievalPort
-from business.research.rag.retriever import RetrievalResult
+from business.research.rag.retrieval.paper_retriever import RetrievalResult
 from business.research.services.rag_policy import ResearchRAGPolicyBuilder
 
 

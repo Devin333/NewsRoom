@@ -6,7 +6,7 @@ from pathlib import Path
 
 from business.research.domain.common import SourceLineage
 from business.research.domain.document import ResearchDocument, ResearchSection
-from business.research.rag.benchmark_paper_ingest import ingest_benchmark_papers
+from business.research.rag.evaluation.paper_benchmark_ingest import ingest_benchmark_papers
 
 
 @dataclass(frozen=True)

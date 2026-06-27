@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from business.research.rag.answer_eval import EvidenceAnswerEvaluator, EvidenceAnswerSample
-from business.research.rag.evidence_eval import EvidenceQAPair
+from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvaluator, EvidenceAnswerSample
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 
 
 def test_answer_evaluator_scores_fact_and_citation_grounding() -> None:

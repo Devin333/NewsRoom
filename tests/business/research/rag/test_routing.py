@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from business.research.rag.routing import build_retrieval_route, classify_query_intent
+from business.research.rag.retrieval.paper_policy import build_retrieval_route, classify_query_intent
 
 
 @pytest.mark.parametrize(

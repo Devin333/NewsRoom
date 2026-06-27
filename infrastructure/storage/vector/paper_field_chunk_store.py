@@ -6,7 +6,7 @@ from qdrant_client import models as qmodels
 
 from business.research.document.models import PaperChunk
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
-from business.research.rag.field_text import FIELD_NAMES, extract_field_texts
+from business.research.rag.adapters.paper_field_text import FIELD_NAMES, extract_field_texts
 from infrastructure.storage.vector.models import VectorDocument, VectorSearchQuery
 from infrastructure.storage.vector.qdrant_store import QdrantVectorStore
 

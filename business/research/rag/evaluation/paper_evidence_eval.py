@@ -18,7 +18,7 @@ from framework.rag.retrieval import dedupe_by_key
 
 from business.research.document.citation_spans import resolve_citation_span
 from business.research.document.models import PaperChunk
-from business.research.rag.retriever import ResearchRetriever, RetrievalRequest
+from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest
 
 EvidenceBehavior = Literal["answer", "abstain"]
 

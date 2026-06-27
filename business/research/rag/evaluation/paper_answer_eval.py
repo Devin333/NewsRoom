@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from business.research.rag.evidence_eval import EvidenceQAPair
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from framework.rag.evaluation import AnswerMetricCase, score_answer_case
 
 

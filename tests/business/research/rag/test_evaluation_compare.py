@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from business.research.document.models import PaperChunk
-from business.research.rag.evaluation_compare import EvidenceABComparator, compare_evidence_results
-from business.research.rag.evidence_eval import EvidenceQAPair, EvidenceRetrievalEvaluator
-from business.research.rag.retriever import RetrievalResult
+from business.research.rag.evaluation.paper_evaluation_compare import EvidenceABComparator, compare_evidence_results
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair, EvidenceRetrievalEvaluator
+from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
 
 def _chunk(chunk_id: str, *, chunk_type: str = "paragraph") -> PaperChunk:

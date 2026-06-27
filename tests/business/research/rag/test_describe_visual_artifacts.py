@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from business.research.document.models import PaperChunk
-from business.research.rag.describe_visual_artifacts import describe_visual_artifacts
+from business.research.rag.visual.describe_visual_artifacts import describe_visual_artifacts
 
 
 class _FakeDescriber:

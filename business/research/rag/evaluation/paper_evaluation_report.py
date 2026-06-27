@@ -8,10 +8,10 @@ from typing import Any
 from framework.rag.evaluation import RAGEvaluationReport
 
 from business.research.rag.adapters.evaluation_scorecard_adapter import evidence_results_to_rag_report
-from business.research.rag.answer_eval import EvidenceAnswerEvalResult
-from business.research.rag.evaluation_compare import EvidenceABResult
-from business.research.rag.evidence_eval import EvidenceEvalResult
-from business.research.rag.generation_eval import GenerationEvalResult
+from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvalResult
+from business.research.rag.evaluation.paper_evaluation_compare import EvidenceABResult
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult
+from business.research.rag.evaluation.paper_generation_eval import GenerationEvalResult
 
 
 @dataclass

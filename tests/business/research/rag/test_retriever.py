@@ -6,7 +6,7 @@ import pytest
 
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
-from business.research.rag.retriever import (
+from business.research.rag.retrieval.paper_retriever import (
     DEFAULT_RETRIEVAL_POLICY,
     HIGH_VALUE_VISUAL_RESULT_INTENTS,
     NEWS_PAPER_RAG_POLICY_ENV,

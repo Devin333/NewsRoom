@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from business.research.document.models import PaperChunk
-from business.research.rag.retriever import RetrievalResult
+from business.research.rag.retrieval.paper_retriever import RetrievalResult
 from framework.rag.context import collect_nearby_context_ids
 from framework.rag.generation import (
     DEFAULT_GROUNDED_SYSTEM_INSTRUCTION,

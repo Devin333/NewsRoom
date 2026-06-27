@@ -6,7 +6,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from business.research.rag.generator import GeneratedAnswer
+from business.research.rag.retrieval.paper_answer_generator import GeneratedAnswer
 
 logger = logging.getLogger(__name__)
 

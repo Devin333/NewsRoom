@@ -60,7 +60,7 @@ def ingest_papers(args: argparse.Namespace) -> int:
 def ask_paper(args: argparse.Namespace) -> int:
     load_root_env()
     from interfaces.services.paper_rag_factory import build_research_retriever
-    from business.research.rag.retriever import RetrievalRequest
+    from business.research.rag.retrieval.paper_retriever import RetrievalRequest
 
     retriever = build_research_retriever(with_reranker=not args.no_rerank)
     result = retriever.retrieve(RetrievalRequest(
@@ -94,7 +94,7 @@ def ask_paper(args: argparse.Namespace) -> int:
 
 def _generate_answer(question, retrieval) -> str:
     import asyncio
-    from business.research.rag.generator import AnswerGenerator
+    from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
     from business.research.application.llm_client import build_unity_llm_call
 
     generator = AnswerGenerator(build_unity_llm_call(max_tokens=600))

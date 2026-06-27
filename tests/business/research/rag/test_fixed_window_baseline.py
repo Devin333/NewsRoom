@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from business.research.document.models import PaperChunk
-from business.research.rag.fixed_window_baseline import FixedWindowBaselineChunker, FixedWindowChunkerConfig
-from business.research.rag.run_evidence_eval import _matches_filters
+from business.research.rag.evaluation.paper_fixed_window_baseline import FixedWindowBaselineChunker, FixedWindowChunkerConfig
+from business.research.rag.cli.run_evidence_eval import _matches_filters
 
 
 def _chunk(chunk_id: str, content: str, *, chunk_type: str = "paragraph", section_index: int = 1) -> PaperChunk:

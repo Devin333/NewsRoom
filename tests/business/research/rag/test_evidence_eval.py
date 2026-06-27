@@ -4,7 +4,7 @@ import pytest
 
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
-from business.research.rag.evidence_eval import (
+from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
     EvidenceRetrievalEvaluator,
@@ -12,7 +12,7 @@ from business.research.rag.evidence_eval import (
     load_evidence_golden_set,
     save_evidence_golden_set,
 )
-from business.research.rag.retriever import RetrievalResult
+from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
 
 def _chunk(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from business.research.reading_session.models import ReadingSession
-from business.research.rag.eval import QAPair
+from business.research.rag.evaluation.paper_gold_builder import QAPair
 
 
 @dataclass

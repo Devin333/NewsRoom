@@ -30,7 +30,7 @@ from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 from business.research.application.visual_chunk_describer import build_visual_chunk_describer_from_env
 from business.research.application.paper_rag_session import PaperRAGSession
-from business.research.rag.retriever import (
+from business.research.rag.retrieval.paper_retriever import (
     ResearchRetriever,
     build_retrieval_policy_from_env,
 )

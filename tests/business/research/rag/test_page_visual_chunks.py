@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from business.research.document.models import PaperChunk
-from business.research.rag.page_visual_chunks import build_page_visual_chunks
+from business.research.rag.visual.page_visual_chunks import build_page_visual_chunks
 
 
 def test_build_page_visual_chunks_groups_visual_elements_by_page(tmp_path: Path) -> None:

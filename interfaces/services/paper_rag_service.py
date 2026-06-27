@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from interfaces.services.paper_rag_factory import build_research_retriever
-from business.research.rag.retriever import RetrievalRequest
+from business.research.rag.retrieval.paper_retriever import RetrievalRequest
 
 
 class PaperRagApplicationService:
@@ -54,7 +54,7 @@ class PaperRagApplicationService:
         return payload
 
     def _generate(self, question: str, retrieval) -> str:
-        from business.research.rag.generator import AnswerGenerator
+        from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
         from business.research.application.llm_client import build_unity_llm_call
 
         generator = AnswerGenerator(build_unity_llm_call(max_tokens=600))

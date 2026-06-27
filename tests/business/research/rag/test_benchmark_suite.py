@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from business.research.rag.benchmark_suite import (
+from business.research.rag.evaluation.paper_benchmark_suite import (
     BenchmarkSuiteConfig,
     GoldEvidenceJudgeItem,
     GoldEvidenceJudgeReport,
@@ -11,8 +11,8 @@ from business.research.rag.benchmark_suite import (
     run_benchmark_suite,
     split_paper_ids,
 )
-from business.research.rag.evidence_eval import EvidenceQAPair
-from business.research.rag.run_benchmark_suite import _parse_thresholds, main
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
+from business.research.rag.cli.run_benchmark_suite import _parse_thresholds, main
 
 
 class _FakeGoldJudge:

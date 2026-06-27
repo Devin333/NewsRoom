@@ -8,7 +8,7 @@ from framework.rag.core import RAGQuery
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
 from business.research.rag.retrieval_port import PaperChunkRetrievalPort, PaperKernelRAGRetriever
-from business.research.rag.retriever import RetrievalResult
+from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
 
 @dataclass

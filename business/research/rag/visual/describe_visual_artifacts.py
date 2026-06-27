@@ -95,7 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m business.research.rag.describe_visual_artifacts",
+        prog="python -m business.research.rag.visual.describe_visual_artifacts",
         description="Describe figure/table images and persist visual_description into research_document.json.",
     )
     parser.add_argument("--papers-dir", required=True, help="Directory containing per-paper research_document.json files.")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from business.research.document.models import PaperChunk
-from business.research.rag.field_text import extract_field_texts
+from business.research.rag.adapters.paper_field_text import extract_field_texts
 
 
 def test_extract_field_texts_returns_available_fields_and_sources():

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from business.research.rag.evidence_eval import (
+from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceEvalResult,
     EvidenceQAPair,
     EvidenceRetrievalEvaluator,
 )
-from business.research.rag.retriever import ResearchRetriever
+from business.research.rag.retrieval.paper_retriever import ResearchRetriever
 
 
 @dataclass(frozen=True)
