@@ -85,7 +85,7 @@ def test_audit_gold_evidence_reports_missing_chunks() -> None:
     assert report.items[0].reason == "missing_gold_chunks"
 
 
-def test_run_benchmark_suite_writes_splits_and_baseline(tmp_path: Path) -> None:
+def test_run_benchmark_suite_writes_splits_without_fixed_window_by_default(tmp_path: Path) -> None:
     papers_dir = tmp_path / "papers"
     _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
 
@@ -107,17 +107,42 @@ def test_run_benchmark_suite_writes_splits_and_baseline(tmp_path: Path) -> None:
     assert (output_dir / "benchmark_suite_report.json").exists()
     assert (output_dir / "benchmark_suite_report.md").exists()
     assert (output_dir / "test" / "candidate" / "evidence_regression_report.json").exists()
-    assert (output_dir / "test" / "fixed_window" / "evidence_regression_report.json").exists()
+    assert not (output_dir / "test" / "fixed_window").exists()
     assert (output_dir / "train" / "golden_set.json").exists()
     assert (output_dir / "dev" / "golden_set.json").exists()
     assert (output_dir / "test" / "golden_set.json").exists()
-    assert result.ab_report["baseline_name"] == "fixed_window"
-    assert "mrr" in result.ab_report["deltas"]
-    assert "relative_improvement" in result.ab_report
+    assert result.baseline_test_report is None
+    assert result.ab_report is None
     assert result.gold_judge is not None
     assert result.gold_judge.model == "fake-gold-judge"
     payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
     assert payload["evaluation_protocol"]["reported_split"] == "test"
+    assert payload["baseline_test_report"] is None
+    assert payload["ab_report"] is None
+
+
+def test_run_benchmark_suite_can_write_fixed_window_baseline_when_requested(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+
+    output_dir = tmp_path / "suite"
+    result = run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=5,
+        include_fixed_window_baseline=True,
+    ))
+
+    assert (output_dir / "test" / "fixed_window" / "evidence_regression_report.json").exists()
+    assert result.baseline_test_report is not None
+    assert result.ab_report is not None
+    assert result.ab_report["baseline_name"] == "fixed_window"
+    assert "mrr" in result.ab_report["deltas"]
+    assert "relative_improvement" in result.ab_report
 
 
 def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: Path) -> None:

@@ -285,11 +285,14 @@ class BenchmarkSuiteResult:
     gold_judge: GoldEvidenceJudgeReport | None
     spot_check: SpotCheckReport | None
     candidate_test_report: dict[str, Any]
-    baseline_test_report: dict[str, Any]
-    ab_report: dict[str, Any]
+    baseline_test_report: dict[str, Any] | None
+    ab_report: dict[str, Any] | None
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        test_policy = "candidate is evaluated on the test split"
+        if self.baseline_test_report is not None:
+            test_policy = "candidate and fixed-window baseline are evaluated only on the test split"
         return {
             "output_dir": str(self.output_dir),
             "papers_total": self.papers_total,
@@ -302,7 +305,7 @@ class BenchmarkSuiteResult:
                 "train_split": "train",
                 "tuning_split": "dev",
                 "reported_split": "test",
-                "test_policy": "candidate and fixed-window baseline are evaluated only on the test split",
+                "test_policy": test_policy,
             },
             "gold_audit": self.gold_audit.to_dict(),
             "gold_judge": self.gold_judge.to_dict() if self.gold_judge is not None else None,
@@ -345,6 +348,7 @@ class BenchmarkSuiteConfig:
     spot_check_sample_size: int = 0
     spot_check_annotations_path: Path | None = None
     quality_thresholds: dict[str, float] = field(default_factory=dict)
+    include_fixed_window_baseline: bool = False
     fixed_window_tokens: int = 220
     fixed_window_overlap_tokens: int | None = None
 
@@ -388,8 +392,11 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
     audit = audit_gold_evidence(test_pairs, chunks, sample_size=config.gold_audit_sample_size, seed=config.split_seed)
     judge_report = _run_gold_judge(config, audit)
     candidate_report, spot_check = _evaluate_candidate(config, chunks, test_pairs, output_dir / "test" / "candidate")
-    baseline_report = _evaluate_fixed_window_baseline(config, chunks, test_pairs, output_dir / "test" / "fixed_window")
-    ab_report = _compare_reports(candidate_report, baseline_report)
+    baseline_report = None
+    ab_report = None
+    if config.include_fixed_window_baseline:
+        baseline_report = _evaluate_fixed_window_baseline(config, chunks, test_pairs, output_dir / "test" / "fixed_window")
+        ab_report = _compare_reports(candidate_report, baseline_report)
 
     warnings = _suite_warnings(
         paper_count=len(paper_ids),
@@ -1069,9 +1076,11 @@ def _write_suite_report(result: BenchmarkSuiteResult) -> None:
 
 def _suite_markdown(payload: dict[str, Any]) -> str:
     candidate = payload["candidate_test_report"]["retrieval"]
-    baseline = payload["baseline_test_report"]["retrieval"]
-    relative_mrr = payload["ab_report"]["relative_improvement"]["mrr"]
-    macro = payload["ab_report"].get("macro_by_qa_type") or {}
+    baseline_report = payload.get("baseline_test_report")
+    baseline = (baseline_report or {}).get("retrieval") or None
+    ab_report = payload.get("ab_report") or None
+    relative_mrr = ((ab_report or {}).get("relative_improvement") or {}).get("mrr")
+    macro = (ab_report or {}).get("macro_by_qa_type") or {}
     lines = [
         "# Paper RAG Benchmark Suite",
         "",
@@ -1085,11 +1094,14 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
         "",
         f"- candidate Hit@10: `{candidate['by_k']['10']['hit_rate']:.3f}`",
         f"- candidate MRR: `{candidate['mrr']:.3f}`",
-        f"- fixed-window Hit@10: `{baseline['by_k']['10']['hit_rate']:.3f}`",
-        f"- fixed-window MRR: `{baseline['mrr']:.3f}`",
-        f"- MRR delta: `{payload['ab_report']['deltas']['mrr']:.3f}`",
-        f"- MRR relative improvement: `{_format_optional_ratio(relative_mrr)}`",
     ]
+    if baseline is not None and ab_report is not None:
+        lines.extend([
+            f"- fixed-window Hit@10: `{baseline['by_k']['10']['hit_rate']:.3f}`",
+            f"- fixed-window MRR: `{baseline['mrr']:.3f}`",
+            f"- MRR delta: `{ab_report['deltas']['mrr']:.3f}`",
+            f"- MRR relative improvement: `{_format_optional_ratio(relative_mrr)}`",
+        ])
     if macro:
         lines.extend([
             f"- candidate macro Hit@10: `{macro['candidate']['macro_hit_at_10']:.3f}`",
@@ -1097,13 +1109,20 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             f"- fixed-window macro Hit@10: `{macro['baseline']['macro_hit_at_10']:.3f}`",
             f"- fixed-window macro MRR: `{macro['baseline']['macro_mrr']:.3f}`",
         ])
+    lines.extend(["", "## Test Metrics By QA Type", ""])
+    if baseline is not None:
+        lines.extend([
+            "| QA type | n | candidate Hit@10 | candidate MRR | fixed-window Hit@10 | fixed-window MRR |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
+            *_qa_type_metric_rows(candidate, baseline),
+        ])
+    else:
+        lines.extend([
+            "| QA type | n | candidate Hit@10 | candidate MRR |",
+            "| --- | ---: | ---: | ---: |",
+            *_qa_type_metric_rows(candidate, None),
+        ])
     lines.extend([
-        "",
-        "## Test Metrics By QA Type",
-        "",
-        "| QA type | n | candidate Hit@10 | candidate MRR | fixed-window Hit@10 | fixed-window MRR |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
-        *_qa_type_metric_rows(candidate, baseline),
         "",
         "## QA Type Counts",
     ])
@@ -1188,29 +1207,31 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _qa_type_metric_rows(candidate: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
+def _qa_type_metric_rows(candidate: dict[str, Any], baseline: dict[str, Any] | None) -> list[str]:
     rows: list[str] = []
     candidate_by_type = candidate.get("by_qa_type") or {}
-    baseline_by_type = baseline.get("by_qa_type") or {}
+    baseline_by_type = (baseline or {}).get("by_qa_type") or {}
     for qa_type in sorted(set(candidate_by_type) | set(baseline_by_type)):
         current = candidate_by_type.get(qa_type) or {}
         base = baseline_by_type.get(qa_type) or {}
         answerable_total = int(current.get("answerable_total") or base.get("answerable_total") or 0)
         if answerable_total <= 0:
             continue
-        rows.append(
-            "| "
-            + " | ".join([
-                qa_type,
-                str(answerable_total),
-                f"{_hit_at_10(current):.3f}",
-                f"{_metric(current, 'mrr'):.3f}",
+        values = [
+            qa_type,
+            str(answerable_total),
+            f"{_hit_at_10(current):.3f}",
+            f"{_metric(current, 'mrr'):.3f}",
+        ]
+        if baseline is not None:
+            values.extend([
                 f"{_hit_at_10(base):.3f}",
                 f"{_metric(base, 'mrr'):.3f}",
             ])
-            + " |"
-        )
-    return rows or ["| none | 0 | 0.000 | 0.000 | 0.000 | 0.000 |"]
+        rows.append("| " + " | ".join(values) + " |")
+    if baseline is not None:
+        return rows or ["| none | 0 | 0.000 | 0.000 | 0.000 | 0.000 |"]
+    return rows or ["| none | 0 | 0.000 | 0.000 |"]
 
 
 def _macro_by_qa_type(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:

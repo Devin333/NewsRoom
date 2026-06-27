@@ -36,6 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         spot_check_sample_size=args.spot_check_sample_size,
         spot_check_annotations_path=Path(args.spot_check_annotations) if args.spot_check_annotations else None,
         quality_thresholds=_parse_thresholds(args.quality_threshold),
+        include_fixed_window_baseline=args.with_fixed_window_baseline,
         fixed_window_tokens=args.fixed_window_tokens,
         fixed_window_overlap_tokens=args.fixed_window_overlap_tokens,
     ))
@@ -46,7 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m business.research.rag.run_benchmark_suite",
-        description="Run train/dev/test paper RAG benchmark with fixed-window baseline and gold evidence audit.",
+        description="Run train/dev/test paper RAG benchmark with gold evidence audit.",
     )
     parser.add_argument("--papers-dir", required=True, help="Directory containing per-paper research_document.json files.")
     parser.add_argument("--output-dir", required=True, help="Directory for benchmark suite artifacts.")
@@ -91,6 +92,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--fixed-window-tokens", type=int, default=220)
     parser.add_argument("--fixed-window-overlap-tokens", type=int)
+    parser.add_argument(
+        "--with-fixed-window-baseline",
+        action="store_true",
+        help="Also run the legacy fixed-window baseline for explicit A/B comparison.",
+    )
     parser.add_argument("--no-negative", action="store_true")
     parser.add_argument("--no-visual", action="store_true")
     parser.add_argument("--no-page-visual", action="store_true")
