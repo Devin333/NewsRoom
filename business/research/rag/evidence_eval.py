@@ -14,6 +14,7 @@ from framework.rag.evaluation import (
     reciprocal_rank as kernel_reciprocal_rank,
     source_locator_coverage as kernel_source_locator_coverage,
 )
+from framework.rag.retrieval import dedupe_by_key
 
 from business.research.document.citation_spans import resolve_citation_span
 from business.research.document.models import PaperChunk
@@ -1159,14 +1160,7 @@ def _resolved_citation_matches(resolved: dict[str, Any], expected: dict[str, Any
 
 
 def _ranked_unique_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:
-    seen: set[str] = set()
-    out: list[PaperChunk] = []
-    for chunk in chunks:
-        if chunk.chunk_id in seen:
-            continue
-        out.append(chunk)
-        seen.add(chunk.chunk_id)
-    return out
+    return dedupe_by_key(chunks, key=lambda chunk: chunk.chunk_id)
 
 
 def _source_locator_for_chunk(chunk: PaperChunk) -> str:

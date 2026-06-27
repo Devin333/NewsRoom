@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, TYPE_CHECKING
 
-from framework.rag.retrieval import normalize_score_weights, weighted_component_score
+from framework.rag.retrieval import dedupe_by_key, normalize_score_weights, weighted_component_score
 
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
@@ -1844,14 +1844,7 @@ def _round_score(value: float) -> float:
 
 
 def _dedupe_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:
-    seen: set[str] = set()
-    out: list[PaperChunk] = []
-    for chunk in chunks:
-        if chunk.chunk_id in seen:
-            continue
-        seen.add(chunk.chunk_id)
-        out.append(chunk)
-    return out
+    return dedupe_by_key(chunks, key=lambda chunk: chunk.chunk_id)
 
 
 def _is_table_chunk(chunk: PaperChunk) -> bool:

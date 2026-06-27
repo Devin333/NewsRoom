@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from framework.rag.core import RAGEvidence
-from framework.rag.retrieval import dedupe_evidence, order_evidence
+from framework.rag.retrieval import dedupe_by_key, dedupe_evidence, order_evidence
 
 
 def _evidence(evidence_id: str, chunk_id: str, score: float) -> RAGEvidence:
@@ -22,6 +22,21 @@ def test_dedupe_evidence_keeps_highest_scoring_duplicate():
     ])
 
     assert [item.evidence_id for item in out] == ["ev-high", "ev-other"]
+
+
+def test_dedupe_by_key_keeps_first_item_for_each_key():
+    items = [
+        {"chunk_id": "chunk-1", "rank": 1},
+        {"chunk_id": "chunk-2", "rank": 2},
+        {"chunk_id": "chunk-1", "rank": 3},
+    ]
+
+    out = dedupe_by_key(items, key=lambda item: item["chunk_id"])
+
+    assert out == [
+        {"chunk_id": "chunk-1", "rank": 1},
+        {"chunk_id": "chunk-2", "rank": 2},
+    ]
 
 
 def test_order_evidence_sorts_by_score_descending():
