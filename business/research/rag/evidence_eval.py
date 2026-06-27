@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+from framework.rag.evaluation import (
+    RetrievalMetricCase,
+    evidence_coverage as kernel_evidence_coverage,
+    hit_at_k as kernel_hit_at_k,
+    ndcg_at_k as kernel_ndcg_at_k,
+    reciprocal_rank as kernel_reciprocal_rank,
+    source_locator_coverage as kernel_source_locator_coverage,
+)
 
 from business.research.document.citation_spans import resolve_citation_span
 from business.research.document.models import PaperChunk
@@ -743,14 +751,14 @@ def _aggregate_samples(
         samples=list(samples),
     )
     for sample in answerable:
-        result.reciprocal_ranks.append(1.0 / sample.first_rank if sample.first_rank else 0.0)
+        metric_case = _retrieval_metric_case(sample)
+        result.reciprocal_ranks.append(kernel_reciprocal_rank(metric_case))
         for k in ks:
-            hit = bool(sample.first_rank and sample.first_rank <= k)
-            if hit:
+            if kernel_hit_at_k(metric_case, k):
                 result.hit_at[k] += 1
-            result.evidence_coverage_at[k].append(sample.coverage_by_k[k])
+            result.evidence_coverage_at[k].append(kernel_evidence_coverage(metric_case, k))
             result.required_type_coverage_at[k].append(sample.type_coverage_by_k[k])
-            result.source_locator_coverage_at[k].append(sample.source_locator_coverage_by_k[k])
+            result.source_locator_coverage_at[k].append(kernel_source_locator_coverage(metric_case, k))
             result.image_recall_at[k].append(sample.image_recall_by_k[k])
             result.visual_evidence_coverage_at[k].append(sample.visual_evidence_coverage_by_k[k])
             citation_accuracy = sample.citation_accuracy_by_k.get(k)
@@ -760,8 +768,27 @@ def _aggregate_samples(
             if overlap_accuracy is not None:
                 result.overlap_citation_accuracy_at[k].append(overlap_accuracy)
             result.over_retrieval_at[k].append(sample.over_retrieval_by_k[k])
-            result.ndcg_at[k].append(_multi_gold_ndcg(sample.ranked_match_chunk_ids[:k], sample.pair.gold_chunk_ids))
+            result.ndcg_at[k].append(kernel_ndcg_at_k(metric_case, k))
     return result
+
+
+def _retrieval_metric_case(sample: EvidenceSampleResult) -> RetrievalMetricCase:
+    return RetrievalMetricCase(
+        case_id=f"{sample.pair.paper_id}:{sample.pair.qa_type}:{sample.pair.question}",
+        gold_evidence_ids=tuple(sample.pair.gold_chunk_ids),
+        ranked_evidence_ids=tuple(sample.ranked_chunk_ids),
+        ranked_evidence_id_candidates=tuple(tuple(ids) for ids in sample.ranked_match_chunk_ids),
+        gold_source_locators=tuple(sample.pair.gold_source_locators),
+        ranked_source_locators=tuple(sample.ranked_source_locators),
+        ranked_source_locator_candidates=tuple(
+            tuple(locators) for locators in sample.ranked_source_locator_candidates
+        ),
+        metadata={
+            "paper_id": sample.pair.paper_id,
+            "qa_type": sample.pair.qa_type,
+            "expected_behavior": sample.pair.expected_behavior,
+        },
+    )
 
 
 def _coverage(retrieved: list[str], required: list[str]) -> float:
@@ -816,22 +843,6 @@ def _first_gold_rank(ranked_ids: list[list[str]], gold_ids: list[str]) -> int:
         if gold.intersection(chunk_ids):
             return index
     return 0
-
-
-def _multi_gold_ndcg(ranked_ids: list[list[str]], gold_ids: list[str]) -> float:
-    gold = set(gold_ids)
-    if not gold:
-        return 0.0
-    seen_hits: set[str] = set()
-    dcg = 0.0
-    for index, chunk_ids in enumerate(ranked_ids, start=1):
-        new_hits = gold.intersection(chunk_ids) - seen_hits
-        if new_hits:
-            dcg += 1.0 / math.log2(index + 1)
-            seen_hits.add(sorted(new_hits)[0])
-    ideal_hits = min(len(gold), len(ranked_ids))
-    ideal = sum(1.0 / math.log2(index + 1) for index in range(1, ideal_hits + 1))
-    return dcg / ideal if ideal else 0.0
 
 
 def _over_retrieval_count(retrieved: list[str], gold_ids: list[str]) -> int:
