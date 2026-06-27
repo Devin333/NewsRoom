@@ -282,6 +282,10 @@ def test_formula_child_is_emitted_as_evidence_before_parent_context():
     assert formula_pack.metadata["formula_latex"] == r"\operatorname{Attention}(Q,K,V)"
     assert formula_pack.metadata["page"] == 5
     assert formula_pack.metadata["pdf_rect"] == [10, 20, 30, 40]
+    assert formula_pack.metadata["rag_document_id"] == "1706.03762"
+    assert formula_pack.metadata["rag_chunk_id"] == "eq-1"
+    assert formula_pack.metadata["rag_source_locator"]["page"] == 5
+    assert formula_pack.metadata["rag_source_locator"]["bbox"] == [10.0, 20.0, 30.0, 40.0]
     assert "LaTeX:" in formula_pack.summary
 
 
@@ -458,4 +462,10 @@ def test_figure_evidence_exposes_ocr_diagnostics():
     assert figure_pack.metadata["fused_score"] == 0.47
     assert figure_pack.metadata["fusion_strategy"] == "text_image_fusion"
     assert figure_pack.metadata["visual_hit"] is True
+    assert figure_pack.metadata["rag_score"] == 0.47
+    assert figure_pack.metadata["rag_score_breakdown"] == {
+        "final_score": 0.47,
+        "text_score": 0.24,
+        "visual_score": 0.91,
+    }
     assert "OCR Text:" in figure_pack.summary

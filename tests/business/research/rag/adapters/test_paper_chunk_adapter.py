@@ -3,6 +3,7 @@ from __future__ import annotations
 from business.research.document.models import PaperChunk
 from business.research.rag.adapters import (
     PaperChunkAdapter,
+    paper_chunk_to_evidence_metadata,
     paper_chunk_to_rag_chunk,
     paper_chunk_to_rag_evidence,
     source_locator_from_paper_chunk,
@@ -98,6 +99,30 @@ def test_paper_chunk_adapter_does_not_invent_missing_breakdown_values():
 
     assert evidence.score == 0.0
     assert evidence.score_breakdown.to_dict() == {}
+
+
+def test_paper_chunk_projects_to_evidence_metadata_for_harness_pack():
+    metadata = paper_chunk_to_evidence_metadata(_chunk())
+
+    assert metadata["chunk_type"] == "formula"
+    assert metadata["parent_chunk_id"] == "parent-1"
+    assert metadata["has_formula"] is True
+    assert metadata["formula_latex"] == "y = Wx"
+    assert metadata["source_locator"] == "paper://paper-1/pdf#page=6&pdf_rect=1,2,3,4"
+    assert metadata["rag_document_id"] == "paper-1"
+    assert metadata["rag_chunk_id"] == "chunk-1"
+    assert metadata["rag_score"] == 0.9
+    assert metadata["rag_score_breakdown"] == {
+        "child_similarity": 0.7,
+        "parent_relevance": 0.6,
+        "field_score": 0.5,
+        "section_heading_score": 0.4,
+        "position_bonus": 0.3,
+        "rerank_score": 0.2,
+        "final_score": 0.9,
+    }
+    assert metadata["rag_source_locator"]["page"] == 6
+    assert metadata["rag_source_locator"]["bbox"] == [1.0, 2.0, 3.0, 4.0]
 
 
 def test_source_locator_uses_metadata_page_and_rect_when_raw_locator_is_less_structured():
