@@ -8,12 +8,14 @@ from typing import Any
 from business.research.rag.answer_eval import EvidenceAnswerEvalResult
 from business.research.rag.evaluation_compare import EvidenceABResult
 from business.research.rag.evidence_eval import EvidenceEvalResult
+from business.research.rag.generation_eval import GenerationEvalResult
 
 
 @dataclass
 class EvidenceRegressionReport:
     retrieval: EvidenceEvalResult | None = None
     answer: EvidenceAnswerEvalResult | None = None
+    generation: GenerationEvalResult | None = None
     ab: EvidenceABResult | None = None
     thresholds: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -29,6 +31,8 @@ class EvidenceRegressionReport:
             payload["retrieval"] = _retrieval_result_to_dict(self.retrieval)
         if self.answer is not None:
             payload["answer"] = _answer_result_to_dict(self.answer)
+        if self.generation is not None:
+            payload["generation"] = _generation_result_to_dict(self.generation)
         if self.ab is not None:
             payload["ab"] = _ab_result_to_dict(self.ab)
         return payload
@@ -59,6 +63,8 @@ class EvidenceRegressionReport:
             lines.extend(["## Retrieval", "", _code_block(self.retrieval.report()), ""])
         if self.answer is not None:
             lines.extend(["## Answer", "", _code_block(self.answer.report()), ""])
+        if self.generation is not None:
+            lines.extend(["## Generation", "", _code_block(self.generation.report()), ""])
         if self.ab is not None:
             lines.extend(["## A/B", "", _code_block(self.ab.report()), ""])
         return "\n".join(lines).rstrip() + "\n"
@@ -133,6 +139,16 @@ def _answer_result_to_dict(result: EvidenceAnswerEvalResult) -> dict[str, Any]:
     }
 
 
+def _generation_result_to_dict(result: GenerationEvalResult) -> dict[str, Any]:
+    return {
+        "total": len(result.per_sample),
+        "faithfulness": result.faithfulness_score(),
+        "answer_relevancy": result.answer_relevancy_score(),
+        "context_precision": result.context_precision_score(),
+        "per_sample": [score.to_dict() for score in result.per_sample],
+    }
+
+
 def _ab_result_to_dict(result: EvidenceABResult) -> dict[str, Any]:
     return {
         "baseline_name": result.baseline_name,
@@ -171,6 +187,12 @@ def _threshold_values(report: EvidenceRegressionReport) -> dict[str, float]:
             "answer.source_locator_grounding": report.answer.source_locator_grounding_score(),
             "answer.abstention_accuracy": report.answer.abstention_accuracy(),
             "answer.success_rate": report.answer.success_rate(),
+        })
+    if report.generation is not None:
+        values.update({
+            "generation.faithfulness": report.generation.faithfulness_score(),
+            "generation.answer_relevancy": report.generation.answer_relevancy_score(),
+            "generation.context_precision": report.generation.context_precision_score(),
         })
     if report.ab is not None:
         for delta in report.ab.deltas:

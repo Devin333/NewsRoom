@@ -35,13 +35,22 @@ class GenerationEvalResult:
         vals = [getattr(s, attr) for s in self.per_sample]
         return sum(vals) / len(vals) if vals else 0.0
 
+    def faithfulness_score(self) -> float:
+        return self._avg("faithfulness")
+
+    def answer_relevancy_score(self) -> float:
+        return self._avg("answer_relevancy")
+
+    def context_precision_score(self) -> float:
+        return self._avg("context_precision")
+
     def report(self) -> str:
         n = len(self.per_sample)
         return (
             f"=== 生成测评 (n={n}) ===\n"
-            f"  Faithfulness      = {self._avg('faithfulness'):.3f}\n"
-            f"  Answer Relevancy  = {self._avg('answer_relevancy'):.3f}\n"
-            f"  Context Precision = {self._avg('context_precision'):.3f}"
+            f"  Faithfulness      = {self.faithfulness_score():.3f}\n"
+            f"  Answer Relevancy  = {self.answer_relevancy_score():.3f}\n"
+            f"  Context Precision = {self.context_precision_score():.3f}"
         )
 
 

@@ -9,6 +9,7 @@ from business.research.rag.answer_eval import (
 )
 from business.research.rag.evaluation_report import EvidenceRegressionReport
 from business.research.rag.evidence_eval import EvidenceEvalResult, EvidenceQAPair
+from business.research.rag.generation_eval import GenerationEvalResult, GenerationScores
 
 
 def test_evidence_regression_report_writes_json_and_markdown(tmp_path) -> None:
@@ -44,10 +45,22 @@ def test_evidence_regression_report_writes_json_and_markdown(tmp_path) -> None:
             answer_success=True,
         )
     ])
+    generation = GenerationEvalResult(per_sample=[
+        GenerationScores(
+            faithfulness=1.0,
+            answer_relevancy=0.9,
+            context_precision=0.8,
+        )
+    ])
     report = EvidenceRegressionReport(
         retrieval=retrieval,
         answer=answer,
-        thresholds={"retrieval.evidence_coverage": 0.5, "answer.success_rate": 0.9},
+        generation=generation,
+        thresholds={
+            "retrieval.evidence_coverage": 0.5,
+            "answer.success_rate": 0.9,
+            "generation.faithfulness": 0.9,
+        },
         metadata={"paper_id": "p1"},
     )
 
@@ -59,9 +72,11 @@ def test_evidence_regression_report_writes_json_and_markdown(tmp_path) -> None:
     assert payload["passed"] is True
     assert payload["retrieval"]["by_k"]["1"]["hit_rate"] == 1.0
     assert payload["answer"]["success_rate"] == 1.0
+    assert payload["generation"]["faithfulness"] == 1.0
     assert "Paper RAG Evidence Regression Report" in markdown
     assert "Evidence Retrieval Eval" in markdown
     assert "Evidence Answer Eval" in markdown
+    assert "Generation" in markdown
 
 
 def test_evidence_regression_report_records_threshold_failures() -> None:

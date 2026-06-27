@@ -27,6 +27,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         gold_judge_mode=args.gold_judge,
         gold_judge_sample_size=args.gold_judge_sample_size,
         gold_judge_max_evidence_chars=args.gold_judge_max_evidence_chars,
+        answer_eval_enabled=args.answer_eval,
+        answer_eval_sample_size=args.answer_eval_sample_size,
+        answer_max_context_chunks=args.answer_max_context_chunks,
+        answer_max_chars_per_chunk=args.answer_max_chars_per_chunk,
+        answer_judge_mode=args.answer_judge,
+        answer_judge_sample_size=args.answer_judge_sample_size,
+        spot_check_sample_size=args.spot_check_sample_size,
+        spot_check_annotations_path=Path(args.spot_check_annotations) if args.spot_check_annotations else None,
+        quality_thresholds=_parse_thresholds(args.quality_threshold),
         fixed_window_tokens=args.fixed_window_tokens,
         fixed_window_overlap_tokens=args.fixed_window_overlap_tokens,
     ))
@@ -60,6 +69,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum sampled audit items to send to --gold-judge.",
     )
     parser.add_argument("--gold-judge-max-evidence-chars", type=int, default=1600)
+    parser.add_argument("--answer-eval", action="store_true", help="Generate answers for the test split and run answer-level evaluation.")
+    parser.add_argument("--answer-eval-sample-size", type=int, help="Maximum deterministic test samples for answer evaluation.")
+    parser.add_argument("--answer-max-context-chunks", type=int, default=3)
+    parser.add_argument("--answer-max-chars-per-chunk", type=int, default=1000)
+    parser.add_argument(
+        "--answer-judge",
+        choices=("none", "llm"),
+        default="none",
+        help="Optional LLM faithfulness/relevancy/context-precision judge for generated answers.",
+    )
+    parser.add_argument("--answer-judge-sample-size", type=int, help="Maximum generated answers sent to --answer-judge.")
+    parser.add_argument("--spot-check-sample-size", type=int, default=0, help="Export answer samples for manual spot checking.")
+    parser.add_argument("--spot-check-annotations", help="Optional JSONL manual annotations to summarize in the benchmark report.")
+    parser.add_argument(
+        "--quality-threshold",
+        action="append",
+        default=[],
+        metavar="METRIC=VALUE",
+        help="Quality gate threshold, for example answer.success_rate=0.85 or generation.faithfulness=0.9.",
+    )
     parser.add_argument("--fixed-window-tokens", type=int, default=220)
     parser.add_argument("--fixed-window-overlap-tokens", type=int)
     parser.add_argument("--no-negative", action="store_true")
@@ -67,6 +96,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-page-visual", action="store_true")
     parser.add_argument("--no-render-page-visual", action="store_true")
     return parser
+
+
+def _parse_thresholds(values: list[str]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError(f"threshold must be METRIC=VALUE: {raw!r}")
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"threshold metric is empty: {raw!r}")
+        out[key] = float(value)
+    return out
 
 
 if __name__ == "__main__":

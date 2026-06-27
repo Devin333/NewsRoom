@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
+import re
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Protocol, Sequence
 
 from business.research.document.models import PaperChunk
 from business.research.application.llm_client import _browser_ua_transport
+from business.research.rag.answer_eval import EvidenceAnswerEvaluator, EvidenceAnswerSample
 from business.research.rag.evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
@@ -18,11 +22,16 @@ from business.research.rag.evidence_eval import (
 )
 from business.research.rag.evaluation_report import EvidenceRegressionReport
 from business.research.rag.fixed_window_baseline import FixedWindowBaselineChunker, FixedWindowChunkerConfig
+from business.research.rag.generation_eval import GenerationEvaluator, GenerationEvalResult
+from business.research.rag.generator import AnswerGenerator, GeneratedAnswer
 from business.research.rag.page_visual_chunks import build_page_visual_chunks
 from business.research.rag.run_evidence_eval import _build_live_retriever, _load_chunks_from_papers_dir
+from business.research.rag.retriever import RetrievalRequest
 from framework.llm.clients.openai_compatible import LLMRetryPolicy, OpenAICompatibleClient, OpenAICompatibleConfig
 from framework.llm.models.request import LLMRequest
 from framework.shared.env import load_root_env
+
+LLMCall = Callable[[str], Awaitable[str]]
 
 DEFAULT_SPLIT_RATIOS = (0.6, 0.2, 0.2)
 DEFAULT_TARGET_QA_TYPES = (
@@ -153,6 +162,24 @@ class GoldEvidenceJudge(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class SpotCheckReport:
+    sample_path: str
+    sample_size: int
+    annotation_path: str = ""
+    annotated_count: int = 0
+    label_counts: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "sample_path": self.sample_path,
+            "sample_size": self.sample_size,
+            "annotation_path": self.annotation_path,
+            "annotated_count": self.annotated_count,
+            "label_counts": dict(sorted(self.label_counts.items())),
+        }
+
+
 class OpenAICompatibleGoldEvidenceJudge:
     """Optional LLM audit for whether gold evidence supports a QA pair."""
 
@@ -256,6 +283,7 @@ class BenchmarkSuiteResult:
     target_qa_counts: dict[str, int]
     gold_audit: GoldEvidenceAuditReport
     gold_judge: GoldEvidenceJudgeReport | None
+    spot_check: SpotCheckReport | None
     candidate_test_report: dict[str, Any]
     baseline_test_report: dict[str, Any]
     ab_report: dict[str, Any]
@@ -278,6 +306,7 @@ class BenchmarkSuiteResult:
             },
             "gold_audit": self.gold_audit.to_dict(),
             "gold_judge": self.gold_judge.to_dict() if self.gold_judge is not None else None,
+            "spot_check": self.spot_check.to_dict() if self.spot_check is not None else None,
             "candidate_test_report": self.candidate_test_report,
             "baseline_test_report": self.baseline_test_report,
             "ab_report": self.ab_report,
@@ -305,6 +334,17 @@ class BenchmarkSuiteConfig:
     gold_judge_sample_size: int | None = None
     gold_judge_max_evidence_chars: int = 1600
     gold_evidence_judge: GoldEvidenceJudge | None = None
+    answer_eval_enabled: bool = False
+    answer_eval_sample_size: int | None = None
+    answer_max_context_chunks: int = 3
+    answer_max_chars_per_chunk: int = 1000
+    answer_llm_call: LLMCall | None = None
+    answer_judge_mode: str = "none"
+    answer_judge_sample_size: int | None = None
+    answer_judge_llm_call: LLMCall | None = None
+    spot_check_sample_size: int = 0
+    spot_check_annotations_path: Path | None = None
+    quality_thresholds: dict[str, float] = field(default_factory=dict)
     fixed_window_tokens: int = 220
     fixed_window_overlap_tokens: int | None = None
 
@@ -347,7 +387,7 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
     test_pairs = split_pairs.get("test", [])
     audit = audit_gold_evidence(test_pairs, chunks, sample_size=config.gold_audit_sample_size, seed=config.split_seed)
     judge_report = _run_gold_judge(config, audit)
-    candidate_report = _evaluate_candidate(config, chunks, test_pairs, output_dir / "test" / "candidate")
+    candidate_report, spot_check = _evaluate_candidate(config, chunks, test_pairs, output_dir / "test" / "candidate")
     baseline_report = _evaluate_fixed_window_baseline(config, chunks, test_pairs, output_dir / "test" / "fixed_window")
     ab_report = _compare_reports(candidate_report, baseline_report)
 
@@ -358,6 +398,7 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         splits=splits,
         audit=audit,
         judge_report=judge_report,
+        candidate_report=candidate_report,
     )
     result = BenchmarkSuiteResult(
         output_dir=output_dir,
@@ -369,6 +410,7 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         target_qa_counts=target_counts,
         gold_audit=audit,
         gold_judge=judge_report,
+        spot_check=spot_check,
         candidate_test_report=candidate_report,
         baseline_test_report=baseline_report,
         ab_report=ab_report,
@@ -466,7 +508,7 @@ def _evaluate_candidate(
     chunks: list[PaperChunk],
     pairs: list[EvidenceQAPair],
     output_dir: Path,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], SpotCheckReport | None]:
     retriever, visual_store = _build_live_retriever(
         chunks,
         visual_enabled=config.visual,
@@ -474,16 +516,321 @@ def _evaluate_candidate(
         retrieval_policy=config.retrieval_policy,
     )
     retrieval = EvidenceRetrievalEvaluator(retriever).evaluate(pairs)
+    answer_samples: list[EvidenceAnswerSample] = []
+    generated_answers: list[GeneratedAnswer] = []
+    answer_result = None
+    generation_result = None
+    if _answers_requested(config):
+        answer_samples, generated_answers = asyncio.run(_generate_answer_samples(config, retriever, pairs))
+        _write_answer_samples(output_dir / "answer_samples.jsonl", answer_samples, generated_answers)
+        if config.answer_eval_enabled:
+            answer_result = EvidenceAnswerEvaluator().evaluate(answer_samples)
+        if _answer_judge_enabled(config):
+            judge_answers = _answer_judge_sample(generated_answers, config)
+            generation_result = asyncio.run(_run_answer_judge(config, judge_answers))
     metadata = {
         "mode": "candidate",
         "retrieval_policy": retriever.policy.name,
         "chunks_total": len(chunks),
         "visual_fusion_enabled": visual_store is not None,
         "visual_indexed_chunks": len(getattr(visual_store, "_vectors", {})) if visual_store is not None else 0,
+        "answer_eval_enabled": config.answer_eval_enabled,
+        "answer_judge_mode": config.answer_judge_mode,
+        "answer_samples": len(answer_samples),
     }
-    report = EvidenceRegressionReport(retrieval=retrieval, metadata=metadata)
+    report = EvidenceRegressionReport(
+        retrieval=retrieval,
+        answer=answer_result,
+        generation=generation_result,
+        thresholds=dict(config.quality_thresholds),
+        metadata=metadata,
+    )
     report.write(output_dir)
-    return json.loads((output_dir / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    payload = json.loads((output_dir / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    spot_check = _write_spot_check_report(
+        config,
+        output_dir=output_dir,
+        answer_samples=answer_samples,
+        generated_answers=generated_answers,
+        answer_result=answer_result,
+    )
+    if spot_check is not None:
+        payload["spot_check"] = spot_check.to_dict()
+        (output_dir / "evidence_regression_report.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return payload, spot_check
+
+
+def _answers_requested(config: BenchmarkSuiteConfig) -> bool:
+    return (
+        config.answer_eval_enabled
+        or _answer_judge_enabled(config)
+        or config.spot_check_sample_size > 0
+    )
+
+
+def _answer_judge_enabled(config: BenchmarkSuiteConfig) -> bool:
+    mode = str(config.answer_judge_mode or "none").strip().casefold()
+    return mode not in {"", "none", "off", "false", "0"}
+
+
+async def _generate_answer_samples(
+    config: BenchmarkSuiteConfig,
+    retriever: Any,
+    pairs: list[EvidenceQAPair],
+) -> tuple[list[EvidenceAnswerSample], list[GeneratedAnswer]]:
+    llm_call = config.answer_llm_call or _build_answer_llm_call(max_tokens=700)
+    generator = AnswerGenerator(
+        llm_call,
+        max_context_chunks=config.answer_max_context_chunks,
+        max_chars_per_chunk=config.answer_max_chars_per_chunk,
+    )
+    samples: list[EvidenceAnswerSample] = []
+    generated: list[GeneratedAnswer] = []
+    for pair in _answer_generation_pairs(pairs, config):
+        retrieval = retriever.retrieve(RetrievalRequest(
+            paper_id=pair.paper_id,
+            question=pair.question,
+            limit=10,
+        ))
+        answer = await generator.generate(pair.question, retrieval)
+        context_chunks = _context_chunks_for_answer(retrieval, answer.context_chunk_ids)
+        cited_chunk_ids = _cited_chunk_ids(answer.answer, answer.context_chunk_ids)
+        context_by_id = {chunk.chunk_id: chunk for chunk in context_chunks}
+        cited_locators = [
+            locator for chunk_id in cited_chunk_ids
+            if (locator := _chunk_source_locator(context_by_id.get(chunk_id)))
+        ]
+        samples.append(EvidenceAnswerSample(
+            pair=pair,
+            answer=answer.answer,
+            cited_chunk_ids=cited_chunk_ids,
+            cited_source_locators=cited_locators,
+            context_chunk_ids=list(answer.context_chunk_ids),
+            metadata={
+                "context_count": len(answer.context_chunk_ids),
+                "citation_count": len(cited_chunk_ids),
+            },
+        ))
+        generated.append(answer)
+    return samples, generated
+
+
+def _answer_generation_pairs(pairs: list[EvidenceQAPair], config: BenchmarkSuiteConfig) -> list[EvidenceQAPair]:
+    sample_size = _answer_generation_sample_size(config)
+    if sample_size is None:
+        return list(pairs)
+    return _stable_sample(list(pairs), sample_size=max(0, sample_size), seed=f"{config.split_seed}:answer_eval")
+
+
+def _answer_generation_sample_size(config: BenchmarkSuiteConfig) -> int | None:
+    if config.answer_eval_enabled:
+        return config.answer_eval_sample_size
+    requested_sizes: list[int | None] = []
+    if _answer_judge_enabled(config):
+        requested_sizes.append(config.answer_judge_sample_size)
+    if config.spot_check_sample_size > 0:
+        requested_sizes.append(config.spot_check_sample_size)
+    if not requested_sizes:
+        return 0
+    if any(size is None for size in requested_sizes):
+        return None
+    return max(max(0, int(size)) for size in requested_sizes if size is not None)
+
+
+def _build_answer_llm_call(*, max_tokens: int) -> LLMCall:
+    from business.research.application.llm_client import build_unity_llm_call
+
+    return build_unity_llm_call(max_tokens=max_tokens, temperature=0)
+
+
+def _context_chunks_for_answer(retrieval: Any, context_chunk_ids: list[str]) -> list[PaperChunk]:
+    candidates = [
+        *getattr(retrieval, "child_chunks", []),
+        *getattr(retrieval, "ref_chunks", []),
+        *getattr(retrieval, "parent_chunks", []),
+    ]
+    by_id = {chunk.chunk_id: chunk for chunk in candidates}
+    return [chunk for chunk_id in context_chunk_ids if (chunk := by_id.get(chunk_id)) is not None]
+
+
+def _cited_chunk_ids(answer: str, context_chunk_ids: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"\[(\d+)\]", answer):
+        index = int(match.group(1)) - 1
+        if index < 0 or index >= len(context_chunk_ids):
+            continue
+        chunk_id = context_chunk_ids[index]
+        if chunk_id not in seen:
+            out.append(chunk_id)
+            seen.add(chunk_id)
+    return out
+
+
+def _chunk_source_locator(chunk: PaperChunk | None) -> str:
+    if chunk is None:
+        return ""
+    return str(chunk.metadata.get("source_locator") or chunk.metadata.get("source_ref") or "")
+
+
+def _write_answer_samples(
+    path: Path,
+    samples: list[EvidenceAnswerSample],
+    generated_answers: list[GeneratedAnswer],
+) -> None:
+    records = [
+        _answer_sample_record(sample, generated)
+        for sample, generated in zip(samples, generated_answers, strict=True)
+    ]
+    _write_jsonl(path, records)
+
+
+def _answer_sample_record(
+    sample: EvidenceAnswerSample,
+    generated: GeneratedAnswer,
+    *,
+    score: Any | None = None,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "question": sample.pair.question,
+        "paper_id": sample.pair.paper_id,
+        "qa_type": sample.pair.qa_type,
+        "expected_behavior": sample.pair.expected_behavior,
+        "answer": sample.answer,
+        "answer_facts": list(sample.pair.answer_facts),
+        "gold_chunk_ids": list(sample.pair.gold_chunk_ids),
+        "gold_source_locators": list(sample.pair.gold_source_locators),
+        "context_chunk_ids": list(sample.context_chunk_ids),
+        "cited_chunk_ids": list(sample.cited_chunk_ids),
+        "cited_source_locators": list(sample.cited_source_locators),
+        "contexts": list(generated.contexts),
+    }
+    if score is not None:
+        record["deterministic_scores"] = {
+            "fact_coverage": score.fact_coverage,
+            "citation_grounding": score.citation_grounding,
+            "source_locator_grounding": score.source_locator_grounding,
+            "abstention_correct": score.abstention_correct,
+            "answer_success": score.answer_success,
+            "matched_facts": list(score.matched_facts),
+            "missing_facts": list(score.missing_facts),
+        }
+    return record
+
+
+def _write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _answer_judge_sample(
+    generated_answers: list[GeneratedAnswer],
+    config: BenchmarkSuiteConfig,
+) -> list[GeneratedAnswer]:
+    sample_size = config.answer_judge_sample_size
+    if sample_size is None:
+        return list(generated_answers)
+    return list(generated_answers[:max(0, sample_size)])
+
+
+async def _run_answer_judge(
+    config: BenchmarkSuiteConfig,
+    generated_answers: list[GeneratedAnswer],
+) -> GenerationEvalResult:
+    mode = str(config.answer_judge_mode or "none").strip().casefold()
+    if mode != "llm":
+        raise ValueError("answer_judge_mode must be 'none' or 'llm'")
+    llm_call = config.answer_judge_llm_call or _build_answer_llm_call(max_tokens=300)
+    return await GenerationEvaluator(llm_call).evaluate(generated_answers)
+
+
+def _write_spot_check_report(
+    config: BenchmarkSuiteConfig,
+    *,
+    output_dir: Path,
+    answer_samples: list[EvidenceAnswerSample],
+    generated_answers: list[GeneratedAnswer],
+    answer_result: Any | None,
+) -> SpotCheckReport | None:
+    if config.spot_check_sample_size <= 0:
+        return _spot_check_report_from_annotations(config, output_dir=output_dir, sample_size=0)
+    score_by_question = {
+        score.sample.pair.question: score
+        for score in (answer_result.scores if answer_result is not None else [])
+    }
+    records = [
+        _answer_sample_record(
+            sample,
+            generated,
+            score=score_by_question.get(sample.pair.question),
+        )
+        for sample, generated in zip(answer_samples, generated_answers, strict=True)
+    ]
+    records = _spot_check_sample_records(records, config)
+    path = output_dir / "spot_check_samples.jsonl"
+    _write_jsonl(path, records)
+    annotation_summary = _spot_check_report_from_annotations(
+        config,
+        output_dir=output_dir,
+        sample_size=len(records),
+        sample_path=path,
+    )
+    return annotation_summary or SpotCheckReport(
+        sample_path=str(path),
+        sample_size=len(records),
+    )
+
+
+def _spot_check_sample_records(records: list[dict[str, Any]], config: BenchmarkSuiteConfig) -> list[dict[str, Any]]:
+    def priority(record: dict[str, Any]) -> tuple[int, str]:
+        scores = record.get("deterministic_scores") or {}
+        failed = scores.get("answer_success") is False
+        key = _stable_split_key(config.split_seed, f"spot:{record.get('paper_id')}:{record.get('question')}")
+        return (0 if failed else 1, key)
+
+    ordered = sorted(records, key=priority)
+    return ordered[:max(0, config.spot_check_sample_size)]
+
+
+def _spot_check_report_from_annotations(
+    config: BenchmarkSuiteConfig,
+    *,
+    output_dir: Path,
+    sample_size: int,
+    sample_path: Path | None = None,
+) -> SpotCheckReport | None:
+    path = config.spot_check_annotations_path
+    if path is None:
+        return None
+    if not path.exists():
+        raise FileNotFoundError(f"spot check annotations not found: {path}")
+    counts: Counter[str] = Counter()
+    annotated = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            label = str(
+                item.get("label")
+                or item.get("status")
+                or item.get("verdict")
+                or "unknown"
+            ).strip().casefold() or "unknown"
+            counts[label] += 1
+            annotated += 1
+    return SpotCheckReport(
+        sample_path=str(sample_path or output_dir / "spot_check_samples.jsonl"),
+        sample_size=sample_size,
+        annotation_path=str(path),
+        annotated_count=annotated,
+        label_counts=dict(counts),
+    )
 
 
 def _evaluate_fixed_window_baseline(
@@ -628,6 +975,7 @@ def _suite_warnings(
     splits: dict[str, BenchmarkSplit],
     audit: GoldEvidenceAuditReport,
     judge_report: GoldEvidenceJudgeReport | None,
+    candidate_report: dict[str, Any],
 ) -> list[str]:
     warnings: list[str] = []
     if paper_count < config.min_papers:
@@ -651,6 +999,10 @@ def _suite_warnings(
             warnings.append(f"gold_judge_warning:{judge_report.warning}")
         if judge_report.error:
             warnings.append(f"gold_judge_error:{judge_report.error}")
+    if candidate_report.get("passed") is False:
+        warnings.append("candidate_quality_gate_failed")
+        for issue in candidate_report.get("issues") or []:
+            warnings.append(f"candidate_quality_issue:{issue}")
     return warnings
 
 
@@ -725,6 +1077,42 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
     ])
     for qa_type, count in payload["target_qa_counts"].items():
         lines.append(f"- {qa_type}: `{count}`")
+    answer = payload["candidate_test_report"].get("answer")
+    if answer:
+        lines.extend([
+            "",
+            "## Answer Metrics",
+            "",
+            f"- answer success rate: `{answer['success_rate']:.3f}`",
+            f"- answer fact coverage: `{answer['answer_fact_coverage']:.3f}`",
+            f"- citation grounding: `{answer['citation_grounding_score']:.3f}`",
+            f"- source locator grounding: `{answer['source_locator_grounding_score']:.3f}`",
+            f"- abstention accuracy: `{answer['abstention_accuracy']:.3f}`",
+        ])
+    generation = payload["candidate_test_report"].get("generation")
+    if generation:
+        lines.extend([
+            "",
+            "## Generation Judge",
+            "",
+            f"- faithfulness: `{generation['faithfulness']:.3f}`",
+            f"- answer relevancy: `{generation['answer_relevancy']:.3f}`",
+            f"- context precision: `{generation['context_precision']:.3f}`",
+            f"- judged samples: `{generation['total']}`",
+        ])
+    spot_check = payload.get("spot_check")
+    if spot_check:
+        lines.extend([
+            "",
+            "## Spot Check",
+            "",
+            f"- sample_path: `{spot_check['sample_path']}`",
+            f"- sample_size: `{spot_check['sample_size']}`",
+            f"- annotated_count: `{spot_check['annotated_count']}`",
+        ])
+        if spot_check.get("label_counts"):
+            for label, count in sorted(spot_check["label_counts"].items()):
+                lines.append(f"- {label}: `{count}`")
     lines.extend([
         "",
         "## Splits",

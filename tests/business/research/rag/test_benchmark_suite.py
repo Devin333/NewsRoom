@@ -12,7 +12,7 @@ from business.research.rag.benchmark_suite import (
     split_paper_ids,
 )
 from business.research.rag.evidence_eval import EvidenceQAPair
-from business.research.rag.run_benchmark_suite import main
+from business.research.rag.run_benchmark_suite import _parse_thresholds, main
 
 
 class _FakeGoldJudge:
@@ -40,6 +40,22 @@ class _FakeGoldJudge:
             error=0,
             items=judged,
         )
+
+
+async def _fake_answer_llm(prompt: str) -> str:
+    return (
+        "Figure 1: architecture overview. Table 1: accuracy results. "
+        "The table reports accuracy 95, Equation 1 defines the score, "
+        "and s = x + y. [1]"
+    )
+
+
+async def _fake_judge_llm(prompt: str) -> str:
+    if "Score (0-100)" in prompt:
+        return "100"
+    if "Verdicts (yes/no per passage)" in prompt:
+        return "yes\nyes\nyes"
+    return "yes"
 
 
 def test_split_paper_ids_is_stable_and_non_empty() -> None:
@@ -71,15 +87,7 @@ def test_audit_gold_evidence_reports_missing_chunks() -> None:
 
 def test_run_benchmark_suite_writes_splits_and_baseline(tmp_path: Path) -> None:
     papers_dir = tmp_path / "papers"
-    for paper_id in ("p1", "p2", "p3"):
-        paper_dir = papers_dir / paper_id
-        (paper_dir / "figures").mkdir(parents=True)
-        (paper_dir / "figures" / "fig.png").write_bytes(b"fake")
-        payload = _research_document_payload(paper_id)
-        (paper_dir / "research_document.json").write_text(
-            json.dumps(payload, ensure_ascii=False),
-            encoding="utf-8",
-        )
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
 
     output_dir = tmp_path / "suite"
     result = run_benchmark_suite(BenchmarkSuiteConfig(
@@ -112,6 +120,85 @@ def test_run_benchmark_suite_writes_splits_and_baseline(tmp_path: Path) -> None:
     assert payload["evaluation_protocol"]["reported_split"] == "test"
 
 
+def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+    annotations_path = tmp_path / "spot_annotations.jsonl"
+    annotations_path.write_text(
+        "\n".join([
+            json.dumps({"label": "pass"}),
+            json.dumps({"verdict": "needs_fix"}),
+        ]),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "suite"
+
+    result = run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=5,
+        answer_eval_enabled=True,
+        answer_eval_sample_size=2,
+        answer_llm_call=_fake_answer_llm,
+        answer_judge_mode="llm",
+        answer_judge_sample_size=1,
+        answer_judge_llm_call=_fake_judge_llm,
+        spot_check_sample_size=2,
+        spot_check_annotations_path=annotations_path,
+        quality_thresholds={"answer.success_rate": 1.1},
+    ))
+
+    candidate_dir = output_dir / "test" / "candidate"
+    candidate = result.candidate_test_report
+    report_payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
+    markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
+    answer_samples = (candidate_dir / "answer_samples.jsonl").read_text(encoding="utf-8").splitlines()
+    spot_samples = (candidate_dir / "spot_check_samples.jsonl").read_text(encoding="utf-8").splitlines()
+
+    assert candidate["answer"]["total"] == 2
+    assert candidate["generation"]["total"] == 1
+    assert candidate["spot_check"]["annotated_count"] == 2
+    assert report_payload["spot_check"]["label_counts"] == {"needs_fix": 1, "pass": 1}
+    assert len(answer_samples) == 2
+    assert len(spot_samples) == 2
+    assert "candidate_quality_gate_failed" in result.warnings
+    assert any(warning.startswith("candidate_quality_issue:answer.success_rate=") for warning in result.warnings)
+    assert "## Answer Metrics" in markdown
+    assert "## Generation Judge" in markdown
+    assert "## Spot Check" in markdown
+
+
+def test_spot_check_generation_is_capped_by_sample_size(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+    prompts: list[str] = []
+
+    async def fake_answer(prompt: str) -> str:
+        prompts.append(prompt)
+        return "The answer is in the selected context. [1]"
+
+    output_dir = tmp_path / "suite"
+    result = run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=5,
+        answer_llm_call=fake_answer,
+        spot_check_sample_size=1,
+    ))
+
+    assert len(prompts) == 1
+    assert result.spot_check is not None
+    assert result.spot_check.sample_size == 1
+
+
 def test_run_benchmark_suite_cli(tmp_path: Path) -> None:
     papers_dir = tmp_path / "papers"
     paper_dir = papers_dir / "p1"
@@ -133,6 +220,8 @@ def test_run_benchmark_suite_cli(tmp_path: Path) -> None:
         "1",
         "--gold-audit-sample-size",
         "2",
+        "--quality-threshold",
+        "retrieval.hit_rate=0",
         "--no-page-visual",
     ])
 
@@ -142,6 +231,29 @@ def test_run_benchmark_suite_cli(tmp_path: Path) -> None:
     item = payload["gold_audit"]["items"][0]
     assert "evidence_previews" in item
     assert "answer_facts" in item
+
+
+def test_parse_thresholds_requires_metric_value_pairs() -> None:
+    assert _parse_thresholds(["answer.success_rate=0.8"]) == {"answer.success_rate": 0.8}
+
+    try:
+        _parse_thresholds(["answer.success_rate"])
+    except ValueError as exc:
+        assert "METRIC=VALUE" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def _write_research_document_fixtures(papers_dir: Path, paper_ids: tuple[str, ...]) -> None:
+    for paper_id in paper_ids:
+        paper_dir = papers_dir / paper_id
+        (paper_dir / "figures").mkdir(parents=True)
+        (paper_dir / "figures" / "fig.png").write_bytes(b"fake")
+        payload = _research_document_payload(paper_id)
+        (paper_dir / "research_document.json").write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
 
 def _research_document_payload(paper_id: str) -> dict:
