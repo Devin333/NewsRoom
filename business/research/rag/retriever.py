@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, TYPE_CHECKING
 
+from framework.rag.core import intent_allowed, intent_budget, position_decay_score
 from framework.rag.retrieval import (
     dedupe_by_key,
     expansion_metadata,
@@ -174,19 +175,20 @@ class RetrievalPolicy:
         return self.position_alpha.get(intent, self.default_alpha)
 
     def position_weight(self, intent: str, section_index: int, current: int) -> float:
-        alpha = self.alpha_for(intent)
-        if alpha == 0.0:
-            return 0.0
-        return alpha * math.exp(-abs(section_index - current) / self.sigma)
+        return position_decay_score(
+            section_index=section_index,
+            current_index=current,
+            alpha=self.alpha_for(intent),
+            sigma=self.sigma,
+        )
 
     def parent_budget_for(self, intent: str) -> tuple[int, int]:
-        count, tokens = self.parent_intent_budgets.get(
+        return intent_budget(
             intent,
-            (self.max_parent_chunks, self.max_parent_tokens),
-        )
-        return (
-            max(0, min(self.max_parent_chunks, int(count))),
-            max(0, min(self.max_parent_tokens, int(tokens))),
+            intent_budgets=self.parent_intent_budgets,
+            default_budget=(self.max_parent_chunks, self.max_parent_tokens),
+            max_chunks=self.max_parent_chunks,
+            max_tokens=self.max_parent_tokens,
         )
 
     def parent_score_weights_for(self, intent: str) -> dict[str, float]:
@@ -217,10 +219,10 @@ class RetrievalPolicy:
         return tuple(out) if out else tuple(FIELD_NAMES)
 
     def reranker_enabled_for(self, intent: str) -> bool:
-        return _intent_allowed(intent, self.reranking_intents)
+        return intent_allowed(intent, self.reranking_intents)
 
     def field_reranker_enabled_for(self, intent: str) -> bool:
-        return self.field_reranking_enabled and _intent_allowed(intent, self.field_reranking_intents)
+        return self.field_reranking_enabled and intent_allowed(intent, self.field_reranking_intents)
 
 
 def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
@@ -1643,10 +1645,6 @@ def _normalized_child_final_score_weights(weights: dict[str, float]) -> dict[str
         "position": 0.05,
         "graph": 0.05,
     })
-
-
-def _intent_allowed(intent: str, allowed_intents: tuple[str, ...]) -> bool:
-    return not allowed_intents or intent in allowed_intents
 
 
 def _normalized_parent_score_weights(weights: dict[str, float]) -> dict[str, float]:

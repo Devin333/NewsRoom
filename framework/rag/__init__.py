@@ -14,8 +14,11 @@ from framework.rag.core import (
     build_chunk_semantic_key,
     build_rag_stable_id,
     content_fingerprint,
+    intent_allowed,
+    intent_budget,
     normalize_rag_key,
     normalize_semantic_text,
+    position_decay_score,
 )
 
 __all__ = [
@@ -32,6 +35,9 @@ __all__ = [
     "build_chunk_semantic_key",
     "build_rag_stable_id",
     "content_fingerprint",
+    "intent_allowed",
+    "intent_budget",
     "normalize_rag_key",
     "normalize_semantic_text",
+    "position_decay_score",
 ]
