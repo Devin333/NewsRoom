@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Mapping
 
 from framework.rag.core import RAGEvidence, RAGScoreBreakdown
 
@@ -62,4 +62,36 @@ def score_evidence(evidence: RAGEvidence, *, weights: RAGScoringWeights | None =
     return replace(evidence, score=final_score, score_breakdown=breakdown, metadata=metadata)
 
 
-__all__ = ["RAGScoringWeights", "fuse_score", "score_evidence"]
+def normalize_score_weights(
+    weights: Mapping[str, float],
+    *,
+    keys: tuple[str, ...],
+    fallback: Mapping[str, float],
+) -> dict[str, float]:
+    normalized = {key: max(0.0, float(weights.get(key, 0.0))) for key in keys}
+    total = sum(normalized.values())
+    if total <= 0.0:
+        return dict(fallback)
+    return {key: round(value / total, 6) for key, value in normalized.items()}
+
+
+def weighted_component_score(
+    components: Mapping[str, float | None],
+    weights: Mapping[str, float],
+) -> float:
+    total = 0.0
+    for name, weight in weights.items():
+        value = components.get(name)
+        if value is None:
+            continue
+        total += float(value) * float(weight)
+    return total
+
+
+__all__ = [
+    "RAGScoringWeights",
+    "fuse_score",
+    "normalize_score_weights",
+    "score_evidence",
+    "weighted_component_score",
+]

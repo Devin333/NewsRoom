@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, TYPE_CHECKING
 
+from framework.rag.retrieval import normalize_score_weights, weighted_component_score
+
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
@@ -707,21 +709,27 @@ class ResearchRetriever:
         has_field_semantic = field_summary.best_score > 0.0 or field_rerank_score is not None
         if has_field_semantic:
             child_weights = self._policy.normalized_child_final_score_weights()
-            final_score = (
-                semantic * child_weights["semantic"]
-                + field_summary.best_score * child_weights["field_embedding"]
-                + field_rerank * child_weights["field_rerank"]
-                + position_score * child_weights["position"]
-                + graph_score * child_weights["graph"]
+            final_score = weighted_component_score(
+                {
+                    "semantic": semantic,
+                    "field_embedding": field_summary.best_score,
+                    "field_rerank": field_rerank,
+                    "position": position_score,
+                    "graph": graph_score,
+                },
+                child_weights,
             )
             score_strategy = "semantic_field_embedding_rerank_fusion"
         else:
             child_weights = self._policy.normalized_child_score_weights()
-            final_score = (
-                semantic * child_weights["semantic"]
-                + field_scores.field_score * child_weights["field"]
-                + position_score * child_weights["position"]
-                + graph_score * child_weights["graph"]
+            final_score = weighted_component_score(
+                {
+                    "semantic": semantic,
+                    "field": field_scores.field_score,
+                    "position": position_score,
+                    "graph": graph_score,
+                },
+                child_weights,
             )
             score_strategy = "semantic_lexical_field_fallback"
         final_score = _clamp_score(final_score + element_label_boost)
@@ -1234,11 +1242,14 @@ class ResearchRetriever:
             if rerank_score is not None
             else _deterministic_parent_relevance(candidate.child_relevance_score, heading_score)
         )
-        final_score = (
-            candidate.child_relevance_score * score_weights["child"]
-            + parent_relevance_score * score_weights["parent"]
-            + heading_score * score_weights["heading"]
-            + position_score * score_weights["position"]
+        final_score = weighted_component_score(
+            {
+                "child": candidate.child_relevance_score,
+                "parent": parent_relevance_score,
+                "heading": heading_score,
+                "position": position_score,
+            },
+            score_weights,
         )
         return _ParentCandidate(
             parent=candidate.parent,
@@ -1632,11 +1643,7 @@ def _normalized_score_weights(
     keys: tuple[str, ...],
     fallback: dict[str, float],
 ) -> dict[str, float]:
-    normalized = {key: max(0.0, float(weights.get(key, 0.0))) for key in keys}
-    total = sum(normalized.values())
-    if total <= 0.0:
-        return dict(fallback)
-    return {key: round(value / total, 6) for key, value in normalized.items()}
+    return normalize_score_weights(weights, keys=keys, fallback=fallback)
 
 
 def _field_scores_for_chunk(
@@ -1657,12 +1664,15 @@ def _field_scores_for_chunk(
     caption_score = _lexical_match_score(query_text, field_texts.caption)
     equation_score = _lexical_match_score(query_text, field_texts.equation)
     body_score = _lexical_match_score(query_text, field_texts.body)
-    field_score = (
-        title_score * normalized_weights["title"]
-        + abstract_score * normalized_weights["abstract"]
-        + caption_score * normalized_weights["caption"]
-        + equation_score * normalized_weights["equation"]
-        + body_score * normalized_weights["body"]
+    field_score = weighted_component_score(
+        {
+            "title": title_score,
+            "abstract": abstract_score,
+            "caption": caption_score,
+            "equation": equation_score,
+            "body": body_score,
+        },
+        normalized_weights,
     )
     return _FieldScores(
         title_score=_round_score(title_score),
