@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from framework.harness import (
+    DeterministicRAGPlanner,
     RAGBudget,
     RAGBudgetSnapshot,
     RAGExecutionPolicy,
@@ -76,3 +77,25 @@ def test_budget_gate_rejects_projected_plan_over_limits() -> None:
 
     assert result.passed is False
     assert set(result.details["violations"]) == {"queries", "worker_calls"}
+
+
+def test_deterministic_planner_marks_initial_query_with_required_evidence_type() -> None:
+    spec = fake_rag_session_spec(required_evidence_types=("method", "figure"))
+
+    plan = DeterministicRAGPlanner().plan(spec, round_index=0, gap_report={})
+
+    assert plan.queries[0].metadata["evidence_type"] == "method"
+
+
+def test_deterministic_planner_prefers_missing_evidence_type_when_replanning() -> None:
+    spec = fake_rag_session_spec(required_evidence_types=("method", "figure"))
+
+    plan = DeterministicRAGPlanner().plan(
+        spec,
+        round_index=1,
+        gap_report={"missing_evidence_types": ["figure"]},
+    )
+
+    assert plan.queries[0].metadata["evidence_type"] == "figure"
+    assert plan.queries[0].query is not None
+    assert "figure" in plan.queries[0].query

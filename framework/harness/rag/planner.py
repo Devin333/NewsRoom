@@ -22,15 +22,21 @@ class DeterministicRAGPlanner:
     def plan(self, spec: RAGSessionSpec, *, round_index: int, gap_report: dict[str, Any]) -> RetrievalPlanCandidate:
         suffix = f"round-{round_index + 1}"
         query_text = spec.goal.question
-        if gap_report.get("missing_evidence_types"):
-            query_text = f"{query_text} {' '.join(gap_report['missing_evidence_types'])}"
+        missing_evidence_types = tuple(str(item) for item in gap_report.get("missing_evidence_types", ()) if str(item).strip())
+        if missing_evidence_types:
+            query_text = f"{query_text} {' '.join(missing_evidence_types)}"
+        evidence_type = (
+            missing_evidence_types[0]
+            if missing_evidence_types
+            else spec.goal.required_evidence_types[min(round_index, len(spec.goal.required_evidence_types) - 1)]
+        )
         query_step = RetrievalStepSpec(
             step_id=f"{spec.session_id}:query:{suffix}",
             operation=RetrievalOperation.SEARCH_CORPUS,
             query=query_text,
             corpus=spec.allowed_corpora[0],
             max_results=min(5, max(spec.budget.max_queries, 1)),
-            metadata={"scope_ref": spec.source_policy.get("scope_ref")},
+            metadata={"scope_ref": spec.source_policy.get("scope_ref"), "evidence_type": evidence_type},
         )
         memory_step = RetrievalStepSpec(
             step_id=f"{spec.session_id}:memory:{suffix}",

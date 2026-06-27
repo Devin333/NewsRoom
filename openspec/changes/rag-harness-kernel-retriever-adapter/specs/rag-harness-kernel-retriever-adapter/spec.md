@@ -23,3 +23,12 @@ The existing Paper Harness retrieval port SHALL delegate through the kernel retr
 - **WHEN** `PaperChunkRetrievalPort.retrieve()` is called
 - **THEN** it returns the same Paper evidence ids and key metadata fields as before
 - **AND** collection metadata still includes intent, child count, ref count, and section index
+
+### Requirement: Paper Harness sessions preserve kernel evidence traceability
+Paper RAG sessions SHALL preserve required evidence types and kernel metadata from Research policy assembly through Harness context pack assembly.
+
+#### Scenario: Missing evidence type drives a second Paper RAG query
+- **WHEN** a Research retrieval goal requires multiple evidence types
+- **AND** the first retrieval round only satisfies one required evidence type
+- **THEN** the deterministic planner marks the replan query with the missing evidence type
+- **AND** the Paper kernel retriever path returns accepted context pack evidence with source refs, span refs, artifact refs, and evidence trace rows for each required evidence type

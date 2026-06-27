@@ -17,3 +17,4 @@
 - [x] 3.1 Run `openspec validate rag-harness-kernel-retriever-adapter --strict`
 - [x] 3.2 Run focused Harness adapter and Research retrieval port tests
 - [x] 3.3 Run full RAG pytest coverage, compile, and boundary scans
+- [x] 3.4 Add Paper RAG Harness integration coverage for `ResearchRAGPolicyBuilder -> BoundedRAGSessionController -> PaperChunkRetrievalPort -> KernelRAGRetrieverHarnessAdapter -> RAGContextPack`
