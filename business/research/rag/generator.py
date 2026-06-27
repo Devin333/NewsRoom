@@ -7,6 +7,11 @@ from typing import Any
 from business.research.document.models import PaperChunk
 from business.research.rag.retriever import RetrievalResult
 from framework.rag.context import collect_nearby_context_ids
+from framework.rag.generation import (
+    DEFAULT_GROUNDED_SYSTEM_INSTRUCTION,
+    GeneratedRAGAnswer,
+    build_numbered_context_prompt,
+)
 
 
 @dataclass
@@ -26,6 +31,15 @@ class GeneratedAnswer:
             "context_metadata": dict(self.context_metadata),
         }
 
+    def to_kernel_answer(self) -> GeneratedRAGAnswer:
+        return GeneratedRAGAnswer(
+            question=self.question,
+            answer=self.answer,
+            context_ids=tuple(self.context_chunk_ids),
+            contexts=tuple(self.contexts),
+            metadata=dict(self.context_metadata),
+        )
+
 
 @dataclass(frozen=True)
 class AnswerContextSelection:
@@ -33,13 +47,7 @@ class AnswerContextSelection:
     metadata: dict[str, Any]
 
 
-_SYSTEM_INSTR = (
-    "You are a research assistant answering questions about an academic paper. "
-    "Answer ONLY from the numbered context passages below. "
-    "Cite the passages you use with bracketed numbers like [1], [2]. "
-    "If the context does not contain the answer, say so explicitly. "
-    "Be concise and precise."
-)
+_SYSTEM_INSTR = DEFAULT_GROUNDED_SYSTEM_INSTRUCTION
 
 
 class AnswerContextAssembler:
@@ -137,12 +145,10 @@ class AnswerGenerator:
         return self._context_assembler.select(retrieval).chunks
 
     def _build_prompt(self, question: str, contexts: list[str]) -> str:
-        numbered = "\n\n".join(f"[{i + 1}] {text}" for i, text in enumerate(contexts))
-        return (
-            f"{_SYSTEM_INSTR}\n\n"
-            f"Context passages:\n{numbered}\n\n"
-            f"Question: {question}\n\n"
-            "Answer (with citations):"
+        return build_numbered_context_prompt(
+            question=question,
+            contexts=contexts,
+            system_instruction=_SYSTEM_INSTR,
         )
 
 
