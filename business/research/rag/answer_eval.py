@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from business.research.rag.evidence_eval import EvidenceQAPair
+from framework.rag.evaluation import AnswerMetricCase, score_answer_case
 
 
 _ABSTAIN_MARKERS = (
@@ -35,49 +35,6 @@ _ABSTAIN_MARKERS = (
     "没有提到",
     "论文中没有",
 )
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
-_STRUCTURAL_FACT_STOPWORDS = {
-    "figure",
-    "fig",
-    "table",
-    "tbl",
-    "equation",
-    "eq",
-    "caption",
-    "nearby",
-    "context",
-    "source",
-    "section",
-    "latex",
-    "normalized",
-    "symbols",
-    "operators",
-    "arxiv",
-    "begin",
-    "end",
-    "label",
-    "mathcal",
-    "sigma",
-    "text",
-    "theta",
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "for",
-    "in",
-    "is",
-    "of",
-    "on",
-    "our",
-    "the",
-    "this",
-    "to",
-    "use",
-    "we",
-    "with",
-}
 
 
 @dataclass
@@ -206,134 +163,26 @@ class EvidenceAnswerEvaluator:
 
     def score(self, sample: EvidenceAnswerSample) -> EvidenceAnswerScores:
         pair = sample.pair
-        if pair.expected_behavior == "abstain":
-            abstention_correct = 1.0 if _looks_like_abstention(sample.answer) else 0.0
-            return EvidenceAnswerScores(
-                sample=sample,
-                fact_coverage=None,
-                citation_grounding=None,
-                source_locator_grounding=None,
-                abstention_correct=abstention_correct,
-                answer_success=abstention_correct == 1.0,
-                failure_reason="" if abstention_correct == 1.0 else "abstention_mismatch",
-            )
-
-        fact_coverage, matched, missing = _fact_coverage(
-            sample.answer,
-            pair.answer_facts,
-            threshold=self._fact_match_threshold,
-        )
-        retrieval_context_coverage = _coverage(sample.context_chunk_ids, pair.gold_chunk_ids)
-        citation_grounding = _coverage(sample.cited_chunk_ids, pair.gold_chunk_ids)
-        source_locator_grounding = _locator_coverage(
-            sample.cited_source_locators,
-            pair.gold_source_locators,
-        )
-        citation_required = bool(pair.gold_chunk_ids)
-        citation_passed = (
-            not citation_required
-            or citation_grounding is not None
-            and citation_grounding >= self._success_citation_threshold
-        )
-        fact_passed = (
-            fact_coverage is None
-            or fact_coverage >= self._success_fact_threshold
-        )
-        abstained = _looks_like_abstention(sample.answer)
-        substantive_answer = (
-            not abstained
-            or fact_coverage is not None
-            and fact_passed
-        )
-        answer_success = fact_passed and citation_passed and substantive_answer
-        failure_reason = _failure_reason(
-            sample,
-            fact_coverage=fact_coverage,
-            retrieval_context_coverage=retrieval_context_coverage,
-            citation_grounding=citation_grounding,
-            fact_passed=fact_passed,
-            citation_passed=citation_passed,
-            answer_success=answer_success,
+        score = score_answer_case(
+            _metric_case_from_sample(sample),
+            fact_match_threshold=self._fact_match_threshold,
             success_fact_threshold=self._success_fact_threshold,
+            success_citation_threshold=self._success_citation_threshold,
+            abstain_markers=_ABSTAIN_MARKERS,
         )
         return EvidenceAnswerScores(
             sample=sample,
-            fact_coverage=fact_coverage,
-            citation_grounding=citation_grounding,
-            source_locator_grounding=source_locator_grounding,
-            abstention_correct=None,
-            answer_success=answer_success,
-            retrieval_context_coverage=retrieval_context_coverage,
-            citation_gold_coverage=citation_grounding,
-            failure_reason=failure_reason,
-            matched_facts=tuple(matched),
-            missing_facts=tuple(missing),
+            fact_coverage=score.fact_coverage,
+            citation_grounding=score.citation_grounding,
+            source_locator_grounding=score.source_locator_grounding,
+            abstention_correct=score.abstention_correct,
+            answer_success=score.answer_success,
+            retrieval_context_coverage=score.retrieval_context_coverage,
+            citation_gold_coverage=score.citation_gold_coverage,
+            failure_reason=score.failure_reason,
+            matched_facts=score.matched_facts,
+            missing_facts=score.missing_facts,
         )
-
-
-def _fact_coverage(
-    answer: str,
-    facts: list[str],
-    *,
-    threshold: float,
-) -> tuple[float | None, list[str], list[str]]:
-    normalized_facts = _unique_texts(facts)
-    if not normalized_facts:
-        return None, [], []
-    matched: list[str] = []
-    missing: list[str] = []
-    for fact in normalized_facts:
-        if _fact_matches(answer, fact, threshold=threshold):
-            matched.append(fact)
-        else:
-            missing.append(fact)
-    return len(matched) / len(normalized_facts), matched, missing
-
-
-def _fact_matches(answer: str, fact: str, *, threshold: float) -> bool:
-    normalized_answer = _normalize_text(answer)
-    normalized_fact = _normalize_text(fact)
-    if not normalized_answer or not normalized_fact:
-        return False
-    if normalized_fact in normalized_answer:
-        return True
-    fact_tokens = _content_tokens(normalized_fact)
-    if not fact_tokens:
-        return False
-    answer_tokens = set(_content_tokens(normalized_answer))
-    overlap = sum(1 for token in fact_tokens if _token_matches(token, answer_tokens))
-    return overlap / len(fact_tokens) >= _effective_fact_threshold(fact, fact_tokens, threshold)
-
-
-def _failure_reason(
-    sample: EvidenceAnswerSample,
-    *,
-    fact_coverage: float | None,
-    retrieval_context_coverage: float | None,
-    citation_grounding: float | None,
-    fact_passed: bool,
-    citation_passed: bool,
-    answer_success: bool,
-    success_fact_threshold: float,
-) -> str:
-    if answer_success:
-        return ""
-    pair = sample.pair
-    if pair.gold_chunk_ids:
-        retrieved_ids = _metadata_ids(sample.metadata, "retrieved_chunk_ids")
-        if retrieved_ids and _coverage(retrieved_ids, pair.gold_chunk_ids) != 1.0:
-            return "missing_gold_in_retrieval"
-        if retrieval_context_coverage is not None and retrieval_context_coverage < 1.0:
-            return "missing_gold_in_llm_context"
-        if citation_grounding is not None and citation_grounding < 1.0:
-            return "missing_gold_citation"
-    if not fact_passed and fact_coverage is not None and fact_coverage < success_fact_threshold:
-        return "fact_match_low"
-    if not citation_passed:
-        return "missing_gold_citation"
-    if _looks_like_abstention(sample.answer):
-        return "unexpected_abstention"
-    return "other"
 
 
 def _metadata_ids(metadata: dict[str, Any], key: str) -> list[str]:
@@ -343,88 +192,26 @@ def _metadata_ids(metadata: dict[str, Any], key: str) -> list[str]:
     return _unique_texts(raw)
 
 
-def _effective_fact_threshold(fact: str, fact_tokens: list[str], threshold: float) -> float:
-    lowered = fact.casefold()
-    effective = threshold
-    if len(fact_tokens) >= 12:
-        effective = min(effective, 0.55)
-    if len(fact_tokens) >= 24:
-        effective = min(effective, 0.45)
-    if "nearby context" in lowered or "caption:" in lowered:
-        effective = min(effective, 0.30)
-    if "latex:" in lowered or "\\begin" in lowered or "[equation" in lowered:
-        effective = min(effective, 0.35)
-    return effective
-
-
-def _coverage(retrieved: list[str], required: list[str]) -> float | None:
-    required_set = set(_unique_texts(required))
-    if not required_set:
-        return None
-    return len(required_set.intersection(_unique_texts(retrieved))) / len(required_set)
-
-
-def _locator_coverage(retrieved: list[str], required: list[str]) -> float | None:
-    required_locators = _unique_texts(required)
-    if not required_locators:
-        return None
-    retrieved_locators = _unique_texts(retrieved)
-    hits = 0
-    for locator in required_locators:
-        if any(_locator_matches(candidate, locator) for candidate in retrieved_locators):
-            hits += 1
-    return hits / len(required_locators)
-
-
-def _locator_matches(candidate: str, required: str) -> bool:
-    return bool(candidate and required) and (
-        candidate == required
-        or candidate.startswith(required)
-        or required.startswith(candidate)
+def _metric_case_from_sample(sample: EvidenceAnswerSample) -> AnswerMetricCase:
+    pair = sample.pair
+    return AnswerMetricCase(
+        case_id=f"{pair.paper_id}:{pair.qa_type}:{pair.question}",
+        question=pair.question,
+        answer=sample.answer,
+        expected_facts=tuple(pair.answer_facts),
+        cited_evidence_ids=tuple(sample.cited_chunk_ids),
+        context_evidence_ids=tuple(sample.context_chunk_ids),
+        gold_evidence_ids=tuple(pair.gold_chunk_ids),
+        expected_abstain=pair.expected_behavior == "abstain",
+        cited_source_locators=tuple(sample.cited_source_locators),
+        gold_source_locators=tuple(pair.gold_source_locators),
+        retrieved_evidence_ids=tuple(_metadata_ids(sample.metadata, "retrieved_chunk_ids")),
+        metadata={
+            "paper_id": pair.paper_id,
+            "qa_type": pair.qa_type,
+            **dict(sample.metadata),
+        },
     )
-
-
-def _looks_like_abstention(answer: str) -> bool:
-    normalized = _normalize_text(answer)
-    return any(marker in normalized for marker in _ABSTAIN_MARKERS)
-
-
-def _normalize_text(text: str) -> str:
-    return " ".join(str(text or "").casefold().split())
-
-
-def _tokens(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.casefold())
-
-
-def _content_tokens(text: str) -> list[str]:
-    return [
-        token
-        for token in _tokens(_strip_structural_fact_noise(text))
-        if token not in _STRUCTURAL_FACT_STOPWORDS
-        and not token.startswith("chunk_")
-        and len(token) > 1
-    ]
-
-
-def _strip_structural_fact_noise(text: str) -> str:
-    text = re.sub(r"_\{([^}]+)\}", r"_\1", text)
-    text = re.sub(r"\^\{([^}]+)\}", r"_\1", text)
-    text = text.replace("\\", " ")
-    text = text.replace("{", " ").replace("}", " ")
-    text = re.sub(r"\[[^\]]+\]", " ", text)
-    text = re.split(r"\bSource\s*:", text, maxsplit=1, flags=re.IGNORECASE)[0]
-    return text
-
-
-def _token_matches(token: str, answer_tokens: set[str]) -> bool:
-    if token in answer_tokens:
-        return True
-    if len(token) > 3 and token.endswith("s") and token[:-1] in answer_tokens:
-        return True
-    if len(token) > 3 and f"{token}s" in answer_tokens:
-        return True
-    return False
 
 
 def _unique_texts(values: list[Any]) -> list[str]:
