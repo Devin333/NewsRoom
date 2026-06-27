@@ -158,12 +158,18 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
     markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
     answer_samples = (candidate_dir / "answer_samples.jsonl").read_text(encoding="utf-8").splitlines()
     spot_samples = (candidate_dir / "spot_check_samples.jsonl").read_text(encoding="utf-8").splitlines()
+    answer_sample_records = [json.loads(line) for line in answer_samples]
 
     assert candidate["answer"]["total"] == 2
     assert candidate["generation"]["total"] == 1
     assert candidate["spot_check"]["annotated_count"] == 2
     assert report_payload["spot_check"]["label_counts"] == {"needs_fix": 1, "pass": 1}
     assert len(answer_samples) == 2
+    assert all("deterministic_scores" in record for record in answer_sample_records)
+    assert all(
+        "retrieval_context_coverage" in record["deterministic_scores"]
+        for record in answer_sample_records
+    )
     assert len(spot_samples) == 2
     assert "candidate_quality_gate_failed" in result.warnings
     assert any(warning.startswith("candidate_quality_issue:answer.success_rate=") for warning in result.warnings)

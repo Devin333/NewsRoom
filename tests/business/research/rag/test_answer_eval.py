@@ -25,15 +25,21 @@ def test_answer_evaluator_scores_fact_and_citation_grounding() -> None:
         ),
         cited_chunk_ids=["tbl-1", "para-result"],
         cited_source_locators=["paper://p1/pdf#page=6&pdf_rect=1,2,3,4", "paper://p1/pdf#page=7"],
+        context_chunk_ids=["tbl-1", "para-result"],
+        metadata={"retrieved_chunk_ids": ["tbl-1", "para-result"]},
     )
 
     result = EvidenceAnswerEvaluator().evaluate([sample])
     score = result.scores[0]
 
     assert score.fact_coverage == 1.0
+    assert score.retrieval_context_coverage == 1.0
     assert score.citation_grounding == 1.0
+    assert score.citation_gold_coverage == 1.0
     assert score.source_locator_grounding == 1.0
     assert score.answer_success is True
+    assert score.failure_reason == ""
+    assert result.retrieval_context_coverage_score() == 1.0
     assert result.by_qa_type["table_qa"].success_rate() == 1.0
 
 
@@ -52,12 +58,16 @@ def test_answer_evaluator_marks_missing_facts_and_weak_citations() -> None:
         pair=pair,
         answer="The equation computes attention weights. [eq-1]",
         cited_chunk_ids=["eq-1"],
+        context_chunk_ids=["eq-1"],
+        metadata={"retrieved_chunk_ids": ["eq-1", "para-explain"]},
     )
 
     score = EvidenceAnswerEvaluator().score(sample)
 
     assert score.fact_coverage == 0.5
+    assert score.retrieval_context_coverage == 0.5
     assert score.citation_grounding == 0.5
+    assert score.failure_reason == "missing_gold_in_llm_context"
     assert score.answer_success is False
     assert score.matched_facts == ("The equation computes attention weights.",)
     assert score.missing_facts == ("The paragraph explains queries keys and values.",)
@@ -70,18 +80,22 @@ def test_answer_evaluator_scores_negative_abstention() -> None:
     )
     good = EvidenceAnswerSample(
         pair=pair,
-        answer="The paper does not discuss that, and there is not enough evidence to answer.",
+        answer="The provided context does not mention any unrelated future model.",
+    )
+    good_plural = EvidenceAnswerSample(
+        pair=pair,
+        answer="The provided passages do not mention any unrelated future model.",
     )
     bad = EvidenceAnswerSample(
         pair=pair,
         answer="Yes, it uses the unrelated future model.",
     )
 
-    result = EvidenceAnswerEvaluator().evaluate([good, bad])
+    result = EvidenceAnswerEvaluator().evaluate([good, good_plural, bad])
 
-    assert [score.abstention_correct for score in result.scores] == [1.0, 0.0]
-    assert result.abstention_accuracy() == 0.5
-    assert result.success_rate() == 0.5
+    assert [score.abstention_correct for score in result.scores] == [1.0, 1.0, 0.0]
+    assert result.abstention_accuracy() == 2 / 3
+    assert result.success_rate() == 2 / 3
 
 
 def test_answer_evaluator_allows_no_fact_gold_but_requires_citation_when_present() -> None:
@@ -105,3 +119,52 @@ def test_answer_evaluator_allows_no_fact_gold_but_requires_citation_when_present
     assert score.citation_grounding == 0.0
     assert score.source_locator_grounding == 0.0
     assert score.answer_success is False
+
+
+def test_answer_evaluator_reports_missing_gold_in_retrieval() -> None:
+    pair = EvidenceQAPair(
+        question="What does the formula mean?",
+        paper_id="p1",
+        qa_type="formula_qa",
+        gold_chunk_ids=["eq-1"],
+        answer_facts=["The formula computes a convolution kernel."],
+    )
+    sample = EvidenceAnswerSample(
+        pair=pair,
+        answer="The context discusses attention instead. [other]",
+        cited_chunk_ids=["other"],
+        context_chunk_ids=["other"],
+        metadata={"retrieved_chunk_ids": ["other"]},
+    )
+
+    result = EvidenceAnswerEvaluator().evaluate([sample])
+    score = result.scores[0]
+
+    assert score.retrieval_context_coverage == 0.0
+    assert score.failure_reason == "missing_gold_in_retrieval"
+    assert result.failure_reason_counts() == {"missing_gold_in_retrieval": 1}
+
+
+def test_answer_evaluator_soft_matches_long_structured_facts() -> None:
+    pair = EvidenceQAPair(
+        question="What does the figure show?",
+        paper_id="p1",
+        qa_type="figure_qa",
+        gold_chunk_ids=["fig-1"],
+        answer_facts=[
+            "[Figure fig_1] Caption: Schematic of the objective we use in our baseline model. "
+            "Nearby Context: In this example, we process a long sentence with multiple labels."
+        ],
+    )
+    sample = EvidenceAnswerSample(
+        pair=pair,
+        answer="The figure shows a schematic of the baseline objective. [fig-1]",
+        cited_chunk_ids=["fig-1"],
+        context_chunk_ids=["fig-1"],
+        metadata={"retrieved_chunk_ids": ["fig-1"]},
+    )
+
+    score = EvidenceAnswerEvaluator().score(sample)
+
+    assert score.fact_coverage == 1.0
+    assert score.answer_success is True

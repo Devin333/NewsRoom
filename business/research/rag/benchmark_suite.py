@@ -336,7 +336,7 @@ class BenchmarkSuiteConfig:
     gold_evidence_judge: GoldEvidenceJudge | None = None
     answer_eval_enabled: bool = False
     answer_eval_sample_size: int | None = None
-    answer_max_context_chunks: int = 3
+    answer_max_context_chunks: int = 5
     answer_max_chars_per_chunk: int = 1000
     answer_llm_call: LLMCall | None = None
     answer_judge_mode: str = "none"
@@ -522,12 +522,17 @@ def _evaluate_candidate(
     generation_result = None
     if _answers_requested(config):
         answer_samples, generated_answers = asyncio.run(_generate_answer_samples(config, retriever, pairs))
-        _write_answer_samples(output_dir / "answer_samples.jsonl", answer_samples, generated_answers)
         if config.answer_eval_enabled:
             answer_result = EvidenceAnswerEvaluator().evaluate(answer_samples)
         if _answer_judge_enabled(config):
             judge_answers = _answer_judge_sample(generated_answers, config)
             generation_result = asyncio.run(_run_answer_judge(config, judge_answers))
+        _write_answer_samples(
+            output_dir / "answer_samples.jsonl",
+            answer_samples,
+            generated_answers,
+            answer_result=answer_result,
+        )
     metadata = {
         "mode": "candidate",
         "retrieval_policy": retriever.policy.name,
@@ -612,6 +617,10 @@ async def _generate_answer_samples(
             metadata={
                 "context_count": len(answer.context_chunk_ids),
                 "citation_count": len(cited_chunk_ids),
+                "retrieved_chunk_ids": list(answer.context_metadata.get("retrieved_chunk_ids") or []),
+                "context_selection_strategy": answer.context_metadata.get("context_selection_strategy", ""),
+                "context_source_buckets": dict(answer.context_metadata.get("context_source_buckets") or {}),
+                "gold_context_coverage": _coverage(answer.context_chunk_ids, pair.gold_chunk_ids),
             },
         ))
         generated.append(answer)
@@ -680,9 +689,16 @@ def _write_answer_samples(
     path: Path,
     samples: list[EvidenceAnswerSample],
     generated_answers: list[GeneratedAnswer],
+    *,
+    answer_result: Any | None = None,
 ) -> None:
+    score_by_key = _answer_score_by_key(answer_result)
     records = [
-        _answer_sample_record(sample, generated)
+        _answer_sample_record(
+            sample,
+            generated,
+            score=score_by_key.get(_answer_sample_key(sample)),
+        )
         for sample, generated in zip(samples, generated_answers, strict=True)
     ]
     _write_jsonl(path, records)
@@ -707,14 +723,20 @@ def _answer_sample_record(
         "cited_chunk_ids": list(sample.cited_chunk_ids),
         "cited_source_locators": list(sample.cited_source_locators),
         "contexts": list(generated.contexts),
+        "metadata": dict(sample.metadata),
+        "context_metadata": dict(generated.context_metadata),
     }
     if score is not None:
         record["deterministic_scores"] = {
             "fact_coverage": score.fact_coverage,
+            "fact_match_coverage": score.fact_coverage,
+            "retrieval_context_coverage": score.retrieval_context_coverage,
             "citation_grounding": score.citation_grounding,
+            "citation_gold_coverage": score.citation_gold_coverage,
             "source_locator_grounding": score.source_locator_grounding,
             "abstention_correct": score.abstention_correct,
             "answer_success": score.answer_success,
+            "failure_reason": score.failure_reason,
             "matched_facts": list(score.matched_facts),
             "missing_facts": list(score.missing_facts),
         }
@@ -759,15 +781,12 @@ def _write_spot_check_report(
 ) -> SpotCheckReport | None:
     if config.spot_check_sample_size <= 0:
         return _spot_check_report_from_annotations(config, output_dir=output_dir, sample_size=0)
-    score_by_question = {
-        score.sample.pair.question: score
-        for score in (answer_result.scores if answer_result is not None else [])
-    }
+    score_by_key = _answer_score_by_key(answer_result)
     records = [
         _answer_sample_record(
             sample,
             generated,
-            score=score_by_question.get(sample.pair.question),
+            score=score_by_key.get(_answer_sample_key(sample)),
         )
         for sample, generated in zip(answer_samples, generated_answers, strict=True)
     ]
@@ -784,6 +803,19 @@ def _write_spot_check_report(
         sample_path=str(path),
         sample_size=len(records),
     )
+
+
+def _answer_score_by_key(answer_result: Any | None) -> dict[tuple[str, str, str], Any]:
+    if answer_result is None:
+        return {}
+    return {
+        _answer_sample_key(score.sample): score
+        for score in answer_result.scores
+    }
+
+
+def _answer_sample_key(sample: EvidenceAnswerSample) -> tuple[str, str, str]:
+    return (sample.pair.paper_id, sample.pair.qa_type, sample.pair.question)
 
 
 def _spot_check_sample_records(records: list[dict[str, Any]], config: BenchmarkSuiteConfig) -> list[dict[str, Any]]:
@@ -1085,10 +1117,17 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             "",
             f"- answer success rate: `{answer['success_rate']:.3f}`",
             f"- answer fact coverage: `{answer['answer_fact_coverage']:.3f}`",
+            f"- retrieval context coverage: `{answer['retrieval_context_coverage']:.3f}`",
             f"- citation grounding: `{answer['citation_grounding_score']:.3f}`",
+            f"- citation gold coverage: `{answer['citation_gold_coverage']:.3f}`",
             f"- source locator grounding: `{answer['source_locator_grounding_score']:.3f}`",
             f"- abstention accuracy: `{answer['abstention_accuracy']:.3f}`",
         ])
+        failure_counts = answer.get("failure_reason_counts") or {}
+        if failure_counts:
+            lines.append("- failure reasons:")
+            for reason, count in sorted(failure_counts.items()):
+                lines.append(f"  - `{reason}`: `{count}`")
     generation = payload["candidate_test_report"].get("generation")
     if generation:
         lines.extend([
@@ -1199,6 +1238,25 @@ def _hit_at_10(retrieval: dict[str, Any]) -> float:
 
 def _average(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
+
+
+def _coverage(retrieved: list[str], required: list[str]) -> float | None:
+    required_set = set(_unique_texts(required))
+    if not required_set:
+        return None
+    return len(required_set.intersection(_unique_texts(retrieved))) / len(required_set)
+
+
+def _unique_texts(values: Iterable[Any]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        out.append(text)
+        seen.add(text)
+    return out
 
 
 def _summary_from_report(report: dict[str, Any]) -> dict[str, Any]:

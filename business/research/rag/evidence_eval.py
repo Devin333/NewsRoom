@@ -889,10 +889,19 @@ def _explicit_result_reference_chunks(chunk: PaperChunk, chunks_by_id: dict[str,
 
 
 def _answer_facts_from_chunk(chunk: PaperChunk) -> list[str]:
+    caption = str(chunk.metadata.get("caption_text") or chunk.metadata.get("surya_caption") or "")
+    if not caption:
+        caption = _caption_from_content(chunk.content)
+    if chunk.chunk_type == "figure" or chunk.has_figure:
+        return _unique_texts([caption]) if caption else [_snippet_from_content(_table_body_without_nearby_context(chunk.content))]
+    if chunk.chunk_type == "table" or chunk.has_table:
+        table_body = _table_body_without_nearby_context(chunk.content)
+        return _unique_texts([
+            caption,
+            _snippet_from_content(table_body),
+        ])[:2]
     candidates = [
-        str(chunk.metadata.get("caption_text") or ""),
-        str(chunk.metadata.get("surya_caption") or ""),
-        _caption_from_content(chunk.content),
+        caption,
         _snippet_from_content(chunk.content),
     ]
     return _unique_texts([candidate for candidate in candidates if candidate])[:2]

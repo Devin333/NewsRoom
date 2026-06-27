@@ -128,10 +128,14 @@ def _answer_result_to_dict(result: EvidenceAnswerEvalResult) -> dict[str, Any]:
     return {
         "total": result.total,
         "answer_fact_coverage": result.answer_fact_coverage(),
+        "fact_match_coverage": result.answer_fact_coverage(),
+        "retrieval_context_coverage": result.retrieval_context_coverage_score(),
         "citation_grounding_score": result.citation_grounding_score(),
+        "citation_gold_coverage": result.citation_gold_coverage_score(),
         "source_locator_grounding_score": result.source_locator_grounding_score(),
         "abstention_accuracy": result.abstention_accuracy(),
         "success_rate": result.success_rate(),
+        "failure_reason_counts": result.failure_reason_counts(),
         "by_qa_type": {
             qa_type: _answer_result_to_dict(sub)
             for qa_type, sub in result.by_qa_type.items()
@@ -183,7 +187,10 @@ def _threshold_values(report: EvidenceRegressionReport) -> dict[str, float]:
     if report.answer is not None:
         values.update({
             "answer.fact_coverage": report.answer.answer_fact_coverage(),
+            "answer.fact_match_coverage": report.answer.answer_fact_coverage(),
+            "answer.retrieval_context_coverage": report.answer.retrieval_context_coverage_score(),
             "answer.citation_grounding": report.answer.citation_grounding_score(),
+            "answer.citation_gold_coverage": report.answer.citation_gold_coverage_score(),
             "answer.source_locator_grounding": report.answer.source_locator_grounding_score(),
             "answer.abstention_accuracy": report.answer.abstention_accuracy(),
             "answer.success_rate": report.answer.success_rate(),
