@@ -330,6 +330,7 @@ class EvidenceCandidate:
     confidence: float = 0.0
     freshness: str = "unknown"
     lineage: tuple[str, ...] = ()
+    artifact_refs: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -345,10 +346,18 @@ class EvidenceCandidate:
         object.__setattr__(self, "span_refs", tuple(str(ref) for ref in self.span_refs))
         object.__setattr__(self, "claim_refs", tuple(str(ref) for ref in self.claim_refs))
         object.__setattr__(self, "lineage", tuple(str(item) for item in self.lineage))
+        object.__setattr__(self, "artifact_refs", tuple(str(ref) for ref in self.artifact_refs if str(ref).strip()))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     @classmethod
-    def from_evidence_pack(cls, pack: EvidencePack, *, evidence_type: str) -> "EvidenceCandidate":
+    def from_evidence_pack(
+        cls,
+        pack: EvidencePack,
+        *,
+        evidence_type: str,
+        artifact_refs: tuple[str, ...] = (),
+    ) -> "EvidenceCandidate":
+        pack_artifact_refs = _artifact_refs_from_metadata(pack.metadata)
         return cls(
             evidence_id=pack.evidence_id,
             title=pack.title,
@@ -360,6 +369,7 @@ class EvidenceCandidate:
             confidence=pack.confidence,
             freshness=pack.freshness,
             lineage=pack.lineage,
+            artifact_refs=tuple(dict.fromkeys((*pack_artifact_refs, *artifact_refs))),
             metadata=pack.metadata,
         )
 
@@ -372,7 +382,12 @@ class EvidenceCandidate:
             confidence=self.confidence,
             freshness=self.freshness,
             lineage=self.lineage,
-            metadata={**self.metadata, "evidence_type": self.evidence_type, "claim_refs": list(self.claim_refs)},
+            metadata={
+                **self.metadata,
+                "evidence_type": self.evidence_type,
+                "claim_refs": list(self.claim_refs),
+                "artifact_refs": list(self.artifact_refs),
+            },
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -387,6 +402,7 @@ class EvidenceCandidate:
             "confidence": self.confidence,
             "freshness": self.freshness,
             "lineage": list(self.lineage),
+            "artifact_refs": list(self.artifact_refs),
             "metadata": to_jsonable(self.metadata),
         }
 
@@ -489,6 +505,8 @@ class RAGContextPack:
     conflicting_evidence: tuple[EvidenceCandidate, ...] = ()
     memory_context: tuple[dict[str, Any], ...] = ()
     source_refs: tuple[str, ...] = ()
+    artifact_refs: tuple[str, ...] = ()
+    evidence_trace: tuple[dict[str, Any], ...] = ()
     gap_report: dict[str, Any] = field(default_factory=dict)
     budget_snapshot: RAGBudgetSnapshot | None = None
     assembly_summary: str | None = None
@@ -514,6 +532,8 @@ class RAGContextPack:
         object.__setattr__(self, "conflicting_evidence", tuple(self.conflicting_evidence))
         object.__setattr__(self, "memory_context", tuple(dict(item) for item in self.memory_context))
         object.__setattr__(self, "source_refs", tuple(str(ref) for ref in self.source_refs))
+        object.__setattr__(self, "artifact_refs", tuple(str(ref) for ref in self.artifact_refs if str(ref).strip()))
+        object.__setattr__(self, "evidence_trace", tuple(dict(item) for item in self.evidence_trace))
         object.__setattr__(self, "gap_report", dict(self.gap_report))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
@@ -537,6 +557,8 @@ class RAGContextPack:
             "conflicting_evidence": [item.to_dict() for item in self.conflicting_evidence],
             "memory_context": to_jsonable(list(self.memory_context)),
             "source_refs": list(self.source_refs),
+            "artifact_refs": list(self.artifact_refs),
+            "evidence_trace": to_jsonable(list(self.evidence_trace)),
             "gap_report": to_jsonable(self.gap_report),
             "budget_snapshot": self.budget_snapshot.to_dict() if self.budget_snapshot else None,
             "assembly_summary": self.assembly_summary,
@@ -601,6 +623,15 @@ class RAGTranscript:
 
 def ensure_jsonable_rag_model(value: Any) -> None:
     stable_json_dumps(to_jsonable(value))
+
+
+def _artifact_refs_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
+    raw = metadata.get("artifact_refs") or metadata.get("artifact_ref") or ()
+    if isinstance(raw, str):
+        raw = (raw,)
+    if not isinstance(raw, (tuple, list)):
+        return ()
+    return tuple(str(ref) for ref in raw if str(ref).strip())
 
 
 __all__ = [

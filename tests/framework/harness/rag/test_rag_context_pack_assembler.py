@@ -21,19 +21,37 @@ def test_context_pack_assembler_routes_rag_payload_through_context_assembler() -
             confidence=0.9,
             freshness="static-fixture",
             lineage=("retrieval.fake", "source.read"),
+            artifact_refs=("artifact://paper/method-image",),
         ),
     )
 
     pack = assembler.assemble(
         spec=spec,
         accepted_evidence=evidence,
+        artifact_refs=("artifact://retrieval/request-1",),
         budget_snapshot=None,
         policy=RAGExecutionPolicy.from_session_spec(spec),
     )
 
     envelope = assembler.envelopes[0]
     assert pack.metadata["context_snapshot_ref"]
+    assert pack.artifact_refs == ("artifact://paper/method-image", "artifact://retrieval/request-1")
+    assert pack.evidence_trace == (
+        {
+            "status": "accepted",
+            "evidence_id": "evidence:method",
+            "evidence_type": "method",
+            "source_ref": "source://paper#method",
+            "span_refs": ["source://paper#method:p3"],
+            "artifact_refs": ["artifact://paper/method-image"],
+            "lineage": ["retrieval.fake", "source.read"],
+            "confidence": 0.9,
+            "score_breakdown": {},
+        },
+    )
     assert envelope.stable_prefix[ContextSegmentType.GLOBAL_POLICY.value]
+    assert envelope.artifact_refs == pack.artifact_refs
+    assert envelope.metadata["evidence_trace"] == [dict(pack.evidence_trace[0])]
     assert ContextSegmentType.EVIDENCE_MEMORY.value in envelope.dynamic_tail
     assert all(segment.cache_scope == ContextCacheScope.STABLE_PREFIX for segment in envelope.segments[:3])
     assert all(segment.cache_scope == ContextCacheScope.DYNAMIC_TAIL for segment in envelope.segments[3:])

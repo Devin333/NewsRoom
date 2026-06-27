@@ -32,6 +32,7 @@ def evidence_candidate_from_rag_evidence(
         confidence=_confidence(evidence.score),
         freshness=str(evidence.metadata.get("freshness") or "unknown"),
         lineage=(evidence.document_id,),
+        artifact_refs=_artifact_refs(evidence.metadata),
         metadata=metadata,
     )
 
@@ -47,6 +48,15 @@ def _source_ref(evidence: RAGEvidence) -> str:
 
 def _confidence(score: float) -> float:
     return max(0.0, min(float(score), 1.0))
+
+
+def _artifact_refs(metadata: dict[str, Any]) -> tuple[str, ...]:
+    raw = metadata.get("artifact_refs") or metadata.get("artifact_ref") or ()
+    if isinstance(raw, str):
+        raw = (raw,)
+    if not isinstance(raw, (tuple, list)):
+        return ()
+    return tuple(str(ref) for ref in raw if str(ref).strip())
 
 
 __all__ = ["evidence_candidate_from_rag_evidence"]

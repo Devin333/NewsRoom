@@ -16,7 +16,7 @@ def test_kernel_rag_evidence_converts_to_harness_evidence_candidate():
             source_id="source://doc-1/chunk-1",
             raw_locator="source://doc-1/chunk-1",
         ),
-        metadata={"section_title": "Results"},
+        metadata={"section_title": "Results", "artifact_refs": ["artifact://visual/1"]},
     )
 
     candidate = evidence_candidate_from_rag_evidence(evidence, evidence_type="experiment_result")
@@ -29,6 +29,7 @@ def test_kernel_rag_evidence_converts_to_harness_evidence_candidate():
     assert candidate.evidence_type == "experiment_result"
     assert candidate.confidence == 0.85
     assert candidate.lineage == ("doc-1",)
+    assert candidate.artifact_refs == ("artifact://visual/1",)
     assert candidate.metadata["rag_score"] == 0.85
     assert candidate.metadata["rag_score_breakdown"] == {
         "child_similarity": 0.8,

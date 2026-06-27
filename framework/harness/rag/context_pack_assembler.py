@@ -28,6 +28,7 @@ class RAGContextPackAssembler:
         rejected_evidence: tuple[EvidenceCandidate, ...] = (),
         conflicting_evidence: tuple[EvidenceCandidate, ...] = (),
         memory_context: tuple[dict[str, Any], ...] = (),
+        artifact_refs: tuple[str, ...] = (),
         gap_report: dict[str, Any] | None = None,
         budget_snapshot: RAGBudgetSnapshot | None = None,
         policy: RAGExecutionPolicy | None = None,
@@ -36,8 +37,17 @@ class RAGContextPackAssembler:
         snapshot = budget_snapshot or RAGBudgetSnapshot()
         context_budget = _context_budget_from_rag_policy(policy)
         source_refs = _source_refs(accepted_evidence, rejected_evidence, conflicting_evidence)
+        artifact_refs = tuple(dict.fromkeys((
+            *_artifact_refs(accepted_evidence, rejected_evidence, conflicting_evidence),
+            *tuple(str(ref) for ref in artifact_refs if str(ref).strip()),
+        )))
         retained_memory_context = tuple(_trim_memory_hit(item) for item in memory_context[: policy.budget.max_memory_hits])
         retained_evidence = accepted_evidence[: policy.budget.max_context_items]
+        evidence_trace = _evidence_trace(
+            accepted=retained_evidence,
+            rejected=rejected_evidence,
+            conflicting=conflicting_evidence,
+        )
         context_tokens = min(
             _estimate_context_tokens(accepted_evidence, rejected_evidence, conflicting_evidence, memory_context),
             policy.budget.max_context_tokens,
@@ -64,6 +74,8 @@ class RAGContextPackAssembler:
             conflicting_evidence=conflicting_evidence,
             memory_context=retained_memory_context,
             source_refs=source_refs,
+            artifact_refs=artifact_refs,
+            evidence_trace=evidence_trace,
             gap_report=dict(gap_report or {}),
             budget_snapshot=snapshot,
             assembly_summary=_assembly_summary(accepted_evidence, rejected_evidence, conflicting_evidence, memory_context),
@@ -71,6 +83,8 @@ class RAGContextPackAssembler:
                 "context_assembly_required": True,
                 "stable_prefix_contains_dynamic_rag": False,
                 "context_policy": to_jsonable(policy.context_policy),
+                "artifact_refs": list(artifact_refs),
+                "evidence_trace": to_jsonable(list(evidence_trace)),
             },
         )
         envelope = self.to_context_envelope(pack, spec=spec, context_budget=context_budget)
@@ -86,6 +100,8 @@ class RAGContextPackAssembler:
             conflicting_evidence=pack.conflicting_evidence,
             memory_context=pack.memory_context,
             source_refs=pack.source_refs,
+            artifact_refs=pack.artifact_refs,
+            evidence_trace=pack.evidence_trace,
             gap_report=pack.gap_report,
             budget_snapshot=pack.budget_snapshot,
             assembly_summary=pack.assembly_summary,
@@ -122,7 +138,7 @@ class RAGContextPackAssembler:
                 "allowed_tools": spec.allowed_tools,
                 "allowed_memory_namespaces": spec.allowed_memory_namespaces,
                 "source_refs": pack.source_refs,
-                "artifact_refs": tuple(pack.metadata.get("artifact_refs", ())),
+                "artifact_refs": pack.artifact_refs,
                 "memory_refs": tuple(str(item.get("memory_ref", item.get("ref", ""))) for item in pack.memory_context if item.get("memory_ref") or item.get("ref")),
                 "evidence_refs": tuple(item.evidence_id for item in pack.accepted_evidence),
                 "evidence_memory_ref": pack.pack_id,
@@ -136,6 +152,7 @@ class RAGContextPackAssembler:
                     "accepted_evidence": [item.to_dict() for item in pack.accepted_evidence],
                     "rejected_evidence": [item.to_dict() for item in pack.rejected_evidence],
                     "conflicting_evidence": [item.to_dict() for item in pack.conflicting_evidence],
+                    "evidence_trace": to_jsonable(list(pack.evidence_trace)),
                     "gap_report": to_jsonable(pack.gap_report),
                     "budget_snapshot": pack.budget_snapshot.to_dict() if pack.budget_snapshot else None,
                 },
@@ -166,6 +183,46 @@ def _source_refs(*groups: tuple[EvidenceCandidate, ...]) -> tuple[str, ...]:
             refs.append(candidate.source_ref)
             refs.extend(candidate.span_refs)
     return tuple(dict.fromkeys(ref for ref in refs if ref))
+
+
+def _artifact_refs(*groups: tuple[EvidenceCandidate, ...]) -> tuple[str, ...]:
+    refs: list[str] = []
+    for group in groups:
+        for candidate in group:
+            refs.extend(candidate.artifact_refs)
+            raw = candidate.metadata.get("artifact_refs", ())
+            if isinstance(raw, str):
+                refs.append(raw)
+            elif isinstance(raw, (list, tuple)):
+                refs.extend(str(ref) for ref in raw)
+    return tuple(dict.fromkeys(ref for ref in refs if str(ref).strip()))
+
+
+def _evidence_trace(
+    *,
+    accepted: tuple[EvidenceCandidate, ...],
+    rejected: tuple[EvidenceCandidate, ...],
+    conflicting: tuple[EvidenceCandidate, ...],
+) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    for status, group in (
+        ("accepted", accepted),
+        ("rejected", rejected),
+        ("conflicting", conflicting),
+    ):
+        for candidate in group:
+            rows.append({
+                "status": status,
+                "evidence_id": candidate.evidence_id,
+                "evidence_type": candidate.evidence_type,
+                "source_ref": candidate.source_ref,
+                "span_refs": list(candidate.span_refs),
+                "artifact_refs": list(candidate.artifact_refs),
+                "lineage": list(candidate.lineage),
+                "confidence": candidate.confidence,
+                "score_breakdown": to_jsonable(candidate.metadata.get("rag_score_breakdown", {})),
+            })
+    return tuple(rows)
 
 
 def _estimate_context_tokens(

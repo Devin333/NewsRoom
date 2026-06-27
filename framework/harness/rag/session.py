@@ -63,6 +63,7 @@ class RAGSessionState:
     rejected_evidence: list[EvidenceCandidate] = field(default_factory=list)
     conflicting_evidence: list[EvidenceCandidate] = field(default_factory=list)
     memory_context: list[dict[str, Any]] = field(default_factory=list)
+    artifact_refs: list[str] = field(default_factory=list)
     gap_report: dict[str, Any] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
 
@@ -133,6 +134,7 @@ class BoundedRAGSessionController(RAGSessionController):
                 break
 
             step_results = self._execute_plan(plan, state, policy)
+            state.artifact_refs.extend(_dedupe_texts(ref for result in step_results for ref in result.artifact_refs))
             for step_result in step_results:
                 self._event(state, "rag_step_executed", step_result.to_dict())
             verification = self.source_verifier.verify(tuple(_result_evidence(step_results)), policy=policy)
@@ -185,6 +187,7 @@ class BoundedRAGSessionController(RAGSessionController):
                 rejected_evidence=tuple(state.rejected_evidence),
                 conflicting_evidence=tuple(state.conflicting_evidence),
                 memory_context=tuple(state.memory_context[: spec.budget.max_memory_hits]),
+                artifact_refs=_dedupe_texts(state.artifact_refs),
                 gap_report=state.gap_report,
                 budget_snapshot=state.budget_snapshot,
                 policy=policy,
@@ -269,13 +272,21 @@ class BoundedRAGSessionController(RAGSessionController):
             )
         )
         evidence_type = str(step.metadata.get("evidence_type") or _default_evidence_type(state.spec))
-        candidates = tuple(EvidenceCandidate.from_evidence_pack(pack, evidence_type=evidence_type) for pack in collection.packs)
+        artifact_refs = (collection.request_ref,) if collection.request_ref else ()
+        candidates = tuple(
+            EvidenceCandidate.from_evidence_pack(
+                pack,
+                evidence_type=evidence_type,
+                artifact_refs=artifact_refs,
+            )
+            for pack in collection.packs
+        )
         return RetrievalStepResult(
             step_id=step.step_id,
             operation=step.operation,
             items=candidates,
             source_refs=tuple(ref for item in candidates for ref in (item.source_ref, *item.span_refs)),
-            artifact_refs=(collection.request_ref,) if collection.request_ref else (),
+            artifact_refs=artifact_refs,
             metadata=collection.metadata,
         )
 
@@ -440,6 +451,18 @@ def _dedupe_evidence(
         seen.add(candidate.evidence_id)
         deduped.append(candidate)
     return tuple(deduped)
+
+
+def _dedupe_texts(values: Any) -> tuple[str, ...]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return tuple(out)
 
 
 def _coverage_passed(results: tuple[RAGGateResult, ...]) -> bool:

@@ -23,6 +23,10 @@ def test_bounded_rag_controller_returns_verified_context_pack() -> None:
     assert result.decision.decision_type == RAGDecisionType.RETURN_CONTEXT_PACK
     assert result.context_pack is not None
     assert result.context_pack.accepted_evidence[0].lineage
+    assert "retrieval://fake/1" in result.context_pack.artifact_refs
+    assert result.context_pack.metadata["artifact_refs"] == list(result.context_pack.artifact_refs)
+    assert result.context_pack.evidence_trace[0]["status"] == "accepted"
+    assert result.context_pack.evidence_trace[0]["span_refs"]
     assert result.context_pack.metadata["context_snapshot_ref"]
 
 
