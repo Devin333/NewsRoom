@@ -7,7 +7,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, TYPE_CHECKING
 
-from framework.rag.retrieval import dedupe_by_key, normalize_score_weights, weighted_component_score
+from framework.rag.retrieval import (
+    dedupe_by_key,
+    expansion_metadata,
+    normalize_score_weights,
+    weighted_component_score,
+)
 
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
@@ -1989,12 +1994,12 @@ def _with_expansion_metadata(
     rank: int,
 ) -> PaperChunk:
     metadata = dict(chunk.metadata)
-    metadata.update({
-        "expanded_from_chunk_id": expanded_from_chunk_id,
-        "expansion_reason": reason,
-        "expansion_edge": edge,
-        "expansion_rank": rank,
-    })
+    metadata.update(expansion_metadata(
+        expanded_from_id=expanded_from_chunk_id,
+        reason=reason,
+        edge=edge,
+        rank=rank,
+    ))
     return chunk.model_copy(update={"metadata": metadata})
 
 
