@@ -11,6 +11,8 @@ from framework.rag.retrieval import (
     dedupe_by_key,
     expansion_metadata,
     normalize_score_weights,
+    RerankScoreSet,
+    rerank_sort_key,
     weighted_component_score,
 )
 
@@ -584,11 +586,20 @@ class ResearchRetriever:
             return [sem for _chunk, sem in candidates]
         passages = [chunk.content for chunk, _ in candidates]
         try:
-            return self._reranker.score(question, passages)
+            scores = self._reranker.score(question, passages)
         except Exception:
             import logging
             logging.getLogger(__name__).warning("reranker failed, falling back to vector scores")
             return [sem for _chunk, sem in candidates]
+        normalized_scores = RerankScoreSet.from_raw(scores, expected_count=len(candidates))
+        if normalized_scores is None:
+            logging.getLogger(__name__).warning(
+                "reranker returned %s scores for %s candidates",
+                len(scores),
+                len(candidates),
+            )
+            return [sem for _chunk, sem in candidates]
+        return list(normalized_scores.scores)
 
     def _build_filters(self, route: RetrievalRoute) -> dict[str, Any]:
         filters: dict[str, Any] = {}
@@ -669,17 +680,15 @@ class ResearchRetriever:
         except Exception:
             logging.getLogger(__name__).warning("field reranker failed", exc_info=True)
             return {}
-        if len(scores) != len(chunks):
+        normalized_scores = RerankScoreSet.from_raw(scores, expected_count=len(chunks))
+        if normalized_scores is None:
             logging.getLogger(__name__).warning(
                 "field reranker returned %s scores for %s candidates",
                 len(scores),
                 len(chunks),
             )
             return {}
-        return {
-            chunk.chunk_id: _clamp_score(float(score))
-            for chunk, score in zip(chunks, scores, strict=True)
-        }
+        return normalized_scores.as_id_map([chunk.chunk_id for chunk in chunks])
 
     def _score_child_candidate(
         self,
@@ -1056,7 +1065,8 @@ class ResearchRetriever:
         except Exception:
             logging.getLogger(__name__).warning("table context reranker failed", exc_info=True)
             return []
-        if len(scores) != len(candidates):
+        normalized_scores = RerankScoreSet.from_raw(scores, expected_count=len(candidates))
+        if normalized_scores is None:
             logging.getLogger(__name__).warning(
                 "table context reranker returned %s scores for %s candidates",
                 len(scores),
@@ -1065,12 +1075,12 @@ class ResearchRetriever:
             return []
 
         ranked: list[tuple[float, tuple[int, int, int], float, PaperChunk]] = []
-        for rerank_score, (priority, vector_score, chunk) in zip(scores, candidates, strict=True):
+        for rerank_score, (priority, vector_score, chunk) in zip(normalized_scores.scores, candidates, strict=True):
             if rerank_score < self._policy.table_context_rerank_score_threshold:
                 continue
             metadata = dict(chunk.metadata)
             metadata.update({
-                "table_context_rerank_score": round(float(rerank_score), 6),
+                "table_context_rerank_score": round(rerank_score, 6),
                 "table_context_rerank_strategy": "cross_encoder",
                 "table_context_rerank_query": query_text[:400],
             })
@@ -1080,7 +1090,11 @@ class ResearchRetriever:
                 vector_score,
                 chunk.model_copy(update={"metadata": metadata}),
             ))
-        ranked.sort(key=lambda item: (-item[0], *item[1], -item[2]))
+        ranked.sort(key=lambda item: rerank_sort_key(
+            rerank_score=item[0],
+            priority=item[1],
+            fallback_score=item[2],
+        ))
         return [chunk for _rerank, _priority, _vector_score, chunk in ranked[:limit]]
 
     def _fetch_parents(
@@ -1198,14 +1212,15 @@ class ResearchRetriever:
             passages = [_parent_context_rerank_passage(candidate) for candidate in candidates]
             try:
                 scores = self._reranker.score(rerank_query, passages)  # type: ignore[union-attr]
-                if len(scores) == len(candidates):
-                    rerank_scores = [float(score) for score in scores]
-                else:
+                normalized_scores = RerankScoreSet.from_raw(scores, expected_count=len(candidates))
+                if normalized_scores is None:
                     logging.getLogger(__name__).warning(
                         "parent context reranker returned %s scores for %s candidates",
                         len(scores),
                         len(candidates),
                     )
+                else:
+                    rerank_scores = list(normalized_scores.scores)
             except Exception:
                 logging.getLogger(__name__).warning("parent context reranker failed", exc_info=True)
 
