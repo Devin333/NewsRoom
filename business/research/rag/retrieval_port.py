@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from framework.harness.retrieval.evidence_pack import EvidencePack, EvidencePackCollection
+from framework.harness.retrieval.evidence_pack import EvidencePackCollection
 from framework.harness.retrieval.ports import RetrievalPort
 from framework.harness.retrieval.request import RetrievalRequest
+from framework.harness.rag.kernel_evidence_adapter import KernelRAGRetrieverHarnessAdapter
+from framework.rag.core import RAGEvidence, RAGQuery
 
 from business.research.document.models import PaperChunk
-from business.research.rag.adapters import paper_chunk_to_evidence_metadata
+from business.research.rag.adapters import PaperChunkAdapter
 from business.research.rag.retriever import ResearchRetriever, RetrievalRequest as ResearchRetrievalRequest
 
 
@@ -34,31 +36,30 @@ class PaperChunkRetrievalPort:
     """
 
     def __init__(self, retriever: ResearchRetriever, *, default_section_index: int = 0) -> None:
+        self._kernel_retriever = PaperKernelRAGRetriever(
+            retriever,
+            default_section_index=default_section_index,
+        )
+        self._harness_adapter = KernelRAGRetrieverHarnessAdapter(
+            self._kernel_retriever,
+            default_intent="paper_query",
+            default_evidence_type="paper_chunk",
+        )
         self._retriever = retriever
         self._default_section_index = max(0, default_section_index)
 
     def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection:
-        paper_id = _extract_paper_id(request)
-        if not paper_id:
-            return EvidencePackCollection(packs=(), metadata={"error": "no paper_id in scope"})
-
-        section_index = self._resolve_section_index(request)
-        result = self._retriever.retrieve(ResearchRetrievalRequest(
-            paper_id=paper_id,
-            question=request.query,
-            current_section_index=section_index,
-            limit=request.limit,
+        collection = self._harness_adapter.retrieve(_request_with_paper_metadata(
+            request,
+            paper_id=_extract_paper_id(request),
+            section_index=self._resolve_section_index(request),
         ))
-
-        evidence_chunks = _dedupe_chunks((*result.child_chunks, *result.ref_chunks, *result.parent_chunks))
-        packs = tuple(_chunk_to_evidence_pack(chunk) for chunk in evidence_chunks)
         return EvidencePackCollection(
-            packs=packs,
+            packs=collection.packs,
+            request_ref=collection.request_ref,
             metadata={
-                "intent": result.intent,
-                "child_count": len(result.child_chunks),
-                "ref_count": len(result.ref_chunks),
-                "section_index": section_index,
+                **collection.metadata,
+                **dict(self._kernel_retriever.last_metadata),
             },
         )
 
@@ -73,6 +74,37 @@ class PaperChunkRetrievalPort:
         return index if index >= 0 else self._default_section_index
 
 
+class PaperKernelRAGRetriever:
+    """Research-owned adapter from generic RAG queries to Paper RAG evidence."""
+
+    def __init__(self, retriever: ResearchRetriever, *, default_section_index: int = 0) -> None:
+        self._retriever = retriever
+        self._default_section_index = max(0, default_section_index)
+        self._chunk_adapter = PaperChunkAdapter()
+        self.last_metadata: dict[str, object] = {}
+
+    def retrieve(self, query: RAGQuery) -> tuple[RAGEvidence, ...]:
+        paper_id = _paper_id_from_rag_query(query)
+        if not paper_id:
+            self.last_metadata = {"error": "no paper_id in scope"}
+            return ()
+        section_index = _section_index_from_rag_query(query, default=self._default_section_index)
+        result = self._retriever.retrieve(ResearchRetrievalRequest(
+            paper_id=paper_id,
+            question=query.query,
+            current_section_index=section_index,
+            limit=query.limit,
+        ))
+        chunks = _dedupe_chunks((*result.child_chunks, *result.ref_chunks, *result.parent_chunks))
+        self.last_metadata = {
+            "intent": result.intent,
+            "child_count": len(result.child_chunks),
+            "ref_count": len(result.ref_chunks),
+            "section_index": section_index,
+        }
+        return tuple(self._chunk_adapter.to_rag_evidence(chunk) for chunk in chunks)
+
+
 def _dedupe_chunks(chunks: tuple[PaperChunk, ...]) -> tuple[PaperChunk, ...]:
     seen: set[str] = set()
     result: list[PaperChunk] = []
@@ -84,21 +116,52 @@ def _dedupe_chunks(chunks: tuple[PaperChunk, ...]) -> tuple[PaperChunk, ...]:
     return tuple(result)
 
 
-def _chunk_to_evidence_pack(chunk: PaperChunk) -> EvidencePack:
-    source_ref = chunk.metadata.get("source_ref") or f"arxiv://{chunk.paper_id}/{chunk.chunk_id}"
-    return EvidencePack(
-        evidence_id=chunk.chunk_id,
-        title=chunk.section_title or chunk.chunk_type,
-        summary=chunk.content[:1200],
-        source_refs=(source_ref,),
-        confidence=0.8,
-        freshness="current",
-        lineage=(chunk.paper_id,),
-        metadata=paper_chunk_to_evidence_metadata(chunk),
+def _request_with_paper_metadata(
+    request: RetrievalRequest,
+    *,
+    paper_id: str,
+    section_index: int,
+) -> RetrievalRequest:
+    return RetrievalRequest(
+        query=request.query,
+        scope=request.scope,
+        filters=request.filters,
+        limit=request.limit,
+        context_refs=request.context_refs,
+        metadata={
+            **dict(request.metadata),
+            "paper_id": paper_id,
+            "current_section_index": section_index,
+        },
     )
+
+
+def _paper_id_from_rag_query(query: RAGQuery) -> str:
+    raw = query.metadata.get("paper_id") or query.filters.get("paper_id")
+    if raw:
+        return str(raw)
+    for ref in query.filters.get("context_refs", ()):
+        text = str(ref)
+        if text.startswith("arxiv://"):
+            part = text.removeprefix("arxiv://").split("/")[0]
+            if part:
+                return part
+    scope = str(query.metadata.get("scope") or "")
+    return scope if scope and scope != "default" else ""
+
+
+def _section_index_from_rag_query(query: RAGQuery, *, default: int) -> int:
+    raw = query.metadata.get("current_section_index")
+    if raw is None:
+        return default
+    try:
+        index = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return index if index >= 0 else default
 
 
 # Verify structural compliance at import time
 assert isinstance(PaperChunkRetrievalPort(None), RetrievalPort)  # type: ignore[arg-type]
 
-__all__ = ["PaperChunkRetrievalPort"]
+__all__ = ["PaperChunkRetrievalPort", "PaperKernelRAGRetriever"]

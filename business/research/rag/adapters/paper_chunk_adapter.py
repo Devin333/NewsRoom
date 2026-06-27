@@ -62,7 +62,7 @@ class PaperChunkAdapter:
             score=resolved_score if resolved_score is not None else 0.0,
             score_breakdown=breakdown,
             source_locator=rag_chunk.source_locator,
-            metadata=rag_chunk.metadata,
+            metadata={**dict(rag_chunk.metadata), **_evidence_pack_metadata(chunk)},
         )
 
 

@@ -9,6 +9,7 @@ from framework.harness.rag.fake import (
     fake_reader_repair_memory,
     fake_research_evidence_packs,
 )
+from framework.harness.rag.kernel_evidence_adapter import KernelRAGRetrieverHarnessAdapter, evidence_candidate_from_rag_evidence
 from framework.harness.rag.gates import (
     RAGEvidenceConflictGate,
     RAGEvidenceCoverageGate,
@@ -59,6 +60,7 @@ __all__ = [
     "FakeRAGPlanner",
     "FakeRAGSessionController",
     "FakeSourceVerifier",
+    "KernelRAGRetrieverHarnessAdapter",
     "RAGEvidenceConflictGate",
     "RAGEvidenceCoverageGate",
     "RAGEvidenceGateResult",
@@ -97,6 +99,7 @@ __all__ = [
     "SourceVerifier",
     "WorkerRAGPlanner",
     "budget_exceeded",
+    "evidence_candidate_from_rag_evidence",
     "ensure_jsonable_rag_model",
     "failed_gate_dicts",
     "fake_rag_session_spec",

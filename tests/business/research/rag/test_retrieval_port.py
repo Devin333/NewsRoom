@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from framework.harness.retrieval.request import RetrievalRequest
+from framework.rag.core import RAGQuery
 
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
-from business.research.rag.retrieval_port import PaperChunkRetrievalPort
+from business.research.rag.retrieval_port import PaperChunkRetrievalPort, PaperKernelRAGRetriever
 from business.research.rag.retriever import RetrievalResult
 
 
@@ -92,6 +93,29 @@ def test_section_index_echoed_in_collection_metadata():
     port = PaperChunkRetrievalPort(spy, default_section_index=5)  # type: ignore[arg-type]
     result = port.retrieve(_request({}))
     assert result.metadata["section_index"] == 5
+    assert result.metadata["adapter"] == "kernel_rag_retriever_harness_adapter"
+    assert result.request_ref == "rag-kernel://retrieval/paper_query/how-does-attention-work"
+
+
+def test_paper_kernel_rag_retriever_projects_chunks_to_rag_evidence():
+    spy = _SpyRetriever()
+    retriever = PaperKernelRAGRetriever(spy, default_section_index=5)  # type: ignore[arg-type]
+
+    evidence = retriever.retrieve(RAGQuery(
+        query="how does attention work",
+        intent="paper_query",
+        filters={"context_refs": ["arxiv://1706.03762/latex"]},
+        limit=2,
+    ))
+
+    assert spy.seen_section_index == 5
+    assert [item.evidence_id for item in evidence] == ["c1"]
+    assert evidence[0].chunk_id == "c1"
+    assert evidence[0].document_id == "1706.03762"
+    assert evidence[0].metadata["chunk_type"] == "paragraph"
+    assert evidence[0].source_locator is not None
+    assert retriever.last_metadata["intent"] == "concept_method"
+    assert retriever.last_metadata["section_index"] == 5
 
 
 def test_parent_context_metadata_exposed_in_evidence_pack():

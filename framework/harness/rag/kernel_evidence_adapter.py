@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from framework.harness.rag.models import EvidenceCandidate
+from framework.harness.retrieval.evidence_pack import EvidencePackCollection
+from framework.harness.retrieval.request import RetrievalRequest
 from framework.rag.core import RAGEvidence
+from framework.rag.core import RAGQuery, RAGRetrieverPort
 
 
 def evidence_candidate_from_rag_evidence(
@@ -37,6 +40,39 @@ def evidence_candidate_from_rag_evidence(
     )
 
 
+class KernelRAGRetrieverHarnessAdapter:
+    """Adapts a domain-neutral RAG retriever to the Harness retrieval port."""
+
+    def __init__(
+        self,
+        retriever: RAGRetrieverPort,
+        *,
+        default_intent: str = "general",
+        default_evidence_type: str = "rag_evidence",
+    ) -> None:
+        self._retriever = retriever
+        self._default_intent = str(default_intent or "general")
+        self._default_evidence_type = str(default_evidence_type or "rag_evidence")
+
+    def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection:
+        query = _rag_query_from_harness_request(request, default_intent=self._default_intent)
+        evidence = tuple(self._retriever.retrieve(query))
+        evidence_type = str(request.metadata.get("evidence_type") or self._default_evidence_type)
+        candidates = tuple(
+            evidence_candidate_from_rag_evidence(item, evidence_type=evidence_type)
+            for item in evidence
+        )
+        return EvidencePackCollection(
+            packs=tuple(candidate.to_evidence_pack() for candidate in candidates),
+            request_ref=f"rag-kernel://retrieval/{query.intent}/{_stable_request_suffix(query.query)}",
+            metadata={
+                "rag_query": query.to_dict(),
+                "evidence_count": len(evidence),
+                "adapter": "kernel_rag_retriever_harness_adapter",
+            },
+        )
+
+
 def _source_ref(evidence: RAGEvidence) -> str:
     if evidence.source_locator is not None:
         return evidence.source_locator.raw_locator or evidence.source_locator.source_id
@@ -59,4 +95,46 @@ def _artifact_refs(metadata: dict[str, Any]) -> tuple[str, ...]:
     return tuple(str(ref) for ref in raw if str(ref).strip())
 
 
-__all__ = ["evidence_candidate_from_rag_evidence"]
+def _rag_query_from_harness_request(
+    request: RetrievalRequest,
+    *,
+    default_intent: str,
+) -> RAGQuery:
+    required_types = _text_tuple(request.metadata.get("required_chunk_types"))
+    preferred_fields = _text_tuple(request.metadata.get("preferred_fields"))
+    filters = dict(request.filters)
+    if request.context_refs:
+        filters.setdefault("context_refs", list(request.context_refs))
+    return RAGQuery(
+        query=request.query,
+        intent=str(request.metadata.get("intent") or default_intent),
+        required_chunk_types=required_types,
+        preferred_fields=preferred_fields,
+        filters=filters,
+        limit=request.limit,
+        metadata={
+            "scope": request.scope,
+            **dict(request.metadata),
+        },
+    )
+
+
+def _text_tuple(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,) if value.strip() else ()
+    if isinstance(value, (tuple, list)):
+        return tuple(str(item) for item in value if str(item).strip())
+    return ()
+
+
+def _stable_request_suffix(text: str) -> str:
+    normalized = "-".join(str(text or "").casefold().split())
+    return normalized[:80] or "query"
+
+
+__all__ = [
+    "KernelRAGRetrieverHarnessAdapter",
+    "evidence_candidate_from_rag_evidence",
+]
