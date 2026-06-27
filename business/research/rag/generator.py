@@ -6,6 +6,7 @@ from typing import Any
 
 from business.research.document.models import PaperChunk
 from business.research.rag.retriever import RetrievalResult
+from framework.rag.context import collect_nearby_context_ids
 
 
 @dataclass
@@ -158,20 +159,10 @@ def _bucket_map(retrieval: RetrievalResult) -> dict[str, str]:
 
 
 def _related_context_ids(chunk: PaperChunk) -> list[str]:
-    related: list[str] = []
-    for key in ("nearby_context_chunk_id", "parent_table_chunk_id", "source_parent_chunk_id"):
-        value = str(chunk.metadata.get(key) or "")
-        if value:
-            related.append(value)
-    if chunk.parent_chunk_id:
-        related.append(chunk.parent_chunk_id)
-    for ref in chunk.metadata.get("referenced_by_chunks", []):
-        if not isinstance(ref, dict):
-            continue
-        chunk_id = str(ref.get("chunk_id") or "")
-        if chunk_id:
-            related.append(chunk_id)
-    return _unique_texts(related)
+    return list(collect_nearby_context_ids(
+        metadata=chunk.metadata,
+        parent_id=chunk.parent_chunk_id or "",
+    ).ids)
 
 
 def _append_chunk(chunks: list[PaperChunk], chunk: PaperChunk) -> None:
