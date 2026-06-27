@@ -3,6 +3,11 @@ from __future__ import annotations
 from framework.rag.retrieval.dedup import dedupe_by_key, dedupe_evidence, order_evidence
 from framework.rag.retrieval.expansion import ExpansionMetadata, expansion_metadata
 from framework.rag.retrieval.field_score import FieldScoreResult, score_fields
+from framework.rag.retrieval.query_intent import (
+    QueryIntentRule,
+    build_query_intent_rules,
+    classify_query_intent_by_rules,
+)
 from framework.rag.retrieval.rerank import RerankScoreSet, rerank_sort_key
 from framework.rag.retrieval.scoring import (
     RAGScoringWeights,
@@ -15,8 +20,11 @@ from framework.rag.retrieval.scoring import (
 __all__ = [
     "ExpansionMetadata",
     "FieldScoreResult",
+    "QueryIntentRule",
     "RAGScoringWeights",
     "RerankScoreSet",
+    "build_query_intent_rules",
+    "classify_query_intent_by_rules",
     "dedupe_by_key",
     "dedupe_evidence",
     "expansion_metadata",

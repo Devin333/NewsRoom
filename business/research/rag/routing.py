@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
+
+from framework.rag.retrieval import (
+    QueryIntentRule,
+    build_query_intent_rules,
+    classify_query_intent_by_rules,
+)
 
 QueryIntent = Literal[
     "concept_method",
@@ -14,7 +20,7 @@ QueryIntent = Literal[
     "formula_query",
 ]
 
-_INTENT_SIGNALS: list[tuple[QueryIntent, list[str]]] = [
+_INTENT_SIGNALS: tuple[QueryIntentRule, ...] = build_query_intent_rules([
     ("numerical_result", [
         "\u5b9e\u9a8c\u7ed3\u679c",
         "\u7ed3\u679c",
@@ -30,7 +36,7 @@ _INTENT_SIGNALS: list[tuple[QueryIntent, list[str]]] = [
     ("numerical_result", ["准确率", "f1", "bleu", "rouge", "outperform", "accuracy", "多少", "几%", "score"]),
     ("contribution",     ["贡献", "contribution", "novelty", "propose", "提出", "创新", "what does this paper"]),
     ("concept_method",   ["如何", "怎么", "how", "what is", "why", "method", "approach", "architecture"]),
-]
+])
 
 _FIGURE_ID_RE = re.compile(r"图\s*(\w+)|[Ff]ig(?:ure)?[.s]?\s*(\w+)")
 
@@ -47,11 +53,12 @@ class RetrievalRoute:
 
 
 def classify_query_intent(question: str) -> QueryIntent:
-    q = question.lower()
-    for intent, keywords in _INTENT_SIGNALS:
-        if any(kw in q for kw in keywords):
-            return intent
-    return "concept_method"
+    intent = classify_query_intent_by_rules(
+        question,
+        _INTENT_SIGNALS,
+        default_intent="concept_method",
+    )
+    return cast(QueryIntent, intent)
 
 
 def build_retrieval_route(question: str) -> RetrievalRoute:
