@@ -18,3 +18,4 @@
 - [x] 3.2 Run focused Harness adapter and Research retrieval port tests
 - [x] 3.3 Run full RAG pytest coverage, compile, and boundary scans
 - [x] 3.4 Add Paper RAG Harness integration coverage for `ResearchRAGPolicyBuilder -> BoundedRAGSessionController -> PaperChunkRetrievalPort -> KernelRAGRetrieverHarnessAdapter -> RAGContextPack`
+- [x] 3.5 Remove the unused Research RAG policy port that leaked Harness `RAGSessionSpec` through the Research ports package
