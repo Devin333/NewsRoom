@@ -151,6 +151,42 @@ def test_run_benchmark_suite_can_write_fixed_window_baseline_when_requested(tmp_
     assert "relative_improvement" in result.ab_report
 
 
+def test_run_benchmark_suite_writes_blind_detemplated_protocol(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+
+    output_dir = tmp_path / "suite"
+    result = run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=5,
+        gold_judge_mode="fake",
+        gold_judge_sample_size=2,
+        gold_evidence_judge=_FakeGoldJudge(),
+        question_profile="blind_detemplated",
+    ))
+
+    payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
+    markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
+    golden_records = []
+    for split in ("train", "dev", "test"):
+        golden_records.extend(json.loads((output_dir / split / "golden_set.json").read_text(encoding="utf-8")))
+    profiled = [record for record in golden_records if record["metadata"].get("question_profile") == "blind_detemplated"]
+
+    assert result.question_profile == "blind_detemplated"
+    assert payload["evaluation_protocol"]["question_profile"] == "blind_detemplated"
+    assert payload["evaluation_protocol"]["blind_test"] is True
+    assert "question profile: `blind_detemplated`" in markdown
+    assert profiled
+    assert all("template_question" in record["metadata"] for record in profiled)
+    assert not any("Table 1:" in record["question"] for record in profiled)
+    assert not any("Figure 1:" in record["question"] for record in profiled)
+
+
 def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: Path) -> None:
     papers_dir = tmp_path / "papers"
     _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
@@ -261,12 +297,15 @@ def test_run_benchmark_suite_cli(tmp_path: Path) -> None:
         "2",
         "--quality-threshold",
         "retrieval.hit_rate=0",
+        "--question-profile",
+        "blind_detemplated",
         "--no-page-visual",
     ])
 
     assert exit_code == 0
     payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
     assert payload["papers_total"] == 1
+    assert payload["evaluation_protocol"]["question_profile"] == "blind_detemplated"
     item = payload["gold_audit"]["items"][0]
     assert "evidence_previews" in item
     assert "answer_facts" in item

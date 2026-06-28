@@ -20,6 +20,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         target_min_per_type=args.target_min_per_type,
         split_seed=args.split_seed,
         include_negative=not args.no_negative,
+        question_profile=args.question_profile,
         visual=not args.no_visual,
         page_visual=not args.no_page_visual,
         render_page_visual=not args.no_render_page_visual,
@@ -57,6 +58,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-papers", type=int, default=20)
     parser.add_argument("--target-min-per-type", type=int, default=50)
     parser.add_argument("--split-seed", default="paper-rag-benchmark-v1")
+    parser.add_argument(
+        "--question-profile",
+        choices=("template", "blind_detemplated"),
+        default="template",
+        help="Question generation profile. Use blind_detemplated for natural blind-test prompts.",
+    )
     parser.add_argument("--gold-audit-sample-size", type=int, default=30)
     parser.add_argument(
         "--gold-judge",

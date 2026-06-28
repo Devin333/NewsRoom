@@ -282,6 +282,7 @@ class BenchmarkSuiteResult:
     split_seed: str
     splits: dict[str, BenchmarkSplit]
     target_qa_counts: dict[str, int]
+    question_profile: str
     gold_audit: GoldEvidenceAuditReport
     gold_judge: GoldEvidenceJudgeReport | None
     spot_check: SpotCheckReport | None
@@ -307,6 +308,13 @@ class BenchmarkSuiteResult:
                 "tuning_split": "dev",
                 "reported_split": "test",
                 "test_policy": test_policy,
+                "question_profile": self.question_profile,
+                "blind_test": self.question_profile == "blind_detemplated",
+                "detemplate_policy": (
+                    "remove_labels_caption_quote_v1"
+                    if self.question_profile == "blind_detemplated"
+                    else ""
+                ),
             },
             "gold_audit": self.gold_audit.to_dict(),
             "gold_judge": self.gold_judge.to_dict() if self.gold_judge is not None else None,
@@ -330,6 +338,7 @@ class BenchmarkSuiteConfig:
     split_seed: str = "paper-rag-benchmark-v1"
     split_ratios: tuple[float, float, float] = DEFAULT_SPLIT_RATIOS
     include_negative: bool = True
+    question_profile: str = "template"
     visual: bool = True
     page_visual: bool = True
     render_page_visual: bool = False
@@ -357,12 +366,14 @@ class BenchmarkSuiteConfig:
 def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
     output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+    question_profile = _normalize_question_profile(config.question_profile)
     base_chunks, chunks = _load_suite_chunk_sets(config)
     gold_chunks = _gold_builder_chunks(base_chunks)
     paper_ids = sorted({chunk.paper_id for chunk in gold_chunks})
     pairs = EvidenceGoldenSetBuilder(
         max_pairs_per_type=config.max_pairs_per_type,
         include_negative=config.include_negative,
+        question_profile=question_profile,
     ).build(gold_chunks)
     target_counts = _target_counts(pairs)
     split_map = split_paper_ids(
@@ -416,6 +427,7 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         split_seed=config.split_seed,
         splits=splits,
         target_qa_counts=target_counts,
+        question_profile=question_profile,
         gold_audit=audit,
         gold_judge=judge_report,
         spot_check=spot_check,
@@ -461,6 +473,15 @@ def split_paper_ids(
         "dev": ordered[train_count:train_count + dev_count],
         "test": ordered[train_count + dev_count:],
     }
+
+
+def _normalize_question_profile(profile: str) -> str:
+    normalized = str(profile or "template").strip().casefold()
+    if normalized in {"", "template"}:
+        return "template"
+    if normalized in {"blind", "blind_detemplated", "detemplated"}:
+        return "blind_detemplated"
+    raise ValueError("question_profile must be 'template' or 'blind_detemplated'")
 
 
 def audit_gold_evidence(
@@ -544,6 +565,8 @@ def _evaluate_candidate(
     metadata = {
         "mode": "candidate",
         "retrieval_policy": retriever.policy.name,
+        "question_profile": _normalize_question_profile(config.question_profile),
+        "blind_test": _normalize_question_profile(config.question_profile) == "blind_detemplated",
         "chunks_total": len(chunks),
         "visual_fusion_enabled": visual_store is not None,
         "visual_indexed_chunks": len(getattr(visual_store, "_vectors", {})) if visual_store is not None else 0,
@@ -1063,6 +1086,8 @@ def _suite_warnings(
             warnings.append(f"gold_judge_warning:{judge_report.warning}")
         if judge_report.error:
             warnings.append(f"gold_judge_error:{judge_report.error}")
+    elif _normalize_question_profile(config.question_profile) == "blind_detemplated":
+        warnings.append("blind_detemplated_without_gold_judge")
     if candidate_report.get("passed") is False:
         warnings.append("candidate_quality_gate_failed")
         for issue in candidate_report.get("issues") or []:
@@ -1114,6 +1139,8 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
         f"- pairs: `{payload['pairs_total']}`",
         f"- warnings: `{len(payload['warnings'])}`",
         f"- reported split: `{payload['evaluation_protocol']['reported_split']}`",
+        f"- question profile: `{payload['evaluation_protocol'].get('question_profile', 'template')}`",
+        f"- blind test: `{payload['evaluation_protocol'].get('blind_test', False)}`",
         "",
         "## Test Metrics",
         "",

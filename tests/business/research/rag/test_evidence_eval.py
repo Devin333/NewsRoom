@@ -534,6 +534,49 @@ def test_visual_questions_include_caption_topic_to_reduce_label_ambiguity() -> N
     assert "Figure 2, captioned Architecture overview" in questions["figure_qa"]
 
 
+def test_blind_detemplated_profile_rewrites_questions_without_direct_labels_or_caption_copy() -> None:
+    table = _chunk(
+        "tbl-blind",
+        chunk_type="table",
+        content="[Table 3]\nCaption:\nReward model results across helpfulness and safety benchmarks.",
+        metadata={"reference_labels": ["3"], "image_ref": "tables/table3.png"},
+    )
+    figure = _chunk(
+        "fig-blind",
+        chunk_type="figure",
+        content="[Figure 2]\nCaption:\nArchitecture overview for the reward model.",
+        metadata={"reference_labels": ["2"], "image_ref": "figures/fig2.png"},
+    )
+    formula = _chunk(
+        "eq-blind",
+        chunk_type="formula",
+        content="[Equation eq_abc]\nLaTeX:\ny = x + 1",
+    ).model_copy(update={"has_formula": True, "formula_latex": "y = x + 1"})
+    citation = _chunk(
+        "para-blind",
+        content="When we read a story, we bring implicit knowledge about the physical world.",
+        metadata={"source_locator": "paper://p1/pdf#page=1"},
+    )
+
+    pairs = EvidenceGoldenSetBuilder(
+        max_pairs_per_type=5,
+        include_negative=False,
+        question_profile="blind_detemplated",
+    ).build([table, figure, formula, citation])
+    by_type = {pair.qa_type: pair for pair in pairs}
+
+    assert by_type["table_qa"].gold_chunk_ids == ["tbl-blind"]
+    assert "Table 3" not in by_type["table_qa"].question
+    assert "Reward model results across helpfulness" not in by_type["table_qa"].question
+    assert "Figure 2" not in by_type["figure_qa"].question
+    assert "Architecture overview for the reward model" not in by_type["figure_qa"].question
+    assert "eq_abc" not in by_type["formula_qa"].question
+    assert "When we read a story" not in by_type["citation_qa"].question
+    assert by_type["table_qa"].metadata["question_profile"] == "blind_detemplated"
+    assert by_type["table_qa"].metadata["blind_evaluation"] is True
+    assert by_type["table_qa"].metadata["template_question"].startswith("What do the experimental results around Table 3")
+
+
 def test_table_pair_skips_label_only_nearby_context_gold() -> None:
     table = _chunk(
         "tbl-zero-shot",

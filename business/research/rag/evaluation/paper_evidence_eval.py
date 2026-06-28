@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,6 +23,7 @@ from business.research.rag.adapters.paper_chunk_adapter import paper_chunk_to_ra
 from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest
 
 EvidenceBehavior = Literal["answer", "abstain"]
+QuestionProfile = Literal["template", "blind_detemplated"]
 
 
 _DEFAULT_KS = (1, 3, 5, 10)
@@ -391,9 +392,11 @@ class EvidenceGoldenSetBuilder:
         *,
         max_pairs_per_type: int = _DEFAULT_MAX_PAIRS_PER_TYPE,
         include_negative: bool = True,
+        question_profile: QuestionProfile = "template",
     ) -> None:
         self._max_pairs_per_type = max(1, int(max_pairs_per_type))
         self._include_negative = include_negative
+        self._question_profile = _normalize_question_profile(question_profile)
 
     def build(self, chunks: list[PaperChunk], *, domain: str = "") -> list[EvidenceQAPair]:
         chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
@@ -414,7 +417,7 @@ class EvidenceGoldenSetBuilder:
                     domain=domain,
                     metadata={"builder": "deterministic_template"},
                 ))
-        return pairs
+        return _apply_question_profile(pairs, self._question_profile, chunks_by_id=chunks_by_id)
 
     def _build_type(
         self,
@@ -500,6 +503,124 @@ def build_evidence_pairs_from_chunks(
                 domain=domain,
             ))
     return pairs
+
+
+def _normalize_question_profile(profile: str) -> QuestionProfile:
+    normalized = str(profile or "template").strip().casefold()
+    if normalized in {"", "template"}:
+        return "template"
+    if normalized in {"blind", "blind_detemplated", "detemplated"}:
+        return "blind_detemplated"
+    raise ValueError("question_profile must be 'template' or 'blind_detemplated'")
+
+
+def _apply_question_profile(
+    pairs: list[EvidenceQAPair],
+    profile: QuestionProfile,
+    *,
+    chunks_by_id: dict[str, PaperChunk],
+) -> list[EvidenceQAPair]:
+    if profile == "template":
+        return pairs
+    return [_detemplated_pair(pair, chunks_by_id=chunks_by_id) for pair in pairs]
+
+
+def _detemplated_pair(pair: EvidenceQAPair, *, chunks_by_id: dict[str, PaperChunk]) -> EvidenceQAPair:
+    source_chunk = _first_gold_chunk(pair, chunks_by_id)
+    question = _blind_question_for_pair(pair, source_chunk)
+    metadata = {
+        **dict(pair.metadata),
+        "question_profile": "blind_detemplated",
+        "blind_evaluation": True,
+        "detemplated": True,
+        "detemplate_policy": "remove_labels_caption_quote_v1",
+        "template_question": pair.question,
+    }
+    if source_chunk is not None:
+        metadata["detemplate_source_chunk_type"] = source_chunk.chunk_type
+        if source_chunk.section_title:
+            metadata["detemplate_section_title"] = source_chunk.section_title
+    return replace(pair, question=question, metadata=metadata)
+
+
+def _first_gold_chunk(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> PaperChunk | None:
+    for chunk_id in pair.gold_chunk_ids:
+        chunk = chunks_by_id.get(chunk_id)
+        if chunk is not None:
+            return chunk
+    return None
+
+
+def _blind_question_for_pair(pair: EvidenceQAPair, chunk: PaperChunk | None) -> str:
+    section_hint = _natural_section_hint(chunk)
+    if pair.expected_behavior == _ABSTAIN_BEHAVIOR:
+        return "Is there evidence in this paper for an unrelated future model that the paper itself does not discuss?"
+    if pair.qa_type == "table_qa":
+        return f"What quantitative evidence does the paper use in {section_hint}, and what is the takeaway?"
+    if pair.qa_type == "experiment_result_qa":
+        return f"What do the reported experiments in {section_hint} suggest overall?"
+    if pair.qa_type == "figure_qa":
+        return f"What visual evidence explains the model, process, or behavior discussed in {section_hint}?"
+    if pair.qa_type == "formula_qa":
+        return f"How does the paper define the key mathematical relation used in {section_hint}?"
+    if pair.qa_type == "formula_explanation_qa":
+        return f"How does the surrounding text explain the mathematical relation in {section_hint}?"
+    if pair.qa_type == "citation_qa":
+        topic = _claim_topic(pair.answer_facts[0] if pair.answer_facts else "")
+        if topic:
+            return f"Which passage grounds the paper's claim about {topic}?"
+        return f"Which passage grounds the main claim made in {section_hint}?"
+    return f"What evidence in {section_hint} answers this question?"
+
+
+def _natural_section_hint(chunk: PaperChunk | None) -> str:
+    if chunk is None:
+        return "the paper"
+    roles = [str(role).replace("_", " ") for role in chunk.section_role if str(role).strip()]
+    if roles:
+        role = roles[0]
+        return f"the {role} section"
+    title = " ".join(str(chunk.section_title or "").split())
+    if title:
+        cleaned = re.sub(r"^\d+(?:\.\d+)*\s*", "", title).strip()
+        if cleaned:
+            return f"the {cleaned} section"
+    return "the paper"
+
+
+def _claim_topic(text: str) -> str:
+    stopwords = {
+        "this",
+        "that",
+        "with",
+        "from",
+        "have",
+        "into",
+        "their",
+        "there",
+        "where",
+        "which",
+        "paper",
+        "model",
+        "models",
+        "using",
+        "used",
+        "show",
+        "shows",
+        "result",
+        "results",
+    }
+    tokens = []
+    seen: set[str] = set()
+    for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{3,}", str(text or "")):
+        normalized = token.casefold()
+        if normalized in stopwords or normalized in seen:
+            continue
+        tokens.append(token)
+        seen.add(normalized)
+        if len(tokens) >= 4:
+            break
+    return " ".join(tokens)
 
 
 def _template_pair_for_chunk(
