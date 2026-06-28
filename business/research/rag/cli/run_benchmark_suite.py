@@ -60,9 +60,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--split-seed", default="paper-rag-benchmark-v1")
     parser.add_argument(
         "--question-profile",
-        choices=("template", "blind_detemplated"),
+        choices=("template", "blind_detemplated", "blind_semantic"),
         default="template",
-        help="Question generation profile. Use blind_detemplated for natural blind-test prompts.",
+        help="Question generation profile. Use blind_semantic for blind prompts with natural anchors.",
     )
     parser.add_argument("--gold-audit-sample-size", type=int, default=30)
     parser.add_argument(

@@ -23,7 +23,7 @@ from business.research.rag.adapters.paper_chunk_adapter import paper_chunk_to_ra
 from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest
 
 EvidenceBehavior = Literal["answer", "abstain"]
-QuestionProfile = Literal["template", "blind_detemplated"]
+QuestionProfile = Literal["template", "blind_detemplated", "blind_semantic"]
 
 
 _DEFAULT_KS = (1, 3, 5, 10)
@@ -511,7 +511,9 @@ def _normalize_question_profile(profile: str) -> QuestionProfile:
         return "template"
     if normalized in {"blind", "blind_detemplated", "detemplated"}:
         return "blind_detemplated"
-    raise ValueError("question_profile must be 'template' or 'blind_detemplated'")
+    if normalized in {"blind_semantic", "semantic", "semantic_blind"}:
+        return "blind_semantic"
+    raise ValueError("question_profile must be 'template', 'blind_detemplated', or 'blind_semantic'")
 
 
 def _apply_question_profile(
@@ -522,7 +524,9 @@ def _apply_question_profile(
 ) -> list[EvidenceQAPair]:
     if profile == "template":
         return pairs
-    return [_detemplated_pair(pair, chunks_by_id=chunks_by_id) for pair in pairs]
+    if profile == "blind_detemplated":
+        return [_detemplated_pair(pair, chunks_by_id=chunks_by_id) for pair in pairs]
+    return [_blind_semantic_pair(pair, chunks_by_id=chunks_by_id) for pair in pairs]
 
 
 def _detemplated_pair(pair: EvidenceQAPair, *, chunks_by_id: dict[str, PaperChunk]) -> EvidenceQAPair:
@@ -543,12 +547,253 @@ def _detemplated_pair(pair: EvidenceQAPair, *, chunks_by_id: dict[str, PaperChun
     return replace(pair, question=question, metadata=metadata)
 
 
+def _blind_semantic_pair(pair: EvidenceQAPair, *, chunks_by_id: dict[str, PaperChunk]) -> EvidenceQAPair:
+    source_chunk = _first_gold_chunk(pair, chunks_by_id)
+    anchors, anchor_sources = _semantic_anchors_for_pair(pair, source_chunk, chunks_by_id)
+    question = _blind_semantic_question_for_pair(pair, source_chunk, anchors)
+    metadata = {
+        **dict(pair.metadata),
+        "question_profile": "blind_semantic",
+        "blind_evaluation": True,
+        "detemplated": True,
+        "detemplate_policy": "semantic_anchors_no_labels_v1",
+        "template_question": pair.question,
+        "semantic_anchors": anchors,
+        "semantic_anchor_sources": anchor_sources,
+    }
+    if source_chunk is not None:
+        metadata["detemplate_source_chunk_type"] = source_chunk.chunk_type
+        if source_chunk.section_title:
+            metadata["detemplate_section_title"] = source_chunk.section_title
+    return replace(pair, question=question, metadata=metadata)
+
+
 def _first_gold_chunk(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> PaperChunk | None:
     for chunk_id in pair.gold_chunk_ids:
         chunk = chunks_by_id.get(chunk_id)
         if chunk is not None:
             return chunk
     return None
+
+
+def _blind_semantic_question_for_pair(
+    pair: EvidenceQAPair,
+    chunk: PaperChunk | None,
+    anchors: list[str],
+) -> str:
+    section_hint = _natural_section_hint(chunk)
+    anchor_phrase = _anchor_phrase(anchors)
+    if pair.expected_behavior == _ABSTAIN_BEHAVIOR:
+        return "Is there evidence in this paper for an unrelated future model that the paper itself does not discuss?"
+    if pair.qa_type == "table_qa":
+        if anchor_phrase:
+            return f"What quantitative evidence does the paper report about {anchor_phrase}?"
+        return f"What quantitative evidence does the paper report in {section_hint}?"
+    if pair.qa_type == "experiment_result_qa":
+        if anchor_phrase:
+            return f"What do the reported results about {anchor_phrase} suggest overall?"
+        return f"What do the reported experiments in {section_hint} suggest overall?"
+    if pair.qa_type == "figure_qa":
+        if anchor_phrase:
+            return f"What visual evidence does the paper use to explain {anchor_phrase}?"
+        return f"What visual evidence explains the model, process, or behavior discussed in {section_hint}?"
+    if pair.qa_type == "formula_qa":
+        if anchor_phrase:
+            return f"How does the paper define the mathematical relation for {anchor_phrase}?"
+        return f"How does the paper define the key mathematical relation used in {section_hint}?"
+    if pair.qa_type == "formula_explanation_qa":
+        if anchor_phrase:
+            return f"How does the surrounding text explain the mathematical relation for {anchor_phrase}?"
+        return f"How does the surrounding text explain the mathematical relation in {section_hint}?"
+    if pair.qa_type == "citation_qa":
+        if anchor_phrase:
+            return f"Which passage grounds the paper's claim about {anchor_phrase}?"
+        return f"Which passage grounds the main claim made in {section_hint}?"
+    if anchor_phrase:
+        return f"What evidence answers the question about {anchor_phrase}?"
+    return f"What evidence in {section_hint} answers this question?"
+
+
+def _semantic_anchors_for_pair(
+    pair: EvidenceQAPair,
+    chunk: PaperChunk | None,
+    chunks_by_id: dict[str, PaperChunk],
+) -> tuple[list[str], list[str]]:
+    candidates: list[tuple[str, str]] = []
+    if pair.qa_type in {"table_qa", "experiment_result_qa"}:
+        candidates.extend(_table_anchor_candidates(pair, chunk))
+    elif pair.qa_type == "figure_qa":
+        candidates.extend(_figure_anchor_candidates(pair, chunk))
+    elif pair.qa_type in {"formula_qa", "formula_explanation_qa"}:
+        candidates.extend(_formula_anchor_candidates(pair, chunk, chunks_by_id))
+    elif pair.qa_type == "citation_qa":
+        candidates.extend(("answer_fact", fact) for fact in pair.answer_facts)
+    else:
+        candidates.extend(("answer_fact", fact) for fact in pair.answer_facts)
+        if chunk is not None:
+            candidates.append(("content", chunk.content))
+
+    anchors: list[str] = []
+    sources: list[str] = []
+    for source, text in candidates:
+        for anchor in _semantic_anchor_terms(text):
+            if anchor in anchors:
+                continue
+            anchors.append(anchor)
+            if source not in sources:
+                sources.append(source)
+            if len(anchors) >= 6:
+                return anchors, sources
+    return anchors, sources
+
+
+def _table_anchor_candidates(pair: EvidenceQAPair, chunk: PaperChunk | None) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    topic = str(pair.metadata.get("table_topic") or "")
+    if topic:
+        candidates.append(("metadata.table_topic", topic))
+    if chunk is None:
+        candidates.extend(("answer_fact", fact) for fact in pair.answer_facts)
+        return candidates
+    candidates.extend([
+        ("metadata.caption_text", str(chunk.metadata.get("caption_text") or "")),
+        ("metadata.surya_caption", str(chunk.metadata.get("surya_caption") or "")),
+        ("metadata.semantic_text", str(chunk.metadata.get("semantic_text") or "")),
+        ("metadata.table_text", str(chunk.metadata.get("table_text") or "")),
+        ("metadata.columns", _metadata_text(chunk.metadata.get("columns"))),
+        ("metadata.rows", _metadata_text(chunk.metadata.get("rows"))),
+        ("content.caption", _caption_from_content(chunk.content)),
+        ("content", chunk.content),
+    ])
+    candidates.extend(("answer_fact", fact) for fact in pair.answer_facts)
+    return candidates
+
+
+def _figure_anchor_candidates(pair: EvidenceQAPair, chunk: PaperChunk | None) -> list[tuple[str, str]]:
+    if chunk is None:
+        return [("answer_fact", fact) for fact in pair.answer_facts]
+    candidates = [
+        ("metadata.visual_description", str(chunk.metadata.get("visual_description") or "")),
+        ("metadata.caption_text", str(chunk.metadata.get("caption_text") or "")),
+        ("metadata.surya_caption", str(chunk.metadata.get("surya_caption") or "")),
+        ("content.caption", _caption_from_content(chunk.content)),
+        ("content", chunk.content),
+    ]
+    candidates.extend(("answer_fact", fact) for fact in pair.answer_facts)
+    return candidates
+
+
+def _formula_anchor_candidates(
+    pair: EvidenceQAPair,
+    chunk: PaperChunk | None,
+    chunks_by_id: dict[str, PaperChunk],
+) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    if chunk is not None:
+        candidates.extend([
+            ("formula_description", chunk.formula_description),
+            ("section_title", chunk.section_title),
+        ])
+    for chunk_id in pair.gold_chunk_ids:
+        context = chunks_by_id.get(chunk_id)
+        if context is None or context is chunk:
+            continue
+        candidates.append(("gold_context", context.content))
+    if chunk is not None:
+        candidates.extend([
+            ("metadata.formula_referenced_text", _metadata_text(chunk.metadata.get("formula_referenced_text"))),
+            ("metadata.formula_symbols", _metadata_text(chunk.metadata.get("formula_symbols"))),
+            ("metadata.formula_operators", _metadata_text(chunk.metadata.get("formula_operators"))),
+            ("formula_latex", chunk.formula_latex),
+            ("content", chunk.content),
+        ])
+    candidates.extend(("answer_fact", fact) for fact in pair.answer_facts)
+    return candidates
+
+
+def _metadata_text(value: object) -> str:
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                parts.extend(str(part) for part in item.values() if str(part).strip())
+            else:
+                text = str(item).strip()
+                if text:
+                    parts.append(text)
+        return " ".join(parts)
+    if isinstance(value, dict):
+        return " ".join(str(part) for part in value.values() if str(part).strip())
+    return str(value or "")
+
+
+def _semantic_anchor_terms(text: str) -> list[str]:
+    cleaned = _strip_element_labels(str(text or ""))
+    cleaned = re.sub(r"\\(?:begin|end)\{[^{}]*\}", " ", cleaned)
+    cleaned = re.sub(r"\\(?:label|ref|cite|caption)\{[^{}]*\}", " ", cleaned)
+    cleaned = re.sub(r"\\(?:mathcal|mathrm|mathbf|mathbb|text|operatorname|boldsymbol)\{([^{}]*)\}", r"\1", cleaned)
+    cleaned = cleaned.replace("\\", " ")
+    tokens = [
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", cleaned)
+        if _is_semantic_anchor_token(token)
+    ]
+    anchors: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        normalized = token.casefold().strip("-_")
+        if normalized in seen:
+            continue
+        anchors.append(token.strip("-_"))
+        seen.add(normalized)
+        if len(anchors) >= 6:
+            break
+    return anchors
+
+
+def _strip_element_labels(text: str) -> str:
+    cleaned = re.sub(r"\[(?:figure|fig\.?|table|equation|eq\.?)\s+[^\]]+\]", " ", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:figure|fig\.?|table|equation|eq\.?)\s+[A-Za-z0-9_.:-]+\b[:.]?", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:fig|tbl|eq)_[A-Za-z0-9_-]+\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\blabel\{[^{}]*\}", " ", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def _is_semantic_anchor_token(token: str) -> bool:
+    normalized = token.casefold().strip("-_")
+    if len(normalized) < 3:
+        return False
+    stopwords = {
+        "about", "above", "across", "after", "again", "against", "align", "also", "although", "among",
+        "answer", "around", "available", "because", "before", "begin", "being", "below",
+        "between", "briefly", "can", "caption", "cdot", "chunk", "column", "columns", "compared",
+        "concretely", "contains", "context", "could", "dataset", "define", "defined", "denote",
+        "denotes", "describe", "despite", "does",
+        "each", "end", "equation", "figure", "formula", "frac", "from", "given", "have",
+        "here", "into", "introduces", "label", "latex", "left", "let", "many", "mathbb", "mathcal", "mathbf", "mathrm", "method",
+        "model", "models", "nabla", "normalized", "operator", "operatorname", "operators",
+        "original", "paper", "paragraph", "reported", "result", "results", "right", "row", "rows",
+        "section", "show", "shows", "some", "sqrt", "subsection", "symbols", "table", "text",
+        "that", "their", "there", "these", "this", "using", "where", "which", "whenever",
+        "with", "within",
+        "and", "are", "for", "new", "next", "now", "one", "our", "the",
+    }
+    if normalized in stopwords:
+        return False
+    if normalized.startswith(("fig", "tbl", "eq_")) and any(char.isdigit() for char in normalized):
+        return False
+    return True
+
+
+def _anchor_phrase(anchors: list[str]) -> str:
+    selected = [anchor for anchor in anchors if anchor.strip()][:6]
+    if not selected:
+        return ""
+    if len(selected) == 1:
+        return selected[0]
+    if len(selected) == 2:
+        return f"{selected[0]} and {selected[1]}"
+    return ", ".join(selected[:-1]) + f", and {selected[-1]}"
 
 
 def _blind_question_for_pair(pair: EvidenceQAPair, chunk: PaperChunk | None) -> str:

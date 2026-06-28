@@ -7,6 +7,7 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     BenchmarkSuiteConfig,
     GoldEvidenceJudgeItem,
     GoldEvidenceJudgeReport,
+    audit_question_ambiguity,
     audit_gold_evidence,
     run_benchmark_suite,
     split_paper_ids,
@@ -185,6 +186,90 @@ def test_run_benchmark_suite_writes_blind_detemplated_protocol(tmp_path: Path) -
     assert all("template_question" in record["metadata"] for record in profiled)
     assert not any("Table 1:" in record["question"] for record in profiled)
     assert not any("Figure 1:" in record["question"] for record in profiled)
+
+
+def test_run_benchmark_suite_writes_blind_semantic_protocol_and_question_audit(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+
+    output_dir = tmp_path / "suite"
+    result = run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=5,
+        gold_judge_mode="fake",
+        gold_judge_sample_size=2,
+        gold_evidence_judge=_FakeGoldJudge(),
+        question_profile="blind_semantic",
+    ))
+
+    payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
+    markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
+    golden_records = []
+    for split in ("train", "dev", "test"):
+        golden_records.extend(json.loads((output_dir / split / "golden_set.json").read_text(encoding="utf-8")))
+    profiled = [record for record in golden_records if record["metadata"].get("question_profile") == "blind_semantic"]
+
+    assert result.question_profile == "blind_semantic"
+    assert payload["evaluation_protocol"]["question_profile"] == "blind_semantic"
+    assert payload["evaluation_protocol"]["blind_test"] is True
+    assert payload["evaluation_protocol"]["detemplate_policy"] == "semantic_anchors_no_labels_v1"
+    assert payload["question_audit"]["total"] == payload["pairs_total"]
+    assert "## Question Ambiguity Audit" in markdown
+    assert "question profile: `blind_semantic`" in markdown
+    assert profiled
+    assert all("template_question" in record["metadata"] for record in profiled)
+    assert any(record["metadata"].get("semantic_anchors") for record in profiled)
+    assert not any("Table 1:" in record["question"] for record in profiled)
+    assert not any("Figure 1:" in record["question"] for record in profiled)
+    assert not any("Equation 1" in record["question"] for record in profiled)
+
+
+def test_question_ambiguity_audit_flags_duplicate_ambiguous_and_label_leakage() -> None:
+    pairs = [
+        EvidenceQAPair(
+            question="What quantitative evidence reports accuracy?",
+            paper_id="p1",
+            qa_type="table_qa",
+            gold_chunk_ids=["tbl1"],
+            required_evidence_types=["table"],
+            metadata={"question_profile": "blind_semantic", "semantic_anchors": ["accuracy", "benchmark"]},
+        ),
+        EvidenceQAPair(
+            question="What quantitative evidence reports accuracy?",
+            paper_id="p1",
+            qa_type="table_qa",
+            gold_chunk_ids=["tbl2"],
+            required_evidence_types=["table"],
+            metadata={"question_profile": "blind_semantic", "semantic_anchors": ["accuracy", "benchmark"]},
+        ),
+        EvidenceQAPair(
+            question="What does Table 1 show?",
+            paper_id="p1",
+            qa_type="table_qa",
+            gold_chunk_ids=["tbl1"],
+            required_evidence_types=["table"],
+            metadata={"question_profile": "blind_semantic", "semantic_anchors": ["accuracy"]},
+        ),
+    ]
+
+    report = audit_question_ambiguity(pairs, [])
+
+    assert report.total == 3
+    assert report.duplicate_questions == 2
+    assert report.ambiguous_questions == 2
+    assert report.missing_semantic_anchor == 1
+    assert report.label_leakage == 1
+    assert {reason for item in report.items for reason in item.reasons} >= {
+        "duplicate_question",
+        "ambiguous_question",
+        "missing_semantic_anchor",
+        "label_leakage",
+    }
 
 
 def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: Path) -> None:

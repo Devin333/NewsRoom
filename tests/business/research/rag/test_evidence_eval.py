@@ -577,6 +577,54 @@ def test_blind_detemplated_profile_rewrites_questions_without_direct_labels_or_c
     assert by_type["table_qa"].metadata["template_question"].startswith("What do the experimental results around Table 3")
 
 
+def test_blind_semantic_profile_preserves_short_anchors_without_direct_labels() -> None:
+    table = _chunk(
+        "tbl-semantic",
+        chunk_type="table",
+        content="[Table 3]\nCaption:\nReward model results across helpfulness and safety benchmarks.",
+        metadata={
+            "reference_labels": ["3"],
+            "image_ref": "tables/table3.png",
+            "rows": [{"benchmark": "helpfulness", "score": "92"}, {"benchmark": "safety", "score": "88"}],
+        },
+    )
+    figure = _chunk(
+        "fig-semantic",
+        chunk_type="figure",
+        content="[Figure 2]\nCaption:\nArchitecture overview for the reward model.",
+        metadata={"reference_labels": ["2"], "image_ref": "figures/fig2.png"},
+    )
+    formula = _chunk(
+        "eq-semantic",
+        chunk_type="formula",
+        content="[Equation eq_ranking]\nLaTeX:\nL_ranking = -log(sigma(r_chosen - r_rejected))",
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": "L_ranking = -log(sigma(r_chosen - r_rejected))",
+        "formula_description": "ranking loss compares chosen and rejected reward responses",
+    })
+
+    pairs = EvidenceGoldenSetBuilder(
+        max_pairs_per_type=5,
+        include_negative=False,
+        question_profile="blind_semantic",
+    ).build([table, figure, formula])
+    by_type = {pair.qa_type: pair for pair in pairs}
+
+    assert "Table 3" not in by_type["table_qa"].question
+    assert "Figure 2" not in by_type["figure_qa"].question
+    assert "eq_ranking" not in by_type["formula_qa"].question
+    assert "Reward model results across helpfulness and safety benchmarks" not in by_type["table_qa"].question
+    assert "reward" in by_type["table_qa"].question.casefold()
+    assert "helpfulness" in by_type["table_qa"].question.casefold()
+    assert "architecture" in by_type["figure_qa"].question.casefold()
+    assert "ranking" in by_type["formula_qa"].question.casefold()
+    assert by_type["table_qa"].metadata["question_profile"] == "blind_semantic"
+    assert by_type["table_qa"].metadata["detemplate_policy"] == "semantic_anchors_no_labels_v1"
+    assert len(by_type["table_qa"].metadata["semantic_anchors"]) >= 3
+    assert by_type["formula_qa"].metadata["semantic_anchors"][:2] == ["ranking", "loss"]
+
+
 def test_table_pair_skips_label_only_nearby_context_gold() -> None:
     table = _chunk(
         "tbl-zero-shot",

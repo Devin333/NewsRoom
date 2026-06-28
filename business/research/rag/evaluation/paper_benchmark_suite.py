@@ -181,6 +181,78 @@ class SpotCheckReport:
         }
 
 
+@dataclass(frozen=True)
+class QuestionAmbiguityAuditItem:
+    question: str
+    paper_id: str
+    qa_type: str
+    reasons: tuple[str, ...]
+    gold_chunk_ids: tuple[str, ...] = ()
+    semantic_anchors: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "question": self.question,
+            "paper_id": self.paper_id,
+            "qa_type": self.qa_type,
+            "reasons": list(self.reasons),
+            "gold_chunk_ids": list(self.gold_chunk_ids),
+            "semantic_anchors": list(self.semantic_anchors),
+        }
+
+
+@dataclass(frozen=True)
+class QuestionAmbiguityAuditReport:
+    total: int
+    duplicate_questions: int
+    ambiguous_questions: int
+    missing_semantic_anchor: int
+    label_leakage: int
+    caption_copy: int
+    by_qa_type: dict[str, dict[str, int]] = field(default_factory=dict)
+    items: tuple[QuestionAmbiguityAuditItem, ...] = ()
+
+    @property
+    def duplicate_question_rate(self) -> float:
+        return self.duplicate_questions / self.total if self.total else 0.0
+
+    @property
+    def ambiguous_question_rate(self) -> float:
+        return self.ambiguous_questions / self.total if self.total else 0.0
+
+    @property
+    def missing_semantic_anchor_rate(self) -> float:
+        return self.missing_semantic_anchor / self.total if self.total else 0.0
+
+    @property
+    def label_leakage_rate(self) -> float:
+        return self.label_leakage / self.total if self.total else 0.0
+
+    @property
+    def caption_copy_rate(self) -> float:
+        return self.caption_copy / self.total if self.total else 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total": self.total,
+            "duplicate_questions": self.duplicate_questions,
+            "duplicate_question_rate": self.duplicate_question_rate,
+            "ambiguous_questions": self.ambiguous_questions,
+            "ambiguous_question_rate": self.ambiguous_question_rate,
+            "missing_semantic_anchor": self.missing_semantic_anchor,
+            "missing_semantic_anchor_rate": self.missing_semantic_anchor_rate,
+            "label_leakage": self.label_leakage,
+            "label_leakage_rate": self.label_leakage_rate,
+            "caption_copy": self.caption_copy,
+            "caption_copy_rate": self.caption_copy_rate,
+            "by_qa_type": {
+                qa_type: dict(counts)
+                for qa_type, counts in sorted(self.by_qa_type.items())
+            },
+            "items": [item.to_dict() for item in self.items],
+        }
+
+
 class OpenAICompatibleGoldEvidenceJudge:
     """Optional LLM audit for whether gold evidence supports a QA pair."""
 
@@ -283,6 +355,7 @@ class BenchmarkSuiteResult:
     splits: dict[str, BenchmarkSplit]
     target_qa_counts: dict[str, int]
     question_profile: str
+    question_audit: QuestionAmbiguityAuditReport
     gold_audit: GoldEvidenceAuditReport
     gold_judge: GoldEvidenceJudgeReport | None
     spot_check: SpotCheckReport | None
@@ -309,13 +382,10 @@ class BenchmarkSuiteResult:
                 "reported_split": "test",
                 "test_policy": test_policy,
                 "question_profile": self.question_profile,
-                "blind_test": self.question_profile == "blind_detemplated",
-                "detemplate_policy": (
-                    "remove_labels_caption_quote_v1"
-                    if self.question_profile == "blind_detemplated"
-                    else ""
-                ),
+                "blind_test": _is_blind_question_profile(self.question_profile),
+                "detemplate_policy": _detemplate_policy_for_profile(self.question_profile),
             },
+            "question_audit": self.question_audit.to_dict(),
             "gold_audit": self.gold_audit.to_dict(),
             "gold_judge": self.gold_judge.to_dict() if self.gold_judge is not None else None,
             "spot_check": self.spot_check.to_dict() if self.spot_check is not None else None,
@@ -375,6 +445,7 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         include_negative=config.include_negative,
         question_profile=question_profile,
     ).build(gold_chunks)
+    question_audit = audit_question_ambiguity(pairs, gold_chunks)
     target_counts = _target_counts(pairs)
     split_map = split_paper_ids(
         paper_ids,
@@ -428,6 +499,7 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         splits=splits,
         target_qa_counts=target_counts,
         question_profile=question_profile,
+        question_audit=question_audit,
         gold_audit=audit,
         gold_judge=judge_report,
         spot_check=spot_check,
@@ -481,7 +553,212 @@ def _normalize_question_profile(profile: str) -> str:
         return "template"
     if normalized in {"blind", "blind_detemplated", "detemplated"}:
         return "blind_detemplated"
-    raise ValueError("question_profile must be 'template' or 'blind_detemplated'")
+    if normalized in {"blind_semantic", "semantic", "semantic_blind"}:
+        return "blind_semantic"
+    raise ValueError("question_profile must be 'template', 'blind_detemplated', or 'blind_semantic'")
+
+
+def _is_blind_question_profile(profile: str) -> bool:
+    return _normalize_question_profile(profile) != "template"
+
+
+def _detemplate_policy_for_profile(profile: str) -> str:
+    normalized = _normalize_question_profile(profile)
+    if normalized == "blind_detemplated":
+        return "remove_labels_caption_quote_v1"
+    if normalized == "blind_semantic":
+        return "semantic_anchors_no_labels_v1"
+    return ""
+
+
+def audit_question_ambiguity(
+    pairs: Sequence[EvidenceQAPair],
+    chunks: Sequence[PaperChunk],
+) -> QuestionAmbiguityAuditReport:
+    chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
+    normalized_groups: dict[tuple[str, str, str], list[tuple[int, EvidenceQAPair]]] = {}
+    for index, pair in enumerate(pairs):
+        key = (pair.paper_id, pair.qa_type, _normalize_question_text(pair.question))
+        normalized_groups.setdefault(key, []).append((index, pair))
+
+    duplicate_indexes: set[int] = set()
+    ambiguous_indexes: set[int] = set()
+    for grouped in normalized_groups.values():
+        if len(grouped) <= 1:
+            continue
+        duplicate_indexes.update(index for index, _pair in grouped)
+        gold_signatures = {
+            tuple(pair.gold_chunk_ids)
+            for _index, pair in grouped
+            if pair.expected_behavior == "answer"
+        }
+        if len(gold_signatures) > 1:
+            ambiguous_indexes.update(index for index, _pair in grouped)
+
+    missing_anchor_indexes: set[int] = set()
+    label_leakage_indexes: set[int] = set()
+    caption_copy_indexes: set[int] = set()
+    flagged_items: list[QuestionAmbiguityAuditItem] = []
+    by_qa_type: dict[str, Counter[str]] = {}
+
+    for index, pair in enumerate(pairs):
+        reasons: list[str] = []
+        anchors = tuple(str(anchor) for anchor in pair.metadata.get("semantic_anchors") or [])
+        if index in duplicate_indexes:
+            reasons.append("duplicate_question")
+        if index in ambiguous_indexes:
+            reasons.append("ambiguous_question")
+        if _missing_semantic_anchor(pair):
+            missing_anchor_indexes.add(index)
+            reasons.append("missing_semantic_anchor")
+        if _question_has_label_leakage(pair.question):
+            label_leakage_indexes.add(index)
+            reasons.append("label_leakage")
+        if _question_copies_source_text(pair, chunks_by_id):
+            caption_copy_indexes.add(index)
+            reasons.append("caption_copy")
+
+        counts = by_qa_type.setdefault(pair.qa_type, Counter())
+        counts["total"] += 1
+        for reason in reasons:
+            counts[reason] += 1
+        if reasons:
+            flagged_items.append(QuestionAmbiguityAuditItem(
+                question=pair.question,
+                paper_id=pair.paper_id,
+                qa_type=pair.qa_type,
+                reasons=tuple(reasons),
+                gold_chunk_ids=tuple(pair.gold_chunk_ids),
+                semantic_anchors=anchors,
+            ))
+
+    return QuestionAmbiguityAuditReport(
+        total=len(pairs),
+        duplicate_questions=len(duplicate_indexes),
+        ambiguous_questions=len(ambiguous_indexes),
+        missing_semantic_anchor=len(missing_anchor_indexes),
+        label_leakage=len(label_leakage_indexes),
+        caption_copy=len(caption_copy_indexes),
+        by_qa_type={qa_type: dict(counter) for qa_type, counter in by_qa_type.items()},
+        items=tuple(flagged_items[:100]),
+    )
+
+
+def _normalize_question_text(question: str) -> str:
+    return " ".join(str(question or "").casefold().split())
+
+
+def _missing_semantic_anchor(pair: EvidenceQAPair) -> bool:
+    if pair.expected_behavior != "answer":
+        return False
+    profile = str(pair.metadata.get("question_profile") or "template")
+    anchors = [
+        str(anchor).strip()
+        for anchor in pair.metadata.get("semantic_anchors") or []
+        if str(anchor).strip()
+    ]
+    if _normalize_question_profile(profile) == "blind_semantic":
+        return len(anchors) < 2
+    return len(_semantic_question_tokens(pair.question)) < 2
+
+
+def _semantic_question_tokens(question: str) -> list[str]:
+    stopwords = {
+        "about", "does", "evidence", "explain", "explains", "ground", "grounds", "paper",
+        "passage", "question", "reported", "result", "results", "section", "show", "shows",
+        "suggest", "table", "figure", "formula", "equation", "what", "which", "where", "with",
+        "used", "overall", "quantitative", "visual", "mathematical", "relation",
+    }
+    out: list[str] = []
+    seen: set[str] = set()
+    for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", str(question or "")):
+        normalized = token.casefold()
+        if normalized in stopwords or normalized in seen:
+            continue
+        out.append(token)
+        seen.add(normalized)
+    return out
+
+
+def _question_has_label_leakage(question: str) -> bool:
+    text = str(question or "")
+    return bool(re.search(
+        r"\b(?:figure|fig\.?|table|equation|eq\.?)\s+[A-Za-z0-9_.:-]+\b",
+        text,
+        flags=re.IGNORECASE,
+    ))
+
+
+def _question_copies_source_text(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> bool:
+    question_tokens = _copy_check_tokens(pair.question)
+    if len(question_tokens) < 8:
+        return False
+    for text in _source_texts_for_copy_audit(pair, chunks_by_id):
+        if _longest_common_token_run(question_tokens, _copy_check_tokens(text)) >= 8:
+            return True
+    return False
+
+
+def _source_texts_for_copy_audit(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> list[str]:
+    texts: list[str] = []
+    texts.extend(pair.answer_facts)
+    for chunk_id in pair.gold_chunk_ids:
+        chunk = chunks_by_id.get(chunk_id)
+        if chunk is None:
+            continue
+        texts.extend([
+            str(chunk.metadata.get("caption_text") or ""),
+            str(chunk.metadata.get("surya_caption") or ""),
+            str(chunk.metadata.get("visual_description") or ""),
+            str(chunk.metadata.get("semantic_text") or ""),
+            str(chunk.metadata.get("table_text") or ""),
+            _caption_block_for_audit(chunk.content),
+        ])
+    return [text for text in texts if str(text).strip()]
+
+
+def _copy_check_tokens(text: str) -> list[str]:
+    return [
+        token.casefold()
+        for token in re.findall(r"[A-Za-z0-9]+", str(text or ""))
+        if len(token) > 1
+    ]
+
+
+def _longest_common_token_run(left: list[str], right: list[str]) -> int:
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    best = 0
+    for left_token in left:
+        current = [0] * (len(right) + 1)
+        for index, right_token in enumerate(right, start=1):
+            if left_token != right_token:
+                continue
+            current[index] = previous[index - 1] + 1
+            best = max(best, current[index])
+        previous = current
+    return best
+
+
+def _caption_block_for_audit(content: str) -> str:
+    marker = "caption:"
+    normalized = str(content or "").casefold()
+    index = normalized.find(marker)
+    if index < 0:
+        return ""
+    tail = str(content or "")[index + len(marker):]
+    lines: list[str] = []
+    for line in tail.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if lines:
+                break
+            continue
+        if stripped.endswith(":") and lines:
+            break
+        lines.append(stripped)
+    return " ".join(lines)
 
 
 def audit_gold_evidence(
@@ -566,7 +843,7 @@ def _evaluate_candidate(
         "mode": "candidate",
         "retrieval_policy": retriever.policy.name,
         "question_profile": _normalize_question_profile(config.question_profile),
-        "blind_test": _normalize_question_profile(config.question_profile) == "blind_detemplated",
+        "blind_test": _is_blind_question_profile(config.question_profile),
         "chunks_total": len(chunks),
         "visual_fusion_enabled": visual_store is not None,
         "visual_indexed_chunks": len(getattr(visual_store, "_vectors", {})) if visual_store is not None else 0,
@@ -1086,8 +1363,8 @@ def _suite_warnings(
             warnings.append(f"gold_judge_warning:{judge_report.warning}")
         if judge_report.error:
             warnings.append(f"gold_judge_error:{judge_report.error}")
-    elif _normalize_question_profile(config.question_profile) == "blind_detemplated":
-        warnings.append("blind_detemplated_without_gold_judge")
+    elif _is_blind_question_profile(config.question_profile):
+        warnings.append(f"{_normalize_question_profile(config.question_profile)}_without_gold_judge")
     if candidate_report.get("passed") is False:
         warnings.append("candidate_quality_gate_failed")
         for issue in candidate_report.get("issues") or []:
@@ -1199,6 +1476,32 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
     ])
     for qa_type, count in payload["target_qa_counts"].items():
         lines.append(f"- {qa_type}: `{count}`")
+    question_audit = payload.get("question_audit") or {}
+    if question_audit:
+        lines.extend([
+            "",
+            "## Question Ambiguity Audit",
+            "",
+            f"- duplicate question rate: `{_metric(question_audit, 'duplicate_question_rate'):.3f}`",
+            f"- ambiguous question rate: `{_metric(question_audit, 'ambiguous_question_rate'):.3f}`",
+            f"- missing semantic anchor rate: `{_metric(question_audit, 'missing_semantic_anchor_rate'):.3f}`",
+            f"- label leakage rate: `{_metric(question_audit, 'label_leakage_rate'):.3f}`",
+            f"- caption copy rate: `{_metric(question_audit, 'caption_copy_rate'):.3f}`",
+        ])
+        by_qa_type = question_audit.get("by_qa_type") or {}
+        if by_qa_type:
+            lines.extend([
+                "",
+                "| QA type | n | duplicate | ambiguous | missing anchor | label leakage | caption copy |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ])
+            for qa_type, counts in sorted(by_qa_type.items()):
+                lines.append(
+                    f"| {qa_type} | {counts.get('total', 0)} | "
+                    f"{counts.get('duplicate_question', 0)} | {counts.get('ambiguous_question', 0)} | "
+                    f"{counts.get('missing_semantic_anchor', 0)} | {counts.get('label_leakage', 0)} | "
+                    f"{counts.get('caption_copy', 0)} |"
+                )
     answer = payload["candidate_test_report"].get("answer")
     if answer:
         lines.extend([
