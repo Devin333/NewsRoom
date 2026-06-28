@@ -119,6 +119,12 @@ def test_run_benchmark_suite_writes_splits_without_fixed_window_by_default(tmp_p
     assert payload["evaluation_protocol"]["reported_split"] == "test"
     assert payload["baseline_test_report"] is None
     assert payload["ab_report"] is None
+    breakdown_summary = payload["candidate_test_report"]["retrieval"]["score_breakdown_summary"]
+    assert breakdown_summary["evidence_count"] > 0
+    assert "final_score" in breakdown_summary["components"]
+    scorecard_metadata = payload["candidate_test_report"]["rag_evaluation_report"]["scorecard"]["metadata"]
+    assert scorecard_metadata["score_breakdown_summary"]["evidence_count"] == breakdown_summary["evidence_count"]
+    assert "## Score Breakdown" in (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
 
 
 def test_run_benchmark_suite_can_write_fixed_window_baseline_when_requested(tmp_path: Path) -> None:
@@ -191,6 +197,8 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
     assert report_payload["spot_check"]["label_counts"] == {"needs_fix": 1, "pass": 1}
     assert len(answer_samples) == 2
     assert all("deterministic_scores" in record for record in answer_sample_records)
+    assert all("context_score_breakdowns" in record for record in answer_sample_records)
+    assert any(record["context_score_breakdowns"] for record in answer_sample_records)
     assert all(
         "retrieval_context_coverage" in record["deterministic_scores"]
         for record in answer_sample_records

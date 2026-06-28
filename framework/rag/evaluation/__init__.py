@@ -18,6 +18,7 @@ from framework.rag.evaluation.retrieval_metrics import (
     reciprocal_rank,
     source_locator_coverage,
 )
+from framework.rag.evaluation.score_breakdown import SCORE_BREAKDOWN_COMPONENTS, summarize_score_breakdowns
 
 __all__ = [
     "AnswerMetricCase",
@@ -27,6 +28,7 @@ __all__ = [
     "RAGFailureReason",
     "RAGScorecard",
     "RetrievalMetricCase",
+    "SCORE_BREAKDOWN_COMPONENTS",
     "evaluate_answer_case",
     "evaluate_retrieval_case",
     "evidence_coverage",
@@ -37,4 +39,5 @@ __all__ = [
     "source_locator_coverage",
     "score_answer_case",
     "normalize_failure_reason",
+    "summarize_score_breakdowns",
 ]

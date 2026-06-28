@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +19,7 @@ from framework.rag.retrieval import dedupe_by_key
 
 from business.research.document.citation_spans import resolve_citation_span
 from business.research.document.models import PaperChunk
+from business.research.rag.adapters.paper_chunk_adapter import paper_chunk_to_rag_evidence
 from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest
 
 EvidenceBehavior = Literal["answer", "abstain"]
@@ -159,6 +161,7 @@ class EvidenceSampleResult:
     ranked_source_locator_candidates: list[list[str]]
     ranked_image_refs: list[str]
     ranked_image_ref_candidates: list[list[str]]
+    ranked_score_breakdowns: list[dict[str, float]] = field(default_factory=list)
     first_rank: int = 0
     coverage_by_k: dict[int, float] = field(default_factory=dict)
     type_coverage_by_k: dict[int, float] = field(default_factory=dict)
@@ -297,6 +300,7 @@ class EvidenceRetrievalEvaluator:
                 ranked_source_locator_candidates=[],
                 ranked_image_refs=[],
                 ranked_image_ref_candidates=[],
+                ranked_score_breakdowns=[],
                 first_rank=0,
                 coverage_by_k={k: 0.0 for k in ks},
                 type_coverage_by_k={k: 0.0 for k in ks},
@@ -326,6 +330,7 @@ class EvidenceRetrievalEvaluator:
         ranked_locator_candidates = [_source_locator_candidates_for_chunk(chunk) for chunk in ranked_chunks]
         ranked_images = [_image_ref_for_chunk(chunk) for chunk in ranked_chunks]
         ranked_image_candidates = [_image_ref_candidates_for_chunk(chunk) for chunk in ranked_chunks]
+        ranked_score_breakdowns = [_score_breakdown_for_chunk(chunk) for chunk in ranked_chunks]
         first_rank = _first_gold_rank(ranked_match_ids, pair.gold_chunk_ids)
         return EvidenceSampleResult(
             pair=pair,
@@ -337,6 +342,7 @@ class EvidenceRetrievalEvaluator:
             ranked_source_locator_candidates=ranked_locator_candidates,
             ranked_image_refs=ranked_images,
             ranked_image_ref_candidates=ranked_image_candidates,
+            ranked_score_breakdowns=ranked_score_breakdowns,
             first_rank=first_rank,
             coverage_by_k={
                 k: _candidate_coverage(ranked_match_ids[:k], pair.gold_chunk_ids)
@@ -906,6 +912,23 @@ def _retrieval_metric_case(sample: EvidenceSampleResult) -> RetrievalMetricCase:
     )
 
 
+def _score_breakdown_for_chunk(chunk: PaperChunk) -> dict[str, float]:
+    return paper_chunk_to_rag_evidence(chunk).score_breakdown.to_dict()
+
+
+def iter_ranked_score_breakdowns(
+    result: EvidenceEvalResult,
+    *,
+    top_k: int | None = None,
+) -> Iterable[dict[str, float]]:
+    for sample in result.samples:
+        breakdowns = sample.ranked_score_breakdowns
+        if top_k is not None:
+            breakdowns = breakdowns[:top_k]
+        for breakdown in breakdowns:
+            yield breakdown
+
+
 def _coverage(retrieved: list[str], required: list[str]) -> float:
     required_set = set(_unique_texts(required))
     if not required_set:
@@ -1451,6 +1474,7 @@ __all__ = [
     "EvidenceRetrievalEvaluator",
     "EvidenceSampleResult",
     "build_evidence_pairs_from_chunks",
+    "iter_ranked_score_breakdowns",
     "load_evidence_golden_set",
     "save_evidence_golden_set",
 ]

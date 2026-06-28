@@ -13,6 +13,7 @@ from typing import Any, Iterable, Protocol, Sequence
 
 from business.research.document.models import PaperChunk
 from business.research.application.llm_client import _browser_ua_transport
+from business.research.rag.adapters.paper_chunk_adapter import paper_chunk_to_rag_evidence
 from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvaluator, EvidenceAnswerSample
 from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
@@ -613,6 +614,8 @@ async def _generate_answer_samples(
             required_context_ids=pair.gold_chunk_ids,
         )
         context_chunks = _context_chunks_for_answer(retrieval, answer.context_chunk_ids)
+        context_score_breakdowns = _context_score_breakdowns(context_chunks)
+        answer.context_metadata["context_score_breakdowns"] = context_score_breakdowns
         cited_chunk_ids = _cited_chunk_ids(answer.answer, answer.context_chunk_ids)
         context_by_id = {chunk.chunk_id: chunk for chunk in context_chunks}
         cited_locators = [
@@ -640,6 +643,7 @@ async def _generate_answer_samples(
                 ),
                 "required_context_coverage": answer.context_metadata.get("required_context_coverage"),
                 "gold_context_coverage": _coverage(answer.context_chunk_ids, pair.gold_chunk_ids),
+                "context_score_breakdowns": context_score_breakdowns,
             },
         ))
         generated.append(answer)
@@ -742,6 +746,7 @@ def _answer_sample_record(
         "cited_chunk_ids": list(sample.cited_chunk_ids),
         "cited_source_locators": list(sample.cited_source_locators),
         "contexts": list(generated.contexts),
+        "context_score_breakdowns": dict(sample.metadata.get("context_score_breakdowns") or {}),
         "metadata": dict(sample.metadata),
         "context_metadata": dict(generated.context_metadata),
     }
@@ -767,6 +772,14 @@ def _write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _context_score_breakdowns(chunks: list[PaperChunk]) -> dict[str, dict[str, float]]:
+    return {
+        chunk.chunk_id: breakdown
+        for chunk in chunks
+        if (breakdown := paper_chunk_to_rag_evidence(chunk).score_breakdown.to_dict())
+    }
 
 
 def _answer_judge_sample(
@@ -1121,6 +1134,25 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             f"- fixed-window macro Hit@10: `{macro['baseline']['macro_hit_at_10']:.3f}`",
             f"- fixed-window macro MRR: `{macro['baseline']['macro_mrr']:.3f}`",
         ])
+    score_breakdown = candidate.get("score_breakdown_summary") or {}
+    score_components = score_breakdown.get("components") or {}
+    if score_components:
+        lines.extend([
+            "",
+            "## Score Breakdown",
+            "",
+            f"- top_k: `{score_breakdown.get('top_k')}`",
+            f"- evidence_count: `{score_breakdown.get('evidence_count', 0)}`",
+            "",
+            "| Component | count | avg | min | max |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ])
+        for component, stats in score_components.items():
+            lines.append(
+                f"| `{component}` | `{stats.get('count', 0)}` | "
+                f"`{stats.get('avg', 0.0):.3f}` | `{stats.get('min', 0.0):.3f}` | "
+                f"`{stats.get('max', 0.0):.3f}` |"
+            )
     lines.extend(["", "## Test Metrics By QA Type", ""])
     if baseline is not None:
         lines.extend([

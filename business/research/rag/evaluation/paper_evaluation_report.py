@@ -5,12 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from framework.rag.evaluation import RAGEvaluationReport
+from framework.rag.evaluation import RAGEvaluationReport, summarize_score_breakdowns
 
 from business.research.rag.adapters.evaluation_scorecard_adapter import evidence_results_to_rag_report
 from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvalResult
 from business.research.rag.evaluation.paper_evaluation_compare import EvidenceABResult
-from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult, iter_ranked_score_breakdowns
 from business.research.rag.evaluation.paper_generation_eval import GenerationEvalResult
 
 
@@ -131,11 +131,19 @@ def _retrieval_result_to_dict(result: EvidenceEvalResult) -> dict[str, Any]:
             }
             for k in result.ks
         },
+        "score_breakdown_summary": _score_breakdown_summary(result),
         "by_qa_type": {
             qa_type: _retrieval_result_to_dict(sub)
             for qa_type, sub in result.by_qa_type.items()
         },
     }
+
+
+def _score_breakdown_summary(result: EvidenceEvalResult) -> dict[str, Any]:
+    top_k = max(result.ks) if result.ks else None
+    summary = summarize_score_breakdowns(iter_ranked_score_breakdowns(result, top_k=top_k))
+    summary["top_k"] = top_k
+    return summary
 
 
 def _answer_result_to_dict(result: EvidenceAnswerEvalResult) -> dict[str, Any]:

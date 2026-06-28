@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from framework.rag.evaluation import MetricValue, RAGEvaluationReport, RAGFailureReason, RAGScorecard
+from framework.rag.evaluation.score_breakdown import summarize_score_breakdowns
 
 
 def test_scorecard_and_report_serialize_metrics_and_failure_reasons():
@@ -31,3 +32,21 @@ def test_scorecard_normalizes_legacy_failure_reason_strings():
         "context_missing_gold",
         "abstention_expected",
     ]
+
+
+def test_summarize_score_breakdowns_reports_component_stats():
+    summary = summarize_score_breakdowns([
+        {"child_similarity": 0.2, "field_score": 0.8, "ignored": "x"},
+        {"child_similarity": 0.6, "final_score": 0.9},
+        {},
+    ])
+
+    assert summary["evidence_count"] == 2
+    assert summary["components"]["child_similarity"] == {
+        "count": 2,
+        "avg": 0.4,
+        "min": 0.2,
+        "max": 0.6,
+    }
+    assert summary["components"]["field_score"]["avg"] == 0.8
+    assert summary["components"]["final_score"]["max"] == 0.9

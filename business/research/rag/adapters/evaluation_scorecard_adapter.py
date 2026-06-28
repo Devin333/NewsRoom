@@ -8,10 +8,11 @@ from framework.rag.evaluation import (
     RAGFailureReason,
     RAGScorecard,
     normalize_failure_reason,
+    summarize_score_breakdowns,
 )
 
 from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvalResult
-from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult, iter_ranked_score_breakdowns
 from business.research.rag.evaluation.paper_generation_eval import GenerationEvalResult
 
 
@@ -57,6 +58,7 @@ def evidence_results_to_rag_scorecard(
         **dict(metadata or {}),
         "thresholds": dict(thresholds or {}),
         "paper_specific_metrics": _paper_specific_metrics(retrieval),
+        "score_breakdown_summary": _score_breakdown_summary(retrieval),
         "raw_failure_reason_counts": answer.failure_reason_counts() if answer is not None else {},
     }
     return RAGScorecard(
@@ -117,6 +119,15 @@ def _paper_specific_metrics(result: EvidenceEvalResult | None) -> dict[str, Any]
         }
         for k in result.ks
     }
+
+
+def _score_breakdown_summary(result: EvidenceEvalResult | None) -> dict[str, Any]:
+    if result is None:
+        return {}
+    top_k = max(result.ks) if result.ks else None
+    summary = summarize_score_breakdowns(iter_ranked_score_breakdowns(result, top_k=top_k))
+    summary["top_k"] = top_k
+    return summary
 
 
 def _mapped_failure_reasons(result: EvidenceAnswerEvalResult | None) -> tuple[RAGFailureReason, ...]:
