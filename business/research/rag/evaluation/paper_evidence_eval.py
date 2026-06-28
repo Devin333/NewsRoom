@@ -558,7 +558,10 @@ def _formula_explanation_pair(
         ]),
         answer_facts=_unique_texts([
             *_answer_facts_from_chunk(chunk),
-            *(_snippet_from_content(context.content) for context in context_chunks[:2]),
+            *(
+                _formula_context_fact(chunk, context)
+                for context in context_chunks[:2]
+            ),
         ])[:3],
         expected_behavior=_ANSWER_BEHAVIOR,
         difficulty="medium",
@@ -589,6 +592,114 @@ def _typed_element_label(label: str, *, element_type: str) -> str:
     return f"{element_type.title()} {normalized}"
 
 
+def _formula_context_fact(formula_chunk: PaperChunk, context: PaperChunk) -> str:
+    sentences = _fact_sentences(context.content)
+    if not sentences:
+        return _snippet_from_content(context.content)
+    formula_terms = _formula_terms(formula_chunk)
+    best_index = 0
+    best_score = -1
+    for index, sentence in enumerate(sentences):
+        lowered = sentence.casefold()
+        tokens = set(_fact_tokens(sentence))
+        term_hits = len(tokens & formula_terms)
+        explanation_hits = sum(
+            1
+            for keyword in (
+                "where",
+                "denote",
+                "denotes",
+                "represent",
+                "represents",
+                "defined",
+                "means",
+                "is the",
+                "are the",
+                "incorporate",
+                "computed",
+            )
+            if keyword in lowered
+        )
+        score = term_hits * 2 + explanation_hits
+        if score > best_score:
+            best_score = score
+            best_index = index
+    selected = sentences[best_index]
+    if best_index + 1 < len(sentences) and len(selected) < 220:
+        next_sentence = sentences[best_index + 1]
+        if _formula_sentence_related(next_sentence, formula_terms):
+            selected = f"{selected} {next_sentence}"
+    return _snippet_from_content(selected, max_chars=260)
+
+
+def _fact_sentences(content: str) -> list[str]:
+    text = re.sub(
+        r"\\begin\{(?:equation|align|gather)[*]?\}.*?\\end\{(?:equation|align|gather)[*]?\}",
+        " ",
+        str(content or ""),
+        flags=re.DOTALL,
+    )
+    text = re.sub(r"\$\$.*?\$\$", " ", text, flags=re.DOTALL)
+    candidates = re.split(r"(?<=[.!?])\s+|\n{2,}", text)
+    out = [" ".join(candidate.split()) for candidate in candidates if len(candidate.split()) >= 5]
+    return out
+
+
+def _formula_terms(chunk: PaperChunk) -> set[str]:
+    text = " ".join([
+        chunk.formula_latex,
+        str(chunk.metadata.get("equation_label") or ""),
+        str(chunk.metadata.get("reference_labels") or ""),
+    ])
+    return {
+        token
+        for token in _fact_tokens(text)
+        if len(token) > 1 and token not in {"begin", "end", "equation", "label", "left", "right"}
+    }
+
+
+def _fact_tokens(text: str) -> list[str]:
+    cleaned = re.sub(r"\\label\{[^{}]*\}", " ", str(text or ""))
+    cleaned = re.sub(r"_\{([^}]+)\}", r"_\1", cleaned)
+    cleaned = re.sub(r"\^\{([^}]+)\}", r"_\1", cleaned)
+    cleaned = re.sub(r"\\([A-Za-z]+)_([A-Za-z0-9]+)", r" \1_\2 ", cleaned)
+    cleaned = re.sub(r"\\(?:mathbf|mathrm|mathcal|mathbb|text|operatorname|boldsymbol)\{([^{}]*)\}", r"\1", cleaned)
+    cleaned = cleaned.replace("\\", " ")
+    return [token.casefold() for token in re.findall(r"[A-Za-z0-9_]+", cleaned)]
+
+
+def _formula_sentence_related(sentence: str, formula_terms: set[str]) -> bool:
+    tokens = set(_fact_tokens(sentence))
+    if tokens & formula_terms:
+        return True
+    lowered = sentence.casefold()
+    return any(keyword in lowered for keyword in ("where", "denote", "represent", "defined", "means"))
+
+
+def _table_question(label: str, chunk: PaperChunk) -> str:
+    topic = _visual_question_topic(chunk)
+    if topic:
+        return f"What do the experimental results around {label}, about {topic}, show?"
+    return f"What do the experimental results around {label} show?"
+
+
+def _figure_question(label: str, chunk: PaperChunk) -> str:
+    topic = _visual_question_topic(chunk)
+    if topic:
+        return f"What does {label}, captioned {topic}, show?"
+    return f"What does {label} show?"
+
+
+def _visual_question_topic(chunk: PaperChunk) -> str:
+    topic = _caption_from_content(chunk.content)
+    if not topic:
+        topic = str(chunk.metadata.get("caption_text") or chunk.metadata.get("surya_caption") or "")
+    topic = " ".join(topic.split())
+    if len(topic) > 140:
+        topic = topic[:140].rsplit(" ", 1)[0].strip()
+    return topic
+
+
 def _visual_or_table_pair(
     chunk: PaperChunk,
     *,
@@ -602,9 +713,9 @@ def _visual_or_table_pair(
         element_type="table" if is_table else "figure",
     )
     question = (
-        f"What do the experimental results around {label} show?"
+        _table_question(label, chunk)
         if is_table
-        else f"What does {label} show?"
+        else _figure_question(label, chunk)
     )
     gold_ids = [chunk.chunk_id]
     required_types = ["table" if is_table else "figure"]
@@ -704,7 +815,9 @@ def _citation_pair(chunk: PaperChunk, *, domain: str) -> EvidenceQAPair | None:
     source_locator = _source_locator_for_chunk(chunk)
     if not source_locator:
         return None
-    snippet = _snippet_from_content(chunk.content)
+    snippet = _clean_citation_claim(_snippet_from_content(chunk.content))
+    if not _is_contentful_citation_claim(snippet):
+        return None
     citation_span = {
         "chunk_id": chunk.chunk_id,
         "snippet": snippet,
@@ -1079,6 +1192,31 @@ def _snippet_from_content(content: str, *, max_chars: int = 180) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars].rsplit(" ", 1)[0].strip() or text[:max_chars].strip()
+
+
+def _clean_citation_claim(snippet: str) -> str:
+    text = " ".join(str(snippet or "").split())
+    return re.sub(
+        r"^(?:sec|subsec|section|appendix)[:._-]?[A-Za-z0-9_-]+\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
+def _is_contentful_citation_claim(snippet: str) -> bool:
+    text = str(snippet or "").strip()
+    if not text:
+        return False
+    lowered = text.casefold()
+    if re.fullmatch(r"(?:sec|subsec|section|appendix)[:._-]?[a-z0-9_-]*", lowered):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z0-9_-]*", text)
+    meaningful = [
+        word for word in words
+        if len(word) > 2 and word.casefold() not in {"sec", "subsec", "section", "figure", "table"}
+    ]
+    return len(meaningful) >= 6
 
 
 def _element_label(chunk: PaperChunk, *, fallback: str) -> str:

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol, Sequence
 
 from business.research.document.arxiv_parser import ArxivDocumentParser
+from business.research.document.pdf_visual_sidecar import merge_pdf_visual_sidecar
 from business.research.document.source_format import detect_source_format
 from business.research.domain.document import ResearchDocument
 from framework.shared.env import load_root_env
@@ -75,6 +76,11 @@ class PaperIngestItem:
     equations: int = 0
     duration_seconds: float = 0.0
     output_path: str = ""
+    pdf_sidecar_status: str = "disabled"
+    pdf_sidecar_reason: str = ""
+    pdf_sidecar_bytes: int = 0
+    pdf_sidecar_visual_merged_figures: int = 0
+    pdf_sidecar_visual_merged_tables: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +97,11 @@ class PaperIngestItem:
             "equations": self.equations,
             "duration_seconds": self.duration_seconds,
             "output_path": self.output_path,
+            "pdf_sidecar_status": self.pdf_sidecar_status,
+            "pdf_sidecar_reason": self.pdf_sidecar_reason,
+            "pdf_sidecar_bytes": self.pdf_sidecar_bytes,
+            "pdf_sidecar_visual_merged_figures": self.pdf_sidecar_visual_merged_figures,
+            "pdf_sidecar_visual_merged_tables": self.pdf_sidecar_visual_merged_tables,
         }
 
 
@@ -123,6 +134,9 @@ def ingest_benchmark_papers(
     manifest_path: Path | None = None,
     fetcher: SourcePackageFetcher | None = None,
     parser: DocumentParser | None = None,
+    with_pdf_sidecar: bool = False,
+    pdf_sidecar_mode: str = "missing",
+    merge_pdf_visuals: bool = True,
 ) -> PaperIngestReport:
     load_root_env()
     _configure_paper_artifact_root(papers_dir)
@@ -151,9 +165,19 @@ def ingest_benchmark_papers(
             package = fetcher.fetch_source_package(arxiv_id)
             source_format, _canonical = detect_source_format(package.content)
             document = parser.parse(paper_id, package.content)
-            if not output_path.exists():
-                _write_document(document, output_path)
             _copy_original_pdf_if_available(package.content, papers_dir / paper_id, paper_id)
+            sidecar = _maybe_merge_pdf_sidecar(
+                document,
+                arxiv_id=arxiv_id,
+                paper_id=paper_id,
+                papers_dir=papers_dir,
+                fetcher=fetcher,
+                enabled=with_pdf_sidecar,
+                mode=pdf_sidecar_mode,
+                merge_pdf_visuals=merge_pdf_visuals,
+            )
+            document = sidecar.document
+            _write_document(document, output_path)
         except Exception as exc:  # noqa: BLE001 - batch ingest records failures and continues
             items.append(PaperIngestItem(
                 arxiv_id=arxiv_id,
@@ -177,6 +201,11 @@ def ingest_benchmark_papers(
             equations=len(document.equations),
             output_path=str(output_path),
             duration_seconds=_elapsed(start),
+            pdf_sidecar_status=sidecar.status,
+            pdf_sidecar_reason=sidecar.reason,
+            pdf_sidecar_bytes=sidecar.bytes_fetched,
+            pdf_sidecar_visual_merged_figures=sidecar.visual_merged_figures,
+            pdf_sidecar_visual_merged_tables=sidecar.visual_merged_tables,
         ))
 
     report = PaperIngestReport(
@@ -209,6 +238,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         force=args.force,
         max_papers=args.max_papers,
         manifest_path=Path(args.manifest) if args.manifest else None,
+        with_pdf_sidecar=args.with_pdf_sidecar,
+        pdf_sidecar_mode=args.pdf_sidecar_mode,
+        merge_pdf_visuals=not args.no_merge_pdf_visuals,
     )
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), end="\n")
     return 0 if report.failed == 0 else 1
@@ -225,6 +257,22 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", default=".newsroom/eval/paper-rag-ingest-manifest.json")
     parser.add_argument("--max-papers", type=int)
     parser.add_argument("--force", action="store_true", help="Re-parse papers even when research_document.json exists.")
+    parser.add_argument(
+        "--with-pdf-sidecar",
+        action="store_true",
+        help="Fetch the arXiv PDF after source parsing and merge Surya/PyMuPDF visual artifacts.",
+    )
+    parser.add_argument(
+        "--pdf-sidecar-mode",
+        choices=("missing", "always"),
+        default="missing",
+        help="When to fetch the PDF sidecar. 'missing' only fetches when figure/table images are incomplete.",
+    )
+    parser.add_argument(
+        "--no-merge-pdf-visuals",
+        action="store_true",
+        help="Fetch/copy the PDF sidecar but do not merge visual crops into research_document.json.",
+    )
     return parser
 
 
@@ -280,6 +328,68 @@ def _copy_original_pdf_if_available(source_bytes: bytes, paper_dir: Path, paper_
         dotted_path = paper_dir / f"{dotted}_original.pdf"
         if not dotted_path.exists():
             shutil.copyfile(pdf_path, dotted_path)
+
+
+@dataclass(frozen=True)
+class _PdfSidecarResult:
+    document: ResearchDocument
+    status: str
+    reason: str = ""
+    bytes_fetched: int = 0
+    visual_merged_figures: int = 0
+    visual_merged_tables: int = 0
+
+
+def _maybe_merge_pdf_sidecar(
+    document: ResearchDocument,
+    *,
+    arxiv_id: str,
+    paper_id: str,
+    papers_dir: Path,
+    fetcher: Any,
+    enabled: bool,
+    mode: str,
+    merge_pdf_visuals: bool,
+) -> _PdfSidecarResult:
+    if not enabled:
+        return _PdfSidecarResult(document=document, status="disabled")
+    normalized_mode = str(mode or "missing").strip().casefold()
+    if normalized_mode == "missing" and not _has_missing_visual_images(document):
+        return _PdfSidecarResult(document=document, status="skipped", reason="visual_images_already_present")
+    fetch_pdf_package = getattr(fetcher, "fetch_pdf_package", None)
+    if not callable(fetch_pdf_package):
+        return _PdfSidecarResult(document=document, status="failed", reason="fetcher_missing_fetch_pdf_package")
+    try:
+        pdf_package = fetch_pdf_package(arxiv_id)
+        pdf_bytes = bytes(pdf_package.content)
+        _copy_original_pdf_if_available(pdf_bytes, papers_dir / paper_id, paper_id)
+        if not merge_pdf_visuals:
+            return _PdfSidecarResult(
+                document=document,
+                status="fetched",
+                reason="merge_disabled",
+                bytes_fetched=len(pdf_bytes),
+            )
+        merged = merge_pdf_visual_sidecar(document, pdf_bytes, paper_id=paper_id)
+        return _PdfSidecarResult(
+            document=merged,
+            status="merged",
+            bytes_fetched=len(pdf_bytes),
+            visual_merged_figures=sum(1 for figure in merged.figures if figure.image_ref),
+            visual_merged_tables=sum(1 for table in merged.tables if table.metadata.get("image_ref")),
+        )
+    except Exception as exc:  # noqa: BLE001 - sidecar should not fail the main source parse
+        return _PdfSidecarResult(
+            document=document,
+            status="failed",
+            reason=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def _has_missing_visual_images(document: ResearchDocument) -> bool:
+    return any(not figure.image_ref for figure in document.figures) or any(
+        not table.metadata.get("image_ref") for table in document.tables
+    )
 
 
 def _elapsed(start: float) -> float:

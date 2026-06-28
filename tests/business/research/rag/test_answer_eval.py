@@ -121,6 +121,66 @@ def test_answer_evaluator_allows_no_fact_gold_but_requires_citation_when_present
     assert score.answer_success is False
 
 
+def test_answer_evaluator_treats_citation_qa_as_evidence_selection() -> None:
+    pair = EvidenceQAPair(
+        question="Which evidence supports the claim: Scaling language models helps NLP?",
+        paper_id="p1",
+        qa_type="citation_qa",
+        gold_chunk_ids=["para-1"],
+        gold_source_locators=["paper://p1/latex"],
+        answer_facts=[
+            "The NLP landscape has recently been revolutionized by language models [][inter alia]peters-etal-2018-deep.",
+        ],
+    )
+    sample = EvidenceAnswerSample(
+        pair=pair,
+        answer="The support is the cited introduction paragraph about language models changing NLP. [1]",
+        cited_chunk_ids=["para-1"],
+        cited_source_locators=["paper://p1/latex"],
+        context_chunk_ids=["para-1"],
+        metadata={"retrieved_chunk_ids": ["para-1"]},
+    )
+
+    score = EvidenceAnswerEvaluator().score(sample)
+
+    assert score.fact_coverage == 0.0
+    assert score.citation_gold_coverage == 1.0
+    assert score.answer_success is True
+    assert score.failure_reason == ""
+
+
+def test_answer_evaluator_soft_matches_latex_symbol_paraphrases() -> None:
+    pair = EvidenceQAPair(
+        question="How is Equation dd7633a3523b explained in the surrounding text?",
+        paper_id="p1",
+        qa_type="formula_explanation_qa",
+        gold_chunk_ids=["eq-1", "para-1"],
+        answer_facts=[
+            (
+                r"A typical choice of fn:qkv is \begin{equation} "
+                r"f_{t:t\in\{q,k,v\}}(\x_i,i):=\W_{t:t\in\{q,k,v\}}(\x_i+\p_i), "
+                r"\label{fn:adtv-posi} \end{equation} where $\p_i\in\mathbb{R}^{d}$ is a"
+            )
+        ],
+    )
+    sample = EvidenceAnswerSample(
+        pair=pair,
+        answer=(
+            "The equation is a typical query/key/value mapping. It maps token x_i plus "
+            "the positional vector p_i through W_t, and p_i is a d-dimensional vector "
+            "determined by the token position. [1] [2]"
+        ),
+        cited_chunk_ids=["eq-1", "para-1"],
+        context_chunk_ids=["eq-1", "para-1"],
+        metadata={"retrieved_chunk_ids": ["eq-1", "para-1"]},
+    )
+
+    score = EvidenceAnswerEvaluator().score(sample)
+
+    assert score.fact_coverage == 1.0
+    assert score.answer_success is True
+
+
 def test_answer_evaluator_reports_missing_gold_in_retrieval() -> None:
     pair = EvidenceQAPair(
         question="What does the formula mean?",

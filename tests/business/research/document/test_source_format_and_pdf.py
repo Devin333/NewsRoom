@@ -11,7 +11,14 @@ import fitz
 import pytest
 
 from business.foundation import build_stable_id
-from business.research.domain.document import ResearchEquation
+from business.research.domain.common import SourceLineage
+from business.research.domain.document import (
+    ResearchDocument,
+    ResearchEquation,
+    ResearchFigure,
+    ResearchSection,
+    ResearchTable,
+)
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.document.pdf_compiler import (
     FigureImageRef,
@@ -29,6 +36,7 @@ from business.research.document.pdf_compiler import (
     _run_nougat,
     _with_nearest_caption_region,
 )
+from business.research.document.pdf_visual_sidecar import merge_pdf_visual_sidecar
 from business.research.document.source_format import SourceFormat, detect_source_format
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -902,6 +910,107 @@ def test_pdf_parser_attaches_surya_table_images(
     assert doc.tables[0].metadata["source_locator"] == (
         "arxiv://2501_table/pdf#page=2&pdf_rect=61.200,158.400,550.800,316.800"
     )
+
+
+@patch(
+    "business.research.document.pdf_visual_sidecar._extract_page_text_evidence",
+    return_value=[
+        PageTextEvidence(
+            page=1,
+            native_text="Figure 1: Model architecture\nTable 1: Results",
+            selected_text="Figure 1: Model architecture\nTable 1: Results",
+            selected_source="pymupdf_text",
+            native_chars=44,
+            native_words=7,
+        )
+    ],
+)
+@patch(
+    "business.research.document.pdf_visual_sidecar._extract_surya_layout_artifacts",
+    return_value=SuryaLayoutArtifacts(
+        figure_images=[
+            FigureImageRef(
+                image_ref="figures/surya_p001_fig001.png",
+                page=1,
+                metadata={
+                    "image_source": "surya_layout",
+                    "bbox": [100, 100, 900, 400],
+                    "pdf_rect": [61.2, 79.2, 550.8, 316.8],
+                },
+            )
+        ],
+        table_images=[
+            FigureImageRef(
+                image_ref="tables/surya_table_p001_001.png",
+                page=1,
+                metadata={
+                    "image_source": "surya_table_layout",
+                    "bbox": [100, 450, 900, 650],
+                    "pdf_rect": [61.2, 356.4, 550.8, 514.8],
+                    "table_text": "Model  Score\nours  0.91\nbase  0.83",
+                    "table_text_source": "pymupdf_bbox",
+                },
+            )
+        ],
+        layout_ref="surya_layout.json",
+        region_count=2,
+    ),
+)
+def test_pdf_visual_sidecar_merges_visual_refs_into_latex_document(
+    mock_surya_artifacts,
+    mock_page_text,
+) -> None:
+    source_ref = "arxiv://2501.00001/latex"
+    doc = ResearchDocument(
+        paper_id="2501.00001",
+        source_hash="hash",
+        sections=[
+            ResearchSection(
+                section_id="sec-intro",
+                title="Introduction",
+                text="Figure 1 and Table 1 summarize the method.",
+                source_ref=source_ref,
+            )
+        ],
+        figures=[
+            ResearchFigure(
+                figure_id="fig-1",
+                caption="Model architecture",
+                source_ref=source_ref,
+                metadata={"figure_number": 1},
+            )
+        ],
+        tables=[
+            ResearchTable(
+                table_id="tbl-1",
+                caption="Results",
+                source_ref=source_ref,
+                metadata={"table_number": 1},
+            )
+        ],
+        lineage=SourceLineage(source_refs=[source_ref], source_hash="hash"),
+        metadata={"parse_source": "latex"},
+    )
+
+    merged = merge_pdf_visual_sidecar(doc, _make_pdf(["placeholder"]), paper_id="2501.00001")
+
+    assert merged.lineage.source_refs == ["arxiv://2501.00001/latex", "arxiv://2501.00001/pdf"]
+    assert merged.figures[0].source_ref == "arxiv://2501.00001/pdf"
+    assert merged.figures[0].image_ref == "figures/surya_p001_fig001.png"
+    assert merged.figures[0].page == 1
+    assert merged.figures[0].metadata["source_locator"] == (
+        "arxiv://2501.00001/pdf#page=1&pdf_rect=61.200,79.200,550.800,316.800"
+    )
+    assert merged.tables[0].source_ref == "arxiv://2501.00001/pdf"
+    assert merged.tables[0].metadata["image_ref"] == "tables/surya_table_p001_001.png"
+    assert merged.tables[0].rows == [
+        {"Model": "ours", "Score": "0.91"},
+        {"Model": "base", "Score": "0.83"},
+    ]
+    assert merged.metadata["pdf_sidecar_visual_merged_figures"] == 1
+    assert merged.metadata["pdf_sidecar_visual_merged_tables"] == 1
+    assert merged.metadata["parse_quality"]["figures"]["with_image"] == 1
+    assert merged.metadata["parse_quality"]["tables"]["with_image"] == 1
 
 
 @patch(

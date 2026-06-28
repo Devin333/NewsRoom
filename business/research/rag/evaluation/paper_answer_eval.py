@@ -163,10 +163,15 @@ class EvidenceAnswerEvaluator:
 
     def score(self, sample: EvidenceAnswerSample) -> EvidenceAnswerScores:
         pair = sample.pair
-        score = score_answer_case(
-            _metric_case_from_sample(sample),
+        thresholds = _thresholds_for_pair(
+            pair,
             fact_match_threshold=self._fact_match_threshold,
             success_fact_threshold=self._success_fact_threshold,
+        )
+        score = score_answer_case(
+            _metric_case_from_sample(sample),
+            fact_match_threshold=thresholds["fact_match_threshold"],
+            success_fact_threshold=thresholds["success_fact_threshold"],
             success_citation_threshold=self._success_citation_threshold,
             abstain_markers=_ABSTAIN_MARKERS,
         )
@@ -212,6 +217,29 @@ def _metric_case_from_sample(sample: EvidenceAnswerSample) -> AnswerMetricCase:
             **dict(sample.metadata),
         },
     )
+
+
+def _thresholds_for_pair(
+    pair: EvidenceQAPair,
+    *,
+    fact_match_threshold: float,
+    success_fact_threshold: float,
+) -> dict[str, float]:
+    qa_type = str(pair.qa_type or "").casefold()
+    if qa_type == "citation_qa":
+        return {
+            "fact_match_threshold": fact_match_threshold,
+            "success_fact_threshold": 0.0,
+        }
+    if qa_type in {"formula_qa", "formula_explanation_qa"}:
+        return {
+            "fact_match_threshold": min(fact_match_threshold, 0.65),
+            "success_fact_threshold": success_fact_threshold,
+        }
+    return {
+        "fact_match_threshold": fact_match_threshold,
+        "success_fact_threshold": success_fact_threshold,
+    }
 
 
 def _unique_texts(values: list[Any]) -> list[str]:

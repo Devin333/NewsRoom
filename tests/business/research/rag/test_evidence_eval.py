@@ -430,6 +430,73 @@ def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
     assert all(pair.domain == "nlp" for pair in pairs)
 
 
+def test_formula_explanation_pair_prefers_symbol_explanation_sentence() -> None:
+    formula = _chunk(
+        "eq-qkv",
+        chunk_type="formula",
+        content="[Equation eq_qkv]\nLaTeX:\nq_m=f_q(x_m,m), k_n=f_k(x_n,n), v_n=f_v(x_n,n)",
+        metadata={
+            "equation_id": "eq-qkv",
+            "referenced_by_chunks": [{"chunk_id": "para-qkv"}],
+        },
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": r"\q_m=f_q(\x_m,m), \k_n=f_k(\x_n,n), \v_n=f_v(\x_n,n)",
+    })
+    context = _chunk(
+        "para-qkv",
+        content=(
+            "Let S_N be a sequence of input tokens and E_N be their embeddings. "
+            "The self-attention first incorporates position information into the word embeddings. "
+            "where q_m, k_n and v_n incorporate the mth and nth positions through f_q, f_k and f_v."
+        ),
+    )
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=2).build([formula, context], domain="nlp")
+    pair = next(item for item in pairs if item.qa_type == "formula_explanation_qa")
+
+    assert any("q_m, k_n and v_n incorporate" in fact for fact in pair.answer_facts)
+    assert not any(fact.startswith("Let S_N be a sequence") for fact in pair.answer_facts)
+
+
+def test_citation_pair_strips_latex_section_label_prefix() -> None:
+    chunk = _chunk(
+        "para-cite-label",
+        content="sec:intro When we read a story, we bring implicit knowledge about the physical world.",
+        metadata={"source_locator": "paper://p1/pdf#page=1"},
+    )
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=1).build([chunk], domain="nlp")
+    citation_pairs = [pair for pair in pairs if pair.qa_type == "citation_qa"]
+
+    assert len(citation_pairs) == 1
+    assert citation_pairs[0].question.startswith("Which evidence supports the claim: When we read a story")
+    assert citation_pairs[0].answer_facts == [
+        "When we read a story, we bring implicit knowledge about the physical world."
+    ]
+
+
+def test_visual_questions_include_caption_topic_to_reduce_label_ambiguity() -> None:
+    table = _chunk(
+        "tbl-ambiguous",
+        chunk_type="table",
+        content="[Table tbl_1]\nCaption:\nReward model results across helpfulness and safety benchmarks.",
+        metadata={"reference_labels": ["3"], "image_ref": "tables/table3.png"},
+    )
+    figure = _chunk(
+        "fig-ambiguous",
+        chunk_type="figure",
+        content="[Figure fig_1]\nCaption:\nArchitecture overview for the reward model.",
+        metadata={"reference_labels": ["2"], "image_ref": "figures/fig2.png"},
+    )
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=2).build([table, figure], domain="nlp")
+    questions = {pair.qa_type: pair.question for pair in pairs}
+
+    assert "Table 3, about Reward model results" in questions["table_qa"]
+    assert "Figure 2, captioned Architecture overview" in questions["figure_qa"]
+
+
 def test_experiment_result_pairs_require_result_like_table() -> None:
     architecture_table = _chunk(
         "tbl-architecture",

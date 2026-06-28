@@ -53,6 +53,10 @@ ARXIV_SOURCE_CONTENT_TYPES = (
     "application/x-eprint-tar",
     "application/pdf",
 )
+ARXIV_PDF_CONTENT_TYPES = (
+    "application/pdf",
+    "application/octet-stream",
+)
 DEFAULT_ARXIV_SOURCE_MAX_BYTES = 120_000_000
 
 
@@ -269,6 +273,63 @@ class ArxivSourceConnector:
 
         return run_with_fetch_retries(operation, policy)
 
+    def fetch_pdf_package(
+        self,
+        arxiv_id: str,
+        *,
+        max_bytes: int | None = None,
+    ) -> ArxivSourcePackage:
+        normalized_id = normalize_arxiv_id(arxiv_id)
+        if not normalized_id:
+            raise ValueError("arxiv id is required")
+        url = build_arxiv_pdf_url(normalized_id)
+        policy = self.fetch_policy
+        if max_bytes is not None and max_bytes > 0 and max_bytes != policy.max_bytes:
+            from dataclasses import replace
+
+            policy = replace(policy, max_bytes=max_bytes)
+        rate_limit = self._rate_limiter.reserve(
+            url,
+            limit_per_minute=policy.rate_limit_per_domain_per_minute,
+        )
+        if not rate_limit.allowed:
+            raise ValueError(f"arXiv PDF fetch rate limit reached for domain: {rate_limit.domain}")
+        ensure_robots_allowed(url, policy)
+
+        def operation() -> ArxivSourcePackage:
+            request = Request(
+                url,
+                headers={
+                    "Accept": "application/pdf,application/octet-stream,*/*",
+                    "User-Agent": policy.user_agent,
+                },
+            )
+            with open_request_with_fetch_policy(request, policy) as response:
+                response_metadata = response_metadata_from_http_response(response, url=url)
+                ensure_supported_content_type(response_metadata.content_type, ARXIV_PDF_CONTENT_TYPES)
+                content_length = response.headers.get("Content-Length") if response.headers is not None else None
+                if content_length and int(content_length) > policy.max_bytes:
+                    raise ValueError("arXiv PDF exceeds configured maximum size")
+                body = response.read(policy.max_bytes + 1)
+            if len(body) > policy.max_bytes:
+                raise ValueError("arXiv PDF exceeds configured maximum size")
+            if not body.startswith(b"%PDF"):
+                raise ValueError("arXiv PDF response did not contain a PDF document")
+            return ArxivSourcePackage(
+                arxiv_id=normalized_id,
+                url=response_metadata.url or url,
+                content=body,
+                content_type=response_metadata.content_type,
+                file_name=(
+                    _content_disposition_file_name((response_metadata.headers or {}).get("Content-Disposition"))
+                    or f"{normalized_id.replace('/', '_')}.pdf"
+                ),
+                fetched_at=datetime.now(UTC),
+                response_metadata=response_metadata,
+            )
+
+        return run_with_fetch_retries(operation, policy)
+
 
 def build_arxiv_query_url(base_url: str, query: ArxivQuery) -> str:
     params = {
@@ -288,6 +349,10 @@ def build_arxiv_source_url(arxiv_id: str) -> str:
 
 def build_arxiv_src_url(arxiv_id: str) -> str:
     return f"https://arxiv.org/src/{quote(normalize_arxiv_id(arxiv_id), safe='.')}"
+
+
+def build_arxiv_pdf_url(arxiv_id: str) -> str:
+    return f"https://arxiv.org/pdf/{quote(normalize_arxiv_id(arxiv_id), safe='/.')}"
 
 
 def normalize_arxiv_id(value: str) -> str:

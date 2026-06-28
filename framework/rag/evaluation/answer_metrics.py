@@ -50,7 +50,12 @@ _STRUCTURAL_FACT_STOPWORDS = {
     "begin",
     "end",
     "label",
+    "left",
     "mathcal",
+    "mathbf",
+    "mathrm",
+    "mathbb",
+    "operatorname",
     "sigma",
     "text",
     "theta",
@@ -59,19 +64,29 @@ _STRUCTURAL_FACT_STOPWORDS = {
     "and",
     "are",
     "as",
+    "built",
     "for",
     "in",
     "is",
+    "it",
     "of",
     "on",
     "our",
     "the",
     "this",
     "to",
+    "top",
     "use",
     "we",
+    "where",
     "with",
+    "modify",
+    "separately",
+    "further",
 }
+_LATEX_WRAPPED_COMMAND_RE = re.compile(
+    r"\\(?:mathbf|mathrm|mathcal|mathbb|text|operatorname|boldsymbol)\{([^{}]*)\}"
+)
 
 
 @dataclass(frozen=True)
@@ -359,15 +374,25 @@ def _content_tokens(text: str) -> tuple[str, ...]:
         for token in _tokens(_strip_structural_fact_noise(text))
         if token not in _STRUCTURAL_FACT_STOPWORDS
         and not token.startswith("chunk_")
+        and not token.endswith("_")
         and len(token) > 1
     )
 
 
 def _strip_structural_fact_noise(text: str) -> str:
+    text = re.sub(r"\\label\{[^{}]*\}", " ", text)
+    text = re.sub(r"\\(?:begin|end)\{[^{}]*\}", " ", text)
+    previous = None
+    while previous != text:
+        previous = text
+        text = _LATEX_WRAPPED_COMMAND_RE.sub(r"\1", text)
     text = re.sub(r"_\{([^}]+)\}", r"_\1", text)
     text = re.sub(r"\^\{([^}]+)\}", r"_\1", text)
+    text = re.sub(r"\\([A-Za-z]+)_([A-Za-z0-9]+)", r" \1_\2 ", text)
+    text = re.sub(r"\\([A-Za-z]+)(?=[\s_^{},)\\]|$)", r" \1 ", text)
     text = text.replace("\\", " ")
     text = text.replace("{", " ").replace("}", " ")
+    text = text.replace("`", " ")
     text = re.sub(r"\[[^\]]+\]", " ", text)
     text = re.split(r"\bSource\s*:", text, maxsplit=1, flags=re.IGNORECASE)[0]
     return text
@@ -375,6 +400,8 @@ def _strip_structural_fact_noise(text: str) -> str:
 
 def _token_matches(token: str, answer_tokens: set[str]) -> bool:
     if token in answer_tokens:
+        return True
+    if token == "qkv" and {"query", "key", "value"}.issubset(answer_tokens):
         return True
     if len(token) > 3 and token.endswith("s") and token[:-1] in answer_tokens:
         return True
