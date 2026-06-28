@@ -62,12 +62,14 @@ def test_answer_evaluator_marks_missing_facts_and_weak_citations() -> None:
         metadata={"retrieved_chunk_ids": ["eq-1", "para-explain"]},
     )
 
-    score = EvidenceAnswerEvaluator().score(sample)
+    result = EvidenceAnswerEvaluator().evaluate([sample])
+    score = result.scores[0]
 
     assert score.fact_coverage == 0.5
     assert score.retrieval_context_coverage == 0.5
     assert score.citation_grounding == 0.5
-    assert score.failure_reason == "missing_gold_in_llm_context"
+    assert score.failure_reason == "context_missing_gold"
+    assert result.failure_reason_counts() == {"context_missing_gold": 1}
     assert score.answer_success is False
     assert score.matched_facts == ("The equation computes attention weights.",)
     assert score.missing_facts == ("The paragraph explains queries keys and values.",)

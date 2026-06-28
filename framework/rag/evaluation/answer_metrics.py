@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 import re
 
+from framework.rag.evaluation.failure_reason import RAGFailureReason
 from framework.rag.evaluation.report import MetricValue
 
 
@@ -151,7 +152,7 @@ def score_answer_case(
             source_locator_grounding=None,
             abstention_correct=abstention_correct,
             answer_success=abstention_correct == 1.0,
-            failure_reason="" if abstention_correct == 1.0 else "abstention_mismatch",
+            failure_reason="" if abstention_correct == 1.0 else RAGFailureReason.ABSTENTION_EXPECTED.value,
         )
 
     fact_score, matched, missing = fact_coverage_details(
@@ -305,18 +306,18 @@ def _answer_failure_reason(
         return ""
     if case.gold_evidence_ids:
         if case.retrieved_evidence_ids and id_coverage(case.retrieved_evidence_ids, case.gold_evidence_ids) != 1.0:
-            return "missing_gold_in_retrieval"
+            return RAGFailureReason.MISSING_GOLD_IN_RETRIEVAL.value
         if retrieval_context_coverage is not None and retrieval_context_coverage < 1.0:
-            return "missing_gold_in_llm_context"
+            return RAGFailureReason.CONTEXT_MISSING_GOLD.value
         if citation_grounding is not None and citation_grounding < 1.0:
-            return "missing_gold_citation"
+            return RAGFailureReason.CITATION_MISSING_SOURCE.value
     if not fact_passed and fact_coverage is not None and fact_coverage < success_fact_threshold:
-        return "fact_match_low"
+        return RAGFailureReason.FACT_MATCH_LOW.value
     if not citation_passed:
-        return "missing_gold_citation"
+        return RAGFailureReason.CITATION_MISSING_SOURCE.value
     if looks_like_abstention(case.answer, abstain_markers=abstain_markers):
-        return "unexpected_abstention"
-    return "other"
+        return RAGFailureReason.ABSTENTION_EXPECTED.value
+    return RAGFailureReason.ANSWER_NOT_GROUNDED.value
 
 
 def _fact_matches(answer: str, fact: str, *, threshold: float) -> bool:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.rag.evaluation import AnswerMetricCase, evaluate_answer_case, score_answer_case
+from framework.rag.evaluation import AnswerMetricCase, RAGFailureReason, evaluate_answer_case, score_answer_case
 
 
 def test_answer_metrics_are_deterministic_and_grounded_in_context():
@@ -93,4 +93,37 @@ def test_score_answer_case_explains_missing_retrieval_and_structured_fact_match(
 
     assert structured_score.fact_coverage == 1.0
     assert structured_score.answer_success is True
-    assert missing_score.failure_reason == "missing_gold_in_retrieval"
+    assert missing_score.failure_reason == RAGFailureReason.MISSING_GOLD_IN_RETRIEVAL.value
+
+
+def test_score_answer_case_uses_canonical_failure_reason_taxonomy():
+    context_missing = AnswerMetricCase(
+        case_id="case-6",
+        question="What does the table show?",
+        answer="Only the table is cited. [tbl-1]",
+        expected_facts=("The table conclusion is explained in the paragraph.",),
+        cited_evidence_ids=("tbl-1",),
+        context_evidence_ids=("tbl-1",),
+        gold_evidence_ids=("tbl-1", "para-1"),
+        retrieved_evidence_ids=("tbl-1", "para-1"),
+    )
+    citation_missing = AnswerMetricCase(
+        case_id="case-7",
+        question="What does the table show?",
+        answer="The table conclusion is explained in the paragraph. [other]",
+        expected_facts=("The table conclusion is explained in the paragraph.",),
+        cited_evidence_ids=("other",),
+        context_evidence_ids=("tbl-1", "para-1"),
+        gold_evidence_ids=("tbl-1", "para-1"),
+        retrieved_evidence_ids=("tbl-1", "para-1"),
+    )
+    abstention_mismatch = AnswerMetricCase(
+        case_id="case-8",
+        question="What is missing?",
+        answer="This paper has enough evidence.",
+        expected_abstain=True,
+    )
+
+    assert score_answer_case(context_missing).failure_reason == RAGFailureReason.CONTEXT_MISSING_GOLD.value
+    assert score_answer_case(citation_missing).failure_reason == RAGFailureReason.CITATION_MISSING_SOURCE.value
+    assert score_answer_case(abstention_mismatch).failure_reason == RAGFailureReason.ABSTENTION_EXPECTED.value
