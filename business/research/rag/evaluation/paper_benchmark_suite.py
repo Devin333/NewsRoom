@@ -1376,6 +1376,7 @@ def _audit_pair(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> Go
     answer_facts_present = any(str(fact).strip() for fact in pair.answer_facts)
     locator_count = sum(1 for chunk in gold_chunks if chunk.metadata.get("source_locator") or chunk.metadata.get("source_ref"))
     image_count = sum(1 for chunk in gold_chunks if chunk.metadata.get("image_ref"))
+    figure_evidence_count = sum(1 for chunk in gold_chunks if _has_usable_figure_evidence(chunk))
     required_types = set(pair.required_evidence_types)
     available_types = {_evidence_type(chunk) for chunk in gold_chunks}
     if missing:
@@ -1384,7 +1385,7 @@ def _audit_pair(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> Go
     elif required_types and not required_types.issubset(available_types):
         status = "warning"
         reason = "required_evidence_type_not_fully_represented"
-    elif pair.qa_type in {"figure_qa", "table_qa"} and image_count == 0:
+    elif pair.qa_type == "figure_qa" and image_count == 0 and figure_evidence_count == 0:
         status = "warning"
         reason = "visual_qa_without_image_ref"
     elif not answer_facts_present and pair.expected_behavior == "answer":
@@ -1407,6 +1408,23 @@ def _audit_pair(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> Go
         answer_facts=tuple(str(fact) for fact in pair.answer_facts if str(fact).strip())[:3],
         evidence_previews=tuple(_evidence_preview(chunk) for chunk in gold_chunks[:5]),
     )
+
+
+def _has_usable_figure_evidence(chunk: PaperChunk) -> bool:
+    if chunk.metadata.get("image_ref"):
+        return True
+    for key in ("visual_description", "caption_text", "surya_caption"):
+        if _meaningful_text(str(chunk.metadata.get(key) or "")):
+            return True
+    caption = _caption_block_for_audit(chunk.content)
+    if _meaningful_text(caption):
+        return True
+    return _meaningful_text(chunk.content, min_chars=48)
+
+
+def _meaningful_text(value: str, *, min_chars: int = 12) -> bool:
+    normalized = " ".join(str(value or "").split())
+    return len(normalized) >= min_chars
 
 
 def _target_counts(pairs: Iterable[EvidenceQAPair]) -> dict[str, int]:

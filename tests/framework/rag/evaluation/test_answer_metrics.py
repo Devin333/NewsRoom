@@ -96,6 +96,34 @@ def test_score_answer_case_explains_missing_retrieval_and_structured_fact_match(
     assert missing_score.failure_reason == RAGFailureReason.MISSING_GOLD_IN_RETRIEVAL.value
 
 
+def test_score_answer_case_preserves_latex_display_math_for_formula_match():
+    case = AnswerMetricCase(
+        case_id="case-latex-display",
+        question="How is the objective defined?",
+        answer=(
+            "The objective is\n"
+            "\\[\n"
+            "\\arg \\max_\\pi \\mathbb{E}_{p \\sim \\mathcal{D}, g \\sim \\pi}[R(g \\mid p)]\n"
+            "\\]\n"
+            "where prompts come from the dataset and generations come from the policy. [eq-1]"
+        ),
+        expected_facts=(
+            "\\begin{equation}\n"
+            "   \\arg \\max _\\pi \\mathbb{E}_{p \\sim \\mathcal{D}, g \\sim \\pi}[R(g \\mid p)]\n"
+            "\\end{equation}",
+        ),
+        cited_evidence_ids=("eq-1",),
+        context_evidence_ids=("eq-1",),
+        gold_evidence_ids=("eq-1",),
+        retrieved_evidence_ids=("eq-1",),
+    )
+
+    score = score_answer_case(case)
+
+    assert score.fact_coverage == 1.0
+    assert score.answer_success is True
+
+
 def test_score_answer_case_uses_canonical_failure_reason_taxonomy():
     context_missing = AnswerMetricCase(
         case_id="case-6",

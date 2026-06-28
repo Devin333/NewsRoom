@@ -12,6 +12,7 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     run_benchmark_suite,
     split_paper_ids,
 )
+from business.research.document.models import PaperChunk
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from business.research.rag.cli.run_benchmark_suite import _parse_thresholds, main
 
@@ -59,6 +60,25 @@ async def _fake_judge_llm(prompt: str) -> str:
     return "yes"
 
 
+def _paper_chunk(
+    *,
+    chunk_id: str,
+    chunk_type: str,
+    content: str,
+    metadata: dict | None = None,
+) -> PaperChunk:
+    return PaperChunk(
+        chunk_id=chunk_id,
+        paper_id="p1",
+        parse_source="latex",
+        chunk_type=chunk_type,
+        has_figure=chunk_type == "figure",
+        has_table=chunk_type == "table",
+        content=content,
+        metadata=metadata or {},
+    )
+
+
 def test_split_paper_ids_is_stable_and_non_empty() -> None:
     paper_ids = [f"p{i}" for i in range(10)]
 
@@ -84,6 +104,83 @@ def test_audit_gold_evidence_reports_missing_chunks() -> None:
 
     assert report.failed == 1
     assert report.items[0].reason == "missing_gold_chunks"
+
+
+def test_audit_gold_evidence_accepts_latex_table_without_image_ref() -> None:
+    table = _paper_chunk(
+        chunk_id="tbl1",
+        chunk_type="table",
+        content="Caption: Performance of architectural variants. Rows: baseline 31.2, large 33.8.",
+        metadata={
+            "source_locator": "paper://p1/table/1",
+            "caption_text": "Performance of architectural variants.",
+            "table_rows": [{"model": "baseline", "score": "31.2"}],
+        },
+    )
+    pair = EvidenceQAPair(
+        question="What quantitative evidence is reported for the architectural variants?",
+        paper_id="p1",
+        qa_type="table_qa",
+        gold_chunk_ids=["tbl1"],
+        required_evidence_types=["table"],
+        answer_facts=["baseline 31.2"],
+    )
+
+    report = audit_gold_evidence([pair], [table], sample_size=10, seed="seed")
+
+    assert report.passed == 1
+    assert report.warning == 0
+    assert report.items[0].image_ref_count == 0
+    assert report.items[0].reason == "ok"
+
+
+def test_audit_gold_evidence_accepts_caption_only_figure_without_image_ref() -> None:
+    figure = _paper_chunk(
+        chunk_id="fig1",
+        chunk_type="figure",
+        content="Caption: Schematic of the baseline objective and training process.",
+        metadata={
+            "source_locator": "paper://p1/figure/1",
+            "caption_text": "Schematic of the baseline objective and training process.",
+        },
+    )
+    pair = EvidenceQAPair(
+        question="What visual evidence explains the baseline objective and training process?",
+        paper_id="p1",
+        qa_type="figure_qa",
+        gold_chunk_ids=["fig1"],
+        required_evidence_types=["figure"],
+        answer_facts=["baseline objective"],
+    )
+
+    report = audit_gold_evidence([pair], [figure], sample_size=10, seed="seed")
+
+    assert report.passed == 1
+    assert report.warning == 0
+    assert report.items[0].image_ref_count == 0
+    assert report.items[0].reason == "ok"
+
+
+def test_audit_gold_evidence_warns_for_figure_without_image_or_textual_evidence() -> None:
+    figure = _paper_chunk(
+        chunk_id="fig1",
+        chunk_type="figure",
+        content="Figure.",
+        metadata={"source_locator": "paper://p1/figure/1"},
+    )
+    pair = EvidenceQAPair(
+        question="What visual evidence explains the baseline objective?",
+        paper_id="p1",
+        qa_type="figure_qa",
+        gold_chunk_ids=["fig1"],
+        required_evidence_types=["figure"],
+        answer_facts=["baseline objective"],
+    )
+
+    report = audit_gold_evidence([pair], [figure], sample_size=10, seed="seed")
+
+    assert report.warning == 1
+    assert report.items[0].reason == "visual_qa_without_image_ref"
 
 
 def test_run_benchmark_suite_writes_splits_without_fixed_window_by_default(tmp_path: Path) -> None:

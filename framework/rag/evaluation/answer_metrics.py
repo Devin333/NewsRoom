@@ -398,7 +398,8 @@ def _strip_structural_fact_noise(text: str) -> str:
     text = text.replace("\\", " ")
     text = text.replace("{", " ").replace("}", " ")
     text = text.replace("`", " ")
-    text = re.sub(r"\[[^\]]+\]", " ", text)
+    text = re.sub(r"(?<!\\)\[(?:figure|fig|table|tbl|equation|eq)\s+[^\]]+\]", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<!\\)\[(?:\d+|[A-Za-z]{1,16}[-_][A-Za-z0-9_-]{1,32})\]", " ", text)
     text = re.split(r"\bSource\s*:", text, maxsplit=1, flags=re.IGNORECASE)[0]
     return text
 
