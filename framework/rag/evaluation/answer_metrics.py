@@ -327,6 +327,10 @@ def _fact_matches(answer: str, fact: str, *, threshold: float) -> bool:
     if normalized_fact in normalized_answer:
         return True
     fact_tokens = _content_tokens(normalized_fact)
+    if _looks_like_formula_fact(fact):
+        formula_score = _formula_symbol_overlap(answer, fact)
+        if formula_score is not None and formula_score >= _formula_symbol_threshold(fact):
+            return True
     if not fact_tokens:
         return False
     answer_tokens = set(_content_tokens(normalized_answer))
@@ -408,6 +412,51 @@ def _token_matches(token: str, answer_tokens: set[str]) -> bool:
     if len(token) > 3 and f"{token}s" in answer_tokens:
         return True
     return False
+
+
+def _looks_like_formula_fact(fact: str) -> bool:
+    lowered = str(fact or "").casefold()
+    return (
+        "\\begin" in lowered
+        or "\\end" in lowered
+        or "\\[" in lowered
+        or "$" in lowered
+        or bool(re.search(r"[A-Za-z0-9_')]\s*[=+\-*/]\s*[A-Za-z0-9_('\\]", str(fact or "")))
+    )
+
+
+def _formula_symbol_overlap(answer: str, fact: str) -> float | None:
+    fact_symbols = _formula_symbol_tokens(fact)
+    if not fact_symbols:
+        return None
+    answer_symbols = _formula_symbol_tokens(answer)
+    if not answer_symbols:
+        return 0.0
+    return len(fact_symbols & answer_symbols) / len(fact_symbols)
+
+
+def _formula_symbol_threshold(fact: str) -> float:
+    symbols = _formula_symbol_tokens(fact)
+    if len(symbols) <= 4:
+        return 0.75
+    if len(symbols) <= 8:
+        return 0.55
+    return 0.45
+
+
+def _formula_symbol_tokens(text: str) -> set[str]:
+    cleaned = _strip_structural_fact_noise(text)
+    tokens = {
+        token.strip("_").casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_']*", cleaned)
+    }
+    return {
+        token.rstrip("'")
+        for token in tokens
+        if token
+        and token not in _STRUCTURAL_FACT_STOPWORDS
+        and token not in {"frac", "sqrt", "sum", "exp", "log", "sin", "cos", "min", "max"}
+    }
 
 
 def _clean_tuple(values: Iterable[Any]) -> tuple[str, ...]:

@@ -181,6 +181,34 @@ def test_answer_evaluator_soft_matches_latex_symbol_paraphrases() -> None:
     assert score.answer_success is True
 
 
+def test_answer_evaluator_matches_raw_formula_with_symbol_explanation() -> None:
+    pair = EvidenceQAPair(
+        question="What does Equation 2bc179d051e1 mean in this paper?",
+        paper_id="p1",
+        qa_type="formula_qa",
+        gold_chunk_ids=["eq-ssm"],
+        answer_facts=[
+            r"\begin{align} h'(t) &= \A h(t) + \B x(t) \\ y(t) &= \C h(t) \end{align}",
+        ],
+    )
+    sample = EvidenceAnswerSample(
+        pair=pair,
+        answer=(
+            "The equation defines a continuous-time state space model: the hidden state h(t) "
+            "evolves from A h(t) plus the input term B x(t), and the output is read out "
+            "as y(t) = C h(t). [1]"
+        ),
+        cited_chunk_ids=["eq-ssm"],
+        context_chunk_ids=["eq-ssm"],
+        metadata={"retrieved_chunk_ids": ["eq-ssm"]},
+    )
+
+    score = EvidenceAnswerEvaluator().score(sample)
+
+    assert score.fact_coverage == 1.0
+    assert score.answer_success is True
+
+
 def test_answer_evaluator_reports_missing_gold_in_retrieval() -> None:
     pair = EvidenceQAPair(
         question="What does the formula mean?",

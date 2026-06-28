@@ -497,6 +497,28 @@ def test_visual_questions_include_caption_topic_to_reduce_label_ambiguity() -> N
     assert "Figure 2, captioned Architecture overview" in questions["figure_qa"]
 
 
+def test_table_pair_skips_label_only_nearby_context_gold() -> None:
+    table = _chunk(
+        "tbl-zero-shot",
+        chunk_type="table",
+        content="[Table tbl_1]\nCaption:\nZero-shot evaluations.\nRows: S6 | 99.8",
+        metadata={
+            "nearby_context_chunk_id": "sec-intro",
+            "caption_text": "Table 1: Selective Copying accuracy.",
+        },
+    )
+    label_only = _chunk("sec-intro", content="sec:intro")
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=2, include_negative=False).build(
+        [table, label_only],
+        domain="nlp",
+    )
+    table_pair = next(pair for pair in pairs if pair.qa_type == "table_qa")
+
+    assert table_pair.gold_chunk_ids == ["tbl-zero-shot"]
+    assert table_pair.required_evidence_types == ["table"]
+
+
 def test_experiment_result_pairs_require_result_like_table() -> None:
     architecture_table = _chunk(
         "tbl-architecture",

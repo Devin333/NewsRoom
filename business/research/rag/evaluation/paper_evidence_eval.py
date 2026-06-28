@@ -721,7 +721,7 @@ def _visual_or_table_pair(
     required_types = ["table" if is_table else "figure"]
     for related_id in _related_context_ids(chunk):
         related = chunks_by_id.get(related_id)
-        if related is None:
+        if related is None or not _is_contentful_related_context_chunk(related):
             continue
         gold_ids.append(related.chunk_id)
         evidence_type = _evidence_type_for_chunk(related)
@@ -1008,7 +1008,11 @@ def _explicit_result_reference_chunks(chunk: PaperChunk, chunks_by_id: dict[str,
             continue
         chunk_id = str(ref.get("chunk_id") or "")
         context = chunks_by_id.get(chunk_id)
-        if context is not None and _is_result_context_chunk(context):
+        if (
+            context is not None
+            and _is_contentful_related_context_chunk(context)
+            and _is_result_context_chunk(context)
+        ):
             out.append(context)
     return _ranked_unique_chunks(out)
 
@@ -1056,6 +1060,23 @@ def _is_result_context_chunk(chunk: PaperChunk) -> bool:
             "f1",
         )
     )
+
+
+def _is_contentful_related_context_chunk(chunk: PaperChunk) -> bool:
+    if chunk.chunk_type != "paragraph":
+        return True
+    snippet = _clean_citation_claim(_snippet_from_content(chunk.content, max_chars=260))
+    if not snippet:
+        return False
+    lowered = snippet.casefold()
+    if re.fullmatch(r"(?:sec|subsec|section|appendix)[:._-]?[a-z0-9_-]*", lowered):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z0-9_-]*", snippet)
+    meaningful = [
+        word for word in words
+        if len(word) > 2 and word.casefold() not in {"sec", "subsec", "section", "figure", "table"}
+    ]
+    return len(meaningful) >= 3
 
 
 def _is_experiment_result_table(chunk: PaperChunk) -> bool:

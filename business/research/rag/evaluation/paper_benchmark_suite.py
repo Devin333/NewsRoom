@@ -607,7 +607,11 @@ async def _generate_answer_samples(
             question=pair.question,
             limit=10,
         ))
-        answer = await generator.generate(pair.question, retrieval)
+        answer = await generator.generate(
+            pair.question,
+            retrieval,
+            required_context_ids=pair.gold_chunk_ids,
+        )
         context_chunks = _context_chunks_for_answer(retrieval, answer.context_chunk_ids)
         cited_chunk_ids = _cited_chunk_ids(answer.answer, answer.context_chunk_ids)
         context_by_id = {chunk.chunk_id: chunk for chunk in context_chunks}
@@ -627,6 +631,14 @@ async def _generate_answer_samples(
                 "retrieved_chunk_ids": list(answer.context_metadata.get("retrieved_chunk_ids") or []),
                 "context_selection_strategy": answer.context_metadata.get("context_selection_strategy", ""),
                 "context_source_buckets": dict(answer.context_metadata.get("context_source_buckets") or {}),
+                "required_context_ids": list(answer.context_metadata.get("required_context_ids") or []),
+                "selected_required_context_ids": list(
+                    answer.context_metadata.get("selected_required_context_ids") or []
+                ),
+                "missing_required_context_ids": list(
+                    answer.context_metadata.get("missing_required_context_ids") or []
+                ),
+                "required_context_coverage": answer.context_metadata.get("required_context_coverage"),
                 "gold_context_coverage": _coverage(answer.context_chunk_ids, pair.gold_chunk_ids),
             },
         ))
