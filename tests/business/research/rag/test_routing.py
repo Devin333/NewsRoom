@@ -21,3 +21,17 @@ def test_formula_questions_route_to_formula_query(question: str) -> None:
 
     assert route.intent == "formula_query"
     assert route.extra_filters == {"has_formula": True}
+
+
+def test_citation_questions_route_before_table_keywords() -> None:
+    question = (
+        "Which evidence supports the claim: Large language models pre-trained on "
+        "web-scale datasets show strong zero-shot and few-shot generalization?"
+    )
+
+    route = build_retrieval_route(question)
+
+    assert classify_query_intent(question) == "citation_query"
+    assert route.intent == "citation_query"
+    assert route.extra_filters == {}
+    assert route.chunk_type_filter == ["abstract", "paragraph"]

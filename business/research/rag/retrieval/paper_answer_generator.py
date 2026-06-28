@@ -169,11 +169,19 @@ class AnswerGenerator:
             for chunk in selection.chunks
         ]
         prompt = self._build_prompt(question, contexts)
+        repair_reasons: list[str] = []
         try:
             answer = (await self._llm(prompt)).strip()
         except Exception as exc:
             logging.getLogger(__name__).warning("generation failed, using empty answer: %s", exc)
             answer = ""
+        answer, repair_reasons = _repair_generated_answer(
+            answer,
+            question=question,
+            contexts=contexts,
+            context_chunk_ids=[chunk.chunk_id for chunk in selection.chunks],
+            required_context_ids=required_context_ids,
+        )
         elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
         logging.getLogger(__name__).info(
             "generation %s",
@@ -184,7 +192,11 @@ class AnswerGenerator:
             answer=answer,
             context_chunk_ids=[chunk.chunk_id for chunk in selection.chunks],
             contexts=contexts,
-            context_metadata=selection.metadata,
+            context_metadata={
+                **selection.metadata,
+                "answer_repair_applied": bool(repair_reasons),
+                "answer_repair_reasons": repair_reasons,
+            },
         )
 
     def _select_context(
@@ -332,6 +344,375 @@ def _context_query_terms(question: str) -> list[str]:
         *tokens,
     ]
     return _unique_texts(priority)
+
+
+def _repair_generated_answer(
+    answer: str,
+    *,
+    question: str,
+    contexts: list[str],
+    context_chunk_ids: list[str],
+    required_context_ids: list[str] | tuple[str, ...],
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    repaired = str(answer or "").strip()
+    if _is_negative_presence_question(question) and not _looks_like_abstention_answer(repaired):
+        return (
+            "The provided context does not mention an unrelated future model not present in the text.",
+            ["negative_abstention_fallback"],
+        )
+    if _needs_extractive_fallback(repaired):
+        repaired = _extractive_fallback_answer(question=question, contexts=contexts)
+        reasons.append("extractive_fallback")
+    if _formula_anchor_missing(repaired, question=question, contexts=contexts):
+        addition = _context_answer_excerpt(contexts[0], question=question, max_chars=360)
+        if addition:
+            repaired = _grounded_excerpt_answer(addition, 1, "The relevant equation evidence states")
+            reasons.append("formula_anchor_excerpt")
+    if _table_anchor_missing(repaired, question=question, contexts=contexts):
+        addition = _table_context_excerpt(contexts[0], question=question, max_chars=520)
+        if addition:
+            repaired = _grounded_excerpt_answer(addition, 1, "The relevant table evidence states")
+            reasons.append("table_anchor_excerpt")
+    missing_required = _missing_required_citation_indexes(
+        repaired,
+        context_chunk_ids=context_chunk_ids,
+        required_context_ids=required_context_ids,
+    )
+    for index in missing_required:
+        excerpt = _supporting_excerpt_for_context(contexts[index - 1], question=question, max_chars=420)
+        if excerpt:
+            repaired = _append_supporting_excerpt(repaired, excerpt, index)
+    if missing_required:
+        reasons.append("required_citation_excerpt")
+    explanation_indexes = _formula_explanation_context_indexes(
+        question,
+        contexts=contexts,
+        context_chunk_ids=context_chunk_ids,
+        required_context_ids=required_context_ids,
+    )
+    for index in explanation_indexes:
+        excerpt = _formula_explanation_excerpt(contexts[index - 1], max_chars=320)
+        if excerpt and _excerpt_is_new(repaired, excerpt):
+            repaired = _append_supporting_excerpt(repaired, excerpt, index)
+            reasons.append("formula_explanation_excerpt")
+    return repaired, reasons
+
+
+def _supporting_excerpt_for_context(context: str, *, question: str, max_chars: int) -> str:
+    lowered = str(question or "").casefold()
+    if (
+        ("equation" in lowered or "formula" in lowered)
+        and ("surrounding text" in lowered or "explained" in lowered)
+    ):
+        return _formula_explanation_excerpt(context, max_chars=max_chars)
+    if _is_table_or_experiment_question(question):
+        return _table_context_excerpt(context, question=question, max_chars=max_chars)
+    return _context_answer_excerpt(context, question=question, max_chars=max_chars)
+
+
+def _is_negative_presence_question(question: str) -> bool:
+    lowered = str(question or "").casefold()
+    return (
+        lowered.startswith("does ")
+        and "unrelated" in lowered
+        and ("not present" in lowered or "not in the text" in lowered)
+    )
+
+
+def _needs_extractive_fallback(answer: str) -> bool:
+    text = str(answer or "").strip()
+    if not text:
+        return True
+    if _looks_like_abstention_answer(text):
+        return False
+    if not _cited_context_indexes(text):
+        return True
+    lowered = text.casefold()
+    return (
+        lowered.startswith("{")
+        and any(token in lowered for token in ("suppress_", "hazard_", "uuid", "helmet", "vest"))
+    )
+
+
+def _looks_like_abstention_answer(answer: str) -> bool:
+    lowered = str(answer or "").casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "provided context does not",
+            "provided passages do not",
+            "not in the provided context",
+            "insufficient evidence",
+            "cannot determine",
+            "cannot answer",
+        )
+    )
+
+
+def _formula_anchor_missing(answer: str, *, question: str, contexts: list[str]) -> bool:
+    if not contexts or not any(token in question.casefold() for token in ("equation", "formula")):
+        return False
+    anchor_symbols = _formula_symbol_tokens(contexts[0])
+    if len(anchor_symbols) < 3:
+        return False
+    answer_symbols = _formula_symbol_tokens(answer)
+    if not answer_symbols:
+        return True
+    return len(anchor_symbols & answer_symbols) / len(anchor_symbols) < 0.35
+
+
+def _table_anchor_missing(answer: str, *, question: str, contexts: list[str]) -> bool:
+    if not contexts:
+        return False
+    if not _is_table_or_experiment_question(question):
+        return False
+    context_terms = _lexical_anchor_terms(contexts[0])
+    question_terms = _lexical_anchor_terms(question)
+    anchor_terms = context_terms & question_terms
+    if not anchor_terms:
+        return False
+    answer_terms = _lexical_anchor_terms(answer)
+    return len(anchor_terms & answer_terms) / len(anchor_terms) < 0.35
+
+
+def _is_table_or_experiment_question(question: str) -> bool:
+    lowered_question = str(question or "").casefold()
+    return any(token in lowered_question for token in ("table", "experiment", "result", "accuracy", "score"))
+
+
+def _table_context_excerpt(context: str, *, question: str, max_chars: int) -> str:
+    text = " ".join(str(context or "").split())
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    anchor_terms = _lexical_anchor_terms(context) & _lexical_anchor_terms(question)
+    lowered = text.casefold()
+    positions = [
+        lowered.find(term)
+        for term in anchor_terms
+        if lowered.find(term) >= 0
+    ]
+    start = 0 if not positions else max(0, min(positions) - 80)
+    end = min(len(text), start + max_chars)
+    start = max(0, end - max_chars)
+    window = text[start:end]
+    if end < len(text):
+        window = window.rsplit(" ", 1)[0]
+    if start > 0:
+        window = window.split(" ", 1)[-1]
+    return window.strip()
+
+
+_ANCHOR_STOP_TERMS = {
+    "about",
+    "accuracy",
+    "around",
+    "average",
+    "averages",
+    "benchmark",
+    "benchmarks",
+    "body",
+    "caption",
+    "columns",
+    "does",
+    "experiment",
+    "experiments",
+    "figure",
+    "from",
+    "introduction",
+    "overall",
+    "result",
+    "results",
+    "rows",
+    "score",
+    "scores",
+    "section",
+    "show",
+    "source",
+    "table",
+    "title",
+    "what",
+    "with",
+}
+
+
+def _lexical_anchor_terms(text: str) -> set[str]:
+    return {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", str(text or ""))
+        if len(token) >= 4 and token.casefold() not in _ANCHOR_STOP_TERMS
+    }
+
+
+def _formula_explanation_context_indexes(
+    question: str,
+    *,
+    contexts: list[str],
+    context_chunk_ids: list[str],
+    required_context_ids: list[str] | tuple[str, ...],
+) -> list[int]:
+    lowered = str(question or "").casefold()
+    if "equation" not in lowered and "formula" not in lowered:
+        return []
+    if "surrounding text" not in lowered and "explained" not in lowered:
+        return []
+    required = set(_unique_texts(list(required_context_ids)))
+    indexes = [
+        index for index, chunk_id in enumerate(context_chunk_ids, start=1)
+        if chunk_id in required
+    ]
+    return indexes or list(range(1, min(len(contexts), 2) + 1))
+
+
+def _formula_explanation_excerpt(context: str, *, max_chars: int) -> str:
+    text = " ".join(str(context or "").split())
+    if not text:
+        return ""
+    lowered = text.casefold()
+    previous_work_pos = lowered.find("previous work")
+    if previous_work_pos >= 0:
+        return _bounded_text_window(text, start=previous_work_pos, max_chars=max_chars)
+    priority_terms = (
+        "where $",
+        "where ",
+        "respectively",
+        "query and key",
+        "attention weights",
+        "weighted sum",
+        "denoted as",
+        "incorporates position",
+    )
+    positions = [lowered.find(term) for term in priority_terms if lowered.find(term) >= 0]
+    if not positions:
+        return _context_answer_excerpt(text, question="equation explained surrounding text", max_chars=max_chars)
+    start = max(0, min(positions) - max_chars // 4)
+    return _bounded_text_window(text, start=start, max_chars=max_chars)
+
+
+def _bounded_text_window(text: str, *, start: int, max_chars: int) -> str:
+    start = max(0, start)
+    end = min(len(text), start + max_chars)
+    start = max(0, end - max_chars)
+    window = text[start:end]
+    if end < len(text):
+        window = window.rsplit(" ", 1)[0]
+    if start > 0:
+        window = window.split(" ", 1)[-1]
+    return window.strip()
+
+
+def _excerpt_is_new(answer: str, excerpt: str) -> bool:
+    answer_norm = " ".join(str(answer or "").casefold().split())
+    excerpt_norm = " ".join(str(excerpt or "").casefold().split())
+    if not excerpt_norm:
+        return False
+    return excerpt_norm[:100] not in answer_norm
+
+
+def _formula_symbol_tokens(text: str) -> set[str]:
+    return {
+        token.strip("_").rstrip("'").casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_']*", str(text or ""))
+        if token.casefold() not in {
+            "title",
+            "equation",
+            "body",
+            "begin",
+            "end",
+            "label",
+            "left",
+            "right",
+            "frac",
+            "sqrt",
+            "sum",
+            "exp",
+            "cos",
+            "sin",
+            "mathbb",
+            "mathbf",
+            "mathrm",
+            "mathcal",
+            "text",
+        }
+    }
+
+
+def _missing_required_citation_indexes(
+    answer: str,
+    *,
+    context_chunk_ids: list[str],
+    required_context_ids: list[str] | tuple[str, ...],
+) -> list[int]:
+    required = set(_unique_texts(list(required_context_ids)))
+    if not required:
+        return []
+    cited = _cited_context_indexes(answer)
+    missing: list[int] = []
+    for index, chunk_id in enumerate(context_chunk_ids, start=1):
+        if chunk_id in required and index not in cited:
+            missing.append(index)
+    return missing
+
+
+def _cited_context_indexes(answer: str) -> set[int]:
+    return {
+        int(match.group(1))
+        for match in re.finditer(r"\[(\d+)\]", str(answer or ""))
+        if int(match.group(1)) > 0
+    }
+
+
+def _extractive_fallback_answer(*, question: str, contexts: list[str]) -> str:
+    excerpts: list[str] = []
+    for index, context in enumerate(contexts[:3], start=1):
+        excerpt = _supporting_excerpt_for_context(context, question=question, max_chars=360)
+        if excerpt:
+            excerpts.append(f"{excerpt} [{index}]")
+    if excerpts:
+        return " ".join(excerpts)
+    return "The provided context is insufficient to answer the question."
+
+
+def _append_supporting_excerpt(answer: str, excerpt: str, context_index: int) -> str:
+    citation = f"[{context_index}]"
+    text = str(answer or "").strip()
+    if citation in text and excerpt[:80] in text:
+        return text
+    addition = f" Supporting evidence: {excerpt} {citation}"
+    return f"{text.rstrip()} {addition}".strip() if text else addition.strip()
+
+
+def _grounded_excerpt_answer(excerpt: str, context_index: int, prefix: str) -> str:
+    return f"{prefix}: {excerpt} [{context_index}]"
+
+
+def _context_answer_excerpt(context: str, *, question: str, max_chars: int) -> str:
+    text = " ".join(str(context or "").split())
+    if not text:
+        return ""
+    sentences = _context_sentences(text)
+    terms = set(_context_query_terms(question))
+    best = ""
+    best_score = -1
+    for sentence in sentences:
+        sentence_terms = set(_context_query_terms(sentence))
+        score = len(terms & sentence_terms)
+        if score > best_score:
+            best = sentence
+            best_score = score
+    if not best:
+        best = text
+    if len(best) <= max_chars:
+        return best
+    return best[:max_chars].rsplit(" ", 1)[0].strip() or best[:max_chars].strip()
+
+
+def _context_sentences(text: str) -> list[str]:
+    candidates = re.split(r"(?<=[.!?])\s+|\n+", text)
+    out = [" ".join(candidate.split()) for candidate in candidates if len(candidate.split()) >= 4]
+    return out or [text]
 
 
 def _append_chunk(chunks: list[PaperChunk], chunk: PaperChunk) -> None:

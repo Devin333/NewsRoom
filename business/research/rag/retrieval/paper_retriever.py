@@ -154,6 +154,7 @@ class RetrievalPolicy:
     })
     field_intent_score_weights: dict[str, dict[str, float]] = field(default_factory=lambda: {
         "concept_method": {"title": 0.35, "abstract": 0.15, "caption": 0.10, "equation": 0.10, "body": 0.30},
+        "citation_query": {"title": 0.05, "abstract": 0.20, "caption": 0.00, "equation": 0.00, "body": 0.75},
         "contribution": {"title": 0.30, "abstract": 0.40, "caption": 0.05, "equation": 0.05, "body": 0.20},
         "figure_query": {"title": 0.10, "abstract": 0.05, "caption": 0.60, "equation": 0.05, "body": 0.20},
         "table_query": {"title": 0.10, "abstract": 0.05, "caption": 0.40, "equation": 0.05, "body": 0.40},
@@ -169,6 +170,7 @@ class RetrievalPolicy:
     field_default_search_fields: tuple[str, ...] = ("title", "abstract", "caption", "equation", "body")
     field_intent_search_fields: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
         "concept_method": ("title", "body"),
+        "citation_query": ("body", "abstract", "title"),
         "contribution": ("abstract", "title", "body"),
         "figure_query": ("caption", "body"),
         "table_query": ("caption", "body"),

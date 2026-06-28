@@ -157,6 +157,265 @@ def test_answer_generator_context_includes_structured_metadata_fields() -> None:
     assert "Average NLU" in answer.contexts[0]
 
 
+def test_answer_generator_falls_back_when_llm_returns_unrelated_uncited_text() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return '{"suppress_yolo_no_helmet":true,"hazard_summary":"unrelated"}'
+
+    paragraph = _chunk(
+        "claim-para",
+        "paragraph",
+        "Large language models trained on web-scale datasets support zero-shot generalization.",
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[paragraph],
+        ref_chunks=[],
+        intent="citation_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        "Which evidence supports the claim about web-scale language models?",
+        retrieval,
+    ))
+
+    assert "Large language models trained on web-scale datasets" in answer.answer
+    assert "[1]" in answer.answer
+    assert answer.context_metadata["answer_repair_reasons"] == ["extractive_fallback"]
+
+
+def test_answer_generator_appends_missing_required_context_citation() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return "The table shows higher accuracy. [1]"
+
+    table = _chunk("table-1", "table", "Table 1 reports accuracy.")
+    result = _chunk("result-para", "paragraph", "The result paragraph says accuracy improves over baseline.")
+    retrieval = RetrievalResult(
+        parent_chunks=[result],
+        child_chunks=[table],
+        ref_chunks=[],
+        intent="table_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        "What do the experimental results show?",
+        retrieval,
+        required_context_ids=["table-1", "result-para"],
+    ))
+
+    assert "[1]" in answer.answer
+    assert "[2]" in answer.answer
+    assert "accuracy improves over baseline" in answer.answer
+    assert "required_citation_excerpt" in answer.context_metadata["answer_repair_reasons"]
+
+
+def test_answer_generator_appends_formula_anchor_when_answer_uses_neighbor_formula() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return "The equation builds q, k, and v vectors from token embeddings. [2]"
+
+    target = _chunk(
+        "eq-attn",
+        "formula",
+        (
+            "Title: Preliminary Equation: a_{m,n}=exp(q_m k_n / sqrt(d)) / "
+            "sum_j exp(q_m k_j / sqrt(d)); o_m=sum_n a_{m,n} v_n"
+        ),
+    )
+    neighbor = _chunk(
+        "eq-qkv",
+        "formula",
+        "Title: Preliminary Equation: q_m=f_q(x_m,m); k_n=f_k(x_n,n); v_n=f_v(x_n,n)",
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[target, neighbor],
+        ref_chunks=[],
+        intent="formula_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        "What does Equation 8bb3508a510a mean in this paper?",
+        retrieval,
+        required_context_ids=["eq-attn"],
+    ))
+
+    assert "a_{m,n}" in answer.answer
+    assert "o_m=sum_n" in answer.answer
+    assert "[1]" in answer.answer
+    assert "token embeddings" not in answer.answer
+    assert "formula_anchor_excerpt" in answer.context_metadata["answer_repair_reasons"]
+
+
+def test_answer_generator_appends_table_anchor_when_answer_uses_neighbor_formula() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return "Equation 8bb3508a510a explains attention weights from q and k vectors. [2]"
+
+    target_table = _chunk(
+        "table-4",
+        "table",
+        (
+            "Table 4: Pre-training strategy of RoFormer on Chinese dataset. "
+            "The training procedure is divided into consecutive stages. "
+            "Stage Max seq length Batch size Training steps Loss Accuracy "
+            "1 512 256 200k 1.73 65.0% 5 1536 256 10k 1.58 67.4%."
+        ),
+    )
+    neighbor_formula = _chunk(
+        "eq-attn",
+        "formula",
+        "Equation: a_{m,n}=exp(q_m k_n / sqrt(d)); o_m=sum_n a_{m,n} v_n",
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[target_table, neighbor_formula],
+        ref_chunks=[],
+        intent="table_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        (
+            "What do the experiment results around Table 4, about Pre-training "
+            "strategy of RoFormer on Chinese dataset, show overall?"
+        ),
+        retrieval,
+        required_context_ids=["table-4"],
+    ))
+
+    assert "Pre-training strategy of RoFormer" in answer.answer
+    assert "Stage Max seq length" in answer.answer
+    assert "[1]" in answer.answer
+    assert "Equation 8bb3508a510a" not in answer.answer
+    assert "table_anchor_excerpt" in answer.context_metadata["answer_repair_reasons"]
+
+
+def test_answer_generator_does_not_add_table_anchor_when_answer_matches_table() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return (
+            "The RoFormer pre-training strategy uses multiple training stages "
+            "with different sequence lengths, batch sizes, losses, and accuracy values. [1]"
+        )
+
+    target_table = _chunk(
+        "table-4",
+        "table",
+        (
+            "Table 4: Pre-training strategy of RoFormer on Chinese dataset. "
+            "Stage Max seq length Batch size Training steps Loss Accuracy."
+        ),
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[target_table],
+        ref_chunks=[],
+        intent="table_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        (
+            "What do the experiment results around Table 4, about Pre-training "
+            "strategy of RoFormer on Chinese dataset, show overall?"
+        ),
+        retrieval,
+        required_context_ids=["table-4"],
+    ))
+
+    assert answer.context_metadata["answer_repair_reasons"] == []
+
+
+def test_answer_generator_abstains_for_negative_presence_question() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return "The paper discusses a future model. [1]"
+
+    paragraph = _chunk("para-1", "paragraph", "The paper discusses rotary position embeddings.")
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[paragraph],
+        ref_chunks=[],
+        intent="concept_method",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        "Does this paper discuss an unrelated future model not present in the text?",
+        retrieval,
+    ))
+
+    assert "does not mention" in answer.answer
+    assert answer.context_metadata["answer_repair_reasons"] == ["negative_abstention_fallback"]
+
+
+def test_answer_generator_adds_formula_explanation_excerpt_from_required_contexts() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return "The equation defines q, k, and v projections. [1]"
+
+    formula = _chunk(
+        "eq-qkv",
+        "formula",
+        "Equation: q_m=f_q(x_m,m); k_n=f_k(x_n,n); v_n=f_v(x_n,n)",
+    )
+    explanation = _chunk(
+        "para-qkv",
+        "paragraph",
+        (
+            "where q_m, k_n and v_n incorporate the mth and nth positions through "
+            "f_q, f_k and f_v, respectively. The query and key values are then used "
+            "to compute attention weights, while the output is a weighted sum."
+        ),
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[explanation],
+        child_chunks=[formula],
+        ref_chunks=[],
+        intent="formula_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        "How is Equation 5e7b4a508e19 explained in the surrounding text?",
+        retrieval,
+        required_context_ids=["eq-qkv", "para-qkv"],
+    ))
+
+    assert "attention weights" in answer.answer
+    assert "weighted sum" in answer.answer
+    assert "[2]" in answer.answer
+    assert "required_citation_excerpt" in answer.context_metadata["answer_repair_reasons"]
+
+
+def test_answer_generator_extractive_fallback_preserves_formula_explanation_text() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return ""
+
+    formula = _chunk(
+        "eq-pos",
+        "formula",
+        "Equation: f_t(x_i,i):=W_t(x_i+p_i)",
+    )
+    explanation = _chunk(
+        "para-pos",
+        "paragraph",
+        (
+            "A typical choice uses a trainable position vector p_i. "
+            "Previous work introduced the use of a set of trainable vectors "
+            "p_i in {p_t}_{t=1}^{L}, where L is the maximum sequence length."
+        ),
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[explanation],
+        child_chunks=[formula],
+        ref_chunks=[],
+        intent="formula_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        "How is Equation dd7633a3523b explained in the surrounding text?",
+        retrieval,
+        required_context_ids=["eq-pos", "para-pos"],
+    ))
+
+    assert "Previous work introduced" in answer.answer
+    assert "maximum sequence length" in answer.answer
+    assert "[2]" in answer.answer
+    assert "extractive_fallback" in answer.context_metadata["answer_repair_reasons"]
+
+
 def _chunk(
     chunk_id: str,
     chunk_type: str,

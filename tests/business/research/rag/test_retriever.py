@@ -903,6 +903,41 @@ def test_parent_fallback_to_children_when_no_parent():
     assert result.parent_chunks[0].chunk_id == "abs-1"
 
 
+def test_citation_query_retrieves_claim_paragraph_despite_zero_shot_table_terms():
+    claim = (
+        "Large language models pre-trained on web-scale datasets are revolutionizing NLP "
+        "with strong zero-shot and few-shot generalization."
+    )
+    table = _chunk(
+        "tbl-zero-shot",
+        chunk_type="table",
+        section_title="Introduction",
+        section_role=["background"],
+        content=(
+            "[Table 1] Caption: Segmentation datasets used to evaluate zero-shot "
+            "segmentation with point prompts. Rows: masks and image types."
+        ),
+    )
+    paragraph = _chunk(
+        "para-claim",
+        section_title="Introduction",
+        section_role=["background"],
+        content=f"sec:intro {claim} These foundation models generalize beyond training data.",
+    )
+    store = _ScriptedChunkStore([table, paragraph], search_order=["tbl-zero-shot", "para-claim"])
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY))
+
+    result = retriever.retrieve(RetrievalRequest(
+        paper_id="p1",
+        question=f"Which evidence supports the claim: {claim}",
+        limit=1,
+    ))
+
+    assert result.intent == "citation_query"
+    assert store.calls[0]["filters"] == {}
+    assert result.child_chunks[0].chunk_id == "para-claim"
+
+
 def test_long_parent_expansion_returns_child_anchored_snippet():
     anchor = "The attention block mixes local and global features for stability."
     parent_content = " ".join(["intro"] * 80 + [anchor] + ["tail"] * 80)

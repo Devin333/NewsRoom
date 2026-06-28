@@ -11,6 +11,7 @@ from framework.rag.retrieval import (
 )
 
 QueryIntent = Literal[
+    "citation_query",
     "concept_method",
     "numerical_result",
     "contribution",
@@ -39,6 +40,11 @@ _INTENT_SIGNALS: tuple[QueryIntentRule, ...] = build_query_intent_rules([
 ])
 
 _FIGURE_ID_RE = re.compile(r"图\s*(\w+)|[Ff]ig(?:ure)?[.s]?\s*(\w+)")
+_CITATION_QUERY_RE = re.compile(
+    r"\b(?:which|what)\s+evidence\s+supports\s+(?:the\s+)?claim\b|"
+    r"\bsupport(?:ing)?\s+evidence\s+for\s+(?:the\s+)?claim\b",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass
@@ -53,6 +59,8 @@ class RetrievalRoute:
 
 
 def classify_query_intent(question: str) -> QueryIntent:
+    if _CITATION_QUERY_RE.search(str(question or "")):
+        return "citation_query"
     intent = classify_query_intent_by_rules(
         question,
         _INTENT_SIGNALS,
@@ -64,6 +72,13 @@ def classify_query_intent(question: str) -> QueryIntent:
 def build_retrieval_route(question: str) -> RetrievalRoute:
     """Map a user question to retrieval path (PRD §7)."""
     intent = classify_query_intent(question)
+
+    if intent == "citation_query":
+        return RetrievalRoute(
+            intent=intent,
+            chunk_type_filter=["abstract", "paragraph"],
+            use_propositions=True,
+        )
 
     if intent == "figure_query":
         return RetrievalRoute(
