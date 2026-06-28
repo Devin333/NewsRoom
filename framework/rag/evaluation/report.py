@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from framework.rag.evaluation.failure_reason import RAGFailureReason
+from framework.rag.evaluation.failure_reason import RAGFailureReason, normalize_failure_reason
 from framework.shared.json import to_jsonable
 
 
@@ -40,7 +40,11 @@ class RAGScorecard:
             raise ValueError("run_id is required")
         object.__setattr__(self, "run_id", str(self.run_id))
         object.__setattr__(self, "metrics", tuple(self.metrics))
-        object.__setattr__(self, "failure_reasons", tuple(RAGFailureReason(reason) for reason in self.failure_reasons))
+        object.__setattr__(
+            self,
+            "failure_reasons",
+            tuple(normalize_failure_reason(reason) for reason in self.failure_reasons),
+        )
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def metric(self, name: str) -> MetricValue | None:

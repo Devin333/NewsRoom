@@ -2,22 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from framework.rag.evaluation import MetricValue, RAGEvaluationReport, RAGFailureReason, RAGScorecard
+from framework.rag.evaluation import (
+    MetricValue,
+    RAGEvaluationReport,
+    RAGFailureReason,
+    RAGScorecard,
+    normalize_failure_reason,
+)
 
 from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvalResult
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult
 from business.research.rag.evaluation.paper_generation_eval import GenerationEvalResult
-
-
-_FAILURE_REASON_MAP: dict[str, RAGFailureReason] = {
-    "missing_gold_in_retrieval": RAGFailureReason.MISSING_GOLD_IN_RETRIEVAL,
-    "missing_gold_in_llm_context": RAGFailureReason.CONTEXT_MISSING_GOLD,
-    "missing_gold_citation": RAGFailureReason.CITATION_MISSING_SOURCE,
-    "fact_match_low": RAGFailureReason.FACT_MATCH_LOW,
-    "unexpected_abstention": RAGFailureReason.ABSTENTION_EXPECTED,
-    "abstention_mismatch": RAGFailureReason.ABSTENTION_EXPECTED,
-    "other": RAGFailureReason.ANSWER_NOT_GROUNDED,
-}
 
 
 def evidence_results_to_rag_report(
@@ -129,8 +124,8 @@ def _mapped_failure_reasons(result: EvidenceAnswerEvalResult | None) -> tuple[RA
         return ()
     mapped: list[RAGFailureReason] = []
     for reason in result.failure_reason_counts():
-        generic_reason = _FAILURE_REASON_MAP.get(reason)
-        if generic_reason is not None and generic_reason not in mapped:
+        generic_reason = normalize_failure_reason(reason)
+        if generic_reason not in mapped:
             mapped.append(generic_reason)
     return tuple(mapped)
 

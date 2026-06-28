@@ -6,7 +6,7 @@ from framework.rag.evaluation.answer_metrics import (
     evaluate_answer_case,
     score_answer_case,
 )
-from framework.rag.evaluation.failure_reason import RAGFailureReason
+from framework.rag.evaluation.failure_reason import RAGFailureReason, normalize_failure_reason
 from framework.rag.evaluation.report import MetricValue, RAGEvaluationReport, RAGScorecard
 from framework.rag.evaluation.retrieval_metrics import (
     RetrievalMetricCase,
@@ -36,4 +36,5 @@ __all__ = [
     "reciprocal_rank",
     "source_locator_coverage",
     "score_answer_case",
+    "normalize_failure_reason",
 ]
