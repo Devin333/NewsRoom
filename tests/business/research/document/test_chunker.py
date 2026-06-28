@@ -438,6 +438,36 @@ def test_cross_page_figure_reference_does_not_replace_visual_locator():
     }]
 
 
+def test_duplicate_figure_ids_use_visual_identity_for_chunk_ids():
+    visual = make_figure("fig_split", "Ablation heatmap.").model_copy(update={
+        "page": 35,
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=35&pdf_rect=63,65,565,190",
+            "image_ref": "figures/surya_p035_fig011.png",
+            "pdf_rect": [63, 65, 565, 190],
+        },
+    })
+    caption_only = make_figure("fig_split", "Ablation heatmap from appendix.").model_copy(update={
+        "page": 35,
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf",
+        },
+    })
+    doc = _structured_doc().model_copy(update={"figures": [visual, caption_only]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    figure_chunks = [
+        c for c in chunks
+        if c.chunk_type == "figure" and c.figure_id == "fig_split"
+    ]
+    assert len(figure_chunks) == 2
+    assert len({c.chunk_id for c in figure_chunks}) == 2
+    assert len({c.metadata["source_locator"] for c in figure_chunks}) == 2
+    assert any(c.metadata["image_ref"] == "figures/surya_p035_fig011.png" for c in figure_chunks)
+    assert all(c.metadata.get("figure_chunk_identity") for c in figure_chunks)
+
+
 def test_table_chunk_produced():
     doc = make_doc(sections=[
         make_section("s0", "Abstract", "Abstract."),
@@ -573,6 +603,40 @@ def test_long_table_emits_row_group_chunks():
     assert all(c.parent_chunk_id == parent.chunk_id for c in row_groups)
     assert "model-44 | 124" in row_groups[-1].content
     assert "model-44 | 124" not in parent.content
+
+
+def test_duplicate_table_ids_use_visual_identity_for_chunk_ids():
+    left = make_table("tab-split", "Split ablation table", ["Model", "Score"]).model_copy(update={
+        "page": 16,
+        "rows": [{"Model": "Hyena", "Score": "10.24"}],
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=16&pdf_rect=101,106,308,193",
+            "image_ref": "tables/surya_table_p016_006.png",
+            "pdf_rect": [101, 106, 308, 193],
+        },
+    })
+    right = make_table("tab-split", "Split ablation table", ["Model", "Score"]).model_copy(update={
+        "page": 16,
+        "rows": [{"Model": "Mamba", "Score": "10.75"}],
+        "metadata": {
+            "source_locator": "paper://paper-1/pdf#page=16&pdf_rect=310,106,527,193",
+            "image_ref": "tables/surya_table_p016_007.png",
+            "pdf_rect": [310, 106, 527, 193],
+        },
+    })
+    doc = _structured_doc().model_copy(update={"tables": [left, right]})
+
+    chunks = CHUNKER.chunk(doc, "pymupdf")
+
+    table_chunks = [
+        c for c in chunks
+        if c.chunk_type == "table" and c.metadata.get("table_id") == "tab-split"
+    ]
+    assert len(table_chunks) == 2
+    assert len({c.chunk_id for c in table_chunks}) == 2
+    assert len({c.metadata["source_locator"] for c in table_chunks}) == 2
+    assert len({c.metadata["image_ref"] for c in table_chunks}) == 2
+    assert all(c.metadata.get("table_chunk_identity") for c in table_chunks)
 
 
 def test_fallback_for_unstructured_doc():
@@ -762,6 +826,46 @@ def test_chunk_manifest_reuses_id_when_paragraph_index_shifts(tmp_path):
     manifest = json.loads((tmp_path / "chunk_manifest.json").read_text(encoding="utf-8"))
     entries = {entry["semantic_key"]: entry for entry in manifest["chunks"]}
     assert entries[first_target.metadata["semantic_key"]]["chunk_id"] == first_target.chunk_id
+
+
+def test_chunk_manifest_splits_duplicate_generated_chunk_ids(tmp_path):
+    manager = ChunkManifestManager(tmp_path / "chunk_manifest.json")
+    chunks = [
+        PaperChunk(
+            chunk_id="chunk_duplicate",
+            paper_id="paper-1",
+            parse_source="pymupdf",
+            chunk_type="table",
+            section_title="Experiments",
+            has_table=True,
+            content="left table rows",
+            metadata={
+                "source_ref": "paper://paper-1",
+                "source_locator": "paper://paper-1/pdf#page=16&pdf_rect=101,106,308,193",
+            },
+        ),
+        PaperChunk(
+            chunk_id="chunk_duplicate",
+            paper_id="paper-1",
+            parse_source="pymupdf",
+            chunk_type="table",
+            section_title="Experiments",
+            has_table=True,
+            content="right table rows",
+            metadata={
+                "source_ref": "paper://paper-1",
+                "source_locator": "paper://paper-1/pdf#page=16&pdf_rect=310,106,527,193",
+            },
+        ),
+    ]
+
+    resolved = manager.resolve_chunk_ids("paper-1", chunks)
+
+    assert len({chunk.chunk_id for chunk in resolved}) == 2
+    assert {chunk.metadata["source_locator"] for chunk in resolved} == {
+        "paper://paper-1/pdf#page=16&pdf_rect=101,106,308,193",
+        "paper://paper-1/pdf#page=16&pdf_rect=310,106,527,193",
+    }
 
 
 def _find_chunk(chunks: list[PaperChunk], text: str) -> PaperChunk:

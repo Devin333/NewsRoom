@@ -873,8 +873,9 @@ def _aggregate_samples(
             result.evidence_coverage_at[k].append(kernel_evidence_coverage(metric_case, k))
             result.required_type_coverage_at[k].append(sample.type_coverage_by_k[k])
             result.source_locator_coverage_at[k].append(kernel_source_locator_coverage(metric_case, k))
-            result.image_recall_at[k].append(sample.image_recall_by_k[k])
-            result.visual_evidence_coverage_at[k].append(sample.visual_evidence_coverage_by_k[k])
+            if sample.pair.gold_image_refs:
+                result.image_recall_at[k].append(sample.image_recall_by_k[k])
+                result.visual_evidence_coverage_at[k].append(sample.visual_evidence_coverage_by_k[k])
             citation_accuracy = sample.citation_accuracy_by_k.get(k)
             if citation_accuracy is not None:
                 result.citation_accuracy_at[k].append(citation_accuracy)

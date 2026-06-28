@@ -380,6 +380,21 @@ def _table_semantic_text(tbl: ResearchTable, rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _table_visual_identity(tbl: ResearchTable) -> str:
+    metadata = tbl.metadata
+    identity_parts = [
+        str(metadata.get("source_locator") or ""),
+        str(metadata.get("image_ref") or ""),
+        str(metadata.get("pdf_rect") or metadata.get("bbox") or metadata.get("rect") or ""),
+        str(tbl.page or ""),
+        _table_semantic_text(tbl, tbl.rows[:_TABLE_PARENT_ROW_LIMIT]),
+    ]
+    identity_text = "\n".join(part for part in identity_parts if part)
+    if not identity_text:
+        identity_text = f"{tbl.table_id}\n{tbl.caption}"
+    return _content_hash(identity_text)
+
+
 def _formula_to_text(eq: ResearchEquation, parent: PaperChunk | None) -> str:
     referenced_texts = _formula_referenced_texts(eq)
     lines = [
@@ -442,6 +457,21 @@ def _figure_to_text(fig: ResearchFigure, parent: PaperChunk | None) -> tuple[str
         ("source_locator", source_locator),
     )
     return "\n".join(lines), sources
+
+
+def _figure_visual_identity(fig: ResearchFigure) -> str:
+    metadata = fig.metadata
+    identity_parts = [
+        str(metadata.get("source_locator") or ""),
+        str(fig.image_ref or metadata.get("image_ref") or ""),
+        str(metadata.get("pdf_rect") or metadata.get("bbox") or metadata.get("rect") or ""),
+        str(fig.page or ""),
+        fig.caption,
+    ]
+    identity_text = "\n".join(part for part in identity_parts if part)
+    if not identity_text:
+        identity_text = fig.figure_id
+    return _content_hash(identity_text)
 
 
 def _context_excerpt(text: str, *, max_chars: int = 900) -> str:
@@ -643,6 +673,22 @@ def _formula_references_by_equation(chunks: list[PaperChunk]) -> dict[str, list[
 
 def _stable_chunk_id(paper_id: str, *parts: str) -> str:
     return build_rag_stable_id("chunk", paper_id, *parts)
+
+
+def _dedupe_generated_chunk_id(
+    paper_id: str,
+    parts: list[str],
+    used_ids: dict[str, int],
+) -> tuple[str, str]:
+    chunk_id = _stable_chunk_id(paper_id, *parts)
+    occurrence = used_ids.get(chunk_id, 0) + 1
+    used_ids[chunk_id] = occurrence
+    if occurrence == 1:
+        return chunk_id, ""
+    return (
+        _stable_chunk_id(paper_id, *parts, "occurrence", str(occurrence)),
+        str(occurrence),
+    )
 
 
 def _normalize_semantic_text(text: str) -> str:
@@ -946,6 +992,10 @@ class PaperDocumentChunker:
 
     def _add_figure_chunks(self, doc, parse_source, structure_detected, out):
         references_by_element = _visual_references_by_element(out)
+        figure_id_counts: dict[str, int] = {}
+        for fig in doc.figures:
+            figure_id_counts[fig.figure_id] = figure_id_counts.get(fig.figure_id, 0) + 1
+        used_figure_chunk_ids: dict[str, int] = {}
         for fig in doc.figures:
             parent, match_strategy = _find_visual_parent(
                 caption=fig.caption,
@@ -958,6 +1008,16 @@ class PaperDocumentChunker:
             section_index = parent.section_index if parent else 0
             figure_text = f"{fig.figure_id}\n{fig.caption}"
             content, content_sources = _figure_to_text(fig, parent)
+            figure_identity = ""
+            figure_id_parts = ["fig", fig.figure_id]
+            if figure_id_counts.get(fig.figure_id, 0) > 1:
+                figure_identity = _figure_visual_identity(fig)
+                figure_id_parts.extend(["visual", figure_identity])
+            figure_chunk_id, figure_chunk_occurrence = _dedupe_generated_chunk_id(
+                doc.paper_id,
+                figure_id_parts,
+                used_figure_chunk_ids,
+            )
             alignment_metadata = _visual_alignment_metadata(
                 kind="figure",
                 element_id=fig.figure_id,
@@ -970,7 +1030,7 @@ class PaperDocumentChunker:
                 references=references_by_element.get(("figure", fig.figure_id), []),
             )
             out.append(PaperChunk(
-                chunk_id=_stable_chunk_id(doc.paper_id, "fig", fig.figure_id),
+                chunk_id=figure_chunk_id,
                 paper_id=doc.paper_id,
                 parse_source=parse_source,
                 structure_detected=structure_detected,
@@ -992,16 +1052,22 @@ class PaperDocumentChunker:
                     base={
                         **fig.metadata,
                         **alignment_metadata,
-                        "image_ref": fig.image_ref or "",
+                        "image_ref": fig.image_ref or fig.metadata.get("image_ref") or "",
                         "page": fig.page,
                         "figure_parent_match_strategy": match_strategy,
                         "content_sources": content_sources,
+                        "figure_chunk_identity": figure_identity,
+                        "figure_chunk_occurrence": figure_chunk_occurrence,
                     },
                 ),
             ))
 
     def _add_table_chunks(self, doc, parse_source, structure_detected, out):
         references_by_element = _visual_references_by_element(out)
+        table_id_counts: dict[str, int] = {}
+        for tbl in doc.tables:
+            table_id_counts[tbl.table_id] = table_id_counts.get(tbl.table_id, 0) + 1
+        used_table_chunk_ids: dict[str, int] = {}
         for tbl in doc.tables:
             parent, match_strategy = _find_visual_parent(
                 caption=tbl.caption,
@@ -1017,7 +1083,16 @@ class PaperDocumentChunker:
                 tbl,
                 tbl.rows[:_TABLE_PARENT_ROW_LIMIT],
             )
-            table_chunk_id = _stable_chunk_id(doc.paper_id, "tbl", tbl.table_id)
+            table_identity = ""
+            table_id_parts = ["tbl", tbl.table_id]
+            if table_id_counts.get(tbl.table_id, 0) > 1:
+                table_identity = _table_visual_identity(tbl)
+                table_id_parts.extend(["visual", table_identity])
+            table_chunk_id, table_chunk_occurrence = _dedupe_generated_chunk_id(
+                doc.paper_id,
+                table_id_parts,
+                used_table_chunk_ids,
+            )
             alignment_metadata = _visual_alignment_metadata(
                 kind="table",
                 element_id=tbl.table_id,
@@ -1056,6 +1131,8 @@ class PaperDocumentChunker:
                         "table_parent_match_strategy": match_strategy,
                         "content_sources": content_sources,
                         "row_count": len(tbl.rows),
+                        "table_chunk_identity": table_identity,
+                        "table_chunk_occurrence": table_chunk_occurrence,
                     },
                 ),
             ))
@@ -1072,15 +1149,16 @@ class PaperDocumentChunker:
                     row_end=row_end - 1,
                 )
                 group_semantic_text = _table_semantic_text(tbl, group_rows)
+                row_group_id_parts = [
+                    *table_id_parts,
+                    "rows",
+                    str(row_start),
+                    str(row_end - 1),
+                ]
+                if table_chunk_occurrence:
+                    row_group_id_parts.extend(["parent_occurrence", table_chunk_occurrence])
                 out.append(PaperChunk(
-                    chunk_id=_stable_chunk_id(
-                        doc.paper_id,
-                        "tbl",
-                        tbl.table_id,
-                        "rows",
-                        str(row_start),
-                        str(row_end - 1),
-                    ),
+                    chunk_id=_stable_chunk_id(doc.paper_id, *row_group_id_parts),
                     paper_id=doc.paper_id,
                     parse_source=parse_source,
                     structure_detected=structure_detected,
@@ -1110,6 +1188,8 @@ class PaperDocumentChunker:
                             "row_end": row_end - 1,
                             "parent_table_chunk_id": table_chunk_id,
                             "is_table_row_group": True,
+                            "table_chunk_identity": table_identity,
+                            "table_chunk_occurrence": table_chunk_occurrence,
                         },
                     ),
                 ))

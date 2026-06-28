@@ -32,8 +32,12 @@ class ChunkManifestManager:
         previous_by_key = _previous_chunk_ids_by_semantic_key(manifest)
         previous_ids = set(previous_by_key.values())
         keyed_chunks = _ensure_unique_semantic_keys(paper_id, chunks)
+        old_id_counts: dict[str, int] = {}
+        for chunk in keyed_chunks:
+            old_id_counts[chunk.chunk_id] = old_id_counts.get(chunk.chunk_id, 0) + 1
 
         id_map: dict[str, str] = {}
+        resolved_pairs: list[tuple[PaperChunk, str]] = []
         used_ids: set[str] = set()
         for chunk in keyed_chunks:
             semantic_key = str(chunk.metadata.get("semantic_key") or "")
@@ -45,7 +49,7 @@ class ChunkManifestManager:
                     if old_id in previous_ids
                     else old_id
                 )
-            if resolved_id in used_ids and resolved_id != old_id:
+            if resolved_id in used_ids:
                 if old_id not in used_ids and old_id not in previous_ids:
                     resolved_id = old_id
                 else:
@@ -56,10 +60,26 @@ class ChunkManifestManager:
                         semantic_key,
                         old_id,
                     )
-            id_map[old_id] = resolved_id
+                    collision_index = 2
+                    while resolved_id in used_ids:
+                        resolved_id = build_rag_stable_id(
+                            "chunk",
+                            paper_id,
+                            "manifest",
+                            semantic_key,
+                            old_id,
+                            str(collision_index),
+                        )
+                        collision_index += 1
+            if old_id_counts.get(old_id, 0) == 1:
+                id_map[old_id] = resolved_id
+            resolved_pairs.append((chunk, resolved_id))
             used_ids.add(resolved_id)
 
-        return [_remap_chunk_identity(chunk, id_map) for chunk in keyed_chunks]
+        return [
+            _remap_chunk_identity(chunk, resolved_id, id_map)
+            for chunk, resolved_id in resolved_pairs
+        ]
 
     def write(self, paper_id: str, chunks: list[PaperChunk]) -> Path:
         path = self.path_for(paper_id)
@@ -174,11 +194,14 @@ def _ensure_semantic_metadata(
     return metadata
 
 
-def _remap_chunk_identity(chunk: PaperChunk, id_map: dict[str, str]) -> PaperChunk:
+def _remap_chunk_identity(
+    chunk: PaperChunk,
+    resolved_id: str,
+    id_map: dict[str, str],
+) -> PaperChunk:
     metadata = dict(chunk.metadata)
     metadata = remap_span_origin_ids(metadata, id_map)
     updates: dict[str, Any] = {}
-    resolved_id = id_map.get(chunk.chunk_id, chunk.chunk_id)
     if resolved_id != chunk.chunk_id:
         metadata["generated_chunk_id"] = chunk.chunk_id
         metadata["chunk_id_reused_from_manifest"] = True

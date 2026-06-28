@@ -352,6 +352,43 @@ def test_retrieval_evaluator_scores_image_recall_for_visual_chunks() -> None:
     assert result.visual_evidence_coverage(1) == 1.0
 
 
+def test_image_recall_ignores_pairs_without_gold_images() -> None:
+    figure = _chunk(
+        "fig-1",
+        chunk_type="figure",
+        metadata={"image_ref": "figures/fig1.png"},
+    )
+    formula = _chunk("eq-1", chunk_type="formula")
+    retriever = _FakeRetriever(RetrievalResult(
+        child_chunks=[figure, formula],
+        ref_chunks=[],
+        parent_chunks=[],
+        intent="figure_query",
+    ))
+    pairs = [
+        EvidenceQAPair(
+            question="What does the equation define?",
+            paper_id="p1",
+            qa_type="formula_qa",
+            gold_chunk_ids=["eq-1"],
+            required_evidence_types=["formula"],
+        ),
+        EvidenceQAPair(
+            question="What does Figure 1 show?",
+            paper_id="p1",
+            qa_type="figure_qa",
+            gold_chunk_ids=["fig-1"],
+            required_evidence_types=["figure"],
+            gold_image_refs=["figures/fig1.png"],
+        ),
+    ]
+
+    result = EvidenceRetrievalEvaluator(retriever).evaluate(pairs, ks=(1,))
+
+    assert result.image_recall(1) == 1.0
+    assert result.visual_evidence_coverage(1) == 1.0
+
+
 def test_evidence_golden_set_builder_creates_typed_pairs_from_chunks() -> None:
     formula = _chunk(
         "eq-1",
