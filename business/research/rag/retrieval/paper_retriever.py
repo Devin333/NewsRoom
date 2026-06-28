@@ -104,6 +104,7 @@ class RetrievalPolicy:
     max_table_context_chunks: int = 4
     table_result_context_search_limit: int = 12
     supplemental_table_result_limit: int = 2
+    max_figure_context_chunks: int = 2
     table_context_rerank_score_threshold: float = 0.0
     max_parent_chunks: int = 3
     max_parent_tokens: int = 1800
@@ -456,6 +457,7 @@ class ResearchRetriever:
         t0 = time.perf_counter()
         route = build_retrieval_route(request.question)
         filters = self._build_filters(route)
+        candidate_filters = self._candidate_filters(route, filters)
 
         # ── 1. vector search (over-fetch for re-ranking) ──────────────────────
         element_query_labels = _element_query_labels(request.question, route.intent)
@@ -465,16 +467,11 @@ class ResearchRetriever:
                 candidate_limit,
                 request.limit * self._policy.element_label_overfetch_multiplier,
             )
-        candidates = self._store.search_with_scores(
-            request.paper_id,
-            request.question,
-            filters=filters,
-            limit=candidate_limit,
-        )
+        candidates = self._search_text_candidates(request, candidate_filters, candidate_limit)
         n_recalled = len(candidates)
-        field_hits = self._search_field_candidates(request, route, filters)
+        field_hits = self._search_field_candidates(request, route, candidate_filters)
         candidates = self._merge_field_hits(candidates, field_hits, request.paper_id)
-        visual_hits = self._search_visual_candidates(request, route, filters)
+        visual_hits = self._search_visual_candidates(request, route, candidate_filters)
         n_visual_recalled = len(visual_hits)
 
         # ── 2. base relevance: reranker (if available) else vector score ──────
@@ -524,6 +521,7 @@ class ResearchRetriever:
             )
         scored.sort(key=lambda x: x[1], reverse=True)
         child_chunks = [c for c, _ in scored[: request.limit]]
+        child_chunks = self._interleave_figure_context(child_chunks, request, route)
         supplemental_table_chunks = self._supplemental_table_hits(child_chunks, request, route)
         child_chunks.extend(supplemental_table_chunks)
         top_score = scored[0][1] if scored else 0.0
@@ -544,6 +542,7 @@ class ResearchRetriever:
                 self._policy.element_label_overfetch_multiplier
             ),
             "candidate_limit": candidate_limit,
+            "candidate_filters": candidate_filters,
             "element_query_labels": sorted(element_query_labels),
             "retrieval_policy_visual_fusion_weights": {
                 "text": self._policy.visual_fusion_text_weight,
@@ -569,6 +568,10 @@ class ResearchRetriever:
             "ref_returned": len(ref_chunks),
             "supplemental_table_returned": len(supplemental_table_chunks),
             "table_context_returned": len(table_context_chunks),
+            "figure_context_returned": sum(
+                1 for chunk in child_chunks
+                if chunk.metadata.get("expansion_reason") in {"figure_nearby_context", "figure_body_reference"}
+            ),
             "top_score": round(top_score, 4),
             "elapsed_ms": elapsed_ms,
             "field_scoring_enabled": self._policy.field_scoring_enabled,
@@ -629,11 +632,40 @@ class ResearchRetriever:
             filters.update(route.extra_filters)
         return filters
 
+    def _candidate_filters(self, route: RetrievalRoute, base_filters: dict[str, Any]) -> list[dict[str, Any]]:
+        if "chunk_type" in base_filters or not route.chunk_type_filter:
+            return [dict(base_filters)]
+        return [
+            {**base_filters, "chunk_type": chunk_type}
+            for chunk_type in route.chunk_type_filter
+        ]
+
+    def _search_text_candidates(
+        self,
+        request: RetrievalRequest,
+        candidate_filters: list[dict[str, Any]],
+        limit: int,
+    ) -> list[tuple[PaperChunk, float]]:
+        by_id: dict[str, tuple[PaperChunk, float]] = {}
+        for filters in candidate_filters:
+            for chunk, score in self._store.search_with_scores(
+                request.paper_id,
+                request.question,
+                filters=filters,
+                limit=limit,
+            ):
+                existing = by_id.get(chunk.chunk_id)
+                if existing is None or score > existing[1]:
+                    by_id[chunk.chunk_id] = (chunk, score)
+        candidates = list(by_id.values())
+        candidates.sort(key=lambda item: item[1], reverse=True)
+        return candidates[:limit]
+
     def _search_field_candidates(
         self,
         request: RetrievalRequest,
         route: RetrievalRoute,
-        filters: dict[str, Any],
+        candidate_filters: list[dict[str, Any]],
     ) -> list[FieldEmbeddingHit]:
         if self._field_index is None or not self._policy.field_embedding_enabled:
             return []
@@ -643,17 +675,27 @@ class ResearchRetriever:
             * self._policy.overfetch_multiplier
             * max(1, self._policy.field_embedding_search_limit_multiplier),
         )
-        try:
-            return self._field_index.search_field_vectors(
-                request.paper_id,
-                request.question,
-                field_names=self._policy.field_search_fields_for(route.intent),
-                filters=filters,
-                limit=limit,
-            )
-        except Exception:
-            logging.getLogger(__name__).warning("field embedding retrieval failed", exc_info=True)
-            return []
+        hits_by_key: dict[tuple[str, str], FieldEmbeddingHit] = {}
+        for filters in candidate_filters:
+            try:
+                hits = self._field_index.search_field_vectors(
+                    request.paper_id,
+                    request.question,
+                    field_names=self._policy.field_search_fields_for(route.intent),
+                    filters=filters,
+                    limit=limit,
+                )
+            except Exception:
+                logging.getLogger(__name__).warning("field embedding retrieval failed", exc_info=True)
+                return []
+            for hit in hits:
+                key = (hit.chunk_id, hit.field_name)
+                existing = hits_by_key.get(key)
+                if existing is None or hit.score > existing.score:
+                    hits_by_key[key] = hit
+        hits = list(hits_by_key.values())
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits[:limit]
 
     def _merge_field_hits(
         self,
@@ -824,20 +866,30 @@ class ResearchRetriever:
         self,
         request: RetrievalRequest,
         route: RetrievalRoute,
-        filters: dict[str, Any],
+        candidate_filters: list[dict[str, Any]],
     ) -> list[VisualChunkHit]:
         if self._visual_store is None or route.intent != "figure_query":
             return []
-        try:
-            return self._visual_store.search_visual_chunks(
-                request.paper_id,
-                request.question,
-                filters=filters,
-                limit=request.limit * self._policy.overfetch_multiplier,
-            )
-        except Exception:
-            logging.getLogger(__name__).warning("visual retrieval failed", exc_info=True)
-            return []
+        limit = request.limit * self._policy.overfetch_multiplier
+        hits_by_id: dict[str, VisualChunkHit] = {}
+        for filters in candidate_filters:
+            try:
+                hits = self._visual_store.search_visual_chunks(
+                    request.paper_id,
+                    request.question,
+                    filters=filters,
+                    limit=limit,
+                )
+            except Exception:
+                logging.getLogger(__name__).warning("visual retrieval failed", exc_info=True)
+                return []
+            for hit in hits:
+                existing = hits_by_id.get(hit.chunk_id)
+                if existing is None or hit.score > existing.score:
+                    hits_by_id[hit.chunk_id] = hit
+        hits = list(hits_by_id.values())
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits[:limit]
 
     def _fuse_visual_scores(
         self,
@@ -873,6 +925,41 @@ class ResearchRetriever:
                 field_rerank_score=(field_rerank_scores or {}).get(fused_chunk.chunk_id),
             ))
         return fused
+
+
+    def _interleave_figure_context(
+        self,
+        chunks: list[PaperChunk],
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+    ) -> list[PaperChunk]:
+        if route.intent != "figure_query" or self._policy.max_figure_context_chunks <= 0:
+            return chunks
+        out: list[PaperChunk] = []
+        seen: set[str] = set()
+        for chunk in chunks:
+            if chunk.chunk_id not in seen:
+                out.append(chunk)
+                seen.add(chunk.chunk_id)
+            if not _is_figure_chunk(chunk):
+                continue
+            added = 0
+            for ref_id, reason, edge in _figure_context_refs(chunk):
+                if added >= self._policy.max_figure_context_chunks or ref_id in seen:
+                    continue
+                ref = self._store.get_chunk(ref_id)
+                if ref is None or ref.paper_id != request.paper_id:
+                    continue
+                seen.add(ref.chunk_id)
+                added += 1
+                out.append(_with_expansion_metadata(
+                    ref,
+                    expanded_from_chunk_id=chunk.chunk_id,
+                    reason=reason,
+                    edge=edge,
+                    rank=added,
+                ))
+        return out
 
 
     def _supplemental_table_hits(
@@ -1356,6 +1443,11 @@ class ResearchRetriever:
                     if ref_id and ref_id not in seen:
                         refs.append((ref_id, child.chunk_id, "page_visual_related_chunk"))
                         seen.add(ref_id)
+            if _is_figure_chunk(child):
+                for ref_id, reason, _edge in _figure_context_refs(child):
+                    if ref_id and ref_id not in seen:
+                        refs.append((ref_id, child.chunk_id, reason))
+                        seen.add(ref_id)
             if _is_formula_chunk(child):
                 for ref in child.metadata.get("referenced_by_chunks", []):
                     if not isinstance(ref, dict):
@@ -1376,10 +1468,28 @@ class ResearchRetriever:
                     chunk,
                     expanded_from_chunk_id=source_id,
                     reason=reason,
-                    edge="referenced_by_chunks" if reason == "formula_body_reference" else reason,
+                    edge=(
+                        "referenced_by_chunks"
+                        if reason in {"formula_body_reference", "figure_body_reference"}
+                        else reason
+                    ),
                     rank=len(result) + 1,
                 ))
         return result
+
+
+def _figure_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
+    refs: list[tuple[str, str, str]] = []
+    nearby_id = str(chunk.metadata.get("nearby_context_chunk_id") or "")
+    if nearby_id:
+        refs.append((nearby_id, "figure_nearby_context", "nearby_context_chunk_id"))
+    for ref in chunk.metadata.get("referenced_by_chunks", []):
+        if not isinstance(ref, dict):
+            continue
+        ref_id = str(ref.get("chunk_id") or "")
+        if ref_id:
+            refs.append((ref_id, "figure_body_reference", "referenced_by_chunks"))
+    return refs
 
 
 def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float:
@@ -1860,6 +1970,10 @@ def _is_table_chunk(chunk: PaperChunk) -> bool:
         or bool(chunk.metadata.get("table_id"))
         or bool(chunk.metadata.get("parent_table_chunk_id"))
     )
+
+
+def _is_figure_chunk(chunk: PaperChunk) -> bool:
+    return chunk.chunk_type == "figure" or chunk.has_figure or bool(chunk.figure_id)
 
 
 def _is_formula_chunk(chunk: PaperChunk) -> bool:

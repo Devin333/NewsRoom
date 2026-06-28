@@ -934,8 +934,36 @@ def test_citation_query_retrieves_claim_paragraph_despite_zero_shot_table_terms(
     ))
 
     assert result.intent == "citation_query"
-    assert store.calls[0]["filters"] == {}
+    assert [call["filters"] for call in store.calls[:2]] == [
+        {"chunk_type": "abstract"},
+        {"chunk_type": "paragraph"},
+    ]
     assert result.child_chunks[0].chunk_id == "para-claim"
+
+
+def test_figure_query_expands_nearby_context_reference():
+    figure = _chunk(
+        "fig-1",
+        chunk_type="figure",
+        content="[Figure fig-1] Caption: Architecture overview.",
+        metadata={"nearby_context_chunk_id": "para-near"},
+    )
+    nearby = _chunk(
+        "para-near",
+        chunk_type="paragraph",
+        content="The nearby paragraph explains the architecture overview.",
+    )
+    store = _ScriptedChunkStore([figure, nearby], search_order=["fig-1", "para-near"])
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY))
+
+    result = retriever.retrieve(RetrievalRequest(
+        paper_id="p1",
+        question="What does Figure 1 show?",
+        limit=1,
+    ))
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["fig-1", "para-near"]
+    assert result.child_chunks[1].metadata["expansion_reason"] == "figure_nearby_context"
 
 
 def test_long_parent_expansion_returns_child_anchored_snippet():

@@ -364,6 +364,11 @@ def _repair_generated_answer(
     if _needs_extractive_fallback(repaired):
         repaired = _extractive_fallback_answer(question=question, contexts=contexts)
         reasons.append("extractive_fallback")
+    if _citation_claim_anchor_missing(repaired, question=question, contexts=contexts):
+        addition = _citation_claim_excerpt(contexts[0], question=question, max_chars=420)
+        if addition and _excerpt_is_new(repaired, addition):
+            repaired = _append_supporting_excerpt(repaired, addition, 1)
+            reasons.append("citation_claim_excerpt")
     if _formula_anchor_missing(repaired, question=question, contexts=contexts):
         addition = _context_answer_excerpt(contexts[0], question=question, max_chars=360)
         if addition:
@@ -374,6 +379,11 @@ def _repair_generated_answer(
         if addition:
             repaired = _grounded_excerpt_answer(addition, 1, "The relevant table evidence states")
             reasons.append("table_anchor_excerpt")
+    if _table_caption_anchor_missing(repaired, question=question, contexts=contexts):
+        addition = _table_caption_excerpt(contexts[0], max_chars=320)
+        if addition and _excerpt_is_new(repaired, addition):
+            repaired = _append_supporting_excerpt(repaired, addition, 1)
+            reasons.append("table_caption_excerpt")
     missing_required = _missing_required_citation_indexes(
         repaired,
         context_chunk_ids=context_chunk_ids,
@@ -392,7 +402,7 @@ def _repair_generated_answer(
         required_context_ids=required_context_ids,
     )
     for index in explanation_indexes:
-        excerpt = _formula_explanation_excerpt(contexts[index - 1], max_chars=320)
+        excerpt = _formula_explanation_excerpt(contexts[index - 1], max_chars=420)
         if excerpt and _excerpt_is_new(repaired, excerpt):
             repaired = _append_supporting_excerpt(repaired, excerpt, index)
             reasons.append("formula_explanation_excerpt")
@@ -418,6 +428,42 @@ def _is_negative_presence_question(question: str) -> bool:
         and "unrelated" in lowered
         and ("not present" in lowered or "not in the text" in lowered)
     )
+
+
+def _citation_claim_anchor_missing(answer: str, *, question: str, contexts: list[str]) -> bool:
+    if not contexts:
+        return False
+    claim = _claim_from_citation_question(question)
+    if not claim:
+        return False
+    claim_terms = _lexical_anchor_terms(claim)
+    if not claim_terms:
+        return False
+    answer_terms = _lexical_anchor_terms(answer)
+    return len(claim_terms & answer_terms) / len(claim_terms) < 0.45
+
+
+def _claim_from_citation_question(question: str) -> str:
+    match = re.search(r"supports\s+the\s+claim:\s*(.+)", str(question or ""), flags=re.IGNORECASE | re.DOTALL)
+    return " ".join(match.group(1).split()) if match else ""
+
+
+def _citation_claim_excerpt(context: str, *, question: str, max_chars: int) -> str:
+    claim = _claim_from_citation_question(question)
+    if not claim:
+        return ""
+    claim_terms = _lexical_anchor_terms(claim)
+    text = " ".join(str(context or "").split())
+    best = ""
+    best_score = -1
+    for sentence in _context_sentences(text):
+        score = len(claim_terms & _lexical_anchor_terms(sentence))
+        if score > best_score:
+            best = sentence
+            best_score = score
+    if not best or best_score <= 0:
+        return _context_answer_excerpt(context, question=question, max_chars=max_chars)
+    return _bounded_text_window(best, start=0, max_chars=max_chars)
 
 
 def _needs_extractive_fallback(answer: str) -> bool:
@@ -476,9 +522,41 @@ def _table_anchor_missing(answer: str, *, question: str, contexts: list[str]) ->
     return len(anchor_terms & answer_terms) / len(anchor_terms) < 0.35
 
 
+def _table_caption_anchor_missing(answer: str, *, question: str, contexts: list[str]) -> bool:
+    if not contexts or not _is_table_or_experiment_question(question):
+        return False
+    caption = _table_caption_excerpt(contexts[0], max_chars=360)
+    if not caption:
+        return False
+    caption_terms = _lexical_anchor_terms(caption)
+    if not caption_terms:
+        return False
+    answer_terms = _lexical_anchor_terms(answer)
+    return len(caption_terms & answer_terms) / len(caption_terms) < 0.35
+
+
 def _is_table_or_experiment_question(question: str) -> bool:
     lowered_question = str(question or "").casefold()
     return any(token in lowered_question for token in ("table", "experiment", "result", "accuracy", "score"))
+
+
+def _table_caption_excerpt(context: str, *, max_chars: int) -> str:
+    text = " ".join(str(context or "").split())
+    if not text:
+        return ""
+    sentences = _context_sentences(text)
+    for index, sentence in enumerate(sentences):
+        lowered = sentence.casefold()
+        if "caption:" not in lowered and "table " not in lowered and "[table" not in lowered:
+            continue
+        selected = sentence
+        if index + 1 < len(sentences) and len(selected) < 220:
+            next_sentence = sentences[index + 1]
+            next_lowered = next_sentence.casefold()
+            if not next_lowered.startswith(("rows:", "columns:", "body:", "equation:", "title:")):
+                selected = f"{selected} {next_sentence}"
+        return _bounded_text_window(selected, start=0, max_chars=max_chars)
+    return ""
 
 
 def _table_context_excerpt(context: str, *, question: str, max_chars: int) -> str:
@@ -583,6 +661,11 @@ def _formula_explanation_excerpt(context: str, *, max_chars: int) -> str:
         "weighted sum",
         "denoted as",
         "incorporates position",
+        "preferred response",
+        "rejected counterpart",
+        "annotators choose",
+        "chosen response",
+        "rejected",
     )
     positions = [lowered.find(term) for term in priority_terms if lowered.find(term) >= 0]
     if not positions:

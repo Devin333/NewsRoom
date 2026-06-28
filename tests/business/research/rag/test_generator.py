@@ -208,6 +208,44 @@ def test_answer_generator_appends_missing_required_context_citation() -> None:
     assert "required_citation_excerpt" in answer.context_metadata["answer_repair_reasons"]
 
 
+def test_answer_generator_appends_citation_claim_when_answer_paraphrases_support() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return (
+            "The support is that these models generalize beyond training data "
+            "and perform well in few-shot settings. [1]"
+        )
+
+    paragraph = _chunk(
+        "claim-para",
+        "paragraph",
+        (
+            "Large language models pre-trained on web-scale datasets are "
+            "revolutionizing NLP with strong zero-shot and few-shot generalization. "
+            "These foundation models can transfer to many downstream tasks."
+        ),
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[paragraph],
+        ref_chunks=[],
+        intent="citation_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        (
+            "Which evidence supports the claim: Large language models pre-trained "
+            "on web-scale datasets are revolutionizing NLP with strong zero-shot "
+            "and few-shot generalization."
+        ),
+        retrieval,
+        required_context_ids=["claim-para"],
+    ))
+
+    assert "Large language models pre-trained on web-scale datasets" in answer.answer
+    assert "[1]" in answer.answer
+    assert "citation_claim_excerpt" in answer.context_metadata["answer_repair_reasons"]
+
+
 def test_answer_generator_appends_formula_anchor_when_answer_uses_neighbor_formula() -> None:
     async def fake_llm(prompt: str) -> str:
         return "The equation builds q, k, and v vectors from token embeddings. [2]"
@@ -321,6 +359,41 @@ def test_answer_generator_does_not_add_table_anchor_when_answer_matches_table() 
     assert answer.context_metadata["answer_repair_reasons"] == []
 
 
+def test_answer_generator_appends_table_caption_when_answer_misses_caption_semantics() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return (
+            "The best score is 99.8 for Mamba with S6, while weaker pairings "
+            "score much lower. [1]"
+        )
+
+    table = _chunk(
+        "table-selective-copying",
+        "table",
+        (
+            "Caption: Table 1: (Selective Copying.) Accuracy for combinations "
+            "of architectures and inner sequence layers. Rows: S4 18.3; "
+            "Mamba S6 99.8."
+        ),
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[table],
+        ref_chunks=[],
+        intent="table_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        "What do the experimental results around Table 1 show?",
+        retrieval,
+        required_context_ids=["table-selective-copying"],
+    ))
+
+    assert "Selective Copying" in answer.answer
+    assert "inner sequence layers" in answer.answer
+    assert "[1]" in answer.answer
+    assert "table_caption_excerpt" in answer.context_metadata["answer_repair_reasons"]
+
+
 def test_answer_generator_abstains_for_negative_presence_question() -> None:
     async def fake_llm(prompt: str) -> str:
         return "The paper discusses a future model. [1]"
@@ -412,6 +485,47 @@ def test_answer_generator_extractive_fallback_preserves_formula_explanation_text
 
     assert "Previous work introduced" in answer.answer
     assert "maximum sequence length" in answer.answer
+    assert "[2]" in answer.answer
+    assert "extractive_fallback" in answer.context_metadata["answer_repair_reasons"]
+
+
+def test_answer_generator_extractive_fallback_preserves_preferred_response_definition() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return ""
+
+    formula = _chunk(
+        "eq-ranking",
+        "formula",
+        (
+            "Equation: L_ranking=-log(sigma(r_theta(x,y_c)-"
+            "r_theta(x,y_r)-m(r)))"
+        ),
+    )
+    explanation = _chunk(
+        "para-ranking",
+        "paragraph",
+        (
+            "Equation: L_ranking=-log(sigma(r_theta(x,y_c)-r_theta(x,y_r)-m(r))). "
+            "$y_{c}$ is the preferred response that annotators choose and $y_{r}$ "
+            "is the rejected counterpart. Built on top of this binary ranking loss, "
+            "the margin $m(r)$ is a discrete function of the preference rating."
+        ),
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[explanation],
+        child_chunks=[formula],
+        ref_chunks=[],
+        intent="formula_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(fake_llm).generate(
+        "How is Equation a3028792cf7f explained in the surrounding text?",
+        retrieval,
+        required_context_ids=["eq-ranking", "para-ranking"],
+    ))
+
+    assert "preferred response that annotators choose" in answer.answer
+    assert "rejected counterpart" in answer.answer
     assert "[2]" in answer.answer
     assert "extractive_fallback" in answer.context_metadata["answer_repair_reasons"]
 
