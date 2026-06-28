@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from business.research.document.models import PaperChunk
+from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
+from business.research.rag.adapters.paper_field_text import FIELD_NAMES, extract_field_texts
 from business.research.rag.evaluation.paper_evaluation_report import EvidenceRegressionReport
 from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
@@ -212,6 +214,10 @@ def _build_live_retriever(
     chunk_store.ensure_collection()
     chunk_store.index_chunks(chunks)
 
+    field_index = _InMemoryFieldEmbeddingIndex()
+    field_index.ensure_collection()
+    field_index.index_chunks(chunks)
+
     visual_store = None
     if visual_enabled:
         visual_store = _InMemoryVisualStore(
@@ -223,6 +229,7 @@ def _build_live_retriever(
     return ResearchRetriever(
         chunk_store,
         policy=build_retrieval_policy(retrieval_policy),
+        field_index=field_index,
         visual_store=visual_store,
     ), visual_store
 
@@ -308,6 +315,94 @@ class _InMemoryChunkStore:
 
     def get_parent_chunk(self, chunk: PaperChunk) -> PaperChunk | None:
         return self.get_chunk(chunk.parent_chunk_id) if chunk.parent_chunk_id else None
+
+
+class _InMemoryFieldEmbeddingIndex:
+    def __init__(self) -> None:
+        self._chunks: dict[str, PaperChunk] = {}
+        self._vectors: dict[tuple[str, str], list[float]] = {}
+        self._texts: dict[tuple[str, str], str] = {}
+        self._payloads: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def ensure_collection(self) -> None:
+        pass
+
+    def index_chunks(self, chunks: list[PaperChunk]) -> None:
+        for chunk in chunks:
+            self._chunks[chunk.chunk_id] = chunk
+            field_texts = extract_field_texts(chunk)
+            for field_name, field_text in field_texts.non_empty().items():
+                normalized = str(field_name).strip().casefold()
+                if normalized not in FIELD_NAMES:
+                    continue
+                key = (chunk.chunk_id, normalized)
+                self._texts[key] = field_text
+                self._vectors[key] = _embed_text(field_text)
+                self._payloads[key] = {
+                    "paper_id": chunk.paper_id,
+                    "chunk_id": chunk.chunk_id,
+                    "field_name": normalized,
+                    "field_text": field_text,
+                    "field_text_sources": list(field_texts.sources_for(normalized)),
+                    "chunk_type": chunk.chunk_type,
+                    "section_title": chunk.section_title,
+                    "section_role": list(chunk.section_role),
+                    "section_index": chunk.section_index,
+                    "has_formula": chunk.has_formula,
+                    "has_figure": chunk.has_figure,
+                    "has_table": chunk.has_table,
+                    "figure_id": chunk.figure_id,
+                    "table_id": chunk.metadata.get("table_id", ""),
+                    "source_locator": chunk.metadata.get("source_locator", ""),
+                    "caption_source_locator": chunk.metadata.get("caption_source_locator", ""),
+                    "page": chunk.metadata.get("page"),
+                    "pdf_rect": chunk.metadata.get("pdf_rect"),
+                    "caption_pdf_rect": chunk.metadata.get("caption_pdf_rect"),
+                }
+
+    def delete_paper_chunks(self, paper_id: str) -> None:
+        chunk_ids = [
+            chunk_id
+            for chunk_id, chunk in self._chunks.items()
+            if chunk.paper_id == paper_id
+        ]
+        for chunk_id in chunk_ids:
+            self._chunks.pop(chunk_id, None)
+            for key in list(self._texts):
+                if key[0] == chunk_id:
+                    self._texts.pop(key, None)
+                    self._vectors.pop(key, None)
+                    self._payloads.pop(key, None)
+
+    def search_field_vectors(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        field_names: tuple[str, ...] | None = None,
+        filters: dict[str, Any] | None = None,
+        limit: int = 10,
+    ) -> list[FieldEmbeddingHit]:
+        query_vector = _embed_text(query_text)
+        allowed_fields = set(_normalized_field_names(field_names))
+        hits: list[FieldEmbeddingHit] = []
+        for key, vector in self._vectors.items():
+            chunk_id, field_name = key
+            if allowed_fields and field_name not in allowed_fields:
+                continue
+            chunk = self._chunks.get(chunk_id)
+            if chunk is None or chunk.paper_id != paper_id or not _matches_filters(chunk, filters or {}):
+                continue
+            score = _cosine_similarity(query_vector, vector)
+            hits.append(FieldEmbeddingHit(
+                chunk_id=chunk_id,
+                field_name=field_name,
+                score=score,
+                field_text=self._texts[key],
+                metadata=dict(self._payloads[key]),
+            ))
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits[:limit]
 
 
 class _InMemoryVisualStore:
@@ -403,6 +498,19 @@ def _resolve_image_path(image_ref: str, *, paper_id: str, image_root: Path | Non
         if candidate.exists():
             return candidate
     return candidates[0]
+
+
+def _normalized_field_names(field_names: tuple[str, ...] | None) -> tuple[str, ...]:
+    if not field_names:
+        return ()
+    seen: set[str] = set()
+    out: list[str] = []
+    for field_name in field_names:
+        normalized = str(field_name).strip().casefold()
+        if normalized in FIELD_NAMES and normalized not in seen:
+            out.append(normalized)
+            seen.add(normalized)
+    return tuple(out)
 
 
 class _DeterministicVisualEmbedding:

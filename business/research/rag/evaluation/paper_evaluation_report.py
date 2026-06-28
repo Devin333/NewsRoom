@@ -10,6 +10,7 @@ from framework.rag.evaluation import RAGEvaluationReport, summarize_score_breakd
 from business.research.rag.adapters.evaluation_scorecard_adapter import evidence_results_to_rag_report
 from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvalResult
 from business.research.rag.evaluation.paper_evaluation_compare import EvidenceABResult
+from business.research.rag.adapters.paper_field_text import FIELD_NAMES
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult, iter_ranked_score_breakdowns
 from business.research.rag.evaluation.paper_generation_eval import GenerationEvalResult
 
@@ -65,6 +66,9 @@ class EvidenceRegressionReport:
             lines.append("")
         lines.extend(["## RAG Scorecard", "", _code_block(self.to_rag_evaluation_report().to_markdown()), ""])
         if self.retrieval is not None:
+            distribution = _field_embedding_distribution(self.retrieval)
+            if distribution["matched_evidence_count"]:
+                lines.extend(_field_embedding_distribution_markdown(distribution))
             lines.extend(["## Retrieval", "", _code_block(self.retrieval.report()), ""])
         if self.answer is not None:
             lines.extend(["## Answer", "", _code_block(self.answer.report()), ""])
@@ -132,6 +136,7 @@ def _retrieval_result_to_dict(result: EvidenceEvalResult) -> dict[str, Any]:
             for k in result.ks
         },
         "score_breakdown_summary": _score_breakdown_summary(result),
+        "field_embedding_distribution": _field_embedding_distribution(result),
         "intent_distribution": dict(result.intent_distribution),
         "route_distribution": dict(result.route_distribution),
         "intent_confusion": {
@@ -150,6 +155,99 @@ def _score_breakdown_summary(result: EvidenceEvalResult) -> dict[str, Any]:
     summary = summarize_score_breakdowns(iter_ranked_score_breakdowns(result, top_k=top_k))
     summary["top_k"] = top_k
     return summary
+
+
+def _field_embedding_distribution(result: EvidenceEvalResult) -> dict[str, Any]:
+    top_k = max(result.ks) if result.ks else None
+    field_scores: dict[str, list[float]] = {}
+    evidence_count = 0
+    for breakdown in iter_ranked_score_breakdowns(result, top_k=top_k):
+        evidence_count += 1
+        best_field, best_score = _best_embedding_field_from_breakdown(breakdown)
+        if not best_field or best_score <= 0.0:
+            continue
+        field_scores.setdefault(best_field, []).append(best_score)
+
+    search_hits: dict[str, int] = {}
+    for sample in result.samples:
+        raw = sample.retrieval_metadata.get("field_hits_by_name")
+        if not isinstance(raw, dict):
+            continue
+        for field_name, count in raw.items():
+            normalized = str(field_name).strip().casefold()
+            if normalized not in FIELD_NAMES:
+                continue
+            search_hits[normalized] = search_hits.get(normalized, 0) + _safe_int(count)
+
+    by_field = {
+        field_name: {
+            "count": len(scores),
+            "avg_score": sum(scores) / len(scores),
+            "max_score": max(scores),
+        }
+        for field_name, scores in sorted(field_scores.items())
+        if scores
+    }
+    return {
+        "top_k": top_k,
+        "evidence_count": evidence_count,
+        "matched_evidence_count": sum(item["count"] for item in by_field.values()),
+        "by_field": by_field,
+        "search_hits_by_field": dict(sorted(search_hits.items())),
+    }
+
+
+def _best_embedding_field_from_breakdown(breakdown: dict[str, float]) -> tuple[str, float]:
+    best_field = ""
+    best_score = 0.0
+    for field_name in FIELD_NAMES:
+        raw = breakdown.get(f"{field_name}_embedding_score")
+        if raw is None:
+            continue
+        try:
+            score = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if score > best_score:
+            best_field = field_name
+            best_score = score
+    return best_field, best_score
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _field_embedding_distribution_markdown(distribution: dict[str, Any]) -> list[str]:
+    lines = [
+        "## Field Embedding Distribution",
+        "",
+        f"- top_k: `{distribution.get('top_k')}`",
+        f"- evidence_count: `{distribution.get('evidence_count', 0)}`",
+        f"- matched_evidence_count: `{distribution.get('matched_evidence_count', 0)}`",
+        "",
+    ]
+    by_field = distribution.get("by_field") or {}
+    if by_field:
+        lines.extend([
+            "| Field | count | avg | max |",
+            "| --- | ---: | ---: | ---: |",
+        ])
+        for field_name, stats in sorted(by_field.items()):
+            lines.append(
+                f"| `{field_name}` | `{stats.get('count', 0)}` | "
+                f"`{stats.get('avg_score', 0.0):.3f}` | `{stats.get('max_score', 0.0):.3f}` |"
+            )
+    search_hits = distribution.get("search_hits_by_field") or {}
+    if search_hits:
+        lines.extend(["", "| Search hit field | count |", "| --- | ---: |"])
+        for field_name, count in sorted(search_hits.items()):
+            lines.append(f"| `{field_name}` | `{count}` |")
+    lines.append("")
+    return lines
 
 
 def _answer_result_to_dict(result: EvidenceAnswerEvalResult) -> dict[str, Any]:

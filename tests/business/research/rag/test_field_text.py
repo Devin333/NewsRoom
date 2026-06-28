@@ -37,7 +37,9 @@ def test_extract_field_texts_returns_available_fields_and_sources():
     assert fields.sources_for("title") == ("section_title",)
     assert "metadata.caption_text" in fields.sources_for("caption")
     assert "metadata.visual_description" in fields.sources_for("caption")
+    assert "metadata.visual_description" in fields.sources_for("visual_description")
     assert "attention arrows" in fields.caption
+    assert "attention arrows" in fields.visual_description
     assert "formula_latex" in fields.sources_for("equation")
     assert fields.text_for("missing") == ""
 
@@ -87,7 +89,9 @@ def test_extract_field_texts_includes_formula_structure_metadata():
     assert "metadata.formula_symbols" in fields.sources_for("equation")
     assert "metadata.formula_operators" in fields.sources_for("equation")
     assert "metadata.formula_referenced_text" in fields.sources_for("equation")
+    assert "metadata.formula_referenced_text" in fields.sources_for("referenced_text")
     assert "query key value attention" in fields.equation
+    assert "query key value attention" in fields.referenced_text
 
 
 def test_extract_field_texts_includes_table_structure_metadata():
@@ -119,5 +123,9 @@ def test_extract_field_texts_includes_table_structure_metadata():
     assert "metadata.table_text" in fields.sources_for("body")
     assert "metadata.table_columns" in fields.sources_for("body")
     assert "metadata.table_rows" in fields.sources_for("body")
+    assert "metadata.columns" in fields.sources_for("table_columns")
+    assert "metadata.rows" in fields.sources_for("table_rows")
     assert "proposed model" in fields.body
     assert "baseline | 26.1 | 72.0" in fields.body
+    assert "Model" in fields.table_columns
+    assert "baseline | 26.1 | 72.0" in fields.table_rows

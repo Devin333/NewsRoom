@@ -129,8 +129,12 @@ def test_run_benchmark_suite_writes_splits_without_fixed_window_by_default(tmp_p
     assert retrieval_payload["intent_confusion"]
     scorecard_metadata = payload["candidate_test_report"]["rag_evaluation_report"]["scorecard"]["metadata"]
     assert scorecard_metadata["score_breakdown_summary"]["evidence_count"] == breakdown_summary["evidence_count"]
+    field_distribution = retrieval_payload["field_embedding_distribution"]
+    assert field_distribution["search_hits_by_field"]
+    assert field_distribution["matched_evidence_count"] > 0
     markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
     assert "## Score Breakdown" in markdown
+    assert "## Field Embedding Distribution" in markdown
     assert "## Route Distribution" in markdown
     assert "## Intent Confusion" in markdown
 

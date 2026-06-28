@@ -1457,6 +1457,32 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
                 f"`{stats.get('avg', 0.0):.3f}` | `{stats.get('min', 0.0):.3f}` | "
                 f"`{stats.get('max', 0.0):.3f}` |"
             )
+    field_embedding_distribution = candidate.get("field_embedding_distribution") or {}
+    field_by_name = field_embedding_distribution.get("by_field") or {}
+    field_search_hits = field_embedding_distribution.get("search_hits_by_field") or {}
+    if field_by_name or field_search_hits:
+        lines.extend([
+            "",
+            "## Field Embedding Distribution",
+            "",
+            f"- top_k: `{field_embedding_distribution.get('top_k')}`",
+            f"- matched_evidence_count: `{field_embedding_distribution.get('matched_evidence_count', 0)}`",
+        ])
+        if field_by_name:
+            lines.extend([
+                "",
+                "| Field | count | avg | max |",
+                "| --- | ---: | ---: | ---: |",
+            ])
+            for field_name, stats in sorted(field_by_name.items()):
+                lines.append(
+                    f"| `{field_name}` | `{stats.get('count', 0)}` | "
+                    f"`{stats.get('avg_score', 0.0):.3f}` | `{stats.get('max_score', 0.0):.3f}` |"
+                )
+        if field_search_hits:
+            lines.extend(["", "| Search hit field | count |", "| --- | ---: |"])
+            for field_name, count in sorted(field_search_hits.items()):
+                lines.append(f"| `{field_name}` | `{count}` |")
     route_distribution = candidate.get("route_distribution") or {}
     intent_distribution = candidate.get("intent_distribution") or {}
     intent_confusion = candidate.get("intent_confusion") or {}

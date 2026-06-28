@@ -21,7 +21,7 @@ from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
 from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
-from business.research.rag.adapters.paper_field_text import FIELD_NAMES, extract_field_texts
+from business.research.rag.adapters.paper_field_text import CORE_FIELD_NAMES, FIELD_NAMES, extract_field_texts
 from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute, build_retrieval_route
 from business.research.rag.retrieval.paper_visual_retrieval import (
     PaperVisualFusionWeights,
@@ -79,7 +79,7 @@ _RESULT_QUESTION_KEYWORDS = (
     "\u8868\u660e",
 )
 _PARENT_SCORE_KEYS = ("child", "parent", "heading", "position")
-_FIELD_SCORE_KEYS = FIELD_NAMES
+_FIELD_SCORE_KEYS = CORE_FIELD_NAMES
 _CHILD_FALLBACK_SCORE_KEYS = ("semantic", "field", "position", "graph")
 _CHILD_FINAL_SCORE_KEYS = ("semantic", "field_embedding", "field_rerank", "position", "graph")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -171,16 +171,16 @@ class RetrievalPolicy:
     reranking_intents: tuple[str, ...] = ()
     field_reranking_intents: tuple[str, ...] = ()
     field_embedding_search_limit_multiplier: int = 2
-    field_default_search_fields: tuple[str, ...] = ("title", "abstract", "caption", "equation", "body")
+    field_default_search_fields: tuple[str, ...] = FIELD_NAMES
     field_intent_search_fields: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
-        "concept_method": ("title", "body"),
+        "concept_method": ("title", "abstract", "body", "caption"),
         "citation_query": ("body", "abstract", "title"),
         "contribution": ("abstract", "title", "body"),
-        "figure_query": ("caption", "body"),
-        "table_query": ("caption", "body"),
-        "formula_query": ("equation", "body"),
-        "numerical_result": ("caption", "body", "title"),
-        "comparison": ("caption", "body", "title"),
+        "figure_query": ("caption", "visual_description", "body"),
+        "table_query": ("caption", "table_rows", "table_columns", "body"),
+        "formula_query": ("equation", "referenced_text", "body"),
+        "numerical_result": ("caption", "table_rows", "table_columns", "body", "title"),
+        "comparison": ("caption", "table_rows", "table_columns", "body", "title"),
     })
 
     def alpha_for(self, intent: str) -> float:
@@ -1732,13 +1732,17 @@ def _field_rerank_passage(chunk: PaperChunk) -> str:
         "caption": "Caption",
         "equation": "Equation",
         "body": "Body",
+        "table_rows": "Table rows",
+        "table_columns": "Table columns",
+        "visual_description": "Visual description",
+        "referenced_text": "Referenced text",
     }
     lines = []
     for field_name in FIELD_NAMES:
         text = field_texts.text_for(field_name)
         if not text:
             continue
-        lines.extend([f"{labels[field_name]}:", text[:1600], ""])
+        lines.extend([f"{labels.get(field_name, field_name)}:", text[:1600], ""])
     return "\n".join(lines).strip() or chunk.content[:2000]
 
 

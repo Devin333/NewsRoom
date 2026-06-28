@@ -85,6 +85,17 @@ def test_run_evidence_eval_can_run_live_retrieval_from_parsed_papers(tmp_path) -
     assert payload["metadata"]["mode"] == "live_retrieval"
     assert payload["metadata"]["chunks_total"] > 0
     assert payload["retrieval"]["answerable_total"] > 0
+    distribution = payload["retrieval"]["field_embedding_distribution"]
+    assert distribution["search_hits_by_field"]
+    assert distribution["matched_evidence_count"] > 0
+    components = payload["retrieval"]["score_breakdown_summary"]["components"]
+    embedding_components = {
+        name: stats
+        for name, stats in components.items()
+        if name.endswith("_embedding_score")
+    }
+    assert embedding_components
+    assert any(stats["max"] > 0 for stats in embedding_components.values())
     assert golden.exists()
 
 

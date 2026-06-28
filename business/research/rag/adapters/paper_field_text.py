@@ -4,7 +4,14 @@ from dataclasses import dataclass, field
 
 from business.research.document.models import PaperChunk
 
-FIELD_NAMES: tuple[str, ...] = ("title", "abstract", "caption", "equation", "body")
+CORE_FIELD_NAMES: tuple[str, ...] = ("title", "abstract", "caption", "equation", "body")
+EXPANDED_FIELD_NAMES: tuple[str, ...] = (
+    "table_rows",
+    "table_columns",
+    "visual_description",
+    "referenced_text",
+)
+FIELD_NAMES: tuple[str, ...] = (*CORE_FIELD_NAMES, *EXPANDED_FIELD_NAMES)
 
 
 @dataclass(frozen=True)
@@ -14,6 +21,10 @@ class PaperChunkFieldText:
     caption: str = ""
     equation: str = ""
     body: str = ""
+    table_rows: str = ""
+    table_columns: str = ""
+    visual_description: str = ""
+    referenced_text: str = ""
     sources: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, str]:
@@ -40,12 +51,20 @@ def extract_field_texts(chunk: PaperChunk) -> PaperChunkFieldText:
     caption, caption_sources = _caption_text(chunk)
     equation, equation_sources = _equation_text(chunk)
     body, body_sources = _body_text(chunk)
+    table_rows, table_rows_sources = _table_rows_text(chunk)
+    table_columns, table_columns_sources = _table_columns_text(chunk)
+    visual_description, visual_description_sources = _visual_description_text(chunk)
+    referenced_text, referenced_text_sources = _referenced_text(chunk)
     sources = {
         "title": tuple(title_sources),
         "abstract": tuple(abstract_sources),
         "caption": tuple(caption_sources),
         "equation": tuple(equation_sources),
         "body": tuple(body_sources),
+        "table_rows": tuple(table_rows_sources),
+        "table_columns": tuple(table_columns_sources),
+        "visual_description": tuple(visual_description_sources),
+        "referenced_text": tuple(referenced_text_sources),
     }
     return PaperChunkFieldText(
         title=title,
@@ -53,6 +72,10 @@ def extract_field_texts(chunk: PaperChunk) -> PaperChunkFieldText:
         caption=caption,
         equation=equation,
         body=body,
+        table_rows=table_rows,
+        table_columns=table_columns,
+        visual_description=visual_description,
+        referenced_text=referenced_text,
         sources={name: value for name, value in sources.items() if value},
     )
 
@@ -109,6 +132,41 @@ def _body_text(chunk: PaperChunk) -> tuple[str, list[str]]:
     visual_description = str(chunk.metadata.get("visual_description") or "")
     if visual_description and visual_description not in chunk.content:
         values.append(("metadata.visual_description", visual_description))
+    return _join_sourced_values(values)
+
+
+def _table_rows_text(chunk: PaperChunk) -> tuple[str, list[str]]:
+    if not (chunk.chunk_type == "table" or chunk.has_table or chunk.metadata.get("table_id")):
+        return "", []
+    values = [
+        ("metadata.rows", _metadata_rows_text(chunk.metadata.get("rows"))),
+        ("metadata.table_rows", _metadata_rows_text(chunk.metadata.get("table_rows"))),
+    ]
+    return _join_sourced_values(values)
+
+
+def _table_columns_text(chunk: PaperChunk) -> tuple[str, list[str]]:
+    if not (chunk.chunk_type == "table" or chunk.has_table or chunk.metadata.get("table_id")):
+        return "", []
+    values = [
+        ("metadata.columns", _metadata_list_text(chunk.metadata.get("columns"))),
+        ("metadata.table_columns", _metadata_list_text(chunk.metadata.get("table_columns"))),
+    ]
+    return _join_sourced_values(values)
+
+
+def _visual_description_text(chunk: PaperChunk) -> tuple[str, list[str]]:
+    text = _normalize_text(str(chunk.metadata.get("visual_description") or ""))
+    return text, ["metadata.visual_description"] if text else []
+
+
+def _referenced_text(chunk: PaperChunk) -> tuple[str, list[str]]:
+    values = [
+        ("metadata.formula_referenced_text", _metadata_list_text(chunk.metadata.get("formula_referenced_text"))),
+        ("metadata.referenced_text", _metadata_list_text(chunk.metadata.get("referenced_text"))),
+        ("metadata.reference_text", _metadata_list_text(chunk.metadata.get("reference_text"))),
+        ("metadata.referenced_by_chunks", _referenced_by_text(chunk.metadata.get("referenced_by_chunks"))),
+    ]
     return _join_sourced_values(values)
 
 
@@ -173,4 +231,22 @@ def _metadata_rows_text(value: object) -> str:
     return "\n".join(rows)
 
 
-__all__ = ["FIELD_NAMES", "PaperChunkFieldText", "extract_field_texts"]
+def _referenced_by_text(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    texts: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            text = str(item.get("text") or item.get("text_ref") or item.get("snippet") or "").strip()
+            if text:
+                texts.append(text)
+    return "\n".join(texts)
+
+
+__all__ = [
+    "CORE_FIELD_NAMES",
+    "EXPANDED_FIELD_NAMES",
+    "FIELD_NAMES",
+    "PaperChunkFieldText",
+    "extract_field_texts",
+]

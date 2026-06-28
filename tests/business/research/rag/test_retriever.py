@@ -629,7 +629,7 @@ def test_field_search_plan_depends_on_intent():
     retriever = ResearchRetriever(store, field_index=field_index)
     retriever.retrieve(RetrievalRequest(paper_id="p1", question="What does Figure 1 show?", limit=1))
 
-    assert field_index.calls[0]["field_names"] == ("caption", "body")
+    assert field_index.calls[0]["field_names"] == ("caption", "visual_description", "body")
     assert field_index.calls[0]["filters"]["chunk_type"] == "figure"
 
 
