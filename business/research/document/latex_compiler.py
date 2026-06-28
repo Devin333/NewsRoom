@@ -52,6 +52,11 @@ _BRACES_RE = re.compile(r"\\[a-zA-Z]+\{([^}]*)\}")
 _BACKSLASH_CMD_RE = re.compile(r"\\[a-zA-Z]+\s*")
 _MULTI_WS_RE = re.compile(r"[ \t]{2,}")
 _INPUT_RE = re.compile(r"\\(?:input|include)\{([^}]+)\}")
+_INCLUDEGRAPHICS_RE = re.compile(
+    r"\\includegraphics(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
+    re.DOTALL,
+)
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".pdf"}
 
 
 
@@ -83,9 +88,12 @@ def _extract_latex_images(data: bytes, paper_id: str) -> dict[str, str]:
                 path = os.path.join(figs, safe_name)
                 with open(path, "wb") as out:
                     out.write(img_bytes)
-                stem = os.path.splitext(os.path.basename(member.name))[0]
-                result[stem] = path
-                result[os.path.basename(member.name)] = path
+                basename = os.path.basename(member.name)
+                stem = os.path.splitext(basename)[0]
+                member_no_ext = os.path.splitext(member.name)[0]
+                for key in (member.name, member_no_ext, basename, stem):
+                    result[key] = path
+                    result[key.replace("\\", "/")] = path
     except Exception:
         pass
     return result
@@ -256,9 +264,18 @@ def _parse_figures(
         if image_map:
             ig_m = _INCLUDEGRAPHICS_RE.search(m.group(2))
             if ig_m:
-                name = ig_m.group(1).strip()
-                stem = os.path.splitext(name)[0]
-                image_ref = image_map.get(name) or image_map.get(stem)
+                name = ig_m.group(1).strip().strip("{}").strip()
+                basename = os.path.basename(name)
+                stem = os.path.splitext(basename)[0]
+                name_no_ext = os.path.splitext(name)[0]
+                image_ref = (
+                    image_map.get(name)
+                    or image_map.get(name.replace("\\", "/"))
+                    or image_map.get(name_no_ext)
+                    or image_map.get(name_no_ext.replace("\\", "/"))
+                    or image_map.get(basename)
+                    or image_map.get(stem)
+                )
         figures.append(ResearchFigure(
             figure_id=build_stable_id("fig", paper_id, fig_id),
             caption=caption,

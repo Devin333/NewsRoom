@@ -4,6 +4,7 @@ import gzip
 import io
 import json
 import tarfile
+from pathlib import Path
 from unittest.mock import patch
 
 import fitz
@@ -44,12 +45,20 @@ def _make_pdf(text_pages: list[str]) -> bytes:
 
 
 def _make_latex_targz(tex_content: str) -> bytes:
+    return _make_latex_targz_with_files(tex_content, {})
+
+
+def _make_latex_targz_with_files(tex_content: str, files: dict[str, bytes]) -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
         encoded = tex_content.encode()
         info = tarfile.TarInfo(name="main.tex")
         info.size = len(encoded)
         tf.addfile(info, io.BytesIO(encoded))
+        for name, content in files.items():
+            file_info = tarfile.TarInfo(name=name)
+            file_info.size = len(content)
+            tf.addfile(file_info, io.BytesIO(content))
     return buf.getvalue()
 
 
@@ -1147,3 +1156,27 @@ def test_dispatcher_routes_latex():
     assert doc.metadata.get("parse_source") == "latex"
     titles = [s.title for s in doc.sections]
     assert any("Introduction" in t for t in titles)
+
+
+def test_latex_parser_extracts_includegraphics_image(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
+    tex = (
+        r"\documentclass{article}"
+        r"\begin{document}"
+        r"\section{Method}"
+        r"\begin{figure}"
+        r"\includegraphics[width=\linewidth]{figures/arch}"
+        r"\caption{Architecture overview.}"
+        r"\label{fig:arch}"
+        r"\end{figure}"
+        r"\end{document}"
+    )
+    image_bytes = b"\x89PNG\r\n\x1a\n" + (b"x" * 1200)
+    tgz = _make_latex_targz_with_files(tex, {"figures/arch.png": image_bytes})
+
+    doc = ArxivDocumentParser().parse("2501_latex_image", tgz)
+
+    assert len(doc.figures) == 1
+    assert doc.figures[0].image_ref
+    assert Path(doc.figures[0].image_ref).exists()
+    assert Path(doc.figures[0].image_ref).name == "arch.png"

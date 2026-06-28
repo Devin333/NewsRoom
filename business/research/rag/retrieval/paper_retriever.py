@@ -97,6 +97,7 @@ class RetrievalPolicy:
     default_alpha: float = 0.2          # fallback α for unlisted intents
     sigma: float = 3.0                  # position decay rate, in sections
     overfetch_multiplier: int = 3       # fetch limit*N candidates before re-rank
+    element_label_overfetch_multiplier: int = 25
     rerank_score_threshold: float = 0.3  # drop candidates below this reranker score (0 = off)
     visual_fusion_text_weight: float = 0.65
     visual_fusion_visual_weight: float = 0.35
@@ -455,11 +456,18 @@ class ResearchRetriever:
         filters = self._build_filters(route)
 
         # ── 1. vector search (over-fetch for re-ranking) ──────────────────────
+        element_query_labels = _element_query_labels(request.question, route.intent)
+        candidate_limit = request.limit * self._policy.overfetch_multiplier
+        if element_query_labels:
+            candidate_limit = max(
+                candidate_limit,
+                request.limit * self._policy.element_label_overfetch_multiplier,
+            )
         candidates = self._store.search_with_scores(
             request.paper_id,
             request.question,
             filters=filters,
-            limit=request.limit * self._policy.overfetch_multiplier,
+            limit=candidate_limit,
         )
         n_recalled = len(candidates)
         field_hits = self._search_field_candidates(request, route, filters)
@@ -530,6 +538,11 @@ class ResearchRetriever:
         metrics = {
             "retrieval_policy": self._policy.name,
             "retrieval_policy_overfetch_multiplier": self._policy.overfetch_multiplier,
+            "retrieval_policy_element_label_overfetch_multiplier": (
+                self._policy.element_label_overfetch_multiplier
+            ),
+            "candidate_limit": candidate_limit,
+            "element_query_labels": sorted(element_query_labels),
             "retrieval_policy_visual_fusion_weights": {
                 "text": self._policy.visual_fusion_text_weight,
                 "visual": self._policy.visual_fusion_visual_weight,
@@ -1555,7 +1568,7 @@ def _element_query_labels(query_text: str, intent: str) -> set[str]:
     normalized = query_text.casefold()
     labels: set[str] = set()
     for prefix in prefixes:
-        pattern = rf"\b{re.escape(prefix)}\.?\s*([a-z0-9][a-z0-9._-]*)"
+        pattern = rf"\b{re.escape(prefix)}(?:\.|\s+)([a-z0-9][a-z0-9._-]*)"
         for match in re.finditer(pattern, normalized):
             labels.add(_normalize_element_label(match.group(1)))
     return {label for label in labels if label}

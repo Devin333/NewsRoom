@@ -73,6 +73,7 @@ class _ScriptedChunkStore:
     def __init__(self, chunks: list[PaperChunk], search_order: list[str] | None = None) -> None:
         self.chunks = {chunk.chunk_id: chunk for chunk in chunks}
         self.search_order = search_order or [chunk.chunk_id for chunk in chunks]
+        self.calls: list[dict[str, Any]] = []
 
     def ensure_collection(self) -> None:
         return None
@@ -101,6 +102,7 @@ class _ScriptedChunkStore:
         filters: dict[str, Any] | None = None,
         limit: int = 30,
     ) -> list[tuple[PaperChunk, float]]:
+        self.calls.append({"paper_id": paper_id, "query_text": query_text, "filters": filters, "limit": limit})
         out: list[tuple[PaperChunk, float]] = []
         for index, chunk_id in enumerate(self.search_order):
             chunk = self.chunks[chunk_id]
@@ -376,6 +378,41 @@ def test_tuned_policy_boosts_exact_table_label_match():
     assert result.child_chunks[0].metadata["element_label_match"] is True
     assert result.child_chunks[0].metadata["element_label_boost"] == 0.18
     assert result.child_chunks[0].metadata["child_score_components"]["element_label_boost"] == 0.18
+
+
+def test_element_label_query_uses_deeper_candidate_recall():
+    first = _chunk(
+        "tbl-first",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nExperimental results.",
+        metadata={"reference_labels": ["1"], "table_id": "tbl-first"},
+    )
+    second = _chunk(
+        "tbl-second",
+        chunk_type="table",
+        content="[Table 2]\nCaption:\nMore experimental results.",
+        metadata={"reference_labels": ["2"], "table_id": "tbl-second"},
+    )
+    exact = _chunk(
+        "tbl-exact",
+        chunk_type="table",
+        content="[Table 7]\nCaption:\nExact ablation table.",
+        metadata={"reference_labels": ["7"], "table_id": "tbl-exact"},
+    )
+    store = _ScriptedChunkStore(
+        [first, second, exact],
+        search_order=["tbl-first", "tbl-second", "tbl-exact"],
+    )
+    policy = build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY)
+
+    retriever = ResearchRetriever(store, policy=policy)
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Table 7 show?", limit=1)
+    )
+
+    assert store.calls[0]["limit"] == policy.element_label_overfetch_multiplier
+    assert result.child_chunks[0].chunk_id == "tbl-exact"
+    assert result.metadata["element_query_labels"] == ["7"]
 
 
 def test_element_label_score_boosts_exact_equation_reference():
