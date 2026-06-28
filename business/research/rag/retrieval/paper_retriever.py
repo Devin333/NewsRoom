@@ -551,12 +551,19 @@ class ResearchRetriever:
             ),
             "candidate_limit": candidate_limit,
             "candidate_filters": candidate_filters,
+            "candidate_filter_group_count": len(candidate_filters),
             "element_query_labels": sorted(element_query_labels),
             "retrieval_policy_visual_fusion_weights": {
                 "text": self._policy.visual_fusion_text_weight,
                 "visual": self._policy.visual_fusion_visual_weight,
             },
             "intent": route.intent,
+            "recall_routes": list(route.recall_routes),
+            "route_plan": {
+                "primary_intent": route.intent,
+                "recall_routes": list(route.recall_routes),
+                "candidate_filters": candidate_filters,
+            },
             "reranker": self._reranker is not None,
             "reranker_enabled_for_intent": base_reranker_enabled,
             "reranker_intent_scope": self._policy.reranking_intents,
@@ -649,6 +656,11 @@ class ResearchRetriever:
         return filters
 
     def _candidate_filters(self, route: RetrievalRoute, base_filters: dict[str, Any]) -> list[dict[str, Any]]:
+        if route.candidate_filter_groups:
+            return _dedupe_filters([
+                {**base_filters, **dict(filters)}
+                for filters in route.candidate_filter_groups
+            ])
         if "chunk_type" in base_filters or not route.chunk_type_filter:
             return [dict(base_filters)]
         return [
@@ -798,6 +810,7 @@ class ResearchRetriever:
         field_summary = _field_embedding_summary_from_metadata(chunk.metadata)
         field_rerank = _clamp_score(field_rerank_score) if field_rerank_score is not None else 0.0
         graph_score = _child_graph_score(chunk)
+        route_match_score = _route_match_score(route, chunk)
         element_label_score = _element_label_match_score(request.question, route.intent, chunk)
         graph_score = max(graph_score, element_label_score)
         element_label_boost = _clamp_score(
@@ -864,6 +877,8 @@ class ResearchRetriever:
             "citation_claim_score": _round_score(citation_claim_score),
             "citation_claim_boost": _round_score(citation_claim_boost),
             "graph_score": _round_score(graph_score),
+            "route_match_score": _round_score(route_match_score),
+            "matched_recall_routes": list(_matched_recall_routes(route, chunk)),
             "child_score_strategy": score_strategy,
             "child_score_components": {
                 "semantic": _round_score(semantic),
@@ -872,6 +887,7 @@ class ResearchRetriever:
                 "field_rerank": _round_score(field_rerank) if field_rerank_score is not None else None,
                 "position": _round_score(position_score),
                 "graph": _round_score(graph_score),
+                "route_match": _round_score(route_match_score),
                 "element_label": _round_score(element_label_score),
                 "element_label_boost": _round_score(element_label_boost),
                 "citation_claim": _round_score(citation_claim_score),
@@ -2082,6 +2098,18 @@ def _dedupe_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:
     return dedupe_by_key(chunks, key=lambda chunk: chunk.chunk_id)
 
 
+def _dedupe_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    out: list[dict[str, Any]] = []
+    for item in filters:
+        normalized = tuple(sorted((str(key), repr(value)) for key, value in item.items()))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(item)
+    return out or [{}]
+
+
 def _is_table_chunk(chunk: PaperChunk) -> bool:
     return (
         chunk.chunk_type == "table"
@@ -2097,6 +2125,54 @@ def _is_figure_chunk(chunk: PaperChunk) -> bool:
 
 def _is_formula_chunk(chunk: PaperChunk) -> bool:
     return chunk.chunk_type == "formula" or chunk.has_formula or bool(chunk.formula_latex)
+
+
+def _route_match_score(route: RetrievalRoute, chunk: PaperChunk) -> float:
+    matched_routes = _matched_recall_routes(route, chunk)
+    if not matched_routes:
+        return 0.0
+    if route.intent == "numerical_result":
+        if "table_chunks" in matched_routes:
+            return 1.0
+        if "result_paragraphs" in matched_routes or "conclusion_context" in matched_routes:
+            return 0.8
+    if route.intent == "comparison" and "table_chunks" in matched_routes:
+        return 0.75
+    return 1.0
+
+
+def _matched_recall_routes(route: RetrievalRoute, chunk: PaperChunk) -> tuple[str, ...]:
+    routes: list[str] = []
+    route_set = set(route.recall_routes)
+    if "figure_chunks" in route_set and _is_figure_chunk(chunk):
+        routes.append("figure_chunks")
+    if "table_chunks" in route_set and _is_table_chunk(chunk):
+        routes.append("table_chunks")
+    if "formula_chunks" in route_set and _is_formula_chunk(chunk):
+        routes.append("formula_chunks")
+    if "abstract_body" in route_set and chunk.chunk_type in {"abstract", "paragraph"}:
+        routes.append("abstract_body")
+    if "method_body" in route_set and _has_section_role(chunk, {"method"}):
+        routes.append("method_body")
+    if "result_paragraphs" in route_set and _has_result_context(chunk):
+        routes.append("result_paragraphs")
+    if "conclusion_context" in route_set and _has_section_role(chunk, {"analysis", "conclusion"}):
+        routes.append("conclusion_context")
+    if "comparison_paragraphs" in route_set and _has_section_role(chunk, {"related_work"}):
+        routes.append("comparison_paragraphs")
+    return tuple(routes)
+
+
+def _has_section_role(chunk: PaperChunk, roles: set[str]) -> bool:
+    return bool({str(role).casefold() for role in chunk.section_role} & roles)
+
+
+def _has_result_context(chunk: PaperChunk) -> bool:
+    if chunk.chunk_type != "paragraph":
+        return False
+    if _has_section_role(chunk, {"experiment", "analysis", "conclusion"}):
+        return True
+    return _result_title_rank(chunk.section_title) < 100 or _result_title_rank(chunk.content[:240]) < 100
 
 
 def _should_expand_result_context(intent: str, question: str) -> bool:

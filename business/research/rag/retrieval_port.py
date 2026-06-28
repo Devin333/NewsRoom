@@ -98,6 +98,8 @@ class PaperKernelRAGRetriever:
         chunks = _dedupe_chunks((*result.child_chunks, *result.ref_chunks, *result.parent_chunks))
         self.last_metadata = {
             "intent": result.intent,
+            "recall_routes": tuple(result.metadata.get("recall_routes") or ()),
+            "route_plan": dict(result.metadata.get("route_plan") or {}),
             "child_count": len(result.child_chunks),
             "ref_count": len(result.ref_chunks),
             "section_index": section_index,

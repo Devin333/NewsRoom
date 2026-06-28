@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -172,6 +173,9 @@ class EvidenceSampleResult:
     citation_accuracy_by_k: dict[int, float | None] = field(default_factory=dict)
     overlap_citation_accuracy_by_k: dict[int, float | None] = field(default_factory=dict)
     over_retrieval_by_k: dict[int, int] = field(default_factory=dict)
+    retrieval_intent: str = ""
+    recall_routes: tuple[str, ...] = ()
+    retrieval_metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_answerable(self) -> bool:
@@ -195,6 +199,9 @@ class EvidenceEvalResult:
     over_retrieval_at: dict[int, list[int]] = field(default_factory=dict)
     reciprocal_ranks: list[float] = field(default_factory=list)
     ndcg_at: dict[int, list[float]] = field(default_factory=dict)
+    intent_distribution: dict[str, int] = field(default_factory=dict)
+    route_distribution: dict[str, int] = field(default_factory=dict)
+    intent_confusion: dict[str, dict[str, int]] = field(default_factory=dict)
     by_qa_type: dict[str, "EvidenceEvalResult"] = field(default_factory=dict)
     samples: list[EvidenceSampleResult] = field(default_factory=list)
 
@@ -311,6 +318,9 @@ class EvidenceRetrievalEvaluator:
                 citation_accuracy_by_k={k: None for k in ks},
                 overlap_citation_accuracy_by_k={k: None for k in ks},
                 over_retrieval_by_k={k: 0 for k in ks},
+                retrieval_intent="abstain",
+                recall_routes=(),
+                retrieval_metadata={},
             )
 
         retrieved = self._retriever.retrieve(RetrievalRequest(
@@ -332,6 +342,7 @@ class EvidenceRetrievalEvaluator:
         ranked_images = [_image_ref_for_chunk(chunk) for chunk in ranked_chunks]
         ranked_image_candidates = [_image_ref_candidates_for_chunk(chunk) for chunk in ranked_chunks]
         ranked_score_breakdowns = [_score_breakdown_for_chunk(chunk) for chunk in ranked_chunks]
+        retrieval_metadata = dict(retrieved.metadata)
         first_rank = _first_gold_rank(ranked_match_ids, pair.gold_chunk_ids)
         return EvidenceSampleResult(
             pair=pair,
@@ -381,6 +392,9 @@ class EvidenceRetrievalEvaluator:
                 k: _candidate_over_retrieval_count(ranked_match_ids[:k], pair.gold_chunk_ids)
                 for k in ks
             },
+            retrieval_intent=str(retrieved.intent),
+            recall_routes=tuple(str(route) for route in retrieval_metadata.get("recall_routes") or ()),
+            retrieval_metadata=retrieval_metadata,
         )
 
 
@@ -1236,6 +1250,9 @@ def _aggregate_samples(
         ndcg_at={k: [] for k in ks},
         samples=list(samples),
     )
+    result.intent_distribution = _intent_distribution(samples)
+    result.route_distribution = _route_distribution(samples)
+    result.intent_confusion = _intent_confusion(samples)
     for sample in answerable:
         metric_case = _retrieval_metric_case(sample)
         result.reciprocal_ranks.append(kernel_reciprocal_rank(metric_case))
@@ -1257,6 +1274,35 @@ def _aggregate_samples(
             result.over_retrieval_at[k].append(sample.over_retrieval_by_k[k])
             result.ndcg_at[k].append(kernel_ndcg_at_k(metric_case, k))
     return result
+
+
+def _intent_distribution(samples: list[EvidenceSampleResult]) -> dict[str, int]:
+    counts = Counter(
+        sample.retrieval_intent
+        for sample in samples
+        if sample.retrieval_intent
+    )
+    return dict(sorted(counts.items()))
+
+
+def _route_distribution(samples: list[EvidenceSampleResult]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for sample in samples:
+        for route in sample.recall_routes:
+            counts[route] += 1
+    return dict(sorted(counts.items()))
+
+
+def _intent_confusion(samples: list[EvidenceSampleResult]) -> dict[str, dict[str, int]]:
+    matrix: dict[str, Counter[str]] = {}
+    for sample in samples:
+        if not sample.retrieval_intent:
+            continue
+        matrix.setdefault(sample.pair.qa_type, Counter())[sample.retrieval_intent] += 1
+    return {
+        qa_type: dict(sorted(counts.items()))
+        for qa_type, counts in sorted(matrix.items())
+    }
 
 
 def _retrieval_metric_case(sample: EvidenceSampleResult) -> RetrievalMetricCase:

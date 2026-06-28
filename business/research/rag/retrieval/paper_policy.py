@@ -22,27 +22,106 @@ QueryIntent = Literal[
 ]
 
 _INTENT_SIGNALS: tuple[QueryIntentRule, ...] = build_query_intent_rules([
+    ("table_query", [
+        "table",
+        "tab.",
+        "tab ",
+        "row",
+        "column",
+        "\u8868\u683c",
+    ]),
+    ("figure_query", [
+        "visual evidence",
+        "diagram",
+        "plot",
+        "mask",
+        "architecture figure",
+        "example image",
+        "example images",
+        "figure",
+        "fig",
+        "\u56fe",
+        "\u56fe\u8868",
+    ]),
+    ("formula_query", [
+        "mathematical relation",
+        "objective",
+        "loss",
+        "optimization",
+        "optimize",
+        "variable",
+        "define",
+        "relation",
+        "symbol",
+        "latex",
+        "formula",
+        "equation",
+        "eq.",
+        " eq ",
+        "\u516c\u5f0f",
+        "\u7b26\u53f7",
+        "\u53d8\u91cf",
+    ]),
     ("numerical_result", [
         "\u5b9e\u9a8c\u7ed3\u679c",
         "\u7ed3\u679c",
         "\u8868\u660e",
         "experiment results",
+        "reported experiments",
+        "quantitative evidence",
+        "performance",
         "results show",
+        "what do results show",
+        "what the results show",
+        "takeaway",
+        "suggest overall",
+        "accuracy",
+        "f1",
+        "bleu",
+        "rouge",
+        "outperform",
+        "score",
+        "\u51c6\u786e\u7387",
+        "\u591a\u5c11",
     ]),
-    ("table_query",      ["table", "tab.", "tab ", "row", "column"]),
-    ("formula_query",    ["formula", "equation", "eq.", " eq ", "latex", "symbol", "variable"]),
-    ("figure_query",     ["图", "figure", "fig", "图表"]),
-    ("formula_query",    ["公式", "formula", "equation", "符号", "变量"]),
-    ("comparison",       ["相比", "对比", "compared to", "versus", " vs ", "prior work", "baseline", "相关工作"]),
-    ("numerical_result", ["准确率", "f1", "bleu", "rouge", "outperform", "accuracy", "多少", "几%", "score"]),
-    ("contribution",     ["贡献", "contribution", "novelty", "propose", "提出", "创新", "what does this paper"]),
-    ("concept_method",   ["如何", "怎么", "how", "what is", "why", "method", "approach", "architecture"]),
+    ("comparison", [
+        "\u76f8\u6bd4",
+        "\u5bf9\u6bd4",
+        "compared to",
+        "versus",
+        " vs ",
+        "prior work",
+        "baseline",
+        "\u76f8\u5173\u5de5\u4f5c",
+    ]),
+    ("contribution", [
+        "\u8d21\u732e",
+        "contribution",
+        "novelty",
+        "propose",
+        "\u63d0\u51fa",
+        "\u521b\u65b0",
+        "what does this paper",
+    ]),
+    ("concept_method", [
+        "\u5982\u4f55",
+        "\u600e\u4e48",
+        "how",
+        "what is",
+        "why",
+        "method",
+        "approach",
+        "architecture",
+    ]),
 ])
 
-_FIGURE_ID_RE = re.compile(r"图\s*([\w-]+)?|\bfig(?:ure)?\.?\s*([A-Za-z0-9_-]+)?", flags=re.IGNORECASE)
+_FIGURE_ID_RE = re.compile(r"\u56fe\s*([\w-]+)?|\bfig(?:ure)?\.?\s*([A-Za-z0-9_-]+)?", flags=re.IGNORECASE)
 _CITATION_QUERY_RE = re.compile(
     r"\b(?:which|what)\s+evidence\s+supports\s+(?:the\s+)?claim\b|"
-    r"\bsupport(?:ing)?\s+evidence\s+for\s+(?:the\s+)?claim\b",
+    r"\bsupport(?:ing)?\s+evidence\s+for\s+(?:the\s+)?claim\b|"
+    r"\bwhich\s+passage\s+grounds\s+(?:the\s+paper'?s\s+)?claim\b|"
+    r"\bwhat\s+passage\s+grounds\s+(?:the\s+paper'?s\s+)?claim\b|"
+    r"\bgrounds\s+(?:the\s+paper'?s\s+)?claim\b",
     flags=re.IGNORECASE,
 )
 
@@ -55,6 +134,8 @@ class RetrievalRoute:
     figure_id: str = ""
     use_propositions: bool = False
     prefer_abstract: bool = False
+    recall_routes: tuple[str, ...] = ()
+    candidate_filter_groups: tuple[dict[str, Any], ...] = ()
     extra_filters: dict[str, Any] = field(default_factory=dict)
 
 
@@ -73,13 +154,14 @@ def classify_query_intent(question: str) -> QueryIntent:
 
 
 def build_retrieval_route(question: str) -> RetrievalRoute:
-    """Map a user question to retrieval path (PRD §7)."""
+    """Map a user question to the primary intent plus explanatory recall routes."""
     intent = classify_query_intent(question)
 
     if intent == "citation_query":
         return RetrievalRoute(
             intent=intent,
             chunk_type_filter=["abstract", "paragraph"],
+            recall_routes=("citation_claim", "abstract_body"),
             use_propositions=True,
         )
 
@@ -87,6 +169,7 @@ def build_retrieval_route(question: str) -> RetrievalRoute:
         return RetrievalRoute(
             intent=intent,
             chunk_type_filter=["figure"],
+            recall_routes=("figure_chunks", "caption_fields", "referenced_context"),
             extra_filters={"chunk_type": "figure"},
         )
 
@@ -94,12 +177,14 @@ def build_retrieval_route(question: str) -> RetrievalRoute:
         return RetrievalRoute(
             intent=intent,
             chunk_type_filter=["table"],
+            recall_routes=("table_chunks", "caption_fields", "table_context", "result_context"),
             extra_filters={"chunk_type": "table"},
         )
 
     if intent == "formula_query":
         return RetrievalRoute(
             intent=intent,
+            recall_routes=("formula_chunks", "equation_fields", "formula_context"),
             extra_filters={"has_formula": True},
         )
 
@@ -107,6 +192,12 @@ def build_retrieval_route(question: str) -> RetrievalRoute:
         return RetrievalRoute(
             intent=intent,
             section_role_filter=["experiment"],
+            chunk_type_filter=["table", "paragraph"],
+            recall_routes=("table_chunks", "result_paragraphs", "conclusion_context"),
+            candidate_filter_groups=(
+                {"chunk_type": "table"},
+                {"chunk_type": "paragraph"},
+            ),
             use_propositions=True,
         )
 
@@ -114,6 +205,7 @@ def build_retrieval_route(question: str) -> RetrievalRoute:
         return RetrievalRoute(
             intent=intent,
             chunk_type_filter=["abstract", "paragraph"],
+            recall_routes=("abstract_body", "method_context"),
             prefer_abstract=True,
             use_propositions=True,
         )
@@ -122,13 +214,19 @@ def build_retrieval_route(question: str) -> RetrievalRoute:
         return RetrievalRoute(
             intent=intent,
             section_role_filter=["related_work"],
+            chunk_type_filter=["paragraph", "table"],
+            recall_routes=("comparison_paragraphs", "table_chunks", "result_context"),
+            candidate_filter_groups=(
+                {"chunk_type": "paragraph"},
+                {"chunk_type": "table"},
+            ),
             use_propositions=True,
         )
 
-    # concept_method: default
     return RetrievalRoute(
         intent=intent,
         section_role_filter=["method"],
+        recall_routes=("method_body",),
     )
 
 

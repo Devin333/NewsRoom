@@ -12,6 +12,7 @@ from business.research.rag.evaluation.paper_evidence_eval import (
     load_evidence_golden_set,
     save_evidence_golden_set,
 )
+from business.research.rag.evaluation.paper_evaluation_report import EvidenceRegressionReport
 from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
 
@@ -143,6 +144,44 @@ def test_retrieval_evaluator_scores_multi_evidence_coverage_and_types() -> None:
     assert result.ndcg(2) == 1.0
     assert result.over_retrieval_rate(3) == 1.0
     assert result.by_qa_type["table_qa"].evidence_coverage(2) == 1.0
+
+
+def test_retrieval_evaluator_reports_intent_and_route_distribution() -> None:
+    table = _chunk(
+        "tbl-results",
+        chunk_type="table",
+        content="[Table 1]\nBLEU and accuracy scores.",
+    )
+    retriever = _FakeRetriever(RetrievalResult(
+        child_chunks=[table],
+        ref_chunks=[],
+        parent_chunks=[],
+        intent="numerical_result",
+        metadata={
+            "intent": "numerical_result",
+            "recall_routes": ["table_chunks", "result_paragraphs", "conclusion_context"],
+        },
+    ))
+    pair = EvidenceQAPair(
+        question="What quantitative evidence do the reported experiments provide?",
+        paper_id="p1",
+        qa_type="experiment_result_qa",
+        gold_chunk_ids=["tbl-results"],
+        required_evidence_types=["table"],
+    )
+
+    result = EvidenceRetrievalEvaluator(retriever).evaluate([pair], ks=(1,))
+    report = EvidenceRegressionReport(retrieval=result).to_dict()
+
+    assert result.intent_distribution == {"numerical_result": 1}
+    assert result.route_distribution == {
+        "conclusion_context": 1,
+        "result_paragraphs": 1,
+        "table_chunks": 1,
+    }
+    assert result.intent_confusion == {"experiment_result_qa": {"numerical_result": 1}}
+    assert report["retrieval"]["route_distribution"]["table_chunks"] == 1
+    assert report["retrieval"]["intent_confusion"]["experiment_result_qa"]["numerical_result"] == 1
 
 
 def test_retrieval_evaluator_counts_source_chunk_mapping_as_gold_hit() -> None:

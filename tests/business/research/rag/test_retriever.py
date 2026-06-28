@@ -190,6 +190,51 @@ def test_retrieve_intent_classified():
     assert result.intent == "figure_query"
 
 
+def test_numerical_result_records_multi_route_plan_and_filter_groups():
+    table = _chunk(
+        "tbl-results",
+        chunk_type="table",
+        section_title="Experiments",
+        section_role=["experiment"],
+        content="Table with BLEU scores and baseline performance.",
+        metadata={"table_id": "tbl-results"},
+    )
+    paragraph = _chunk(
+        "para-results",
+        chunk_type="paragraph",
+        section_title="Results",
+        section_role=["experiment"],
+        content="The reported experiments show stronger BLEU performance.",
+    )
+    store = _ScriptedChunkStore([table, paragraph], search_order=["tbl-results", "para-results"])
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+
+    result = retriever.retrieve(
+        RetrievalRequest(
+            paper_id="p1",
+            question="What quantitative evidence do the reported experiments provide about BLEU performance?",
+            limit=2,
+        )
+    )
+
+    assert result.intent == "numerical_result"
+    assert result.metadata["recall_routes"] == [
+        "table_chunks",
+        "result_paragraphs",
+        "conclusion_context",
+    ]
+    assert result.metadata["candidate_filter_group_count"] == 2
+    assert {tuple(sorted(call["filters"].items())) for call in store.calls} >= {
+        (("chunk_type", "table"),),
+        (("chunk_type", "paragraph"),),
+    }
+    assert {
+        route
+        for chunk in result.child_chunks
+        for route in chunk.metadata.get("matched_recall_routes", [])
+    } >= {"table_chunks", "result_paragraphs"}
+
+
 def test_parent_expansion():
     store = _make_store()
     parent, child1, _ = _seed_store(store)

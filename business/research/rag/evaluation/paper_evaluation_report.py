@@ -132,6 +132,12 @@ def _retrieval_result_to_dict(result: EvidenceEvalResult) -> dict[str, Any]:
             for k in result.ks
         },
         "score_breakdown_summary": _score_breakdown_summary(result),
+        "intent_distribution": dict(result.intent_distribution),
+        "route_distribution": dict(result.route_distribution),
+        "intent_confusion": {
+            qa_type: dict(counts)
+            for qa_type, counts in sorted(result.intent_confusion.items())
+        },
         "by_qa_type": {
             qa_type: _retrieval_result_to_dict(sub)
             for qa_type, sub in result.by_qa_type.items()

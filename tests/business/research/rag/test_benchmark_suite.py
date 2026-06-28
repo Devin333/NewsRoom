@@ -123,9 +123,16 @@ def test_run_benchmark_suite_writes_splits_without_fixed_window_by_default(tmp_p
     breakdown_summary = payload["candidate_test_report"]["retrieval"]["score_breakdown_summary"]
     assert breakdown_summary["evidence_count"] > 0
     assert "final_score" in breakdown_summary["components"]
+    retrieval_payload = payload["candidate_test_report"]["retrieval"]
+    assert retrieval_payload["intent_distribution"]
+    assert retrieval_payload["route_distribution"]
+    assert retrieval_payload["intent_confusion"]
     scorecard_metadata = payload["candidate_test_report"]["rag_evaluation_report"]["scorecard"]["metadata"]
     assert scorecard_metadata["score_breakdown_summary"]["evidence_count"] == breakdown_summary["evidence_count"]
-    assert "## Score Breakdown" in (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
+    markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
+    assert "## Score Breakdown" in markdown
+    assert "## Route Distribution" in markdown
+    assert "## Intent Confusion" in markdown
 
 
 def test_run_benchmark_suite_can_write_fixed_window_baseline_when_requested(tmp_path: Path) -> None:

@@ -1457,6 +1457,40 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
                 f"`{stats.get('avg', 0.0):.3f}` | `{stats.get('min', 0.0):.3f}` | "
                 f"`{stats.get('max', 0.0):.3f}` |"
             )
+    route_distribution = candidate.get("route_distribution") or {}
+    intent_distribution = candidate.get("intent_distribution") or {}
+    intent_confusion = candidate.get("intent_confusion") or {}
+    if route_distribution or intent_distribution:
+        lines.extend(["", "## Route Distribution", ""])
+        if intent_distribution:
+            lines.extend([
+                "| Intent | count |",
+                "| --- | ---: |",
+            ])
+            for intent, count in sorted(intent_distribution.items()):
+                lines.append(f"| `{intent}` | `{count}` |")
+        if route_distribution:
+            lines.extend([
+                "",
+                "| Recall route | count |",
+                "| --- | ---: |",
+            ])
+            for route_name, count in sorted(route_distribution.items()):
+                lines.append(f"| `{route_name}` | `{count}` |")
+    if intent_confusion:
+        lines.extend([
+            "",
+            "## Intent Confusion",
+            "",
+            "| QA type | routed intents |",
+            "| --- | --- |",
+        ])
+        for qa_type, counts in sorted(intent_confusion.items()):
+            rendered = ", ".join(
+                f"`{intent}`={count}"
+                for intent, count in sorted(counts.items())
+            )
+            lines.append(f"| `{qa_type}` | {rendered} |")
     lines.extend(["", "## Test Metrics By QA Type", ""])
     if baseline is not None:
         lines.extend([
