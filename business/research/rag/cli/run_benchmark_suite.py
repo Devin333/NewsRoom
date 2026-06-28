@@ -24,6 +24,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         visual=not args.no_visual,
         page_visual=not args.no_page_visual,
         render_page_visual=not args.no_render_page_visual,
+        lightweight_reranker=args.lightweight_reranker,
         gold_audit_sample_size=args.gold_audit_sample_size,
         gold_judge_mode=args.gold_judge,
         gold_judge_sample_size=args.gold_judge_sample_size,
@@ -108,6 +109,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-visual", action="store_true")
     parser.add_argument("--no-page-visual", action="store_true")
     parser.add_argument("--no-render-page-visual", action="store_true")
+    parser.add_argument(
+        "--lightweight-reranker",
+        action="store_true",
+        help="Enable deterministic structured field reranking for the candidate retriever.",
+    )
     return parser
 
 

@@ -9,6 +9,7 @@ from business.research.document.models import PaperChunk
 from business.research.rag.retrieval.paper_retriever import (
     DEFAULT_RETRIEVAL_POLICY,
     HIGH_VALUE_VISUAL_RESULT_INTENTS,
+    LIGHTWEIGHT_FIELD_RERANK_INTENTS,
     NEWS_PAPER_RAG_POLICY_ENV,
     PAPER_VISUAL_RAG_TUNED_POLICY,
     ResearchRetriever,
@@ -664,6 +665,49 @@ def test_structured_field_reranker_influences_child_ordering():
     assert result.metadata["field_rerank_top"] == 0.95
 
 
+def test_structured_field_reranker_passage_includes_expanded_fields():
+    chunk = _chunk(
+        "table-child",
+        chunk_type="table",
+        section_title="Results",
+        section_role=["experiment"],
+        content="[Table 1]\nCaption: Accuracy benchmark results.\nRows: baseline 80, ours 95.",
+        metadata={
+            "caption_text": "Accuracy benchmark results.",
+            "rows": [{"model": "ours", "accuracy": "95"}],
+            "columns": ["model", "accuracy"],
+            "visual_description": "A compact table comparing baseline and ours.",
+            "referenced_text": ["The results show a clear improvement."],
+        },
+    ).model_copy(update={
+        "formula_latex": "s = x + y",
+        "formula_description": "The score combines x and y.",
+        "has_formula": True,
+    })
+    store = _ScriptedChunkStore([chunk], search_order=["table-child"])
+    field_reranker = _KeywordReranker({"Accuracy benchmark": 0.9})
+
+    retriever = ResearchRetriever(
+        store,
+        policy=RetrievalPolicy(overfetch_multiplier=1),
+        field_reranker=field_reranker,
+    )
+    retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What quantitative evidence reports accuracy?", limit=1)
+    )
+
+    passage = field_reranker.calls[0][1][0]
+    assert "Section: Results" in passage
+    assert "Chunk type: table" in passage
+    assert "Caption:" in passage
+    assert "Equation:" in passage
+    assert "Table rows:" in passage
+    assert "Table columns:" in passage
+    assert "Visual description:" in passage
+    assert "Referenced text:" in passage
+    assert "Body:" in passage
+
+
 def test_visual_tuned_policy_skips_rerankers_for_method_intent():
     weak = _chunk("weak-child", content="weak-field generic method details.")
     strong = _chunk("strong-child", content="strong-field exact method explanation.")
@@ -862,7 +906,7 @@ def test_build_retrieval_policy_visual_tuned_uses_benchmark_weights():
     assert policy.visual_fusion_text_weight == pytest.approx(0.85)
     assert policy.visual_fusion_visual_weight == pytest.approx(0.15)
     assert policy.reranking_intents == HIGH_VALUE_VISUAL_RESULT_INTENTS
-    assert policy.field_reranking_intents == HIGH_VALUE_VISUAL_RESULT_INTENTS
+    assert policy.field_reranking_intents == LIGHTWEIGHT_FIELD_RERANK_INTENTS
     assert policy.normalized_child_score_weights() == {
         "semantic": 0.45,
         "field": 0.4,

@@ -69,6 +69,9 @@ class EvidenceRegressionReport:
             distribution = _field_embedding_distribution(self.retrieval)
             if distribution["matched_evidence_count"]:
                 lines.extend(_field_embedding_distribution_markdown(distribution))
+            rerank_distribution = _rerank_distribution(self.retrieval)
+            if rerank_distribution["reranked_evidence_count"]:
+                lines.extend(_rerank_distribution_markdown(rerank_distribution))
             lines.extend(["## Retrieval", "", _code_block(self.retrieval.report()), ""])
         if self.answer is not None:
             lines.extend(["## Answer", "", _code_block(self.answer.report()), ""])
@@ -137,6 +140,7 @@ def _retrieval_result_to_dict(result: EvidenceEvalResult) -> dict[str, Any]:
         },
         "score_breakdown_summary": _score_breakdown_summary(result),
         "field_embedding_distribution": _field_embedding_distribution(result),
+        "rerank_distribution": _rerank_distribution(result),
         "intent_distribution": dict(result.intent_distribution),
         "route_distribution": dict(result.route_distribution),
         "intent_confusion": {
@@ -197,6 +201,47 @@ def _field_embedding_distribution(result: EvidenceEvalResult) -> dict[str, Any]:
     }
 
 
+def _rerank_distribution(result: EvidenceEvalResult) -> dict[str, Any]:
+    top_k = max(result.ks) if result.ks else None
+    scores: list[float] = []
+    evidence_count = 0
+    for breakdown in iter_ranked_score_breakdowns(result, top_k=top_k):
+        evidence_count += 1
+        raw = breakdown.get("rerank_score")
+        if raw is None:
+            continue
+        try:
+            score = float(raw)
+        except (TypeError, ValueError):
+            continue
+        scores.append(score)
+
+    enabled_count = 0
+    intent_counts: dict[str, int] = {}
+    for sample in result.samples:
+        metadata = sample.retrieval_metadata
+        enabled = bool(
+            metadata.get("reranker_enabled_for_intent")
+            or metadata.get("field_reranker_enabled_for_intent")
+        )
+        if enabled:
+            enabled_count += 1
+            intent = str(sample.retrieval_intent or metadata.get("intent") or "")
+            if intent:
+                intent_counts[intent] = intent_counts.get(intent, 0) + 1
+
+    return {
+        "top_k": top_k,
+        "evidence_count": evidence_count,
+        "reranker_enabled_sample_count": enabled_count,
+        "reranked_evidence_count": len(scores),
+        "avg_score": sum(scores) / len(scores) if scores else 0.0,
+        "min_score": min(scores) if scores else 0.0,
+        "max_score": max(scores) if scores else 0.0,
+        "enabled_intents": dict(sorted(intent_counts.items())),
+    }
+
+
 def _best_embedding_field_from_breakdown(breakdown: dict[str, float]) -> tuple[str, float]:
     best_field = ""
     best_score = 0.0
@@ -247,6 +292,27 @@ def _field_embedding_distribution_markdown(distribution: dict[str, Any]) -> list
         for field_name, count in sorted(search_hits.items()):
             lines.append(f"| `{field_name}` | `{count}` |")
     lines.append("")
+    return lines
+
+
+def _rerank_distribution_markdown(distribution: dict[str, Any]) -> list[str]:
+    lines = [
+        "## Rerank Distribution",
+        "",
+        f"- top_k: `{distribution.get('top_k')}`",
+        f"- reranker_enabled_sample_count: `{distribution.get('reranker_enabled_sample_count', 0)}`",
+        f"- reranked_evidence_count: `{distribution.get('reranked_evidence_count', 0)}`",
+        f"- avg_score: `{distribution.get('avg_score', 0.0):.3f}`",
+        f"- min_score: `{distribution.get('min_score', 0.0):.3f}`",
+        f"- max_score: `{distribution.get('max_score', 0.0):.3f}`",
+        "",
+    ]
+    intents = distribution.get("enabled_intents") or {}
+    if intents:
+        lines.extend(["| Intent | enabled samples |", "| --- | ---: |"])
+        for intent, count in sorted(intents.items()):
+            lines.append(f"| `{intent}` | `{count}` |")
+        lines.append("")
     return lines
 
 

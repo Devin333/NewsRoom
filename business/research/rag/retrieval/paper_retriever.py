@@ -87,6 +87,7 @@ DEFAULT_RETRIEVAL_POLICY = "default"
 PAPER_VISUAL_RAG_TUNED_POLICY = "paper_visual_rag_tuned"
 NEWS_PAPER_RAG_POLICY_ENV = "NEWS_PAPER_RAG_POLICY"
 HIGH_VALUE_VISUAL_RESULT_INTENTS = ("figure_query", "table_query", "numerical_result", "comparison")
+LIGHTWEIGHT_FIELD_RERANK_INTENTS = (*HIGH_VALUE_VISUAL_RESULT_INTENTS, "formula_query")
 
 
 @dataclass(frozen=True)
@@ -273,7 +274,7 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         visual_fusion_text_weight=0.85,
         visual_fusion_visual_weight=0.15,
         reranking_intents=HIGH_VALUE_VISUAL_RESULT_INTENTS,
-        field_reranking_intents=HIGH_VALUE_VISUAL_RESULT_INTENTS,
+        field_reranking_intents=LIGHTWEIGHT_FIELD_RERANK_INTENTS,
         element_label_boosts={
             "formula_query": 0.18,
             "table_query": 0.18,
@@ -1737,7 +1738,10 @@ def _field_rerank_passage(chunk: PaperChunk) -> str:
         "visual_description": "Visual description",
         "referenced_text": "Referenced text",
     }
-    lines = []
+    lines = [
+        f"Section: {chunk.section_title or ''}".strip(),
+        f"Chunk type: {chunk.chunk_type}",
+    ]
     for field_name in FIELD_NAMES:
         text = field_texts.text_for(field_name)
         if not text:
@@ -2320,6 +2324,8 @@ def _with_expansion_metadata(
 
 __all__ = [
     "DEFAULT_RETRIEVAL_POLICY",
+    "HIGH_VALUE_VISUAL_RESULT_INTENTS",
+    "LIGHTWEIGHT_FIELD_RERANK_INTENTS",
     "NEWS_PAPER_RAG_POLICY_ENV",
     "PAPER_VISUAL_RAG_TUNED_POLICY",
     "ResearchRetriever",

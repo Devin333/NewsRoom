@@ -240,6 +240,34 @@ def test_run_benchmark_suite_writes_blind_semantic_protocol_and_question_audit(t
     assert not any("Equation 1" in record["question"] for record in profiled)
 
 
+def test_run_benchmark_suite_can_report_lightweight_rerank_distribution(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+
+    output_dir = tmp_path / "suite"
+    result = run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=5,
+        question_profile="blind_semantic",
+        lightweight_reranker=True,
+    ))
+
+    payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
+    markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
+    distribution = payload["candidate_test_report"]["retrieval"]["rerank_distribution"]
+
+    assert result.candidate_test_report["metadata"]["lightweight_reranker_enabled"] is True
+    assert distribution["reranker_enabled_sample_count"] > 0
+    assert distribution["reranked_evidence_count"] > 0
+    assert distribution["max_score"] > 0.0
+    assert "## Rerank Distribution" in markdown
+
+
 def test_question_ambiguity_audit_flags_duplicate_ambiguous_and_label_leakage() -> None:
     pairs = [
         EvidenceQAPair(

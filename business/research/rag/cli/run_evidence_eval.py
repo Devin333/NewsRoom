@@ -84,6 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             visual_enabled=args.visual,
             image_root=Path(args.image_root) if args.image_root else None,
             retrieval_policy=args.retrieval_policy,
+            lightweight_reranker=args.lightweight_reranker,
         )
         retrieval = EvidenceRetrievalEvaluator(retriever).evaluate(pairs)
         policy = retriever.policy
@@ -96,6 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         metadata["visual_fusion_enabled"] = visual_store is not None
         metadata["visual_indexed_chunks"] = _visual_indexed_count(visual_store)
+        metadata["lightweight_reranker_enabled"] = bool(args.lightweight_reranker)
     report = EvidenceRegressionReport(
         retrieval=retrieval,
         metadata=metadata,
@@ -177,6 +179,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Named retrieval policy for --live-retrieval, for example paper_visual_rag_tuned.",
     )
     parser.add_argument(
+        "--lightweight-reranker",
+        action="store_true",
+        help="Enable deterministic structured field reranking for --live-retrieval.",
+    )
+    parser.add_argument(
         "--threshold",
         action="append",
         default=[],
@@ -207,6 +214,7 @@ def _build_live_retriever(
     visual_enabled: bool,
     image_root: Path | None,
     retrieval_policy: str | None = None,
+    lightweight_reranker: bool = False,
 ):
     from business.research.rag.retrieval.paper_retriever import ResearchRetriever, build_retrieval_policy
 
@@ -226,10 +234,16 @@ def _build_live_retriever(
         )
         visual_store.ensure_collection()
         visual_store.index_chunks(chunks)
+    field_reranker = None
+    if lightweight_reranker:
+        from business.research.rag.retrieval.paper_lightweight_reranker import LightweightLexicalReranker
+
+        field_reranker = LightweightLexicalReranker()
     return ResearchRetriever(
         chunk_store,
         policy=build_retrieval_policy(retrieval_policy),
         field_index=field_index,
+        field_reranker=field_reranker,
         visual_store=visual_store,
     ), visual_store
 

@@ -412,6 +412,7 @@ class BenchmarkSuiteConfig:
     visual: bool = True
     page_visual: bool = True
     render_page_visual: bool = False
+    lightweight_reranker: bool = False
     gold_audit_sample_size: int = 30
     gold_judge_mode: str = "none"
     gold_judge_sample_size: int | None = None
@@ -820,6 +821,7 @@ def _evaluate_candidate(
         visual_enabled=config.visual,
         image_root=config.image_root or config.papers_dir,
         retrieval_policy=config.retrieval_policy,
+        lightweight_reranker=config.lightweight_reranker,
     )
     retrieval = EvidenceRetrievalEvaluator(retriever).evaluate(pairs)
     answer_samples: list[EvidenceAnswerSample] = []
@@ -847,6 +849,7 @@ def _evaluate_candidate(
         "chunks_total": len(chunks),
         "visual_fusion_enabled": visual_store is not None,
         "visual_indexed_chunks": len(getattr(visual_store, "_vectors", {})) if visual_store is not None else 0,
+        "lightweight_reranker_enabled": config.lightweight_reranker,
         "answer_eval_enabled": config.answer_eval_enabled,
         "answer_judge_mode": config.answer_judge_mode,
         "answer_samples": len(answer_samples),
@@ -1490,6 +1493,23 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             lines.extend(["", "| Search hit field | count |", "| --- | ---: |"])
             for field_name, count in sorted(field_search_hits.items()):
                 lines.append(f"| `{field_name}` | `{count}` |")
+    rerank_distribution = candidate.get("rerank_distribution") or {}
+    if rerank_distribution.get("reranked_evidence_count"):
+        lines.extend([
+            "",
+            "## Rerank Distribution",
+            "",
+            f"- reranker enabled samples: `{rerank_distribution.get('reranker_enabled_sample_count', 0)}`",
+            f"- reranked evidence count: `{rerank_distribution.get('reranked_evidence_count', 0)}`",
+            f"- avg/min/max: `{rerank_distribution.get('avg_score', 0.0):.3f}` / "
+            f"`{rerank_distribution.get('min_score', 0.0):.3f}` / "
+            f"`{rerank_distribution.get('max_score', 0.0):.3f}`",
+        ])
+        enabled_intents = rerank_distribution.get("enabled_intents") or {}
+        if enabled_intents:
+            lines.extend(["", "| Intent | enabled samples |", "| --- | ---: |"])
+            for intent, count in sorted(enabled_intents.items()):
+                lines.append(f"| `{intent}` | `{count}` |")
     route_distribution = candidate.get("route_distribution") or {}
     intent_distribution = candidate.get("intent_distribution") or {}
     intent_confusion = candidate.get("intent_confusion") or {}
