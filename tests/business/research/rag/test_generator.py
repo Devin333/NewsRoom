@@ -32,6 +32,13 @@ def test_answer_context_assembler_interleaves_related_context() -> None:
         "para-near": "parent",
         "para-other": "child",
     }
+    assert selection.metadata["context_role_buckets"] == {
+        "fig-1": "primary_evidence",
+        "para-near": "interpretation_context",
+        "para-other": "primary_evidence",
+    }
+    assert selection.metadata["primary_evidence_ids"] == ["fig-1", "para-other"]
+    assert selection.metadata["interpretation_context_ids"] == ["para-near"]
     assert selection.metadata["related_context_ids"] == ["para-near"]
 
 
@@ -88,6 +95,47 @@ def test_answer_context_assembler_prioritizes_required_context_ids() -> None:
     assert selection.metadata["required_context_coverage"] == 1.0
 
 
+def test_answer_context_assembler_records_locator_context() -> None:
+    table = _chunk(
+        "table-1",
+        "table",
+        "[Table 1] Caption: results.",
+        metadata={
+            "source_locator": "paper://p1/pdf#page=6&pdf_rect=1,2,3,4",
+            "caption_source_locator": "paper://p1/pdf#page=6&pdf_rect=1,1,3,2",
+            "image_ref": "tables/table1.png",
+            "page": 6,
+            "pdf_rect": [1, 2, 3, 4],
+            "nearby_context_chunk_id": "result-para",
+        },
+    )
+    result_para = _chunk("result-para", "paragraph", "The results improve accuracy.")
+    retrieval = RetrievalResult(
+        parent_chunks=[result_para],
+        child_chunks=[table],
+        ref_chunks=[],
+        intent="table_query",  # type: ignore[arg-type]
+    )
+
+    selection = AnswerContextAssembler(max_context_chunks=2).select(retrieval)
+
+    assert selection.metadata["context_role_buckets"] == {
+        "table-1": "primary_evidence",
+        "result-para": "interpretation_context",
+    }
+    assert selection.metadata["locator_context"] == [{
+        "source_locator": "paper://p1/pdf#page=6&pdf_rect=1,2,3,4",
+        "caption_source_locator": "paper://p1/pdf#page=6&pdf_rect=1,1,3,2",
+        "image_ref": "tables/table1.png",
+        "page": 6,
+        "pdf_rect": [1, 2, 3, 4],
+        "chunk_id": "table-1",
+        "chunk_type": "table",
+        "context_role": "primary_evidence",
+        "source_bucket": "child",
+    }]
+
+
 def test_answer_context_assembler_records_missing_required_context_ids() -> None:
     table = _chunk("table-1", "table", "[Table 1] Results.")
     retrieval = RetrievalResult(
@@ -138,6 +186,9 @@ def test_answer_generator_context_includes_structured_metadata_fields() -> None:
                 "average score in both categories by more than 5 points."
             ),
             "table_text": "Task | Prior | PaLM\nAverage NLU | 70 | 76",
+            "columns": ["Task", "Prior", "PaLM"],
+            "rows": [{"task": "Average NLU", "prior": "70", "palm": "76"}],
+            "source_locator": "paper://p1/pdf#page=5",
         },
     )
     retrieval = RetrievalResult(
@@ -154,7 +205,78 @@ def test_answer_generator_context_includes_structured_metadata_fields() -> None:
     ).generate("What do the experiment results around Table 5 show?", retrieval))
 
     assert "PaLM 540B improves the average score" in answer.contexts[0]
+    assert "Task Prior PaLM" in answer.contexts[0]
+    assert "Average NLU | 70 | 76" in answer.contexts[0]
     assert "Average NLU" in answer.contexts[0]
+    assert "Source locator: paper://p1/pdf#page=5" in answer.contexts[0]
+
+
+def test_answer_generator_context_includes_figure_visual_locator_fields() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return prompt
+
+    figure = _chunk(
+        "fig-1",
+        "figure",
+        "[Figure 1] Caption: architecture.",
+        metadata={
+            "caption_text": "Figure 1 shows the model architecture.",
+            "visual_description": "The image contains stacked encoder and decoder blocks.",
+            "image_ref": "figures/fig1.png",
+            "source_locator": "paper://p1/pdf#page=3",
+        },
+    )
+    explanation = _chunk("para-fig", "paragraph", "The paragraph interprets the figure.")
+    retrieval = RetrievalResult(
+        parent_chunks=[explanation],
+        child_chunks=[figure],
+        ref_chunks=[],
+        intent="figure_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(
+        fake_llm,
+        max_context_chunks=2,
+        max_chars_per_chunk=700,
+    ).generate("What does the figure show?", retrieval))
+
+    assert "Caption: Figure 1 shows the model architecture." in answer.contexts[0]
+    assert "Visual description: The image contains stacked encoder and decoder blocks." in answer.contexts[0]
+    assert "Image ref: figures/fig1.png" in answer.contexts[0]
+    assert answer.context_metadata["context_role_buckets"]["fig-1"] == "primary_evidence"
+    assert answer.context_metadata["context_role_buckets"]["para-fig"] == "interpretation_context"
+    assert answer.context_metadata["locator_context"][0]["image_ref"] == "figures/fig1.png"
+
+
+def test_answer_generator_context_includes_formula_referenced_text() -> None:
+    async def fake_llm(prompt: str) -> str:
+        return prompt
+
+    formula = _chunk(
+        "eq-1",
+        "formula",
+        "Equation: y = Wx.",
+        metadata={
+            "formula_referenced_text": [
+                "The surrounding paragraph explains that W projects x into output space."
+            ],
+        },
+    ).model_copy(update={"has_formula": True, "formula_latex": "y = Wx"})
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[formula],
+        ref_chunks=[],
+        intent="formula_query",  # type: ignore[arg-type]
+    )
+
+    answer = asyncio.run(AnswerGenerator(
+        fake_llm,
+        max_context_chunks=1,
+        max_chars_per_chunk=700,
+    ).generate("How is the equation explained?", retrieval))
+
+    assert "Equation: y = Wx" in answer.contexts[0]
+    assert "Referenced text: The surrounding paragraph explains" in answer.contexts[0]
 
 
 def test_answer_generator_falls_back_when_llm_returns_unrelated_uncited_text() -> None:

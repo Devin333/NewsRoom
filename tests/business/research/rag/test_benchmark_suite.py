@@ -331,6 +331,9 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
     assert all("deterministic_scores" in record for record in answer_sample_records)
     assert all("context_score_breakdowns" in record for record in answer_sample_records)
     assert any(record["context_score_breakdowns"] for record in answer_sample_records)
+    assert all("context_role_buckets" in record["metadata"] for record in answer_sample_records)
+    assert any(record["metadata"]["primary_evidence_ids"] for record in answer_sample_records)
+    assert all("locator_context" in record["metadata"] for record in answer_sample_records)
     assert all(
         "retrieval_context_coverage" in record["deterministic_scores"]
         for record in answer_sample_records

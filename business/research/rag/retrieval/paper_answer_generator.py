@@ -50,7 +50,36 @@ class AnswerContextSelection:
 
 
 _SYSTEM_INSTR = DEFAULT_GROUNDED_SYSTEM_INSTRUCTION
-_CONTEXT_FIELD_ORDER = ("title", "abstract", "caption", "equation", "body")
+_CONTEXT_FIELD_ORDER = (
+    "title",
+    "abstract",
+    "caption",
+    "equation",
+    "table_columns",
+    "table_rows",
+    "visual_description",
+    "referenced_text",
+    "body",
+)
+_CONTEXT_FIELD_LABELS = {
+    "title": "Title",
+    "abstract": "Abstract",
+    "caption": "Caption",
+    "equation": "Equation",
+    "table_columns": "Table columns",
+    "table_rows": "Table rows",
+    "visual_description": "Visual description",
+    "referenced_text": "Referenced text",
+    "body": "Body",
+}
+_LOCATOR_CONTEXT_KEYS = (
+    "source_locator",
+    "caption_source_locator",
+    "image_ref",
+    "page",
+    "pdf_rect",
+    "caption_pdf_rect",
+)
 
 
 class AnswerContextAssembler:
@@ -114,14 +143,36 @@ class AnswerContextAssembler:
             _append_chunk(selected, chunk)
 
         selected = selected[: self._max_chunks]
+        source_buckets = {
+            chunk.chunk_id: bucket_by_id.get(chunk.chunk_id, "unknown")
+            for chunk in selected
+        }
+        role_buckets = {
+            chunk.chunk_id: _context_role(chunk, source_buckets.get(chunk.chunk_id, "unknown"))
+            for chunk in selected
+        }
         return AnswerContextSelection(
             chunks=selected,
             metadata={
                 "context_selection_strategy": self.strategy_name,
-                "context_source_buckets": {
-                    chunk.chunk_id: bucket_by_id.get(chunk.chunk_id, "unknown")
+                "context_source_buckets": source_buckets,
+                "context_role_buckets": role_buckets,
+                "primary_evidence_ids": [
+                    chunk.chunk_id
                     for chunk in selected
-                },
+                    if role_buckets.get(chunk.chunk_id) == "primary_evidence"
+                ],
+                "interpretation_context_ids": [
+                    chunk.chunk_id
+                    for chunk in selected
+                    if role_buckets.get(chunk.chunk_id) == "interpretation_context"
+                ],
+                "locator_context": _locator_context_items(
+                    selected,
+                    role_buckets=role_buckets,
+                    source_buckets=source_buckets,
+                ),
+                "context_relationships": _context_relationships(selected),
                 "related_context_ids": _unique_texts(related_ids),
                 "required_context_ids": required_ids,
                 "selected_required_context_ids": [
@@ -238,6 +289,69 @@ def _related_context_ids(chunk: PaperChunk) -> list[str]:
     ).ids)
 
 
+def _context_role(chunk: PaperChunk, source_bucket: str) -> str:
+    if _has_expansion_metadata(chunk):
+        return "interpretation_context"
+    if source_bucket in {"ref", "parent"}:
+        return "interpretation_context"
+    return "primary_evidence"
+
+
+def _has_expansion_metadata(chunk: PaperChunk) -> bool:
+    metadata = chunk.metadata
+    return any(
+        bool(metadata.get(key))
+        for key in (
+            "expansion_reason",
+            "expansion_edge",
+            "expanded_from_chunk_id",
+            "parent_expansion_reason",
+            "source_parent_chunk_id",
+        )
+    )
+
+
+def _locator_context_items(
+    chunks: list[PaperChunk],
+    *,
+    role_buckets: dict[str, str],
+    source_buckets: dict[str, str],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for chunk in chunks:
+        payload = {
+            key: chunk.metadata.get(key)
+            for key in _LOCATOR_CONTEXT_KEYS
+            if chunk.metadata.get(key) not in (None, "", [], {})
+        }
+        if not payload:
+            continue
+        payload.update({
+            "chunk_id": chunk.chunk_id,
+            "chunk_type": chunk.chunk_type,
+            "context_role": role_buckets.get(chunk.chunk_id, "primary_evidence"),
+            "source_bucket": source_buckets.get(chunk.chunk_id, "unknown"),
+        })
+        items.append(payload)
+    return items
+
+
+def _context_relationships(chunks: list[PaperChunk]) -> list[dict[str, Any]]:
+    relationships: list[dict[str, Any]] = []
+    for chunk in chunks:
+        metadata = chunk.metadata
+        relationship = {
+            "chunk_id": chunk.chunk_id,
+            "expanded_from_chunk_id": metadata.get("expanded_from_chunk_id", ""),
+            "expansion_reason": metadata.get("expansion_reason", ""),
+            "expansion_edge": metadata.get("expansion_edge", ""),
+            "parent_anchor_child_id": metadata.get("parent_anchor_child_id", ""),
+        }
+        if any(value for key, value in relationship.items() if key != "chunk_id"):
+            relationships.append(relationship)
+    return relationships
+
+
 def _system_instruction_for_question(question: str) -> str:
     lowered = str(question or "").casefold()
     extras: list[str] = []
@@ -272,10 +386,24 @@ def _answer_context_text(chunk: PaperChunk) -> str:
     for field_name in _CONTEXT_FIELD_ORDER:
         text = fields.text_for(field_name)
         if text:
-            _append_context_part(parts, seen, f"{field_name.title()}: {text}")
+            label = _CONTEXT_FIELD_LABELS.get(field_name, field_name)
+            _append_context_part(parts, seen, f"{label}: {text}")
+    for label, text in _locator_context_lines(chunk):
+        _append_context_part(parts, seen, f"{label}: {text}")
     if not parts:
         _append_context_part(parts, seen, chunk.content)
     return "\n".join(parts)
+
+
+def _locator_context_lines(chunk: PaperChunk) -> list[tuple[str, str]]:
+    lines: list[tuple[str, str]] = []
+    if image_ref := str(chunk.metadata.get("image_ref") or "").strip():
+        lines.append(("Image ref", image_ref))
+    if source_locator := str(chunk.metadata.get("source_locator") or "").strip():
+        lines.append(("Source locator", source_locator))
+    if caption_locator := str(chunk.metadata.get("caption_source_locator") or "").strip():
+        lines.append(("Caption source locator", caption_locator))
+    return lines
 
 
 def _append_context_part(parts: list[str], seen: set[str], raw: str) -> None:

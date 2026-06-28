@@ -934,6 +934,13 @@ async def _generate_answer_samples(
                 "retrieved_chunk_ids": list(answer.context_metadata.get("retrieved_chunk_ids") or []),
                 "context_selection_strategy": answer.context_metadata.get("context_selection_strategy", ""),
                 "context_source_buckets": dict(answer.context_metadata.get("context_source_buckets") or {}),
+                "context_role_buckets": dict(answer.context_metadata.get("context_role_buckets") or {}),
+                "primary_evidence_ids": list(answer.context_metadata.get("primary_evidence_ids") or []),
+                "interpretation_context_ids": list(
+                    answer.context_metadata.get("interpretation_context_ids") or []
+                ),
+                "locator_context": list(answer.context_metadata.get("locator_context") or []),
+                "context_relationships": list(answer.context_metadata.get("context_relationships") or []),
                 "required_context_ids": list(answer.context_metadata.get("required_context_ids") or []),
                 "selected_required_context_ids": list(
                     answer.context_metadata.get("selected_required_context_ids") or []
