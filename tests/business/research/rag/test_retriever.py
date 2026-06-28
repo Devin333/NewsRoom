@@ -11,6 +11,7 @@ from business.research.rag.retrieval.paper_retriever import (
     HIGH_VALUE_VISUAL_RESULT_INTENTS,
     LIGHTWEIGHT_FIELD_RERANK_INTENTS,
     NEWS_PAPER_RAG_POLICY_ENV,
+    PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
     PAPER_VISUAL_RAG_TUNED_POLICY,
     ResearchRetriever,
     RetrievalPolicy,
@@ -18,6 +19,7 @@ from business.research.rag.retrieval.paper_retriever import (
     RetrievalResult,
     build_retrieval_policy,
     build_retrieval_policy_from_env,
+    retrieval_policy_enables_lightweight_reranker,
 )
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
@@ -935,12 +937,30 @@ def test_build_retrieval_policy_visual_tuned_uses_benchmark_weights():
     }
 
 
+def test_build_retrieval_policy_blind_semantic_uses_promotion_weights():
+    policy = build_retrieval_policy(PAPER_BLIND_SEMANTIC_RAG_V1_POLICY)
+
+    assert policy.name == PAPER_BLIND_SEMANTIC_RAG_V1_POLICY
+    assert policy.overfetch_multiplier == 5
+    assert policy.field_reranking_intents == LIGHTWEIGHT_FIELD_RERANK_INTENTS
+    assert policy.normalized_child_final_score_weights() == {
+        "semantic": 0.35,
+        "field_embedding": 0.25,
+        "field_rerank": 0.3,
+        "position": 0.0,
+        "graph": 0.1,
+    }
+    assert retrieval_policy_enables_lightweight_reranker(PAPER_BLIND_SEMANTIC_RAG_V1_POLICY) is True
+    assert retrieval_policy_enables_lightweight_reranker(PAPER_VISUAL_RAG_TUNED_POLICY) is False
+    assert retrieval_policy_enables_lightweight_reranker(DEFAULT_RETRIEVAL_POLICY) is False
+
+
 def test_build_retrieval_policy_from_env_reads_policy_name():
     policy = build_retrieval_policy_from_env({
-        NEWS_PAPER_RAG_POLICY_ENV: PAPER_VISUAL_RAG_TUNED_POLICY,
+        NEWS_PAPER_RAG_POLICY_ENV: PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
     })
 
-    assert policy.name == PAPER_VISUAL_RAG_TUNED_POLICY
+    assert policy.name == PAPER_BLIND_SEMANTIC_RAG_V1_POLICY
 
 
 def test_build_retrieval_policy_rejects_unknown_name():

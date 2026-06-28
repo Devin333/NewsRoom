@@ -240,7 +240,7 @@ def test_run_benchmark_suite_writes_blind_semantic_protocol_and_question_audit(t
     assert not any("Equation 1" in record["question"] for record in profiled)
 
 
-def test_run_benchmark_suite_can_report_lightweight_rerank_distribution(tmp_path: Path) -> None:
+def test_run_benchmark_suite_can_report_policy_promotion_checklist(tmp_path: Path) -> None:
     papers_dir = tmp_path / "papers"
     _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
 
@@ -254,14 +254,23 @@ def test_run_benchmark_suite_can_report_lightweight_rerank_distribution(tmp_path
         render_page_visual=False,
         gold_audit_sample_size=5,
         question_profile="blind_semantic",
-        lightweight_reranker=True,
+        retrieval_policy="paper_blind_semantic_rag_v1",
     ))
 
     payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
     markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
+    checklist = payload["policy_promotion_checklist"]
     distribution = payload["candidate_test_report"]["retrieval"]["rerank_distribution"]
 
+    assert result.policy_promotion_checklist.policy_name == "paper_blind_semantic_rag_v1"
+    assert (output_dir / "policy_promotion_checklist.json").exists()
+    assert (output_dir / "policy_promotion_checklist.md").exists()
+    assert checklist["policy_name"] == "paper_blind_semantic_rag_v1"
+    assert checklist["ready_for_promotion"] is False
+    assert any(check["check_id"] == "answer_success" and check["status"] == "fail" for check in checklist["checks"])
+    assert "## Policy Promotion Checklist" in markdown
     assert result.candidate_test_report["metadata"]["lightweight_reranker_enabled"] is True
+    assert result.candidate_test_report["metadata"]["retrieval_policy"] == "paper_blind_semantic_rag_v1"
     assert distribution["reranker_enabled_sample_count"] > 0
     assert distribution["reranked_evidence_count"] > 0
     assert distribution["max_score"] > 0.0

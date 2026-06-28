@@ -97,7 +97,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         metadata["visual_fusion_enabled"] = visual_store is not None
         metadata["visual_indexed_chunks"] = _visual_indexed_count(visual_store)
-        metadata["lightweight_reranker_enabled"] = bool(args.lightweight_reranker)
+        metadata["lightweight_reranker_enabled"] = _lightweight_reranker_enabled(
+            args.retrieval_policy,
+            explicit=args.lightweight_reranker,
+        )
     report = EvidenceRegressionReport(
         retrieval=retrieval,
         metadata=metadata,
@@ -176,7 +179,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--retrieval-policy",
         default="",
-        help="Named retrieval policy for --live-retrieval, for example paper_visual_rag_tuned.",
+        help=(
+            "Named retrieval policy for --live-retrieval, for example "
+            "paper_visual_rag_tuned or paper_blind_semantic_rag_v1."
+        ),
     )
     parser.add_argument(
         "--lightweight-reranker",
@@ -234,18 +240,27 @@ def _build_live_retriever(
         )
         visual_store.ensure_collection()
         visual_store.index_chunks(chunks)
+    policy = build_retrieval_policy(retrieval_policy)
     field_reranker = None
-    if lightweight_reranker:
+    if _lightweight_reranker_enabled(retrieval_policy, explicit=lightweight_reranker):
         from business.research.rag.retrieval.paper_lightweight_reranker import LightweightLexicalReranker
 
         field_reranker = LightweightLexicalReranker()
     return ResearchRetriever(
         chunk_store,
-        policy=build_retrieval_policy(retrieval_policy),
+        policy=policy,
         field_index=field_index,
         field_reranker=field_reranker,
         visual_store=visual_store,
     ), visual_store
+
+
+def _lightweight_reranker_enabled(retrieval_policy: str | None, *, explicit: bool) -> bool:
+    if explicit:
+        return True
+    from business.research.rag.retrieval.paper_retriever import retrieval_policy_enables_lightweight_reranker
+
+    return retrieval_policy_enables_lightweight_reranker(retrieval_policy)
 
 
 def _describe_visual_chunks(chunks: list[PaperChunk], *, image_root: Path) -> list[PaperChunk]:

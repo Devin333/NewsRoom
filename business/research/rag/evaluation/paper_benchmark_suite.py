@@ -26,8 +26,15 @@ from business.research.rag.evaluation.paper_fixed_window_baseline import FixedWi
 from business.research.rag.evaluation.paper_generation_eval import GenerationEvaluator, GenerationEvalResult
 from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator, GeneratedAnswer
 from business.research.rag.visual.page_visual_chunks import build_page_visual_chunks
-from business.research.rag.cli.run_evidence_eval import _build_live_retriever, _load_chunks_from_papers_dir
-from business.research.rag.retrieval.paper_retriever import RetrievalRequest
+from business.research.rag.cli.run_evidence_eval import (
+    _build_live_retriever,
+    _lightweight_reranker_enabled,
+    _load_chunks_from_papers_dir,
+)
+from business.research.rag.retrieval.paper_retriever import (
+    PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+    RetrievalRequest,
+)
 from framework.llm.clients.openai_compatible import LLMRetryPolicy, OpenAICompatibleClient, OpenAICompatibleConfig
 from framework.llm.models.request import LLMRequest
 from framework.shared.env import load_root_env
@@ -43,6 +50,16 @@ DEFAULT_TARGET_QA_TYPES = (
     "formula_qa",
     "table_qa",
 )
+PROMOTION_THRESHOLDS = {
+    "overall_hit_at_10": 0.55,
+    "overall_mrr": 0.30,
+    "formula_qa_hit_at_10": 0.40,
+    "figure_qa_hit_at_10": 0.58,
+    "table_qa_hit_at_10": 0.60,
+    "answer_success": 0.55,
+    "ambiguous_question_rate": 0.15,
+    "caption_copy_rate": 0.02,
+}
 
 
 @dataclass(frozen=True)
@@ -345,6 +362,48 @@ class OpenAICompatibleGoldEvidenceJudge:
         )
 
 
+@dataclass(frozen=True)
+class PolicyPromotionCheck:
+    check_id: str
+    label: str
+    status: str
+    actual: Any = None
+    threshold: Any = None
+    details: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "check_id": self.check_id,
+            "label": self.label,
+            "status": self.status,
+            "actual": self.actual,
+            "threshold": self.threshold,
+            "details": self.details,
+        }
+
+
+@dataclass(frozen=True)
+class PolicyPromotionChecklist:
+    policy_name: str
+    ready_for_promotion: bool
+    reported_split: str
+    tuning_split: str
+    thresholds: dict[str, float]
+    checks: tuple[PolicyPromotionCheck, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        status_counts = Counter(check.status for check in self.checks)
+        return {
+            "policy_name": self.policy_name,
+            "ready_for_promotion": self.ready_for_promotion,
+            "reported_split": self.reported_split,
+            "tuning_split": self.tuning_split,
+            "thresholds": dict(self.thresholds),
+            "status_counts": dict(sorted(status_counts.items())),
+            "checks": [check.to_dict() for check in self.checks],
+        }
+
+
 @dataclass
 class BenchmarkSuiteResult:
     output_dir: Path
@@ -359,6 +418,7 @@ class BenchmarkSuiteResult:
     gold_audit: GoldEvidenceAuditReport
     gold_judge: GoldEvidenceJudgeReport | None
     spot_check: SpotCheckReport | None
+    policy_promotion_checklist: PolicyPromotionChecklist
     candidate_test_report: dict[str, Any]
     baseline_test_report: dict[str, Any] | None
     ab_report: dict[str, Any] | None
@@ -389,6 +449,7 @@ class BenchmarkSuiteResult:
             "gold_audit": self.gold_audit.to_dict(),
             "gold_judge": self.gold_judge.to_dict() if self.gold_judge is not None else None,
             "spot_check": self.spot_check.to_dict() if self.spot_check is not None else None,
+            "policy_promotion_checklist": self.policy_promotion_checklist.to_dict(),
             "candidate_test_report": self.candidate_test_report,
             "baseline_test_report": self.baseline_test_report,
             "ab_report": self.ab_report,
@@ -482,6 +543,14 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         baseline_report = _evaluate_fixed_window_baseline(config, chunks, test_pairs, output_dir / "test" / "fixed_window")
         ab_report = _compare_reports(candidate_report, baseline_report)
 
+    promotion_checklist = _build_policy_promotion_checklist(
+        config=config,
+        question_profile=question_profile,
+        splits=splits,
+        question_audit=question_audit,
+        gold_audit=audit,
+        candidate_report=candidate_report,
+    )
     warnings = _suite_warnings(
         paper_count=len(paper_ids),
         target_counts=target_counts,
@@ -504,6 +573,7 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         gold_audit=audit,
         gold_judge=judge_report,
         spot_check=spot_check,
+        policy_promotion_checklist=promotion_checklist,
         candidate_test_report=candidate_report,
         baseline_test_report=baseline_report,
         ab_report=ab_report,
@@ -849,7 +919,10 @@ def _evaluate_candidate(
         "chunks_total": len(chunks),
         "visual_fusion_enabled": visual_store is not None,
         "visual_indexed_chunks": len(getattr(visual_store, "_vectors", {})) if visual_store is not None else 0,
-        "lightweight_reranker_enabled": config.lightweight_reranker,
+        "lightweight_reranker_enabled": _lightweight_reranker_enabled(
+            config.retrieval_policy,
+            explicit=config.lightweight_reranker,
+        ),
         "answer_eval_enabled": config.answer_eval_enabled,
         "answer_judge_mode": config.answer_judge_mode,
         "answer_samples": len(answer_samples),
@@ -1267,7 +1340,7 @@ def _compare_reports(candidate_report: dict[str, Any], baseline_report: dict[str
         }
     return {
         "baseline_name": "fixed_window",
-        "candidate_name": "paper_visual_rag_tuned",
+        "candidate_name": str((candidate_report.get("metadata") or {}).get("retrieval_policy") or "candidate"),
         "baseline": _summary_from_report(baseline_report),
         "candidate": _summary_from_report(candidate_report),
         "macro_by_qa_type": _macro_by_qa_type(candidate, baseline),
@@ -1341,6 +1414,211 @@ def _target_counts(pairs: Iterable[EvidenceQAPair]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def _build_policy_promotion_checklist(
+    *,
+    config: BenchmarkSuiteConfig,
+    question_profile: str,
+    splits: dict[str, BenchmarkSplit],
+    question_audit: QuestionAmbiguityAuditReport,
+    gold_audit: GoldEvidenceAuditReport,
+    candidate_report: dict[str, Any],
+) -> PolicyPromotionChecklist:
+    retrieval = candidate_report.get("retrieval") or {}
+    metadata = candidate_report.get("metadata") or {}
+    answer = candidate_report.get("answer") or None
+    policy_name = str(metadata.get("retrieval_policy") or config.retrieval_policy or "")
+    checks = [
+        _promotion_check(
+            "policy_name",
+            "Explicit blind semantic policy selected",
+            policy_name == PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+            actual=policy_name,
+            threshold=PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+        ),
+        _promotion_check(
+            "question_profile",
+            "Blind semantic question profile selected",
+            _normalize_question_profile(question_profile) == "blind_semantic",
+            actual=question_profile,
+            threshold="blind_semantic",
+        ),
+        _promotion_check(
+            "split_protocol",
+            "Train/dev/test split is present and test is reported",
+            all(splits.get(name) and splits[name].pair_count > 0 for name in ("train", "dev", "test")),
+            actual={name: splits[name].pair_count for name in ("train", "dev", "test") if name in splits},
+            threshold="non-empty train/dev/test",
+            details="tuning_split=dev; reported_split=test",
+        ),
+        _promotion_check(
+            "gold_audit",
+            "Gold evidence audit has no warning or failure",
+            gold_audit.failed == 0 and gold_audit.warning == 0,
+            actual={"warning": gold_audit.warning, "failed": gold_audit.failed},
+            threshold={"warning": 0, "failed": 0},
+        ),
+        _promotion_check(
+            "ambiguity_audit",
+            "Blind questions remain low ambiguity without label leakage",
+            (
+                question_audit.label_leakage == 0
+                and question_audit.ambiguous_question_rate <= PROMOTION_THRESHOLDS["ambiguous_question_rate"]
+                and question_audit.caption_copy_rate <= PROMOTION_THRESHOLDS["caption_copy_rate"]
+            ),
+            actual={
+                "ambiguous_question_rate": round(question_audit.ambiguous_question_rate, 6),
+                "label_leakage": question_audit.label_leakage,
+                "caption_copy_rate": round(question_audit.caption_copy_rate, 6),
+            },
+            threshold={
+                "ambiguous_question_rate": PROMOTION_THRESHOLDS["ambiguous_question_rate"],
+                "label_leakage": 0,
+                "caption_copy_rate": PROMOTION_THRESHOLDS["caption_copy_rate"],
+            },
+        ),
+        _promotion_check(
+            "route_distribution",
+            "Route distribution is present",
+            bool(retrieval.get("route_distribution")),
+            actual=bool(retrieval.get("route_distribution")),
+        ),
+        _promotion_check(
+            "field_embedding_distribution",
+            "Field embedding distribution is present",
+            _field_distribution_present(retrieval),
+            actual=(retrieval.get("field_embedding_distribution") or {}).get("matched_evidence_count", 0),
+            threshold="matched_evidence_count > 0",
+        ),
+        _promotion_check(
+            "rerank_distribution",
+            "Rerank distribution is present",
+            _rerank_distribution_present(retrieval),
+            actual=(retrieval.get("rerank_distribution") or {}).get("reranked_evidence_count", 0),
+            threshold="reranked_evidence_count > 0",
+        ),
+        _metric_promotion_check(
+            "overall_hit_at_10",
+            "Overall Hit@10 meets PRD V5 gate",
+            _hit_at_10(retrieval),
+            PROMOTION_THRESHOLDS["overall_hit_at_10"],
+        ),
+        _metric_promotion_check(
+            "overall_mrr",
+            "Overall MRR meets PRD V5 gate",
+            _metric(retrieval, "mrr"),
+            PROMOTION_THRESHOLDS["overall_mrr"],
+        ),
+        _metric_promotion_check(
+            "formula_qa_hit_at_10",
+            "Formula QA Hit@10 meets PRD V5 gate",
+            _qa_type_hit_at_10(retrieval, "formula_qa"),
+            PROMOTION_THRESHOLDS["formula_qa_hit_at_10"],
+        ),
+        _metric_promotion_check(
+            "figure_qa_hit_at_10",
+            "Figure QA Hit@10 meets PRD V5 gate",
+            _qa_type_hit_at_10(retrieval, "figure_qa"),
+            PROMOTION_THRESHOLDS["figure_qa_hit_at_10"],
+        ),
+        _metric_promotion_check(
+            "table_qa_hit_at_10",
+            "Table QA Hit@10 meets PRD V5 gate",
+            _qa_type_hit_at_10(retrieval, "table_qa"),
+            PROMOTION_THRESHOLDS["table_qa_hit_at_10"],
+        ),
+        _promotion_check(
+            "by_qa_type_metrics",
+            "By-QA-type retrieval metrics are present",
+            bool(retrieval.get("by_qa_type")),
+            actual=sorted((retrieval.get("by_qa_type") or {}).keys()),
+        ),
+        _answer_success_check(answer),
+        _promotion_check(
+            "failure_reasons",
+            "Answer failure reasons are reported",
+            isinstance(answer, dict) and "failure_reason_counts" in answer,
+            actual=(answer or {}).get("failure_reason_counts") if isinstance(answer, dict) else None,
+            threshold="answer.failure_reason_counts present",
+        ),
+    ]
+    ready = all(check.status == "pass" for check in checks)
+    return PolicyPromotionChecklist(
+        policy_name=policy_name,
+        ready_for_promotion=ready,
+        reported_split="test",
+        tuning_split="dev",
+        thresholds=dict(PROMOTION_THRESHOLDS),
+        checks=tuple(checks),
+    )
+
+
+def _promotion_check(
+    check_id: str,
+    label: str,
+    passed: bool,
+    *,
+    actual: Any = None,
+    threshold: Any = None,
+    details: str = "",
+) -> PolicyPromotionCheck:
+    return PolicyPromotionCheck(
+        check_id=check_id,
+        label=label,
+        status="pass" if passed else "fail",
+        actual=actual,
+        threshold=threshold,
+        details=details,
+    )
+
+
+def _metric_promotion_check(
+    check_id: str,
+    label: str,
+    actual: float,
+    threshold: float,
+) -> PolicyPromotionCheck:
+    return _promotion_check(
+        check_id,
+        label,
+        actual >= threshold,
+        actual=round(actual, 6),
+        threshold=threshold,
+    )
+
+
+def _answer_success_check(answer: dict[str, Any] | None) -> PolicyPromotionCheck:
+    if not isinstance(answer, dict):
+        return _promotion_check(
+            "answer_success",
+            "Answer success meets PRD V5 gate",
+            False,
+            actual=None,
+            threshold=PROMOTION_THRESHOLDS["answer_success"],
+            details="answer evaluation was not run",
+        )
+    return _metric_promotion_check(
+        "answer_success",
+        "Answer success meets PRD V5 gate",
+        _metric(answer, "success_rate"),
+        PROMOTION_THRESHOLDS["answer_success"],
+    )
+
+
+def _field_distribution_present(retrieval: dict[str, Any]) -> bool:
+    distribution = retrieval.get("field_embedding_distribution") or {}
+    return bool(distribution.get("matched_evidence_count") or distribution.get("search_hits_by_field"))
+
+
+def _rerank_distribution_present(retrieval: dict[str, Any]) -> bool:
+    distribution = retrieval.get("rerank_distribution") or {}
+    return int(distribution.get("reranked_evidence_count") or 0) > 0
+
+
+def _qa_type_hit_at_10(retrieval: dict[str, Any], qa_type: str) -> float:
+    by_type = retrieval.get("by_qa_type") or {}
+    return _hit_at_10(by_type.get(qa_type) or {})
+
+
 def _suite_warnings(
     *,
     paper_count: int,
@@ -1408,7 +1686,62 @@ def _write_suite_report(result: BenchmarkSuiteResult) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    checklist = payload["policy_promotion_checklist"]
+    (result.output_dir / "policy_promotion_checklist.json").write_text(
+        json.dumps(checklist, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (result.output_dir / "policy_promotion_checklist.md").write_text(
+        _policy_promotion_markdown(checklist, title_level=1),
+        encoding="utf-8",
+    )
     (result.output_dir / "benchmark_suite_report.md").write_text(_suite_markdown(payload), encoding="utf-8")
+
+
+def _policy_promotion_markdown(checklist: dict[str, Any], *, title_level: int) -> str:
+    return "\n".join(_policy_promotion_markdown_lines(checklist, title_level=title_level)).rstrip() + "\n"
+
+
+def _policy_promotion_markdown_lines(checklist: dict[str, Any], *, title_level: int) -> list[str]:
+    prefix = "#" * max(1, min(6, title_level))
+    lines = [
+        f"{prefix} Policy Promotion Checklist",
+        "",
+        f"- policy: `{checklist.get('policy_name', '')}`",
+        f"- ready_for_promotion: `{bool(checklist.get('ready_for_promotion'))}`",
+        f"- tuning split: `{checklist.get('tuning_split', 'dev')}`",
+        f"- reported split: `{checklist.get('reported_split', 'test')}`",
+        "",
+        "| Check | Status | Actual | Threshold | Details |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for check in checklist.get("checks") or []:
+        lines.append(
+            "| "
+            + " | ".join([
+                str(check.get("label") or check.get("check_id") or ""),
+                f"`{check.get('status', '')}`",
+                _format_check_value(check.get("actual")),
+                _format_check_value(check.get("threshold")),
+                str(check.get("details") or ""),
+            ])
+            + " |"
+        )
+    return lines
+
+
+def _format_check_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"`{value:.3f}`"
+    if isinstance(value, (dict, list, tuple)):
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    else:
+        text = str(value)
+    if len(text) > 120:
+        text = text[:117] + "..."
+    return f"`{text}`"
 
 
 def _suite_markdown(payload: dict[str, Any]) -> str:
@@ -1448,6 +1781,9 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             f"- fixed-window macro Hit@10: `{macro['baseline']['macro_hit_at_10']:.3f}`",
             f"- fixed-window macro MRR: `{macro['baseline']['macro_mrr']:.3f}`",
         ])
+    promotion = payload.get("policy_promotion_checklist") or {}
+    if promotion:
+        lines.extend(["", *_policy_promotion_markdown_lines(promotion, title_level=2)])
     score_breakdown = candidate.get("score_breakdown_summary") or {}
     score_components = score_breakdown.get("components") or {}
     if score_components:
@@ -1861,6 +2197,8 @@ __all__ = [
     "GoldEvidenceJudgeItem",
     "GoldEvidenceJudgeReport",
     "OpenAICompatibleGoldEvidenceJudge",
+    "PolicyPromotionCheck",
+    "PolicyPromotionChecklist",
     "audit_gold_evidence",
     "run_benchmark_suite",
     "split_paper_ids",

@@ -85,6 +85,7 @@ _CHILD_FINAL_SCORE_KEYS = ("semantic", "field_embedding", "field_rerank", "posit
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 DEFAULT_RETRIEVAL_POLICY = "default"
 PAPER_VISUAL_RAG_TUNED_POLICY = "paper_visual_rag_tuned"
+PAPER_BLIND_SEMANTIC_RAG_V1_POLICY = "paper_blind_semantic_rag_v1"
 NEWS_PAPER_RAG_POLICY_ENV = "NEWS_PAPER_RAG_POLICY"
 HIGH_VALUE_VISUAL_RESULT_INTENTS = ("figure_query", "table_query", "numerical_result", "comparison")
 LIGHTWEIGHT_FIELD_RERANK_INTENTS = (*HIGH_VALUE_VISUAL_RESULT_INTENTS, "formula_query")
@@ -243,10 +244,11 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
     normalized = (policy_name or DEFAULT_RETRIEVAL_POLICY).strip().casefold()
     if not normalized or normalized == DEFAULT_RETRIEVAL_POLICY:
         return RetrievalPolicy()
-    if normalized != PAPER_VISUAL_RAG_TUNED_POLICY:
+    if normalized not in {PAPER_VISUAL_RAG_TUNED_POLICY, PAPER_BLIND_SEMANTIC_RAG_V1_POLICY}:
         raise ValueError(
             f"unknown retrieval policy {policy_name!r}; expected "
-            f"{DEFAULT_RETRIEVAL_POLICY!r} or {PAPER_VISUAL_RAG_TUNED_POLICY!r}"
+            f"{DEFAULT_RETRIEVAL_POLICY!r}, {PAPER_VISUAL_RAG_TUNED_POLICY!r}, "
+            f"or {PAPER_BLIND_SEMANTIC_RAG_V1_POLICY!r}"
         )
 
     defaults = RetrievalPolicy()
@@ -268,8 +270,17 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         "equation": 0.00,
         "body": 0.50,
     }
+    child_final_score_weights = dict(defaults.child_final_score_weights)
+    if normalized == PAPER_BLIND_SEMANTIC_RAG_V1_POLICY:
+        child_final_score_weights = {
+            "semantic": 0.35,
+            "field_embedding": 0.25,
+            "field_rerank": 0.30,
+            "position": 0.00,
+            "graph": 0.10,
+        }
     return RetrievalPolicy(
-        name=PAPER_VISUAL_RAG_TUNED_POLICY,
+        name=normalized,
         overfetch_multiplier=5,
         visual_fusion_text_weight=0.85,
         visual_fusion_visual_weight=0.15,
@@ -287,8 +298,13 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
             "position": 0.05,
             "graph": 0.10,
         },
+        child_final_score_weights=child_final_score_weights,
         field_intent_score_weights=field_intent_score_weights,
     )
+
+
+def retrieval_policy_enables_lightweight_reranker(policy_name: str | None) -> bool:
+    return build_retrieval_policy(policy_name).name == PAPER_BLIND_SEMANTIC_RAG_V1_POLICY
 
 
 def build_retrieval_policy_from_env(
@@ -2327,6 +2343,7 @@ __all__ = [
     "HIGH_VALUE_VISUAL_RESULT_INTENTS",
     "LIGHTWEIGHT_FIELD_RERANK_INTENTS",
     "NEWS_PAPER_RAG_POLICY_ENV",
+    "PAPER_BLIND_SEMANTIC_RAG_V1_POLICY",
     "PAPER_VISUAL_RAG_TUNED_POLICY",
     "ResearchRetriever",
     "RetrievalPolicy",
@@ -2334,4 +2351,5 @@ __all__ = [
     "RetrievalResult",
     "build_retrieval_policy",
     "build_retrieval_policy_from_env",
+    "retrieval_policy_enables_lightweight_reranker",
 ]

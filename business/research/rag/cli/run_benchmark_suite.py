@@ -54,7 +54,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--papers-dir", required=True, help="Directory containing per-paper research_document.json files.")
     parser.add_argument("--output-dir", required=True, help="Directory for benchmark suite artifacts.")
     parser.add_argument("--image-root", help="Root used to resolve relative figure/table image refs.")
-    parser.add_argument("--retrieval-policy", default="paper_visual_rag_tuned")
+    parser.add_argument(
+        "--retrieval-policy",
+        default="paper_visual_rag_tuned",
+        help="Retrieval policy, for example paper_visual_rag_tuned or paper_blind_semantic_rag_v1.",
+    )
     parser.add_argument("--max-pairs-per-type", type=int, default=100)
     parser.add_argument("--min-papers", type=int, default=20)
     parser.add_argument("--target-min-per-type", type=int, default=50)

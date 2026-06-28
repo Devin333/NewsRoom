@@ -240,6 +240,35 @@ def test_run_evidence_eval_live_retrieval_can_enable_lightweight_reranker(tmp_pa
     assert "## Rerank Distribution" in markdown
 
 
+def test_run_evidence_eval_blind_semantic_policy_auto_enables_lightweight_reranker(tmp_path) -> None:
+    papers_dir = tmp_path / "papers"
+    paper_dir = papers_dir / "p1"
+    paper_dir.mkdir(parents=True)
+    (paper_dir / "research_document.json").write_text(
+        json.dumps(_research_document_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output = tmp_path / "report"
+
+    exit_code = main([
+        "--papers-dir",
+        str(papers_dir),
+        "--build-golden-set",
+        "--live-retrieval",
+        "--retrieval-policy",
+        "paper_blind_semantic_rag_v1",
+        "--output-dir",
+        str(output),
+    ])
+
+    assert exit_code == 0
+    report = json.loads((output / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    distribution = report["retrieval"]["rerank_distribution"]
+    assert report["metadata"]["retrieval_policy"] == "paper_blind_semantic_rag_v1"
+    assert report["metadata"]["lightweight_reranker_enabled"] is True
+    assert distribution["reranked_evidence_count"] > 0
+
+
 def _research_document_payload() -> dict:
     return {
         "paper_id": "p1",
