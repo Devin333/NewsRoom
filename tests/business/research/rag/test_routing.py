@@ -35,3 +35,17 @@ def test_citation_questions_route_before_table_keywords() -> None:
     assert route.intent == "citation_query"
     assert route.extra_filters == {}
     assert route.chunk_type_filter == ["abstract", "paragraph"]
+
+
+def test_explicit_figure_question_routes_before_formula_symbol_keywords() -> None:
+    question = (
+        "What does Figure 1, captioned Chain-of-thought prompting enables large "
+        "language models to tackle complex arithmetic, commonsense, and symbolic "
+        "reasoning tasks, show?"
+    )
+
+    route = build_retrieval_route(question)
+
+    assert classify_query_intent(question) == "figure_query"
+    assert route.intent == "figure_query"
+    assert route.extra_filters == {"chunk_type": "figure"}

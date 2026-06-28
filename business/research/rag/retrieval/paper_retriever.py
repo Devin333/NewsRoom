@@ -105,6 +105,9 @@ class RetrievalPolicy:
     table_result_context_search_limit: int = 12
     supplemental_table_result_limit: int = 2
     max_figure_context_chunks: int = 2
+    max_formula_context_chunks: int = 2
+    citation_claim_overfetch_multiplier: int = 15
+    citation_claim_boost: float = 0.35
     table_context_rerank_score_threshold: float = 0.0
     max_parent_chunks: int = 3
     max_parent_tokens: int = 1800
@@ -467,7 +470,12 @@ class ResearchRetriever:
                 candidate_limit,
                 request.limit * self._policy.element_label_overfetch_multiplier,
             )
-        candidates = self._search_text_candidates(request, candidate_filters, candidate_limit)
+        if route.intent == "citation_query":
+            candidate_limit = max(
+                candidate_limit,
+                request.limit * self._policy.citation_claim_overfetch_multiplier,
+            )
+        candidates = self._search_text_candidates(request, route, candidate_filters, candidate_limit)
         n_recalled = len(candidates)
         field_hits = self._search_field_candidates(request, route, candidate_filters)
         candidates = self._merge_field_hits(candidates, field_hits, request.paper_id)
@@ -521,7 +529,7 @@ class ResearchRetriever:
             )
         scored.sort(key=lambda x: x[1], reverse=True)
         child_chunks = [c for c, _ in scored[: request.limit]]
-        child_chunks = self._interleave_figure_context(child_chunks, request, route)
+        child_chunks = self._interleave_structural_context(child_chunks, request, route)
         supplemental_table_chunks = self._supplemental_table_hits(child_chunks, request, route)
         child_chunks.extend(supplemental_table_chunks)
         top_score = scored[0][1] if scored else 0.0
@@ -571,6 +579,14 @@ class ResearchRetriever:
             "figure_context_returned": sum(
                 1 for chunk in child_chunks
                 if chunk.metadata.get("expansion_reason") in {"figure_nearby_context", "figure_body_reference"}
+            ),
+            "formula_context_returned": sum(
+                1 for chunk in child_chunks
+                if chunk.metadata.get("expansion_reason") in {"formula_parent_context", "formula_body_reference"}
+            ),
+            "interleaved_table_context_returned": sum(
+                1 for chunk in child_chunks
+                if str(chunk.metadata.get("expansion_reason") or "").startswith("table_")
             ),
             "top_score": round(top_score, 4),
             "elapsed_ms": elapsed_ms,
@@ -643,20 +659,23 @@ class ResearchRetriever:
     def _search_text_candidates(
         self,
         request: RetrievalRequest,
+        route: RetrievalRoute,
         candidate_filters: list[dict[str, Any]],
         limit: int,
     ) -> list[tuple[PaperChunk, float]]:
         by_id: dict[str, tuple[PaperChunk, float]] = {}
+        query_texts = _text_recall_queries(request.question, route.intent)
         for filters in candidate_filters:
-            for chunk, score in self._store.search_with_scores(
-                request.paper_id,
-                request.question,
-                filters=filters,
-                limit=limit,
-            ):
-                existing = by_id.get(chunk.chunk_id)
-                if existing is None or score > existing[1]:
-                    by_id[chunk.chunk_id] = (chunk, score)
+            for query_text in query_texts:
+                for chunk, score in self._store.search_with_scores(
+                    request.paper_id,
+                    query_text,
+                    filters=filters,
+                    limit=limit,
+                ):
+                    existing = by_id.get(chunk.chunk_id)
+                    if existing is None or score > existing[1]:
+                        by_id[chunk.chunk_id] = (chunk, score)
         candidates = list(by_id.values())
         candidates.sort(key=lambda item: item[1], reverse=True)
         return candidates[:limit]
@@ -784,6 +803,10 @@ class ResearchRetriever:
         element_label_boost = _clamp_score(
             element_label_score * max(0.0, self._policy.element_label_boosts.get(route.intent, 0.0))
         )
+        citation_claim_score = _citation_claim_match_score(request.question, chunk)
+        citation_claim_boost = _clamp_score(
+            citation_claim_score * max(0.0, self._policy.citation_claim_boost)
+        ) if route.intent == "citation_query" else 0.0
         has_field_semantic = field_summary.best_score > 0.0 or field_rerank_score is not None
         if has_field_semantic:
             child_weights = self._policy.normalized_child_final_score_weights()
@@ -810,7 +833,7 @@ class ResearchRetriever:
                 child_weights,
             )
             score_strategy = "semantic_lexical_field_fallback"
-        final_score = _clamp_score(final_score + element_label_boost)
+        final_score = _clamp_score(final_score + element_label_boost + citation_claim_boost)
         field_texts = extract_field_texts(chunk)
         best_matching_field = _best_matching_field(field_summary, field_scores)
         metadata = dict(chunk.metadata)
@@ -838,6 +861,8 @@ class ResearchRetriever:
             "element_label_score": _round_score(element_label_score),
             "element_label_match": element_label_score > 0.0,
             "element_label_boost": _round_score(element_label_boost),
+            "citation_claim_score": _round_score(citation_claim_score),
+            "citation_claim_boost": _round_score(citation_claim_boost),
             "graph_score": _round_score(graph_score),
             "child_score_strategy": score_strategy,
             "child_score_components": {
@@ -849,6 +874,8 @@ class ResearchRetriever:
                 "graph": _round_score(graph_score),
                 "element_label": _round_score(element_label_score),
                 "element_label_boost": _round_score(element_label_boost),
+                "citation_claim": _round_score(citation_claim_score),
+                "citation_claim_boost": _round_score(citation_claim_boost),
             },
             "child_semantic_score": _round_score(semantic),
             "child_position_score": _round_score(position_score),
@@ -927,13 +954,13 @@ class ResearchRetriever:
         return fused
 
 
-    def _interleave_figure_context(
+    def _interleave_structural_context(
         self,
         chunks: list[PaperChunk],
         request: RetrievalRequest,
         route: RetrievalRoute,
     ) -> list[PaperChunk]:
-        if route.intent != "figure_query" or self._policy.max_figure_context_chunks <= 0:
+        if not chunks:
             return chunks
         out: list[PaperChunk] = []
         seen: set[str] = set()
@@ -941,11 +968,9 @@ class ResearchRetriever:
             if chunk.chunk_id not in seen:
                 out.append(chunk)
                 seen.add(chunk.chunk_id)
-            if not _is_figure_chunk(chunk):
-                continue
             added = 0
-            for ref_id, reason, edge in _figure_context_refs(chunk):
-                if added >= self._policy.max_figure_context_chunks or ref_id in seen:
+            for ref_id, reason, edge in self._structural_context_refs(chunk, request, route):
+                if ref_id in seen:
                     continue
                 ref = self._store.get_chunk(ref_id)
                 if ref is None or ref.paper_id != request.paper_id:
@@ -960,6 +985,24 @@ class ResearchRetriever:
                     rank=added,
                 ))
         return out
+
+    def _structural_context_refs(
+        self,
+        chunk: PaperChunk,
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+    ) -> list[tuple[str, str, str]]:
+        if route.intent == "figure_query" and self._policy.max_figure_context_chunks > 0 and _is_figure_chunk(chunk):
+            return _figure_context_refs(chunk)[: self._policy.max_figure_context_chunks]
+        if _is_table_chunk(chunk) and _should_expand_result_context(route.intent, request.question):
+            return _table_context_refs(chunk)[: self._policy.max_table_context_chunks]
+        if (
+            _is_formula_chunk(chunk)
+            and self._policy.max_formula_context_chunks > 0
+            and _should_expand_formula_context(route.intent, request.question)
+        ):
+            return _formula_context_refs(chunk)[: self._policy.max_formula_context_chunks]
+        return []
 
 
     def _supplemental_table_hits(
@@ -1492,6 +1535,47 @@ def _figure_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
     return refs
 
 
+def _table_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
+    refs: list[tuple[str, str, str]] = []
+    nearby_id = str(chunk.metadata.get("nearby_context_chunk_id") or "")
+    if nearby_id:
+        refs.append((nearby_id, "table_nearby_context", "nearby_context_chunk_id"))
+    for ref in chunk.metadata.get("referenced_by_chunks", []):
+        if not isinstance(ref, dict):
+            continue
+        ref_id = str(ref.get("chunk_id") or "")
+        if ref_id:
+            refs.append((ref_id, "table_body_reference", "referenced_by_chunks"))
+    parent_table_id = str(chunk.metadata.get("parent_table_chunk_id") or "")
+    if parent_table_id:
+        refs.append((parent_table_id, "table_row_group_parent", "parent_table_chunk_id"))
+    parent_id = chunk.parent_chunk_id or ""
+    if parent_id:
+        refs.append((parent_id, "table_parent_context", "parent_chunk_id"))
+    return refs
+
+
+def _formula_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
+    refs: list[tuple[str, str, str]] = []
+    for ref in chunk.metadata.get("referenced_by_chunks", []):
+        if not isinstance(ref, dict):
+            continue
+        ref_id = str(ref.get("chunk_id") or "")
+        if ref_id:
+            refs.append((ref_id, "formula_body_reference", "referenced_by_chunks"))
+    parent_id = chunk.parent_chunk_id or ""
+    if parent_id:
+        refs.append((parent_id, "formula_parent_context", "parent_chunk_id"))
+    return refs
+
+
+def _should_expand_formula_context(intent: str, question: str) -> bool:
+    if intent != "formula_query":
+        return False
+    lowered = str(question or "").casefold()
+    return any(token in lowered for token in ("surrounding text", "explained", "explain", "meaning"))
+
+
 def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float:
     value = metadata.get(key, default)
     try:
@@ -1827,6 +1911,41 @@ def _lexical_match_score(query_text: str, field_text: str) -> float:
     if query_phrase and query_phrase in field_phrase:
         overlap = max(overlap, 0.95)
     return _clamp_score(overlap)
+
+
+def _citation_claim_match_score(question: str, chunk: PaperChunk) -> float:
+    claim = _claim_from_citation_question(question)
+    if not claim:
+        return 0.0
+    return _lexical_match_score(claim, chunk.content)
+
+
+def _text_recall_queries(question: str, intent: str) -> list[str]:
+    queries = [str(question or "")]
+    if intent == "citation_query":
+        claim = _claim_from_citation_question(question)
+        if claim:
+            queries.append(claim)
+    return _unique_nonempty_texts(queries)
+
+
+def _unique_nonempty_texts(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _claim_from_citation_question(question: str) -> str:
+    match = re.search(r"supports\s+the\s+claim:\s*(.+)", str(question or ""), flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        return ""
+    return " ".join(match.group(1).split())
 
 
 def _query_tokens(text: str) -> list[str]:

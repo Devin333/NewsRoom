@@ -39,7 +39,7 @@ _INTENT_SIGNALS: tuple[QueryIntentRule, ...] = build_query_intent_rules([
     ("concept_method",   ["如何", "怎么", "how", "what is", "why", "method", "approach", "architecture"]),
 ])
 
-_FIGURE_ID_RE = re.compile(r"图\s*(\w+)|[Ff]ig(?:ure)?[.s]?\s*(\w+)")
+_FIGURE_ID_RE = re.compile(r"图\s*([\w-]+)?|\bfig(?:ure)?\.?\s*([A-Za-z0-9_-]+)?", flags=re.IGNORECASE)
 _CITATION_QUERY_RE = re.compile(
     r"\b(?:which|what)\s+evidence\s+supports\s+(?:the\s+)?claim\b|"
     r"\bsupport(?:ing)?\s+evidence\s+for\s+(?:the\s+)?claim\b",
@@ -59,10 +59,13 @@ class RetrievalRoute:
 
 
 def classify_query_intent(question: str) -> QueryIntent:
-    if _CITATION_QUERY_RE.search(str(question or "")):
+    text = str(question or "")
+    if _CITATION_QUERY_RE.search(text):
         return "citation_query"
+    if _FIGURE_ID_RE.search(text):
+        return "figure_query"
     intent = classify_query_intent_by_rules(
-        question,
+        text,
         _INTENT_SIGNALS,
         default_intent="concept_method",
     )

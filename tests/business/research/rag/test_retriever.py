@@ -934,11 +934,47 @@ def test_citation_query_retrieves_claim_paragraph_despite_zero_shot_table_terms(
     ))
 
     assert result.intent == "citation_query"
-    assert [call["filters"] for call in store.calls[:2]] == [
+    assert [call["filters"] for call in store.calls[:4]] == [
+        {"chunk_type": "abstract"},
         {"chunk_type": "abstract"},
         {"chunk_type": "paragraph"},
+        {"chunk_type": "paragraph"},
     ]
+    assert store.calls[1]["query_text"] == claim
+    assert store.calls[3]["query_text"] == claim
     assert result.child_chunks[0].chunk_id == "para-claim"
+
+
+def test_citation_query_boosts_candidate_with_claim_overlap():
+    claim = (
+        "These vectors are often learned through an objective that encourages "
+        "co-occurring words to be positioned nearby."
+    )
+    broad_intro = _chunk(
+        "para-broad",
+        chunk_type="paragraph",
+        section_title="Introduction",
+        section_role=["background"],
+        content="Transfer learning methods use text representations for many NLP tasks.",
+    )
+    claim_paragraph = _chunk(
+        "para-claim",
+        chunk_type="paragraph",
+        section_title="Introduction",
+        section_role=["background"],
+        content=f"{claim} The vectors can then transfer to downstream tasks.",
+    )
+    store = _ScriptedChunkStore([broad_intro, claim_paragraph], search_order=["para-broad", "para-claim"])
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY))
+
+    result = retriever.retrieve(RetrievalRequest(
+        paper_id="p1",
+        question=f"Which evidence supports the claim: {claim}",
+        limit=1,
+    ))
+
+    assert result.child_chunks[0].chunk_id == "para-claim"
+    assert result.child_chunks[0].metadata["citation_claim_boost"] > 0
 
 
 def test_figure_query_expands_nearby_context_reference():
@@ -964,6 +1000,56 @@ def test_figure_query_expands_nearby_context_reference():
 
     assert [chunk.chunk_id for chunk in result.child_chunks] == ["fig-1", "para-near"]
     assert result.child_chunks[1].metadata["expansion_reason"] == "figure_nearby_context"
+
+
+def test_formula_explanation_query_interleaves_parent_context():
+    formula = _chunk(
+        "eq-1",
+        chunk_type="formula",
+        parent_chunk_id="para-formula",
+        content="[Equation eq_1] LaTeX: y = Wx.",
+    ).model_copy(update={"has_formula": True, "formula_latex": "y = Wx"})
+    explanation = _chunk(
+        "para-formula",
+        chunk_type="paragraph",
+        content="The surrounding text explains that W projects x into the output space.",
+    )
+    store = _ScriptedChunkStore([formula, explanation], search_order=["eq-1"])
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY))
+
+    result = retriever.retrieve(RetrievalRequest(
+        paper_id="p1",
+        question="How is Equation eq_1 explained in the surrounding text?",
+        limit=1,
+    ))
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["eq-1", "para-formula"]
+    assert result.child_chunks[1].metadata["expansion_reason"] == "formula_parent_context"
+
+
+def test_table_query_interleaves_nearby_context_reference():
+    table = _chunk(
+        "table-1",
+        chunk_type="table",
+        content="[Table 1] Caption: Accuracy by model.",
+        metadata={"nearby_context_chunk_id": "para-result"},
+    )
+    result_para = _chunk(
+        "para-result",
+        chunk_type="paragraph",
+        content="The result paragraph explains that the larger model has the best accuracy.",
+    )
+    store = _ScriptedChunkStore([table, result_para], search_order=["table-1"])
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_VISUAL_RAG_TUNED_POLICY))
+
+    result = retriever.retrieve(RetrievalRequest(
+        paper_id="p1",
+        question="What do the experimental results around Table 1 show?",
+        limit=1,
+    ))
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["table-1", "para-result"]
+    assert result.child_chunks[1].metadata["expansion_reason"] == "table_nearby_context"
 
 
 def test_long_parent_expansion_returns_child_anchored_snippet():
@@ -1290,17 +1376,20 @@ def test_table_hit_expands_nearby_and_referenced_context():
     retriever = ResearchRetriever(store)
     result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="What does Table 1 show?", limit=1))
 
-    ref_by_id = {chunk.chunk_id: chunk for chunk in result.ref_chunks}
+    expanded_by_id = {
+        chunk.chunk_id: chunk
+        for chunk in [*result.child_chunks, *result.ref_chunks]
+    }
     assert result.intent == "table_query"
     assert result.child_chunks[0].chunk_id == "tbl-1"
     assert table.metadata["source_locator"] == "paper://p1/pdf#page=6&pdf_rect=1,2,3,4"
-    assert ref_by_id["near-table"].metadata["expansion_reason"] == "table_nearby_context"
-    assert ref_by_id["near-table"].metadata["expansion_edge"] == "nearby_context_chunk_id"
-    assert ref_by_id["result-ref"].metadata["expansion_reason"] == "table_body_reference"
-    assert ref_by_id["result-ref"].metadata["expanded_from_chunk_id"] == "tbl-1"
-    assert "missing-ref" not in ref_by_id
-    assert "foreign-ref" not in ref_by_id
-    assert result.metadata["table_context_returned"] == 2
+    assert expanded_by_id["near-table"].metadata["expansion_reason"] == "table_nearby_context"
+    assert expanded_by_id["near-table"].metadata["expansion_edge"] == "nearby_context_chunk_id"
+    assert expanded_by_id["result-ref"].metadata["expansion_reason"] == "table_body_reference"
+    assert expanded_by_id["result-ref"].metadata["expanded_from_chunk_id"] == "tbl-1"
+    assert "missing-ref" not in expanded_by_id
+    assert "foreign-ref" not in expanded_by_id
+    assert result.metadata["interleaved_table_context_returned"] == 2
 
 
 def test_table_row_group_hit_expands_parent_table_chunk():
@@ -1325,7 +1414,10 @@ def test_table_row_group_hit_expands_parent_table_chunk():
     retriever = ResearchRetriever(store)
     result = retriever.retrieve(RetrievalRequest(paper_id="p1", question="table rare-row-token", limit=1))
 
-    parent = next(chunk for chunk in result.ref_chunks if chunk.chunk_id == "tbl-parent")
+    parent = next(
+        chunk for chunk in [*result.child_chunks, *result.ref_chunks]
+        if chunk.chunk_id == "tbl-parent"
+    )
     assert result.child_chunks[0].chunk_id == "tbl-row-20"
     assert parent.metadata["expansion_reason"] == "table_row_group_parent"
     assert parent.metadata["expansion_edge"] == "parent_table_chunk_id"
