@@ -21,6 +21,7 @@ from business.research.rag.retrieval.paper_retriever import (
     build_retrieval_policy_from_env,
     retrieval_policy_enables_lightweight_reranker,
 )
+from business.research.rag.retrieval.paper_claim_index import PaperClaimIndex
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
@@ -1084,6 +1085,45 @@ def test_citation_query_boosts_candidate_with_claim_overlap():
 
     assert result.child_chunks[0].chunk_id == "para-claim"
     assert result.child_chunks[0].metadata["citation_claim_boost"] > 0
+
+
+def test_citation_query_uses_claim_index_for_blind_claim_prompt():
+    claim_paragraph = _chunk(
+        "para-claim",
+        chunk_type="paragraph",
+        section_title="Introduction",
+        section_role=["background"],
+        content=(
+            "Large language models pre-trained on web-scale datasets are "
+            "revolutionizing NLP with strong zero-shot and few-shot generalization. "
+            "These foundation models transfer to downstream tasks."
+        ),
+    )
+    broad_paragraph = _chunk(
+        "para-broad",
+        chunk_type="paragraph",
+        section_title="Introduction",
+        section_role=["background"],
+        content="Transfer learning methods use text representations for many NLP tasks.",
+    )
+    store = _ScriptedChunkStore([broad_paragraph, claim_paragraph], search_order=["para-broad"])
+    retriever = ResearchRetriever(
+        store,
+        policy=RetrievalPolicy(overfetch_multiplier=1),
+        claim_index=PaperClaimIndex.from_chunks([broad_paragraph, claim_paragraph]),
+    )
+
+    result = retriever.retrieve(RetrievalRequest(
+        paper_id="p1",
+        question="Which passage grounds the paper's claim about zero-shot and few-shot generalization?",
+        limit=1,
+    ))
+
+    assert result.child_chunks[0].chunk_id == "para-claim"
+    assert result.child_chunks[0].metadata["claim_index_hit"] is True
+    assert result.child_chunks[0].metadata["claim_id"].startswith("claim_")
+    assert "zero-shot and few-shot generalization" in result.child_chunks[0].metadata["claim_text"]
+    assert result.metadata["claim_index_hits"] >= 1
 
 
 def test_figure_query_expands_nearby_context_reference():

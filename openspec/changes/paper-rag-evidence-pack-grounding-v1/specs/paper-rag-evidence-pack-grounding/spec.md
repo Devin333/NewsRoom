@@ -62,3 +62,21 @@ Paper RAG answer generation SHALL be able to hydrate missing same-group evidence
 - **WHEN** retrieval does not return any chunk in a QA pair's `supporting_evidence_group`
 - **THEN** answer context hydration SHALL NOT inject the group's gold chunks
 - **AND** missing gold evidence SHALL remain observable in evaluation metadata
+
+### Requirement: Citation retrieval supports claim-level search
+
+Paper RAG citation retrieval SHALL support deterministic claim-level search while preserving source chunk ids for strict evidence evaluation.
+
+#### Scenario: Claim records map back to source chunks
+
+- **WHEN** the system builds a claim index from paper chunks
+- **THEN** each claim record SHALL include `claim_id`, `paper_id`, `chunk_id`, `claim_text`, `claim_type`, and `source_locator`
+- **AND** claim ids SHALL be stable for the same paper, source chunk, and claim text
+
+#### Scenario: Citation route uses claim hits
+
+- **WHEN** a citation query asks for the passage grounding a paper claim
+- **AND** the claim index finds a matching claim sentence
+- **THEN** retrieval SHALL map the claim hit back to its source chunk
+- **AND** the returned chunk metadata SHALL include `claim_index_hit`, `claim_index_score`, `claim_id`, and `claim_text`
+- **AND** retrieval metadata SHALL report `claim_index_hits`

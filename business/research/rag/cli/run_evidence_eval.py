@@ -223,10 +223,12 @@ def _build_live_retriever(
     lightweight_reranker: bool = False,
 ):
     from business.research.rag.retrieval.paper_retriever import ResearchRetriever, build_retrieval_policy
+    from business.research.rag.retrieval.paper_claim_index import PaperClaimIndex
 
     chunk_store = _InMemoryChunkStore()
     chunk_store.ensure_collection()
     chunk_store.index_chunks(chunks)
+    claim_index = PaperClaimIndex.from_chunks(chunks)
 
     field_index = _InMemoryFieldEmbeddingIndex()
     field_index.ensure_collection()
@@ -252,6 +254,7 @@ def _build_live_retriever(
         field_index=field_index,
         field_reranker=field_reranker,
         visual_store=visual_store,
+        claim_index=claim_index,
     ), visual_store
 
 

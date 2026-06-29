@@ -11,3 +11,6 @@
 - [x] 4.1 Hydrate answer-generation retrieval context from evidence packs after a same-group hit.
 - [x] 4.2 Export evidence-pack expansion metadata in answer samples and context relationships.
 - [x] 4.3 Add tests proving pack hydration does not inject gold evidence without a same-group hit.
+- [x] 5.1 Add deterministic claim extraction and in-memory claim search for paper chunks.
+- [x] 5.2 Connect claim-level search into citation retrieval without replacing strict chunk metrics.
+- [x] 5.3 Export claim hit metadata and add claim index/retriever tests.

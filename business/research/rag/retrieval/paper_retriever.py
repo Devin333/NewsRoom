@@ -22,6 +22,7 @@ from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
 from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
 from business.research.rag.adapters.paper_field_text import CORE_FIELD_NAMES, FIELD_NAMES, extract_field_texts
+from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute, build_retrieval_route
 from business.research.rag.retrieval.paper_visual_retrieval import (
     PaperVisualFusionWeights,
@@ -403,6 +404,12 @@ class RetrievalResult:
                     "parent_final_score": chunk.metadata.get("parent_final_score"),
                     "parent_score_strategy": chunk.metadata.get("parent_score_strategy", ""),
                     "parent_score_weights": chunk.metadata.get("parent_score_weights", {}),
+                    "claim_index_hit": chunk.metadata.get("claim_index_hit", False),
+                    "claim_index_score": chunk.metadata.get("claim_index_score"),
+                    "claim_id": chunk.metadata.get("claim_id", ""),
+                    "claim_text": chunk.metadata.get("claim_text", ""),
+                    "claim_type": chunk.metadata.get("claim_type", ""),
+                    "claim_source_locator": chunk.metadata.get("claim_source_locator", ""),
                     "title_score": chunk.metadata.get("title_score"),
                     "abstract_score": chunk.metadata.get("abstract_score"),
                     "caption_score": chunk.metadata.get("caption_score"),
@@ -460,6 +467,7 @@ class ResearchRetriever:
         field_index: FieldEmbeddingSearchPort | None = None,
         field_reranker: "RerankerPort | None" = None,
         visual_store: VisualChunkSearchPort | None = None,
+        claim_index: PaperClaimSearchPort | None = None,
     ) -> None:
         self._store = chunk_store
         self._policy = policy or RetrievalPolicy()
@@ -467,6 +475,7 @@ class ResearchRetriever:
         self._field_index = field_index
         self._field_reranker = field_reranker
         self._visual_store = visual_store
+        self._claim_index = claim_index
 
     @property
     def policy(self) -> RetrievalPolicy:
@@ -500,6 +509,8 @@ class ResearchRetriever:
         n_recalled = len(candidates)
         field_hits = self._search_field_candidates(request, route, candidate_filters)
         candidates = self._merge_field_hits(candidates, field_hits, request.paper_id)
+        claim_hits = self._search_claim_candidates(request, route, limit=candidate_limit)
+        candidates = self._merge_claim_hits(candidates, claim_hits, request.paper_id)
         visual_hits = self._search_visual_candidates(request, route, candidate_filters)
         n_visual_recalled = len(visual_hits)
 
@@ -598,6 +609,9 @@ class ResearchRetriever:
             "field_search_fields": self._policy.field_search_fields_for(route.intent),
             "field_hits_count": len(field_hits),
             "field_hits_by_name": _field_hits_by_name(field_hits),
+            "claim_index_enabled": self._claim_index is not None,
+            "claim_index_hits": len(claim_hits),
+            "claim_index_top_claim_ids": [hit.record.claim_id for hit in claim_hits[:5]],
             "threshold_filtered": n_filtered,
             "child_returned": len(child_chunks),
             "parent_returned": len(parent_chunks),
@@ -772,6 +786,52 @@ class ResearchRetriever:
             by_id[merged_chunk.chunk_id] = (merged_chunk, existing[1] if existing else 0.0)
         return list(by_id.values())
 
+    def _search_claim_candidates(
+        self,
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+        *,
+        limit: int,
+    ) -> list[ClaimSearchHit]:
+        if self._claim_index is None or route.intent != "citation_query":
+            return []
+        try:
+            return self._claim_index.search_claims(
+                request.paper_id,
+                request.question,
+                limit=limit,
+            )
+        except Exception:
+            logging.getLogger(__name__).warning("claim index retrieval failed", exc_info=True)
+            return []
+
+    def _merge_claim_hits(
+        self,
+        candidates: list[tuple[PaperChunk, float]],
+        claim_hits: list[ClaimSearchHit],
+        paper_id: str,
+    ) -> list[tuple[PaperChunk, float]]:
+        if not claim_hits:
+            return candidates
+        by_id: dict[str, tuple[PaperChunk, float]] = {
+            chunk.chunk_id: (chunk, score)
+            for chunk, score in candidates
+        }
+        for hit in claim_hits:
+            record = hit.record
+            if record.paper_id != paper_id:
+                continue
+            existing = by_id.get(record.chunk_id)
+            chunk = existing[0] if existing else self._store.get_chunk(record.chunk_id)
+            if chunk is None or chunk.paper_id != paper_id:
+                continue
+            merged_chunk = _merge_claim_index_hit(chunk, hit)
+            by_id[merged_chunk.chunk_id] = (
+                merged_chunk,
+                max(existing[1] if existing else 0.0, hit.score),
+            )
+        return list(by_id.values())
+
     def _base_reranker_enabled(self, intent: str) -> bool:
         return self._reranker is not None and self._policy.reranker_enabled_for(intent)
 
@@ -832,12 +892,18 @@ class ResearchRetriever:
         field_rerank = _clamp_score(field_rerank_score) if field_rerank_score is not None else 0.0
         graph_score = _child_graph_score(chunk)
         route_match_score = _route_match_score(route, chunk)
+        claim_index_score = _metadata_float(chunk.metadata, "claim_index_score", 0.0)
+        if route.intent == "citation_query":
+            graph_score = max(graph_score, claim_index_score)
         element_label_score = _element_label_match_score(request.question, route.intent, chunk)
         graph_score = max(graph_score, element_label_score)
         element_label_boost = _clamp_score(
             element_label_score * max(0.0, self._policy.element_label_boosts.get(route.intent, 0.0))
         )
-        citation_claim_score = _citation_claim_match_score(request.question, chunk)
+        citation_claim_score = max(
+            _citation_claim_match_score(request.question, chunk),
+            claim_index_score,
+        )
         citation_claim_boost = _clamp_score(
             citation_claim_score * max(0.0, self._policy.citation_claim_boost)
         ) if route.intent == "citation_query" else 0.0
@@ -911,6 +977,7 @@ class ResearchRetriever:
                 "route_match": _round_score(route_match_score),
                 "element_label": _round_score(element_label_score),
                 "element_label_boost": _round_score(element_label_boost),
+                "claim_index": _round_score(claim_index_score),
                 "citation_claim": _round_score(citation_claim_score),
                 "citation_claim_boost": _round_score(citation_claim_boost),
             },
@@ -1694,6 +1761,24 @@ def _merge_field_embedding_hit(
     out["field_embedding_hits"] = hit_records[:8]
     out["field_embedding_hit_count"] = len(hit_records)
     return out
+
+
+def _merge_claim_index_hit(chunk: PaperChunk, hit: ClaimSearchHit) -> PaperChunk:
+    record = hit.record
+    metadata = dict(chunk.metadata)
+    existing_score = _metadata_float(metadata, "claim_index_score", 0.0)
+    if existing_score > hit.score:
+        return chunk
+    metadata.update({
+        "claim_index_hit": True,
+        "claim_index_score": _round_score(hit.score),
+        "claim_id": record.claim_id,
+        "claim_text": record.claim_text,
+        "claim_type": record.claim_type,
+        "claim_source_locator": record.source_locator,
+        "claim_section_title": record.section_title,
+    })
+    return chunk.model_copy(update={"metadata": metadata})
 
 
 def _field_embedding_summary_from_metadata(metadata: dict[str, Any]) -> _FieldEmbeddingSummary:
