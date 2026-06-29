@@ -472,6 +472,10 @@ class ResearchRetriever:
     def policy(self) -> RetrievalPolicy:
         return self._policy
 
+    def get_chunk(self, chunk_id: str) -> PaperChunk | None:
+        """Expose deterministic chunk lookup for context assembly helpers."""
+        return self._store.get_chunk(chunk_id)
+
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         import time
         t0 = time.perf_counter()

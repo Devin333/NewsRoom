@@ -290,6 +290,9 @@ def _related_context_ids(chunk: PaperChunk) -> list[str]:
 
 
 def _context_role(chunk: PaperChunk, source_bucket: str) -> str:
+    evidence_group_role = str(chunk.metadata.get("evidence_group_role") or "").strip()
+    if evidence_group_role in {"primary_evidence", "interpretation_context", "locator_context"}:
+        return evidence_group_role
     if _has_expansion_metadata(chunk):
         return "interpretation_context"
     if source_bucket in {"ref", "parent"}:
@@ -346,6 +349,8 @@ def _context_relationships(chunks: list[PaperChunk]) -> list[dict[str, Any]]:
             "expansion_reason": metadata.get("expansion_reason", ""),
             "expansion_edge": metadata.get("expansion_edge", ""),
             "parent_anchor_child_id": metadata.get("parent_anchor_child_id", ""),
+            "evidence_group_id": metadata.get("evidence_group_id", ""),
+            "evidence_group_role": metadata.get("evidence_group_role", ""),
         }
         if any(value for key, value in relationship.items() if key != "chunk_id"):
             relationships.append(relationship)

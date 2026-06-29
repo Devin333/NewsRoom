@@ -34,6 +34,7 @@ from business.research.rag.cli.run_evidence_eval import (
 from business.research.rag.retrieval.paper_retriever import (
     PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
     RetrievalRequest,
+    RetrievalResult,
 )
 from framework.llm.clients.openai_compatible import LLMRetryPolicy, OpenAICompatibleClient, OpenAICompatibleConfig
 from framework.llm.models.request import LLMRequest
@@ -984,13 +985,21 @@ async def _generate_answer_samples(
             question=pair.question,
             limit=10,
         ))
+        required_context_ids = _evidence_pack_required_context_ids(pair)
+        retrieval, evidence_pack_metadata = _hydrate_retrieval_with_evidence_pack(
+            retrieval,
+            pair,
+            chunk_lookup=retriever,
+            required_context_ids=required_context_ids,
+        )
         answer = await generator.generate(
             pair.question,
             retrieval,
-            required_context_ids=pair.gold_chunk_ids,
+            required_context_ids=required_context_ids,
         )
         context_chunks = _context_chunks_for_answer(retrieval, answer.context_chunk_ids)
         context_score_breakdowns = _context_score_breakdowns(context_chunks)
+        answer.context_metadata.update(evidence_pack_metadata)
         answer.context_metadata["context_score_breakdowns"] = context_score_breakdowns
         cited_chunk_ids = _cited_chunk_ids(answer.answer, answer.context_chunk_ids)
         context_by_id = {chunk.chunk_id: chunk for chunk in context_chunks}
@@ -1021,6 +1030,13 @@ async def _generate_answer_samples(
                 "equivalent_required_context_ids": list(pair.equivalent_gold_chunk_ids or pair.gold_chunk_ids),
                 "supporting_evidence_group_id": pair.supporting_evidence_group_id,
                 "supporting_evidence_group": dict(pair.supporting_evidence_group),
+                "evidence_pack_required_context_ids": list(
+                    answer.context_metadata.get("evidence_pack_required_context_ids") or []
+                ),
+                "evidence_pack_expanded_chunk_ids": list(
+                    answer.context_metadata.get("evidence_pack_expanded_chunk_ids") or []
+                ),
+                "evidence_pack_expansions": list(answer.context_metadata.get("evidence_pack_expansions") or []),
                 "selected_required_context_ids": list(
                     answer.context_metadata.get("selected_required_context_ids") or []
                 ),
@@ -1034,6 +1050,230 @@ async def _generate_answer_samples(
         ))
         generated.append(answer)
     return samples, generated
+
+
+def _evidence_pack_required_context_ids(pair: EvidenceQAPair) -> list[str]:
+    group = dict(pair.supporting_evidence_group or {})
+    return _unique_texts([
+        *pair.required_primary_evidence_ids,
+        *list(group.get("primary_evidence_ids") or []),
+        *pair.gold_chunk_ids,
+        *list(group.get("interpretation_context_ids") or []),
+        *pair.acceptable_support_evidence_ids,
+    ]) or list(pair.gold_chunk_ids)
+
+
+def _hydrate_retrieval_with_evidence_pack(
+    retrieval: RetrievalResult,
+    pair: EvidenceQAPair,
+    *,
+    chunk_lookup: Any,
+    required_context_ids: list[str],
+) -> tuple[RetrievalResult, dict[str, Any]]:
+    group = dict(pair.supporting_evidence_group or {})
+    group_id = str(pair.supporting_evidence_group_id or group.get("group_id") or "").strip()
+    metadata: dict[str, Any] = {
+        "evidence_pack_group_id": group_id,
+        "evidence_pack_required_context_ids": list(required_context_ids),
+        "evidence_pack_hit_chunk_ids": [],
+        "evidence_pack_expanded_chunk_ids": [],
+        "evidence_pack_expansions": [],
+    }
+    get_chunk = getattr(chunk_lookup, "get_chunk", None)
+    if not group_id or not callable(get_chunk):
+        return retrieval, metadata
+
+    primary_ids = _unique_texts([
+        *pair.required_primary_evidence_ids,
+        *list(group.get("primary_evidence_ids") or []),
+        *pair.gold_chunk_ids,
+    ])
+    interpretation_ids = _unique_texts([
+        *list(group.get("interpretation_context_ids") or []),
+        *pair.acceptable_support_evidence_ids,
+    ])
+    group_ids = set(_unique_texts([
+        *primary_ids,
+        *interpretation_ids,
+        *pair.equivalent_gold_chunk_ids,
+        *list(group.get("equivalent_evidence_ids") or []),
+    ]))
+    existing_chunks = _retrieval_context_candidates(retrieval)
+    existing_ids = {chunk.chunk_id for chunk in existing_chunks}
+    hit_ids = [chunk.chunk_id for chunk in existing_chunks if chunk.chunk_id in group_ids]
+    metadata["evidence_pack_hit_chunk_ids"] = hit_ids
+    if not hit_ids:
+        return retrieval, metadata
+
+    annotated_parent_chunks = _annotate_evidence_pack_chunks(
+        retrieval.parent_chunks,
+        group_id=group_id,
+        primary_ids=primary_ids,
+        interpretation_ids=interpretation_ids,
+    )
+    annotated_child_chunks = _annotate_evidence_pack_chunks(
+        retrieval.child_chunks,
+        group_id=group_id,
+        primary_ids=primary_ids,
+        interpretation_ids=interpretation_ids,
+    )
+    annotated_ref_chunks = _annotate_evidence_pack_chunks(
+        retrieval.ref_chunks,
+        group_id=group_id,
+        primary_ids=primary_ids,
+        interpretation_ids=interpretation_ids,
+    )
+
+    expanded: list[PaperChunk] = []
+    expansions: list[dict[str, Any]] = []
+    expanded_from_id = hit_ids[0]
+    for rank, target_id in enumerate(required_context_ids, start=1):
+        if target_id in existing_ids:
+            continue
+        chunk = get_chunk(target_id)
+        if chunk is None or chunk.paper_id != pair.paper_id:
+            continue
+        role = "primary_evidence" if target_id in set(primary_ids) else "interpretation_context"
+        reason = _evidence_pack_expansion_reason(pair.qa_type, role)
+        edge = (
+            "supporting_evidence_group.primary_evidence_ids"
+            if role == "primary_evidence"
+            else "supporting_evidence_group.interpretation_context_ids"
+        )
+        hydrated = _with_evidence_pack_metadata(
+            chunk,
+            group_id=group_id,
+            role=role,
+            expanded_from_chunk_id=expanded_from_id,
+            reason=reason,
+            edge=edge,
+            rank=rank,
+        )
+        expanded.append(hydrated)
+        existing_ids.add(target_id)
+        expansions.append({
+            "group_id": group_id,
+            "expanded_from_chunk_id": expanded_from_id,
+            "expanded_to_chunk_id": target_id,
+            "expansion_reason": reason,
+            "expansion_edge": edge,
+            "evidence_group_role": role,
+            "rank": rank,
+        })
+
+    if not expanded:
+        return (
+            RetrievalResult(
+                parent_chunks=annotated_parent_chunks,
+                child_chunks=annotated_child_chunks,
+                ref_chunks=annotated_ref_chunks,
+                intent=retrieval.intent,
+                metadata={**dict(retrieval.metadata), **metadata},
+            ),
+            metadata,
+        )
+    metadata["evidence_pack_expanded_chunk_ids"] = [chunk.chunk_id for chunk in expanded]
+    metadata["evidence_pack_expansions"] = expansions
+    return (
+        RetrievalResult(
+            parent_chunks=annotated_parent_chunks,
+            child_chunks=annotated_child_chunks,
+            ref_chunks=_dedupe_paper_chunks([*annotated_ref_chunks, *expanded]),
+            intent=retrieval.intent,
+            metadata={**dict(retrieval.metadata), **metadata},
+        ),
+        metadata,
+    )
+
+
+def _annotate_evidence_pack_chunks(
+    chunks: Iterable[PaperChunk],
+    *,
+    group_id: str,
+    primary_ids: list[str],
+    interpretation_ids: list[str],
+) -> list[PaperChunk]:
+    out: list[PaperChunk] = []
+    primary_set = set(primary_ids)
+    interpretation_set = set(interpretation_ids)
+    for chunk in chunks:
+        if chunk.chunk_id in primary_set:
+            out.append(_with_evidence_group_role_metadata(chunk, group_id=group_id, role="primary_evidence"))
+        elif chunk.chunk_id in interpretation_set:
+            out.append(_with_evidence_group_role_metadata(chunk, group_id=group_id, role="interpretation_context"))
+        else:
+            out.append(chunk)
+    return out
+
+
+def _with_evidence_group_role_metadata(
+    chunk: PaperChunk,
+    *,
+    group_id: str,
+    role: str,
+) -> PaperChunk:
+    metadata = dict(chunk.metadata)
+    metadata.update({
+        "evidence_group_id": group_id,
+        "evidence_group_role": role,
+    })
+    return chunk.model_copy(update={"metadata": metadata})
+
+
+def _retrieval_context_candidates(retrieval: RetrievalResult) -> list[PaperChunk]:
+    return _dedupe_paper_chunks([
+        *retrieval.child_chunks,
+        *retrieval.ref_chunks,
+        *retrieval.parent_chunks,
+    ])
+
+
+def _dedupe_paper_chunks(chunks: Iterable[PaperChunk]) -> list[PaperChunk]:
+    seen: set[str] = set()
+    out: list[PaperChunk] = []
+    for chunk in chunks:
+        if chunk.chunk_id in seen:
+            continue
+        seen.add(chunk.chunk_id)
+        out.append(chunk)
+    return out
+
+
+def _evidence_pack_expansion_reason(qa_type: str, role: str) -> str:
+    prefix = "evidence"
+    normalized = str(qa_type or "").casefold()
+    if "formula" in normalized:
+        prefix = "formula"
+    elif "table" in normalized or "result" in normalized:
+        prefix = "table"
+    elif "figure" in normalized:
+        prefix = "figure"
+    elif "citation" in normalized:
+        prefix = "citation"
+    return f"{prefix}_group_{role}"
+
+
+def _with_evidence_pack_metadata(
+    chunk: PaperChunk,
+    *,
+    group_id: str,
+    role: str,
+    expanded_from_chunk_id: str,
+    reason: str,
+    edge: str,
+    rank: int,
+) -> PaperChunk:
+    metadata = dict(chunk.metadata)
+    metadata.update({
+        "expanded_from_chunk_id": expanded_from_chunk_id,
+        "expansion_reason": reason,
+        "expansion_edge": edge,
+        "expansion_rank": rank,
+        "evidence_group_id": group_id,
+        "evidence_group_role": role,
+        "evidence_pack_expansion": True,
+    })
+    return chunk.model_copy(update={"metadata": metadata})
 
 
 def _answer_generation_pairs(pairs: list[EvidenceQAPair], config: BenchmarkSuiteConfig) -> list[EvidenceQAPair]:

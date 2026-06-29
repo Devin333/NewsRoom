@@ -44,3 +44,21 @@ Answer evaluation SHALL distinguish true missing gold from equivalent evidence s
 - **THEN** the answer evaluation SHALL report equivalent coverage
 - **AND** it SHALL NOT classify the sample as `missing_gold_in_retrieval`
 - **AND** strict gold coverage SHALL still be reported separately
+
+### Requirement: Answer context hydrates evidence packs after same-group hits
+
+Paper RAG answer generation SHALL be able to hydrate missing same-group evidence into the answer context after retrieval hits at least one evidence chunk from that group.
+
+#### Scenario: Hydrating primary evidence from an interpretation hit
+
+- **WHEN** retrieval returns an interpretation chunk that belongs to a QA pair's `supporting_evidence_group`
+- **AND** the group's primary evidence chunk is available from deterministic chunk lookup
+- **THEN** answer context assembly SHALL add the primary evidence chunk as an evidence-pack expansion candidate
+- **AND** the expansion metadata SHALL include `evidence_group_id`, `expanded_from_chunk_id`, `expansion_reason`, and `evidence_group_role`
+- **AND** answer sample metadata SHALL include evidence-pack required ids and expanded chunk ids
+
+#### Scenario: No same-group hit
+
+- **WHEN** retrieval does not return any chunk in a QA pair's `supporting_evidence_group`
+- **THEN** answer context hydration SHALL NOT inject the group's gold chunks
+- **AND** missing gold evidence SHALL remain observable in evaluation metadata

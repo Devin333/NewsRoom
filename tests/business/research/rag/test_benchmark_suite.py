@@ -7,6 +7,8 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     BenchmarkSuiteConfig,
     GoldEvidenceJudgeItem,
     GoldEvidenceJudgeReport,
+    _evidence_pack_required_context_ids,
+    _hydrate_retrieval_with_evidence_pack,
     audit_question_ambiguity,
     audit_gold_evidence,
     run_benchmark_suite,
@@ -15,6 +17,8 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
 from business.research.document.models import PaperChunk
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from business.research.rag.cli.run_benchmark_suite import _parse_thresholds, main
+from business.research.rag.retrieval.paper_answer_generator import AnswerContextAssembler
+from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
 
 class _FakeGoldJudge:
@@ -42,6 +46,14 @@ class _FakeGoldJudge:
             error=0,
             items=judged,
         )
+
+
+class _ChunkLookup:
+    def __init__(self, chunks: list[PaperChunk]) -> None:
+        self._chunks = {chunk.chunk_id: chunk for chunk in chunks}
+
+    def get_chunk(self, chunk_id: str) -> PaperChunk | None:
+        return self._chunks.get(chunk_id)
 
 
 async def _fake_answer_llm(prompt: str) -> str:
@@ -478,6 +490,108 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
     assert "## Answer Metrics" in markdown
     assert "## Generation Judge" in markdown
     assert "## Spot Check" in markdown
+
+
+def test_evidence_pack_hydration_adds_primary_when_group_context_is_hit() -> None:
+    formula = _paper_chunk(
+        chunk_id="eq-hamiltonian",
+        chunk_type="formula",
+        content="Equation: dot y = J^{-1} grad H(y).",
+    )
+    explanation = _paper_chunk(
+        chunk_id="para-formula",
+        chunk_type="paragraph",
+        content="The surrounding text explains the Hamiltonian ODE.",
+    )
+    pair = EvidenceQAPair(
+        question="How is the Hamiltonian ODE defined?",
+        paper_id="p1",
+        qa_type="formula_qa",
+        gold_chunk_ids=["eq-hamiltonian"],
+        equivalent_gold_chunk_ids=["eq-hamiltonian", "para-formula"],
+        supporting_evidence_group_id="eg_formula",
+        required_primary_evidence_ids=["eq-hamiltonian"],
+        acceptable_support_evidence_ids=["para-formula"],
+        supporting_evidence_group={
+            "group_id": "eg_formula",
+            "primary_evidence_ids": ["eq-hamiltonian"],
+            "equivalent_evidence_ids": ["eq-hamiltonian", "para-formula"],
+            "interpretation_context_ids": ["para-formula"],
+        },
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[explanation],
+        ref_chunks=[],
+        intent="formula_query",  # type: ignore[arg-type]
+    )
+
+    required_ids = _evidence_pack_required_context_ids(pair)
+    hydrated, metadata = _hydrate_retrieval_with_evidence_pack(
+        retrieval,
+        pair,
+        chunk_lookup=_ChunkLookup([formula, explanation]),
+        required_context_ids=required_ids,
+    )
+    selection = AnswerContextAssembler(max_context_chunks=2).select(
+        hydrated,
+        required_context_ids=required_ids,
+    )
+
+    assert required_ids == ["eq-hamiltonian", "para-formula"]
+    assert [chunk.chunk_id for chunk in hydrated.ref_chunks] == ["eq-hamiltonian"]
+    assert metadata["evidence_pack_hit_chunk_ids"] == ["para-formula"]
+    assert metadata["evidence_pack_expanded_chunk_ids"] == ["eq-hamiltonian"]
+    assert metadata["evidence_pack_expansions"][0]["expansion_reason"] == "formula_group_primary_evidence"
+    assert [chunk.chunk_id for chunk in selection.chunks] == ["eq-hamiltonian", "para-formula"]
+    assert selection.metadata["context_role_buckets"]["eq-hamiltonian"] == "primary_evidence"
+    assert selection.metadata["context_role_buckets"]["para-formula"] == "interpretation_context"
+    assert selection.metadata["context_relationships"][0]["evidence_group_id"] == "eg_formula"
+
+
+def test_evidence_pack_hydration_does_not_add_gold_without_group_hit() -> None:
+    formula = _paper_chunk(
+        chunk_id="eq-hamiltonian",
+        chunk_type="formula",
+        content="Equation: dot y = J^{-1} grad H(y).",
+    )
+    unrelated = _paper_chunk(
+        chunk_id="para-other",
+        chunk_type="paragraph",
+        content="Other paragraph.",
+    )
+    pair = EvidenceQAPair(
+        question="How is the Hamiltonian ODE defined?",
+        paper_id="p1",
+        qa_type="formula_qa",
+        gold_chunk_ids=["eq-hamiltonian"],
+        equivalent_gold_chunk_ids=["eq-hamiltonian", "para-formula"],
+        supporting_evidence_group_id="eg_formula",
+        required_primary_evidence_ids=["eq-hamiltonian"],
+        supporting_evidence_group={
+            "group_id": "eg_formula",
+            "primary_evidence_ids": ["eq-hamiltonian"],
+            "equivalent_evidence_ids": ["eq-hamiltonian", "para-formula"],
+            "interpretation_context_ids": ["para-formula"],
+        },
+    )
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=[unrelated],
+        ref_chunks=[],
+        intent="formula_query",  # type: ignore[arg-type]
+    )
+
+    hydrated, metadata = _hydrate_retrieval_with_evidence_pack(
+        retrieval,
+        pair,
+        chunk_lookup=_ChunkLookup([formula, unrelated]),
+        required_context_ids=_evidence_pack_required_context_ids(pair),
+    )
+
+    assert hydrated.ref_chunks == []
+    assert metadata["evidence_pack_hit_chunk_ids"] == []
+    assert metadata["evidence_pack_expanded_chunk_ids"] == []
 
 
 def test_spot_check_generation_is_capped_by_sample_size(tmp_path: Path) -> None:
