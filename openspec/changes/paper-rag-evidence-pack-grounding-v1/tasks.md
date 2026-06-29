@@ -17,3 +17,4 @@
 - [x] 6.1 Add Paper RAG answer diagnostics for true missing gold, equivalent support, primary/interpretation context gaps, and claim support.
 - [x] 6.2 Add claim-support metrics to evidence reports, answer samples, scorecards, and promotion checklist.
 - [x] 6.3 Add a multi-dataset benchmark matrix runner for held-out regression sets.
+- [x] 6.4 Support benchmark matrix dataset manifests and fail fast when a required held-out dataset is missing.

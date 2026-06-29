@@ -129,3 +129,10 @@ Paper RAG SHALL provide a benchmark matrix runner for multiple held-out paper da
 - **AND** it SHALL write `benchmark_matrix_report.json`
 - **AND** it SHALL write `benchmark_matrix_report.md`
 - **AND** the aggregate report SHALL include per-dataset Hit@10, equivalent Hit@10, MRR, answer success, warnings, and promotion readiness
+
+#### Scenario: Matrix manifest requires real held-out artifacts
+
+- **WHEN** the runner receives a dataset manifest
+- **THEN** it SHALL load every named dataset entry
+- **AND** it SHALL fail before running if any required `papers_dir` is missing
+- **AND** it SHALL fail before running if any required dataset has no `research_document.json` artifacts

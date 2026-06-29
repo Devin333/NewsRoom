@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from business.research.rag.evaluation.paper_benchmark_suite import (
     BenchmarkSuiteConfig,
     GoldEvidenceJudgeItem,
@@ -17,11 +19,13 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
 from business.research.rag.evaluation.paper_benchmark_matrix import (
     BenchmarkMatrixConfig,
     BenchmarkMatrixDataset,
+    load_benchmark_matrix_datasets,
     run_benchmark_matrix,
 )
 from business.research.document.models import PaperChunk
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from business.research.rag.cli.run_benchmark_suite import _parse_thresholds, main
+from business.research.rag.cli.run_benchmark_matrix import _datasets_from_args, _build_parser as _build_matrix_parser
 from business.research.rag.retrieval.paper_answer_generator import AnswerContextAssembler
 from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
@@ -532,6 +536,57 @@ def test_run_benchmark_matrix_writes_held_out_dataset_summary(tmp_path: Path) ->
     assert set(payload["datasets"]) == {"historical_38", "new50_20260629"}
     assert payload["datasets"]["historical_38"]["papers_total"] == 3
     assert "Eq Hit@10" in markdown
+
+
+def test_benchmark_matrix_loads_manifest_and_requires_real_dataset_dirs(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+    missing_dir = tmp_path / "missing-future"
+    manifest = tmp_path / "datasets.json"
+    manifest.write_text(
+        json.dumps({
+            "datasets": [
+                {"name": "historical_38", "papers_dir": str(papers_dir)},
+                {"name": "new50_future_blind", "papers_dir": str(missing_dir)},
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    datasets = load_benchmark_matrix_datasets(manifest)
+
+    assert [dataset.name for dataset in datasets] == ["historical_38", "new50_future_blind"]
+    assert datasets[0].papers_dir == papers_dir
+    with pytest.raises(FileNotFoundError, match="new50_future_blind"):
+        run_benchmark_matrix(BenchmarkMatrixConfig(
+            datasets=datasets,
+            output_dir=tmp_path / "matrix",
+            min_papers=1,
+            target_min_per_type=1,
+            render_page_visual=False,
+        ))
+
+
+def test_benchmark_matrix_cli_accepts_dataset_manifest(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1",))
+    manifest = tmp_path / "datasets.json"
+    manifest.write_text(
+        json.dumps({"datasets": [{"name": "historical_38", "papers_dir": str(papers_dir)}]}),
+        encoding="utf-8",
+    )
+
+    args = _build_matrix_parser().parse_args([
+        "--dataset-manifest",
+        str(manifest),
+        "--output-dir",
+        str(tmp_path / "matrix"),
+    ])
+
+    datasets = _datasets_from_args(args)
+
+    assert len(datasets) == 1
+    assert datasets[0].name == "historical_38"
 
 
 def test_evidence_pack_hydration_adds_primary_when_group_context_is_hit() -> None:

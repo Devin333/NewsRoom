@@ -8,14 +8,16 @@ from typing import Sequence
 from business.research.rag.evaluation.paper_benchmark_matrix import (
     BenchmarkMatrixConfig,
     BenchmarkMatrixDataset,
+    load_benchmark_matrix_datasets,
     run_benchmark_matrix,
 )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    datasets = _datasets_from_args(args)
     result = run_benchmark_matrix(BenchmarkMatrixConfig(
-        datasets=tuple(_parse_dataset(value) for value in args.dataset),
+        datasets=datasets,
         output_dir=Path(args.output_dir),
         retrieval_policy=args.retrieval_policy,
         question_profile=args.question_profile,
@@ -45,9 +47,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dataset",
         action="append",
-        required=True,
+        default=[],
         metavar="NAME=PATH",
         help="Dataset name and papers directory. Repeat for historical_38, new50_20260629, etc.",
+    )
+    parser.add_argument(
+        "--dataset-manifest",
+        help="JSON manifest with a datasets list. Entries use name, papers_dir, and optional image_root.",
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--retrieval-policy", default="paper_blind_semantic_rag_v1")
@@ -70,6 +76,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-render-page-visual", action="store_true")
     parser.add_argument("--lightweight-reranker", action="store_true")
     return parser
+
+
+def _datasets_from_args(args: argparse.Namespace) -> tuple[BenchmarkMatrixDataset, ...]:
+    datasets: list[BenchmarkMatrixDataset] = []
+    if args.dataset_manifest:
+        datasets.extend(load_benchmark_matrix_datasets(Path(args.dataset_manifest)))
+    datasets.extend(_parse_dataset(value) for value in args.dataset)
+    if not datasets:
+        raise ValueError("provide at least one --dataset or --dataset-manifest")
+    return tuple(datasets)
 
 
 def _parse_dataset(value: str) -> BenchmarkMatrixDataset:

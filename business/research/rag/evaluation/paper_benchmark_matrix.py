@@ -27,6 +27,14 @@ class BenchmarkMatrixDataset:
         if self.image_root is not None:
             object.__setattr__(self, "image_root", Path(self.image_root))
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "BenchmarkMatrixDataset":
+        return cls(
+            name=str(data.get("name") or ""),
+            papers_dir=Path(str(data.get("papers_dir") or data.get("path") or "")),
+            image_root=Path(str(data["image_root"])) if data.get("image_root") else None,
+        )
+
 
 @dataclass
 class BenchmarkMatrixConfig:
@@ -95,6 +103,7 @@ class BenchmarkMatrixResult:
 def run_benchmark_matrix(config: BenchmarkMatrixConfig) -> BenchmarkMatrixResult:
     if not config.datasets:
         raise ValueError("at least one benchmark dataset is required")
+    _validate_dataset_inputs(config.datasets)
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     results: dict[str, BenchmarkSuiteResult] = {}
@@ -129,6 +138,35 @@ def run_benchmark_matrix(config: BenchmarkMatrixConfig) -> BenchmarkMatrixResult
     )
     (output_dir / "benchmark_matrix_report.md").write_text(result.to_markdown(), encoding="utf-8")
     return result
+
+
+def load_benchmark_matrix_datasets(path: Path) -> tuple[BenchmarkMatrixDataset, ...]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    raw_datasets = payload.get("datasets") if isinstance(payload, dict) else payload
+    if not isinstance(raw_datasets, list):
+        raise ValueError("benchmark matrix manifest must contain a 'datasets' list")
+    datasets = tuple(
+        BenchmarkMatrixDataset.from_dict(item)
+        for item in raw_datasets
+        if isinstance(item, dict)
+    )
+    if len(datasets) != len(raw_datasets):
+        raise ValueError("each benchmark matrix dataset entry must be an object")
+    return datasets
+
+
+def _validate_dataset_inputs(datasets: tuple[BenchmarkMatrixDataset, ...]) -> None:
+    names: set[str] = set()
+    for dataset in datasets:
+        if dataset.name in names:
+            raise ValueError(f"duplicate benchmark dataset name: {dataset.name}")
+        names.add(dataset.name)
+        if not dataset.papers_dir.exists():
+            raise FileNotFoundError(f"benchmark dataset does not exist: {dataset.name}={dataset.papers_dir}")
+        if not any(dataset.papers_dir.glob("*/research_document.json")):
+            raise FileNotFoundError(
+                f"benchmark dataset has no research_document.json files: {dataset.name}={dataset.papers_dir}"
+            )
 
 
 def _dataset_summary(result: BenchmarkSuiteResult) -> dict[str, Any]:
@@ -172,5 +210,6 @@ __all__ = [
     "BenchmarkMatrixConfig",
     "BenchmarkMatrixDataset",
     "BenchmarkMatrixResult",
+    "load_benchmark_matrix_datasets",
     "run_benchmark_matrix",
 ]
