@@ -60,6 +60,7 @@ def evidence_results_to_rag_scorecard(
         "paper_specific_metrics": _paper_specific_metrics(retrieval),
         "score_breakdown_summary": _score_breakdown_summary(retrieval),
         "raw_failure_reason_counts": answer.failure_reason_counts() if answer is not None else {},
+        "answer_diagnostic_tag_counts": answer.diagnostic_tag_counts() if answer is not None else {},
     }
     return RAGScorecard(
         run_id=run_id,
@@ -103,6 +104,8 @@ def _answer_metrics(result: EvidenceAnswerEvalResult) -> list[MetricValue]:
         MetricValue("answer.strict_citation_gold_coverage", result.strict_citation_gold_coverage_score()),
         MetricValue("answer.equivalent_citation_gold_coverage", result.equivalent_citation_gold_coverage_score()),
         MetricValue("answer.equivalent_supported_rate", result.equivalent_supported_rate()),
+        MetricValue("answer.claim_support_coverage", result.claim_support_coverage_score()),
+        MetricValue("answer.true_missing_gold_rate", result.true_missing_gold_rate()),
         MetricValue("answer.source_locator_grounding", result.source_locator_grounding_score()),
         MetricValue("answer.abstention_accuracy", result.abstention_accuracy()),
         MetricValue("answer.success_rate", result.success_rate()),

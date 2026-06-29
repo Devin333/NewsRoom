@@ -54,10 +54,13 @@ DEFAULT_TARGET_QA_TYPES = (
 PROMOTION_THRESHOLDS = {
     "overall_hit_at_10": 0.55,
     "overall_mrr": 0.30,
-    "formula_qa_hit_at_10": 0.40,
+    "formula_qa_hit_at_10": 0.45,
+    "citation_qa_hit_at_10": 0.60,
     "figure_qa_hit_at_10": 0.58,
     "table_qa_hit_at_10": 0.60,
-    "answer_success": 0.55,
+    "answer_success": 0.60,
+    "strict_equivalent_hit_at_10_gap": 0.25,
+    "true_missing_gold_rate": 0.25,
     "ambiguous_question_rate": 0.15,
     "caption_copy_rate": 0.02,
 }
@@ -1391,6 +1394,8 @@ def _answer_sample_record(
             "strict_citation_gold_coverage": score.strict_citation_gold_coverage,
             "equivalent_citation_gold_coverage": score.equivalent_citation_gold_coverage,
             "equivalent_gold_supported": score.equivalent_gold_supported,
+            "claim_support_coverage": score.claim_support_coverage,
+            "diagnostic_tags": list(score.diagnostic_tags),
             "source_locator_grounding": score.source_locator_grounding,
             "abstention_correct": score.abstention_correct,
             "answer_success": score.answer_success,
@@ -1784,6 +1789,12 @@ def _build_policy_promotion_checklist(
             PROMOTION_THRESHOLDS["formula_qa_hit_at_10"],
         ),
         _metric_promotion_check(
+            "citation_qa_hit_at_10",
+            "Citation QA Hit@10 meets PRD V5 gate",
+            _qa_type_hit_at_10(retrieval, "citation_qa"),
+            PROMOTION_THRESHOLDS["citation_qa_hit_at_10"],
+        ),
+        _metric_promotion_check(
             "figure_qa_hit_at_10",
             "Figure QA Hit@10 meets PRD V5 gate",
             _qa_type_hit_at_10(retrieval, "figure_qa"),
@@ -1802,6 +1813,10 @@ def _build_policy_promotion_checklist(
             actual=sorted((retrieval.get("by_qa_type") or {}).keys()),
         ),
         _answer_success_check(answer),
+        _strict_equivalent_gap_check(retrieval),
+        _answer_diagnostics_check(answer),
+        _true_missing_gold_rate_check(answer),
+        _claim_support_check(answer),
         _promotion_check(
             "failure_reasons",
             "Answer failure reasons are reported",
@@ -1870,6 +1885,96 @@ def _answer_success_check(answer: dict[str, Any] | None) -> PolicyPromotionCheck
         "Answer success meets PRD V5 gate",
         _metric(answer, "success_rate"),
         PROMOTION_THRESHOLDS["answer_success"],
+    )
+
+
+def _strict_equivalent_gap_check(retrieval: dict[str, Any]) -> PolicyPromotionCheck:
+    by_10 = (retrieval.get("by_k") or {}).get("10") or {}
+    strict_hit = _metric(by_10, "strict_hit_rate")
+    equivalent_hit = _metric(by_10, "equivalent_hit_rate")
+    gap = max(0.0, equivalent_hit - strict_hit)
+    return _promotion_check(
+        "strict_equivalent_hit_at_10_gap",
+        "Strict/equivalent Hit@10 gap is reported and bounded",
+        "strict_hit_rate" in by_10
+        and "equivalent_hit_rate" in by_10
+        and gap <= PROMOTION_THRESHOLDS["strict_equivalent_hit_at_10_gap"],
+        actual={
+            "strict_hit_at_10": round(strict_hit, 6),
+            "equivalent_hit_at_10": round(equivalent_hit, 6),
+            "gap": round(gap, 6),
+        },
+        threshold={"max_gap": PROMOTION_THRESHOLDS["strict_equivalent_hit_at_10_gap"]},
+        details="prevents promotion when equivalent expansion hides a strict-gold regression",
+    )
+
+
+def _answer_diagnostics_check(answer: dict[str, Any] | None) -> PolicyPromotionCheck:
+    if not isinstance(answer, dict):
+        return _promotion_check(
+            "answer_diagnostics",
+            "Answer diagnostics include equivalent and failure split metrics",
+            False,
+            actual=None,
+            threshold="answer diagnostic fields present",
+            details="answer evaluation was not run",
+        )
+    required = {
+        "equivalent_supported_rate",
+        "true_missing_gold_rate",
+        "claim_support_coverage",
+        "diagnostic_tag_counts",
+    }
+    missing = sorted(key for key in required if key not in answer)
+    return _promotion_check(
+        "answer_diagnostics",
+        "Answer diagnostics include equivalent and failure split metrics",
+        not missing,
+        actual={key: answer.get(key) for key in sorted(required)},
+        threshold="all required diagnostics present",
+        details=f"missing={missing}" if missing else "",
+    )
+
+
+def _true_missing_gold_rate_check(answer: dict[str, Any] | None) -> PolicyPromotionCheck:
+    if not isinstance(answer, dict):
+        return _promotion_check(
+            "true_missing_gold_rate",
+            "True missing gold rate is bounded",
+            False,
+            actual=None,
+            threshold=PROMOTION_THRESHOLDS["true_missing_gold_rate"],
+            details="answer evaluation was not run",
+        )
+    actual = _metric(answer, "true_missing_gold_rate")
+    return _promotion_check(
+        "true_missing_gold_rate",
+        "True missing gold rate is bounded",
+        actual <= PROMOTION_THRESHOLDS["true_missing_gold_rate"],
+        actual=round(actual, 6),
+        threshold={"max": PROMOTION_THRESHOLDS["true_missing_gold_rate"]},
+    )
+
+
+def _claim_support_check(answer: dict[str, Any] | None) -> PolicyPromotionCheck:
+    if not isinstance(answer, dict):
+        return _promotion_check(
+            "claim_support_coverage",
+            "Claim support coverage is visible for citation QA",
+            False,
+            actual=None,
+            threshold="metric present",
+            details="answer evaluation was not run",
+        )
+    by_type = answer.get("by_qa_type") or {}
+    citation = by_type.get("citation_qa") or {}
+    actual = citation.get("claim_support_coverage", answer.get("claim_support_coverage"))
+    return _promotion_check(
+        "claim_support_coverage",
+        "Claim support coverage is visible for citation QA",
+        actual is not None,
+        actual=actual,
+        threshold="metric present",
     )
 
 
@@ -2205,6 +2310,9 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             f"- retrieval context coverage: `{answer['retrieval_context_coverage']:.3f}`",
             f"- citation grounding: `{answer['citation_grounding_score']:.3f}`",
             f"- citation gold coverage: `{answer['citation_gold_coverage']:.3f}`",
+            f"- equivalent supported rate: `{answer.get('equivalent_supported_rate', 0.0):.3f}`",
+            f"- claim support coverage: `{answer.get('claim_support_coverage', 0.0):.3f}`",
+            f"- true missing gold rate: `{answer.get('true_missing_gold_rate', 0.0):.3f}`",
             f"- source locator grounding: `{answer['source_locator_grounding_score']:.3f}`",
             f"- abstention accuracy: `{answer['abstention_accuracy']:.3f}`",
         ])
@@ -2213,6 +2321,11 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             lines.append("- failure reasons:")
             for reason, count in sorted(failure_counts.items()):
                 lines.append(f"  - `{reason}`: `{count}`")
+        diagnostic_counts = answer.get("diagnostic_tag_counts") or {}
+        if diagnostic_counts:
+            lines.append("- diagnostic tags:")
+            for tag, count in sorted(diagnostic_counts.items()):
+                lines.append(f"  - `{tag}`: `{count}`")
     generation = payload["candidate_test_report"].get("generation")
     if generation:
         lines.extend([

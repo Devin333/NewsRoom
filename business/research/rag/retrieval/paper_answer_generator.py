@@ -351,6 +351,10 @@ def _context_relationships(chunks: list[PaperChunk]) -> list[dict[str, Any]]:
             "parent_anchor_child_id": metadata.get("parent_anchor_child_id", ""),
             "evidence_group_id": metadata.get("evidence_group_id", ""),
             "evidence_group_role": metadata.get("evidence_group_role", ""),
+            "claim_id": metadata.get("claim_id", ""),
+            "claim_text": metadata.get("claim_text", ""),
+            "claim_type": metadata.get("claim_type", ""),
+            "claim_source_locator": metadata.get("claim_source_locator", ""),
         }
         if any(value for key, value in relationship.items() if key != "chunk_id"):
             relationships.append(relationship)

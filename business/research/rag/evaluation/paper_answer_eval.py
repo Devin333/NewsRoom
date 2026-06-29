@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
-from framework.rag.evaluation import AnswerMetricCase, score_answer_case
+from framework.rag.evaluation import AnswerMetricCase, evidence_support_coverage, score_answer_case
 
 
 _ABSTAIN_MARKERS = (
@@ -62,6 +62,8 @@ class EvidenceAnswerScores:
     strict_citation_gold_coverage: float | None = None
     equivalent_citation_gold_coverage: float | None = None
     equivalent_gold_supported: bool = False
+    claim_support_coverage: float | None = None
+    diagnostic_tags: tuple[str, ...] = ()
     failure_reason: str = ""
     matched_facts: tuple[str, ...] = ()
     missing_facts: tuple[str, ...] = ()
@@ -110,6 +112,23 @@ class EvidenceAnswerEvalResult:
     def equivalent_supported_rate(self) -> float:
         return sum(1 for score in self.scores if score.equivalent_gold_supported) / self.total if self.total else 0.0
 
+    def claim_support_coverage_score(self) -> float:
+        return _average_optional(score.claim_support_coverage for score in self.scores)
+
+    def true_missing_gold_rate(self) -> float:
+        return (
+            sum(1 for score in self.scores if "true_missing_gold_in_retrieval" in score.diagnostic_tags) / self.total
+            if self.total
+            else 0.0
+        )
+
+    def diagnostic_tag_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for score in self.scores:
+            for tag in score.diagnostic_tags:
+                counts[tag] = counts.get(tag, 0) + 1
+        return dict(sorted(counts.items()))
+
     def abstention_accuracy(self) -> float:
         return _average_optional(score.abstention_correct for score in self.scores)
 
@@ -137,6 +156,8 @@ class EvidenceAnswerEvalResult:
             f"  StrictCitationCoverage   = {self.strict_citation_gold_coverage_score():.3f}",
             f"  EquivalentCitationCoverage = {self.equivalent_citation_gold_coverage_score():.3f}",
             f"  EquivalentSupportedRate  = {self.equivalent_supported_rate():.3f}",
+            f"  ClaimSupportCoverage     = {self.claim_support_coverage_score():.3f}",
+            f"  TrueMissingGoldRate      = {self.true_missing_gold_rate():.3f}",
             f"  SourceLocatorGrounding   = {self.source_locator_grounding_score():.3f}",
             f"  AbstentionAccuracy       = {self.abstention_accuracy():.3f}",
             f"  AnswerSuccessRate        = {self.success_rate():.1%}",
@@ -157,6 +178,11 @@ class EvidenceAnswerEvalResult:
             lines.append("  -- failure reasons --")
             for reason, count in failure_counts.items():
                 lines.append(f"     {reason:<32} n={count}")
+        diagnostic_counts = self.diagnostic_tag_counts()
+        if diagnostic_counts:
+            lines.append("  -- diagnostic tags --")
+            for tag, count in diagnostic_counts.items():
+                lines.append(f"     {tag:<40} n={count}")
         return "\n".join(lines)
 
 
@@ -200,6 +226,15 @@ class EvidenceAnswerEvaluator:
             success_citation_threshold=self._success_citation_threshold,
             abstain_markers=_ABSTAIN_MARKERS,
         )
+        claim_support_coverage = _claim_support_coverage(sample)
+        diagnostic_tags = _diagnostic_tags(
+            sample,
+            strict_context_coverage=score.strict_retrieval_context_coverage,
+            equivalent_context_coverage=score.equivalent_retrieval_context_coverage,
+            equivalent_gold_supported=score.equivalent_gold_supported,
+            claim_support_coverage=claim_support_coverage,
+            failure_reason=score.failure_reason,
+        )
         return EvidenceAnswerScores(
             sample=sample,
             fact_coverage=score.fact_coverage,
@@ -214,6 +249,8 @@ class EvidenceAnswerEvaluator:
             strict_citation_gold_coverage=score.strict_citation_gold_coverage,
             equivalent_citation_gold_coverage=score.equivalent_citation_gold_coverage,
             equivalent_gold_supported=score.equivalent_gold_supported,
+            claim_support_coverage=claim_support_coverage,
+            diagnostic_tags=diagnostic_tags,
             failure_reason=score.failure_reason,
             matched_facts=score.matched_facts,
             missing_facts=score.missing_facts,
@@ -225,6 +262,101 @@ def _metadata_ids(metadata: dict[str, Any], key: str) -> list[str]:
     if not isinstance(raw, list):
         return []
     return _unique_texts(raw)
+
+
+def _claim_support_coverage(sample: EvidenceAnswerSample) -> float | None:
+    pair = sample.pair
+    if str(pair.qa_type or "").casefold() != "citation_qa":
+        return None
+    gold_claim_ids = set(_unique_texts(pair.gold_claim_ids))
+    if not gold_claim_ids:
+        return None
+    context_claim_ids = set(_claim_ids_from_metadata(sample.metadata))
+    return 1.0 if gold_claim_ids.intersection(context_claim_ids) else 0.0
+
+
+def _claim_ids_from_metadata(metadata: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for item in metadata.get("context_relationships") or []:
+        if isinstance(item, dict):
+            out.append(str(item.get("claim_id") or ""))
+    for item in metadata.get("locator_context") or []:
+        if isinstance(item, dict):
+            out.append(str(item.get("claim_id") or ""))
+    return _unique_texts(out)
+
+
+def _diagnostic_tags(
+    sample: EvidenceAnswerSample,
+    *,
+    strict_context_coverage: float | None,
+    equivalent_context_coverage: float | None,
+    equivalent_gold_supported: bool,
+    claim_support_coverage: float | None,
+    failure_reason: str,
+) -> tuple[str, ...]:
+    pair = sample.pair
+    tags: list[str] = []
+    if _retrieval_equivalent_support(pair, sample.metadata) != 1.0 and pair.gold_chunk_ids:
+        tags.append("true_missing_gold_in_retrieval")
+    if equivalent_gold_supported:
+        tags.append("gold_id_missed_but_equivalent_supported")
+    if _missing_any(sample.context_chunk_ids, _primary_evidence_ids(pair)):
+        tags.append("context_missing_primary_evidence")
+    if _missing_interpretation_context(pair, sample.context_chunk_ids):
+        tags.append("context_missing_interpretation_evidence")
+    if claim_support_coverage == 0.0:
+        tags.append("claim_not_supported")
+    if failure_reason == "fact_match_low":
+        tags.append("fact_match_low")
+    if (strict_context_coverage or 0.0) < 1.0 and (equivalent_context_coverage or 0.0) >= 1.0:
+        tags.append("strict_context_missed_but_equivalent_supported")
+    return tuple(_unique_texts(tags))
+
+
+def _retrieval_equivalent_support(pair: EvidenceQAPair, metadata: dict[str, Any]) -> float | None:
+    retrieved_ids = _metadata_ids(metadata, "retrieved_chunk_ids")
+    if not retrieved_ids:
+        return 0.0 if pair.gold_chunk_ids else None
+    return evidence_support_coverage(
+        retrieved_ids,
+        pair.gold_chunk_ids,
+        pair.equivalent_gold_chunk_ids or pair.gold_chunk_ids,
+    )
+
+
+def _primary_evidence_ids(pair: EvidenceQAPair) -> list[str]:
+    group = dict(pair.supporting_evidence_group or {})
+    return _unique_texts([
+        *pair.required_primary_evidence_ids,
+        *list(group.get("primary_evidence_ids") or []),
+        *pair.gold_chunk_ids,
+    ])
+
+
+def _interpretation_context_ids(pair: EvidenceQAPair) -> list[str]:
+    group = dict(pair.supporting_evidence_group or {})
+    return _unique_texts([
+        *pair.acceptable_support_evidence_ids,
+        *list(group.get("interpretation_context_ids") or []),
+    ])
+
+
+def _missing_any(candidate_ids: list[str], required_ids: list[str]) -> bool:
+    if not required_ids:
+        return False
+    candidate_set = set(_unique_texts(candidate_ids))
+    return bool(set(required_ids) - candidate_set)
+
+
+def _missing_interpretation_context(pair: EvidenceQAPair, context_chunk_ids: list[str]) -> bool:
+    interpretation_ids = _interpretation_context_ids(pair)
+    if not interpretation_ids:
+        return False
+    qa_type = str(pair.qa_type or "").casefold()
+    if qa_type == "citation_qa":
+        return False
+    return not set(_unique_texts(context_chunk_ids)).intersection(interpretation_ids)
 
 
 def _metric_case_from_sample(sample: EvidenceAnswerSample) -> AnswerMetricCase:

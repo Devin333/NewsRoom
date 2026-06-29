@@ -233,6 +233,72 @@ def test_answer_evaluator_reports_missing_gold_in_retrieval() -> None:
     assert score.retrieval_context_coverage == 0.0
     assert score.failure_reason == "missing_gold_in_retrieval"
     assert result.failure_reason_counts() == {"missing_gold_in_retrieval": 1}
+    assert "true_missing_gold_in_retrieval" in score.diagnostic_tags
+    assert result.true_missing_gold_rate() == 1.0
+
+
+def test_answer_evaluator_reports_equivalent_support_diagnostics() -> None:
+    pair = EvidenceQAPair(
+        question="How is the Hamiltonian ODE defined?",
+        paper_id="p1",
+        qa_type="formula_qa",
+        gold_chunk_ids=["eq-1"],
+        equivalent_gold_chunk_ids=["eq-1", "para-1"],
+        answer_facts=["Hamiltonian ODE is defined as dot y equals J inverse times the Hamiltonian gradient."],
+    )
+    sample = EvidenceAnswerSample(
+        pair=pair,
+        answer="The Hamiltonian ODE is dot y equals J inverse times the Hamiltonian gradient. [para-1]",
+        cited_chunk_ids=["para-1"],
+        context_chunk_ids=["para-1"],
+        metadata={"retrieved_chunk_ids": ["para-1"]},
+    )
+
+    score = EvidenceAnswerEvaluator().score(sample)
+
+    assert score.answer_success is True
+    assert score.equivalent_gold_supported is True
+    assert score.claim_support_coverage is None
+    assert "gold_id_missed_but_equivalent_supported" in score.diagnostic_tags
+    assert "strict_context_missed_but_equivalent_supported" in score.diagnostic_tags
+
+
+def test_answer_evaluator_reports_claim_support_coverage() -> None:
+    pair = EvidenceQAPair(
+        question="Which passage grounds the paper's claim about scaling?",
+        paper_id="p1",
+        qa_type="citation_qa",
+        gold_chunk_ids=["para-claim"],
+        gold_claim_ids=["claim-1"],
+    )
+    supported = EvidenceAnswerSample(
+        pair=pair,
+        answer="The claim is grounded in the introduction. [para-claim]",
+        cited_chunk_ids=["para-claim"],
+        context_chunk_ids=["para-claim"],
+        metadata={
+            "retrieved_chunk_ids": ["para-claim"],
+            "context_relationships": [{"chunk_id": "para-claim", "claim_id": "claim-1"}],
+        },
+    )
+    unsupported = EvidenceAnswerSample(
+        pair=pair,
+        answer="The claim is grounded in the introduction. [para-claim]",
+        cited_chunk_ids=["para-claim"],
+        context_chunk_ids=["para-claim"],
+        metadata={
+            "retrieved_chunk_ids": ["para-claim"],
+            "context_relationships": [{"chunk_id": "para-claim", "claim_id": "claim-other"}],
+        },
+    )
+
+    result = EvidenceAnswerEvaluator().evaluate([supported, unsupported])
+
+    assert result.scores[0].claim_support_coverage == 1.0
+    assert result.scores[1].claim_support_coverage == 0.0
+    assert "claim_not_supported" in result.scores[1].diagnostic_tags
+    assert result.claim_support_coverage_score() == 0.5
+    assert result.diagnostic_tag_counts()["claim_not_supported"] == 1
 
 
 def test_answer_evaluator_soft_matches_long_structured_facts() -> None:

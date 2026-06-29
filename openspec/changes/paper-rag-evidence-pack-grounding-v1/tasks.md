@@ -14,3 +14,6 @@
 - [x] 5.1 Add deterministic claim extraction and in-memory claim search for paper chunks.
 - [x] 5.2 Connect claim-level search into citation retrieval without replacing strict chunk metrics.
 - [x] 5.3 Export claim hit metadata and add claim index/retriever tests.
+- [x] 6.1 Add Paper RAG answer diagnostics for true missing gold, equivalent support, primary/interpretation context gaps, and claim support.
+- [x] 6.2 Add claim-support metrics to evidence reports, answer samples, scorecards, and promotion checklist.
+- [x] 6.3 Add a multi-dataset benchmark matrix runner for held-out regression sets.

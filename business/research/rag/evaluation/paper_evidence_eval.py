@@ -22,6 +22,7 @@ from framework.rag.retrieval import dedupe_by_key
 from business.research.document.citation_spans import resolve_citation_span
 from business.research.document.models import PaperChunk
 from business.research.rag.adapters.paper_chunk_adapter import paper_chunk_to_rag_evidence
+from business.research.rag.retrieval.paper_claim_index import extract_claim_records
 from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest
 
 EvidenceBehavior = Literal["answer", "abstain"]
@@ -673,7 +674,7 @@ def _with_evidence_group(pair: EvidenceQAPair, *, chunks_by_id: dict[str, PaperC
         equivalent_gold_chunk_ids=equivalent_ids,
         required_primary_evidence_ids=pair.required_primary_evidence_ids or list(pair.gold_chunk_ids),
         acceptable_support_evidence_ids=acceptable_ids,
-        gold_claim_ids=pair.gold_claim_ids or _gold_claim_ids_for_pair(pair),
+        gold_claim_ids=pair.gold_claim_ids or _gold_claim_ids_for_pair(pair, chunks_by_id=chunks_by_id),
         supporting_evidence_group=group,
         metadata={
             **dict(pair.metadata),
@@ -773,20 +774,16 @@ def _evidence_group_id(pair: EvidenceQAPair, equivalent_ids: list[str]) -> str:
     return "eg_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def _gold_claim_ids_for_pair(pair: EvidenceQAPair) -> list[str]:
+def _gold_claim_ids_for_pair(pair: EvidenceQAPair, *, chunks_by_id: dict[str, PaperChunk]) -> list[str]:
     if pair.qa_type != "citation_qa":
         return []
-    values = [
-        *(str(span.get("snippet") or "") for span in pair.gold_citation_spans),
-        *pair.answer_facts,
-    ]
-    out: list[str] = []
-    for value in values:
-        text = " ".join(str(value or "").split())
-        if not text:
+    records = []
+    for chunk_id in pair.gold_chunk_ids:
+        chunk = chunks_by_id.get(chunk_id)
+        if chunk is None or chunk.paper_id != pair.paper_id:
             continue
-        out.append("claim_" + hashlib.sha256(f"{pair.paper_id}:{text}".encode("utf-8")).hexdigest()[:16])
-    return _unique_texts(out)
+        records.extend(extract_claim_records(chunk))
+    return _unique_texts([record.claim_id for record in records])
 
 
 def _blind_semantic_question_for_pair(

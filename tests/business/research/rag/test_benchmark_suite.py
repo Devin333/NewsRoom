@@ -14,6 +14,11 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     run_benchmark_suite,
     split_paper_ids,
 )
+from business.research.rag.evaluation.paper_benchmark_matrix import (
+    BenchmarkMatrixConfig,
+    BenchmarkMatrixDataset,
+    run_benchmark_matrix,
+)
 from business.research.document.models import PaperChunk
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from business.research.rag.cli.run_benchmark_suite import _parse_thresholds, main
@@ -377,6 +382,10 @@ def test_run_benchmark_suite_can_report_policy_promotion_checklist(tmp_path: Pat
     assert checklist["policy_name"] == "paper_blind_semantic_rag_v1"
     assert checklist["ready_for_promotion"] is False
     assert any(check["check_id"] == "answer_success" and check["status"] == "fail" for check in checklist["checks"])
+    assert any(check["check_id"] == "strict_equivalent_hit_at_10_gap" for check in checklist["checks"])
+    assert any(check["check_id"] == "answer_diagnostics" for check in checklist["checks"])
+    assert any(check["check_id"] == "true_missing_gold_rate" for check in checklist["checks"])
+    assert any(check["check_id"] == "claim_support_coverage" for check in checklist["checks"])
     assert "## Policy Promotion Checklist" in markdown
     assert result.candidate_test_report["metadata"]["lightweight_reranker_enabled"] is True
     assert result.candidate_test_report["metadata"]["retrieval_policy"] == "paper_blind_semantic_rag_v1"
@@ -484,12 +493,45 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
         "retrieval_context_coverage" in record["deterministic_scores"]
         for record in answer_sample_records
     )
+    assert all("diagnostic_tags" in record["deterministic_scores"] for record in answer_sample_records)
+    assert "diagnostic_tag_counts" in candidate["answer"]
+    assert "true_missing_gold_rate" in candidate["answer"]
+    assert "claim_support_coverage" in candidate["answer"]
     assert len(spot_samples) == 2
     assert "candidate_quality_gate_failed" in result.warnings
     assert any(warning.startswith("candidate_quality_issue:answer.success_rate=") for warning in result.warnings)
     assert "## Answer Metrics" in markdown
     assert "## Generation Judge" in markdown
     assert "## Spot Check" in markdown
+
+
+def test_run_benchmark_matrix_writes_held_out_dataset_summary(tmp_path: Path) -> None:
+    historical_dir = tmp_path / "historical"
+    new50_dir = tmp_path / "new50"
+    _write_research_document_fixtures(historical_dir, ("h1", "h2", "h3"))
+    _write_research_document_fixtures(new50_dir, ("n1", "n2", "n3"))
+
+    output_dir = tmp_path / "matrix"
+    result = run_benchmark_matrix(BenchmarkMatrixConfig(
+        datasets=(
+            BenchmarkMatrixDataset(name="historical_38", papers_dir=historical_dir),
+            BenchmarkMatrixDataset(name="new50_20260629", papers_dir=new50_dir),
+        ),
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=5,
+    ))
+
+    payload = json.loads((output_dir / "benchmark_matrix_report.json").read_text(encoding="utf-8"))
+    markdown = (output_dir / "benchmark_matrix_report.md").read_text(encoding="utf-8")
+
+    assert set(result.dataset_results) == {"historical_38", "new50_20260629"}
+    assert set(payload["datasets"]) == {"historical_38", "new50_20260629"}
+    assert payload["datasets"]["historical_38"]["papers_total"] == 3
+    assert "Eq Hit@10" in markdown
 
 
 def test_evidence_pack_hydration_adds_primary_when_group_context_is_hit() -> None:

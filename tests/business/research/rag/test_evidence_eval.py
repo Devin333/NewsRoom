@@ -13,6 +13,7 @@ from business.research.rag.evaluation.paper_evidence_eval import (
     save_evidence_golden_set,
 )
 from business.research.rag.evaluation.paper_evaluation_report import EvidenceRegressionReport
+from business.research.rag.retrieval.paper_claim_index import extract_claim_records
 from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
 
@@ -316,6 +317,21 @@ def test_retrieval_evaluator_scores_main_citation_accuracy() -> None:
 
     assert result.citation_accuracy(1) == 1.0
     assert result.overlap_citation_accuracy(1) == 0.0
+
+
+def test_golden_set_builder_uses_claim_index_ids_for_citation_gold() -> None:
+    paragraph = _chunk(
+        "para-claim",
+        section_title="Introduction",
+        content="We introduce a scalable retrieval method that improves scientific paper QA.",
+    )
+
+    pairs = EvidenceGoldenSetBuilder(max_pairs_per_type=2, include_negative=False).build([paragraph])
+    citation_pair = next(pair for pair in pairs if pair.qa_type == "citation_qa")
+    claim_ids = [record.claim_id for record in extract_claim_records(paragraph)]
+
+    assert citation_pair.gold_claim_ids
+    assert set(citation_pair.gold_claim_ids).issubset(set(claim_ids))
 
 
 def test_retrieval_evaluator_scores_overlap_citation_origin() -> None:
