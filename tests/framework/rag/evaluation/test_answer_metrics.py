@@ -124,6 +124,30 @@ def test_score_answer_case_preserves_latex_display_math_for_formula_match():
     assert score.answer_success is True
 
 
+def test_score_answer_case_accepts_equivalent_gold_evidence_support():
+    case = AnswerMetricCase(
+        case_id="case-equivalent-gold",
+        question="How is the Hamiltonian ODE defined?",
+        answer="The Hamiltonian ODE is defined as dot y equals J inverse times the Hamiltonian gradient. [para-1]",
+        expected_facts=("Hamiltonian ODE is defined as dot y equals J inverse times the Hamiltonian gradient.",),
+        cited_evidence_ids=("para-1",),
+        context_evidence_ids=("para-1",),
+        gold_evidence_ids=("eq-1",),
+        equivalent_gold_evidence_ids=("eq-1", "para-1"),
+        retrieved_evidence_ids=("para-1",),
+    )
+
+    score = score_answer_case(case)
+
+    assert score.answer_success is True
+    assert score.failure_reason == ""
+    assert score.strict_retrieval_context_coverage == 0.0
+    assert score.equivalent_retrieval_context_coverage == 1.0
+    assert score.strict_citation_gold_coverage == 0.0
+    assert score.equivalent_citation_gold_coverage == 1.0
+    assert score.equivalent_gold_supported is True
+
+
 def test_score_answer_case_uses_canonical_failure_reason_taxonomy():
     context_missing = AnswerMetricCase(
         case_id="case-6",

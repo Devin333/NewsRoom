@@ -57,6 +57,11 @@ class EvidenceAnswerScores:
     answer_success: bool
     retrieval_context_coverage: float | None = None
     citation_gold_coverage: float | None = None
+    strict_retrieval_context_coverage: float | None = None
+    equivalent_retrieval_context_coverage: float | None = None
+    strict_citation_gold_coverage: float | None = None
+    equivalent_citation_gold_coverage: float | None = None
+    equivalent_gold_supported: bool = False
     failure_reason: str = ""
     matched_facts: tuple[str, ...] = ()
     missing_facts: tuple[str, ...] = ()
@@ -90,6 +95,21 @@ class EvidenceAnswerEvalResult:
     def citation_gold_coverage_score(self) -> float:
         return _average_optional(score.citation_gold_coverage for score in self.scores)
 
+    def strict_retrieval_context_coverage_score(self) -> float:
+        return _average_optional(score.strict_retrieval_context_coverage for score in self.scores)
+
+    def equivalent_retrieval_context_coverage_score(self) -> float:
+        return _average_optional(score.equivalent_retrieval_context_coverage for score in self.scores)
+
+    def strict_citation_gold_coverage_score(self) -> float:
+        return _average_optional(score.strict_citation_gold_coverage for score in self.scores)
+
+    def equivalent_citation_gold_coverage_score(self) -> float:
+        return _average_optional(score.equivalent_citation_gold_coverage for score in self.scores)
+
+    def equivalent_supported_rate(self) -> float:
+        return sum(1 for score in self.scores if score.equivalent_gold_supported) / self.total if self.total else 0.0
+
     def abstention_accuracy(self) -> float:
         return _average_optional(score.abstention_correct for score in self.scores)
 
@@ -112,6 +132,11 @@ class EvidenceAnswerEvalResult:
             f"  RetrievalContextCoverage = {self.retrieval_context_coverage_score():.3f}",
             f"  CitationGroundingScore   = {self.citation_grounding_score():.3f}",
             f"  CitationGoldCoverage     = {self.citation_gold_coverage_score():.3f}",
+            f"  StrictContextCoverage    = {self.strict_retrieval_context_coverage_score():.3f}",
+            f"  EquivalentContextCoverage = {self.equivalent_retrieval_context_coverage_score():.3f}",
+            f"  StrictCitationCoverage   = {self.strict_citation_gold_coverage_score():.3f}",
+            f"  EquivalentCitationCoverage = {self.equivalent_citation_gold_coverage_score():.3f}",
+            f"  EquivalentSupportedRate  = {self.equivalent_supported_rate():.3f}",
             f"  SourceLocatorGrounding   = {self.source_locator_grounding_score():.3f}",
             f"  AbstentionAccuracy       = {self.abstention_accuracy():.3f}",
             f"  AnswerSuccessRate        = {self.success_rate():.1%}",
@@ -184,6 +209,11 @@ class EvidenceAnswerEvaluator:
             answer_success=score.answer_success,
             retrieval_context_coverage=score.retrieval_context_coverage,
             citation_gold_coverage=score.citation_gold_coverage,
+            strict_retrieval_context_coverage=score.strict_retrieval_context_coverage,
+            equivalent_retrieval_context_coverage=score.equivalent_retrieval_context_coverage,
+            strict_citation_gold_coverage=score.strict_citation_gold_coverage,
+            equivalent_citation_gold_coverage=score.equivalent_citation_gold_coverage,
+            equivalent_gold_supported=score.equivalent_gold_supported,
             failure_reason=score.failure_reason,
             matched_facts=score.matched_facts,
             missing_facts=score.missing_facts,
@@ -207,6 +237,7 @@ def _metric_case_from_sample(sample: EvidenceAnswerSample) -> AnswerMetricCase:
         cited_evidence_ids=tuple(sample.cited_chunk_ids),
         context_evidence_ids=tuple(sample.context_chunk_ids),
         gold_evidence_ids=tuple(pair.gold_chunk_ids),
+        equivalent_gold_evidence_ids=tuple(pair.equivalent_gold_chunk_ids or pair.gold_chunk_ids),
         expected_abstain=pair.expected_behavior == "abstain",
         cited_source_locators=tuple(sample.cited_source_locators),
         gold_source_locators=tuple(pair.gold_source_locators),

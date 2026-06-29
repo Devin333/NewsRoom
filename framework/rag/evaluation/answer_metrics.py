@@ -99,6 +99,7 @@ class AnswerMetricCase:
     cited_evidence_ids: tuple[str, ...] = ()
     context_evidence_ids: tuple[str, ...] = ()
     gold_evidence_ids: tuple[str, ...] = ()
+    equivalent_gold_evidence_ids: tuple[str, ...] = ()
     expected_abstain: bool = False
     cited_source_locators: tuple[str, ...] = ()
     gold_source_locators: tuple[str, ...] = ()
@@ -114,6 +115,8 @@ class AnswerMetricCase:
         object.__setattr__(self, "cited_evidence_ids", _clean_tuple(self.cited_evidence_ids))
         object.__setattr__(self, "context_evidence_ids", _clean_tuple(self.context_evidence_ids))
         object.__setattr__(self, "gold_evidence_ids", _clean_tuple(self.gold_evidence_ids))
+        equivalent = _clean_tuple(self.equivalent_gold_evidence_ids) or _clean_tuple(self.gold_evidence_ids)
+        object.__setattr__(self, "equivalent_gold_evidence_ids", equivalent)
         object.__setattr__(self, "cited_source_locators", _clean_tuple(self.cited_source_locators))
         object.__setattr__(self, "gold_source_locators", _clean_tuple(self.gold_source_locators))
         object.__setattr__(self, "retrieved_evidence_ids", _clean_tuple(self.retrieved_evidence_ids))
@@ -130,6 +133,11 @@ class AnswerMetricScore:
     answer_success: bool
     retrieval_context_coverage: float | None = None
     citation_gold_coverage: float | None = None
+    strict_retrieval_context_coverage: float | None = None
+    equivalent_retrieval_context_coverage: float | None = None
+    strict_citation_gold_coverage: float | None = None
+    equivalent_citation_gold_coverage: float | None = None
+    equivalent_gold_supported: bool = False
     failure_reason: str = ""
     matched_facts: tuple[str, ...] = ()
     missing_facts: tuple[str, ...] = ()
@@ -160,10 +168,22 @@ def score_answer_case(
         case.expected_facts,
         threshold=fact_match_threshold,
     )
-    retrieval_context_coverage = id_coverage(case.context_evidence_ids, case.gold_evidence_ids)
-    citation_gold_coverage = id_coverage(case.cited_evidence_ids, case.gold_evidence_ids)
+    strict_retrieval_context_coverage = id_coverage(case.context_evidence_ids, case.gold_evidence_ids)
+    strict_citation_gold_coverage = id_coverage(case.cited_evidence_ids, case.gold_evidence_ids)
+    equivalent_retrieval_context_coverage = evidence_support_coverage(
+        case.context_evidence_ids,
+        case.gold_evidence_ids,
+        case.equivalent_gold_evidence_ids,
+    )
+    equivalent_citation_gold_coverage = evidence_support_coverage(
+        case.cited_evidence_ids,
+        case.gold_evidence_ids,
+        case.equivalent_gold_evidence_ids,
+    )
+    retrieval_context_coverage = equivalent_retrieval_context_coverage
+    citation_gold_coverage = equivalent_citation_gold_coverage
     source_locator_score = locator_coverage(case.cited_source_locators, case.gold_source_locators)
-    citation_required = bool(case.gold_evidence_ids)
+    citation_required = bool(case.equivalent_gold_evidence_ids or case.gold_evidence_ids)
     citation_passed = (
         not citation_required
         or citation_gold_coverage is not None
@@ -193,6 +213,17 @@ def score_answer_case(
         answer_success=answer_success,
         retrieval_context_coverage=retrieval_context_coverage,
         citation_gold_coverage=citation_gold_coverage,
+        strict_retrieval_context_coverage=strict_retrieval_context_coverage,
+        equivalent_retrieval_context_coverage=equivalent_retrieval_context_coverage,
+        strict_citation_gold_coverage=strict_citation_gold_coverage,
+        equivalent_citation_gold_coverage=equivalent_citation_gold_coverage,
+        equivalent_gold_supported=_equivalent_gold_supported(
+            case,
+            strict_context_coverage=strict_retrieval_context_coverage,
+            strict_citation_coverage=strict_citation_gold_coverage,
+            equivalent_context_coverage=equivalent_retrieval_context_coverage,
+            equivalent_citation_coverage=equivalent_citation_gold_coverage,
+        ),
         failure_reason=failure_reason,
         matched_facts=matched,
         missing_facts=missing,
@@ -238,6 +269,27 @@ def id_coverage(retrieved: Iterable[Any], required: Iterable[Any]) -> float | No
     if not required_set:
         return None
     return len(required_set.intersection(_clean_tuple(retrieved))) / len(required_set)
+
+
+def evidence_support_coverage(
+    candidate_ids: Iterable[Any],
+    strict_gold_ids: Iterable[Any],
+    equivalent_gold_ids: Iterable[Any],
+) -> float | None:
+    strict_ids = _clean_tuple(strict_gold_ids)
+    equivalent_ids = _clean_tuple(equivalent_gold_ids) or strict_ids
+    if not strict_ids and not equivalent_ids:
+        return None
+    strict = id_coverage(candidate_ids, strict_ids)
+    expanded_equivalent_ids = set(equivalent_ids) - set(strict_ids)
+    if not expanded_equivalent_ids:
+        return strict
+    if strict is not None and strict >= 1.0:
+        return 1.0
+    candidate_set = set(_clean_tuple(candidate_ids))
+    if candidate_set and candidate_set.intersection(expanded_equivalent_ids):
+        return 1.0
+    return 0.0
 
 
 def locator_coverage(retrieved: Iterable[Any], required: Iterable[Any]) -> float | None:
@@ -305,7 +357,14 @@ def _answer_failure_reason(
     if answer_success:
         return ""
     if case.gold_evidence_ids:
-        if case.retrieved_evidence_ids and id_coverage(case.retrieved_evidence_ids, case.gold_evidence_ids) != 1.0:
+        if (
+            case.retrieved_evidence_ids
+            and evidence_support_coverage(
+                case.retrieved_evidence_ids,
+                case.gold_evidence_ids,
+                case.equivalent_gold_evidence_ids,
+            ) != 1.0
+        ):
             return RAGFailureReason.MISSING_GOLD_IN_RETRIEVAL.value
         if retrieval_context_coverage is not None and retrieval_context_coverage < 1.0:
             return RAGFailureReason.CONTEXT_MISSING_GOLD.value
@@ -318,6 +377,24 @@ def _answer_failure_reason(
     if looks_like_abstention(case.answer, abstain_markers=abstain_markers):
         return RAGFailureReason.ABSTENTION_EXPECTED.value
     return RAGFailureReason.ANSWER_NOT_GROUNDED.value
+
+
+def _equivalent_gold_supported(
+    case: AnswerMetricCase,
+    *,
+    strict_context_coverage: float | None,
+    strict_citation_coverage: float | None,
+    equivalent_context_coverage: float | None,
+    equivalent_citation_coverage: float | None,
+) -> bool:
+    if not case.equivalent_gold_evidence_ids:
+        return False
+    strict_supported = (strict_context_coverage or 0.0) >= 1.0 or (strict_citation_coverage or 0.0) >= 1.0
+    equivalent_supported = (
+        (equivalent_context_coverage or 0.0) >= 1.0
+        or (equivalent_citation_coverage or 0.0) >= 1.0
+    )
+    return equivalent_supported and not strict_supported
 
 
 def _fact_matches(answer: str, fact: str, *, threshold: float) -> bool:
@@ -480,6 +557,7 @@ __all__ = [
     "abstention_accuracy",
     "answer_relevance",
     "citation_grounding",
+    "evidence_support_coverage",
     "evaluate_answer_case",
     "fact_coverage",
     "fact_coverage_details",

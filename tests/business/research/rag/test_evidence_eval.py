@@ -146,6 +146,59 @@ def test_retrieval_evaluator_scores_multi_evidence_coverage_and_types() -> None:
     assert result.by_qa_type["table_qa"].evidence_coverage(2) == 1.0
 
 
+def test_golden_set_builder_attaches_supporting_evidence_group() -> None:
+    parent = _chunk(
+        "para-formula",
+        content="The Hamiltonian ODE defines the system dynamics and explains the variables.",
+    )
+    formula = _chunk(
+        "eq-hamiltonian",
+        chunk_type="formula",
+        content="Equation: \\dot{y}=J^{-1}\\nabla H(y)",
+        metadata={"source_locator": "paper://p1/pdf#page=3&rect=1,2,3,4"},
+    )
+    formula.parent_chunk_id = parent.chunk_id
+    formula.formula_latex = "\\dot{y}=J^{-1}\\nabla H(y)"
+
+    pairs = EvidenceGoldenSetBuilder(include_negative=False).build([parent, formula])
+    formula_pair = next(pair for pair in pairs if pair.qa_type == "formula_qa")
+
+    assert formula_pair.supporting_evidence_group_id.startswith("eg_")
+    assert formula_pair.equivalent_gold_chunk_ids == ["eq-hamiltonian", "para-formula"]
+    assert formula_pair.required_primary_evidence_ids == ["eq-hamiltonian"]
+    assert formula_pair.acceptable_support_evidence_ids == ["para-formula"]
+    assert formula_pair.supporting_evidence_group["primary_evidence_ids"] == ["eq-hamiltonian"]
+    assert formula_pair.supporting_evidence_group["interpretation_context_ids"] == ["para-formula"]
+
+
+def test_retrieval_evaluator_reports_strict_and_equivalent_hits() -> None:
+    parent = _chunk("para-formula", content="The Hamiltonian ODE defines the system dynamics.")
+    retriever = _FakeRetriever(RetrievalResult(
+        child_chunks=[parent],
+        ref_chunks=[],
+        parent_chunks=[],
+        intent="formula_query",
+    ))
+    pair = EvidenceQAPair(
+        question="How is the Hamiltonian ODE defined?",
+        paper_id="p1",
+        qa_type="formula_qa",
+        gold_chunk_ids=["eq-hamiltonian"],
+        equivalent_gold_chunk_ids=["eq-hamiltonian", "para-formula"],
+        required_evidence_types=["formula"],
+    )
+
+    result = EvidenceRetrievalEvaluator(retriever).evaluate([pair], ks=(1,))
+    report = EvidenceRegressionReport(retrieval=result).to_dict()
+
+    assert result.hit_rate(1) == 0.0
+    assert result.equivalent_hit_rate(1) == 1.0
+    assert report["retrieval"]["by_k"]["1"]["strict_hit_rate"] == 0.0
+    assert report["retrieval"]["by_k"]["1"]["equivalent_hit_rate"] == 1.0
+    assert report["retrieval"]["strict_mrr"] == 0.0
+    assert report["retrieval"]["equivalent_mrr"] == 1.0
+
+
 def test_retrieval_evaluator_reports_intent_and_route_distribution() -> None:
     table = _chunk(
         "tbl-results",

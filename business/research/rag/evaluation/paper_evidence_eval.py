@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from collections import Counter
 from collections.abc import Iterable
@@ -41,6 +42,12 @@ class EvidenceQAPair:
     paper_id: str
     qa_type: str
     gold_chunk_ids: list[str] = field(default_factory=list)
+    equivalent_gold_chunk_ids: list[str] = field(default_factory=list)
+    supporting_evidence_group_id: str = ""
+    required_primary_evidence_ids: list[str] = field(default_factory=list)
+    acceptable_support_evidence_ids: list[str] = field(default_factory=list)
+    gold_claim_ids: list[str] = field(default_factory=list)
+    supporting_evidence_group: dict[str, Any] = field(default_factory=dict)
     required_evidence_types: list[str] = field(default_factory=list)
     gold_source_locators: list[str] = field(default_factory=list)
     gold_citation_spans: list[dict[str, Any]] = field(default_factory=list)
@@ -57,6 +64,12 @@ class EvidenceQAPair:
         self.qa_type = _require_text(self.qa_type, "qa_type")
         self.expected_behavior = _coerce_behavior(self.expected_behavior)
         self.gold_chunk_ids = _unique_texts(self.gold_chunk_ids)
+        self.equivalent_gold_chunk_ids = _unique_texts(self.equivalent_gold_chunk_ids or self.gold_chunk_ids)
+        self.supporting_evidence_group_id = str(self.supporting_evidence_group_id or "").strip()
+        self.required_primary_evidence_ids = _unique_texts(self.required_primary_evidence_ids or self.gold_chunk_ids)
+        self.acceptable_support_evidence_ids = _unique_texts(self.acceptable_support_evidence_ids)
+        self.gold_claim_ids = _unique_texts(self.gold_claim_ids)
+        self.supporting_evidence_group = dict(self.supporting_evidence_group or {})
         self.required_evidence_types = _unique_texts(self.required_evidence_types)
         self.gold_source_locators = _unique_texts(self.gold_source_locators)
         self.gold_citation_spans = _normalize_citation_spans(self.gold_citation_spans)
@@ -122,6 +135,12 @@ class EvidenceQAPair:
             "paper_id": self.paper_id,
             "qa_type": self.qa_type,
             "gold_chunk_ids": list(self.gold_chunk_ids),
+            "equivalent_gold_chunk_ids": list(self.equivalent_gold_chunk_ids),
+            "supporting_evidence_group_id": self.supporting_evidence_group_id,
+            "required_primary_evidence_ids": list(self.required_primary_evidence_ids),
+            "acceptable_support_evidence_ids": list(self.acceptable_support_evidence_ids),
+            "gold_claim_ids": list(self.gold_claim_ids),
+            "supporting_evidence_group": dict(self.supporting_evidence_group),
             "required_evidence_types": list(self.required_evidence_types),
             "gold_source_locators": list(self.gold_source_locators),
             "gold_citation_spans": [dict(span) for span in self.gold_citation_spans],
@@ -140,6 +159,12 @@ class EvidenceQAPair:
             paper_id=str(data["paper_id"]),
             qa_type=str(data["qa_type"]),
             gold_chunk_ids=list(data.get("gold_chunk_ids") or []),
+            equivalent_gold_chunk_ids=list(data.get("equivalent_gold_chunk_ids") or []),
+            supporting_evidence_group_id=str(data.get("supporting_evidence_group_id") or ""),
+            required_primary_evidence_ids=list(data.get("required_primary_evidence_ids") or []),
+            acceptable_support_evidence_ids=list(data.get("acceptable_support_evidence_ids") or []),
+            gold_claim_ids=list(data.get("gold_claim_ids") or []),
+            supporting_evidence_group=dict(data.get("supporting_evidence_group") or {}),
             required_evidence_types=list(data.get("required_evidence_types") or []),
             gold_source_locators=list(data.get("gold_source_locators") or []),
             gold_citation_spans=list(data.get("gold_citation_spans") or []),
@@ -165,7 +190,9 @@ class EvidenceSampleResult:
     ranked_image_ref_candidates: list[list[str]]
     ranked_score_breakdowns: list[dict[str, float]] = field(default_factory=list)
     first_rank: int = 0
+    equivalent_first_rank: int = 0
     coverage_by_k: dict[int, float] = field(default_factory=dict)
+    equivalent_coverage_by_k: dict[int, float] = field(default_factory=dict)
     type_coverage_by_k: dict[int, float] = field(default_factory=dict)
     source_locator_coverage_by_k: dict[int, float] = field(default_factory=dict)
     image_recall_by_k: dict[int, float] = field(default_factory=dict)
@@ -189,7 +216,9 @@ class EvidenceEvalResult:
     abstain_total: int
     ks: tuple[int, ...] = _DEFAULT_KS
     hit_at: dict[int, int] = field(default_factory=dict)
+    equivalent_hit_at: dict[int, int] = field(default_factory=dict)
     evidence_coverage_at: dict[int, list[float]] = field(default_factory=dict)
+    equivalent_evidence_coverage_at: dict[int, list[float]] = field(default_factory=dict)
     required_type_coverage_at: dict[int, list[float]] = field(default_factory=dict)
     source_locator_coverage_at: dict[int, list[float]] = field(default_factory=dict)
     image_recall_at: dict[int, list[float]] = field(default_factory=dict)
@@ -198,6 +227,7 @@ class EvidenceEvalResult:
     overlap_citation_accuracy_at: dict[int, list[float]] = field(default_factory=dict)
     over_retrieval_at: dict[int, list[int]] = field(default_factory=dict)
     reciprocal_ranks: list[float] = field(default_factory=list)
+    equivalent_reciprocal_ranks: list[float] = field(default_factory=list)
     ndcg_at: dict[int, list[float]] = field(default_factory=dict)
     intent_distribution: dict[str, int] = field(default_factory=dict)
     route_distribution: dict[str, int] = field(default_factory=dict)
@@ -210,6 +240,12 @@ class EvidenceEvalResult:
 
     def evidence_coverage(self, k: int) -> float:
         return _average(self.evidence_coverage_at.get(k, []))
+
+    def equivalent_hit_rate(self, k: int) -> float:
+        return self.equivalent_hit_at.get(k, 0) / self.answerable_total if self.answerable_total else 0.0
+
+    def equivalent_evidence_coverage(self, k: int) -> float:
+        return _average(self.equivalent_evidence_coverage_at.get(k, []))
 
     def required_type_coverage(self, k: int) -> float:
         return _average(self.required_type_coverage_at.get(k, []))
@@ -236,6 +272,9 @@ class EvidenceEvalResult:
     def mrr(self) -> float:
         return _average(self.reciprocal_ranks)
 
+    def equivalent_mrr(self) -> float:
+        return _average(self.equivalent_reciprocal_ranks)
+
     def ndcg(self, k: int) -> float:
         return _average(self.ndcg_at.get(k, []))
 
@@ -247,13 +286,16 @@ class EvidenceEvalResult:
         for k in report_ks:
             lines.append(
                 f"  Hit@{k:<2} = {self.hit_rate(k):6.1%}    "
+                f"EquivalentHit@{k:<2} = {self.equivalent_hit_rate(k):6.1%}    "
                 f"EvidenceCoverage@{k:<2} = {self.evidence_coverage(k):.3f}    "
+                f"EquivalentCoverage@{k:<2} = {self.equivalent_evidence_coverage(k):.3f}    "
                 f"TypeCoverage@{k:<2} = {self.required_type_coverage(k):.3f}    "
                 f"SourceLocatorCoverage@{k:<2} = {self.source_locator_coverage(k):.3f}    "
                 f"ImageRecall@{k:<2} = {self.image_recall(k):.3f}    "
                 f"CitationAccuracy@{k:<2} = {self.citation_accuracy(k):.3f}"
             )
         lines.append(f"  MRR     = {self.mrr():.3f}")
+        lines.append(f"  EquivalentMRR = {self.equivalent_mrr():.3f}")
         if self.by_qa_type:
             lines.append("  -- by qa_type --")
             for qa_type in sorted(self.by_qa_type):
@@ -310,7 +352,9 @@ class EvidenceRetrievalEvaluator:
                 ranked_image_ref_candidates=[],
                 ranked_score_breakdowns=[],
                 first_rank=0,
+                equivalent_first_rank=0,
                 coverage_by_k={k: 0.0 for k in ks},
+                equivalent_coverage_by_k={k: 0.0 for k in ks},
                 type_coverage_by_k={k: 0.0 for k in ks},
                 source_locator_coverage_by_k={k: 0.0 for k in ks},
                 image_recall_by_k={k: 0.0 for k in ks},
@@ -344,6 +388,8 @@ class EvidenceRetrievalEvaluator:
         ranked_score_breakdowns = [_score_breakdown_for_chunk(chunk) for chunk in ranked_chunks]
         retrieval_metadata = dict(retrieved.metadata)
         first_rank = _first_gold_rank(ranked_match_ids, pair.gold_chunk_ids)
+        equivalent_gold_ids = pair.equivalent_gold_chunk_ids or pair.gold_chunk_ids
+        equivalent_first_rank = _first_gold_rank(ranked_match_ids, equivalent_gold_ids)
         return EvidenceSampleResult(
             pair=pair,
             ranked_chunk_ids=ranked_ids,
@@ -356,8 +402,13 @@ class EvidenceRetrievalEvaluator:
             ranked_image_ref_candidates=ranked_image_candidates,
             ranked_score_breakdowns=ranked_score_breakdowns,
             first_rank=first_rank,
+            equivalent_first_rank=equivalent_first_rank,
             coverage_by_k={
                 k: _candidate_coverage(ranked_match_ids[:k], pair.gold_chunk_ids)
+                for k in ks
+            },
+            equivalent_coverage_by_k={
+                k: _candidate_coverage(ranked_match_ids[:k], equivalent_gold_ids)
                 for k in ks
             },
             type_coverage_by_k={
@@ -431,7 +482,8 @@ class EvidenceGoldenSetBuilder:
                     domain=domain,
                     metadata={"builder": "deterministic_template"},
                 ))
-        return _apply_question_profile(pairs, self._question_profile, chunks_by_id=chunks_by_id)
+        profiled = _apply_question_profile(pairs, self._question_profile, chunks_by_id=chunks_by_id)
+        return _attach_evidence_groups(profiled, chunks_by_id=chunks_by_id)
 
     def _build_type(
         self,
@@ -516,7 +568,7 @@ def build_evidence_pairs_from_chunks(
                 chunk=chunk,
                 domain=domain,
             ))
-    return pairs
+    return _attach_evidence_groups(pairs, chunks_by_id=chunks_by_id)
 
 
 def _normalize_question_profile(profile: str) -> QuestionProfile:
@@ -588,6 +640,153 @@ def _first_gold_chunk(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk])
         if chunk is not None:
             return chunk
     return None
+
+
+def _attach_evidence_groups(
+    pairs: list[EvidenceQAPair],
+    *,
+    chunks_by_id: dict[str, PaperChunk],
+) -> list[EvidenceQAPair]:
+    return [_with_evidence_group(pair, chunks_by_id=chunks_by_id) for pair in pairs]
+
+
+def _with_evidence_group(pair: EvidenceQAPair, *, chunks_by_id: dict[str, PaperChunk]) -> EvidenceQAPair:
+    if pair.expected_behavior == _ABSTAIN_BEHAVIOR or not pair.gold_chunk_ids:
+        return pair
+    group = _build_supporting_evidence_group(pair, chunks_by_id=chunks_by_id)
+    equivalent_ids = _unique_texts([
+        *pair.gold_chunk_ids,
+        *pair.equivalent_gold_chunk_ids,
+        *group["equivalent_evidence_ids"],
+    ])
+    acceptable_ids = _unique_texts([
+        *pair.acceptable_support_evidence_ids,
+        *(
+            chunk_id
+            for chunk_id in equivalent_ids
+            if chunk_id not in set(pair.gold_chunk_ids)
+        ),
+    ])
+    return replace(
+        pair,
+        supporting_evidence_group_id=str(group["group_id"]),
+        equivalent_gold_chunk_ids=equivalent_ids,
+        required_primary_evidence_ids=pair.required_primary_evidence_ids or list(pair.gold_chunk_ids),
+        acceptable_support_evidence_ids=acceptable_ids,
+        gold_claim_ids=pair.gold_claim_ids or _gold_claim_ids_for_pair(pair),
+        supporting_evidence_group=group,
+        metadata={
+            **dict(pair.metadata),
+            "supporting_evidence_group_id": str(group["group_id"]),
+            "equivalent_gold_chunk_count": len(equivalent_ids),
+        },
+    )
+
+
+def _build_supporting_evidence_group(
+    pair: EvidenceQAPair,
+    *,
+    chunks_by_id: dict[str, PaperChunk],
+) -> dict[str, Any]:
+    primary_ids = _unique_texts(pair.gold_chunk_ids)
+    equivalent_ids: list[str] = list(primary_ids)
+    interpretation_ids: list[str] = []
+    relations: list[dict[str, str]] = []
+    locator_context: list[dict[str, str]] = []
+
+    def add_related(source: PaperChunk, target_id: str, edge: str) -> None:
+        target = chunks_by_id.get(target_id)
+        if target is None or target.paper_id != pair.paper_id:
+            return
+        equivalent_ids.append(target.chunk_id)
+        if target.chunk_id not in primary_ids:
+            interpretation_ids.append(target.chunk_id)
+        relations.append({
+            "from_chunk_id": source.chunk_id,
+            "to_chunk_id": target.chunk_id,
+            "edge": edge,
+        })
+
+    for chunk_id in primary_ids:
+        chunk = chunks_by_id.get(chunk_id)
+        if chunk is None or chunk.paper_id != pair.paper_id:
+            continue
+        source_locator = _source_locator_for_chunk(chunk)
+        if source_locator:
+            locator_context.append({
+                "chunk_id": chunk.chunk_id,
+                "source_locator": source_locator,
+                "chunk_type": chunk.chunk_type,
+            })
+        if chunk.parent_chunk_id:
+            add_related(chunk, chunk.parent_chunk_id, "parent_chunk_id")
+        for ref_id in chunk.references:
+            add_related(chunk, ref_id, "chunk_reference")
+        for related_id in _related_context_ids(chunk):
+            add_related(chunk, related_id, "related_context")
+        for related in _same_specific_locator_chunks(chunk, chunks_by_id):
+            add_related(chunk, related.chunk_id, "same_specific_source_locator")
+
+    equivalent_ids = _unique_texts(equivalent_ids)
+    interpretation_ids = _unique_texts(interpretation_ids)
+    group_id = _evidence_group_id(pair, equivalent_ids)
+    return {
+        "group_id": group_id,
+        "paper_id": pair.paper_id,
+        "qa_type": pair.qa_type,
+        "primary_evidence_ids": primary_ids,
+        "equivalent_evidence_ids": equivalent_ids,
+        "interpretation_context_ids": interpretation_ids,
+        "locator_context": locator_context,
+        "relations": relations,
+    }
+
+
+def _same_specific_locator_chunks(
+    chunk: PaperChunk,
+    chunks_by_id: dict[str, PaperChunk],
+) -> list[PaperChunk]:
+    locator = _source_locator_for_chunk(chunk)
+    if not _is_specific_source_locator(locator):
+        return []
+    return [
+        candidate
+        for candidate in chunks_by_id.values()
+        if candidate.chunk_id != chunk.chunk_id
+        and candidate.paper_id == chunk.paper_id
+        and _source_locator_for_chunk(candidate) == locator
+    ]
+
+
+def _is_specific_source_locator(locator: str) -> bool:
+    text = str(locator or "").casefold()
+    return any(marker in text for marker in ("page=", "rect=", "#page", "bbox", "pdf#"))
+
+
+def _evidence_group_id(pair: EvidenceQAPair, equivalent_ids: list[str]) -> str:
+    payload = json.dumps({
+        "paper_id": pair.paper_id,
+        "qa_type": pair.qa_type,
+        "gold": pair.gold_chunk_ids,
+        "equivalent": equivalent_ids,
+    }, ensure_ascii=False, sort_keys=True)
+    return "eg_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _gold_claim_ids_for_pair(pair: EvidenceQAPair) -> list[str]:
+    if pair.qa_type != "citation_qa":
+        return []
+    values = [
+        *(str(span.get("snippet") or "") for span in pair.gold_citation_spans),
+        *pair.answer_facts,
+    ]
+    out: list[str] = []
+    for value in values:
+        text = " ".join(str(value or "").split())
+        if not text:
+            continue
+        out.append("claim_" + hashlib.sha256(f"{pair.paper_id}:{text}".encode("utf-8")).hexdigest()[:16])
+    return _unique_texts(out)
 
 
 def _blind_semantic_question_for_pair(
@@ -1239,7 +1438,9 @@ def _aggregate_samples(
         abstain_total=len(samples) - len(answerable),
         ks=ks,
         hit_at={k: 0 for k in ks},
+        equivalent_hit_at={k: 0 for k in ks},
         evidence_coverage_at={k: [] for k in ks},
+        equivalent_evidence_coverage_at={k: [] for k in ks},
         required_type_coverage_at={k: [] for k in ks},
         source_locator_coverage_at={k: [] for k in ks},
         image_recall_at={k: [] for k in ks},
@@ -1255,11 +1456,16 @@ def _aggregate_samples(
     result.intent_confusion = _intent_confusion(samples)
     for sample in answerable:
         metric_case = _retrieval_metric_case(sample)
+        equivalent_metric_case = _equivalent_retrieval_metric_case(sample)
         result.reciprocal_ranks.append(kernel_reciprocal_rank(metric_case))
+        result.equivalent_reciprocal_ranks.append(kernel_reciprocal_rank(equivalent_metric_case))
         for k in ks:
             if kernel_hit_at_k(metric_case, k):
                 result.hit_at[k] += 1
+            if kernel_hit_at_k(equivalent_metric_case, k):
+                result.equivalent_hit_at[k] += 1
             result.evidence_coverage_at[k].append(kernel_evidence_coverage(metric_case, k))
+            result.equivalent_evidence_coverage_at[k].append(kernel_evidence_coverage(equivalent_metric_case, k))
             result.required_type_coverage_at[k].append(sample.type_coverage_by_k[k])
             result.source_locator_coverage_at[k].append(kernel_source_locator_coverage(metric_case, k))
             if sample.pair.gold_image_refs:
@@ -1320,6 +1526,27 @@ def _retrieval_metric_case(sample: EvidenceSampleResult) -> RetrievalMetricCase:
             "paper_id": sample.pair.paper_id,
             "qa_type": sample.pair.qa_type,
             "expected_behavior": sample.pair.expected_behavior,
+        },
+    )
+
+
+def _equivalent_retrieval_metric_case(sample: EvidenceSampleResult) -> RetrievalMetricCase:
+    equivalent_gold_ids = sample.pair.equivalent_gold_chunk_ids or sample.pair.gold_chunk_ids
+    return RetrievalMetricCase(
+        case_id=f"{sample.pair.paper_id}:{sample.pair.qa_type}:{sample.pair.question}:equivalent",
+        gold_evidence_ids=tuple(equivalent_gold_ids),
+        ranked_evidence_ids=tuple(sample.ranked_chunk_ids),
+        ranked_evidence_id_candidates=tuple(tuple(ids) for ids in sample.ranked_match_chunk_ids),
+        gold_source_locators=tuple(sample.pair.gold_source_locators),
+        ranked_source_locators=tuple(sample.ranked_source_locators),
+        ranked_source_locator_candidates=tuple(
+            tuple(locators) for locators in sample.ranked_source_locator_candidates
+        ),
+        metadata={
+            "paper_id": sample.pair.paper_id,
+            "qa_type": sample.pair.qa_type,
+            "expected_behavior": sample.pair.expected_behavior,
+            "metric_scope": "equivalent_gold",
         },
     )
 

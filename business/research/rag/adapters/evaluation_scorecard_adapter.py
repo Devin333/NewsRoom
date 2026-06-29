@@ -72,13 +72,20 @@ def evidence_results_to_rag_scorecard(
 def _retrieval_metrics(result: EvidenceEvalResult) -> list[MetricValue]:
     metrics = [
         MetricValue("retrieval.mrr", result.mrr()),
+        MetricValue("retrieval.equivalent_mrr", result.equivalent_mrr()),
         MetricValue("retrieval.total", result.total),
         MetricValue("retrieval.answerable_total", result.answerable_total),
     ]
     for k in result.ks:
         metrics.extend([
             MetricValue(f"retrieval.hit_at_{k}", result.hit_rate(k), {"k": k}),
+            MetricValue(f"retrieval.equivalent_hit_at_{k}", result.equivalent_hit_rate(k), {"k": k}),
             MetricValue(f"retrieval.evidence_coverage_at_{k}", result.evidence_coverage(k), {"k": k}),
+            MetricValue(
+                f"retrieval.equivalent_evidence_coverage_at_{k}",
+                result.equivalent_evidence_coverage(k),
+                {"k": k},
+            ),
             MetricValue(f"retrieval.source_locator_coverage_at_{k}", result.source_locator_coverage(k), {"k": k}),
             MetricValue(f"retrieval.ndcg_at_{k}", result.ndcg(k), {"k": k}),
         ])
@@ -91,6 +98,11 @@ def _answer_metrics(result: EvidenceAnswerEvalResult) -> list[MetricValue]:
         MetricValue("answer.retrieval_context_coverage", result.retrieval_context_coverage_score()),
         MetricValue("answer.citation_grounding", result.citation_grounding_score()),
         MetricValue("answer.citation_gold_coverage", result.citation_gold_coverage_score()),
+        MetricValue("answer.strict_retrieval_context_coverage", result.strict_retrieval_context_coverage_score()),
+        MetricValue("answer.equivalent_retrieval_context_coverage", result.equivalent_retrieval_context_coverage_score()),
+        MetricValue("answer.strict_citation_gold_coverage", result.strict_citation_gold_coverage_score()),
+        MetricValue("answer.equivalent_citation_gold_coverage", result.equivalent_citation_gold_coverage_score()),
+        MetricValue("answer.equivalent_supported_rate", result.equivalent_supported_rate()),
         MetricValue("answer.source_locator_grounding", result.source_locator_grounding_score()),
         MetricValue("answer.abstention_accuracy", result.abstention_accuracy()),
         MetricValue("answer.success_rate", result.success_rate()),
@@ -111,6 +123,8 @@ def _paper_specific_metrics(result: EvidenceEvalResult | None) -> dict[str, Any]
     return {
         str(k): {
             "required_type_coverage": result.required_type_coverage(k),
+            "equivalent_hit_rate": result.equivalent_hit_rate(k),
+            "equivalent_evidence_coverage": result.equivalent_evidence_coverage(k),
             "image_recall": result.image_recall(k),
             "visual_evidence_coverage": result.visual_evidence_coverage(k),
             "citation_accuracy": result.citation_accuracy(k),

@@ -124,10 +124,16 @@ def _retrieval_result_to_dict(result: EvidenceEvalResult) -> dict[str, Any]:
         "answerable_total": result.answerable_total,
         "abstain_total": result.abstain_total,
         "mrr": result.mrr(),
+        "strict_mrr": result.mrr(),
+        "equivalent_mrr": result.equivalent_mrr(),
         "by_k": {
             str(k): {
                 "hit_rate": result.hit_rate(k),
+                "strict_hit_rate": result.hit_rate(k),
+                "equivalent_hit_rate": result.equivalent_hit_rate(k),
                 "evidence_coverage": result.evidence_coverage(k),
+                "strict_evidence_coverage": result.evidence_coverage(k),
+                "equivalent_evidence_coverage": result.equivalent_evidence_coverage(k),
                 "required_type_coverage": result.required_type_coverage(k),
                 "source_locator_coverage": result.source_locator_coverage(k),
                 "citation_accuracy": result.citation_accuracy(k),
@@ -324,6 +330,11 @@ def _answer_result_to_dict(result: EvidenceAnswerEvalResult) -> dict[str, Any]:
         "retrieval_context_coverage": result.retrieval_context_coverage_score(),
         "citation_grounding_score": result.citation_grounding_score(),
         "citation_gold_coverage": result.citation_gold_coverage_score(),
+        "strict_retrieval_context_coverage": result.strict_retrieval_context_coverage_score(),
+        "equivalent_retrieval_context_coverage": result.equivalent_retrieval_context_coverage_score(),
+        "strict_citation_gold_coverage": result.strict_citation_gold_coverage_score(),
+        "equivalent_citation_gold_coverage": result.equivalent_citation_gold_coverage_score(),
+        "equivalent_supported_rate": result.equivalent_supported_rate(),
         "source_locator_grounding_score": result.source_locator_grounding_score(),
         "abstention_accuracy": result.abstention_accuracy(),
         "success_rate": result.success_rate(),
@@ -369,13 +380,16 @@ def _threshold_values(report: EvidenceRegressionReport) -> dict[str, float]:
         if best_k:
             values.update({
                 "retrieval.hit_rate": report.retrieval.hit_rate(best_k),
+                "retrieval.equivalent_hit_rate": report.retrieval.equivalent_hit_rate(best_k),
                 "retrieval.evidence_coverage": report.retrieval.evidence_coverage(best_k),
+                "retrieval.equivalent_evidence_coverage": report.retrieval.equivalent_evidence_coverage(best_k),
                 "retrieval.required_type_coverage": report.retrieval.required_type_coverage(best_k),
                 "retrieval.source_locator_coverage": report.retrieval.source_locator_coverage(best_k),
                 "retrieval.citation_accuracy": report.retrieval.citation_accuracy(best_k),
                 "retrieval.image_recall": report.retrieval.image_recall(best_k),
             })
         values["retrieval.mrr"] = report.retrieval.mrr()
+        values["retrieval.equivalent_mrr"] = report.retrieval.equivalent_mrr()
     if report.answer is not None:
         values.update({
             "answer.fact_coverage": report.answer.answer_fact_coverage(),
@@ -383,6 +397,11 @@ def _threshold_values(report: EvidenceRegressionReport) -> dict[str, float]:
             "answer.retrieval_context_coverage": report.answer.retrieval_context_coverage_score(),
             "answer.citation_grounding": report.answer.citation_grounding_score(),
             "answer.citation_gold_coverage": report.answer.citation_gold_coverage_score(),
+            "answer.strict_retrieval_context_coverage": report.answer.strict_retrieval_context_coverage_score(),
+            "answer.equivalent_retrieval_context_coverage": report.answer.equivalent_retrieval_context_coverage_score(),
+            "answer.strict_citation_gold_coverage": report.answer.strict_citation_gold_coverage_score(),
+            "answer.equivalent_citation_gold_coverage": report.answer.equivalent_citation_gold_coverage_score(),
+            "answer.equivalent_supported_rate": report.answer.equivalent_supported_rate(),
             "answer.source_locator_grounding": report.answer.source_locator_grounding_score(),
             "answer.abstention_accuracy": report.answer.abstention_accuracy(),
             "answer.success_rate": report.answer.success_rate(),
