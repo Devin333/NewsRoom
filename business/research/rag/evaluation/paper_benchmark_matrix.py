@@ -8,6 +8,8 @@ from typing import Any
 from business.research.rag.evaluation.paper_benchmark_suite import (
     BenchmarkSuiteConfig,
     BenchmarkSuiteResult,
+    GoldEvidenceJudge,
+    LLMCall,
     run_benchmark_suite,
 )
 
@@ -51,9 +53,17 @@ class BenchmarkMatrixConfig:
     render_page_visual: bool = True
     lightweight_reranker: bool = False
     gold_audit_sample_size: int = 30
+    gold_judge_mode: str = "none"
+    gold_judge_sample_size: int | None = None
+    gold_judge_max_evidence_chars: int = 1600
+    gold_evidence_judge: GoldEvidenceJudge | None = None
     answer_eval_enabled: bool = False
     answer_eval_sample_size: int | None = None
+    answer_judge_mode: str = "none"
+    answer_judge_sample_size: int | None = None
+    answer_judge_llm_call: LLMCall | None = None
     spot_check_sample_size: int = 0
+    spot_check_annotations_path: Path | None = None
     quality_thresholds: dict[str, float] = field(default_factory=dict)
 
 
@@ -87,14 +97,15 @@ class BenchmarkMatrixResult:
             f"- ready_for_promotion: `{payload['ready_for_promotion']}`",
             f"- datasets: `{len(payload['datasets'])}`",
             "",
-            "| Dataset | Papers | Pairs | Hit@10 | Eq Hit@10 | MRR | Answer success | Ready | Warnings |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
+            "| Dataset | Papers | Pairs | Hit@10 | Eq Hit@10 | MRR | Answer success | Gold judge pass | Ready | Warnings |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
         ]
         for name, item in payload["datasets"].items():
             lines.append(
                 f"| `{name}` | `{item['papers_total']}` | `{item['pairs_total']}` | "
                 f"`{item['strict_hit_at_10']:.3f}` | `{item['equivalent_hit_at_10']:.3f}` | "
                 f"`{item['mrr']:.3f}` | `{_format_optional_metric(item['answer_success_rate'])}` | "
+                f"`{_format_optional_metric(item['gold_quality']['judge_pass_rate'])}` | "
                 f"`{item['ready_for_promotion']}` | `{item['warning_count']}` |"
             )
         return "\n".join(lines).rstrip() + "\n"
@@ -125,9 +136,20 @@ def run_benchmark_matrix(config: BenchmarkMatrixConfig) -> BenchmarkMatrixResult
                 render_page_visual=config.render_page_visual,
                 lightweight_reranker=config.lightweight_reranker,
                 gold_audit_sample_size=config.gold_audit_sample_size,
+                gold_judge_mode=config.gold_judge_mode,
+                gold_judge_sample_size=config.gold_judge_sample_size,
+                gold_judge_max_evidence_chars=config.gold_judge_max_evidence_chars,
+                gold_evidence_judge=config.gold_evidence_judge,
                 answer_eval_enabled=config.answer_eval_enabled,
                 answer_eval_sample_size=config.answer_eval_sample_size,
+                answer_judge_mode=config.answer_judge_mode,
+                answer_judge_sample_size=config.answer_judge_sample_size,
+                answer_judge_llm_call=config.answer_judge_llm_call,
                 spot_check_sample_size=config.spot_check_sample_size,
+                spot_check_annotations_path=_dataset_annotation_path(
+                    config.spot_check_annotations_path,
+                    dataset.name,
+                ),
                 quality_thresholds=dict(config.quality_thresholds),
             )
         )
@@ -174,6 +196,8 @@ def _dataset_summary(result: BenchmarkSuiteResult) -> dict[str, Any]:
     retrieval = report.get("retrieval") or {}
     by_10 = (retrieval.get("by_k") or {}).get("10") or {}
     answer = report.get("answer") or None
+    gold_judge = result.gold_judge
+    gold_quality = result.to_dict().get("gold_quality") or {}
     return {
         "output_dir": str(result.output_dir),
         "papers_total": result.papers_total,
@@ -185,6 +209,11 @@ def _dataset_summary(result: BenchmarkSuiteResult) -> dict[str, Any]:
         "equivalent_mrr": _float_metric(retrieval, "equivalent_mrr"),
         "answer_success_rate": _float_metric(answer, "success_rate") if isinstance(answer, dict) else None,
         "true_missing_gold_rate": _float_metric(answer, "true_missing_gold_rate") if isinstance(answer, dict) else None,
+        "gold_judge_sample_size": gold_judge.sample_size if gold_judge is not None else 0,
+        "gold_judge_pass_rate": gold_judge.pass_rate if gold_judge is not None else None,
+        "gold_judge_failed": gold_judge.failed if gold_judge is not None else 0,
+        "gold_judge_error_rate": gold_judge.error_rate if gold_judge is not None else None,
+        "gold_quality": gold_quality,
         "ready_for_promotion": result.policy_promotion_checklist.ready_for_promotion,
         "warning_count": len(result.warnings),
         "warnings": list(result.warnings),
@@ -204,6 +233,15 @@ def _float_metric(values: dict[str, Any] | None, key: str) -> float:
 
 def _format_optional_metric(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.3f}"
+
+
+def _dataset_annotation_path(path: Path | None, dataset_name: str) -> Path | None:
+    if path is None:
+        return None
+    path = Path(path)
+    if path.suffix:
+        return path
+    return path / f"{dataset_name}.jsonl"
 
 
 __all__ = [

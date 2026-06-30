@@ -7,9 +7,11 @@ import pytest
 
 from business.research.rag.evaluation.paper_benchmark_suite import (
     BenchmarkSuiteConfig,
+    GoldEvidenceAuditItem,
     GoldEvidenceJudgeItem,
     GoldEvidenceJudgeReport,
     _evidence_pack_required_context_ids,
+    _gold_judge_sample,
     _hydrate_retrieval_with_evidence_pack,
     audit_question_ambiguity,
     audit_gold_evidence,
@@ -97,6 +99,18 @@ def _paper_chunk(
         has_table=chunk_type == "table",
         content=content,
         metadata=metadata or {},
+    )
+
+
+def _audit_item(paper_id: str, qa_type: str, question: str, *, status: str) -> GoldEvidenceAuditItem:
+    return GoldEvidenceAuditItem(
+        question=question,
+        paper_id=paper_id,
+        qa_type=qa_type,
+        status=status,
+        reason="test",
+        gold_chunk_ids=(f"{paper_id}-gold",),
+        answer_facts_present=True,
     )
 
 
@@ -448,8 +462,30 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
     annotations_path = tmp_path / "spot_annotations.jsonl"
     annotations_path.write_text(
         "\n".join([
-            json.dumps({"label": "pass"}),
-            json.dumps({"verdict": "needs_fix"}),
+            json.dumps({
+                "paper_id": "p1",
+                "qa_type": "figure_qa",
+                "question": "What visual evidence is shown?",
+                "gold_evidence_ok": True,
+                "answer_ok": True,
+                "citation_ok": True,
+                "label": "pass",
+                "reason": "gold and answer are supported",
+                "annotator": "tester",
+                "reviewed_at": "2026-06-30",
+            }),
+            json.dumps({
+                "paper_id": "p2",
+                "qa_type": "table_qa",
+                "question": "What quantitative evidence is shown?",
+                "gold_evidence_ok": True,
+                "answer_ok": False,
+                "citation_ok": True,
+                "label": "needs_fix",
+                "reason": "answer missed the table conclusion",
+                "annotator": "tester",
+                "reviewed_at": "2026-06-30",
+            }),
         ]),
         encoding="utf-8",
     )
@@ -486,6 +522,14 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
     assert candidate["generation"]["total"] == 1
     assert candidate["spot_check"]["annotated_count"] == 2
     assert report_payload["spot_check"]["label_counts"] == {"needs_fix": 1, "pass": 1}
+    assert report_payload["spot_check"]["pass_rate"] == 0.5
+    assert report_payload["spot_check"]["fail_count"] == 1
+    assert report_payload["spot_check"]["schema_error_count"] == 0
+    assert report_payload["spot_check"]["by_qa_type"]["figure_qa"]["pass"] == 1
+    assert any(
+        check["check_id"] == "human_spot_check_quality" and check["status"] == "fail"
+        for check in report_payload["policy_promotion_checklist"]["checks"]
+    )
     assert len(answer_samples) == 2
     assert all("deterministic_scores" in record for record in answer_sample_records)
     assert all("context_score_breakdowns" in record for record in answer_sample_records)
@@ -538,6 +582,40 @@ def test_run_benchmark_matrix_writes_held_out_dataset_summary(tmp_path: Path) ->
     assert "Eq Hit@10" in markdown
 
 
+def test_run_benchmark_matrix_passes_gold_judge_and_summarizes_quality(tmp_path: Path) -> None:
+    historical_dir = tmp_path / "historical"
+    new50_dir = tmp_path / "new50"
+    _write_research_document_fixtures(historical_dir, ("h1", "h2", "h3"))
+    _write_research_document_fixtures(new50_dir, ("n1", "n2", "n3"))
+
+    output_dir = tmp_path / "matrix"
+    run_benchmark_matrix(BenchmarkMatrixConfig(
+        datasets=(
+            BenchmarkMatrixDataset(name="historical_38", papers_dir=historical_dir),
+            BenchmarkMatrixDataset(name="new50_20260629", papers_dir=new50_dir),
+        ),
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=6,
+        gold_judge_mode="fake",
+        gold_judge_sample_size=3,
+        gold_evidence_judge=_FakeGoldJudge(),
+    ))
+
+    payload = json.loads((output_dir / "benchmark_matrix_report.json").read_text(encoding="utf-8"))
+    historical = payload["datasets"]["historical_38"]
+
+    assert historical["gold_judge_sample_size"] == 3
+    assert historical["gold_judge_pass_rate"] == 1.0
+    assert historical["gold_quality"]["judge_enabled"] is True
+    assert historical["gold_quality"]["judge_audited"] is True
+    assert "blind_semantic_without_gold_judge" not in historical["warnings"]
+    assert (output_dir / "historical_38" / "gold_fix_manifest.json").exists()
+
+
 def test_benchmark_matrix_loads_manifest_and_requires_real_dataset_dirs(tmp_path: Path) -> None:
     papers_dir = tmp_path / "papers"
     _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
@@ -581,12 +659,39 @@ def test_benchmark_matrix_cli_accepts_dataset_manifest(tmp_path: Path) -> None:
         str(manifest),
         "--output-dir",
         str(tmp_path / "matrix"),
+        "--gold-judge",
+        "llm",
+        "--gold-judge-sample-size",
+        "7",
+        "--answer-judge",
+        "llm",
+        "--answer-judge-sample-size",
+        "5",
     ])
 
     datasets = _datasets_from_args(args)
 
     assert len(datasets) == 1
     assert datasets[0].name == "historical_38"
+    assert args.gold_judge == "llm"
+    assert args.gold_judge_sample_size == 7
+    assert args.answer_judge == "llm"
+    assert args.answer_judge_sample_size == 5
+
+
+def test_gold_judge_sample_is_stratified_and_prioritizes_risky_items() -> None:
+    items = [
+        _audit_item("p1", "formula_qa", "safe formula", status="pass"),
+        _audit_item("p2", "formula_qa", "risky formula", status="warning"),
+        _audit_item("p3", "citation_qa", "citation", status="pass"),
+        _audit_item("p4", "table_qa", "table", status="pass"),
+        _audit_item("p5", "figure_qa", "figure", status="pass"),
+    ]
+
+    sample = _gold_judge_sample(items, sample_size=4, seed="seed")
+
+    assert {item.qa_type for item in sample} >= {"formula_qa", "citation_qa", "table_qa", "figure_qa"}
+    assert next(item for item in sample if item.qa_type == "formula_qa").status == "warning"
 
 
 def test_evidence_pack_hydration_adds_primary_when_group_context_is_hit() -> None:

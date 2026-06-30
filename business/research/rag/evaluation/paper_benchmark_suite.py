@@ -61,9 +61,13 @@ PROMOTION_THRESHOLDS = {
     "answer_success": 0.60,
     "strict_equivalent_hit_at_10_gap": 0.25,
     "true_missing_gold_rate": 0.25,
+    "gold_judge_pass_rate": 0.90,
+    "gold_judge_error_rate": 0.05,
+    "human_spot_check_pass_rate": 0.90,
     "ambiguous_question_rate": 0.15,
     "caption_copy_rate": 0.02,
 }
+_SPOT_CHECK_LABELS = frozenset({"pass", "warning", "fail", "needs_fix"})
 
 
 @dataclass(frozen=True)
@@ -87,6 +91,8 @@ class GoldEvidenceAuditItem:
     source_locator_count: int = 0
     image_ref_count: int = 0
     answer_facts: tuple[str, ...] = ()
+    equivalent_gold_chunk_ids: tuple[str, ...] = ()
+    supporting_evidence_group_id: str = ""
     evidence_previews: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,6 +108,8 @@ class GoldEvidenceAuditItem:
             "source_locator_count": self.source_locator_count,
             "image_ref_count": self.image_ref_count,
             "answer_facts": list(self.answer_facts),
+            "equivalent_gold_chunk_ids": list(self.equivalent_gold_chunk_ids),
+            "supporting_evidence_group_id": self.supporting_evidence_group_id,
             "evidence_previews": [dict(item) for item in self.evidence_previews],
         }
 
@@ -138,6 +146,8 @@ class GoldEvidenceJudgeItem:
     reason: str
     supported: bool = False
     confidence: float = 0.0
+    gold_chunk_ids: tuple[str, ...] = ()
+    equivalent_gold_chunk_ids: tuple[str, ...] = ()
     raw_response: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -149,6 +159,8 @@ class GoldEvidenceJudgeItem:
             "reason": self.reason,
             "supported": self.supported,
             "confidence": self.confidence,
+            "gold_chunk_ids": list(self.gold_chunk_ids),
+            "equivalent_gold_chunk_ids": list(self.equivalent_gold_chunk_ids),
             "raw_response": dict(self.raw_response),
         }
 
@@ -165,6 +177,27 @@ class GoldEvidenceJudgeReport:
     error: int
     items: tuple[GoldEvidenceJudgeItem, ...] = ()
 
+    @property
+    def pass_rate(self) -> float:
+        return self.passed / self.sample_size if self.sample_size else 0.0
+
+    @property
+    def error_rate(self) -> float:
+        return self.error / self.sample_size if self.sample_size else 0.0
+
+    @property
+    def by_qa_type(self) -> dict[str, dict[str, int]]:
+        out: dict[str, dict[str, int]] = {}
+        for qa_type in sorted({item.qa_type for item in self.items}):
+            counts = Counter(item.status for item in self.items if item.qa_type == qa_type)
+            out[qa_type] = {
+                "pass": counts.get("pass", 0),
+                "warning": counts.get("warning", 0),
+                "fail": counts.get("fail", 0),
+                "error": counts.get("error", 0),
+            }
+        return out
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode": self.mode,
@@ -175,6 +208,9 @@ class GoldEvidenceJudgeReport:
             "warning": self.warning,
             "failed": self.failed,
             "error": self.error,
+            "pass_rate": self.pass_rate,
+            "error_rate": self.error_rate,
+            "by_qa_type": self.by_qa_type,
             "items": [item.to_dict() for item in self.items],
         }
 
@@ -191,14 +227,27 @@ class SpotCheckReport:
     annotation_path: str = ""
     annotated_count: int = 0
     label_counts: dict[str, int] = field(default_factory=dict)
+    by_qa_type: dict[str, dict[str, int]] = field(default_factory=dict)
+    schema_error_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        pass_count = int(self.label_counts.get("pass", 0))
+        warning_count = int(self.label_counts.get("warning", 0))
+        fail_count = int(self.label_counts.get("fail", 0)) + int(self.label_counts.get("needs_fix", 0))
         return {
             "sample_path": self.sample_path,
             "sample_size": self.sample_size,
             "annotation_path": self.annotation_path,
             "annotated_count": self.annotated_count,
+            "pass_rate": pass_count / self.annotated_count if self.annotated_count else 0.0,
+            "warning_count": warning_count,
+            "fail_count": fail_count,
+            "schema_error_count": self.schema_error_count,
             "label_counts": dict(sorted(self.label_counts.items())),
+            "by_qa_type": {
+                qa_type: dict(counts)
+                for qa_type, counts in sorted(self.by_qa_type.items())
+            },
         }
 
 
@@ -348,6 +397,8 @@ class OpenAICompatibleGoldEvidenceJudge:
                 qa_type=item.qa_type,
                 status="error",
                 reason=type(exc).__name__,
+                gold_chunk_ids=item.gold_chunk_ids,
+                equivalent_gold_chunk_ids=item.equivalent_gold_chunk_ids,
             )
 
         supported = bool(payload.get("supported"))
@@ -362,6 +413,8 @@ class OpenAICompatibleGoldEvidenceJudge:
             reason=reason,
             supported=supported,
             confidence=confidence,
+            gold_chunk_ids=item.gold_chunk_ids,
+            equivalent_gold_chunk_ids=item.equivalent_gold_chunk_ids,
             raw_response=payload,
         )
 
@@ -453,6 +506,11 @@ class BenchmarkSuiteResult:
             "gold_audit": self.gold_audit.to_dict(),
             "gold_judge": self.gold_judge.to_dict() if self.gold_judge is not None else None,
             "spot_check": self.spot_check.to_dict() if self.spot_check is not None else None,
+            "gold_quality": _gold_quality_summary(
+                self.question_profile,
+                self.gold_judge,
+                self.spot_check,
+            ),
             "policy_promotion_checklist": self.policy_promotion_checklist.to_dict(),
             "candidate_test_report": self.candidate_test_report,
             "baseline_test_report": self.baseline_test_report,
@@ -553,6 +611,8 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         splits=splits,
         question_audit=question_audit,
         gold_audit=audit,
+        judge_report=judge_report,
+        spot_check=spot_check,
         candidate_report=candidate_report,
     )
     warnings = _suite_warnings(
@@ -844,7 +904,7 @@ def audit_gold_evidence(
     seed: str,
 ) -> GoldEvidenceAuditReport:
     chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
-    sample = _stable_sample(list(pairs), sample_size=max(0, sample_size), seed=seed)
+    sample = _stratified_pair_sample(list(pairs), sample_size=max(0, sample_size), seed=f"{seed}:gold_audit")
     items = tuple(_audit_pair(pair, chunks_by_id) for pair in sample)
     counts = Counter(item.status for item in items)
     by_qa_type: dict[str, dict[str, int]] = {}
@@ -1513,19 +1573,21 @@ def _spot_check_report_from_annotations(
     if not path.exists():
         raise FileNotFoundError(f"spot check annotations not found: {path}")
     counts: Counter[str] = Counter()
+    by_qa_type: dict[str, Counter[str]] = {}
     annotated = 0
+    schema_errors = 0
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue
             item = json.loads(line)
-            label = str(
-                item.get("label")
-                or item.get("status")
-                or item.get("verdict")
-                or "unknown"
-            ).strip().casefold() or "unknown"
+            label = _spot_check_label(item)
             counts[label] += 1
+            qa_type = str(item.get("qa_type") or "unknown").strip() or "unknown"
+            type_counts = by_qa_type.setdefault(qa_type, Counter())
+            type_counts[label] += 1
+            if _spot_check_schema_errors(item):
+                schema_errors += 1
             annotated += 1
     return SpotCheckReport(
         sample_path=str(sample_path or output_dir / "spot_check_samples.jsonl"),
@@ -1533,7 +1595,33 @@ def _spot_check_report_from_annotations(
         annotation_path=str(path),
         annotated_count=annotated,
         label_counts=dict(counts),
+        by_qa_type={qa_type: dict(counter) for qa_type, counter in by_qa_type.items()},
+        schema_error_count=schema_errors,
     )
+
+
+def _spot_check_label(item: dict[str, Any]) -> str:
+    label = str(
+        item.get("label")
+        or item.get("status")
+        or item.get("verdict")
+        or "unknown"
+    ).strip().casefold() or "unknown"
+    return label if label in _SPOT_CHECK_LABELS else "unknown"
+
+
+def _spot_check_schema_errors(item: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for key in ("paper_id", "qa_type", "question", "label", "reason"):
+        if not str(item.get(key) or "").strip():
+            errors.append(f"missing_{key}")
+    label = str(item.get("label") or item.get("status") or item.get("verdict") or "").strip().casefold()
+    if label not in _SPOT_CHECK_LABELS:
+        errors.append("invalid_label")
+    for key in ("gold_evidence_ok", "answer_ok", "citation_ok"):
+        if key in item and not isinstance(item[key], bool):
+            errors.append(f"invalid_{key}")
+    return errors
 
 
 def _evaluate_fixed_window_baseline(
@@ -1612,10 +1700,13 @@ def _run_gold_judge(
     mode = str(config.gold_judge_mode or "none").strip().casefold()
     if mode in {"", "none", "off", "false", "0"}:
         return None
-    sample_size = config.gold_judge_sample_size
     items = list(audit.items)
-    if sample_size is not None:
-        items = items[:max(0, sample_size)]
+    if config.gold_judge_sample_size is not None:
+        items = _gold_judge_sample(
+            items,
+            sample_size=max(0, config.gold_judge_sample_size),
+            seed=f"{config.split_seed}:gold_judge",
+        )
     judge = config.gold_evidence_judge
     if judge is None:
         if mode != "llm":
@@ -1662,6 +1753,8 @@ def _audit_pair(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> Go
         source_locator_count=locator_count,
         image_ref_count=image_count,
         answer_facts=tuple(str(fact) for fact in pair.answer_facts if str(fact).strip())[:3],
+        equivalent_gold_chunk_ids=tuple(pair.equivalent_gold_chunk_ids),
+        supporting_evidence_group_id=pair.supporting_evidence_group_id,
         evidence_previews=tuple(_evidence_preview(chunk) for chunk in gold_chunks[:5]),
     )
 
@@ -1695,6 +1788,8 @@ def _build_policy_promotion_checklist(
     splits: dict[str, BenchmarkSplit],
     question_audit: QuestionAmbiguityAuditReport,
     gold_audit: GoldEvidenceAuditReport,
+    judge_report: GoldEvidenceJudgeReport | None,
+    spot_check: SpotCheckReport | None,
     candidate_report: dict[str, Any],
 ) -> PolicyPromotionChecklist:
     retrieval = candidate_report.get("retrieval") or {}
@@ -1731,6 +1826,12 @@ def _build_policy_promotion_checklist(
             actual={"warning": gold_audit.warning, "failed": gold_audit.failed},
             threshold={"warning": 0, "failed": 0},
         ),
+        _gold_judge_quality_check(
+            config=config,
+            question_profile=question_profile,
+            judge_report=judge_report,
+        ),
+        _human_spot_check_quality_check(spot_check),
         _promotion_check(
             "ambiguity_audit",
             "Blind questions remain low ambiguity without label leakage",
@@ -1844,11 +1945,12 @@ def _promotion_check(
     actual: Any = None,
     threshold: Any = None,
     details: str = "",
+    status: str | None = None,
 ) -> PolicyPromotionCheck:
     return PolicyPromotionCheck(
         check_id=check_id,
         label=label,
-        status="pass" if passed else "fail",
+        status=status or ("pass" if passed else "fail"),
         actual=actual,
         threshold=threshold,
         details=details,
@@ -1906,6 +2008,99 @@ def _strict_equivalent_gap_check(retrieval: dict[str, Any]) -> PolicyPromotionCh
         },
         threshold={"max_gap": PROMOTION_THRESHOLDS["strict_equivalent_hit_at_10_gap"]},
         details="prevents promotion when equivalent expansion hides a strict-gold regression",
+    )
+
+
+def _gold_judge_quality_check(
+    *,
+    config: BenchmarkSuiteConfig,
+    question_profile: str,
+    judge_report: GoldEvidenceJudgeReport | None,
+) -> PolicyPromotionCheck:
+    blind = _is_blind_question_profile(question_profile)
+    if judge_report is None:
+        status = "warning" if blind else "pass"
+        return _promotion_check(
+            "gold_judge_quality",
+            "Gold judge quality is available for blind semantic gold evidence",
+            not blind,
+            actual={"enabled": False},
+            threshold={
+                "pass_rate": PROMOTION_THRESHOLDS["gold_judge_pass_rate"],
+                "failed": 0,
+                "error_rate": PROMOTION_THRESHOLDS["gold_judge_error_rate"],
+            },
+            details="blind benchmark is missing gold judge audit" if blind else "gold judge not required",
+            status=status,
+        )
+
+    expected = config.gold_judge_sample_size
+    sample_ok = True if expected is None else judge_report.sample_size >= max(0, expected)
+    pass_rate = judge_report.pass_rate
+    error_rate = judge_report.error_rate
+    passed = (
+        sample_ok
+        and pass_rate >= PROMOTION_THRESHOLDS["gold_judge_pass_rate"]
+        and judge_report.failed == 0
+        and error_rate <= PROMOTION_THRESHOLDS["gold_judge_error_rate"]
+    )
+    return _promotion_check(
+        "gold_judge_quality",
+        "Gold judge quality meets blind semantic audit gate",
+        passed,
+        actual={
+            "sample_size": judge_report.sample_size,
+            "expected_sample_size": expected,
+            "pass_rate": round(pass_rate, 6),
+            "failed": judge_report.failed,
+            "warning": judge_report.warning,
+            "error": judge_report.error,
+            "error_rate": round(error_rate, 6),
+            "by_qa_type": judge_report.by_qa_type,
+        },
+        threshold={
+            "pass_rate": PROMOTION_THRESHOLDS["gold_judge_pass_rate"],
+            "failed": 0,
+            "error_rate": PROMOTION_THRESHOLDS["gold_judge_error_rate"],
+        },
+    )
+
+
+def _human_spot_check_quality_check(spot_check: SpotCheckReport | None) -> PolicyPromotionCheck:
+    if spot_check is None or not spot_check.annotation_path:
+        return _promotion_check(
+            "human_spot_check_quality",
+            "Human spot-check quality is summarized when annotations are provided",
+            True,
+            actual={"annotation_path": "", "annotated_count": 0},
+            threshold="optional unless annotations are provided",
+            details="no human annotations provided",
+        )
+    payload = spot_check.to_dict()
+    pass_rate = float(payload.get("pass_rate") or 0.0)
+    fail_count = int(payload.get("fail_count") or 0)
+    schema_error_count = int(payload.get("schema_error_count") or 0)
+    passed = (
+        spot_check.annotated_count > 0
+        and pass_rate >= PROMOTION_THRESHOLDS["human_spot_check_pass_rate"]
+        and fail_count == 0
+        and schema_error_count == 0
+    )
+    return _promotion_check(
+        "human_spot_check_quality",
+        "Human spot-check annotations meet quality gate",
+        passed,
+        actual={
+            "annotated_count": spot_check.annotated_count,
+            "pass_rate": round(pass_rate, 6),
+            "fail_count": fail_count,
+            "schema_error_count": schema_error_count,
+        },
+        threshold={
+            "pass_rate": PROMOTION_THRESHOLDS["human_spot_check_pass_rate"],
+            "fail_count": 0,
+            "schema_error_count": 0,
+        },
     )
 
 
@@ -2034,6 +2229,104 @@ def _suite_warnings(
     return warnings
 
 
+def _gold_quality_summary(
+    question_profile: str,
+    judge_report: GoldEvidenceJudgeReport | None,
+    spot_check: SpotCheckReport | None,
+) -> dict[str, Any]:
+    judge_enabled = judge_report is not None
+    judge_pass_rate = judge_report.pass_rate if judge_report is not None else 0.0
+    judge_error_rate = judge_report.error_rate if judge_report is not None else 0.0
+    human_payload = spot_check.to_dict() if spot_check is not None else {}
+    human_annotated = int(human_payload.get("annotated_count") or 0)
+    human_pass_rate = float(human_payload.get("pass_rate") or 0.0)
+    human_schema_errors = int(human_payload.get("schema_error_count") or 0)
+    human_fail_count = int(human_payload.get("fail_count") or 0)
+    judge_passed = (
+        judge_report is not None
+        and judge_report.failed == 0
+        and judge_report.error_rate <= PROMOTION_THRESHOLDS["gold_judge_error_rate"]
+        and judge_report.pass_rate >= PROMOTION_THRESHOLDS["gold_judge_pass_rate"]
+    )
+    human_passed = (
+        human_annotated > 0
+        and human_pass_rate >= PROMOTION_THRESHOLDS["human_spot_check_pass_rate"]
+        and human_schema_errors == 0
+        and human_fail_count == 0
+    )
+    return {
+        "blind_question_profile": _is_blind_question_profile(question_profile),
+        "judge_enabled": judge_enabled,
+        "judge_sample_size": judge_report.sample_size if judge_report is not None else 0,
+        "judge_pass_rate": judge_pass_rate,
+        "judge_failed": judge_report.failed if judge_report is not None else 0,
+        "judge_warning": judge_report.warning if judge_report is not None else 0,
+        "judge_error": judge_report.error if judge_report is not None else 0,
+        "judge_error_rate": judge_error_rate,
+        "human_annotation_path": human_payload.get("annotation_path", ""),
+        "human_annotated_count": human_annotated,
+        "human_spot_check_pass_rate": human_pass_rate,
+        "human_spot_check_fail_count": human_fail_count,
+        "human_spot_check_schema_error_count": human_schema_errors,
+        "judge_audited": judge_passed,
+        "fully_audited": judge_passed and human_passed,
+    }
+
+
+def _write_gold_fix_artifacts(output_dir: Path, judge_report: GoldEvidenceJudgeReport | None) -> None:
+    failure_items: list[dict[str, Any]] = []
+    warning_items: list[dict[str, Any]] = []
+    if judge_report is not None:
+        for item in judge_report.items:
+            if item.status == "pass":
+                continue
+            record = _gold_fix_record(item)
+            if item.status == "warning":
+                warning_items.append(record)
+            else:
+                failure_items.append(record)
+    _write_jsonl(output_dir / "gold_judge_failures.jsonl", failure_items)
+    _write_jsonl(output_dir / "gold_judge_warnings.jsonl", warning_items)
+    all_items = [*failure_items, *warning_items]
+    action_counts = Counter(str(item.get("suggested_action") or "") for item in all_items)
+    manifest = {
+        "total": len(all_items),
+        "failure_count": len(failure_items),
+        "warning_count": len(warning_items),
+        "action_counts": dict(sorted(action_counts.items())),
+        "items": all_items,
+    }
+    (output_dir / "gold_fix_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _gold_fix_record(item: GoldEvidenceJudgeItem) -> dict[str, Any]:
+    return {
+        "paper_id": item.paper_id,
+        "qa_type": item.qa_type,
+        "question": item.question,
+        "status": item.status,
+        "supported": item.supported,
+        "confidence": item.confidence,
+        "gold_chunk_ids": list(item.gold_chunk_ids),
+        "equivalent_gold_chunk_ids": list(item.equivalent_gold_chunk_ids),
+        "judge_reason": item.reason,
+        "suggested_action": _suggested_gold_fix_action(item),
+    }
+
+
+def _suggested_gold_fix_action(item: GoldEvidenceJudgeItem) -> str:
+    if item.status == "error":
+        return "rewrite_question"
+    if item.status == "warning":
+        return "add_equivalent_evidence"
+    if item.qa_type in {"citation_qa", "formula_qa", "formula_explanation_qa"}:
+        return "replace_gold_chunk"
+    return "drop_question"
+
+
 def _split_distribution_warnings(splits: dict[str, BenchmarkSplit]) -> list[str]:
     test = splits.get("test")
     if test is None or test.pair_count <= 0:
@@ -2069,6 +2362,7 @@ def _write_suite_report(result: BenchmarkSuiteResult) -> None:
         _policy_promotion_markdown(checklist, title_level=1),
         encoding="utf-8",
     )
+    _write_gold_fix_artifacts(result.output_dir, result.gold_judge)
     (result.output_dir / "benchmark_suite_report.md").write_text(_suite_markdown(payload), encoding="utf-8")
 
 
@@ -2158,6 +2452,21 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
     promotion = payload.get("policy_promotion_checklist") or {}
     if promotion:
         lines.extend(["", *_policy_promotion_markdown_lines(promotion, title_level=2)])
+    gold_quality = payload.get("gold_quality") or {}
+    if gold_quality:
+        lines.extend([
+            "",
+            "## Gold Quality",
+            "",
+            f"- judge_enabled: `{gold_quality.get('judge_enabled', False)}`",
+            f"- judge_sample_size: `{gold_quality.get('judge_sample_size', 0)}`",
+            f"- judge_pass_rate: `{float(gold_quality.get('judge_pass_rate') or 0.0):.3f}`",
+            f"- judge_failed/warning/error: `{gold_quality.get('judge_failed', 0)}/{gold_quality.get('judge_warning', 0)}/{gold_quality.get('judge_error', 0)}`",
+            f"- human_annotated_count: `{gold_quality.get('human_annotated_count', 0)}`",
+            f"- human_spot_check_pass_rate: `{float(gold_quality.get('human_spot_check_pass_rate') or 0.0):.3f}`",
+            f"- judge_audited: `{gold_quality.get('judge_audited', False)}`",
+            f"- fully_audited: `{gold_quality.get('fully_audited', False)}`",
+        ])
     score_breakdown = candidate.get("score_breakdown_summary") or {}
     score_components = score_breakdown.get("components") or {}
     if score_components:
@@ -2346,10 +2655,25 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             f"- sample_path: `{spot_check['sample_path']}`",
             f"- sample_size: `{spot_check['sample_size']}`",
             f"- annotated_count: `{spot_check['annotated_count']}`",
+            f"- pass_rate: `{float(spot_check.get('pass_rate') or 0.0):.3f}`",
+            f"- warning_count: `{spot_check.get('warning_count', 0)}`",
+            f"- fail_count: `{spot_check.get('fail_count', 0)}`",
+            f"- schema_error_count: `{spot_check.get('schema_error_count', 0)}`",
         ])
         if spot_check.get("label_counts"):
             for label, count in sorted(spot_check["label_counts"].items()):
                 lines.append(f"- {label}: `{count}`")
+        if spot_check.get("by_qa_type"):
+            lines.extend([
+                "",
+                "| QA type | pass | warning | fail | needs_fix | unknown |",
+                "| --- | ---: | ---: | ---: | ---: | ---: |",
+            ])
+            for qa_type, counts in sorted(spot_check["by_qa_type"].items()):
+                lines.append(
+                    f"| `{qa_type}` | `{counts.get('pass', 0)}` | `{counts.get('warning', 0)}` | "
+                    f"`{counts.get('fail', 0)}` | `{counts.get('needs_fix', 0)}` | `{counts.get('unknown', 0)}` |"
+                )
     lines.extend([
         "",
         "## Splits",
@@ -2379,8 +2703,21 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             f"- mode: `{judge['mode']}`",
             f"- model: `{judge['model']}`",
             f"- sample_size: `{judge['sample_size']}`",
+            f"- pass_rate: `{float(judge.get('pass_rate') or 0.0):.3f}`",
+            f"- error_rate: `{float(judge.get('error_rate') or 0.0):.3f}`",
             f"- pass/warning/fail/error: `{judge['passed']}/{judge['warning']}/{judge['failed']}/{judge['error']}`",
         ])
+        if judge.get("by_qa_type"):
+            lines.extend([
+                "",
+                "| QA type | pass | warning | fail | error |",
+                "| --- | ---: | ---: | ---: | ---: |",
+            ])
+            for qa_type, counts in sorted(judge["by_qa_type"].items()):
+                lines.append(
+                    f"| `{qa_type}` | `{counts.get('pass', 0)}` | `{counts.get('warning', 0)}` | "
+                    f"`{counts.get('fail', 0)}` | `{counts.get('error', 0)}` |"
+                )
     if payload["warnings"]:
         lines.extend(["", "## Warnings", *[f"- `{warning}`" for warning in payload["warnings"]]])
     return "\n".join(lines) + "\n"
@@ -2502,6 +2839,109 @@ def _stable_split_key(seed: str, paper_id: str) -> str:
 def _stable_sample(values: list[EvidenceQAPair], *, sample_size: int, seed: str) -> list[EvidenceQAPair]:
     ordered = sorted(values, key=lambda pair: _stable_split_key(seed, f"{pair.paper_id}:{pair.question}"))
     return ordered[:sample_size] if sample_size else []
+
+
+def _stratified_pair_sample(values: list[EvidenceQAPair], *, sample_size: int, seed: str) -> list[EvidenceQAPair]:
+    if sample_size <= 0:
+        return []
+    selected: list[EvidenceQAPair] = []
+    seen: set[tuple[str, str, str]] = set()
+    by_type: dict[str, list[EvidenceQAPair]] = {}
+    for pair in values:
+        by_type.setdefault(pair.qa_type, []).append(pair)
+    for qa_type in [*DEFAULT_TARGET_QA_TYPES, *sorted(set(by_type) - set(DEFAULT_TARGET_QA_TYPES))]:
+        candidates = by_type.get(qa_type) or []
+        if not candidates or len(selected) >= sample_size:
+            continue
+        chosen = _ordered_pairs(candidates, seed=f"{seed}:{qa_type}")[0]
+        selected.append(chosen)
+        seen.add(_pair_sample_key(chosen))
+    for pair in _ordered_pairs(values, seed=f"{seed}:fill"):
+        if len(selected) >= sample_size:
+            break
+        key = _pair_sample_key(pair)
+        if key in seen:
+            continue
+        selected.append(pair)
+        seen.add(key)
+    return selected
+
+
+def _gold_judge_sample(
+    items: list[GoldEvidenceAuditItem],
+    *,
+    sample_size: int,
+    seed: str,
+) -> list[GoldEvidenceAuditItem]:
+    if sample_size <= 0:
+        return []
+    selected: list[GoldEvidenceAuditItem] = []
+    seen: set[tuple[str, str, str]] = set()
+    by_type: dict[str, list[GoldEvidenceAuditItem]] = {}
+    for item in items:
+        by_type.setdefault(item.qa_type, []).append(item)
+    for qa_type in [*DEFAULT_TARGET_QA_TYPES, *sorted(set(by_type) - set(DEFAULT_TARGET_QA_TYPES))]:
+        candidates = by_type.get(qa_type) or []
+        if not candidates or len(selected) >= sample_size:
+            continue
+        chosen = _ordered_gold_audit_items(candidates, seed=f"{seed}:{qa_type}")[0]
+        selected.append(chosen)
+        seen.add(_gold_audit_item_key(chosen))
+    for item in _ordered_gold_audit_items(items, seed=f"{seed}:fill"):
+        if len(selected) >= sample_size:
+            break
+        key = _gold_audit_item_key(item)
+        if key in seen:
+            continue
+        selected.append(item)
+        seen.add(key)
+    return selected
+
+
+def _ordered_pairs(values: Iterable[EvidenceQAPair], *, seed: str) -> list[EvidenceQAPair]:
+    return sorted(
+        values,
+        key=lambda pair: (
+            _pair_risk_rank(pair),
+            _stable_split_key(seed, f"{pair.paper_id}:{pair.qa_type}:{pair.question}"),
+        ),
+    )
+
+
+def _ordered_gold_audit_items(values: Iterable[GoldEvidenceAuditItem], *, seed: str) -> list[GoldEvidenceAuditItem]:
+    return sorted(
+        values,
+        key=lambda item: (
+            _gold_audit_risk_rank(item),
+            _stable_split_key(seed, f"{item.paper_id}:{item.qa_type}:{item.question}"),
+        ),
+    )
+
+
+def _pair_risk_rank(pair: EvidenceQAPair) -> int:
+    if pair.qa_type in {"citation_qa", "formula_qa", "formula_explanation_qa"}:
+        return 0
+    if pair.qa_type in {"figure_qa", "table_qa", "experiment_result_qa"}:
+        return 1
+    return 2
+
+
+def _gold_audit_risk_rank(item: GoldEvidenceAuditItem) -> int:
+    if item.status in {"fail", "warning"}:
+        return 0
+    if item.qa_type in {"citation_qa", "formula_qa", "formula_explanation_qa"}:
+        return 1
+    if not item.answer_facts_present:
+        return 2
+    return 3
+
+
+def _pair_sample_key(pair: EvidenceQAPair) -> tuple[str, str, str]:
+    return (pair.paper_id, pair.qa_type, pair.question)
+
+
+def _gold_audit_item_key(item: GoldEvidenceAuditItem) -> tuple[str, str, str]:
+    return (item.paper_id, item.qa_type, item.question)
 
 
 def _evidence_type(chunk: PaperChunk) -> str:

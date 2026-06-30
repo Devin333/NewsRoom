@@ -30,9 +30,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         render_page_visual=not args.no_render_page_visual,
         lightweight_reranker=args.lightweight_reranker,
         gold_audit_sample_size=args.gold_audit_sample_size,
+        gold_judge_mode=args.gold_judge,
+        gold_judge_sample_size=args.gold_judge_sample_size,
+        gold_judge_max_evidence_chars=args.gold_judge_max_evidence_chars,
         answer_eval_enabled=args.answer_eval,
         answer_eval_sample_size=args.answer_eval_sample_size,
+        answer_judge_mode=args.answer_judge,
+        answer_judge_sample_size=args.answer_judge_sample_size,
         spot_check_sample_size=args.spot_check_sample_size,
+        spot_check_annotations_path=Path(args.spot_check_annotations) if args.spot_check_annotations else None,
         quality_thresholds=_parse_thresholds(args.quality_threshold),
     ))
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), end="\n")
@@ -67,9 +73,28 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-min-per-type", type=int, default=50)
     parser.add_argument("--split-seed", default="paper-rag-benchmark-v1")
     parser.add_argument("--gold-audit-sample-size", type=int, default=30)
+    parser.add_argument(
+        "--gold-judge",
+        choices=("none", "llm"),
+        default="none",
+        help="Optional gold evidence audit mode for each matrix dataset.",
+    )
+    parser.add_argument("--gold-judge-sample-size", type=int)
+    parser.add_argument("--gold-judge-max-evidence-chars", type=int, default=1600)
     parser.add_argument("--answer-eval", action="store_true")
     parser.add_argument("--answer-eval-sample-size", type=int)
+    parser.add_argument(
+        "--answer-judge",
+        choices=("none", "llm"),
+        default="none",
+        help="Optional answer generation judge for each matrix dataset.",
+    )
+    parser.add_argument("--answer-judge-sample-size", type=int)
     parser.add_argument("--spot-check-sample-size", type=int, default=0)
+    parser.add_argument(
+        "--spot-check-annotations",
+        help="Optional JSONL file or directory. Directories resolve to <dataset>.jsonl per dataset.",
+    )
     parser.add_argument("--quality-threshold", action="append", default=[], metavar="METRIC=VALUE")
     parser.add_argument("--no-visual", action="store_true")
     parser.add_argument("--no-page-visual", action="store_true")
