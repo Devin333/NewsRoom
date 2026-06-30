@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -14,6 +15,7 @@ from business.research.rag.evaluation.paper_benchmark_matrix import (
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _configure_utf8_output()
     args = _build_parser().parse_args(argv)
     datasets = _datasets_from_args(args)
     result = run_benchmark_matrix(BenchmarkMatrixConfig(
@@ -43,6 +45,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     ))
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), end="\n")
     return 0
+
+
+def _configure_utf8_output() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
 
 
 def _build_parser() -> argparse.ArgumentParser:

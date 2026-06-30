@@ -865,9 +865,9 @@ def _table_anchor_candidates(pair: EvidenceQAPair, chunk: PaperChunk | None) -> 
     if chunk is None:
         candidates.extend(("answer_fact", fact) for fact in pair.answer_facts)
         return candidates
+    trusted_caption = _trusted_caption_for_chunk(chunk)
     candidates.extend([
-        ("metadata.caption_text", str(chunk.metadata.get("caption_text") or "")),
-        ("metadata.surya_caption", str(chunk.metadata.get("surya_caption") or "")),
+        ("trusted_caption", trusted_caption),
         ("metadata.semantic_text", str(chunk.metadata.get("semantic_text") or "")),
         ("metadata.table_text", str(chunk.metadata.get("table_text") or "")),
         ("metadata.columns", _metadata_text(chunk.metadata.get("columns"))),
@@ -884,8 +884,7 @@ def _figure_anchor_candidates(pair: EvidenceQAPair, chunk: PaperChunk | None) ->
         return [("answer_fact", fact) for fact in pair.answer_facts]
     candidates = [
         ("metadata.visual_description", str(chunk.metadata.get("visual_description") or "")),
-        ("metadata.caption_text", str(chunk.metadata.get("caption_text") or "")),
-        ("metadata.surya_caption", str(chunk.metadata.get("surya_caption") or "")),
+        ("trusted_caption", _trusted_caption_for_chunk(chunk)),
         ("content.caption", _caption_from_content(chunk.content)),
         ("content", chunk.content),
     ]
@@ -935,6 +934,33 @@ def _metadata_text(value: object) -> str:
     if isinstance(value, dict):
         return " ".join(str(part) for part in value.values() if str(part).strip())
     return str(value or "")
+
+
+def _trusted_caption_for_chunk(chunk: PaperChunk) -> str:
+    content_caption = _caption_from_content(chunk.content)
+    metadata_caption = str(chunk.metadata.get("caption_text") or chunk.metadata.get("surya_caption") or "")
+    if content_caption and metadata_caption and not _captions_are_compatible(content_caption, metadata_caption):
+        return content_caption
+    return content_caption or metadata_caption
+
+
+def _captions_are_compatible(left: str, right: str) -> bool:
+    left_tokens = _caption_signature_tokens(left)
+    right_tokens = _caption_signature_tokens(right)
+    if not left_tokens or not right_tokens:
+        return True
+    overlap = len(left_tokens & right_tokens)
+    smaller = min(len(left_tokens), len(right_tokens))
+    return overlap >= 2 or (smaller > 0 and overlap / smaller >= 0.4)
+
+
+def _caption_signature_tokens(text: str) -> set[str]:
+    tokens = {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", _strip_element_labels(str(text or "")))
+        if _is_semantic_anchor_token(token)
+    }
+    return tokens
 
 
 def _semantic_anchor_terms(text: str) -> list[str]:
@@ -1090,6 +1116,8 @@ def _template_pair_for_chunk(
     if qa_type == "table_qa":
         return _visual_or_table_pair(chunk, qa_type="table_qa", domain=domain, chunks_by_id=chunks_by_id)
     if qa_type == "figure_qa":
+        if not _has_interpretable_figure_text(chunk):
+            return None
         return _visual_or_table_pair(chunk, qa_type="figure_qa", domain=domain, chunks_by_id=chunks_by_id)
     if qa_type == "citation_qa":
         return _citation_pair(chunk, domain=domain)
@@ -1132,7 +1160,7 @@ def _formula_explanation_pair(
         gold_chunk_ids=_unique_texts([chunk.chunk_id, *(context.chunk_id for context in context_chunks)]),
         required_evidence_types=_unique_texts([
             "formula",
-            *(_evidence_type_for_chunk(context) for context in context_chunks),
+            *(_support_context_evidence_type(context) for context in context_chunks),
         ]),
         gold_source_locators=_unique_texts([
             _source_locator_for_chunk(chunk),
@@ -1175,7 +1203,7 @@ def _typed_element_label(label: str, *, element_type: str) -> str:
 
 
 def _formula_context_fact(formula_chunk: PaperChunk, context: PaperChunk) -> str:
-    sentences = _fact_sentences(context.content)
+    sentences = _formula_context_window_sentences(formula_chunk, context)
     if not sentences:
         return _snippet_from_content(context.content)
     formula_terms = _formula_terms(formula_chunk)
@@ -1212,6 +1240,58 @@ def _formula_context_fact(formula_chunk: PaperChunk, context: PaperChunk) -> str
         if _formula_sentence_related(next_sentence, formula_terms):
             selected = f"{selected} {next_sentence}"
     return _snippet_from_content(selected, max_chars=260)
+
+
+def _formula_context_window_sentences(formula_chunk: PaperChunk, context: PaperChunk) -> list[str]:
+    content = str(context.content or "")
+    position = _formula_anchor_position(formula_chunk, content)
+    if position < 0:
+        return _fact_sentences(content)
+    window = content[max(0, position - 600):position + 1800]
+    return _fact_sentences(window)
+
+
+def _formula_anchor_position(formula_chunk: PaperChunk, content: str) -> int:
+    candidates = _unique_texts([
+        *_formula_label_candidates(formula_chunk),
+        str(formula_chunk.metadata.get("equation_label") or ""),
+        str(formula_chunk.metadata.get("equation_id") or ""),
+    ])
+    for candidate in candidates:
+        if not candidate:
+            continue
+        index = content.find(candidate)
+        if index >= 0:
+            return index
+    latex_tokens = [
+        token
+        for token in _fact_tokens(formula_chunk.formula_latex or formula_chunk.content)
+        if len(token) >= 4
+    ][:6]
+    if not latex_tokens:
+        return -1
+    lowered = content.casefold()
+    best_index = -1
+    best_hits = 0
+    for match in re.finditer(r"\\begin\{(?:equation|align|gather)[*]?\}|\\\[|\$\$", content):
+        start = match.start()
+        window = lowered[start:start + 1200]
+        hits = sum(1 for token in latex_tokens if token in window)
+        if hits > best_hits:
+            best_hits = hits
+            best_index = start
+    return best_index if best_hits >= 2 else -1
+
+
+def _formula_label_candidates(chunk: PaperChunk) -> list[str]:
+    values = [
+        str(chunk.metadata.get("equation_label") or ""),
+        str(chunk.metadata.get("equation_id") or ""),
+        str(chunk.metadata.get("element_label") or ""),
+    ]
+    for source in (chunk.formula_latex, chunk.content):
+        values.extend(re.findall(r"\\label\{([^{}]+)\}", str(source or "")))
+    return _unique_texts(values)
 
 
 def _fact_sentences(content: str) -> list[str]:
@@ -1275,11 +1355,54 @@ def _figure_question(label: str, chunk: PaperChunk) -> str:
 def _visual_question_topic(chunk: PaperChunk) -> str:
     topic = _caption_from_content(chunk.content)
     if not topic:
-        topic = str(chunk.metadata.get("caption_text") or chunk.metadata.get("surya_caption") or "")
+        topic = _trusted_caption_for_chunk(chunk)
     topic = " ".join(topic.split())
     if len(topic) > 140:
         topic = topic[:140].rsplit(" ", 1)[0].strip()
     return topic
+
+
+def _has_interpretable_figure_text(chunk: PaperChunk) -> bool:
+    description = str(chunk.metadata.get("visual_description") or "")
+    if _meaningful_visual_text(description):
+        return True
+    caption = _trusted_caption_for_chunk(chunk)
+    return _meaningful_visual_text(caption) and not _caption_looks_incomplete(caption)
+
+
+def _meaningful_visual_text(text: str) -> bool:
+    words = re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", str(text or ""))
+    return len(words) >= 1
+
+
+def _caption_looks_incomplete(text: str) -> bool:
+    normalized = " ".join(str(text or "").split())
+    if not normalized:
+        return True
+    if normalized.endswith(("\\", "/", ":", ",", ";", "(")):
+        return True
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9-]*", normalized.casefold())
+    if not tokens:
+        return True
+    return tokens[-1] in {
+        "between",
+        "among",
+        "across",
+        "with",
+        "without",
+        "for",
+        "from",
+        "into",
+        "over",
+        "under",
+        "and",
+        "or",
+        "the",
+        "a",
+        "an",
+        "of",
+        "to",
+    }
 
 
 def _visual_or_table_pair(
@@ -1301,11 +1424,13 @@ def _visual_or_table_pair(
     )
     gold_ids = [chunk.chunk_id]
     required_types = ["table" if is_table else "figure"]
+    related_context_chunks: list[PaperChunk] = []
     for related_id in _related_context_ids(chunk):
         related = chunks_by_id.get(related_id)
         if related is None or not _is_contentful_related_context_chunk(related):
             continue
         gold_ids.append(related.chunk_id)
+        related_context_chunks.append(related)
         evidence_type = _evidence_type_for_chunk(related)
         if evidence_type not in required_types:
             required_types.append(evidence_type)
@@ -1317,7 +1442,10 @@ def _visual_or_table_pair(
         required_evidence_types=required_types,
         gold_source_locators=_unique_texts([_source_locator_for_chunk(chunk)]),
         gold_image_refs=_unique_texts([_image_ref_for_chunk(chunk)]),
-        answer_facts=_answer_facts_from_chunk(chunk),
+        answer_facts=_unique_texts([
+            *_answer_facts_from_chunk(chunk),
+            *(_snippet_from_content(context.content, max_chars=260) for context in related_context_chunks[:2]),
+        ])[:3],
         expected_behavior=_ANSWER_BEHAVIOR,
         difficulty="medium",
         domain=domain,
@@ -1678,9 +1806,7 @@ def _explicit_result_reference_chunks(chunk: PaperChunk, chunks_by_id: dict[str,
 
 
 def _answer_facts_from_chunk(chunk: PaperChunk) -> list[str]:
-    caption = str(chunk.metadata.get("caption_text") or chunk.metadata.get("surya_caption") or "")
-    if not caption:
-        caption = _caption_from_content(chunk.content)
+    caption = _trusted_caption_for_chunk(chunk)
     if chunk.chunk_type == "figure" or chunk.has_figure:
         return _unique_texts([caption]) if caption else [_snippet_from_content(_table_body_without_nearby_context(chunk.content))]
     if chunk.chunk_type == "table" or chunk.has_table:
@@ -1742,6 +1868,8 @@ def _is_contentful_related_context_chunk(chunk: PaperChunk) -> bool:
 def _is_experiment_result_table(chunk: PaperChunk) -> bool:
     if _evidence_type_for_chunk(chunk) != "table":
         return False
+    if _table_content_is_fragmented(chunk):
+        return False
     roles = {str(role).casefold() for role in chunk.section_role}
     if roles & {"experiment", "analysis"}:
         role_score = 1
@@ -1764,6 +1892,30 @@ def _is_experiment_result_table(chunk: PaperChunk) -> bool:
     return True
 
 
+def _table_content_is_fragmented(chunk: PaperChunk) -> bool:
+    text = " ".join([
+        str(chunk.metadata.get("table_text") or ""),
+        str(chunk.metadata.get("semantic_text") or ""),
+        _table_body_without_nearby_context(chunk.content),
+    ])
+    columns_match = re.search(r"\bColumns\s*:\s*(.*?)(?:\bRows\s*:|$)", text, flags=re.IGNORECASE | re.DOTALL)
+    if not columns_match:
+        return False
+    columns = [
+        column.strip()
+        for column in re.split(r"\s*\|\s*|,\s*", columns_match.group(1))
+        if column.strip()
+    ]
+    if len(columns) < 8:
+        return False
+    fragmented = [
+        column
+        for column in columns
+        if re.fullmatch(r"(?:[A-Za-z](?:_\d+)?|column_\d+|\.)", column, flags=re.IGNORECASE)
+    ]
+    return len(fragmented) / len(columns) >= 0.5
+
+
 def _keyword_hits(text: str, keywords: tuple[str, ...]) -> int:
     return sum(1 for keyword in keywords if _keyword_in_text(text, keyword))
 
@@ -1779,8 +1931,7 @@ def _keyword_in_text(text: str, keyword: str) -> bool:
 
 def _table_quality_text(chunk: PaperChunk) -> str:
     parts = [
-        str(chunk.metadata.get("caption_text") or ""),
-        str(chunk.metadata.get("surya_caption") or ""),
+        _trusted_caption_for_chunk(chunk),
         str(chunk.metadata.get("semantic_text") or ""),
         str(chunk.metadata.get("table_text") or ""),
         _caption_from_content(chunk.content),
@@ -1799,7 +1950,7 @@ def _table_body_without_nearby_context(content: str) -> str:
 def _experiment_table_topic(chunk: PaperChunk) -> str:
     topic = _caption_from_content(chunk.content)
     if not topic:
-        topic = str(chunk.metadata.get("caption_text") or chunk.metadata.get("surya_caption") or "")
+        topic = _trusted_caption_for_chunk(chunk)
     topic = " ".join(topic.split())
     if len(topic) > 140:
         topic = topic[:140].rsplit(" ", 1)[0].strip()
@@ -2037,6 +2188,12 @@ def _evidence_type_for_chunk(chunk: PaperChunk) -> str:
     if chunk.chunk_type == "table" or chunk.has_table:
         return "table"
     return chunk.chunk_type
+
+
+def _support_context_evidence_type(chunk: PaperChunk) -> str:
+    if chunk.chunk_type == "paragraph":
+        return "paragraph"
+    return _evidence_type_for_chunk(chunk)
 
 
 def _qa_type_for_chunk(chunk: PaperChunk) -> str:

@@ -10,8 +10,10 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     GoldEvidenceAuditItem,
     GoldEvidenceJudgeItem,
     GoldEvidenceJudgeReport,
+    _evidence_preview,
     _evidence_pack_required_context_ids,
     _gold_judge_sample,
+    _judge_prompt,
     _hydrate_retrieval_with_evidence_pack,
     audit_question_ambiguity,
     audit_gold_evidence,
@@ -300,6 +302,27 @@ def test_run_benchmark_suite_writes_splits_without_fixed_window_by_default(tmp_p
     assert "## Field Embedding Distribution" in markdown
     assert "## Route Distribution" in markdown
     assert "## Intent Confusion" in markdown
+
+
+def test_run_benchmark_suite_expands_gold_audit_sample_for_judge(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+
+    result = run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=tmp_path / "suite",
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=1,
+        gold_judge_mode="fake",
+        gold_judge_sample_size=3,
+        gold_evidence_judge=_FakeGoldJudge(),
+    ))
+
+    assert result.gold_judge is not None
+    assert result.gold_judge.sample_size == 3
 
 
 def test_run_benchmark_suite_can_write_fixed_window_baseline_when_requested(tmp_path: Path) -> None:
@@ -762,12 +785,78 @@ def test_gold_judge_sample_is_stratified_and_prioritizes_risky_items() -> None:
         _audit_item("p3", "citation_qa", "citation", status="pass"),
         _audit_item("p4", "table_qa", "table", status="pass"),
         _audit_item("p5", "figure_qa", "figure", status="pass"),
+        GoldEvidenceAuditItem(
+            question="Should the model abstain?",
+            paper_id="p6",
+            qa_type="negative_qa",
+            status="pass",
+            reason="negative",
+            gold_chunk_ids=(),
+        ),
     ]
 
-    sample = _gold_judge_sample(items, sample_size=4, seed="seed")
+    sample = _gold_judge_sample(items, sample_size=6, seed="seed")
 
     assert {item.qa_type for item in sample} >= {"formula_qa", "citation_qa", "table_qa", "figure_qa"}
     assert next(item for item in sample if item.qa_type == "formula_qa").status == "warning"
+    assert "negative_qa" not in {item.qa_type for item in sample}
+
+
+def test_gold_judge_prompt_uses_extended_evidence_preview() -> None:
+    delayed_fact = "FINAL_REWARD_INCLUDES_KL_PENALTY_FOR_STABILITY"
+    chunk = _paper_chunk(
+        chunk_id="para-long",
+        chunk_type="paragraph",
+        content=f"{'background text. ' * 40}{delayed_fact}",
+    )
+    item = GoldEvidenceAuditItem(
+        question="How is the formula explained?",
+        paper_id="p1",
+        qa_type="formula_explanation_qa",
+        status="pass",
+        reason="ok",
+        gold_chunk_ids=("para-long",),
+        answer_facts=("The surrounding text explains the final reward.",),
+        evidence_previews=(_evidence_preview(chunk),),
+    )
+
+    prompt = _judge_prompt(item, max_evidence_chars=1600)
+
+    assert delayed_fact in prompt
+
+
+def test_gold_audit_preview_includes_evidence_group_context() -> None:
+    table = _paper_chunk(
+        chunk_id="tbl-results",
+        chunk_type="table",
+        content="Rows: Model A | 95",
+    )
+    explanation = _paper_chunk(
+        chunk_id="para-result",
+        chunk_type="paragraph",
+        content="The result paragraph explains that Model A improves accuracy.",
+    )
+    pair = EvidenceQAPair(
+        question="What do the reported results suggest?",
+        paper_id="p1",
+        qa_type="experiment_result_qa",
+        gold_chunk_ids=["tbl-results"],
+        equivalent_gold_chunk_ids=["tbl-results", "para-result"],
+        supporting_evidence_group_id="eg-result",
+        supporting_evidence_group={
+            "group_id": "eg-result",
+            "primary_evidence_ids": ["tbl-results"],
+            "interpretation_context_ids": ["para-result"],
+            "equivalent_evidence_ids": ["tbl-results", "para-result"],
+        },
+        required_evidence_types=["table"],
+        answer_facts=["The result paragraph explains that Model A improves accuracy."],
+    )
+
+    report = audit_gold_evidence([pair], [table, explanation], sample_size=1, seed="seed")
+    preview_ids = [preview["chunk_id"] for preview in report.items[0].evidence_previews]
+
+    assert preview_ids == ["tbl-results", "para-result"]
 
 
 def test_evidence_pack_hydration_adds_primary_when_group_context_is_hit() -> None:

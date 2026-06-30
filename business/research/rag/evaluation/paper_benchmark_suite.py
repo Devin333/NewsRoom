@@ -68,6 +68,7 @@ PROMOTION_THRESHOLDS = {
     "caption_copy_rate": 0.02,
 }
 _SPOT_CHECK_LABELS = frozenset({"pass", "warning", "fail", "needs_fix"})
+_GOLD_EVIDENCE_PREVIEW_CHARS = 4000
 
 
 @dataclass(frozen=True)
@@ -347,10 +348,10 @@ class OpenAICompatibleGoldEvidenceJudge:
                 base_url=base_url.rstrip("/"),
                 model=model,
                 api_key_env=api_key_env,
-                timeout_seconds=90.0,
+                timeout_seconds=120.0,
             ),
             transport=_browser_ua_transport,
-            retry_policy=LLMRetryPolicy(max_attempts=2, retry_delay_seconds=(1.0,)),
+            retry_policy=LLMRetryPolicy(max_attempts=4, retry_delay_seconds=(1.0, 2.0, 4.0)),
         )
 
     @classmethod
@@ -596,7 +597,12 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
         save_evidence_golden_set(current_pairs, split_dir / "golden_set.json")
 
     test_pairs = split_pairs.get("test", [])
-    audit = audit_gold_evidence(test_pairs, chunks, sample_size=config.gold_audit_sample_size, seed=config.split_seed)
+    audit = audit_gold_evidence(
+        test_pairs,
+        chunks,
+        sample_size=_effective_gold_audit_sample_size(config),
+        seed=config.split_seed,
+    )
     judge_report = _run_gold_judge(config, audit)
     candidate_report, spot_check = _evaluate_candidate(config, chunks, test_pairs, output_dir / "test" / "candidate")
     baseline_report = None
@@ -645,6 +651,17 @@ def run_benchmark_suite(config: BenchmarkSuiteConfig) -> BenchmarkSuiteResult:
     )
     _write_suite_report(result)
     return result
+
+
+def _effective_gold_audit_sample_size(config: BenchmarkSuiteConfig) -> int:
+    configured = max(0, int(config.gold_audit_sample_size))
+    mode = str(config.gold_judge_mode or "none").strip().casefold()
+    if mode in {"", "none", "off", "false", "0"} or config.gold_judge_sample_size is None:
+        return configured
+    requested = max(0, int(config.gold_judge_sample_size))
+    if requested <= 0:
+        return configured
+    return max(configured, requested + max(10, len(DEFAULT_TARGET_QA_TYPES)))
 
 
 def split_paper_ids(
@@ -1700,7 +1717,7 @@ def _run_gold_judge(
     mode = str(config.gold_judge_mode or "none").strip().casefold()
     if mode in {"", "none", "off", "false", "0"}:
         return None
-    items = list(audit.items)
+    items = [item for item in audit.items if _gold_judge_eligible(item)]
     if config.gold_judge_sample_size is not None:
         items = _gold_judge_sample(
             items,
@@ -1720,6 +1737,8 @@ def _run_gold_judge(
 def _audit_pair(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> GoldEvidenceAuditItem:
     missing = tuple(chunk_id for chunk_id in pair.gold_chunk_ids if chunk_id not in chunks_by_id)
     gold_chunks = [chunks_by_id[chunk_id] for chunk_id in pair.gold_chunk_ids if chunk_id in chunks_by_id]
+    preview_ids = _gold_audit_preview_chunk_ids(pair)
+    preview_chunks = [chunks_by_id[chunk_id] for chunk_id in preview_ids if chunk_id in chunks_by_id]
     answer_facts_present = any(str(fact).strip() for fact in pair.answer_facts)
     locator_count = sum(1 for chunk in gold_chunks if chunk.metadata.get("source_locator") or chunk.metadata.get("source_ref"))
     image_count = sum(1 for chunk in gold_chunks if chunk.metadata.get("image_ref"))
@@ -1755,8 +1774,12 @@ def _audit_pair(pair: EvidenceQAPair, chunks_by_id: dict[str, PaperChunk]) -> Go
         answer_facts=tuple(str(fact) for fact in pair.answer_facts if str(fact).strip())[:3],
         equivalent_gold_chunk_ids=tuple(pair.equivalent_gold_chunk_ids),
         supporting_evidence_group_id=pair.supporting_evidence_group_id,
-        evidence_previews=tuple(_evidence_preview(chunk) for chunk in gold_chunks[:5]),
+        evidence_previews=tuple(_evidence_preview(chunk) for chunk in preview_chunks[:8]),
     )
+
+
+def _gold_judge_eligible(item: GoldEvidenceAuditItem) -> bool:
+    return item.qa_type != "negative_qa" and bool(item.gold_chunk_ids)
 
 
 def _has_usable_figure_evidence(chunk: PaperChunk) -> bool:
@@ -1769,6 +1792,18 @@ def _has_usable_figure_evidence(chunk: PaperChunk) -> bool:
     if _meaningful_text(caption):
         return True
     return _meaningful_text(chunk.content, min_chars=48)
+
+
+def _gold_audit_preview_chunk_ids(pair: EvidenceQAPair) -> list[str]:
+    group = dict(pair.supporting_evidence_group or {})
+    return _unique_texts([
+        *pair.gold_chunk_ids,
+        *pair.equivalent_gold_chunk_ids,
+        *list(group.get("primary_evidence_ids") or []),
+        *list(group.get("interpretation_context_ids") or []),
+        *list(group.get("equivalent_evidence_ids") or []),
+        *pair.acceptable_support_evidence_ids,
+    ]) or list(pair.gold_chunk_ids)
 
 
 def _meaningful_text(value: str, *, min_chars: int = 12) -> bool:
@@ -2875,6 +2910,7 @@ def _gold_judge_sample(
 ) -> list[GoldEvidenceAuditItem]:
     if sample_size <= 0:
         return []
+    items = [item for item in items if _gold_judge_eligible(item)]
     selected: list[GoldEvidenceAuditItem] = []
     seen: set[tuple[str, str, str]] = set()
     by_type: dict[str, list[GoldEvidenceAuditItem]] = {}
@@ -2961,7 +2997,7 @@ def _evidence_preview(chunk: PaperChunk) -> dict[str, Any]:
         "section_title": chunk.section_title,
         "source_locator": chunk.metadata.get("source_locator") or chunk.metadata.get("source_ref") or "",
         "image_ref": chunk.metadata.get("image_ref") or "",
-        "content_preview": " ".join(chunk.content.split())[:360],
+        "content_preview": " ".join(chunk.content.split())[:_GOLD_EVIDENCE_PREVIEW_CHARS],
     }
 
 
