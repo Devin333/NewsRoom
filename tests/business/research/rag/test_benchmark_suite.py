@@ -59,6 +59,37 @@ class _FakeGoldJudge:
         )
 
 
+class _RepairArtifactGoldJudge:
+    def judge(self, items):
+        statuses = ("warning", "fail", "error")
+        judged = tuple(
+            GoldEvidenceJudgeItem(
+                question=item.question,
+                paper_id=item.paper_id,
+                qa_type=item.qa_type,
+                status=statuses[index % len(statuses)],
+                reason=f"{statuses[index % len(statuses)]}_by_fake_judge",
+                supported=False,
+                confidence=0.2,
+                gold_chunk_ids=item.gold_chunk_ids,
+                equivalent_gold_chunk_ids=item.equivalent_gold_chunk_ids,
+            )
+            for index, item in enumerate(items)
+        )
+        counts = {status: sum(1 for item in judged if item.status == status) for status in statuses}
+        return GoldEvidenceJudgeReport(
+            mode="fake",
+            provider="fake",
+            model="fake-repair-artifact-gold-judge",
+            sample_size=len(judged),
+            passed=0,
+            warning=counts["warning"],
+            failed=counts["fail"],
+            error=counts["error"],
+            items=judged,
+        )
+
+
 class _ChunkLookup:
     def __init__(self, chunks: list[PaperChunk]) -> None:
         self._chunks = {chunk.chunk_id: chunk for chunk in chunks}
@@ -614,6 +645,51 @@ def test_run_benchmark_matrix_passes_gold_judge_and_summarizes_quality(tmp_path:
     assert historical["gold_quality"]["judge_audited"] is True
     assert "blind_semantic_without_gold_judge" not in historical["warnings"]
     assert (output_dir / "historical_38" / "gold_fix_manifest.json").exists()
+
+
+def test_run_benchmark_suite_writes_gold_fix_artifacts_for_judge_findings(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+    output_dir = tmp_path / "suite"
+
+    run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        gold_audit_sample_size=6,
+        gold_judge_mode="fake",
+        gold_judge_sample_size=3,
+        gold_evidence_judge=_RepairArtifactGoldJudge(),
+        question_profile="blind_semantic",
+    ))
+
+    failure_records = [
+        json.loads(line)
+        for line in (output_dir / "gold_judge_failures.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    warning_records = [
+        json.loads(line)
+        for line in (output_dir / "gold_judge_warnings.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    manifest = json.loads((output_dir / "gold_fix_manifest.json").read_text(encoding="utf-8"))
+    report_payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
+
+    assert {record["status"] for record in failure_records} == {"fail", "error"}
+    assert [record["status"] for record in warning_records] == ["warning"]
+    assert all(record["suggested_action"] for record in [*failure_records, *warning_records])
+    assert manifest["total"] == 3
+    assert manifest["failure_count"] == 2
+    assert manifest["warning_count"] == 1
+    assert manifest["action_counts"]
+    assert report_payload["gold_quality"]["judge_failed"] == 1
+    assert report_payload["gold_quality"]["judge_error"] == 1
+    assert any(
+        check["check_id"] == "gold_judge_quality" and check["status"] == "fail"
+        for check in report_payload["policy_promotion_checklist"]["checks"]
+    )
 
 
 def test_benchmark_matrix_loads_manifest_and_requires_real_dataset_dirs(tmp_path: Path) -> None:
