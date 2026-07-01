@@ -346,6 +346,9 @@ def test_run_benchmark_suite_writes_splits_without_fixed_window_by_default(tmp_p
     assert breakdown_summary["evidence_count"] > 0
     assert "final_score" in breakdown_summary["components"]
     retrieval_payload = payload["candidate_test_report"]["retrieval"]
+    assert set(retrieval_payload["by_k"]) >= {"3", "5", "10"}
+    assert "evidence_coverage" in retrieval_payload["by_k"]["5"]
+    assert "source_locator_coverage" in retrieval_payload["by_k"]["5"]
     assert retrieval_payload["intent_distribution"]
     assert retrieval_payload["route_distribution"]
     assert retrieval_payload["intent_confusion"]
@@ -356,6 +359,9 @@ def test_run_benchmark_suite_writes_splits_without_fixed_window_by_default(tmp_p
     assert field_distribution["matched_evidence_count"] > 0
     markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
     assert "## Score Breakdown" in markdown
+    assert "candidate Hit@3/5/10" in markdown
+    assert "candidate evidence coverage@3/5/10" in markdown
+    assert "candidate source locator coverage@3/5/10" in markdown
     assert "## Field Embedding Distribution" in markdown
     assert "## Route Distribution" in markdown
     assert "## Intent Confusion" in markdown
@@ -511,6 +517,11 @@ def test_run_benchmark_suite_can_report_policy_promotion_checklist(tmp_path: Pat
     assert checklist["policy_name"] == "paper_blind_semantic_rag_v1"
     assert checklist["ready_for_promotion"] is False
     assert any(check["check_id"] == "answer_success" and check["status"] == "fail" for check in checklist["checks"])
+    assert any(check["check_id"] == "overall_hit_at_3" for check in checklist["checks"])
+    assert any(check["check_id"] == "overall_hit_at_5" for check in checklist["checks"])
+    assert any(check["check_id"] == "overall_evidence_coverage_at_5" for check in checklist["checks"])
+    assert any(check["check_id"] == "overall_source_locator_coverage_at_5" for check in checklist["checks"])
+    assert any(check["check_id"] == "top_k_retrieval_metrics" for check in checklist["checks"])
     assert any(check["check_id"] == "strict_equivalent_hit_at_10_gap" for check in checklist["checks"])
     assert any(check["check_id"] == "answer_diagnostics" for check in checklist["checks"])
     assert any(check["check_id"] == "true_missing_gold_rate" for check in checklist["checks"])

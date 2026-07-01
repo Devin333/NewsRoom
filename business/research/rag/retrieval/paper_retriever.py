@@ -87,9 +87,39 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 DEFAULT_RETRIEVAL_POLICY = "default"
 PAPER_VISUAL_RAG_TUNED_POLICY = "paper_visual_rag_tuned"
 PAPER_BLIND_SEMANTIC_RAG_V1_POLICY = "paper_blind_semantic_rag_v1"
+PAPER_HYBRID_RRF_RAG_V1_POLICY = "paper_hybrid_rrf_rag_v1"
 NEWS_PAPER_RAG_POLICY_ENV = "NEWS_PAPER_RAG_POLICY"
 HIGH_VALUE_VISUAL_RESULT_INTENTS = ("figure_query", "table_query", "numerical_result", "comparison")
 LIGHTWEIGHT_FIELD_RERANK_INTENTS = (*HIGH_VALUE_VISUAL_RESULT_INTENTS, "formula_query")
+_HYBRID_RRF_INTENTS = (*HIGH_VALUE_VISUAL_RESULT_INTENTS, "formula_query", "citation_query")
+_SPARSE_STOP_WORDS = {
+    "about",
+    "caption",
+    "does",
+    "evidence",
+    "explain",
+    "explained",
+    "equation",
+    "fig",
+    "figure",
+    "for",
+    "formula",
+    "from",
+    "how",
+    "paper",
+    "reported",
+    "reports",
+    "result",
+    "results",
+    "show",
+    "shows",
+    "table",
+    "the",
+    "this",
+    "what",
+    "which",
+    "with",
+}
 
 
 @dataclass(frozen=True)
@@ -173,6 +203,11 @@ class RetrievalPolicy:
     field_reranking_enabled: bool = True
     reranking_intents: tuple[str, ...] = ()
     field_reranking_intents: tuple[str, ...] = ()
+    sparse_lexical_enabled: bool = False
+    hybrid_rrf_enabled: bool = False
+    multi_query_enabled: bool = False
+    rrf_k: int = 60
+    sparse_search_limit_multiplier: int = 3
     field_embedding_search_limit_multiplier: int = 2
     field_default_search_fields: tuple[str, ...] = FIELD_NAMES
     field_intent_search_fields: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
@@ -245,11 +280,15 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
     normalized = (policy_name or DEFAULT_RETRIEVAL_POLICY).strip().casefold()
     if not normalized or normalized == DEFAULT_RETRIEVAL_POLICY:
         return RetrievalPolicy()
-    if normalized not in {PAPER_VISUAL_RAG_TUNED_POLICY, PAPER_BLIND_SEMANTIC_RAG_V1_POLICY}:
+    if normalized not in {
+        PAPER_VISUAL_RAG_TUNED_POLICY,
+        PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+        PAPER_HYBRID_RRF_RAG_V1_POLICY,
+    }:
         raise ValueError(
             f"unknown retrieval policy {policy_name!r}; expected "
             f"{DEFAULT_RETRIEVAL_POLICY!r}, {PAPER_VISUAL_RAG_TUNED_POLICY!r}, "
-            f"or {PAPER_BLIND_SEMANTIC_RAG_V1_POLICY!r}"
+            f"{PAPER_BLIND_SEMANTIC_RAG_V1_POLICY!r}, or {PAPER_HYBRID_RRF_RAG_V1_POLICY!r}"
         )
 
     defaults = RetrievalPolicy()
@@ -272,7 +311,7 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         "body": 0.50,
     }
     child_final_score_weights = dict(defaults.child_final_score_weights)
-    if normalized == PAPER_BLIND_SEMANTIC_RAG_V1_POLICY:
+    if normalized in {PAPER_BLIND_SEMANTIC_RAG_V1_POLICY, PAPER_HYBRID_RRF_RAG_V1_POLICY}:
         child_final_score_weights = {
             "semantic": 0.35,
             "field_embedding": 0.25,
@@ -301,11 +340,19 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         },
         child_final_score_weights=child_final_score_weights,
         field_intent_score_weights=field_intent_score_weights,
+        sparse_lexical_enabled=normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY,
+        hybrid_rrf_enabled=normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY,
+        multi_query_enabled=normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY,
+        rrf_k=60,
+        sparse_search_limit_multiplier=4 if normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY else 3,
     )
 
 
 def retrieval_policy_enables_lightweight_reranker(policy_name: str | None) -> bool:
-    return build_retrieval_policy(policy_name).name == PAPER_BLIND_SEMANTIC_RAG_V1_POLICY
+    return build_retrieval_policy(policy_name).name in {
+        PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+        PAPER_HYBRID_RRF_RAG_V1_POLICY,
+    }
 
 
 def build_retrieval_policy_from_env(
@@ -513,6 +560,15 @@ class ResearchRetriever:
         candidates = self._merge_claim_hits(candidates, claim_hits, request.paper_id)
         visual_hits = self._search_visual_candidates(request, route, candidate_filters)
         n_visual_recalled = len(visual_hits)
+        if self._policy.hybrid_rrf_enabled and intent_allowed(route.intent, _HYBRID_RRF_INTENTS):
+            candidates = self._fuse_hybrid_candidate_channels(
+                candidates,
+                field_hits=field_hits,
+                claim_hits=claim_hits,
+                visual_hits=visual_hits,
+                paper_id=request.paper_id,
+                limit=candidate_limit,
+            )
 
         # ── 2. base relevance: reranker (if available) else vector score ──────
         base_reranker_enabled = self._base_reranker_enabled(route.intent)
@@ -584,6 +640,18 @@ class ResearchRetriever:
             "candidate_limit": candidate_limit,
             "candidate_filters": candidate_filters,
             "candidate_filter_group_count": len(candidate_filters),
+            "hybrid_rrf_enabled": self._policy.hybrid_rrf_enabled,
+            "multi_query_enabled": self._policy.multi_query_enabled,
+            "sparse_lexical_enabled": self._policy.sparse_lexical_enabled,
+            "sparse_recalled": sum(
+                1 for chunk, _score in candidates
+                if chunk.metadata.get("sparse_lexical_hit")
+            ),
+            "hybrid_rrf_recalled": sum(
+                1 for chunk, _score in candidates
+                if chunk.metadata.get("hybrid_rrf_fusion")
+            ),
+            "query_variants": _recall_queries_for_policy(request.question, route.intent, self._policy),
             "element_query_labels": sorted(element_query_labels),
             "retrieval_policy_visual_fusion_weights": {
                 "text": self._policy.visual_fusion_text_weight,
@@ -710,8 +778,10 @@ class ResearchRetriever:
         candidate_filters: list[dict[str, Any]],
         limit: int,
     ) -> list[tuple[PaperChunk, float]]:
+        if self._policy.hybrid_rrf_enabled and intent_allowed(route.intent, _HYBRID_RRF_INTENTS):
+            return self._search_hybrid_text_candidates(request, route, candidate_filters, limit)
         by_id: dict[str, tuple[PaperChunk, float]] = {}
-        query_texts = _text_recall_queries(request.question, route.intent)
+        query_texts = _recall_queries_for_policy(request.question, route.intent, self._policy)
         for filters in candidate_filters:
             for query_text in query_texts:
                 for chunk, score in self._store.search_with_scores(
@@ -726,6 +796,74 @@ class ResearchRetriever:
         candidates = list(by_id.values())
         candidates.sort(key=lambda item: item[1], reverse=True)
         return candidates[:limit]
+
+    def _search_hybrid_text_candidates(
+        self,
+        request: RetrievalRequest,
+        route: RetrievalRoute,
+        candidate_filters: list[dict[str, Any]],
+        limit: int,
+    ) -> list[tuple[PaperChunk, float]]:
+        rankings: list[tuple[str, list[tuple[PaperChunk, float]]]] = []
+        query_texts = _recall_queries_for_policy(request.question, route.intent, self._policy)
+        for filter_index, filters in enumerate(candidate_filters):
+            for query_index, query_text in enumerate(query_texts):
+                try:
+                    semantic_hits = self._store.search_with_scores(
+                        request.paper_id,
+                        query_text,
+                        filters=filters,
+                        limit=limit,
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning("semantic retrieval failed", exc_info=True)
+                    semantic_hits = []
+                if semantic_hits:
+                    rankings.append((f"semantic:{filter_index}:{query_index}", semantic_hits))
+                if self._policy.sparse_lexical_enabled:
+                    sparse_limit = max(limit, request.limit * self._policy.sparse_search_limit_multiplier)
+                    sparse_hits = self._sparse_lexical_candidates(
+                        request.paper_id,
+                        query_text,
+                        filters=filters,
+                        limit=sparse_limit,
+                    )
+                    if sparse_hits:
+                        rankings.append((f"sparse:{filter_index}:{query_index}", sparse_hits))
+        return _rrf_fuse_rankings(
+            rankings,
+            limit=limit,
+            rrf_k=self._policy.rrf_k,
+            metadata_prefix="text",
+        )
+
+    def _sparse_lexical_candidates(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        filters: dict[str, Any],
+        limit: int,
+    ) -> list[tuple[PaperChunk, float]]:
+        chunks = _list_store_chunks(self._store, paper_id)
+        if not chunks:
+            return []
+        scored: list[tuple[PaperChunk, float]] = []
+        for chunk in chunks:
+            if chunk.paper_id != paper_id or not _chunk_matches_filters(chunk, filters):
+                continue
+            score = _sparse_lexical_score(query_text, chunk)
+            if score <= 0.0:
+                continue
+            metadata = dict(chunk.metadata)
+            metadata.update({
+                "sparse_lexical_hit": True,
+                "sparse_lexical_score": _round_score(score),
+                "sparse_lexical_strategy": "deterministic_token_overlap",
+            })
+            scored.append((chunk.model_copy(update={"metadata": metadata}), score))
+        scored.sort(key=lambda item: (-item[1], item[0].section_index, item[0].chunk_id))
+        return scored[:limit]
 
     def _search_field_candidates(
         self,
@@ -831,6 +969,97 @@ class ResearchRetriever:
                 max(existing[1] if existing else 0.0, hit.score),
             )
         return list(by_id.values())
+
+    def _fuse_hybrid_candidate_channels(
+        self,
+        candidates: list[tuple[PaperChunk, float]],
+        *,
+        field_hits: list[FieldEmbeddingHit],
+        claim_hits: list[ClaimSearchHit],
+        visual_hits: list[VisualChunkHit],
+        paper_id: str,
+        limit: int,
+    ) -> list[tuple[PaperChunk, float]]:
+        rankings: list[tuple[str, list[tuple[PaperChunk, float]]]] = []
+        if candidates:
+            ranked_candidates = sorted(candidates, key=lambda item: item[1], reverse=True)
+            rankings.append(("text_sparse", ranked_candidates))
+        field_ranked = self._field_hit_ranking(field_hits, paper_id)
+        if field_ranked:
+            rankings.append(("field_embedding", field_ranked))
+        claim_ranked = self._claim_hit_ranking(claim_hits, paper_id)
+        if claim_ranked:
+            rankings.append(("claim", claim_ranked))
+        visual_ranked = self._visual_hit_ranking(visual_hits, paper_id)
+        if visual_ranked:
+            rankings.append(("visual", visual_ranked))
+        if len(rankings) <= 1:
+            return candidates
+        return _rrf_fuse_rankings(
+            rankings,
+            limit=limit,
+            rrf_k=self._policy.rrf_k,
+            metadata_prefix="hybrid",
+        )
+
+    def _field_hit_ranking(
+        self,
+        field_hits: list[FieldEmbeddingHit],
+        paper_id: str,
+    ) -> list[tuple[PaperChunk, float]]:
+        by_id: dict[str, tuple[PaperChunk, float]] = {}
+        for hit in field_hits:
+            existing = by_id.get(hit.chunk_id)
+            chunk = existing[0] if existing else self._store.get_chunk(hit.chunk_id)
+            if chunk is None or chunk.paper_id != paper_id:
+                continue
+            metadata = _merge_field_embedding_hit(chunk.metadata, hit)
+            merged = chunk.model_copy(update={"metadata": metadata})
+            if existing is None or hit.score > existing[1]:
+                by_id[hit.chunk_id] = (merged, hit.score)
+        ranked = list(by_id.values())
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        return ranked
+
+    def _claim_hit_ranking(
+        self,
+        claim_hits: list[ClaimSearchHit],
+        paper_id: str,
+    ) -> list[tuple[PaperChunk, float]]:
+        out: list[tuple[PaperChunk, float]] = []
+        for hit in claim_hits:
+            record = hit.record
+            if record.paper_id != paper_id:
+                continue
+            chunk = self._store.get_chunk(record.chunk_id)
+            if chunk is None or chunk.paper_id != paper_id:
+                continue
+            out.append((_merge_claim_index_hit(chunk, hit), hit.score))
+        out.sort(key=lambda item: item[1], reverse=True)
+        return out
+
+    def _visual_hit_ranking(
+        self,
+        visual_hits: list[VisualChunkHit],
+        paper_id: str,
+    ) -> list[tuple[PaperChunk, float]]:
+        out: list[tuple[PaperChunk, float]] = []
+        for hit in visual_hits:
+            chunk = self._store.get_chunk(hit.chunk_id)
+            if chunk is None or chunk.paper_id != paper_id:
+                continue
+            out.append((
+                with_retrieval_scores(
+                    chunk,
+                    text_score=0.0,
+                    visual_score=hit.score,
+                    fused_score=hit.score,
+                    strategy="visual_channel_rrf",
+                ),
+                hit.score,
+            ))
+        out.sort(key=lambda item: item[1], reverse=True)
+        return out
 
     def _base_reranker_enabled(self, intent: str) -> bool:
         return self._reranker is not None and self._policy.reranker_enabled_for(intent)
@@ -1087,6 +1316,7 @@ class ResearchRetriever:
                     reason=reason,
                     edge=edge,
                     rank=added,
+                    source_chunk=chunk,
                 ))
         return out
 
@@ -1186,6 +1416,7 @@ class ResearchRetriever:
                     reason=reason,
                     edge=edge,
                     rank=expansion_rank,
+                    source_chunk=table,
                 ))
 
             nearby_id = str(table.metadata.get("nearby_context_chunk_id") or "")
@@ -1544,6 +1775,7 @@ class ResearchRetriever:
             }
 
         metadata = dict(parent.metadata)
+        _preserve_source_locator(metadata, candidate.child)
         metadata.update({
             "expanded_from_chunk_id": candidate.child.chunk_id,
             "expansion_reason": "child_parent_context",
@@ -1621,6 +1853,7 @@ class ResearchRetriever:
                         else reason
                     ),
                     rank=len(result) + 1,
+                    source_chunk=self._store.get_chunk(source_id),
                 ))
         return result
 
@@ -2058,6 +2291,177 @@ def _text_recall_queries(question: str, intent: str) -> list[str]:
     return _unique_nonempty_texts(queries)
 
 
+def _recall_queries_for_policy(question: str, intent: str, policy: RetrievalPolicy) -> list[str]:
+    queries = _text_recall_queries(question, intent)
+    if not policy.multi_query_enabled:
+        return queries
+    sparse_terms = " ".join(_sparse_query_tokens(question))
+    if sparse_terms:
+        queries.append(sparse_terms)
+    intent_suffixes = {
+        "figure_query": "figure caption visual description referenced paragraph",
+        "table_query": "table caption rows columns result paragraph",
+        "formula_query": "equation formula latex symbols explanation",
+        "numerical_result": "experiment results table conclusion analysis",
+        "comparison": "comparison baseline versus table result",
+        "citation_query": "supporting evidence claim grounded passage",
+        "contribution": "abstract contribution method novelty",
+    }
+    suffix = intent_suffixes.get(intent, "")
+    if suffix and sparse_terms:
+        queries.append(f"{sparse_terms} {suffix}")
+    elif suffix:
+        queries.append(f"{question} {suffix}")
+    return _unique_nonempty_texts(queries)
+
+
+def _rrf_fuse_rankings(
+    rankings: list[tuple[str, list[tuple[PaperChunk, float]]]],
+    *,
+    limit: int,
+    rrf_k: int,
+    metadata_prefix: str,
+) -> list[tuple[PaperChunk, float]]:
+    if not rankings:
+        return []
+    by_id: dict[str, dict[str, Any]] = {}
+    channel_count = 0
+    for channel_name, ranked_items in rankings:
+        if not ranked_items:
+            continue
+        channel_count += 1
+        seen_in_channel: set[str] = set()
+        for rank, (chunk, raw_score) in enumerate(ranked_items, start=1):
+            if chunk.chunk_id in seen_in_channel:
+                continue
+            seen_in_channel.add(chunk.chunk_id)
+            entry = by_id.setdefault(chunk.chunk_id, {
+                "chunk": chunk,
+                "contributions": {},
+                "channel_scores": {},
+                "total": 0.0,
+            })
+            entry["chunk"] = _merge_chunk_metadata(entry["chunk"], chunk)
+            contribution = 1.0 / (max(1, rrf_k) + rank)
+            entry["contributions"][channel_name] = contribution
+            entry["channel_scores"][channel_name] = _round_score(raw_score)
+            entry["total"] += contribution
+    if not by_id:
+        return []
+    max_total = max(1.0 / (max(1, rrf_k) + 1) * max(1, channel_count), 1e-9)
+    fused: list[tuple[PaperChunk, float]] = []
+    for entry in by_id.values():
+        normalized_score = _clamp_score(float(entry["total"]) / max_total)
+        chunk = entry["chunk"]
+        metadata = dict(chunk.metadata)
+        contributions = {
+            channel: _round_score(score)
+            for channel, score in sorted(entry["contributions"].items())
+        }
+        channel_scores = {
+            channel: _round_score(score)
+            for channel, score in sorted(entry["channel_scores"].items())
+        }
+        metadata.update({
+            f"{metadata_prefix}_rrf_score": _round_score(normalized_score),
+            f"{metadata_prefix}_rrf_channels": sorted(contributions),
+            f"{metadata_prefix}_rrf_channel_contributions": contributions,
+            f"{metadata_prefix}_channel_scores": channel_scores,
+        })
+        if metadata_prefix == "hybrid":
+            metadata.update({
+                "hybrid_rrf_fusion": True,
+                "rrf_score": _round_score(normalized_score),
+                "rrf_channels": sorted(contributions),
+                "rrf_channel_contributions": contributions,
+            })
+        else:
+            metadata[f"{metadata_prefix}_rrf_fusion"] = True
+            if metadata_prefix == "text":
+                metadata.update({
+                    "hybrid_rrf_fusion": True,
+                    "rrf_score": _round_score(normalized_score),
+                    "rrf_channels": sorted(contributions),
+                    "rrf_channel_contributions": contributions,
+                })
+        fused.append((chunk.model_copy(update={"metadata": metadata}), _round_score(normalized_score)))
+    fused.sort(key=lambda item: (-item[1], item[0].section_index, item[0].chunk_id))
+    return fused[:limit]
+
+
+def _merge_chunk_metadata(base: PaperChunk, incoming: PaperChunk) -> PaperChunk:
+    if base.chunk_id != incoming.chunk_id:
+        return base
+    metadata = dict(base.metadata)
+    metadata.update(incoming.metadata)
+    return base.model_copy(update={"metadata": metadata})
+
+
+def _list_store_chunks(store: Any, paper_id: str) -> list[PaperChunk]:
+    list_chunks = getattr(store, "list_chunks", None)
+    if callable(list_chunks):
+        try:
+            return list(list_chunks(paper_id))
+        except TypeError:
+            return list(list_chunks(document_id=paper_id))
+        except Exception:
+            logging.getLogger(__name__).warning("chunk store list_chunks failed", exc_info=True)
+            return []
+    for attr in ("chunks", "_chunks"):
+        raw = getattr(store, attr, None)
+        if isinstance(raw, dict):
+            return [
+                chunk for chunk in raw.values()
+                if isinstance(chunk, PaperChunk) and chunk.paper_id == paper_id
+            ]
+    return []
+
+
+def _chunk_matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
+    for key, expected in (filters or {}).items():
+        actual = getattr(chunk, key, None)
+        if actual is None:
+            actual = chunk.metadata.get(key)
+        if actual != expected:
+            return False
+    return True
+
+
+def _sparse_lexical_score(query_text: str, chunk: PaperChunk) -> float:
+    query_tokens = _sparse_query_tokens(query_text)
+    if not query_tokens:
+        return 0.0
+    field_texts = extract_field_texts(chunk)
+    field_values = field_texts.non_empty()
+    if not field_values:
+        field_values = {"body": chunk.content}
+    query_set = set(query_tokens)
+    best = 0.0
+    for field_name, text in field_values.items():
+        field_tokens = set(_sparse_query_tokens(text))
+        if not field_tokens:
+            continue
+        overlap = len(query_set & field_tokens) / len(query_set)
+        if field_name in {"caption", "equation", "table_rows", "table_columns", "visual_description", "referenced_text"}:
+            overlap *= 1.1
+        best = max(best, overlap)
+    query_phrase = " ".join(query_tokens)
+    content_phrase = " ".join(_sparse_query_tokens("\n".join(field_values.values())))
+    if query_phrase and query_phrase in content_phrase:
+        best = max(best, 0.95)
+    return _clamp_score(best)
+
+
+def _sparse_query_tokens(text: str) -> list[str]:
+    tokens = []
+    for match in _TOKEN_RE.finditer(str(text or "")):
+        token = match.group(0).casefold().strip()
+        if len(token) <= 1 or token in _SPARSE_STOP_WORDS:
+            continue
+        tokens.append(token)
+    return tokens
+
+
 def _unique_nonempty_texts(values: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -2415,8 +2819,11 @@ def _with_expansion_metadata(
     reason: str,
     edge: str,
     rank: int,
+    source_chunk: PaperChunk | None = None,
 ) -> PaperChunk:
     metadata = dict(chunk.metadata)
+    _preserve_source_locator(metadata, source_chunk)
+    metadata["graph_score"] = max(_metadata_float(metadata, "graph_score", 0.0), 1.0)
     metadata.update(expansion_metadata(
         expanded_from_id=expanded_from_chunk_id,
         reason=reason,
@@ -2426,6 +2833,26 @@ def _with_expansion_metadata(
     return chunk.model_copy(update={"metadata": metadata})
 
 
+def _preserve_source_locator(metadata: dict[str, Any], source_chunk: PaperChunk | None) -> None:
+    if source_chunk is None:
+        return
+    if metadata.get("source_locator"):
+        return
+    source_locator = str(
+        source_chunk.metadata.get("source_locator")
+        or source_chunk.metadata.get("source_ref")
+        or ""
+    )
+    if not source_locator:
+        return
+    metadata["source_locator"] = source_locator
+    metadata["source_locator_inherited"] = True
+    metadata["source_locator_origin_chunk_id"] = source_chunk.chunk_id
+    source_locators = source_chunk.metadata.get("source_locators")
+    if source_locators and not metadata.get("source_locators"):
+        metadata["source_locators"] = source_locators
+
+
 
 __all__ = [
     "DEFAULT_RETRIEVAL_POLICY",
@@ -2433,6 +2860,7 @@ __all__ = [
     "LIGHTWEIGHT_FIELD_RERANK_INTENTS",
     "NEWS_PAPER_RAG_POLICY_ENV",
     "PAPER_BLIND_SEMANTIC_RAG_V1_POLICY",
+    "PAPER_HYBRID_RRF_RAG_V1_POLICY",
     "PAPER_VISUAL_RAG_TUNED_POLICY",
     "ResearchRetriever",
     "RetrievalPolicy",

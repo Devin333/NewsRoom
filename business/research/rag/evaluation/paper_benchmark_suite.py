@@ -33,6 +33,7 @@ from business.research.rag.cli.run_evidence_eval import (
 )
 from business.research.rag.retrieval.paper_retriever import (
     PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+    PAPER_HYBRID_RRF_RAG_V1_POLICY,
     RetrievalRequest,
     RetrievalResult,
 )
@@ -52,8 +53,12 @@ DEFAULT_TARGET_QA_TYPES = (
     "table_qa",
 )
 PROMOTION_THRESHOLDS = {
+    "overall_hit_at_3": 0.45,
+    "overall_hit_at_5": 0.50,
     "overall_hit_at_10": 0.55,
     "overall_mrr": 0.30,
+    "overall_evidence_coverage_at_5": 0.45,
+    "overall_source_locator_coverage_at_5": 0.90,
     "formula_qa_hit_at_10": 0.45,
     "citation_qa_hit_at_10": 0.60,
     "figure_qa_hit_at_10": 0.58,
@@ -2264,13 +2269,14 @@ def _build_policy_promotion_checklist(
     metadata = candidate_report.get("metadata") or {}
     answer = candidate_report.get("answer") or None
     policy_name = str(metadata.get("retrieval_policy") or config.retrieval_policy or "")
+    promoted_policies = {PAPER_BLIND_SEMANTIC_RAG_V1_POLICY, PAPER_HYBRID_RRF_RAG_V1_POLICY}
     checks = [
         _promotion_check(
             "policy_name",
-            "Explicit blind semantic policy selected",
-            policy_name == PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+            "Explicit promotion-eligible Paper RAG policy selected",
+            policy_name in promoted_policies,
             actual=policy_name,
-            threshold=PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+            threshold=sorted(promoted_policies),
         ),
         _promotion_check(
             "question_profile",
@@ -2340,10 +2346,41 @@ def _build_policy_promotion_checklist(
             threshold="reranked_evidence_count > 0",
         ),
         _metric_promotion_check(
+            "overall_hit_at_3",
+            "Overall Hit@3 meets staged retrieval gate",
+            _hit_at_k(retrieval, 3),
+            PROMOTION_THRESHOLDS["overall_hit_at_3"],
+        ),
+        _metric_promotion_check(
+            "overall_hit_at_5",
+            "Overall Hit@5 meets staged retrieval gate",
+            _hit_at_k(retrieval, 5),
+            PROMOTION_THRESHOLDS["overall_hit_at_5"],
+        ),
+        _metric_promotion_check(
             "overall_hit_at_10",
             "Overall Hit@10 meets PRD V5 gate",
             _hit_at_10(retrieval),
             PROMOTION_THRESHOLDS["overall_hit_at_10"],
+        ),
+        _metric_promotion_check(
+            "overall_evidence_coverage_at_5",
+            "Overall evidence coverage@5 meets staged retrieval gate",
+            _by_k_metric(retrieval, 5, "evidence_coverage"),
+            PROMOTION_THRESHOLDS["overall_evidence_coverage_at_5"],
+        ),
+        _metric_promotion_check(
+            "overall_source_locator_coverage_at_5",
+            "Overall source locator coverage@5 meets staged retrieval gate",
+            _by_k_metric(retrieval, 5, "source_locator_coverage"),
+            PROMOTION_THRESHOLDS["overall_source_locator_coverage_at_5"],
+        ),
+        _promotion_check(
+            "top_k_retrieval_metrics",
+            "Top-k retrieval metrics include @3, @5, and @10",
+            _top_k_metrics_present(retrieval),
+            actual=sorted((retrieval.get("by_k") or {}).keys()),
+            threshold=["3", "5", "10"],
         ),
         _metric_promotion_check(
             "overall_mrr",
@@ -2964,21 +3001,36 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
         "",
         "## Test Metrics",
         "",
-        f"- candidate Hit@10: `{candidate['by_k']['10']['hit_rate']:.3f}`",
+        f"- candidate Hit@3/5/10: `{_hit_at_k(candidate, 3):.3f}` / "
+        f"`{_hit_at_k(candidate, 5):.3f}` / `{_hit_at_k(candidate, 10):.3f}`",
+        f"- candidate equivalent Hit@3/5/10: `{_by_k_metric(candidate, 3, 'equivalent_hit_rate'):.3f}` / "
+        f"`{_by_k_metric(candidate, 5, 'equivalent_hit_rate'):.3f}` / "
+        f"`{_by_k_metric(candidate, 10, 'equivalent_hit_rate'):.3f}`",
+        f"- candidate evidence coverage@3/5/10: `{_by_k_metric(candidate, 3, 'evidence_coverage'):.3f}` / "
+        f"`{_by_k_metric(candidate, 5, 'evidence_coverage'):.3f}` / "
+        f"`{_by_k_metric(candidate, 10, 'evidence_coverage'):.3f}`",
+        f"- candidate source locator coverage@3/5/10: `{_by_k_metric(candidate, 3, 'source_locator_coverage'):.3f}` / "
+        f"`{_by_k_metric(candidate, 5, 'source_locator_coverage'):.3f}` / "
+        f"`{_by_k_metric(candidate, 10, 'source_locator_coverage'):.3f}`",
         f"- candidate MRR: `{candidate['mrr']:.3f}`",
     ]
     if baseline is not None and ab_report is not None:
         lines.extend([
-            f"- fixed-window Hit@10: `{baseline['by_k']['10']['hit_rate']:.3f}`",
+            f"- fixed-window Hit@3/5/10: `{_hit_at_k(baseline, 3):.3f}` / "
+            f"`{_hit_at_k(baseline, 5):.3f}` / `{_hit_at_k(baseline, 10):.3f}`",
             f"- fixed-window MRR: `{baseline['mrr']:.3f}`",
             f"- MRR delta: `{ab_report['deltas']['mrr']:.3f}`",
             f"- MRR relative improvement: `{_format_optional_ratio(relative_mrr)}`",
         ])
     if macro:
         lines.extend([
-            f"- candidate macro Hit@10: `{macro['candidate']['macro_hit_at_10']:.3f}`",
+            f"- candidate macro Hit@3/5/10: `{macro['candidate']['macro_hit_at_3']:.3f}` / "
+            f"`{macro['candidate']['macro_hit_at_5']:.3f}` / "
+            f"`{macro['candidate']['macro_hit_at_10']:.3f}`",
             f"- candidate macro MRR: `{macro['candidate']['macro_mrr']:.3f}`",
-            f"- fixed-window macro Hit@10: `{macro['baseline']['macro_hit_at_10']:.3f}`",
+            f"- fixed-window macro Hit@3/5/10: `{macro['baseline']['macro_hit_at_3']:.3f}` / "
+            f"`{macro['baseline']['macro_hit_at_5']:.3f}` / "
+            f"`{macro['baseline']['macro_hit_at_10']:.3f}`",
             f"- fixed-window macro MRR: `{macro['baseline']['macro_mrr']:.3f}`",
         ])
     promotion = payload.get("policy_promotion_checklist") or {}
@@ -3098,14 +3150,14 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
     lines.extend(["", "## Test Metrics By QA Type", ""])
     if baseline is not None:
         lines.extend([
-            "| QA type | n | candidate Hit@10 | candidate MRR | fixed-window Hit@10 | fixed-window MRR |",
-            "| --- | ---: | ---: | ---: | ---: | ---: |",
+            "| QA type | n | candidate Hit@3 | candidate Hit@5 | candidate Hit@10 | candidate MRR | fixed-window Hit@3 | fixed-window Hit@5 | fixed-window Hit@10 | fixed-window MRR |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             *_qa_type_metric_rows(candidate, baseline),
         ])
     else:
         lines.extend([
-            "| QA type | n | candidate Hit@10 | candidate MRR |",
-            "| --- | ---: | ---: | ---: |",
+            "| QA type | n | candidate Hit@3 | candidate Hit@5 | candidate Hit@10 | candidate MRR |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
             *_qa_type_metric_rows(candidate, None),
         ])
     lines.extend([
@@ -3287,18 +3339,22 @@ def _qa_type_metric_rows(candidate: dict[str, Any], baseline: dict[str, Any] | N
         values = [
             qa_type,
             str(answerable_total),
+            f"{_hit_at_k(current, 3):.3f}",
+            f"{_hit_at_k(current, 5):.3f}",
             f"{_hit_at_10(current):.3f}",
             f"{_metric(current, 'mrr'):.3f}",
         ]
         if baseline is not None:
             values.extend([
+                f"{_hit_at_k(base, 3):.3f}",
+                f"{_hit_at_k(base, 5):.3f}",
                 f"{_hit_at_10(base):.3f}",
                 f"{_metric(base, 'mrr'):.3f}",
             ])
         rows.append("| " + " | ".join(values) + " |")
     if baseline is not None:
-        return rows or ["| none | 0 | 0.000 | 0.000 | 0.000 | 0.000 |"]
-    return rows or ["| none | 0 | 0.000 | 0.000 |"]
+        return rows or ["| none | 0 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |"]
+    return rows or ["| none | 0 | 0.000 | 0.000 | 0.000 | 0.000 |"]
 
 
 def _macro_by_qa_type(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
@@ -3315,13 +3371,39 @@ def _macro_summary(retrieval: dict[str, Any]) -> dict[str, Any]:
     ]
     return {
         "qa_types": len(values),
+        "macro_hit_at_3": _average([_hit_at_k(item, 3) for item in values]),
+        "macro_hit_at_5": _average([_hit_at_k(item, 5) for item in values]),
         "macro_hit_at_10": _average([_hit_at_10(item) for item in values]),
         "macro_mrr": _average([_metric(item, "mrr") for item in values]),
     }
 
 
 def _hit_at_10(retrieval: dict[str, Any]) -> float:
-    return _metric(((retrieval.get("by_k") or {}).get("10") or {}), "hit_rate")
+    return _hit_at_k(retrieval, 10)
+
+
+def _hit_at_k(retrieval: dict[str, Any], k: int) -> float:
+    return _by_k_metric(retrieval, k, "hit_rate")
+
+
+def _by_k_metric(retrieval: dict[str, Any], k: int, key: str) -> float:
+    return _metric(((retrieval.get("by_k") or {}).get(str(k)) or {}), key)
+
+
+def _top_k_metrics_present(retrieval: dict[str, Any]) -> bool:
+    by_k = retrieval.get("by_k") or {}
+    required = ("3", "5", "10")
+    required_metrics = (
+        "hit_rate",
+        "equivalent_hit_rate",
+        "evidence_coverage",
+        "source_locator_coverage",
+        "ndcg",
+    )
+    return all(
+        k in by_k and all(metric in (by_k.get(k) or {}) for metric in required_metrics)
+        for k in required
+    )
 
 
 def _average(values: list[float]) -> float:
@@ -3352,7 +3434,15 @@ def _summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
     by_k = retrieval.get("by_k") or {}
     return {
         "answerable_total": retrieval.get("answerable_total", 0),
+        "hit_at_3": (by_k.get("3") or {}).get("hit_rate", 0.0),
+        "hit_at_5": (by_k.get("5") or {}).get("hit_rate", 0.0),
         "hit_at_10": (by_k.get("10") or {}).get("hit_rate", 0.0),
+        "evidence_coverage_at_3": (by_k.get("3") or {}).get("evidence_coverage", 0.0),
+        "evidence_coverage_at_5": (by_k.get("5") or {}).get("evidence_coverage", 0.0),
+        "evidence_coverage_at_10": (by_k.get("10") or {}).get("evidence_coverage", 0.0),
+        "source_locator_coverage_at_3": (by_k.get("3") or {}).get("source_locator_coverage", 0.0),
+        "source_locator_coverage_at_5": (by_k.get("5") or {}).get("source_locator_coverage", 0.0),
+        "source_locator_coverage_at_10": (by_k.get("10") or {}).get("source_locator_coverage", 0.0),
         "mrr": retrieval.get("mrr", 0.0),
     }
 

@@ -181,7 +181,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help=(
             "Named retrieval policy for --live-retrieval, for example "
-            "paper_visual_rag_tuned or paper_blind_semantic_rag_v1."
+            "paper_visual_rag_tuned, paper_blind_semantic_rag_v1, "
+            "or paper_hybrid_rrf_rag_v1."
         ),
     )
     parser.add_argument(
@@ -347,6 +348,9 @@ class _InMemoryChunkStore:
 
     def get_parent_chunk(self, chunk: PaperChunk) -> PaperChunk | None:
         return self.get_chunk(chunk.parent_chunk_id) if chunk.parent_chunk_id else None
+
+    def list_chunks(self, paper_id: str) -> list[PaperChunk]:
+        return [chunk for chunk in self._chunks.values() if chunk.paper_id == paper_id]
 
 
 class _InMemoryFieldEmbeddingIndex:

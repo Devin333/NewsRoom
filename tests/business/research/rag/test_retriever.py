@@ -12,6 +12,7 @@ from business.research.rag.retrieval.paper_retriever import (
     LIGHTWEIGHT_FIELD_RERANK_INTENTS,
     NEWS_PAPER_RAG_POLICY_ENV,
     PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+    PAPER_HYBRID_RRF_RAG_V1_POLICY,
     PAPER_VISUAL_RAG_TUNED_POLICY,
     ResearchRetriever,
     RetrievalPolicy,
@@ -122,6 +123,9 @@ class _ScriptedChunkStore:
 
     def get_parent_chunk(self, chunk: PaperChunk) -> PaperChunk | None:
         return self.get_chunk(chunk.parent_chunk_id) if chunk.parent_chunk_id else None
+
+    def list_chunks(self, paper_id: str) -> list[PaperChunk]:
+        return [chunk for chunk in self.chunks.values() if chunk.paper_id == paper_id]
 
 
 def _matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
@@ -462,6 +466,38 @@ def test_element_label_query_uses_deeper_candidate_recall():
     assert store.calls[0]["limit"] == policy.element_label_overfetch_multiplier
     assert result.child_chunks[0].chunk_id == "tbl-exact"
     assert result.metadata["element_query_labels"] == ["7"]
+
+
+def test_hybrid_policy_uses_sparse_rrf_to_recall_exact_table_terms():
+    generic = _chunk(
+        "tbl-generic",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nGeneric benchmark results.",
+        metadata={"table_id": "tbl-generic"},
+    )
+    rare = _chunk(
+        "tbl-rare",
+        chunk_type="table",
+        content="[Table 2]\nCaption:\nExact raremetric42 ablation results.",
+        metadata={"table_id": "tbl-rare"},
+    )
+    store = _ScriptedChunkStore(
+        [generic, rare],
+        search_order=["tbl-generic"],
+    )
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_HYBRID_RRF_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Which table reports raremetric42?", limit=2)
+    )
+
+    assert result.metadata["hybrid_rrf_enabled"] is True
+    assert result.metadata["sparse_lexical_enabled"] is True
+    assert result.metadata["sparse_recalled"] >= 1
+    assert result.child_chunks[0].chunk_id == "tbl-rare"
+    assert result.child_chunks[0].metadata["sparse_lexical_hit"] is True
+    assert result.child_chunks[0].metadata["hybrid_rrf_fusion"] is True
+    assert "sparse" in " ".join(result.child_chunks[0].metadata["text_rrf_channels"])
 
 
 def test_element_label_score_boosts_exact_equation_reference():
@@ -954,6 +990,18 @@ def test_build_retrieval_policy_blind_semantic_uses_promotion_weights():
     assert retrieval_policy_enables_lightweight_reranker(PAPER_BLIND_SEMANTIC_RAG_V1_POLICY) is True
     assert retrieval_policy_enables_lightweight_reranker(PAPER_VISUAL_RAG_TUNED_POLICY) is False
     assert retrieval_policy_enables_lightweight_reranker(DEFAULT_RETRIEVAL_POLICY) is False
+
+
+def test_build_retrieval_policy_hybrid_rrf_enables_sparse_multi_query_and_reranker():
+    policy = build_retrieval_policy(PAPER_HYBRID_RRF_RAG_V1_POLICY)
+
+    assert policy.name == PAPER_HYBRID_RRF_RAG_V1_POLICY
+    assert policy.sparse_lexical_enabled is True
+    assert policy.hybrid_rrf_enabled is True
+    assert policy.multi_query_enabled is True
+    assert policy.rrf_k == 60
+    assert policy.sparse_search_limit_multiplier == 4
+    assert retrieval_policy_enables_lightweight_reranker(PAPER_HYBRID_RRF_RAG_V1_POLICY) is True
 
 
 def test_build_retrieval_policy_from_env_reads_policy_name():
@@ -1534,6 +1582,10 @@ def test_table_hit_expands_nearby_and_referenced_context():
     assert table.metadata["source_locator"] == "paper://p1/pdf#page=6&pdf_rect=1,2,3,4"
     assert expanded_by_id["near-table"].metadata["expansion_reason"] == "table_nearby_context"
     assert expanded_by_id["near-table"].metadata["expansion_edge"] == "nearby_context_chunk_id"
+    assert expanded_by_id["near-table"].metadata["source_locator"] == table.metadata["source_locator"]
+    assert expanded_by_id["near-table"].metadata["source_locator_inherited"] is True
+    assert expanded_by_id["near-table"].metadata["source_locator_origin_chunk_id"] == "tbl-1"
+    assert expanded_by_id["near-table"].metadata["graph_score"] == 1.0
     assert expanded_by_id["result-ref"].metadata["expansion_reason"] == "table_body_reference"
     assert expanded_by_id["result-ref"].metadata["expanded_from_chunk_id"] == "tbl-1"
     assert "missing-ref" not in expanded_by_id
