@@ -355,7 +355,17 @@ def _generation_result_to_dict(result: GenerationEvalResult) -> dict[str, Any]:
         "faithfulness": result.faithfulness_score(),
         "answer_relevancy": result.answer_relevancy_score(),
         "context_precision": result.context_precision_score(),
+        "claim_support_rate": result.claim_support_rate_score(),
+        "contradiction_rate": result.contradiction_rate_score(),
+        "unsupported_claim_rate": result.unsupported_claim_rate_score(),
+        "citation_grounding_rate": result.citation_grounding_rate_score(),
+        "citation_claim_support_rate": result.citation_claim_support_rate_score(),
+        "wrong_citation_rate": result.wrong_citation_rate_score(),
+        "missing_citation_rate": result.missing_citation_rate_score(),
+        "grounded_answer_rate": result.grounded_answer_rate_score(),
+        "judge_error_rate": result.judge_error_rate(),
         "per_sample": [score.to_dict() for score in result.per_sample],
+        "sample_judgments": [judgment.to_dict() for judgment in result.sample_judgments],
     }
 
 
@@ -415,6 +425,15 @@ def _threshold_values(report: EvidenceRegressionReport) -> dict[str, float]:
             "generation.faithfulness": report.generation.faithfulness_score(),
             "generation.answer_relevancy": report.generation.answer_relevancy_score(),
             "generation.context_precision": report.generation.context_precision_score(),
+            "generation.claim_support_rate": report.generation.claim_support_rate_score(),
+            "generation.contradiction_rate": report.generation.contradiction_rate_score(),
+            "generation.unsupported_claim_rate": report.generation.unsupported_claim_rate_score(),
+            "generation.citation_grounding_rate": report.generation.citation_grounding_rate_score(),
+            "generation.citation_claim_support_rate": report.generation.citation_claim_support_rate_score(),
+            "generation.wrong_citation_rate": report.generation.wrong_citation_rate_score(),
+            "generation.missing_citation_rate": report.generation.missing_citation_rate_score(),
+            "generation.grounded_answer_rate": report.generation.grounded_answer_rate_score(),
+            "generation.judge_error_rate": report.generation.judge_error_rate(),
         })
     if report.ab is not None:
         for delta in report.ab.deltas:

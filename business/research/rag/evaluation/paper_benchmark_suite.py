@@ -64,10 +64,35 @@ PROMOTION_THRESHOLDS = {
     "gold_judge_pass_rate": 0.90,
     "gold_judge_error_rate": 0.05,
     "human_spot_check_pass_rate": 0.90,
+    "claim_support_rate": 0.85,
+    "citation_claim_support_rate": 0.80,
+    "unsupported_claim_rate": 0.10,
+    "judge_human_agreement": 0.80,
     "ambiguous_question_rate": 0.15,
     "caption_copy_rate": 0.02,
 }
 _SPOT_CHECK_LABELS = frozenset({"pass", "warning", "fail", "needs_fix"})
+_SPOT_CHECK_BOOLEAN_FIELDS = (
+    "gold_evidence_ok",
+    "retrieval_ok",
+    "context_ok",
+    "answer_ok",
+    "faithfulness_ok",
+    "citation_ok",
+)
+_ANSWER_FIX_REASON_ACTIONS = {
+    "missing_gold_in_retrieval": "improve_retrieval_policy",
+    "missing_gold_in_llm_context": "expand_context_assembler",
+    "fact_match_low": "fix_answer_prompt",
+    "unsupported_claim": "fix_answer_prompt",
+    "contradicted_claim": "fix_answer_prompt",
+    "wrong_citation": "fix_citation_mapping",
+    "missing_citation": "fix_citation_mapping",
+    "abstention_wrong": "fix_answer_prompt",
+    "gold_evidence_bad": "fix_gold_evidence",
+    "judge_human_conflict": "manual_review_required",
+    "judge_error": "manual_review_required",
+}
 _GOLD_EVIDENCE_PREVIEW_CHARS = 4000
 
 
@@ -230,25 +255,44 @@ class SpotCheckReport:
     label_counts: dict[str, int] = field(default_factory=dict)
     by_qa_type: dict[str, dict[str, int]] = field(default_factory=dict)
     schema_error_count: int = 0
+    boolean_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    calibration: dict[str, Any] = field(default_factory=dict)
+    conflict_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         pass_count = int(self.label_counts.get("pass", 0))
         warning_count = int(self.label_counts.get("warning", 0))
         fail_count = int(self.label_counts.get("fail", 0)) + int(self.label_counts.get("needs_fix", 0))
+        boolean_rates = {
+            f"human_{field.removesuffix('_ok')}_ok_rate": _boolean_true_rate(counts)
+            for field, counts in sorted(self.boolean_counts.items())
+        }
         return {
             "sample_path": self.sample_path,
             "sample_size": self.sample_size,
             "annotation_path": self.annotation_path,
             "annotated_count": self.annotated_count,
+            "human_spot_check_pass_rate": pass_count / self.annotated_count if self.annotated_count else 0.0,
             "pass_rate": pass_count / self.annotated_count if self.annotated_count else 0.0,
             "warning_count": warning_count,
             "fail_count": fail_count,
             "schema_error_count": self.schema_error_count,
+            **boolean_rates,
             "label_counts": dict(sorted(self.label_counts.items())),
             "by_qa_type": {
                 qa_type: dict(counts)
                 for qa_type, counts in sorted(self.by_qa_type.items())
             },
+            "human_by_qa_type": {
+                qa_type: dict(counts)
+                for qa_type, counts in sorted(self.by_qa_type.items())
+            },
+            "boolean_counts": {
+                field: dict(counts)
+                for field, counts in sorted(self.boolean_counts.items())
+            },
+            "judge_human_calibration": dict(self.calibration),
+            "conflict_count": self.conflict_count,
         }
 
 
@@ -979,13 +1023,21 @@ def _evaluate_candidate(
     generated_answers: list[GeneratedAnswer] = []
     answer_result = None
     generation_result = None
+    answer_judge_records: list[tuple[EvidenceAnswerSample, GeneratedAnswer]] = []
     if _answers_requested(config):
         answer_samples, generated_answers = asyncio.run(_generate_answer_samples(config, retriever, pairs))
         if config.answer_eval_enabled:
             answer_result = EvidenceAnswerEvaluator().evaluate(answer_samples)
         if _answer_judge_enabled(config):
-            judge_answers = _answer_judge_sample(generated_answers, config)
+            answer_judge_records = _answer_judge_sample_records(answer_samples, generated_answers, config)
+            judge_answers = [generated for _sample, generated in answer_judge_records]
             generation_result = asyncio.run(_run_answer_judge(config, judge_answers))
+            _write_answer_judge_artifacts(
+                output_dir,
+                answer_judge_records,
+                generation_result,
+                answer_result=answer_result,
+            )
         _write_answer_samples(
             output_dir / "answer_samples.jsonl",
             answer_samples,
@@ -1023,6 +1075,14 @@ def _evaluate_candidate(
         answer_samples=answer_samples,
         generated_answers=generated_answers,
         answer_result=answer_result,
+        generation_result=generation_result,
+        answer_judge_records=answer_judge_records,
+    )
+    _write_answer_fix_artifacts(
+        output_dir,
+        answer_judge_records=answer_judge_records,
+        generation_result=generation_result,
+        spot_check=spot_check,
     )
     if spot_check is not None:
         payload["spot_check"] = spot_check.to_dict()
@@ -1498,14 +1558,16 @@ def _context_score_breakdowns(chunks: list[PaperChunk]) -> dict[str, dict[str, f
     }
 
 
-def _answer_judge_sample(
+def _answer_judge_sample_records(
+    answer_samples: list[EvidenceAnswerSample],
     generated_answers: list[GeneratedAnswer],
     config: BenchmarkSuiteConfig,
-) -> list[GeneratedAnswer]:
+) -> list[tuple[EvidenceAnswerSample, GeneratedAnswer]]:
+    records = list(zip(answer_samples, generated_answers, strict=True))
     sample_size = config.answer_judge_sample_size
     if sample_size is None:
-        return list(generated_answers)
-    return list(generated_answers[:max(0, sample_size)])
+        return records
+    return records[:max(0, sample_size)]
 
 
 async def _run_answer_judge(
@@ -1515,8 +1577,157 @@ async def _run_answer_judge(
     mode = str(config.answer_judge_mode or "none").strip().casefold()
     if mode != "llm":
         raise ValueError("answer_judge_mode must be 'none' or 'llm'")
-    llm_call = config.answer_judge_llm_call or _build_answer_llm_call(max_tokens=300)
+    llm_call = config.answer_judge_llm_call or _build_answer_llm_call(max_tokens=900)
     return await GenerationEvaluator(llm_call).evaluate(generated_answers)
+
+
+def _write_answer_judge_artifacts(
+    output_dir: Path,
+    answer_judge_records: list[tuple[EvidenceAnswerSample, GeneratedAnswer]],
+    generation_result: GenerationEvalResult,
+    *,
+    answer_result: Any | None,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    score_by_key = _answer_score_by_key(answer_result)
+    records = []
+    failures = []
+    for index, (sample, generated) in enumerate(answer_judge_records):
+        judgment = _generation_judgment_at(generation_result, index)
+        record = _answer_sample_record(
+            sample,
+            generated,
+            score=score_by_key.get(_answer_sample_key(sample)),
+        )
+        if judgment is not None:
+            record["llm_judge"] = judgment.to_dict()
+        records.append(record)
+        if judgment is not None and _answer_judge_failure_reasons(record):
+            failures.append(_answer_judge_failure_record(record))
+    (output_dir / "answer_judge_report.json").write_text(
+        json.dumps(_answer_judge_report_payload(generation_result), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _write_jsonl(output_dir / "answer_judge_samples.jsonl", records)
+    _write_jsonl(output_dir / "answer_judge_failures.jsonl", failures)
+
+
+def _answer_judge_report_payload(generation_result: GenerationEvalResult) -> dict[str, Any]:
+    return {
+        "total": len(generation_result.per_sample),
+        "claim_support_rate": generation_result.claim_support_rate_score(),
+        "contradiction_rate": generation_result.contradiction_rate_score(),
+        "unsupported_claim_rate": generation_result.unsupported_claim_rate_score(),
+        "citation_grounding_rate": generation_result.citation_grounding_rate_score(),
+        "citation_claim_support_rate": generation_result.citation_claim_support_rate_score(),
+        "wrong_citation_rate": generation_result.wrong_citation_rate_score(),
+        "missing_citation_rate": generation_result.missing_citation_rate_score(),
+        "grounded_answer_rate": generation_result.grounded_answer_rate_score(),
+        "answer_faithfulness": generation_result.faithfulness_score(),
+        "answer_relevance": generation_result.answer_relevancy_score(),
+        "context_precision": generation_result.context_precision_score(),
+        "judge_error_rate": generation_result.judge_error_rate(),
+        "items": [judgment.to_dict() for judgment in generation_result.sample_judgments],
+    }
+
+
+def _write_answer_fix_artifacts(
+    output_dir: Path,
+    *,
+    answer_judge_records: list[tuple[EvidenceAnswerSample, GeneratedAnswer]],
+    generation_result: GenerationEvalResult | None,
+    spot_check: SpotCheckReport | None,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    items: list[dict[str, Any]] = []
+    if generation_result is not None:
+        for index, (sample, generated) in enumerate(answer_judge_records):
+            judgment = _generation_judgment_at(generation_result, index)
+            if judgment is None:
+                continue
+            base = _answer_sample_record(sample, generated)
+            base["llm_judge"] = judgment.to_dict()
+            reasons = _answer_judge_failure_reasons(base)
+            if not reasons:
+                continue
+            items.append(_answer_fix_record(base, reasons=reasons))
+    if spot_check is not None:
+        for conflict in (spot_check.calibration or {}).get("conflicts", []) or []:
+            items.append({
+                "paper_id": conflict.get("paper_id", ""),
+                "qa_type": conflict.get("qa_type", ""),
+                "question": conflict.get("question", ""),
+                "failure_reasons": ["judge_human_conflict"],
+                "suggested_action": _ANSWER_FIX_REASON_ACTIONS["judge_human_conflict"],
+                "source": "human_spot_check_conflict",
+                "details": conflict,
+            })
+    action_counts = Counter(str(item.get("suggested_action") or "") for item in items)
+    reason_counts: Counter[str] = Counter()
+    for item in items:
+        reason_counts.update(item.get("failure_reasons") or [])
+    manifest = {
+        "total": len(items),
+        "reason_counts": dict(sorted(reason_counts.items())),
+        "action_counts": dict(sorted(action_counts.items())),
+        "items": items,
+    }
+    (output_dir / "answer_fix_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _answer_judge_failure_record(record: dict[str, Any]) -> dict[str, Any]:
+    return _answer_fix_record(record, reasons=_answer_judge_failure_reasons(record))
+
+
+def _answer_fix_record(record: dict[str, Any], *, reasons: list[str]) -> dict[str, Any]:
+    action = _suggested_answer_fix_action(reasons)
+    return {
+        "paper_id": record.get("paper_id", ""),
+        "qa_type": record.get("qa_type", ""),
+        "question": record.get("question", ""),
+        "failure_reasons": reasons,
+        "suggested_action": action,
+        "source": "answer_judge",
+        "gold_chunk_ids": list(record.get("gold_chunk_ids") or []),
+        "context_chunk_ids": list(record.get("context_chunk_ids") or []),
+        "cited_chunk_ids": list(record.get("cited_chunk_ids") or []),
+        "deterministic_failure_reason": ((record.get("deterministic_scores") or {}).get("failure_reason") or ""),
+        "llm_scores": ((record.get("llm_judge") or {}).get("scores") or {}),
+    }
+
+
+def _answer_judge_failure_reasons(record: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    deterministic = record.get("deterministic_scores") or {}
+    deterministic_reason = str(deterministic.get("failure_reason") or "")
+    if deterministic_reason:
+        reasons.append(deterministic_reason)
+    judge = record.get("llm_judge") or {}
+    scores = judge.get("scores") or {}
+    if bool(scores.get("judge_error")) or judge.get("status") == "error":
+        reasons.append("judge_error")
+    if _safe_float(scores.get("claim_support_rate")) < PROMOTION_THRESHOLDS["claim_support_rate"]:
+        reasons.append("unsupported_claim")
+    if _safe_float(scores.get("contradiction_rate")) > 0.0:
+        reasons.append("contradicted_claim")
+    if _safe_float(scores.get("wrong_citation_rate")) > 0.0:
+        reasons.append("wrong_citation")
+    if _safe_float(scores.get("missing_citation_rate")) > 0.0:
+        reasons.append("missing_citation")
+    if _safe_float(scores.get("citation_claim_support_rate")) < PROMOTION_THRESHOLDS["citation_claim_support_rate"]:
+        reasons.append("wrong_citation")
+    return _unique_texts(reasons)
+
+
+def _suggested_answer_fix_action(reasons: list[str]) -> str:
+    for reason in reasons:
+        action = _ANSWER_FIX_REASON_ACTIONS.get(reason)
+        if action:
+            return action
+    return "manual_review_required"
 
 
 def _write_spot_check_report(
@@ -1526,10 +1737,18 @@ def _write_spot_check_report(
     answer_samples: list[EvidenceAnswerSample],
     generated_answers: list[GeneratedAnswer],
     answer_result: Any | None,
+    generation_result: GenerationEvalResult | None,
+    answer_judge_records: list[tuple[EvidenceAnswerSample, GeneratedAnswer]],
 ) -> SpotCheckReport | None:
     if config.spot_check_sample_size <= 0:
-        return _spot_check_report_from_annotations(config, output_dir=output_dir, sample_size=0)
+        return _spot_check_report_from_annotations(
+            config,
+            output_dir=output_dir,
+            sample_size=0,
+            answer_judge_by_key=_answer_judge_by_key(answer_judge_records, generation_result),
+        )
     score_by_key = _answer_score_by_key(answer_result)
+    judge_by_key = _answer_judge_by_key(answer_judge_records, generation_result)
     records = [
         _answer_sample_record(
             sample,
@@ -1538,6 +1757,10 @@ def _write_spot_check_report(
         )
         for sample, generated in zip(answer_samples, generated_answers, strict=True)
     ]
+    for record in records:
+        judgment = judge_by_key.get(_answer_record_key(record))
+        if judgment is not None:
+            record["llm_judge"] = judgment.to_dict()
     records = _spot_check_sample_records(records, config)
     path = output_dir / "spot_check_samples.jsonl"
     _write_jsonl(path, records)
@@ -1546,6 +1769,7 @@ def _write_spot_check_report(
         output_dir=output_dir,
         sample_size=len(records),
         sample_path=path,
+        answer_judge_by_key=judge_by_key,
     )
     return annotation_summary or SpotCheckReport(
         sample_path=str(path),
@@ -1567,14 +1791,59 @@ def _answer_sample_key(sample: EvidenceAnswerSample) -> tuple[str, str, str]:
 
 
 def _spot_check_sample_records(records: list[dict[str, Any]], config: BenchmarkSuiteConfig) -> list[dict[str, Any]]:
-    def priority(record: dict[str, Any]) -> tuple[int, str]:
-        scores = record.get("deterministic_scores") or {}
-        failed = scores.get("answer_success") is False
-        key = _stable_split_key(config.split_seed, f"spot:{record.get('paper_id')}:{record.get('question')}")
-        return (0 if failed else 1, key)
+    sample_size = max(0, config.spot_check_sample_size)
+    if sample_size <= 0:
+        return []
+    selected: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_type.setdefault(str(record.get("qa_type") or "unknown"), []).append(record)
+    qa_order = [
+        *DEFAULT_TARGET_QA_TYPES,
+        "negative_qa",
+        *sorted(set(by_type) - set(DEFAULT_TARGET_QA_TYPES) - {"negative_qa"}),
+    ]
+    for qa_type in qa_order:
+        candidates = by_type.get(qa_type) or []
+        if not candidates or len(selected) >= sample_size:
+            continue
+        chosen = sorted(candidates, key=lambda record: _spot_check_priority(record, config))[0]
+        selected.append(chosen)
+        seen.add(_answer_record_key(chosen))
+    for record in sorted(records, key=lambda item: _spot_check_priority(item, config)):
+        if len(selected) >= sample_size:
+            break
+        key = _answer_record_key(record)
+        if key in seen:
+            continue
+        selected.append(record)
+        seen.add(key)
+    return selected
 
-    ordered = sorted(records, key=priority)
-    return ordered[:max(0, config.spot_check_sample_size)]
+
+def _spot_check_priority(record: dict[str, Any], config: BenchmarkSuiteConfig) -> tuple[int, int, int, str]:
+    scores = record.get("deterministic_scores") or {}
+    judge_scores = ((record.get("llm_judge") or {}).get("scores") or {})
+    deterministic_failed = scores.get("answer_success") is False
+    llm_pass = _llm_judge_passes(judge_scores)
+    llm_failed = llm_pass is False
+    conflict = scores.get("answer_success") is not None and llm_pass is not None and bool(scores.get("answer_success")) != llm_pass
+    complex_type = str(record.get("qa_type") or "") in {
+        "formula_qa",
+        "formula_explanation_qa",
+        "table_qa",
+        "figure_qa",
+        "experiment_result_qa",
+        "negative_qa",
+    }
+    key = _stable_split_key(config.split_seed, f"spot:{record.get('paper_id')}:{record.get('question')}")
+    return (
+        0 if deterministic_failed or llm_failed else 1,
+        0 if conflict else 1,
+        0 if complex_type else 1,
+        key,
+    )
 
 
 def _spot_check_report_from_annotations(
@@ -1583,6 +1852,7 @@ def _spot_check_report_from_annotations(
     output_dir: Path,
     sample_size: int,
     sample_path: Path | None = None,
+    answer_judge_by_key: dict[tuple[str, str, str], Any] | None = None,
 ) -> SpotCheckReport | None:
     path = config.spot_check_annotations_path
     if path is None:
@@ -1591,6 +1861,10 @@ def _spot_check_report_from_annotations(
         raise FileNotFoundError(f"spot check annotations not found: {path}")
     counts: Counter[str] = Counter()
     by_qa_type: dict[str, Counter[str]] = {}
+    boolean_counts: dict[str, Counter[str]] = {field: Counter() for field in _SPOT_CHECK_BOOLEAN_FIELDS}
+    calibration_counts: Counter[str] = Counter()
+    calibration_by_type: dict[str, Counter[str]] = {}
+    conflicts: list[dict[str, Any]] = []
     annotated = 0
     schema_errors = 0
     with path.open("r", encoding="utf-8") as handle:
@@ -1605,7 +1879,27 @@ def _spot_check_report_from_annotations(
             type_counts[label] += 1
             if _spot_check_schema_errors(item):
                 schema_errors += 1
+            for field in _SPOT_CHECK_BOOLEAN_FIELDS:
+                if isinstance(item.get(field), bool):
+                    boolean_counts[field]["true" if item[field] else "false"] += 1
+            calibration_item = _spot_check_calibration_item(item, answer_judge_by_key or {})
+            if calibration_item:
+                calibration_counts[calibration_item["bucket"]] += 1
+                calibration_counts[calibration_item["outcome"]] += 1
+                type_calibration = calibration_by_type.setdefault(qa_type, Counter())
+                type_calibration[calibration_item["bucket"]] += 1
+                type_calibration[calibration_item["outcome"]] += 1
+                if calibration_item["bucket"] == "conflict":
+                    conflicts.append(calibration_item)
             annotated += 1
+    calibration = _spot_check_calibration_summary(calibration_counts)
+    calibration["judge_by_qa_type"] = {
+        qa_type: _spot_check_calibration_summary(counter)
+        for qa_type, counter in sorted(calibration_by_type.items())
+    }
+    calibration["conflicts"] = conflicts
+    conflicts_path = output_dir / "human_spot_check_conflicts.jsonl"
+    _write_jsonl(conflicts_path, conflicts)
     return SpotCheckReport(
         sample_path=str(sample_path or output_dir / "spot_check_samples.jsonl"),
         sample_size=sample_size,
@@ -1614,6 +1908,9 @@ def _spot_check_report_from_annotations(
         label_counts=dict(counts),
         by_qa_type={qa_type: dict(counter) for qa_type, counter in by_qa_type.items()},
         schema_error_count=schema_errors,
+        boolean_counts={field: dict(counter) for field, counter in boolean_counts.items()},
+        calibration=calibration,
+        conflict_count=len(conflicts),
     )
 
 
@@ -1635,10 +1932,146 @@ def _spot_check_schema_errors(item: dict[str, Any]) -> list[str]:
     label = str(item.get("label") or item.get("status") or item.get("verdict") or "").strip().casefold()
     if label not in _SPOT_CHECK_LABELS:
         errors.append("invalid_label")
-    for key in ("gold_evidence_ok", "answer_ok", "citation_ok"):
+    for key in _SPOT_CHECK_BOOLEAN_FIELDS:
         if key in item and not isinstance(item[key], bool):
             errors.append(f"invalid_{key}")
+    if "correct_support_chunk_ids" in item and not isinstance(item["correct_support_chunk_ids"], list):
+        errors.append("invalid_correct_support_chunk_ids")
     return errors
+
+
+def _spot_check_calibration_item(
+    item: dict[str, Any],
+    answer_judge_by_key: dict[tuple[str, str, str], Any],
+) -> dict[str, Any] | None:
+    key = (
+        str(item.get("paper_id") or ""),
+        str(item.get("qa_type") or ""),
+        str(item.get("question") or ""),
+    )
+    judgment = answer_judge_by_key.get(key)
+    if judgment is None:
+        return None
+    human_pass = _human_annotation_passes(item)
+    llm_pass = _llm_judge_passes(judgment.scores.to_dict())
+    if llm_pass is None:
+        return None
+    bucket = "agree" if human_pass == llm_pass else "conflict"
+    if human_pass and llm_pass:
+        outcome = "true_positive"
+    elif human_pass and not llm_pass:
+        outcome = "false_negative"
+    elif not human_pass and llm_pass:
+        outcome = "false_positive"
+    else:
+        outcome = "true_negative"
+    return {
+        "bucket": bucket,
+        "outcome": outcome,
+        "paper_id": key[0],
+        "qa_type": key[1],
+        "question": key[2],
+        "human_pass": human_pass,
+        "llm_pass": llm_pass,
+        "human_label": _spot_check_label(item),
+        "llm_status": judgment.status,
+        "llm_scores": judgment.scores.to_dict(),
+        "reason": str(item.get("reason") or ""),
+    }
+
+
+def _human_annotation_passes(item: dict[str, Any]) -> bool:
+    label = _spot_check_label(item)
+    if label != "pass":
+        return False
+    for field in ("gold_evidence_ok", "answer_ok", "faithfulness_ok", "citation_ok"):
+        if item.get(field) is False:
+            return False
+    return True
+
+
+def _spot_check_calibration_summary(counts: Counter[str]) -> dict[str, Any]:
+    agree = int(counts.get("agree", 0))
+    conflict = int(counts.get("conflict", 0))
+    compared = agree + conflict
+    tp = int(counts.get("true_positive", 0))
+    tn = int(counts.get("true_negative", 0))
+    fp = int(counts.get("false_positive", 0))
+    fn = int(counts.get("false_negative", 0))
+    return {
+        "compared_count": compared,
+        "judge_human_agreement": agree / compared if compared else 0.0,
+        "conflict_count": conflict,
+        "true_positive": tp,
+        "true_negative": tn,
+        "false_positive": fp,
+        "false_negative": fn,
+        "judge_precision": tp / (tp + fp) if (tp + fp) else 0.0,
+        "judge_recall": tp / (tp + fn) if (tp + fn) else 0.0,
+        "judge_false_positive_rate": fp / (fp + tn) if (fp + tn) else 0.0,
+        "judge_false_negative_rate": fn / (fn + tp) if (fn + tp) else 0.0,
+    }
+
+
+def _answer_judge_by_key(
+    answer_judge_records: list[tuple[EvidenceAnswerSample, GeneratedAnswer]],
+    generation_result: GenerationEvalResult | None,
+) -> dict[tuple[str, str, str], Any]:
+    if generation_result is None:
+        return {}
+    out: dict[tuple[str, str, str], Any] = {}
+    for index, (sample, _generated) in enumerate(answer_judge_records):
+        judgment = _generation_judgment_at(generation_result, index)
+        if judgment is not None:
+            out[_answer_sample_key(sample)] = judgment
+    return out
+
+
+def _generation_judgment_at(generation_result: GenerationEvalResult, index: int) -> Any | None:
+    if 0 <= index < len(generation_result.sample_judgments):
+        return generation_result.sample_judgments[index]
+    if 0 <= index < len(generation_result.per_sample):
+        score = generation_result.per_sample[index]
+        return type("_ScoreOnlyJudgment", (), {
+            "scores": score,
+            "status": "error" if score.judge_error else "pass",
+            "to_dict": lambda self: {"scores": score.to_dict(), "status": self.status},
+        })()
+    return None
+
+
+def _answer_record_key(record: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(record.get("paper_id") or ""),
+        str(record.get("qa_type") or ""),
+        str(record.get("question") or ""),
+    )
+
+
+def _llm_judge_passes(scores: dict[str, Any]) -> bool | None:
+    if not scores:
+        return None
+    if bool(scores.get("judge_error")):
+        return False
+    return (
+        _safe_float(scores.get("claim_support_rate")) >= PROMOTION_THRESHOLDS["claim_support_rate"]
+        and _safe_float(scores.get("citation_claim_support_rate")) >= PROMOTION_THRESHOLDS["citation_claim_support_rate"]
+        and _safe_float(scores.get("unsupported_claim_rate")) <= PROMOTION_THRESHOLDS["unsupported_claim_rate"]
+    )
+
+
+def _boolean_true_rate(counts: dict[str, int]) -> float:
+    true_count = int(counts.get("true", 0))
+    false_count = int(counts.get("false", 0))
+    total = true_count + false_count
+    return true_count / total if total else 0.0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _evaluate_fixed_window_baseline(
@@ -1949,6 +2382,10 @@ def _build_policy_promotion_checklist(
             actual=sorted((retrieval.get("by_qa_type") or {}).keys()),
         ),
         _answer_success_check(answer),
+        _answer_judge_quality_check(
+            config=config,
+            generation=candidate_report.get("generation") if isinstance(candidate_report, dict) else None,
+        ),
         _strict_equivalent_gap_check(retrieval),
         _answer_diagnostics_check(answer),
         _true_missing_gold_rate_check(answer),
@@ -2022,6 +2459,58 @@ def _answer_success_check(answer: dict[str, Any] | None) -> PolicyPromotionCheck
         "Answer success meets PRD V5 gate",
         _metric(answer, "success_rate"),
         PROMOTION_THRESHOLDS["answer_success"],
+    )
+
+
+def _answer_judge_quality_check(
+    *,
+    config: BenchmarkSuiteConfig,
+    generation: dict[str, Any] | None,
+) -> PolicyPromotionCheck:
+    if not _answer_judge_enabled(config):
+        return _promotion_check(
+            "answer_judge_quality",
+            "Structured answer judge quality is summarized when enabled",
+            True,
+            actual={"enabled": False},
+            threshold="optional unless --answer-judge is enabled",
+            details="answer judge not enabled",
+        )
+    if not isinstance(generation, dict):
+        return _promotion_check(
+            "answer_judge_quality",
+            "Structured answer judge quality meets claim/citation gates",
+            False,
+            actual=None,
+            threshold="generation metrics present",
+            details="answer judge was enabled but no generation report was produced",
+        )
+    claim_support = _metric(generation, "claim_support_rate")
+    citation_support = _metric(generation, "citation_claim_support_rate")
+    unsupported = _metric(generation, "unsupported_claim_rate")
+    judge_error = _metric(generation, "judge_error_rate")
+    passed = (
+        claim_support >= PROMOTION_THRESHOLDS["claim_support_rate"]
+        and citation_support >= PROMOTION_THRESHOLDS["citation_claim_support_rate"]
+        and unsupported <= PROMOTION_THRESHOLDS["unsupported_claim_rate"]
+        and judge_error == 0.0
+    )
+    return _promotion_check(
+        "answer_judge_quality",
+        "Structured answer judge quality meets claim/citation gates",
+        passed,
+        actual={
+            "claim_support_rate": round(claim_support, 6),
+            "citation_claim_support_rate": round(citation_support, 6),
+            "unsupported_claim_rate": round(unsupported, 6),
+            "judge_error_rate": round(judge_error, 6),
+        },
+        threshold={
+            "claim_support_rate": PROMOTION_THRESHOLDS["claim_support_rate"],
+            "citation_claim_support_rate": PROMOTION_THRESHOLDS["citation_claim_support_rate"],
+            "unsupported_claim_rate_max": PROMOTION_THRESHOLDS["unsupported_claim_rate"],
+            "judge_error_rate": 0.0,
+        },
     )
 
 
@@ -2115,11 +2604,16 @@ def _human_spot_check_quality_check(spot_check: SpotCheckReport | None) -> Polic
     pass_rate = float(payload.get("pass_rate") or 0.0)
     fail_count = int(payload.get("fail_count") or 0)
     schema_error_count = int(payload.get("schema_error_count") or 0)
+    calibration = payload.get("judge_human_calibration") or {}
+    compared = int(calibration.get("compared_count") or 0)
+    agreement = float(calibration.get("judge_human_agreement") or 0.0)
+    calibration_ok = compared == 0 or agreement >= PROMOTION_THRESHOLDS["judge_human_agreement"]
     passed = (
         spot_check.annotated_count > 0
         and pass_rate >= PROMOTION_THRESHOLDS["human_spot_check_pass_rate"]
         and fail_count == 0
         and schema_error_count == 0
+        and calibration_ok
     )
     return _promotion_check(
         "human_spot_check_quality",
@@ -2130,11 +2624,14 @@ def _human_spot_check_quality_check(spot_check: SpotCheckReport | None) -> Polic
             "pass_rate": round(pass_rate, 6),
             "fail_count": fail_count,
             "schema_error_count": schema_error_count,
+            "judge_human_agreement": round(agreement, 6),
+            "judge_human_compared_count": compared,
         },
         threshold={
             "pass_rate": PROMOTION_THRESHOLDS["human_spot_check_pass_rate"],
             "fail_count": 0,
             "schema_error_count": 0,
+            "judge_human_agreement": PROMOTION_THRESHOLDS["judge_human_agreement"],
         },
     )
 
@@ -2679,6 +3176,12 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             f"- faithfulness: `{generation['faithfulness']:.3f}`",
             f"- answer relevancy: `{generation['answer_relevancy']:.3f}`",
             f"- context precision: `{generation['context_precision']:.3f}`",
+            f"- claim support rate: `{generation.get('claim_support_rate', 0.0):.3f}`",
+            f"- unsupported claim rate: `{generation.get('unsupported_claim_rate', 0.0):.3f}`",
+            f"- citation claim support rate: `{generation.get('citation_claim_support_rate', 0.0):.3f}`",
+            f"- wrong citation rate: `{generation.get('wrong_citation_rate', 0.0):.3f}`",
+            f"- missing citation rate: `{generation.get('missing_citation_rate', 0.0):.3f}`",
+            f"- judge error rate: `{generation.get('judge_error_rate', 0.0):.3f}`",
             f"- judged samples: `{generation['total']}`",
         ])
     spot_check = payload.get("spot_check")
@@ -2691,10 +3194,23 @@ def _suite_markdown(payload: dict[str, Any]) -> str:
             f"- sample_size: `{spot_check['sample_size']}`",
             f"- annotated_count: `{spot_check['annotated_count']}`",
             f"- pass_rate: `{float(spot_check.get('pass_rate') or 0.0):.3f}`",
+            f"- human_answer_ok_rate: `{float(spot_check.get('human_answer_ok_rate') or 0.0):.3f}`",
+            f"- human_faithfulness_ok_rate: `{float(spot_check.get('human_faithfulness_ok_rate') or 0.0):.3f}`",
+            f"- human_citation_ok_rate: `{float(spot_check.get('human_citation_ok_rate') or 0.0):.3f}`",
             f"- warning_count: `{spot_check.get('warning_count', 0)}`",
             f"- fail_count: `{spot_check.get('fail_count', 0)}`",
             f"- schema_error_count: `{spot_check.get('schema_error_count', 0)}`",
         ])
+        calibration = spot_check.get("judge_human_calibration") or {}
+        if calibration:
+            lines.extend([
+                f"- judge_human_agreement: `{float(calibration.get('judge_human_agreement') or 0.0):.3f}`",
+                f"- judge_precision: `{float(calibration.get('judge_precision') or 0.0):.3f}`",
+                f"- judge_recall: `{float(calibration.get('judge_recall') or 0.0):.3f}`",
+                f"- judge_false_positive_rate: `{float(calibration.get('judge_false_positive_rate') or 0.0):.3f}`",
+                f"- judge_false_negative_rate: `{float(calibration.get('judge_false_negative_rate') or 0.0):.3f}`",
+                f"- conflict_count: `{spot_check.get('conflict_count', 0)}`",
+            ])
         if spot_check.get("label_counts"):
             for label, count in sorted(spot_check["label_counts"].items()):
                 lines.append(f"- {label}: `{count}`")

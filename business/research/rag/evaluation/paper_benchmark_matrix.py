@@ -59,6 +59,7 @@ class BenchmarkMatrixConfig:
     gold_evidence_judge: GoldEvidenceJudge | None = None
     answer_eval_enabled: bool = False
     answer_eval_sample_size: int | None = None
+    answer_llm_call: LLMCall | None = None
     answer_judge_mode: str = "none"
     answer_judge_sample_size: int | None = None
     answer_judge_llm_call: LLMCall | None = None
@@ -108,6 +109,18 @@ class BenchmarkMatrixResult:
                 f"`{_format_optional_metric(item['gold_quality']['judge_pass_rate'])}` | "
                 f"`{item['ready_for_promotion']}` | `{item['warning_count']}` |"
             )
+        lines.extend([
+            "",
+            "| Dataset | Claim support | Citation support | Unsupported claims | Human agreement |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ])
+        for name, item in payload["datasets"].items():
+            lines.append(
+                f"| `{name}` | `{_format_optional_metric(item['claim_support_rate'])}` | "
+                f"`{_format_optional_metric(item['citation_claim_support_rate'])}` | "
+                f"`{_format_optional_metric(item['unsupported_claim_rate'])}` | "
+                f"`{_format_optional_metric(item['judge_human_agreement'])}` |"
+            )
         return "\n".join(lines).rstrip() + "\n"
 
 
@@ -142,6 +155,7 @@ def run_benchmark_matrix(config: BenchmarkMatrixConfig) -> BenchmarkMatrixResult
                 gold_evidence_judge=config.gold_evidence_judge,
                 answer_eval_enabled=config.answer_eval_enabled,
                 answer_eval_sample_size=config.answer_eval_sample_size,
+                answer_llm_call=config.answer_llm_call,
                 answer_judge_mode=config.answer_judge_mode,
                 answer_judge_sample_size=config.answer_judge_sample_size,
                 answer_judge_llm_call=config.answer_judge_llm_call,
@@ -196,6 +210,9 @@ def _dataset_summary(result: BenchmarkSuiteResult) -> dict[str, Any]:
     retrieval = report.get("retrieval") or {}
     by_10 = (retrieval.get("by_k") or {}).get("10") or {}
     answer = report.get("answer") or None
+    generation = report.get("generation") or None
+    spot_check = report.get("spot_check") or None
+    calibration = ((spot_check or {}).get("judge_human_calibration") or {}) if isinstance(spot_check, dict) else {}
     gold_judge = result.gold_judge
     gold_quality = result.to_dict().get("gold_quality") or {}
     return {
@@ -209,6 +226,18 @@ def _dataset_summary(result: BenchmarkSuiteResult) -> dict[str, Any]:
         "equivalent_mrr": _float_metric(retrieval, "equivalent_mrr"),
         "answer_success_rate": _float_metric(answer, "success_rate") if isinstance(answer, dict) else None,
         "true_missing_gold_rate": _float_metric(answer, "true_missing_gold_rate") if isinstance(answer, dict) else None,
+        "claim_support_rate": _float_metric(generation, "claim_support_rate") if isinstance(generation, dict) else None,
+        "citation_claim_support_rate": (
+            _float_metric(generation, "citation_claim_support_rate") if isinstance(generation, dict) else None
+        ),
+        "unsupported_claim_rate": (
+            _float_metric(generation, "unsupported_claim_rate") if isinstance(generation, dict) else None
+        ),
+        "wrong_citation_rate": _float_metric(generation, "wrong_citation_rate") if isinstance(generation, dict) else None,
+        "missing_citation_rate": _float_metric(generation, "missing_citation_rate") if isinstance(generation, dict) else None,
+        "judge_human_agreement": (
+            _float_metric(calibration, "judge_human_agreement") if calibration else None
+        ),
         "gold_judge_sample_size": gold_judge.sample_size if gold_judge is not None else 0,
         "gold_judge_pass_rate": gold_judge.pass_rate if gold_judge is not None else None,
         "gold_judge_failed": gold_judge.failed if gold_judge is not None else 0,

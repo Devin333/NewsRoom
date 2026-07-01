@@ -15,6 +15,8 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     _gold_judge_sample,
     _judge_prompt,
     _hydrate_retrieval_with_evidence_pack,
+    _spot_check_report_from_annotations,
+    _spot_check_schema_errors,
     audit_question_ambiguity,
     audit_gold_evidence,
     run_benchmark_suite,
@@ -28,6 +30,7 @@ from business.research.rag.evaluation.paper_benchmark_matrix import (
 )
 from business.research.document.models import PaperChunk
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
+from business.research.rag.evaluation.paper_generation_eval import GenerationSampleJudgment, GenerationScores
 from business.research.rag.cli.run_benchmark_suite import _parse_thresholds, main
 from business.research.rag.cli.run_benchmark_matrix import _datasets_from_args, _build_parser as _build_matrix_parser
 from business.research.rag.retrieval.paper_answer_generator import AnswerContextAssembler
@@ -109,11 +112,65 @@ async def _fake_answer_llm(prompt: str) -> str:
 
 
 async def _fake_judge_llm(prompt: str) -> str:
+    if "claims" in prompt and "citation_checks" in prompt:
+        return json.dumps({
+            "claims": [
+                {
+                    "claim_text": "The answer is supported by the provided context [1].",
+                    "verdict": "supported",
+                    "support_chunk_ids": ["para-p1"],
+                    "reason": "fake judge support",
+                }
+            ],
+            "citation_checks": [
+                {
+                    "claim_text": "The answer is supported by the provided context [1].",
+                    "cited_chunk_ids": ["para-p1"],
+                    "support_chunk_ids": ["para-p1"],
+                    "citation_supports_claim": True,
+                    "wrong_citation": False,
+                    "missing_citation": False,
+                    "reason": "fake citation support",
+                }
+            ],
+            "answer_relevance": 1.0,
+            "context_precision": 1.0,
+            "reason": "fake structured answer judge",
+        })
     if "Score (0-100)" in prompt:
         return "100"
     if "Verdicts (yes/no per passage)" in prompt:
         return "yes\nyes\nyes"
     return "yes"
+
+
+async def _fake_bad_answer_judge_llm(prompt: str) -> str:
+    if "claims" in prompt and "citation_checks" in prompt:
+        return json.dumps({
+            "claims": [
+                {
+                    "claim_text": "The generated answer states an unsupported result.",
+                    "verdict": "insufficient",
+                    "support_chunk_ids": [],
+                    "reason": "No supporting context.",
+                }
+            ],
+            "citation_checks": [
+                {
+                    "claim_text": "The generated answer states an unsupported result.",
+                    "cited_chunk_ids": [],
+                    "support_chunk_ids": [],
+                    "citation_supports_claim": False,
+                    "wrong_citation": False,
+                    "missing_citation": True,
+                    "reason": "The claim has no citation.",
+                }
+            ],
+            "answer_relevance": 0.4,
+            "context_precision": 0.2,
+            "reason": "unsupported answer",
+        })
+    return "0"
 
 
 def _paper_chunk(
@@ -569,14 +626,21 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
     report_payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
     markdown = (output_dir / "benchmark_suite_report.md").read_text(encoding="utf-8")
     answer_samples = (candidate_dir / "answer_samples.jsonl").read_text(encoding="utf-8").splitlines()
+    answer_judge_report = json.loads((candidate_dir / "answer_judge_report.json").read_text(encoding="utf-8"))
+    answer_judge_samples = (candidate_dir / "answer_judge_samples.jsonl").read_text(encoding="utf-8").splitlines()
+    answer_fix_manifest = json.loads((candidate_dir / "answer_fix_manifest.json").read_text(encoding="utf-8"))
     spot_samples = (candidate_dir / "spot_check_samples.jsonl").read_text(encoding="utf-8").splitlines()
     answer_sample_records = [json.loads(line) for line in answer_samples]
 
     assert candidate["answer"]["total"] == 2
     assert candidate["generation"]["total"] == 1
+    assert candidate["generation"]["claim_support_rate"] == 1.0
+    assert candidate["generation"]["citation_claim_support_rate"] == 1.0
     assert candidate["spot_check"]["annotated_count"] == 2
     assert report_payload["spot_check"]["label_counts"] == {"needs_fix": 1, "pass": 1}
     assert report_payload["spot_check"]["pass_rate"] == 0.5
+    assert report_payload["spot_check"]["human_answer_ok_rate"] == 0.5
+    assert report_payload["spot_check"]["human_citation_ok_rate"] == 1.0
     assert report_payload["spot_check"]["fail_count"] == 1
     assert report_payload["spot_check"]["schema_error_count"] == 0
     assert report_payload["spot_check"]["by_qa_type"]["figure_qa"]["pass"] == 1
@@ -585,6 +649,10 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
         for check in report_payload["policy_promotion_checklist"]["checks"]
     )
     assert len(answer_samples) == 2
+    assert answer_judge_report["total"] == 1
+    assert answer_judge_report["claim_support_rate"] == 1.0
+    assert len(answer_judge_samples) == 1
+    assert answer_fix_manifest["total"] == 0
     assert all("deterministic_scores" in record for record in answer_sample_records)
     assert all("context_score_breakdowns" in record for record in answer_sample_records)
     assert any(record["context_score_breakdowns"] for record in answer_sample_records)
@@ -607,6 +675,109 @@ def test_run_benchmark_suite_writes_answer_eval_judge_and_spot_check(tmp_path: P
     assert "## Spot Check" in markdown
 
 
+def test_run_benchmark_suite_writes_answer_fix_manifest_for_answer_judge_failures(tmp_path: Path) -> None:
+    papers_dir = tmp_path / "papers"
+    _write_research_document_fixtures(papers_dir, ("p1", "p2", "p3"))
+    output_dir = tmp_path / "suite"
+
+    run_benchmark_suite(BenchmarkSuiteConfig(
+        papers_dir=papers_dir,
+        output_dir=output_dir,
+        min_papers=3,
+        target_min_per_type=1,
+        max_pairs_per_type=20,
+        render_page_visual=False,
+        answer_eval_enabled=True,
+        answer_eval_sample_size=1,
+        answer_llm_call=_fake_answer_llm,
+        answer_judge_mode="llm",
+        answer_judge_sample_size=1,
+        answer_judge_llm_call=_fake_bad_answer_judge_llm,
+    ))
+
+    candidate_dir = output_dir / "test" / "candidate"
+    failures = [
+        json.loads(line)
+        for line in (candidate_dir / "answer_judge_failures.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    manifest = json.loads((candidate_dir / "answer_fix_manifest.json").read_text(encoding="utf-8"))
+
+    assert failures
+    assert manifest["total"] == 1
+    assert "unsupported_claim" in manifest["reason_counts"]
+    assert "missing_citation" in manifest["reason_counts"]
+    assert manifest["items"][0]["suggested_action"] in {"fix_answer_prompt", "fix_citation_mapping"}
+
+
+def test_spot_check_schema_validates_extended_boolean_fields() -> None:
+    errors = _spot_check_schema_errors({
+        "paper_id": "p1",
+        "qa_type": "table_qa",
+        "question": "What changed?",
+        "label": "pass",
+        "reason": "ok",
+        "retrieval_ok": "yes",
+        "context_ok": True,
+        "faithfulness_ok": False,
+        "correct_support_chunk_ids": "para-1",
+    })
+
+    assert "invalid_retrieval_ok" in errors
+    assert "invalid_correct_support_chunk_ids" in errors
+
+
+def test_spot_check_report_calibrates_human_annotations_against_answer_judge(tmp_path: Path) -> None:
+    annotations_path = tmp_path / "annotations.jsonl"
+    annotations_path.write_text(
+        json.dumps({
+            "paper_id": "p1",
+            "qa_type": "table_qa",
+            "question": "What changed?",
+            "answer": "It improved.",
+            "gold_evidence_ok": True,
+            "retrieval_ok": True,
+            "context_ok": True,
+            "answer_ok": True,
+            "faithfulness_ok": True,
+            "citation_ok": True,
+            "label": "pass",
+            "reason": "human says pass",
+            "correct_support_chunk_ids": ["tbl-1"],
+        }),
+        encoding="utf-8",
+    )
+    judgment = GenerationSampleJudgment(
+        question="What changed?",
+        answer="It improved.",
+        scores=GenerationScores(
+            faithfulness=0.0,
+            answer_relevancy=1.0,
+            context_precision=0.0,
+            claim_support_rate=0.0,
+            unsupported_claim_rate=1.0,
+            citation_claim_support_rate=0.0,
+        ),
+        status="fail",
+    )
+
+    report = _spot_check_report_from_annotations(
+        BenchmarkSuiteConfig(papers_dir=tmp_path, output_dir=tmp_path, spot_check_annotations_path=annotations_path),
+        output_dir=tmp_path,
+        sample_size=1,
+        answer_judge_by_key={("p1", "table_qa", "What changed?"): judgment},
+    )
+
+    assert report is not None
+    payload = report.to_dict()
+    calibration = payload["judge_human_calibration"]
+    assert payload["human_answer_ok_rate"] == 1.0
+    assert calibration["compared_count"] == 1
+    assert calibration["judge_human_agreement"] == 0.0
+    assert calibration["false_negative"] == 1
+    assert payload["conflict_count"] == 1
+    assert (tmp_path / "human_spot_check_conflicts.jsonl").exists()
+
+
 def test_run_benchmark_matrix_writes_held_out_dataset_summary(tmp_path: Path) -> None:
     historical_dir = tmp_path / "historical"
     new50_dir = tmp_path / "new50"
@@ -625,6 +796,12 @@ def test_run_benchmark_matrix_writes_held_out_dataset_summary(tmp_path: Path) ->
         max_pairs_per_type=20,
         render_page_visual=False,
         gold_audit_sample_size=5,
+        answer_eval_enabled=True,
+        answer_eval_sample_size=1,
+        answer_llm_call=_fake_answer_llm,
+        answer_judge_mode="llm",
+        answer_judge_sample_size=1,
+        answer_judge_llm_call=_fake_judge_llm,
     ))
 
     payload = json.loads((output_dir / "benchmark_matrix_report.json").read_text(encoding="utf-8"))
@@ -633,7 +810,10 @@ def test_run_benchmark_matrix_writes_held_out_dataset_summary(tmp_path: Path) ->
     assert set(result.dataset_results) == {"historical_38", "new50_20260629"}
     assert set(payload["datasets"]) == {"historical_38", "new50_20260629"}
     assert payload["datasets"]["historical_38"]["papers_total"] == 3
+    assert payload["datasets"]["historical_38"]["claim_support_rate"] == 1.0
+    assert payload["datasets"]["historical_38"]["citation_claim_support_rate"] == 1.0
     assert "Eq Hit@10" in markdown
+    assert "Claim support" in markdown
 
 
 def test_run_benchmark_matrix_passes_gold_judge_and_summarizes_quality(tmp_path: Path) -> None:

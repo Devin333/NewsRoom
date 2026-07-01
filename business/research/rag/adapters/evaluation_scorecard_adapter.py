@@ -117,6 +117,15 @@ def _generation_metrics(result: GenerationEvalResult) -> list[MetricValue]:
         MetricValue("generation.faithfulness", result.faithfulness_score()),
         MetricValue("generation.answer_relevancy", result.answer_relevancy_score()),
         MetricValue("generation.context_precision", result.context_precision_score()),
+        MetricValue("generation.claim_support_rate", result.claim_support_rate_score()),
+        MetricValue("generation.contradiction_rate", result.contradiction_rate_score()),
+        MetricValue("generation.unsupported_claim_rate", result.unsupported_claim_rate_score()),
+        MetricValue("generation.citation_grounding_rate", result.citation_grounding_rate_score()),
+        MetricValue("generation.citation_claim_support_rate", result.citation_claim_support_rate_score()),
+        MetricValue("generation.wrong_citation_rate", result.wrong_citation_rate_score()),
+        MetricValue("generation.missing_citation_rate", result.missing_citation_rate_score()),
+        MetricValue("generation.grounded_answer_rate", result.grounded_answer_rate_score()),
+        MetricValue("generation.judge_error_rate", result.judge_error_rate()),
     ]
 
 
