@@ -19,6 +19,7 @@ from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
     EvidenceRetrievalEvaluator,
+    formula_failure_diagnostics,
     save_evidence_golden_set,
 )
 from business.research.rag.evaluation.paper_evaluation_report import EvidenceRegressionReport
@@ -177,6 +178,11 @@ class GoldEvidenceJudgeItem:
     reason: str
     supported: bool = False
     confidence: float = 0.0
+    question_clear: bool | None = None
+    gold_evidence_complete: bool | None = None
+    equivalent_gold_needed: bool | None = None
+    bad_gold_reason: str = ""
+    suggested_action: str = ""
     gold_chunk_ids: tuple[str, ...] = ()
     equivalent_gold_chunk_ids: tuple[str, ...] = ()
     raw_response: dict[str, Any] = field(default_factory=dict)
@@ -190,6 +196,11 @@ class GoldEvidenceJudgeItem:
             "reason": self.reason,
             "supported": self.supported,
             "confidence": self.confidence,
+            "question_clear": self.question_clear,
+            "gold_evidence_complete": self.gold_evidence_complete,
+            "equivalent_gold_needed": self.equivalent_gold_needed,
+            "bad_gold_reason": self.bad_gold_reason,
+            "suggested_action": self.suggested_action,
             "gold_chunk_ids": list(self.gold_chunk_ids),
             "equivalent_gold_chunk_ids": list(self.equivalent_gold_chunk_ids),
             "raw_response": dict(self.raw_response),
@@ -454,6 +465,8 @@ class OpenAICompatibleGoldEvidenceJudge:
         supported = bool(payload.get("supported"))
         confidence = _clamped_float(payload.get("confidence"))
         reason = str(payload.get("reason") or "").strip()[:500] or "no_reason"
+        bad_gold_reason = str(payload.get("bad_gold_reason") or "").strip()[:120]
+        suggested_action = str(payload.get("suggested_action") or "").strip()[:120]
         status = "pass" if supported and confidence >= 0.6 else "warning" if supported else "fail"
         return GoldEvidenceJudgeItem(
             question=item.question,
@@ -463,6 +476,11 @@ class OpenAICompatibleGoldEvidenceJudge:
             reason=reason,
             supported=supported,
             confidence=confidence,
+            question_clear=_optional_bool(payload.get("question_clear")),
+            gold_evidence_complete=_optional_bool(payload.get("gold_evidence_complete")),
+            equivalent_gold_needed=_optional_bool(payload.get("equivalent_gold_needed")),
+            bad_gold_reason=bad_gold_reason,
+            suggested_action=suggested_action,
             gold_chunk_ids=item.gold_chunk_ids,
             equivalent_gold_chunk_ids=item.equivalent_gold_chunk_ids,
             raw_response=payload,
@@ -1024,6 +1042,7 @@ def _evaluate_candidate(
         lightweight_reranker=config.lightweight_reranker,
     )
     retrieval = EvidenceRetrievalEvaluator(retriever).evaluate(pairs)
+    formula_diagnostics = formula_failure_diagnostics(retrieval, top_k=10)
     answer_samples: list[EvidenceAnswerSample] = []
     generated_answers: list[GeneratedAnswer] = []
     answer_result = None
@@ -1073,7 +1092,9 @@ def _evaluate_candidate(
         metadata=metadata,
     )
     report.write(output_dir)
+    _write_formula_retrieval_diagnostics(output_dir, formula_diagnostics)
     payload = json.loads((output_dir / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    payload["formula_retrieval_diagnostics"] = _formula_diagnostics_summary(formula_diagnostics)
     spot_check = _write_spot_check_report(
         config,
         output_dir=output_dir,
@@ -1091,11 +1112,28 @@ def _evaluate_candidate(
     )
     if spot_check is not None:
         payload["spot_check"] = spot_check.to_dict()
-        (output_dir / "evidence_regression_report.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+    (output_dir / "evidence_regression_report.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return payload, spot_check
+
+
+def _write_formula_retrieval_diagnostics(output_dir: Path, diagnostics: dict[str, Any]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "formula_retrieval_diagnostics.json").write_text(
+        json.dumps(diagnostics, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _write_jsonl(output_dir / "formula_retrieval_failures.jsonl", list(diagnostics.get("items") or []))
+
+
+def _formula_diagnostics_summary(diagnostics: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "top_k": diagnostics.get("top_k", 10),
+        "total_failures": diagnostics.get("total_failures", 0),
+        "reason_counts": dict(diagnostics.get("reason_counts") or {}),
+    }
 
 
 def _answers_requested(config: BenchmarkSuiteConfig) -> bool:
@@ -2879,6 +2917,10 @@ def _gold_fix_record(item: GoldEvidenceJudgeItem) -> dict[str, Any]:
         "status": item.status,
         "supported": item.supported,
         "confidence": item.confidence,
+        "question_clear": item.question_clear,
+        "gold_evidence_complete": item.gold_evidence_complete,
+        "equivalent_gold_needed": item.equivalent_gold_needed,
+        "bad_gold_reason": item.bad_gold_reason,
         "gold_chunk_ids": list(item.gold_chunk_ids),
         "equivalent_gold_chunk_ids": list(item.equivalent_gold_chunk_ids),
         "judge_reason": item.reason,
@@ -2887,12 +2929,20 @@ def _gold_fix_record(item: GoldEvidenceJudgeItem) -> dict[str, Any]:
 
 
 def _suggested_gold_fix_action(item: GoldEvidenceJudgeItem) -> str:
-    if item.status == "error":
+    if item.suggested_action:
+        return item.suggested_action
+    if item.bad_gold_reason == "question_ambiguous":
         return "rewrite_question"
+    if item.bad_gold_reason in {"missing_required_context", "formula_context_missing", "table_context_missing"}:
+        return "add_context_gold"
+    if item.bad_gold_reason in {"gold_chunk_not_supporting", "wrong_equivalent_gold"}:
+        return "add_equivalent_gold"
+    if item.status == "error":
+        return "manual_review_required"
     if item.status == "warning":
-        return "add_equivalent_evidence"
+        return "add_equivalent_gold"
     if item.qa_type in {"citation_qa", "formula_qa", "formula_explanation_qa"}:
-        return "replace_gold_chunk"
+        return "add_context_gold"
     return "drop_question"
 
 
@@ -3619,8 +3669,15 @@ def _judge_prompt(item: GoldEvidenceAuditItem, max_evidence_chars: int) -> str:
         }, ensure_ascii=False))
     return "\n".join([
         "You are auditing a paper QA benchmark gold evidence item.",
-        "Return JSON only with keys: supported(boolean), confidence(number 0-1), reason(string).",
+        "Return JSON only with keys: supported(boolean), confidence(number 0-1), reason(string), "
+        "question_clear(boolean), gold_evidence_complete(boolean), equivalent_gold_needed(boolean), "
+        "bad_gold_reason(string), suggested_action(string).",
         "Judge whether the evidence previews are enough to support the question and expected answer facts.",
+        "Use bad_gold_reason values such as question_ambiguous, gold_chunk_not_supporting, "
+        "missing_required_context, formula_context_missing, table_context_missing, figure_image_missing, "
+        "source_locator_missing, or empty string.",
+        "Use suggested_action values such as keep, add_equivalent_gold, add_context_gold, rewrite_question, "
+        "drop_question, or manual_review_required.",
         "",
         f"Question: {item.question}",
         f"QA type: {item.qa_type}",
@@ -3650,6 +3707,19 @@ def _clamped_float(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(1.0, parsed))
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    normalized = str(value).strip().casefold()
+    if normalized in {"true", "yes", "1"}:
+        return True
+    if normalized in {"false", "no", "0"}:
+        return False
+    return None
 
 
 __all__ = [

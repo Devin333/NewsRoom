@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from business.research.document.models import PaperChunk
+from business.research.rag.formula_normalizer import normalize_formula_metadata
 
 CORE_FIELD_NAMES: tuple[str, ...] = ("title", "abstract", "caption", "equation", "body")
 EXPANDED_FIELD_NAMES: tuple[str, ...] = (
@@ -107,12 +108,40 @@ def _caption_text(chunk: PaperChunk) -> tuple[str, list[str]]:
 
 
 def _equation_text(chunk: PaperChunk) -> tuple[str, list[str]]:
+    formula_latex = chunk.formula_latex or (chunk.content if chunk.has_formula or chunk.chunk_type == "formula" else "")
+    derived = normalize_formula_metadata(
+        formula_latex,
+        formula_description=chunk.formula_description,
+        content=chunk.content,
+        metadata=chunk.metadata,
+    )
     values = [
         ("formula_latex", chunk.formula_latex),
         ("formula_description", chunk.formula_description),
-        ("metadata.formula_normalized_latex", str(chunk.metadata.get("formula_normalized_latex") or "")),
-        ("metadata.formula_symbols", _metadata_list_text(chunk.metadata.get("formula_symbols"))),
-        ("metadata.formula_operators", _metadata_list_text(chunk.metadata.get("formula_operators"))),
+        ("metadata.formula_normalized_latex", _metadata_or_derived(
+            chunk.metadata.get("formula_normalized_latex"),
+            derived.normalized_latex,
+        )),
+        ("metadata.formula_symbols", _metadata_or_derived(
+            chunk.metadata.get("formula_symbols"),
+            derived.symbols,
+        )),
+        ("metadata.formula_operators", _metadata_or_derived(
+            chunk.metadata.get("formula_operators"),
+            derived.operators,
+        )),
+        ("metadata.formula_structure_tokens", _metadata_or_derived(
+            chunk.metadata.get("formula_structure_tokens"),
+            derived.structure_tokens,
+        )),
+        ("metadata.formula_reference_labels", _metadata_or_derived(
+            chunk.metadata.get("formula_reference_labels"),
+            derived.reference_labels,
+        )),
+        ("metadata.formula_context_terms", _metadata_or_derived(
+            chunk.metadata.get("formula_context_terms"),
+            derived.context_terms,
+        )),
         ("metadata.formula_referenced_text", _metadata_list_text(chunk.metadata.get("formula_referenced_text"))),
     ]
     if chunk.has_formula or chunk.chunk_type == "formula":
@@ -212,7 +241,16 @@ def _normalize_text(text: str) -> str:
 def _metadata_list_text(value: object) -> str:
     if isinstance(value, list):
         return "\n".join(str(item) for item in value if str(item).strip())
+    if isinstance(value, tuple):
+        return "\n".join(str(item) for item in value if str(item).strip())
     return str(value or "")
+
+
+def _metadata_or_derived(value: object, derived: object) -> str:
+    text = _metadata_list_text(value)
+    if text.strip():
+        return text
+    return _metadata_list_text(derived)
 
 
 def _metadata_rows_text(value: object) -> str:

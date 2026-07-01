@@ -94,6 +94,35 @@ def test_extract_field_texts_includes_formula_structure_metadata():
     assert "query key value attention" in fields.referenced_text
 
 
+def test_extract_field_texts_derives_formula_structure_when_metadata_missing():
+    chunk = PaperChunk(
+        chunk_id="eq-2",
+        paper_id="p1",
+        parse_source="latex",
+        chunk_type="formula",
+        section_title="Method",
+        section_role=["method"],
+        section_index=2,
+        has_formula=True,
+        formula_latex=r"\operatorname{Attention}(Q,K,V)=\operatorname{softmax}(QK^T)",
+        formula_description="Attention maps query key value vectors.",
+        content="Equation 2 defines the attention calculation.",
+        metadata={"reference_labels": ["2"]},
+    )
+
+    fields = extract_field_texts(chunk)
+
+    assert "metadata.formula_normalized_latex" in fields.sources_for("equation")
+    assert "metadata.formula_symbols" in fields.sources_for("equation")
+    assert "metadata.formula_operators" in fields.sources_for("equation")
+    assert "metadata.formula_structure_tokens" in fields.sources_for("equation")
+    assert "metadata.formula_reference_labels" in fields.sources_for("equation")
+    assert "metadata.formula_context_terms" in fields.sources_for("equation")
+    assert "attention" in fields.equation.casefold()
+    assert "Q" in fields.equation
+    assert "function_call" in fields.equation
+
+
 def test_extract_field_texts_includes_table_structure_metadata():
     chunk = PaperChunk(
         chunk_id="tbl-1",

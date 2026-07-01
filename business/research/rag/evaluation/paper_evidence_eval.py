@@ -1693,6 +1693,143 @@ def iter_ranked_score_breakdowns(
             yield breakdown
 
 
+def formula_failure_diagnostics(
+    result: EvidenceEvalResult,
+    *,
+    top_k: int = 10,
+) -> dict[str, Any]:
+    items = [
+        _formula_failure_item(sample, top_k=top_k)
+        for sample in result.samples
+        if _is_formula_sample_failure(sample, top_k=top_k)
+    ]
+    reason_counts: Counter[str] = Counter()
+    for item in items:
+        reason_counts.update(item.get("failure_reasons") or [])
+    return {
+        "top_k": top_k,
+        "total_failures": len(items),
+        "reason_counts": dict(sorted(reason_counts.items())),
+        "items": items,
+    }
+
+
+def _is_formula_sample_failure(sample: EvidenceSampleResult, *, top_k: int) -> bool:
+    if sample.pair.expected_behavior != _ANSWER_BEHAVIOR:
+        return False
+    if sample.pair.qa_type not in {"formula_qa", "formula_explanation_qa"}:
+        return False
+    if sample.equivalent_first_rank and sample.equivalent_first_rank <= top_k:
+        if sample.pair.qa_type != "formula_explanation_qa":
+            return False
+        return sample.equivalent_coverage_by_k.get(top_k, 0.0) < 1.0
+    return True
+
+
+def _formula_failure_item(sample: EvidenceSampleResult, *, top_k: int) -> dict[str, Any]:
+    ranked_ids = sample.ranked_chunk_ids[:top_k]
+    score_breakdowns = sample.ranked_score_breakdowns[:top_k]
+    reasons = _formula_failure_reasons(sample, top_k=top_k)
+    return {
+        "paper_id": sample.pair.paper_id,
+        "qa_type": sample.pair.qa_type,
+        "question": sample.pair.question,
+        "gold_chunk_ids": list(sample.pair.gold_chunk_ids),
+        "equivalent_gold_chunk_ids": list(sample.pair.equivalent_gold_chunk_ids),
+        "ranked_chunk_ids": ranked_ids,
+        "first_gold_rank": sample.first_rank,
+        "equivalent_first_gold_rank": sample.equivalent_first_rank,
+        "evidence_coverage_at_k": sample.coverage_by_k.get(top_k, 0.0),
+        "equivalent_evidence_coverage_at_k": sample.equivalent_coverage_by_k.get(top_k, 0.0),
+        "failure_reasons": reasons,
+        "suggested_action": _formula_failure_suggested_action(reasons),
+        "score_breakdown": score_breakdowns,
+        "retrieval_metadata": _formula_retrieval_metadata(sample.retrieval_metadata),
+    }
+
+
+def _formula_failure_reasons(sample: EvidenceSampleResult, *, top_k: int) -> list[str]:
+    reasons: list[str] = []
+    metadata = sample.retrieval_metadata
+    if sample.retrieval_intent and sample.retrieval_intent != "formula_query":
+        reasons.append("formula_intent_mismatch")
+    if not metadata.get("formula_sparse_enabled"):
+        reasons.append("formula_sparse_disabled")
+    if not sample.equivalent_first_rank:
+        reasons.append("missing_gold_in_retrieval")
+    elif sample.equivalent_first_rank > top_k:
+        reasons.append("reranker_demoted_gold")
+    if sample.pair.qa_type == "formula_explanation_qa":
+        if sample.equivalent_coverage_by_k.get(top_k, 0.0) < 1.0:
+            reasons.append("formula_context_missing")
+        if not _sample_has_formula_graph_expansion(sample):
+            reasons.append("graph_expansion_missing")
+    if metadata.get("formula_sparse_enabled") and not _sample_has_formula_sparse_hit(sample):
+        reasons.append("symbol_sparse_miss")
+    if _sample_has_label_question(sample) and not _sample_has_label_match(sample):
+        reasons.append("equation_label_miss")
+    return _unique_texts(reasons or ["formula_retrieval_low"])
+
+
+def _formula_failure_suggested_action(reasons: list[str]) -> str:
+    if "formula_intent_mismatch" in reasons:
+        return "improve_formula_query_routing"
+    if "formula_sparse_disabled" in reasons or "symbol_sparse_miss" in reasons:
+        return "improve_formula_sparse_scoring"
+    if "equation_label_miss" in reasons:
+        return "fix_formula_label_metadata"
+    if "graph_expansion_missing" in reasons or "formula_context_missing" in reasons:
+        return "add_formula_explanation_edge"
+    if "missing_gold_in_retrieval" in reasons:
+        return "improve_retrieval_policy"
+    if "reranker_demoted_gold" in reasons:
+        return "tune_formula_reranking"
+    return "manual_review_required"
+
+
+def _sample_has_formula_sparse_hit(sample: EvidenceSampleResult) -> bool:
+    for breakdown in sample.ranked_score_breakdowns:
+        if float(breakdown.get("formula_sparse_score") or 0.0) > 0.0:
+            return True
+    return False
+
+
+def _sample_has_label_match(sample: EvidenceSampleResult) -> bool:
+    for breakdown in sample.ranked_score_breakdowns:
+        if float(breakdown.get("element_label_score") or 0.0) > 0.0:
+            return True
+        if float(breakdown.get("formula_label_score") or 0.0) > 0.0:
+            return True
+    return False
+
+
+def _sample_has_label_question(sample: EvidenceSampleResult) -> bool:
+    return bool(re.search(r"\b(?:equation|eq\.?|formula)\s+[A-Za-z0-9_.:-]+\b", sample.pair.question, re.IGNORECASE))
+
+
+def _sample_has_formula_graph_expansion(sample: EvidenceSampleResult) -> bool:
+    returned = int(sample.retrieval_metadata.get("formula_context_returned") or 0)
+    if returned > 0:
+        return True
+    for breakdown in sample.ranked_score_breakdowns:
+        if float(breakdown.get("graph_score") or 0.0) > 0.0:
+            return True
+    return False
+
+
+def _formula_retrieval_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "retrieval_policy",
+        "formula_sparse_enabled",
+        "formula_sparse_recalled",
+        "formula_context_returned",
+        "field_search_fields",
+        "intent",
+        "recall_routes",
+    )
+    return {key: metadata.get(key) for key in keys if key in metadata}
+
+
 def _coverage(retrieved: list[str], required: list[str]) -> float:
     required_set = set(_unique_texts(required))
     if not required_set:
@@ -2267,6 +2404,7 @@ __all__ = [
     "EvidenceRetrievalEvaluator",
     "EvidenceSampleResult",
     "build_evidence_pairs_from_chunks",
+    "formula_failure_diagnostics",
     "iter_ranked_score_breakdowns",
     "load_evidence_golden_set",
     "save_evidence_golden_set",

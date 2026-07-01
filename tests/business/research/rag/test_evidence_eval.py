@@ -9,6 +9,7 @@ from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceQAPair,
     EvidenceRetrievalEvaluator,
     build_evidence_pairs_from_chunks,
+    formula_failure_diagnostics,
     load_evidence_golden_set,
     save_evidence_golden_set,
 )
@@ -236,6 +237,53 @@ def test_retrieval_evaluator_reports_intent_and_route_distribution() -> None:
     assert result.intent_confusion == {"experiment_result_qa": {"numerical_result": 1}}
     assert report["retrieval"]["route_distribution"]["table_chunks"] == 1
     assert report["retrieval"]["intent_confusion"]["experiment_result_qa"]["numerical_result"] == 1
+
+
+def test_formula_failure_diagnostics_explain_formula_context_miss() -> None:
+    wrong_formula = _chunk(
+        "eq-wrong",
+        chunk_type="formula",
+        content="Equation: E = mc^2",
+        metadata={
+            "formula_sparse_score": 0.8,
+            "formula_symbol_score": 0.8,
+            "child_final_score": 0.9,
+        },
+    )
+    retriever = _FakeRetriever(RetrievalResult(
+        child_chunks=[wrong_formula],
+        ref_chunks=[],
+        parent_chunks=[],
+        intent="formula_query",
+        metadata={
+            "retrieval_policy": "paper_formula_rag_v1",
+            "intent": "formula_query",
+            "formula_sparse_enabled": True,
+            "formula_sparse_recalled": 1,
+            "formula_context_returned": 0,
+        },
+    ))
+    pair = EvidenceQAPair(
+        question="How is Equation 2 explained in the surrounding text?",
+        paper_id="p1",
+        qa_type="formula_explanation_qa",
+        gold_chunk_ids=["eq-attn", "para-attn"],
+        equivalent_gold_chunk_ids=["eq-attn", "para-attn"],
+        required_evidence_types=["formula", "paragraph"],
+    )
+
+    result = EvidenceRetrievalEvaluator(retriever).evaluate([pair], ks=(1, 10))
+    diagnostics = formula_failure_diagnostics(result, top_k=10)
+
+    assert diagnostics["total_failures"] == 1
+    item = diagnostics["items"][0]
+    assert "missing_gold_in_retrieval" in item["failure_reasons"]
+    assert "formula_context_missing" in item["failure_reasons"]
+    assert "graph_expansion_missing" in item["failure_reasons"]
+    assert "equation_label_miss" in item["failure_reasons"]
+    assert item["suggested_action"] == "fix_formula_label_metadata"
+    assert item["score_breakdown"][0]["formula_sparse_score"] == 0.8
+    assert diagnostics["reason_counts"]["graph_expansion_missing"] == 1
 
 
 def test_retrieval_evaluator_counts_source_chunk_mapping_as_gold_hit() -> None:

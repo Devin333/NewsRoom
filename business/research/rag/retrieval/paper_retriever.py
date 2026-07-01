@@ -5,7 +5,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import Any, Iterable, Mapping, TYPE_CHECKING
 
 from framework.rag.core import intent_allowed, intent_budget, position_decay_score
 from framework.rag.retrieval import (
@@ -22,6 +22,7 @@ from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
 from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
 from business.research.rag.adapters.paper_field_text import CORE_FIELD_NAMES, FIELD_NAMES, extract_field_texts
+from business.research.rag.formula_normalizer import FormulaRetrievalMetadata, normalize_formula_metadata
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute, build_retrieval_route
 from business.research.rag.retrieval.paper_visual_retrieval import (
@@ -88,17 +89,30 @@ DEFAULT_RETRIEVAL_POLICY = "default"
 PAPER_VISUAL_RAG_TUNED_POLICY = "paper_visual_rag_tuned"
 PAPER_BLIND_SEMANTIC_RAG_V1_POLICY = "paper_blind_semantic_rag_v1"
 PAPER_HYBRID_RRF_RAG_V1_POLICY = "paper_hybrid_rrf_rag_v1"
+PAPER_FORMULA_RAG_V1_POLICY = "paper_formula_rag_v1"
 NEWS_PAPER_RAG_POLICY_ENV = "NEWS_PAPER_RAG_POLICY"
 HIGH_VALUE_VISUAL_RESULT_INTENTS = ("figure_query", "table_query", "numerical_result", "comparison")
 LIGHTWEIGHT_FIELD_RERANK_INTENTS = (*HIGH_VALUE_VISUAL_RESULT_INTENTS, "formula_query")
 _HYBRID_RRF_INTENTS = (*HIGH_VALUE_VISUAL_RESULT_INTENTS, "formula_query", "citation_query")
+_FORMULA_CONTEXT_REASONS = frozenset({
+    "formula_nearby_context",
+    "formula_explained_by",
+    "formula_body_reference",
+    "formula_explicit_reference",
+    "formula_parent_context",
+    "formula_reverse_context",
+    "formula_reverse_reference",
+})
 _SPARSE_STOP_WORDS = {
     "about",
     "caption",
+    "define",
+    "defined",
     "does",
     "evidence",
     "explain",
     "explained",
+    "explanation",
     "equation",
     "fig",
     "figure",
@@ -106,14 +120,23 @@ _SPARSE_STOP_WORDS = {
     "formula",
     "from",
     "how",
+    "latex",
+    "mathematical",
+    "mean",
+    "means",
     "paper",
+    "relation",
     "reported",
     "reports",
     "result",
     "results",
     "show",
     "shows",
+    "surrounding",
+    "symbol",
+    "symbols",
     "table",
+    "text",
     "the",
     "this",
     "what",
@@ -209,6 +232,8 @@ class RetrievalPolicy:
     rrf_k: int = 60
     sparse_search_limit_multiplier: int = 3
     field_embedding_search_limit_multiplier: int = 2
+    formula_sparse_enabled: bool = False
+    formula_sparse_boost: float = 0.0
     field_default_search_fields: tuple[str, ...] = FIELD_NAMES
     field_intent_search_fields: dict[str, tuple[str, ...]] = field(default_factory=lambda: {
         "concept_method": ("title", "abstract", "body", "caption"),
@@ -284,11 +309,13 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         PAPER_VISUAL_RAG_TUNED_POLICY,
         PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
         PAPER_HYBRID_RRF_RAG_V1_POLICY,
+        PAPER_FORMULA_RAG_V1_POLICY,
     }:
         raise ValueError(
             f"unknown retrieval policy {policy_name!r}; expected "
             f"{DEFAULT_RETRIEVAL_POLICY!r}, {PAPER_VISUAL_RAG_TUNED_POLICY!r}, "
-            f"{PAPER_BLIND_SEMANTIC_RAG_V1_POLICY!r}, or {PAPER_HYBRID_RRF_RAG_V1_POLICY!r}"
+            f"{PAPER_BLIND_SEMANTIC_RAG_V1_POLICY!r}, {PAPER_HYBRID_RRF_RAG_V1_POLICY!r}, "
+            f"or {PAPER_FORMULA_RAG_V1_POLICY!r}"
         )
 
     defaults = RetrievalPolicy()
@@ -311,13 +338,21 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         "body": 0.50,
     }
     child_final_score_weights = dict(defaults.child_final_score_weights)
-    if normalized in {PAPER_BLIND_SEMANTIC_RAG_V1_POLICY, PAPER_HYBRID_RRF_RAG_V1_POLICY}:
+    if normalized in {PAPER_BLIND_SEMANTIC_RAG_V1_POLICY, PAPER_HYBRID_RRF_RAG_V1_POLICY, PAPER_FORMULA_RAG_V1_POLICY}:
         child_final_score_weights = {
             "semantic": 0.35,
             "field_embedding": 0.25,
             "field_rerank": 0.30,
             "position": 0.00,
             "graph": 0.10,
+        }
+    if normalized == PAPER_FORMULA_RAG_V1_POLICY:
+        field_intent_score_weights["formula_query"] = {
+            "title": 0.05,
+            "abstract": 0.00,
+            "caption": 0.00,
+            "equation": 0.75,
+            "body": 0.20,
         }
     return RetrievalPolicy(
         name=normalized,
@@ -340,11 +375,16 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
         },
         child_final_score_weights=child_final_score_weights,
         field_intent_score_weights=field_intent_score_weights,
-        sparse_lexical_enabled=normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY,
-        hybrid_rrf_enabled=normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY,
-        multi_query_enabled=normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY,
+        sparse_lexical_enabled=normalized in {PAPER_HYBRID_RRF_RAG_V1_POLICY, PAPER_FORMULA_RAG_V1_POLICY},
+        hybrid_rrf_enabled=normalized in {PAPER_HYBRID_RRF_RAG_V1_POLICY, PAPER_FORMULA_RAG_V1_POLICY},
+        multi_query_enabled=normalized in {PAPER_HYBRID_RRF_RAG_V1_POLICY, PAPER_FORMULA_RAG_V1_POLICY},
         rrf_k=60,
-        sparse_search_limit_multiplier=4 if normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY else 3,
+        sparse_search_limit_multiplier=5 if normalized == PAPER_FORMULA_RAG_V1_POLICY else (
+            4 if normalized == PAPER_HYBRID_RRF_RAG_V1_POLICY else 3
+        ),
+        formula_sparse_enabled=normalized == PAPER_FORMULA_RAG_V1_POLICY,
+        formula_sparse_boost=0.20 if normalized == PAPER_FORMULA_RAG_V1_POLICY else 0.0,
+        max_formula_context_chunks=4 if normalized == PAPER_FORMULA_RAG_V1_POLICY else defaults.max_formula_context_chunks,
     )
 
 
@@ -352,6 +392,7 @@ def retrieval_policy_enables_lightweight_reranker(policy_name: str | None) -> bo
     return build_retrieval_policy(policy_name).name in {
         PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
         PAPER_HYBRID_RRF_RAG_V1_POLICY,
+        PAPER_FORMULA_RAG_V1_POLICY,
     }
 
 
@@ -396,6 +437,28 @@ class _FieldEmbeddingSummary:
     best_field: str = ""
     best_score: float = 0.0
     hits: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class _FormulaSparseScores:
+    symbol_score: float = 0.0
+    operator_score: float = 0.0
+    label_score: float = 0.0
+    structure_score: float = 0.0
+    context_score: float = 0.0
+    sparse_score: float = 0.0
+    strategy: str = ""
+
+    def as_metadata(self) -> dict[str, Any]:
+        return {
+            "formula_symbol_score": _round_score(self.symbol_score),
+            "formula_operator_score": _round_score(self.operator_score),
+            "formula_label_score": _round_score(self.label_score),
+            "formula_structure_score": _round_score(self.structure_score),
+            "formula_context_score": _round_score(self.context_score),
+            "formula_sparse_score": _round_score(self.sparse_score),
+            "formula_sparse_strategy": self.strategy,
+        }
 
 
 @dataclass
@@ -480,6 +543,14 @@ class RetrievalResult:
                     "best_matching_field": chunk.metadata.get("best_matching_field", ""),
                     "element_label_score": chunk.metadata.get("element_label_score"),
                     "element_label_match": chunk.metadata.get("element_label_match", False),
+                    "formula_symbol_score": chunk.metadata.get("formula_symbol_score"),
+                    "formula_operator_score": chunk.metadata.get("formula_operator_score"),
+                    "formula_label_score": chunk.metadata.get("formula_label_score"),
+                    "formula_structure_score": chunk.metadata.get("formula_structure_score"),
+                    "formula_context_score": chunk.metadata.get("formula_context_score"),
+                    "formula_sparse_score": chunk.metadata.get("formula_sparse_score"),
+                    "formula_sparse_boost": chunk.metadata.get("formula_sparse_boost"),
+                    "formula_sparse_strategy": chunk.metadata.get("formula_sparse_strategy", ""),
                     "graph_score": chunk.metadata.get("graph_score"),
                     "child_score_strategy": chunk.metadata.get("child_score_strategy", ""),
                     "child_score_components": chunk.metadata.get("child_score_components", {}),
@@ -643,9 +714,14 @@ class ResearchRetriever:
             "hybrid_rrf_enabled": self._policy.hybrid_rrf_enabled,
             "multi_query_enabled": self._policy.multi_query_enabled,
             "sparse_lexical_enabled": self._policy.sparse_lexical_enabled,
+            "formula_sparse_enabled": self._policy.formula_sparse_enabled,
             "sparse_recalled": sum(
                 1 for chunk, _score in candidates
                 if chunk.metadata.get("sparse_lexical_hit")
+            ),
+            "formula_sparse_recalled": sum(
+                1 for chunk, _score in candidates
+                if chunk.metadata.get("formula_sparse_hit")
             ),
             "hybrid_rrf_recalled": sum(
                 1 for chunk, _score in candidates
@@ -692,7 +768,10 @@ class ResearchRetriever:
             ),
             "formula_context_returned": sum(
                 1 for chunk in child_chunks
-                if chunk.metadata.get("expansion_reason") in {"formula_parent_context", "formula_body_reference"}
+                if chunk.metadata.get("expansion_reason") in _FORMULA_CONTEXT_REASONS
+            ) + sum(
+                1 for chunk in ref_chunks
+                if chunk.metadata.get("expansion_reason") in _FORMULA_CONTEXT_REASONS
             ),
             "interleaved_table_context_returned": sum(
                 1 for chunk in child_chunks
@@ -759,6 +838,8 @@ class ResearchRetriever:
         return filters
 
     def _candidate_filters(self, route: RetrievalRoute, base_filters: dict[str, Any]) -> list[dict[str, Any]]:
+        if route.intent == "formula_query" and self._policy.formula_sparse_enabled:
+            return [{"chunk_type": "formula"}]
         if route.candidate_filter_groups:
             return _dedupe_filters([
                 {**base_filters, **dict(filters)}
@@ -827,6 +908,9 @@ class ResearchRetriever:
                         query_text,
                         filters=filters,
                         limit=sparse_limit,
+                        formula_sparse_enabled=(
+                            self._policy.formula_sparse_enabled and route.intent == "formula_query"
+                        ),
                     )
                     if sparse_hits:
                         rankings.append((f"sparse:{filter_index}:{query_index}", sparse_hits))
@@ -844,6 +928,7 @@ class ResearchRetriever:
         *,
         filters: dict[str, Any],
         limit: int,
+        formula_sparse_enabled: bool = False,
     ) -> list[tuple[PaperChunk, float]]:
         chunks = _list_store_chunks(self._store, paper_id)
         if not chunks:
@@ -852,15 +937,20 @@ class ResearchRetriever:
         for chunk in chunks:
             if chunk.paper_id != paper_id or not _chunk_matches_filters(chunk, filters):
                 continue
-            score = _sparse_lexical_score(query_text, chunk)
+            lexical_score = _sparse_lexical_score(query_text, chunk)
+            formula_scores = _formula_sparse_scores(query_text, chunk) if formula_sparse_enabled else _FormulaSparseScores()
+            score = max(lexical_score, formula_scores.sparse_score)
             if score <= 0.0:
                 continue
             metadata = dict(chunk.metadata)
             metadata.update({
                 "sparse_lexical_hit": True,
-                "sparse_lexical_score": _round_score(score),
+                "sparse_lexical_score": _round_score(lexical_score),
                 "sparse_lexical_strategy": "deterministic_token_overlap",
             })
+            if formula_sparse_enabled:
+                metadata.update(formula_scores.as_metadata())
+                metadata["formula_sparse_hit"] = formula_scores.sparse_score > 0.0
             scored.append((chunk.model_copy(update={"metadata": metadata}), score))
         scored.sort(key=lambda item: (-item[1], item[0].section_index, item[0].chunk_id))
         return scored[:limit]
@@ -1122,10 +1212,15 @@ class ResearchRetriever:
         graph_score = _child_graph_score(chunk)
         route_match_score = _route_match_score(route, chunk)
         claim_index_score = _metadata_float(chunk.metadata, "claim_index_score", 0.0)
+        formula_scores = (
+            _formula_sparse_scores(request.question, chunk)
+            if self._policy.formula_sparse_enabled and route.intent == "formula_query"
+            else _FormulaSparseScores()
+        )
         if route.intent == "citation_query":
             graph_score = max(graph_score, claim_index_score)
         element_label_score = _element_label_match_score(request.question, route.intent, chunk)
-        graph_score = max(graph_score, element_label_score)
+        graph_score = max(graph_score, element_label_score, formula_scores.label_score)
         element_label_boost = _clamp_score(
             element_label_score * max(0.0, self._policy.element_label_boosts.get(route.intent, 0.0))
         )
@@ -1136,6 +1231,9 @@ class ResearchRetriever:
         citation_claim_boost = _clamp_score(
             citation_claim_score * max(0.0, self._policy.citation_claim_boost)
         ) if route.intent == "citation_query" else 0.0
+        formula_sparse_boost = _clamp_score(
+            formula_scores.sparse_score * max(0.0, self._policy.formula_sparse_boost)
+        ) if route.intent == "formula_query" else 0.0
         has_field_semantic = field_summary.best_score > 0.0 or field_rerank_score is not None
         if has_field_semantic:
             child_weights = self._policy.normalized_child_final_score_weights()
@@ -1162,7 +1260,7 @@ class ResearchRetriever:
                 child_weights,
             )
             score_strategy = "semantic_lexical_field_fallback"
-        final_score = _clamp_score(final_score + element_label_boost + citation_claim_boost)
+        final_score = _clamp_score(final_score + element_label_boost + citation_claim_boost + formula_sparse_boost)
         field_texts = extract_field_texts(chunk)
         best_matching_field = _best_matching_field(field_summary, field_scores)
         metadata = dict(chunk.metadata)
@@ -1192,6 +1290,7 @@ class ResearchRetriever:
             "element_label_boost": _round_score(element_label_boost),
             "citation_claim_score": _round_score(citation_claim_score),
             "citation_claim_boost": _round_score(citation_claim_boost),
+            "formula_sparse_boost": _round_score(formula_sparse_boost),
             "graph_score": _round_score(graph_score),
             "route_match_score": _round_score(route_match_score),
             "matched_recall_routes": list(_matched_recall_routes(route, chunk)),
@@ -1209,6 +1308,8 @@ class ResearchRetriever:
                 "claim_index": _round_score(claim_index_score),
                 "citation_claim": _round_score(citation_claim_score),
                 "citation_claim_boost": _round_score(citation_claim_boost),
+                "formula_sparse": _round_score(formula_scores.sparse_score),
+                "formula_sparse_boost": _round_score(formula_sparse_boost),
             },
             "child_semantic_score": _round_score(semantic),
             "child_position_score": _round_score(position_score),
@@ -1220,6 +1321,9 @@ class ResearchRetriever:
                 for field_name in field_texts.available_fields()
             },
         })
+        if self._policy.formula_sparse_enabled and route.intent == "formula_query":
+            metadata.update(formula_scores.as_metadata())
+            metadata["formula_sparse_hit"] = formula_scores.sparse_score > 0.0
         return chunk.model_copy(update={"metadata": metadata}), _round_score(final_score)
 
     def _search_visual_candidates(
@@ -1333,9 +1437,21 @@ class ResearchRetriever:
         if (
             _is_formula_chunk(chunk)
             and self._policy.max_formula_context_chunks > 0
-            and _should_expand_formula_context(route.intent, request.question)
+            and (
+                _should_expand_formula_context(route.intent, request.question)
+                or self._policy.formula_sparse_enabled
+            )
         ):
             return _formula_context_refs(chunk)[: self._policy.max_formula_context_chunks]
+        if (
+            route.intent == "formula_query"
+            and self._policy.max_formula_context_chunks > 0
+            and (
+                _should_expand_formula_context(route.intent, request.question)
+                or self._policy.formula_sparse_enabled
+            )
+        ):
+            return _formula_reverse_context_refs(chunk)[: self._policy.max_formula_context_chunks]
         return []
 
 
@@ -1828,17 +1944,10 @@ class ResearchRetriever:
                         refs.append((ref_id, child.chunk_id, reason))
                         seen.add(ref_id)
             if _is_formula_chunk(child):
-                for ref in child.metadata.get("referenced_by_chunks", []):
-                    if not isinstance(ref, dict):
-                        continue
-                    ref_id = str(ref.get("chunk_id") or "")
+                for ref_id, reason, _edge in self._formula_context_refs_for_child(child, paper_id):
                     if ref_id and ref_id not in seen:
-                        refs.append((ref_id, child.chunk_id, "formula_body_reference"))
+                        refs.append((ref_id, child.chunk_id, reason))
                         seen.add(ref_id)
-                parent_id = child.parent_chunk_id or ""
-                if parent_id and parent_id not in seen:
-                    refs.append((parent_id, child.chunk_id, "formula_parent_context"))
-                    seen.add(parent_id)
         result: list[PaperChunk] = []
         for ref_id, source_id, reason in refs:
             chunk = self._store.get_chunk(ref_id)
@@ -1856,6 +1965,21 @@ class ResearchRetriever:
                     source_chunk=self._store.get_chunk(source_id),
                 ))
         return result
+
+    def _formula_context_refs_for_child(
+        self,
+        child: PaperChunk,
+        paper_id: str,
+    ) -> list[tuple[str, str, str]]:
+        refs = list(_formula_context_refs(child))
+        formula_id = child.chunk_id
+        for candidate in _list_store_chunks(self._store, paper_id):
+            if candidate.chunk_id == formula_id or candidate.paper_id != paper_id:
+                continue
+            for ref_id, _reason, edge in _formula_reverse_context_refs(candidate):
+                if ref_id == formula_id:
+                    refs.append((candidate.chunk_id, "formula_reverse_context", edge))
+        return _dedupe_ref_tuples(refs)
 
 
 def _figure_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
@@ -1894,23 +2018,78 @@ def _table_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
 
 def _formula_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
     refs: list[tuple[str, str, str]] = []
-    for ref in chunk.metadata.get("referenced_by_chunks", []):
-        if not isinstance(ref, dict):
-            continue
-        ref_id = str(ref.get("chunk_id") or "")
-        if ref_id:
-            refs.append((ref_id, "formula_body_reference", "referenced_by_chunks"))
+    nearby_id = str(chunk.metadata.get("nearby_context_chunk_id") or "")
+    if nearby_id:
+        refs.append((nearby_id, "formula_nearby_context", "nearby_context_chunk_id"))
+    for key in ("explained_by_chunks", "formula_explanation_chunks", "formula_context_chunk_ids"):
+        for ref_id in _metadata_chunk_refs(chunk.metadata.get(key)):
+            refs.append((ref_id, "formula_explained_by", key))
+    for ref_id in _metadata_chunk_refs(chunk.metadata.get("referenced_by_chunks")):
+        refs.append((ref_id, "formula_body_reference", "referenced_by_chunks"))
     parent_id = chunk.parent_chunk_id or ""
     if parent_id:
         refs.append((parent_id, "formula_parent_context", "parent_chunk_id"))
-    return refs
+    return _dedupe_ref_tuples(refs)
+
+
+def _formula_reverse_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
+    refs: list[tuple[str, str, str]] = []
+    metadata = chunk.metadata
+    for key in (
+        "formula_chunk_id",
+        "linked_formula_chunk_id",
+        "explains_formula_chunk_id",
+        "formula_context_for_chunk_id",
+        "referenced_formula_chunk_ids",
+        "formula_chunk_ids",
+    ):
+        for ref_id in _metadata_chunk_refs(metadata.get(key)):
+            refs.append((ref_id, "formula_reverse_reference", key))
+    for ref_id in chunk.references:
+        refs.append((str(ref_id), "formula_explicit_reference", "chunk.references"))
+    return _dedupe_ref_tuples(refs)
+
+
+def _metadata_chunk_refs(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        for key in ("chunk_id", "id", "ref_id", "target_chunk_id"):
+            ref_id = str(value.get(key) or "").strip()
+            if ref_id:
+                return [ref_id]
+        return []
+    if isinstance(value, (list, tuple, set)):
+        refs: list[str] = []
+        for item in value:
+            refs.extend(_metadata_chunk_refs(item))
+        return refs
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def _dedupe_ref_tuples(refs: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    seen: set[str] = set()
+    out: list[tuple[str, str, str]] = []
+    for ref_id, reason, edge in refs:
+        normalized = str(ref_id or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append((normalized, reason, edge))
+    return out
 
 
 def _should_expand_formula_context(intent: str, question: str) -> bool:
     if intent != "formula_query":
         return False
     lowered = str(question or "").casefold()
-    return any(token in lowered for token in ("surrounding text", "explained", "explain", "meaning"))
+    return any(token in lowered for token in (
+        "surrounding text",
+        "explained",
+        "explain",
+        "meaning",
+    ))
 
 
 def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float:
@@ -2135,6 +2314,7 @@ def _element_query_labels(query_text: str, intent: str) -> set[str]:
 def _chunk_reference_labels(chunk: PaperChunk) -> set[str]:
     values: list[Any] = [
         chunk.metadata.get("reference_labels"),
+        chunk.metadata.get("formula_reference_labels"),
         chunk.metadata.get("equation_number"),
         chunk.metadata.get("equation_id"),
         chunk.metadata.get("table_id"),
@@ -2450,6 +2630,161 @@ def _sparse_lexical_score(query_text: str, chunk: PaperChunk) -> float:
     if query_phrase and query_phrase in content_phrase:
         best = max(best, 0.95)
     return _clamp_score(best)
+
+
+def _formula_sparse_scores(query_text: str, chunk: PaperChunk) -> _FormulaSparseScores:
+    if not _is_formula_chunk(chunk) and not _chunk_has_formula_context(chunk):
+        return _FormulaSparseScores()
+    query_formula = normalize_formula_metadata(str(query_text or ""), content=str(query_text or ""))
+    chunk_formula = _formula_metadata_for_chunk(chunk)
+
+    query_symbols = _casefold_set([*query_formula.symbols])
+    query_operators = _casefold_set([*query_formula.operators])
+    query_labels = {
+        _normalize_element_label(value)
+        for value in [*query_formula.reference_labels, *_element_query_labels(query_text, "formula_query")]
+        if _normalize_element_label(value)
+    }
+    query_structure = _casefold_set(query_formula.structure_tokens)
+    query_context = _casefold_set([
+        *query_formula.symbols,
+        *query_formula.operators,
+        *query_formula.structure_tokens,
+        *query_formula.context_terms,
+        *_sparse_query_tokens(query_formula.normalized_latex),
+        *_sparse_query_tokens(query_text),
+    ])
+
+    chunk_symbols = _casefold_set([
+        *chunk_formula.symbols,
+        *_metadata_text_values(chunk.metadata.get("formula_symbols")),
+    ])
+    chunk_operators = _casefold_set([
+        *chunk_formula.operators,
+        *_metadata_text_values(chunk.metadata.get("formula_operators")),
+    ])
+    chunk_labels = {
+        _normalize_element_label(value)
+        for value in [
+            *chunk_formula.reference_labels,
+            *_metadata_text_values(chunk.metadata.get("formula_reference_labels")),
+            *_metadata_text_values(chunk.metadata.get("reference_labels")),
+            str(chunk.metadata.get("equation_id") or ""),
+            str(chunk.metadata.get("equation_label") or ""),
+            str(chunk.metadata.get("equation_number") or ""),
+            str(chunk.metadata.get("element_label") or ""),
+        ]
+        if _normalize_element_label(value)
+    }
+    chunk_structure = _casefold_set([
+        *chunk_formula.structure_tokens,
+        *_metadata_text_values(chunk.metadata.get("formula_structure_tokens")),
+    ])
+    chunk_context = _casefold_set([
+        *chunk_formula.symbols,
+        *chunk_formula.operators,
+        *chunk_formula.structure_tokens,
+        *_sparse_query_tokens(chunk_formula.normalized_latex),
+        *chunk_formula.context_terms,
+        *_metadata_text_values(chunk.metadata.get("formula_context_terms")),
+        *_sparse_query_tokens(chunk.formula_description),
+        *_sparse_query_tokens(_metadata_join(chunk.metadata.get("formula_referenced_text"))),
+        *_sparse_query_tokens(chunk.content),
+    ])
+
+    symbol_score = _overlap_score(query_symbols, chunk_symbols)
+    operator_score = max(
+        _overlap_score(query_operators, chunk_operators),
+        _overlap_score(query_context, chunk_operators),
+    )
+    label_score = _overlap_score(query_labels, chunk_labels)
+    structure_score = _overlap_score(query_structure, chunk_structure)
+    context_score = _overlap_score(query_context, chunk_context)
+    weighted = weighted_component_score(
+        {
+            "symbol": symbol_score,
+            "operator": operator_score,
+            "label": label_score,
+            "structure": structure_score,
+            "context": context_score,
+        },
+        {
+            "symbol": 0.25,
+            "operator": 0.20,
+            "label": 0.30,
+            "structure": 0.10,
+            "context": 0.15,
+        },
+    )
+    sparse_score = max(weighted, label_score, (symbol_score + operator_score) / 2.0)
+    if sparse_score <= 0.0:
+        return _FormulaSparseScores()
+    return _FormulaSparseScores(
+        symbol_score=_round_score(symbol_score),
+        operator_score=_round_score(operator_score),
+        label_score=_round_score(label_score),
+        structure_score=_round_score(structure_score),
+        context_score=_round_score(context_score),
+        sparse_score=_round_score(_clamp_score(sparse_score)),
+        strategy="deterministic_formula_overlap",
+    )
+
+
+def _formula_metadata_for_chunk(chunk: PaperChunk) -> FormulaRetrievalMetadata:
+    formula_latex = chunk.formula_latex or (chunk.content if _is_formula_chunk(chunk) else "")
+    return normalize_formula_metadata(
+        formula_latex,
+        formula_description=chunk.formula_description,
+        content=chunk.content,
+        metadata=chunk.metadata,
+    )
+
+
+def _chunk_has_formula_context(chunk: PaperChunk) -> bool:
+    metadata = chunk.metadata
+    return bool(
+        metadata.get("formula_referenced_text")
+        or metadata.get("formula_symbols")
+        or metadata.get("formula_operators")
+        or metadata.get("formula_reference_labels")
+        or metadata.get("formula_context_terms")
+        or metadata.get("formula_chunk_id")
+        or metadata.get("linked_formula_chunk_id")
+    )
+
+
+def _overlap_score(query_terms: set[str], candidate_terms: set[str]) -> float:
+    if not query_terms or not candidate_terms:
+        return 0.0
+    return _clamp_score(len(query_terms & candidate_terms) / len(query_terms))
+
+
+def _casefold_set(values: Iterable[Any]) -> set[str]:
+    return {
+        str(value).casefold().strip()
+        for value in values
+        if str(value or "").strip()
+    }
+
+
+def _metadata_text_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        out: list[str] = []
+        for item in value.values():
+            out.extend(_metadata_text_values(item))
+        return out
+    if isinstance(value, (list, tuple, set)):
+        out = []
+        for item in value:
+            out.extend(_metadata_text_values(item))
+        return out
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _metadata_join(value: Any) -> str:
+    return " ".join(_metadata_text_values(value))
 
 
 def _sparse_query_tokens(text: str) -> list[str]:
@@ -2860,6 +3195,7 @@ __all__ = [
     "LIGHTWEIGHT_FIELD_RERANK_INTENTS",
     "NEWS_PAPER_RAG_POLICY_ENV",
     "PAPER_BLIND_SEMANTIC_RAG_V1_POLICY",
+    "PAPER_FORMULA_RAG_V1_POLICY",
     "PAPER_HYBRID_RRF_RAG_V1_POLICY",
     "PAPER_VISUAL_RAG_TUNED_POLICY",
     "ResearchRetriever",

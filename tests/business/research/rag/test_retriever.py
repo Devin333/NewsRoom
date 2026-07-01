@@ -12,6 +12,7 @@ from business.research.rag.retrieval.paper_retriever import (
     LIGHTWEIGHT_FIELD_RERANK_INTENTS,
     NEWS_PAPER_RAG_POLICY_ENV,
     PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
+    PAPER_FORMULA_RAG_V1_POLICY,
     PAPER_HYBRID_RRF_RAG_V1_POLICY,
     PAPER_VISUAL_RAG_TUNED_POLICY,
     ResearchRetriever,
@@ -500,6 +501,131 @@ def test_hybrid_policy_uses_sparse_rrf_to_recall_exact_table_terms():
     assert "sparse" in " ".join(result.child_chunks[0].metadata["text_rrf_channels"])
 
 
+def test_formula_policy_uses_formula_sparse_rrf_to_recall_symbol_operator_match():
+    weak = _chunk(
+        "eq-weak",
+        chunk_type="formula",
+        content="[Equation 1]\nLaTeX:\nE = mc^2",
+    ).model_copy(update={"has_formula": True, "formula_latex": "E = mc^2"})
+    strong = _chunk(
+        "eq-attn",
+        chunk_type="formula",
+        content="[Equation 2]\nLaTeX:\n\\operatorname{Attention}(Q,K,V)",
+        metadata={"reference_labels": ["2"], "equation_id": "eq:attn"},
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": r"\operatorname{Attention}(Q,K,V)",
+        "formula_description": "Attention computes query key value scores.",
+    })
+    store = _ScriptedChunkStore(
+        [weak, strong],
+        search_order=["eq-weak"],
+    )
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_FORMULA_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Attention Q K V equation", limit=2)
+    )
+
+    assert result.metadata["formula_sparse_enabled"] is True
+    assert result.metadata["formula_sparse_recalled"] >= 1
+    assert result.child_chunks[0].chunk_id == "eq-attn"
+    assert result.child_chunks[0].metadata["formula_sparse_hit"] is True
+    assert result.child_chunks[0].metadata["formula_symbol_score"] > 0.0
+    assert result.child_chunks[0].metadata["formula_operator_score"] > 0.0
+    assert result.child_chunks[0].metadata["formula_sparse_boost"] > 0.0
+
+
+def test_formula_policy_uses_formula_label_sparse_match():
+    wrong = _chunk(
+        "eq-1",
+        chunk_type="formula",
+        content="[Equation 1]\nLaTeX:\nE = mc^2",
+        metadata={"reference_labels": ["1"]},
+    ).model_copy(update={"has_formula": True, "formula_latex": "E = mc^2"})
+    exact = _chunk(
+        "eq-7",
+        chunk_type="formula",
+        content="[Equation 7]\nLaTeX:\nL = x + y",
+        metadata={"reference_labels": ["7"], "equation_id": "eq:loss"},
+    ).model_copy(update={"has_formula": True, "formula_latex": "L = x + y"})
+    store = _ScriptedChunkStore([wrong, exact], search_order=["eq-1"])
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_FORMULA_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Equation 7 mean?", limit=2)
+    )
+
+    assert result.child_chunks[0].chunk_id == "eq-7"
+    assert result.child_chunks[0].metadata["formula_label_score"] == 1.0
+    assert result.child_chunks[0].metadata["element_label_match"] is True
+
+
+def test_formula_policy_keeps_paragraphs_out_of_primary_formula_candidate_ranking():
+    paragraph = _chunk(
+        "para-noisy",
+        chunk_type="paragraph",
+        content="This paragraph repeats Attention Q K V equation many times.",
+    )
+    formula = _chunk(
+        "eq-attn",
+        chunk_type="formula",
+        content="[Equation 2]\nLaTeX:\n\\operatorname{Attention}(Q,K,V)",
+        metadata={"reference_labels": ["2"]},
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": r"\operatorname{Attention}(Q,K,V)",
+    })
+    store = _ScriptedChunkStore(
+        [paragraph, formula],
+        search_order=["para-noisy", "eq-attn"],
+    )
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_FORMULA_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does the Attention Q K V equation mean?", limit=2)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["eq-attn"]
+    text_calls = [call for call in store.calls if call["filters"] is not None]
+    assert {"chunk_type": "formula"} in [call["filters"] for call in text_calls]
+    assert {"has_formula": True} not in [call["filters"] for call in text_calls]
+    assert {"chunk_type": "paragraph"} not in [call["filters"] for call in text_calls]
+
+
+def test_formula_policy_matches_latex_command_tokens_from_natural_language_question():
+    weak = _chunk(
+        "eq-weak",
+        chunk_type="formula",
+        content="[Equation 1]\nLaTeX:\nx = y",
+    ).model_copy(update={"has_formula": True, "formula_latex": "x = y"})
+    strong = _chunk(
+        "eq-command",
+        chunk_type="formula",
+        content="[Equation 2]\nLaTeX:\n\\Omega \\mapsto \\partial_x f \\forall x",
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": r"\Omega \mapsto \partial_x f \forall x",
+    })
+    store = _ScriptedChunkStore(
+        [weak, strong],
+        search_order=["eq-weak"],
+    )
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_FORMULA_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(
+            paper_id="p1",
+            question="How does the paper define the relation for Omega, mapsto, partial, and forall?",
+            limit=2,
+        )
+    )
+
+    assert result.child_chunks[0].chunk_id == "eq-command"
+    assert result.child_chunks[0].metadata["formula_context_score"] > 0.0
+    assert result.child_chunks[0].metadata["formula_sparse_boost"] > 0.0
+
+
 def test_element_label_score_boosts_exact_equation_reference():
     weak = _chunk(
         "eq-1",
@@ -563,6 +689,40 @@ def test_formula_hit_expands_referenced_explanation_context():
     assert set(ref_by_id) == {"para-explain", "para-parent"}
     assert ref_by_id["para-explain"].metadata["expansion_reason"] == "formula_body_reference"
     assert ref_by_id["para-parent"].metadata["expansion_reason"] == "formula_parent_context"
+
+
+def test_formula_policy_adds_reverse_linked_explanation_as_ref_context():
+    formula = _chunk(
+        "eq-attn",
+        chunk_type="formula",
+        content="[Equation 2]\nLaTeX:\n\\operatorname{Attention}(Q,K,V)",
+        metadata={"reference_labels": ["2"], "source_locator": "paper://p1/pdf#page=2"},
+    ).model_copy(update={
+        "has_formula": True,
+        "formula_latex": r"\operatorname{Attention}(Q,K,V)",
+    })
+    explanation = _chunk(
+        "para-explain",
+        chunk_type="paragraph",
+        content="Equation 2 means attention computes query key value scores.",
+        metadata={"formula_chunk_id": "eq-attn"},
+    )
+    store = _ScriptedChunkStore(
+        [formula, explanation],
+        search_order=["para-explain"],
+    )
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_FORMULA_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="What does Equation 2 mean?", limit=1)
+    )
+
+    assert [chunk.chunk_id for chunk in result.child_chunks] == ["eq-attn"]
+    ref_by_id = {chunk.chunk_id: chunk for chunk in result.ref_chunks}
+    assert "para-explain" in ref_by_id
+    assert ref_by_id["para-explain"].metadata["expansion_reason"] == "formula_reverse_context"
+    assert ref_by_id["para-explain"].metadata["expanded_from_chunk_id"] == "eq-attn"
+    assert result.metadata["formula_context_returned"] == 1
 
 
 def test_field_score_boosts_abstract_for_contribution_query():
@@ -1002,6 +1162,26 @@ def test_build_retrieval_policy_hybrid_rrf_enables_sparse_multi_query_and_rerank
     assert policy.rrf_k == 60
     assert policy.sparse_search_limit_multiplier == 4
     assert retrieval_policy_enables_lightweight_reranker(PAPER_HYBRID_RRF_RAG_V1_POLICY) is True
+
+
+def test_build_retrieval_policy_formula_rag_enables_formula_sparse_policy():
+    policy = build_retrieval_policy(PAPER_FORMULA_RAG_V1_POLICY)
+
+    assert policy.name == PAPER_FORMULA_RAG_V1_POLICY
+    assert policy.sparse_lexical_enabled is True
+    assert policy.hybrid_rrf_enabled is True
+    assert policy.multi_query_enabled is True
+    assert policy.formula_sparse_enabled is True
+    assert policy.formula_sparse_boost == pytest.approx(0.20)
+    assert policy.max_formula_context_chunks == 4
+    assert policy.field_score_weights_for("formula_query") == {
+        "title": 0.05,
+        "abstract": 0.0,
+        "caption": 0.0,
+        "equation": 0.75,
+        "body": 0.2,
+    }
+    assert retrieval_policy_enables_lightweight_reranker(PAPER_FORMULA_RAG_V1_POLICY) is True
 
 
 def test_build_retrieval_policy_from_env_reads_policy_name():

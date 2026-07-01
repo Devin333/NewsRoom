@@ -12,6 +12,7 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     GoldEvidenceJudgeReport,
     _evidence_preview,
     _evidence_pack_required_context_ids,
+    _gold_fix_record,
     _gold_judge_sample,
     _judge_prompt,
     _hydrate_retrieval_with_evidence_pack,
@@ -890,6 +891,7 @@ def test_run_benchmark_suite_writes_gold_fix_artifacts_for_judge_findings(tmp_pa
     ]
     manifest = json.loads((output_dir / "gold_fix_manifest.json").read_text(encoding="utf-8"))
     report_payload = json.loads((output_dir / "benchmark_suite_report.json").read_text(encoding="utf-8"))
+    candidate_report = report_payload["candidate_test_report"]
 
     assert {record["status"] for record in failure_records} == {"fail", "error"}
     assert [record["status"] for record in warning_records] == ["warning"]
@@ -900,10 +902,39 @@ def test_run_benchmark_suite_writes_gold_fix_artifacts_for_judge_findings(tmp_pa
     assert manifest["action_counts"]
     assert report_payload["gold_quality"]["judge_failed"] == 1
     assert report_payload["gold_quality"]["judge_error"] == 1
+    assert (output_dir / "test" / "candidate" / "formula_retrieval_diagnostics.json").exists()
+    assert (output_dir / "test" / "candidate" / "formula_retrieval_failures.jsonl").exists()
+    assert "formula_retrieval_diagnostics" in candidate_report
     assert any(
         check["check_id"] == "gold_judge_quality" and check["status"] == "fail"
         for check in report_payload["policy_promotion_checklist"]["checks"]
     )
+
+
+def test_gold_fix_record_preserves_formula_gold_judge_reason() -> None:
+    item = GoldEvidenceJudgeItem(
+        question="How is Equation 2 explained?",
+        paper_id="p1",
+        qa_type="formula_explanation_qa",
+        status="fail",
+        reason="missing formula explanation context",
+        supported=False,
+        confidence=0.2,
+        question_clear=True,
+        gold_evidence_complete=False,
+        equivalent_gold_needed=True,
+        bad_gold_reason="formula_context_missing",
+        gold_chunk_ids=("eq-2",),
+        equivalent_gold_chunk_ids=("eq-2", "para-explain"),
+    )
+
+    record = _gold_fix_record(item)
+
+    assert record["question_clear"] is True
+    assert record["gold_evidence_complete"] is False
+    assert record["equivalent_gold_needed"] is True
+    assert record["bad_gold_reason"] == "formula_context_missing"
+    assert record["suggested_action"] == "add_context_gold"
 
 
 def test_benchmark_matrix_loads_manifest_and_requires_real_dataset_dirs(tmp_path: Path) -> None:
