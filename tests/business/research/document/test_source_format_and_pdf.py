@@ -20,6 +20,7 @@ from business.research.domain.document import (
     ResearchTable,
 )
 from business.research.document.arxiv_parser import ArxivDocumentParser
+from business.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
 from business.research.document.pdf_compiler import (
     FigureImageRef,
     PageTextEvidence,
@@ -36,6 +37,7 @@ from business.research.document.pdf_compiler import (
     _run_nougat,
     _with_nearest_caption_region,
 )
+from business.research.document.pdf_parser_backend import pdf_parser_backend_name
 from business.research.document.pdf_visual_sidecar import merge_pdf_visual_sidecar
 from business.research.document.source_format import SourceFormat, detect_source_format
 
@@ -68,6 +70,14 @@ def _make_latex_targz_with_files(tex_content: str, files: dict[str, bytes]) -> b
             file_info.size = len(content)
             tf.addfile(file_info, io.BytesIO(content))
     return buf.getvalue()
+
+
+def _write_mineru_content(output_dir: Path, payload: list[dict[str, object]]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "content_list.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 _SAMPLE_MMD = r"""
@@ -1249,6 +1259,92 @@ def test_dispatcher_routes_gzipped_pdf(mock_nougat):
     gzipped = gzip.compress(pdf_bytes)
     doc = ArxivDocumentParser().parse("2501_33333", gzipped)
     assert doc.metadata.get("parse_source") == "nougat"
+
+
+def test_mineru_pdf_parser_converts_content_list(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
+
+    def fake_run(command, *, timeout_seconds):
+        assert command[:5] == ["docker", "run", "--rm", "--gpus", "all"]
+        output_dir = Path(command[command.index("-v", command.index("-v") + 1) + 1].rsplit(":", 1)[0])
+        image_path = output_dir / "figure.png"
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(b"png")
+        _write_mineru_content(
+            output_dir,
+            [
+                {"type": "text", "text_level": 1, "text": "Introduction", "page_idx": 0},
+                {"type": "text", "text": "This paper studies parser backends.", "page_idx": 0},
+                {"type": "equation", "latex": "E=mc^2", "page_idx": 0, "bbox": [100, 100, 300, 140]},
+                {
+                    "type": "image",
+                    "img_path": "figure.png",
+                    "caption": ["Figure 1: Overview."],
+                    "page_idx": 0,
+                    "bbox": [100, 200, 500, 600],
+                },
+                {
+                    "type": "table",
+                    "caption": ["Table 1: Scores."],
+                    "page_idx": 0,
+                    "bbox": [100, 650, 500, 900],
+                    "rows": [["Model", "Score"], ["baseline", "0.8"]],
+                },
+            ],
+        )
+
+    monkeypatch.setattr(
+        "business.research.document.mineru_pdf_parser.run_docker_command",
+        fake_run,
+    )
+    pdf_bytes = _make_pdf(["Introduction\nThis paper studies parser backends."])
+
+    doc = MinerUPdfDocumentParser().parse("2501_mineru", pdf_bytes)
+
+    assert doc.metadata["parse_source"] == "mineru"
+    assert doc.metadata["parser_backend"] == "mineru"
+    assert len(doc.sections) == 1
+    assert doc.sections[0].title == "Introduction"
+    assert len(doc.equations) == 1
+    assert doc.equations[0].metadata["source_locator"].startswith("arxiv://2501_mineru/pdf#page=1")
+    assert len(doc.figures) == 1
+    assert Path(doc.figures[0].image_ref).exists()
+    assert len(doc.tables) == 1
+    assert doc.tables[0].columns == ["Model", "Score"]
+    assert doc.tables[0].rows == [{"Model": "baseline", "Score": "0.8"}]
+    assert doc.metadata["parse_quality"]["tables"]["with_rows"] == 1
+
+
+def test_dispatcher_can_select_mineru_backend(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+
+    def fake_run(command, *, timeout_seconds):
+        output_dir = Path(command[command.index("-v", command.index("-v") + 1) + 1].rsplit(":", 1)[0])
+        _write_mineru_content(
+            output_dir,
+            [
+                {"type": "text", "text_level": 1, "text": "Abstract", "page_idx": 0},
+                {"type": "text", "text": "Parsed by MinerU.", "page_idx": 0},
+            ],
+        )
+
+    monkeypatch.setattr(
+        "business.research.document.mineru_pdf_parser.run_docker_command",
+        fake_run,
+    )
+
+    doc = ArxivDocumentParser(pdf_parser_backend="mineru").parse(
+        "2501_dispatch_mineru",
+        _make_pdf(["Parsed by MinerU."]),
+    )
+
+    assert doc.metadata["parse_source"] == "mineru"
+
+
+def test_pdf_parser_backend_name_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="NEWSROOM_PDF_PARSER_BACKEND"):
+        pdf_parser_backend_name("marker")
 
 
 def test_dispatcher_routes_latex():

@@ -182,3 +182,29 @@ def test_ingest_benchmark_papers_merges_pdf_sidecar_visuals(monkeypatch, tmp_pat
     assert payload["figures"][0]["image_ref"] == "figures/fig1.png"
     assert payload["tables"][0]["metadata"]["image_ref"] == "tables/table1.png"
     assert (tmp_path / "papers" / "1706.03762" / "1706.03762_original.pdf").exists()
+
+
+def test_ingest_benchmark_papers_passes_pdf_parser_backend(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, str | None] = {}
+
+    class FakeArxivDocumentParser:
+        def __init__(self, *, pdf_parser_backend: str | None = None):
+            captured["backend"] = pdf_parser_backend
+
+        def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
+            return _FakeParser().parse(paper_id, source_bytes)
+
+    monkeypatch.setattr(
+        "business.research.rag.evaluation.paper_benchmark_ingest.ArxivDocumentParser",
+        FakeArxivDocumentParser,
+    )
+
+    report = ingest_benchmark_papers(
+        ["1706.03762"],
+        papers_dir=tmp_path / "papers",
+        fetcher=_FakeFetcher(),
+        pdf_parser_backend="mineru",
+    )
+
+    assert report.succeeded == 1
+    assert captured["backend"] == "mineru"

@@ -134,6 +134,7 @@ def ingest_benchmark_papers(
     manifest_path: Path | None = None,
     fetcher: SourcePackageFetcher | None = None,
     parser: DocumentParser | None = None,
+    pdf_parser_backend: str | None = None,
     with_pdf_sidecar: bool = False,
     pdf_sidecar_mode: str = "missing",
     merge_pdf_visuals: bool = True,
@@ -144,7 +145,7 @@ def ingest_benchmark_papers(
     if max_papers is not None:
         ids = ids[:max(0, max_papers)]
     fetcher = fetcher or ArxivSourceConnector()
-    parser = parser or ArxivDocumentParser()
+    parser = parser or ArxivDocumentParser(pdf_parser_backend=pdf_parser_backend)
 
     items: list[PaperIngestItem] = []
     for arxiv_id in ids:
@@ -241,6 +242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         with_pdf_sidecar=args.with_pdf_sidecar,
         pdf_sidecar_mode=args.pdf_sidecar_mode,
         merge_pdf_visuals=not args.no_merge_pdf_visuals,
+        pdf_parser_backend=args.pdf_parser_backend,
     )
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), end="\n")
     return 0 if report.failed == 0 else 1
@@ -257,6 +259,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", default=".newsroom/eval/paper-rag-ingest-manifest.json")
     parser.add_argument("--max-papers", type=int)
     parser.add_argument("--force", action="store_true", help="Re-parse papers even when research_document.json exists.")
+    parser.add_argument(
+        "--pdf-parser-backend",
+        choices=("nougat", "mineru"),
+        default=None,
+        help="PDF parser backend for PDF source packages. Defaults to NEWSROOM_PDF_PARSER_BACKEND or nougat.",
+    )
     parser.add_argument(
         "--with-pdf-sidecar",
         action="store_true",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from business.research.domain.document import ResearchDocument
 from business.research.document.latex_compiler import LatexSourceParser
 from business.research.document.pdf_compiler import PdfDocumentParser
+from business.research.document.pdf_parser_backend import build_pdf_document_parser
 from business.research.document.source_format import SourceFormat, detect_source_format
 
 
@@ -19,9 +20,10 @@ class ArxivDocumentParser:
         self,
         latex_parser: LatexSourceParser | None = None,
         pdf_parser: PdfDocumentParser | None = None,
+        pdf_parser_backend: str | None = None,
     ) -> None:
         self._latex = latex_parser or LatexSourceParser()
-        self._pdf = pdf_parser or PdfDocumentParser()
+        self._pdf = pdf_parser or build_pdf_document_parser(pdf_parser_backend)
 
     def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
         fmt, canonical = detect_source_format(source_bytes)
