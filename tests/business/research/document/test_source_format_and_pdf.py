@@ -80,6 +80,27 @@ def _write_mineru_content(output_dir: Path, payload: list[dict[str, object]]) ->
     )
 
 
+def _write_mineru_named_content(output_dir: Path, name: str, payload: list[dict[str, object]]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    nested = output_dir / "input" / "auto"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / name).write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _docker_mount_host_path(command: list[str], container_path: str) -> Path:
+    for index, part in enumerate(command):
+        if part != "-v" or index + 1 >= len(command):
+            continue
+        mount = command[index + 1]
+        suffix = f":{container_path}"
+        if mount.endswith(suffix):
+            return Path(mount[: -len(suffix)])
+    raise AssertionError(f"missing docker mount for {container_path}")
+
+
 _SAMPLE_MMD = r"""
 This is the preamble abstract text.
 
@@ -1264,10 +1285,16 @@ def test_dispatcher_routes_gzipped_pdf(mock_nougat):
 def test_mineru_pdf_parser_converts_content_list(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
     monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
+    monkeypatch.setenv("NEWSROOM_MINERU_MODEL_SOURCE", "modelscope")
+    monkeypatch.setenv("NEWSROOM_MINERU_CACHE_DIR", str(tmp_path / "mineru-cache"))
+    monkeypatch.setenv("NEWSROOM_MINERU_CONFIG_DIR", str(tmp_path / "mineru-config"))
 
     def fake_run(command, *, timeout_seconds):
         assert command[:5] == ["docker", "run", "--rm", "--gpus", "all"]
-        output_dir = Path(command[command.index("-v", command.index("-v") + 1) + 1].rsplit(":", 1)[0])
+        assert "MINERU_MODEL_SOURCE=modelscope" in command
+        assert any(part.endswith("mineru-cache:/root/.cache") for part in command)
+        assert any(part.endswith("mineru-config:/root") for part in command)
+        output_dir = _docker_mount_host_path(command, "/output")
         image_path = output_dir / "figure.png"
         image_path.parent.mkdir(parents=True, exist_ok=True)
         image_path.write_bytes(b"png")
@@ -1280,7 +1307,7 @@ def test_mineru_pdf_parser_converts_content_list(monkeypatch, tmp_path):
                 {
                     "type": "image",
                     "img_path": "figure.png",
-                    "caption": ["Figure 1: Overview."],
+                    "image_caption": ["Figure 1: Overview."],
                     "page_idx": 0,
                     "bbox": [100, 200, 500, 600],
                 },
@@ -1289,8 +1316,10 @@ def test_mineru_pdf_parser_converts_content_list(monkeypatch, tmp_path):
                     "caption": ["Table 1: Scores."],
                     "page_idx": 0,
                     "bbox": [100, 650, 500, 900],
-                    "rows": [["Model", "Score"], ["baseline", "0.8"]],
+                    "table_body": "<table><tr><td>Model</td><td>Score</td></tr>"
+                    "<tr><td>baseline</td><td>0.8</td></tr></table>",
                 },
+                {"type": "page_number", "text": "1", "page_idx": 0},
             ],
         )
 
@@ -1320,7 +1349,7 @@ def test_dispatcher_can_select_mineru_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
 
     def fake_run(command, *, timeout_seconds):
-        output_dir = Path(command[command.index("-v", command.index("-v") + 1) + 1].rsplit(":", 1)[0])
+        output_dir = _docker_mount_host_path(command, "/output")
         _write_mineru_content(
             output_dir,
             [
@@ -1340,6 +1369,34 @@ def test_dispatcher_can_select_mineru_backend(monkeypatch, tmp_path):
     )
 
     assert doc.metadata["parse_source"] == "mineru"
+
+
+def test_mineru_pdf_parser_reads_named_content_list(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+
+    def fake_run(command, *, timeout_seconds):
+        output_dir = _docker_mount_host_path(command, "/output")
+        _write_mineru_named_content(
+            output_dir,
+            "input_content_list.json",
+            [
+                {"type": "text", "text_level": 1, "text": "Abstract", "page_idx": 0},
+                {"type": "text", "text": "Named output works.", "page_idx": 0},
+            ],
+        )
+
+    monkeypatch.setattr(
+        "business.research.document.mineru_pdf_parser.run_docker_command",
+        fake_run,
+    )
+
+    doc = MinerUPdfDocumentParser().parse(
+        "2501_mineru_named_content",
+        _make_pdf(["Named output works."]),
+    )
+
+    assert doc.metadata["parse_source"] == "mineru"
+    assert doc.sections[0].text == "Named output works."
 
 
 def test_pdf_parser_backend_name_rejects_unknown_backend():

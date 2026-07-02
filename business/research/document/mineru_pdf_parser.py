@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from hashlib import sha256
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -57,13 +59,34 @@ class MinerUPdfDocumentParser:
 def _mineru_command(*, input_dir: Path, output_dir: Path) -> list[str]:
     image = os.environ.get("NEWSROOM_MINERU_DOCKER_IMAGE", "mineru:latest").strip()
     extra_args = _split_env_args(os.environ.get("NEWSROOM_MINERU_DOCKER_ARGS", ""))
+    model_source = os.environ.get("NEWSROOM_MINERU_MODEL_SOURCE", "modelscope").strip() or "modelscope"
+    cache_dir = os.environ.get("NEWSROOM_MINERU_CACHE_DIR", "").strip()
+    config_dir = os.environ.get("NEWSROOM_MINERU_CONFIG_DIR", "").strip()
     return [
         "docker",
         "run",
         "--rm",
         "--gpus",
         "all",
+        "-e",
+        f"MINERU_MODEL_SOURCE={model_source}",
         *extra_args,
+        *(
+            [
+                "-v",
+                f"{Path(cache_dir).resolve()}:/root/.cache",
+            ]
+            if cache_dir
+            else []
+        ),
+        *(
+            [
+                "-v",
+                f"{Path(config_dir).resolve()}:/root",
+            ]
+            if config_dir
+            else []
+        ),
         "-v",
         f"{input_dir.resolve()}:/input",
         "-v",
@@ -104,7 +127,7 @@ def _document_from_mineru_output(
     duration_seconds: float,
     command: list[str],
 ) -> ResearchDocument:
-    content_path = first_existing_file(output_dir, ("content_list.json",))
+    content_path = _mineru_content_list_path(output_dir)
     if content_path is None:
         raise FileNotFoundError(f"MinerU did not produce content_list.json under {output_dir}")
     blocks = _load_json_list(content_path)
@@ -229,6 +252,8 @@ def _document_from_mineru_output(
                 },
             ))
             continue
+        if kind in _IGNORED_BLOCK_KINDS:
+            continue
         warnings.append(f"block_{index}: unsupported MinerU type {kind!r}")
 
     flush_section()
@@ -265,6 +290,14 @@ def _load_json_list(path: Path) -> list[Any]:
     raise ValueError(f"MinerU content file must contain a list: {path}")
 
 
+def _mineru_content_list_path(output_dir: Path) -> Path | None:
+    path = first_existing_file(output_dir, ("content_list.json", "input_content_list.json"))
+    if path is not None:
+        return path
+    matches = sorted(path for path in output_dir.rglob("*_content_list.json") if path.is_file())
+    return matches[0] if matches else None
+
+
 def _block_kind(block: dict[str, Any]) -> str:
     raw = (
         block.get("type")
@@ -275,10 +308,15 @@ def _block_kind(block: dict[str, Any]) -> str:
     )
     value = str(raw).strip().lower().replace("-", "_")
     aliases = {
+        "aside_text": "aside_text",
+        "footer": "footer",
         "inline_equation": "equation",
         "interline_equation": "equation",
         "isolated_formula": "equation",
         "formula": "equation",
+        "list": "list",
+        "page_footnote": "page_footnote",
+        "page_number": "page_number",
         "text": "text",
         "title": "text",
         "image": "image",
@@ -286,6 +324,15 @@ def _block_kind(block: dict[str, Any]) -> str:
         "table": "table",
     }
     return aliases.get(value, value or "unknown")
+
+
+_IGNORED_BLOCK_KINDS = {
+    "aside_text",
+    "footer",
+    "list",
+    "page_footnote",
+    "page_number",
+}
 
 
 def _block_page(block: dict[str, Any]) -> int | None:
@@ -350,6 +397,7 @@ def _block_caption(block: dict[str, Any]) -> str:
     return metadata_text(
         block.get("caption")
         or block.get("img_caption")
+        or block.get("image_caption")
         or block.get("table_caption")
         or block.get("caption_text")
     )
@@ -369,6 +417,10 @@ def _table_rows(block: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]
             matrix = [[metadata_text(cell) for cell in row] for row in rows_value]
             return _matrix_to_rows(matrix)
     html = metadata_text(block.get("table_body") or block.get("html") or block.get("content"))
+    if "<table" in html.lower():
+        columns, rows = _html_table_rows(html)
+        if columns or rows:
+            return columns, rows
     if "|" in html:
         matrix = [
             [cell.strip() for cell in line.strip("|").split("|")]
@@ -377,6 +429,51 @@ def _table_rows(block: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]
         ]
         return _matrix_to_rows(matrix)
     return [], []
+
+
+class _TableHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self._row: list[str] | None = None
+        self._cell_parts: list[str] | None = None
+        self._in_cell = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag == "tr":
+            self._row = []
+            return
+        if tag in {"td", "th"} and self._row is not None:
+            self._cell_parts = []
+            self._in_cell = True
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in {"td", "th"} and self._row is not None and self._cell_parts is not None:
+            self._row.append(_normalize_text(" ".join(self._cell_parts)))
+            self._cell_parts = None
+            self._in_cell = False
+            return
+        if tag == "tr" and self._row is not None:
+            if any(cell for cell in self._row):
+                self.rows.append(self._row)
+            self._row = None
+
+    def handle_data(self, data: str) -> None:
+        if self._in_cell and self._cell_parts is not None:
+            self._cell_parts.append(data)
+
+
+def _html_table_rows(html: str) -> tuple[list[str], list[dict[str, Any]]]:
+    parser = _TableHTMLParser()
+    parser.feed(html)
+    return _matrix_to_rows(parser.rows)
+
+
+def _normalize_text(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", value).strip()
+    return re.sub(r"\s+([,.;:!?])", r"\1", normalized)
 
 
 def _matrix_to_rows(matrix: list[list[str]]) -> tuple[list[str], list[dict[str, Any]]]:

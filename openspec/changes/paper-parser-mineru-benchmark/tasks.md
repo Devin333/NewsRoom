@@ -5,4 +5,4 @@
 - [x] Add tests for MinerU JSON conversion, bbox conversion, backend selection,
       and Docker failure diagnostics.
 - [x] Validate with targeted document/RAG tests and compile check.
-- [ ] Commit only MinerU branch changes.
+- [x] Commit only MinerU branch changes.
