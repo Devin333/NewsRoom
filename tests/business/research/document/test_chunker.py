@@ -658,7 +658,7 @@ def test_structure_detected_flag():
 
 def test_parse_source_propagated():
     doc = _structured_doc()
-    for source in ("latex", "marker", "pymupdf", "nougat"):
+    for source in ("latex", "marker", "pymupdf", "nougat", "mineru"):
         chunks = CHUNKER.chunk(doc, source)  # type: ignore[arg-type]
         assert all(c.parse_source == source for c in chunks)
 

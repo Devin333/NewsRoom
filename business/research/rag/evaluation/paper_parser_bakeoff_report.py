@@ -41,7 +41,9 @@ def build_parser_bakeoff_report(config: ParserBakeoffReportConfig) -> ParserBake
     all_paper_ids: set[str] = set()
     for parser_input in config.inputs:
         documents = _load_documents(parser_input.papers_dir)
-        all_paper_ids.update(doc.get("paper_id", "") for doc in documents if doc.get("paper_id"))
+        all_paper_ids.update(
+            _artifact_paper_id(doc) for doc in documents if _artifact_paper_id(doc)
+        )
         parser_payloads[parser_input.name] = _parser_summary(
             parser_input.name,
             parser_input.papers_dir,
@@ -61,16 +63,27 @@ def build_parser_bakeoff_report(config: ParserBakeoffReportConfig) -> ParserBake
 def _load_documents(papers_dir: Path) -> list[dict[str, Any]]:
     documents: list[dict[str, Any]] = []
     for path in sorted(papers_dir.rglob("research_document.json")):
+        artifact_paper_id = path.parent.name
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             documents.append({
-                "paper_id": path.parent.name,
+                "paper_id": artifact_paper_id,
+                "_artifact_paper_id": artifact_paper_id,
+                "_reported_paper_id": None,
                 "_load_error": f"{type(exc).__name__}: {exc}",
                 "_path": str(path),
             })
             continue
         if isinstance(payload, dict):
+            reported_paper_id = str(payload.get("paper_id") or "")
+            payload["_artifact_paper_id"] = artifact_paper_id
+            payload["_reported_paper_id"] = reported_paper_id
+            if reported_paper_id and reported_paper_id != artifact_paper_id:
+                payload["_paper_id_mismatch"] = {
+                    "artifact_paper_id": artifact_paper_id,
+                    "reported_paper_id": reported_paper_id,
+                }
             payload["_path"] = str(path)
             documents.append(payload)
     return documents
@@ -91,9 +104,15 @@ def _parser_summary(
         "name": name,
         "papers_dir": str(papers_dir),
         "paper_count": len(documents),
+        "paper_ids": [_artifact_paper_id(doc) for doc in documents if _artifact_paper_id(doc)],
         "parser_metrics": parser_metrics,
         "rag_metrics": rag_metrics,
         "load_errors": failed,
+        "paper_id_mismatches": [
+            doc["_paper_id_mismatch"]
+            for doc in documents
+            if isinstance(doc.get("_paper_id_mismatch"), dict)
+        ],
     }
 
 
@@ -212,12 +231,12 @@ def _element_coverage(
 
 
 def _caption_source_locator_coverage(documents: list[dict[str, Any]]) -> float:
-    elements = _visual_elements(documents)
-    with_locator = [
-        item for item in elements
-        if str(item.get("caption") or "").strip() and _source_locator(item)
+    captioned = [
+        item for item in _visual_elements(documents)
+        if str(item.get("caption") or "").strip()
     ]
-    return _safe_div(len(with_locator), len(elements))
+    with_locator = [item for item in captioned if _source_locator(item)]
+    return _safe_div(len(with_locator), len(captioned))
 
 
 def _element_source_locator_coverage(documents: list[dict[str, Any]]) -> float:
@@ -253,6 +272,10 @@ def _source_locator(item: dict[str, Any]) -> str:
 
 def _pdf_rect(item: dict[str, Any]) -> Any:
     return (item.get("metadata") or {}).get("pdf_rect")
+
+
+def _artifact_paper_id(document: dict[str, Any]) -> str:
+    return str(document.get("_artifact_paper_id") or document.get("paper_id") or "")
 
 
 def _recommend(parser_payloads: dict[str, dict[str, Any]]) -> dict[str, Any]:

@@ -78,6 +78,32 @@ def test_build_parser_bakeoff_report_summarizes_parser_artifacts(tmp_path: Path)
     assert "Parser-Level Metrics" in (tmp_path / "report.md").read_text(encoding="utf-8")
 
 
+def test_bakeoff_report_uses_artifact_directory_as_canonical_paper_id(tmp_path: Path) -> None:
+    parser_dir = tmp_path / "papers-marker"
+    _write_doc(
+        parser_dir / "1706.03762" / "research_document.json",
+        paper_id="1706.03762_marker_smoke",
+        sections=[],
+        figures=[],
+        tables=[],
+        equations=[],
+    )
+
+    report = build_parser_bakeoff_report(ParserBakeoffReportConfig(
+        inputs=(ParserArtifactInput("marker", parser_dir),),
+        output_json=tmp_path / "report.json",
+        output_markdown=tmp_path / "report.md",
+    ))
+
+    payload = report.to_dict()
+    assert payload["paper_ids"] == ["1706.03762"]
+    assert payload["parsers"]["marker"]["paper_ids"] == ["1706.03762"]
+    assert payload["parsers"]["marker"]["paper_id_mismatches"] == [{
+        "artifact_paper_id": "1706.03762",
+        "reported_paper_id": "1706.03762_marker_smoke",
+    }]
+
+
 def _write_doc(
     path: Path,
     *,
