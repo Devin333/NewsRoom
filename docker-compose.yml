@@ -10,6 +10,7 @@ services:
       NOUGAT_MODEL: ${NOUGAT_MODEL:-0.1.0-base}
       HF_HOME: /home/app/.cache/huggingface
       TORCH_HOME: /home/app/.cache/torch
+      NLTK_DATA: /home/app/.cache/nltk_data
       HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
       HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
       NEWS_VISUAL_EMBEDDING_ENABLED: ${NEWS_VISUAL_EMBEDDING_ENABLED:-1}
