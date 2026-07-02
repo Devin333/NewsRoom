@@ -609,6 +609,7 @@ class ResearchRetriever:
         route = build_retrieval_route(request.question)
         filters = self._build_filters(route)
         candidate_filters = self._candidate_filters(route, filters)
+        retrieval_degradations: list[dict[str, Any]] = []
 
         # ── 1. vector search (over-fetch for re-ranking) ──────────────────────
         element_query_labels = _element_query_labels(request.question, route.intent)
@@ -623,7 +624,13 @@ class ResearchRetriever:
                 candidate_limit,
                 request.limit * self._policy.citation_claim_overfetch_multiplier,
             )
-        candidates = self._search_text_candidates(request, route, candidate_filters, candidate_limit)
+        candidates = self._search_text_candidates(
+            request,
+            route,
+            candidate_filters,
+            candidate_limit,
+            degradations=retrieval_degradations,
+        )
         n_recalled = len(candidates)
         field_hits = self._search_field_candidates(request, route, candidate_filters)
         candidates = self._merge_field_hits(candidates, field_hits, request.paper_id)
@@ -788,6 +795,7 @@ class ResearchRetriever:
             "field_embedding_score_top": _metadata_extreme(scored, "field_embedding_score", max),
             "field_rerank_top": _metadata_extreme(scored, "field_rerank_score", max),
             "best_matching_fields": _best_matching_fields(scored),
+            "retrieval_degradations": retrieval_degradations,
         }
         metrics.update(parent_metrics)
         logging.getLogger(__name__).info("retrieval %s", metrics)
@@ -858,9 +866,17 @@ class ResearchRetriever:
         route: RetrievalRoute,
         candidate_filters: list[dict[str, Any]],
         limit: int,
+        *,
+        degradations: list[dict[str, Any]],
     ) -> list[tuple[PaperChunk, float]]:
         if self._policy.hybrid_rrf_enabled and intent_allowed(route.intent, _HYBRID_RRF_INTENTS):
-            return self._search_hybrid_text_candidates(request, route, candidate_filters, limit)
+            return self._search_hybrid_text_candidates(
+                request,
+                route,
+                candidate_filters,
+                limit,
+                degradations=degradations,
+            )
         by_id: dict[str, tuple[PaperChunk, float]] = {}
         query_texts = _recall_queries_for_policy(request.question, route.intent, self._policy)
         for filters in candidate_filters:
@@ -884,6 +900,8 @@ class ResearchRetriever:
         route: RetrievalRoute,
         candidate_filters: list[dict[str, Any]],
         limit: int,
+        *,
+        degradations: list[dict[str, Any]],
     ) -> list[tuple[PaperChunk, float]]:
         rankings: list[tuple[str, list[tuple[PaperChunk, float]]]] = []
         query_texts = _recall_queries_for_policy(request.question, route.intent, self._policy)
@@ -911,6 +929,7 @@ class ResearchRetriever:
                         formula_sparse_enabled=(
                             self._policy.formula_sparse_enabled and route.intent == "formula_query"
                         ),
+                        degradations=degradations,
                     )
                     if sparse_hits:
                         rankings.append((f"sparse:{filter_index}:{query_index}", sparse_hits))
@@ -929,9 +948,18 @@ class ResearchRetriever:
         filters: dict[str, Any],
         limit: int,
         formula_sparse_enabled: bool = False,
+        degradations: list[dict[str, Any]] | None = None,
     ) -> list[tuple[PaperChunk, float]]:
-        chunks = _list_store_chunks(self._store, paper_id)
+        chunks = self._store.list_chunks(paper_id)
         if not chunks:
+            if degradations is not None:
+                _append_degradation_once(
+                    degradations,
+                    code="sparse_inventory_empty",
+                    stage="sparse_lexical",
+                    paper_id=paper_id,
+                    reason="ChunkStorePort.list_chunks returned no chunks for sparse lexical recall.",
+                )
             return []
         scored: list[tuple[PaperChunk, float]] = []
         for chunk in chunks:
@@ -1973,7 +2001,7 @@ class ResearchRetriever:
     ) -> list[tuple[str, str, str]]:
         refs = list(_formula_context_refs(child))
         formula_id = child.chunk_id
-        for candidate in _list_store_chunks(self._store, paper_id):
+        for candidate in self._store.list_chunks(paper_id):
             if candidate.chunk_id == formula_id or candidate.paper_id != paper_id:
                 continue
             for ref_id, _reason, edge in _formula_reverse_context_refs(candidate):
@@ -2577,24 +2605,22 @@ def _merge_chunk_metadata(base: PaperChunk, incoming: PaperChunk) -> PaperChunk:
     return base.model_copy(update={"metadata": metadata})
 
 
-def _list_store_chunks(store: Any, paper_id: str) -> list[PaperChunk]:
-    list_chunks = getattr(store, "list_chunks", None)
-    if callable(list_chunks):
-        try:
-            return list(list_chunks(paper_id))
-        except TypeError:
-            return list(list_chunks(document_id=paper_id))
-        except Exception:
-            logging.getLogger(__name__).warning("chunk store list_chunks failed", exc_info=True)
-            return []
-    for attr in ("chunks", "_chunks"):
-        raw = getattr(store, attr, None)
-        if isinstance(raw, dict):
-            return [
-                chunk for chunk in raw.values()
-                if isinstance(chunk, PaperChunk) and chunk.paper_id == paper_id
-            ]
-    return []
+def _append_degradation_once(
+    degradations: list[dict[str, Any]],
+    *,
+    code: str,
+    stage: str,
+    paper_id: str,
+    reason: str,
+) -> None:
+    if any(item.get("code") == code and item.get("stage") == stage for item in degradations):
+        return
+    degradations.append({
+        "code": code,
+        "stage": stage,
+        "paper_id": paper_id,
+        "reason": reason,
+    })
 
 
 def _chunk_matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:

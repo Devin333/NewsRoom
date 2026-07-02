@@ -80,6 +80,9 @@ class PaperChunkStoreAdapter:
 
     # ── ChunkIndexerPort ───────────────────────────────────────────────────────
 
+    def list_chunks(self, paper_id: str) -> list[PaperChunk]:
+        return [c for p in self._store.list_paper_payloads(paper_id) if (c := _payload_to_chunk(p)) is not None]
+
     def index_chunks(self, chunks: list[PaperChunk]) -> None:
         self._store.index_payloads([_chunk_to_payload(c) for c in chunks])
 

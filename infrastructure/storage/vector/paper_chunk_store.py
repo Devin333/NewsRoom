@@ -93,6 +93,12 @@ class PaperChunkStore:
         result = self._store.get_document(PAPER_CHUNKS_COLLECTION, chunk_id)
         return dict(result.payload) if result else None
 
+    def list_paper_payloads(self, paper_id: str) -> list[dict[str, Any]]:
+        return self._store.list_payloads(
+            PAPER_CHUNKS_COLLECTION,
+            filters={"paper_id": paper_id},
+        )
+
 
 def _payload_to_doc(payload: dict[str, Any]) -> VectorDocument:
     return VectorDocument(

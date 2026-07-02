@@ -60,6 +60,19 @@ class InMemoryVectorStore:
             return None
         return VectorSearchResult.from_payload(score=1.0, payload=doc.to_payload())
 
+    def list_payloads(
+        self,
+        collection: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        batch_size: int = 256,
+    ) -> list[dict[str, Any]]:
+        return [
+            doc.to_payload()
+            for doc in self._collections.get(collection, {}).values()
+            if _matches_filters(doc, filters or {})
+        ]
+
     def delete_by_filter(self, collection: str, filters: dict[str, Any]) -> int:
         docs = self._collections.get(collection, {})
         matching_ids = [
