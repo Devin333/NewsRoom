@@ -37,3 +37,22 @@ directly and parses each PDF with the explicitly selected PDF parser backend.
 - **AND** it writes per-paper `research_document.json` artifacts under the
   configured papers directory
 - **AND** it writes a manifest containing success, skip, and failure counts
+
+### Requirement: PDF URL parser bake-off ingest
+
+The system SHALL provide a parser bake-off ingest path that fetches arbitrary
+PDF URLs, including ACL Anthology PDF URLs, and parses each PDF with the
+explicitly selected PDF parser backend.
+
+#### Scenario: Run ACL Anthology parser comparison
+
+- **WHEN** parser bake-off URL ingest is run with `--acl-long-year 2025`
+  and an explicit `--pdf-parser-backend`
+- **THEN** it fetches the corresponding ACL Anthology PDF URLs from
+  `https://aclanthology.org/`
+- **AND** it writes per-paper `research_document.json` artifacts under the
+  configured papers directory
+- **AND** it rewrites document source locators from parser-local arXiv-style
+  references to `pdf-url://<source_id>` references
+- **AND** it records `source_id`, `source_url`, and success, skip, or failure
+  counts in the ingest manifest
