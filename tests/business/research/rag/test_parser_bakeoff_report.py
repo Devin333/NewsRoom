@@ -75,7 +75,74 @@ def test_build_parser_bakeoff_report_summarizes_parser_artifacts(tmp_path: Path)
     assert payload["parsers"]["marker"]["rag_metrics"]["hit_at_5"] == 0.5
     assert payload["parsers"]["marker"]["rag_metrics"]["table_qa_evidence_coverage_at_5"] == 0.9
     assert (tmp_path / "report.json").exists()
-    assert "Parser-Level Metrics" in (tmp_path / "report.md").read_text(encoding="utf-8")
+    markdown = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Parser-Level Metrics" in markdown
+    assert "RAG-Level Metrics" in markdown
+
+
+def test_build_parser_bakeoff_report_reads_benchmark_suite_candidate_schema(tmp_path: Path) -> None:
+    parser_dir = tmp_path / "papers-marker"
+    _write_doc(
+        parser_dir / "paper1" / "research_document.json",
+        paper_id="paper1",
+        sections=[{"text": "hello world"}],
+        figures=[],
+        tables=[],
+        equations=[],
+    )
+    rag_report = tmp_path / "benchmark_suite_report.json"
+    rag_report.write_text(
+        json.dumps({
+            "papers_total": 20,
+            "chunks_total": 100,
+            "pairs_total": 50,
+            "evaluation_protocol": {"reported_split": "test"},
+            "candidate_test_report": {
+                "retrieval": {
+                    "mrr": 0.55,
+                    "by_k": {
+                        "3": {"hit_rate": 0.7},
+                        "5": {
+                            "hit_rate": 0.75,
+                            "ndcg": 0.6,
+                            "evidence_coverage": 0.72,
+                            "source_locator_coverage": 0.82,
+                        },
+                        "10": {
+                            "hit_rate": 0.84,
+                            "equivalent_hit_rate": 0.92,
+                            "evidence_coverage": 0.8,
+                            "source_locator_coverage": 0.9,
+                        },
+                    },
+                    "by_qa_type": {
+                        "table_qa": {"by_k": {"5": {"evidence_coverage": 0.91}}},
+                        "figure_qa": {"by_k": {"5": {"evidence_coverage": 0.81}}},
+                        "formula_explanation_qa": {"mrr": 0.61},
+                    },
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    report = build_parser_bakeoff_report(ParserBakeoffReportConfig(
+        inputs=(ParserArtifactInput("marker", parser_dir, rag_report),),
+        output_json=tmp_path / "report.json",
+        output_markdown=tmp_path / "report.md",
+    ))
+
+    rag_metrics = report.to_dict()["parsers"]["marker"]["rag_metrics"]
+    assert rag_metrics["papers_total"] == 20
+    assert rag_metrics["pairs_total"] == 50
+    assert rag_metrics["hit_at_3"] == 0.7
+    assert rag_metrics["hit_at_10"] == 0.84
+    assert rag_metrics["equivalent_hit_at_10"] == 0.92
+    assert rag_metrics["mrr"] == 0.55
+    assert rag_metrics["table_qa_evidence_coverage_at_5"] == 0.91
+    markdown = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "84.0%" in markdown
+    assert "0.55" in markdown
 
 
 def test_bakeoff_report_uses_artifact_directory_as_canonical_paper_id(tmp_path: Path) -> None:

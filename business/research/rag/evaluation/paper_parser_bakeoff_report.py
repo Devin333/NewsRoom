@@ -280,14 +280,23 @@ def _rag_metrics(rag_report_path: Path | None) -> dict[str, Any]:
         payload = json.loads(rag_report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {"status": "load_error", "path": str(rag_report_path), "reason": f"{type(exc).__name__}: {exc}"}
-    candidate = (((payload.get("reports") or {}).get("candidate") or {}).get("metrics") or {})
-    by_type = (((payload.get("reports") or {}).get("candidate") or {}).get("by_qa_type") or {})
+    legacy_candidate_report = ((payload.get("reports") or {}).get("candidate") or {})
+    candidate = (
+        legacy_candidate_report.get("metrics")
+        or ((payload.get("candidate_test_report") or {}).get("retrieval") or {})
+    )
+    by_type = legacy_candidate_report.get("by_qa_type") or candidate.get("by_qa_type") or {}
     return {
         "status": "loaded",
         "path": str(rag_report_path),
+        "papers_total": payload.get("papers_total"),
+        "chunks_total": payload.get("chunks_total"),
+        "pairs_total": payload.get("pairs_total"),
+        "reported_split": ((payload.get("evaluation_protocol") or {}).get("reported_split")),
         "hit_at_3": _metric_at_k(candidate, 3, "hit_rate"),
         "hit_at_5": _metric_at_k(candidate, 5, "hit_rate"),
         "hit_at_10": _metric_at_k(candidate, 10, "hit_rate"),
+        "equivalent_hit_at_10": _metric_at_k(candidate, 10, "equivalent_hit_rate"),
         "mrr": candidate.get("mrr"),
         "ndcg_at_5": _metric_at_k(candidate, 5, "ndcg"),
         "evidence_coverage_at_5": _metric_at_k(candidate, 5, "evidence_coverage"),
@@ -409,14 +418,19 @@ def _recommend(parser_payloads: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 def _overall_score(item: dict[str, Any]) -> float:
     metrics = item.get("parser_metrics") or {}
-    return (
-        float(metrics.get("parse_success_rate") or 0.0) * 2.0
+    rag = item.get("rag_metrics") or {}
+    parse_success_rate = float(metrics.get("parse_success_rate") or 0.0)
+    quality_score = (
+        parse_success_rate * 3.0
         + float(metrics.get("element_source_locator_coverage") or 0.0)
         + float(metrics.get("bbox_coverage") or 0.0)
         + float(metrics.get("table_rows_coverage") or 0.0)
         + float(metrics.get("image_ref_coverage") or 0.0)
+        + float(rag.get("hit_at_10") or 0.0)
+        + float(rag.get("mrr") or 0.0)
         - min(float(metrics.get("parser_warning_count_avg") or 0.0), 5.0) * 0.1
     )
+    return quality_score * parse_success_rate
 
 
 def _metric(item: dict[str, Any], name: str) -> float:
@@ -472,6 +486,37 @@ def _markdown(payload: dict[str, Any]) -> str:
                 _fmt_pct(metrics.get("element_source_locator_coverage")),
                 _fmt_pct(metrics.get("bbox_coverage")),
                 _fmt_num(metrics.get("parser_warning_count")),
+            ])
+            + " |"
+        )
+    lines.extend([
+        "",
+        "## RAG-Level Metrics",
+        "",
+        "| Parser | papers | pairs | Hit@3 | Hit@5 | Hit@10 | Eq Hit@10 | MRR | NDCG@5 | Evidence@5 | Evidence@10 | Locator@5 | Locator@10 | formula-exp MRR | figure cov@5 | table cov@5 |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for name, item in (payload.get("parsers") or {}).items():
+        metrics = item.get("rag_metrics") or {}
+        lines.append(
+            "| "
+            + " | ".join([
+                name,
+                str(metrics.get("papers_total") or "-"),
+                str(metrics.get("pairs_total") or "-"),
+                _fmt_pct(metrics.get("hit_at_3")),
+                _fmt_pct(metrics.get("hit_at_5")),
+                _fmt_pct(metrics.get("hit_at_10")),
+                _fmt_pct(metrics.get("equivalent_hit_at_10")),
+                _fmt_num(metrics.get("mrr")),
+                _fmt_num(metrics.get("ndcg_at_5")),
+                _fmt_pct(metrics.get("evidence_coverage_at_5")),
+                _fmt_pct(metrics.get("evidence_coverage_at_10")),
+                _fmt_pct(metrics.get("source_locator_coverage_at_5")),
+                _fmt_pct(metrics.get("source_locator_coverage_at_10")),
+                _fmt_num(metrics.get("formula_explanation_qa_mrr")),
+                _fmt_pct(metrics.get("figure_qa_evidence_coverage_at_5")),
+                _fmt_pct(metrics.get("table_qa_evidence_coverage_at_5")),
             ])
             + " |"
         )
