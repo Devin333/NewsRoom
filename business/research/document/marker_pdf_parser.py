@@ -61,6 +61,7 @@ class MarkerPdfDocumentParser:
 def _marker_command(*, input_dir: Path, output_dir: Path) -> list[str]:
     image = os.environ.get("NEWSROOM_MARKER_DOCKER_IMAGE", "newsroom-marker:latest").strip()
     extra_args = _split_env_args(os.environ.get("NEWSROOM_MARKER_DOCKER_ARGS", ""))
+    cache_dir = os.environ.get("NEWSROOM_MARKER_CACHE_DIR", "").strip()
     return [
         "docker",
         "run",
@@ -69,7 +70,17 @@ def _marker_command(*, input_dir: Path, output_dir: Path) -> list[str]:
         "all",
         "-e",
         "TORCH_DEVICE=cuda",
+        "-e",
+        "HF_HOME=/root/.cache/huggingface",
         *extra_args,
+        *(
+            [
+                "-v",
+                f"{Path(cache_dir).resolve()}:/root/.cache",
+            ]
+            if cache_dir
+            else []
+        ),
         "-v",
         f"{input_dir.resolve()}:/input",
         "-v",

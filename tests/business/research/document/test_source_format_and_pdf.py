@@ -1264,10 +1264,23 @@ def test_dispatcher_routes_gzipped_pdf(mock_nougat):
 def test_marker_pdf_parser_converts_json_blocks(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
     monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
+    marker_cache = tmp_path / "marker-cache"
+    monkeypatch.setenv("NEWSROOM_MARKER_CACHE_DIR", str(marker_cache))
 
     def fake_run(command, *, timeout_seconds):
-        assert command[:7] == ["docker", "run", "--rm", "--gpus", "all", "-e", "TORCH_DEVICE=cuda"]
-        output_dir = Path(command[command.index("-v", command.index("-v") + 1) + 1].rsplit(":", 1)[0])
+        assert command[:9] == [
+            "docker",
+            "run",
+            "--rm",
+            "--gpus",
+            "all",
+            "-e",
+            "TORCH_DEVICE=cuda",
+            "-e",
+            "HF_HOME=/root/.cache/huggingface",
+        ]
+        assert any(part.endswith("marker-cache:/root/.cache") for part in command)
+        output_dir = Path(next(part for part in command if part.endswith(":/output")).rsplit(":", 1)[0])
         image_path = output_dir / "figure.png"
         image_path.parent.mkdir(parents=True, exist_ok=True)
         image_path.write_bytes(b"png")
