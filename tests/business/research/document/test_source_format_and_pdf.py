@@ -1328,6 +1328,127 @@ def test_marker_pdf_parser_converts_json_blocks(monkeypatch, tmp_path):
     assert doc.metadata["parse_quality"]["figures"]["with_bbox"] == 1
 
 
+def test_marker_pdf_parser_handles_real_marker_block_tree(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
+    image_b64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2w=="
+
+    def fake_run(command, *, timeout_seconds):
+        output_dir = Path(command[command.index("-v", command.index("-v") + 1) + 1].rsplit(":", 1)[0])
+        _write_marker_json(
+            output_dir,
+            {
+                "children": [
+                    {
+                        "id": "/page/0/Page/0",
+                        "block_type": "Page",
+                        "children": [
+                            {
+                                "id": "/page/0/SectionHeader/1",
+                                "block_type": "SectionHeader",
+                                "html": "<h1>Introduction</h1>",
+                                "bbox": [50.0, 70.0, 200.0, 95.0],
+                            },
+                            {
+                                "id": "/page/0/Text/2",
+                                "block_type": "Text",
+                                "html": "<p>Parsed by <b>Marker</b>.</p>",
+                            },
+                        ],
+                    },
+                    {
+                        "id": "/page/5/Page/100",
+                        "block_type": "Page",
+                        "children": [
+                            {
+                                "id": "/page/5/TableGroup/110",
+                                "block_type": "TableGroup",
+                                "html": "<content-ref src='/page/5/Caption/0'></content-ref>"
+                                "<content-ref src='/page/5/Table/1'></content-ref>",
+                                "bbox": [105.75, 70.5, 504.75, 185.625],
+                                "children": [
+                                    {
+                                        "id": "/page/5/Caption/0",
+                                        "block_type": "Caption",
+                                        "html": "<p>Table 1: Maximum path lengths.</p>",
+                                        "bbox": [105.75, 70.5, 504.75, 102.0],
+                                    },
+                                    {
+                                        "id": "/page/5/Table/1",
+                                        "block_type": "Table",
+                                        "html": "<table><tbody>"
+                                        "<tr><th>Layer Type</th><th>Complexity</th></tr>"
+                                        "<tr><td>Self-Attention</td><td>O(n^2 d)</td></tr>"
+                                        "</tbody></table>",
+                                        "bbox": [113.36, 110.63, 498.63, 186.36],
+                                    },
+                                ],
+                            },
+                            {
+                                "id": "/page/5/FigureGroup/111",
+                                "block_type": "FigureGroup",
+                                "bbox": [100.0, 220.0, 300.0, 430.0],
+                                "children": [
+                                    {
+                                        "id": "/page/5/Figure/2",
+                                        "block_type": "Figure",
+                                        "bbox": [100.0, 220.0, 300.0, 400.0],
+                                        "images": {"/page/5/Figure/2": image_b64},
+                                    },
+                                    {
+                                        "id": "/page/5/Caption/3",
+                                        "block_type": "Caption",
+                                        "html": "<p>Figure 1: Model architecture.</p>",
+                                    },
+                                ],
+                            },
+                            {
+                                "id": "/page/5/Equation/4",
+                                "block_type": "Equation",
+                                "html": "<p><math display=\"block\">E=mc^2</math> (1)</p>",
+                                "bbox": [120.0, 460.0, 240.0, 480.0],
+                            },
+                            {"id": "/page/5/TableCell/5", "block_type": "TableCell", "html": "<td>ignored</td>"},
+                        ],
+                    },
+                ]
+            },
+        )
+
+    monkeypatch.setattr(
+        "business.research.document.marker_pdf_parser.run_docker_command",
+        fake_run,
+    )
+    pdf_bytes = _make_pdf(["page 1", "page 2", "page 3", "page 4", "page 5", "page 6"])
+
+    doc = MarkerPdfDocumentParser().parse("2501_marker_real_tree", pdf_bytes)
+
+    assert doc.sections[0].page_start == 1
+    assert doc.sections[0].title == "Introduction"
+    assert doc.sections[0].text == "Parsed by Marker."
+    assert len(doc.tables) == 1
+    table_group = doc.tables[0]
+    assert table_group.page == 6
+    assert table_group.caption == "Table 1: Maximum path lengths."
+    assert table_group.columns == ["Layer Type", "Complexity"]
+    assert table_group.rows == [{"Layer Type": "Self-Attention", "Complexity": "O(n^2 d)"}]
+    assert table_group.metadata["pdf_rect"] == [105.75, 70.5, 504.75, 185.625]
+    assert "page=6" in table_group.source_ref
+    assert len(doc.figures) == 1
+    figure_group = doc.figures[0]
+    assert figure_group.caption == "Figure 1: Model architecture."
+    assert figure_group.page == 6
+    assert figure_group.image_ref
+    assert Path(figure_group.image_ref).exists()
+    assert len(doc.equations) == 1
+    assert doc.equations[0].page == 6
+    assert doc.equations[0].latex == "E=mc^2 (1)"
+    assert doc.metadata["parse_quality"]["tables"]["with_rows"] >= 1
+    assert doc.metadata["parse_quality"]["tables"]["with_bbox"] >= 1
+    assert doc.metadata["parse_quality"]["figures"]["with_image"] >= 1
+    assert not doc.metadata["parser_warnings"]
+
+
 def test_dispatcher_can_select_marker_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
 
