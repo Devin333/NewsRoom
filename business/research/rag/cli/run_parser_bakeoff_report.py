@@ -17,11 +17,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_utf8_output()
     args = _build_parser().parse_args(argv)
     rag_reports = _parse_named_paths(args.rag_report)
+    ingest_manifests = _parse_named_paths(args.ingest_manifest)
     inputs = tuple(
         ParserArtifactInput(
             name=name,
             papers_dir=path,
             rag_report_path=rag_reports.get(name),
+            ingest_manifest_path=ingest_manifests.get(name),
         )
         for name, path in _parse_named_paths(args.parser).items()
     )
@@ -61,6 +63,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="NAME=PATH",
         help="Optional benchmark_suite_report.json for a parser name.",
+    )
+    parser.add_argument(
+        "--ingest-manifest",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="Optional parser bake-off ingest manifest for requested/succeeded/failed counts.",
     )
     parser.add_argument(
         "--output-json",

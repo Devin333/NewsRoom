@@ -11,6 +11,7 @@ class ParserArtifactInput:
     name: str
     papers_dir: Path
     rag_report_path: Path | None = None
+    ingest_manifest_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -41,14 +42,17 @@ def build_parser_bakeoff_report(config: ParserBakeoffReportConfig) -> ParserBake
     all_paper_ids: set[str] = set()
     for parser_input in config.inputs:
         documents = _load_documents(parser_input.papers_dir)
-        all_paper_ids.update(
-            _artifact_paper_id(doc) for doc in documents if _artifact_paper_id(doc)
-        )
+        ingest_manifest = _load_ingest_manifest(parser_input.ingest_manifest_path)
+        scoped_documents = _scope_documents(documents, ingest_manifest)
+        all_paper_ids.update(_manifest_paper_ids(ingest_manifest))
+        all_paper_ids.update(_artifact_paper_id(doc) for doc in scoped_documents if _artifact_paper_id(doc))
         parser_payloads[parser_input.name] = _parser_summary(
             parser_input.name,
             parser_input.papers_dir,
-            documents,
+            scoped_documents,
             rag_report_path=parser_input.rag_report_path,
+            ingest_manifest_path=parser_input.ingest_manifest_path,
+            ingest_manifest=ingest_manifest,
         )
     report = ParserBakeoffReport(
         parser_count=len(parser_payloads),
@@ -89,25 +93,83 @@ def _load_documents(papers_dir: Path) -> list[dict[str, Any]]:
     return documents
 
 
+def _load_ingest_manifest(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    if not path.exists():
+        return {"_manifest_status": "missing", "_manifest_path": str(path)}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "_manifest_status": "load_error",
+            "_manifest_path": str(path),
+            "_manifest_error": f"{type(exc).__name__}: {exc}",
+        }
+    if not isinstance(payload, dict):
+        return {
+            "_manifest_status": "load_error",
+            "_manifest_path": str(path),
+            "_manifest_error": "manifest root is not an object",
+        }
+    payload["_manifest_status"] = "loaded"
+    payload["_manifest_path"] = str(path)
+    return payload
+
+
+def _scope_documents(
+    documents: list[dict[str, Any]],
+    ingest_manifest: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    requested_ids = set(_manifest_paper_ids(ingest_manifest))
+    if not requested_ids:
+        return documents
+    return [doc for doc in documents if _artifact_paper_id(doc) in requested_ids]
+
+
+def _manifest_paper_ids(ingest_manifest: dict[str, Any] | None) -> list[str]:
+    if not ingest_manifest or ingest_manifest.get("_manifest_status") != "loaded":
+        return []
+    ids: list[str] = []
+    seen: set[str] = set()
+    for item in ingest_manifest.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        paper_id = str(item.get("paper_id") or item.get("arxiv_id") or "").strip()
+        if paper_id and paper_id not in seen:
+            seen.add(paper_id)
+            ids.append(paper_id)
+    return ids
+
+
 def _parser_summary(
     name: str,
     papers_dir: Path,
     documents: list[dict[str, Any]],
     *,
     rag_report_path: Path | None,
+    ingest_manifest_path: Path | None,
+    ingest_manifest: dict[str, Any] | None,
 ) -> dict[str, Any]:
     succeeded = [doc for doc in documents if not doc.get("_load_error")]
     failed = [doc for doc in documents if doc.get("_load_error")]
-    parser_metrics = _parser_metrics(succeeded, failed)
+    manifest_summary = _manifest_summary(ingest_manifest, succeeded)
+    parser_metrics = _parser_metrics(succeeded, failed, manifest_summary)
     rag_metrics = _rag_metrics(rag_report_path)
+    requested_ids = _manifest_paper_ids(ingest_manifest)
+    paper_ids = requested_ids or [_artifact_paper_id(doc) for doc in documents if _artifact_paper_id(doc)]
     return {
         "name": name,
         "papers_dir": str(papers_dir),
-        "paper_count": len(documents),
-        "paper_ids": [_artifact_paper_id(doc) for doc in documents if _artifact_paper_id(doc)],
+        "paper_count": manifest_summary.get("requested") or len(documents),
+        "artifact_document_count": len(documents),
+        "paper_ids": paper_ids,
         "parser_metrics": parser_metrics,
         "rag_metrics": rag_metrics,
+        "ingest_manifest": manifest_summary,
+        "ingest_manifest_path": str(ingest_manifest_path) if ingest_manifest_path else None,
         "load_errors": failed,
+        "failed_items": manifest_summary.get("failed_items") or [],
         "paper_id_mismatches": [
             doc["_paper_id_mismatch"]
             for doc in documents
@@ -116,9 +178,52 @@ def _parser_summary(
     }
 
 
-def _parser_metrics(documents: list[dict[str, Any]], failed: list[dict[str, Any]]) -> dict[str, Any]:
-    paper_count = len(documents) + len(failed)
-    parse_success_rate = _safe_div(len(documents), paper_count)
+def _manifest_summary(
+    ingest_manifest: dict[str, Any] | None,
+    documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if ingest_manifest is None:
+        return {"status": "not_provided"}
+    status = str(ingest_manifest.get("_manifest_status") or "unknown")
+    if status != "loaded":
+        return {
+            "status": status,
+            "path": ingest_manifest.get("_manifest_path"),
+            "reason": ingest_manifest.get("_manifest_error"),
+        }
+    items = [item for item in (ingest_manifest.get("items") or []) if isinstance(item, dict)]
+    failed_items = [item for item in items if item.get("status") == "failed"]
+    successful_status_items = [
+        item for item in items if item.get("status") in {"succeeded", "skipped"}
+    ]
+    loaded_ids = {_artifact_paper_id(doc) for doc in documents if _artifact_paper_id(doc)}
+    missing_successful_items = [
+        item for item in successful_status_items
+        if str(item.get("paper_id") or item.get("arxiv_id") or "") not in loaded_ids
+    ]
+    return {
+        "status": "loaded",
+        "path": ingest_manifest.get("_manifest_path"),
+        "backend": ingest_manifest.get("backend"),
+        "papers_dir": ingest_manifest.get("papers_dir"),
+        "requested": _int_or_zero(ingest_manifest.get("requested")) or len(items),
+        "succeeded": _int_or_zero(ingest_manifest.get("succeeded")),
+        "skipped": _int_or_zero(ingest_manifest.get("skipped")),
+        "failed": _int_or_zero(ingest_manifest.get("failed")),
+        "loaded_success_count": len(documents),
+        "failed_items": failed_items,
+        "missing_successful_items": missing_successful_items,
+    }
+
+
+def _parser_metrics(
+    documents: list[dict[str, Any]],
+    failed: list[dict[str, Any]],
+    manifest_summary: dict[str, Any],
+) -> dict[str, Any]:
+    requested_count = _metric_denominator(documents, failed, manifest_summary)
+    parse_success_count = len(documents)
+    parse_success_rate = _safe_div(parse_success_count, requested_count)
     section_counts = [len(doc.get("sections") or []) for doc in documents]
     figure_counts = [len(doc.get("figures") or []) for doc in documents]
     table_counts = [len(doc.get("tables") or []) for doc in documents]
@@ -137,6 +242,8 @@ def _parser_metrics(documents: list[dict[str, Any]], failed: list[dict[str, Any]
         for doc in documents
     ]
     return {
+        "parse_success_count": parse_success_count,
+        "parse_requested_count": requested_count,
         "parse_success_rate": parse_success_rate,
         "parse_duration_seconds_avg": _avg(durations),
         "section_count_avg": _avg(section_counts),
@@ -152,6 +259,16 @@ def _parser_metrics(documents: list[dict[str, Any]], failed: list[dict[str, Any]
         "parser_warning_count": sum(warnings),
         "parser_warning_count_avg": _avg(warnings),
     }
+
+
+def _metric_denominator(
+    documents: list[dict[str, Any]],
+    failed: list[dict[str, Any]],
+    manifest_summary: dict[str, Any],
+) -> int:
+    if manifest_summary.get("status") == "loaded":
+        return _int_or_zero(manifest_summary.get("requested"))
+    return len(documents) + len(failed)
 
 
 def _rag_metrics(rag_report_path: Path | None) -> dict[str, Any]:
@@ -344,7 +461,7 @@ def _markdown(payload: dict[str, Any]) -> str:
             + " | ".join([
                 name,
                 str(item.get("paper_count", 0)),
-                _fmt_pct(metrics.get("parse_success_rate")),
+                f"{_fmt_pct(metrics.get('parse_success_rate'))} ({int(metrics.get('parse_success_count') or 0)}/{int(metrics.get('parse_requested_count') or 0)})",
                 _fmt_num(metrics.get("section_count_avg")),
                 _fmt_num(metrics.get("text_chars_avg")),
                 _fmt_num(metrics.get("formula_count_avg")),
@@ -358,6 +475,22 @@ def _markdown(payload: dict[str, Any]) -> str:
             ])
             + " |"
         )
+    failure_lines: list[str] = []
+    for name, item in (payload.get("parsers") or {}).items():
+        failed_items = item.get("failed_items") or []
+        missing_items = ((item.get("ingest_manifest") or {}).get("missing_successful_items") or [])
+        if failed_items or missing_items:
+            failure_lines.append(f"### {name}")
+            for failed in failed_items:
+                failure_lines.append(
+                    f"- failed `{failed.get('paper_id') or failed.get('arxiv_id')}`: {failed.get('reason') or 'unknown'}"
+                )
+            for missing in missing_items:
+                failure_lines.append(
+                    f"- missing artifact `{missing.get('paper_id') or missing.get('arxiv_id')}`: manifest status `{missing.get('status')}`"
+                )
+    if failure_lines:
+        lines.extend(["", "## Ingest Failures", "", *failure_lines])
     lines.extend(["", "## Recommendations", ""])
     for key, value in (payload.get("recommendations") or {}).items():
         lines.append(f"- {key}: `{value}`")
@@ -393,6 +526,13 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 __all__ = [

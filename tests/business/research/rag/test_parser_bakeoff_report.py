@@ -104,6 +104,67 @@ def test_bakeoff_report_uses_artifact_directory_as_canonical_paper_id(tmp_path: 
     }]
 
 
+def test_bakeoff_report_uses_ingest_manifest_for_requested_and_failed_items(tmp_path: Path) -> None:
+    parser_dir = tmp_path / "papers-mineru"
+    _write_doc(
+        parser_dir / "paper1" / "research_document.json",
+        paper_id="paper1",
+        sections=[],
+        figures=[],
+        tables=[],
+        equations=[],
+    )
+    manifest_path = tmp_path / "mineru-ingest.json"
+    manifest_path.write_text(
+        json.dumps({
+            "backend": "mineru",
+            "papers_dir": str(parser_dir),
+            "requested": 2,
+            "succeeded": 1,
+            "skipped": 0,
+            "failed": 1,
+            "items": [
+                {
+                    "arxiv_id": "paper1",
+                    "paper_id": "paper1",
+                    "status": "succeeded",
+                    "backend": "mineru",
+                    "output_path": str(parser_dir / "paper1" / "research_document.json"),
+                },
+                {
+                    "arxiv_id": "paper2",
+                    "paper_id": "paper2",
+                    "status": "failed",
+                    "backend": "mineru",
+                    "reason": "RuntimeError: docker parser failed (exit 1)",
+                    "output_path": str(parser_dir / "paper2" / "research_document.json"),
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    report = build_parser_bakeoff_report(ParserBakeoffReportConfig(
+        inputs=(ParserArtifactInput("mineru", parser_dir, ingest_manifest_path=manifest_path),),
+        output_json=tmp_path / "report.json",
+        output_markdown=tmp_path / "report.md",
+    ))
+
+    payload = report.to_dict()
+    parser_payload = payload["parsers"]["mineru"]
+    metrics = parser_payload["parser_metrics"]
+    assert payload["paper_ids"] == ["paper1", "paper2"]
+    assert parser_payload["paper_count"] == 2
+    assert parser_payload["artifact_document_count"] == 1
+    assert metrics["parse_requested_count"] == 2
+    assert metrics["parse_success_count"] == 1
+    assert metrics["parse_success_rate"] == 0.5
+    assert parser_payload["failed_items"][0]["paper_id"] == "paper2"
+    markdown = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "50.0% (1/2)" in markdown
+    assert "failed `paper2`" in markdown
+
+
 def _write_doc(
     path: Path,
     *,
