@@ -16,7 +16,10 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir -U 'mineru[core]>=3.4.0' --break-system-packages
+RUN python3 -m pip install --no-cache-dir -U \
+        'mineru[core]>=3.4.0' \
+        'pdftext==0.6.3' \
+        --break-system-packages
 
 RUN if [ "${MINERU_PRELOAD_MODELS}" = "1" ]; then \
         mineru-models-download -s huggingface -m all; \
