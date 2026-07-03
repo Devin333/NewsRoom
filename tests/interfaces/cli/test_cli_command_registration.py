@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 
+import pytest
+
 from interfaces.cli.news import build_parser
 
 
@@ -44,7 +46,7 @@ def test_cli_key_subcommands_and_handlers_are_bound() -> None:
         ["worker", "status"],
         ["workers", "status"],
         ["memory", "bootstrap"],
-        ["paper", "ask", "1706.03762", "What is the method?", "--answer", "--legacy-direct-answer"],
+        ["paper", "ask", "1706.03762", "What is the method?", "--answer"],
         ["sources", "list"],
         ["mcp", "catalog"],
         ["storage", "metrics"],
@@ -55,19 +57,30 @@ def test_cli_key_subcommands_and_handlers_are_bound() -> None:
         assert callable(args.handler)
 
 
-def test_cli_paper_ask_registers_gated_answer_fallback_flag() -> None:
+def test_cli_paper_ask_answer_mode_has_no_legacy_direct_flag() -> None:
     args = build_parser().parse_args([
         "paper",
         "ask",
         "1706.03762",
         "What is the method?",
         "--answer",
-        "--legacy-direct-answer",
     ])
 
     assert args.paper_command == "ask"
     assert args.answer is True
-    assert args.legacy_direct_answer is True
+    assert not hasattr(args, "legacy_direct_answer")
+
+
+def test_cli_paper_ask_rejects_removed_legacy_direct_flag() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args([
+            "paper",
+            "ask",
+            "1706.03762",
+            "What is the method?",
+            "--answer",
+            "--legacy-direct-answer",
+        ])
 
 
 def test_cli_paper_ask_registers_tenant_scope_flags() -> None:

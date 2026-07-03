@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import pytest
+
 from framework.harness.rag.models import (
     AnswerClaim,
     EvidenceCandidate,
@@ -200,18 +202,17 @@ def test_rag_ask_gated_generation_respects_expected_abstention_golden_case() -> 
     assert payload["answer_candidate"]["abstained"] is True
 
 
-def test_rag_ask_legacy_fallback_marks_generation_mode(monkeypatch) -> None:
+def test_rag_ask_legacy_direct_generation_fails_closed() -> None:
+    retriever = _Retriever()
     service = PaperRagApplicationService(
-        retriever=_Retriever(),
+        retriever=retriever,
         session_factory=lambda **_: (_ for _ in ()).throw(AssertionError("session should not be built")),
     )
-    monkeypatch.setattr(service, "_generate", lambda question, retrieval: "Legacy answer.")
 
-    payload = service.rag_ask("p1", "How does it work?", generate=True, gated=False)
+    with pytest.raises(ValueError, match="legacy direct paper RAG answer generation has been removed"):
+        service.rag_ask("p1", "How does it work?", generate=True, gated=False)
 
-    assert payload["generation_mode"] == "legacy_direct"
-    assert payload["status"] == "legacy_direct_answered"
-    assert payload["answer"] == "Legacy answer."
+    assert retriever.calls == []
 
 
 def _session_result(

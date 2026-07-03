@@ -30,11 +30,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     ask_parser.add_argument("--tenant-id", default=None, help="Tenant id for scoped gated RAG memory and evidence checks")
     ask_parser.add_argument("--user-id", default=None, help="User id for scoped gated RAG memory")
     ask_parser.add_argument("--memory-namespace", default=None, help="Explicit scoped memory namespace")
-    ask_parser.add_argument(
-        "--legacy-direct-answer",
-        action="store_true",
-        help="Use the old direct generator instead of gated Harness answer generation",
-    )
     ask_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     ask_parser.set_defaults(handler=ask_paper)
 
@@ -82,7 +77,6 @@ def ask_paper(args: argparse.Namespace) -> int:
         section_index=args.section,
         limit=args.limit,
         generate=args.answer,
-        gated=not args.legacy_direct_answer,
         tenant_id=args.tenant_id,
         user_id=args.user_id,
         memory_namespace=args.memory_namespace,

@@ -1,6 +1,6 @@
 ## Context
 
-T4 added a framework generation phase and a Research `PaperAnswerWorker`, but the production-facing chunk RAG ask path still uses `ResearchRetriever` plus `AnswerGenerator` directly. This change connects the ask surface to `PaperRAGSession` only when generation is explicitly requested through the gated path.
+T4 added a framework generation phase and a Research `PaperAnswerWorker`. At rollout time, the production-facing chunk RAG ask path still used `ResearchRetriever` plus `AnswerGenerator` directly. This change connected the ask surface to `PaperRAGSession` for generated answers.
 
 ## Goals / Non-Goals
 
@@ -9,10 +9,9 @@ T4 added a framework generation phase and a Research `PaperAnswerWorker`, but th
 - Return explicit `answered`, `abstained`, `insufficient_evidence`, or `halted` status.
 - Expose answer claims, cited evidence ids, gate results, transcript id, and context pack summary.
 - Preserve the retrieve-only payload for `generate=False`.
-- Preserve a `gated=False` fallback for the old direct generator path.
+- Keep generated answers on the gated Harness path. The original rollout fallback has been superseded by `remove-legacy-direct-rag-answer`.
 
 **Non-Goals:**
-- Remove the legacy direct generator path.
 - Add unsupported-claim supplemental retrieval.
 - Change answer gate semantics.
 - Add new LLM judge or answer faithfulness scoring.
@@ -33,7 +32,7 @@ T4 added a framework generation phase and a Research `PaperAnswerWorker`, but th
 
 4. The API gets a `gated` request flag defaulting to true.
 
-   This makes the safer path the default for generated answers, while allowing explicit fallback during rollout.
+   This made the safer path the default during rollout. The direct fallback is no longer available after `remove-legacy-direct-rag-answer`.
 
 ## Risks / Trade-offs
 

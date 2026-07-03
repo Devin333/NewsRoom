@@ -18,7 +18,7 @@ The system SHALL route generated chunk-based paper RAG answers through the bound
 - **THEN** the service SHALL return status `abstained` or `insufficient_evidence`
 - **AND** it SHALL include deterministic decision and gate details instead of returning unverified answer text
 
-#### Scenario: Explicit fallback remains available
+#### Scenario: Legacy fallback is superseded
 - **WHEN** a caller asks paper RAG with `generate=true` and `gated=false`
-- **THEN** the service SHALL use the legacy direct generator path
-- **AND** the payload SHALL mark the generation mode as `legacy_direct`
+- **THEN** the service SHALL NOT use the legacy direct generator path
+- **AND** the call SHALL fail closed as defined by `remove-legacy-direct-rag-answer`

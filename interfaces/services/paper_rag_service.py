@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -39,7 +38,9 @@ class PaperRagApplicationService:
         user_id: str | None = None,
         memory_namespace: str | None = None,
     ) -> dict[str, Any]:
-        if generate and gated:
+        if generate and not gated:
+            raise ValueError("legacy direct paper RAG answer generation has been removed; use gated Harness generation")
+        if generate:
             return self._gated_ask(
                 paper_id,
                 question,
@@ -69,10 +70,6 @@ class PaperRagApplicationService:
                 tenant_filtered_passage_count=filtered_count,
             ),
         }
-        if generate:
-            payload["answer"] = self._generate(question, result)
-            payload["generation_mode"] = "legacy_direct"
-            payload["status"] = "legacy_direct_answered" if str(payload["answer"]).strip() else "legacy_direct_empty"
         return payload
 
     def _gated_ask(
@@ -114,14 +111,6 @@ class PaperRagApplicationService:
             goal=goal,
             result=result,
         )
-
-    def _generate(self, question: str, retrieval: Any) -> str:
-        from business.research.application.llm_client import build_unity_llm_call
-        from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
-
-        generator = AnswerGenerator(build_unity_llm_call(max_tokens=600))
-        return asyncio.run(generator.generate(question, retrieval)).answer
-
 
 def _passages_from_retrieval(result: Any, *, tenant_id: str | None = None) -> tuple[list[dict[str, Any]], int]:
     visible_chunks = []

@@ -14,13 +14,13 @@
 - [x] 3.1 Add `gated` option to `PaperRagApplicationService.rag_ask`.
 - [x] 3.2 Route `generate=True, gated=True` through `PaperRAGSession`.
 - [x] 3.3 Return status, answer, claims, citations, gate results, transcript id, and context pack summary.
-- [x] 3.4 Add API and CLI flags for gated fallback control while keeping default gated generation.
+- [x] 3.4 Add API and CLI flags for gated fallback control while keeping default gated generation. Superseded by `remove-legacy-direct-rag-answer`, which removes the CLI fallback and makes direct callers fail closed.
 
 ## 4. Tests
 
 - [x] 4.1 Add business/session wiring tests.
 - [x] 4.2 Add ask goal construction tests.
-- [x] 4.3 Add service tests for retrieve-only, gated generated, abstained, and legacy fallback payloads.
+- [x] 4.3 Add service tests for retrieve-only, gated generated, abstained, and legacy fallback behavior. Superseded by `remove-legacy-direct-rag-answer`, which changes legacy fallback behavior to fail closed.
 
 ## 5. Validation
 
