@@ -40,6 +40,8 @@ from business.research.rag.retrieval.paper_visual_retrieval import (
     visual_fusion_score,
     with_retrieval_scores,
 )
+from business.research.rag.retrieval.channels import RankedHit, RankedList, RecallChannel
+from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
 
 __all__ = [
     "AnswerContextAssembler",
@@ -58,6 +60,9 @@ __all__ = [
     "PaperClaimIndex",
     "PaperClaimSearchPort",
     "QueryIntent",
+    "RankedHit",
+    "RankedList",
+    "RecallChannel",
     "ResearchRetriever",
     "RetrievalPolicy",
     "RetrievalRequest",
@@ -68,6 +73,8 @@ __all__ = [
     "build_retrieval_route",
     "classify_query_intent",
     "extract_claim_records",
+    "fuse_chunk_rankings",
+    "fuse_ranked_hits",
     "fuse_visual_retrieval_scores",
     "retrieval_policy_enables_lightweight_reranker",
     "visual_fusion_score",
