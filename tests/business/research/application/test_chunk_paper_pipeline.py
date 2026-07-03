@@ -115,6 +115,7 @@ def test_chunk_pipeline_writes_chunk_manifest(tmp_path):
     store = _ChunkStore()
     repo = _ChunkRepository()
     manifest_path = tmp_path / "chunk_manifest.json"
+    bm25_index_path = tmp_path / "bm25_index.json"
     pipeline = ChunkPaperPipeline(
         store,  # type: ignore[arg-type]
         repo,
@@ -127,9 +128,15 @@ def test_chunk_pipeline_writes_chunk_manifest(tmp_path):
     result = pipeline.run("2501.00001")
 
     assert result.chunk_manifest_path == str(manifest_path)
+    assert result.bm25_index_path == str(bm25_index_path)
     assert manifest_path.exists()
+    assert bm25_index_path.exists()
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    bm25_payload = json.loads(bm25_index_path.read_text(encoding="utf-8"))
     assert payload["paper_id"] == "2501.00001"
+    assert bm25_payload["paper_id"] == "2501.00001"
+    assert bm25_payload["chunks"]
+    assert bm25_payload["postings"]
     assert payload["chunks"]
     assert store.chunks
     assert repo.chunks

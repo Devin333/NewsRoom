@@ -23,6 +23,7 @@ from business.research.ports.field_embedding_index import FieldEmbeddingHit, Fie
 from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
 from business.research.rag.adapters.paper_field_text import CORE_FIELD_NAMES, FIELD_NAMES, extract_field_texts
 from business.research.rag.formula_normalizer import FormulaRetrievalMetadata, normalize_formula_metadata
+from business.research.rag.retrieval.bm25_index import PaperBM25Index, load_bm25_index
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings
 from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute, build_retrieval_route
@@ -965,7 +966,7 @@ class ResearchRetriever:
         formula_sparse_enabled: bool = False,
         trace: RetrievalTrace | None = None,
     ) -> list[tuple[PaperChunk, float]]:
-        chunks = self._store.list_chunks(paper_id)
+        index, index_source, chunks = self._load_sparse_bm25_index(paper_id, trace)
         if not chunks:
             if trace is not None:
                 _append_degradation_once(
@@ -976,27 +977,85 @@ class ResearchRetriever:
                     reason="ChunkStorePort.list_chunks returned no chunks for sparse lexical recall.",
                 )
             return []
-        scored: list[tuple[PaperChunk, float]] = []
-        for chunk in chunks:
+        scored_by_id: dict[str, tuple[PaperChunk, float]] = {}
+        bm25_query = " ".join(_sparse_query_tokens(query_text)) or query_text
+        for hit in index.search(bm25_query, limit=max(limit * 3, limit)):
+            chunk = hit.chunk
             if chunk.paper_id != paper_id or not _chunk_matches_filters(chunk, filters):
                 continue
             lexical_score = _sparse_lexical_score(query_text, chunk)
             formula_scores = _formula_sparse_scores(query_text, chunk) if formula_sparse_enabled else _FormulaSparseScores()
-            score = max(lexical_score, formula_scores.sparse_score)
+            score = max(hit.score, lexical_score, formula_scores.sparse_score)
             if score <= 0.0:
                 continue
             metadata = dict(chunk.metadata)
             metadata.update({
                 "sparse_lexical_hit": True,
                 "sparse_lexical_score": _round_score(lexical_score),
-                "sparse_lexical_strategy": "deterministic_token_overlap",
+                "sparse_bm25_score": _round_score(hit.score),
+                "sparse_lexical_strategy": "bm25_index",
+                "sparse_candidate_source": index_source,
             })
             if formula_sparse_enabled:
                 metadata.update(formula_scores.as_metadata())
                 metadata["formula_sparse_hit"] = formula_scores.sparse_score > 0.0
-            scored.append((chunk.model_copy(update={"metadata": metadata}), score))
+            scored_by_id[chunk.chunk_id] = (chunk.model_copy(update={"metadata": metadata}), score)
+        if formula_sparse_enabled:
+            for chunk in chunks:
+                if chunk.chunk_id in scored_by_id:
+                    continue
+                if chunk.paper_id != paper_id or not _chunk_matches_filters(chunk, filters):
+                    continue
+                formula_scores = _formula_sparse_scores(query_text, chunk)
+                if formula_scores.sparse_score <= 0.0:
+                    continue
+                lexical_score = _sparse_lexical_score(query_text, chunk)
+                metadata = dict(chunk.metadata)
+                metadata.update({
+                    "sparse_lexical_hit": True,
+                    "sparse_lexical_score": _round_score(lexical_score),
+                    "sparse_bm25_score": 0.0,
+                    "sparse_lexical_strategy": "bm25_index_with_formula_fallback",
+                    "sparse_candidate_source": index_source,
+                    **formula_scores.as_metadata(),
+                    "formula_sparse_hit": True,
+                })
+                scored_by_id[chunk.chunk_id] = (
+                    chunk.model_copy(update={"metadata": metadata}),
+                    formula_scores.sparse_score,
+                )
+        scored = list(scored_by_id.values())
         scored.sort(key=lambda item: (-item[1], item[0].section_index, item[0].chunk_id))
         return scored[:limit]
+
+    def _load_sparse_bm25_index(
+        self,
+        paper_id: str,
+        trace: RetrievalTrace | None,
+    ) -> tuple[PaperBM25Index, str, list[PaperChunk]]:
+        try:
+            index = load_bm25_index(paper_id)
+            return index, "bm25_index", index.chunks
+        except FileNotFoundError:
+            if trace is not None:
+                _append_degradation_once(
+                    trace,
+                    code="sparse_bm25_index_missing",
+                    stage="sparse_lexical",
+                    paper_id=paper_id,
+                    reason="Persisted BM25 index was not found; rebuilding sparse lexical inventory from ChunkStorePort.list_chunks.",
+                )
+        except Exception as exc:
+            if trace is not None:
+                _append_degradation_once(
+                    trace,
+                    code="sparse_bm25_index_unreadable",
+                    stage="sparse_lexical",
+                    paper_id=paper_id,
+                    reason=f"Persisted BM25 index could not be loaded: {exc}",
+                )
+        chunks = self._store.list_chunks(paper_id)
+        return PaperBM25Index.build(paper_id, chunks), "bm25_list_chunks_fallback", chunks
 
     def _search_field_candidates(
         self,
