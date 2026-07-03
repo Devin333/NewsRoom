@@ -28,8 +28,20 @@ class FakeRAGPlanner(DeterministicRAGPlanner):
         self.plans = list(plans)
         self.requests: list[dict[str, Any]] = []
 
-    def plan(self, spec: RAGSessionSpec, *, round_index: int, gap_report: dict[str, Any]) -> RetrievalPlanCandidate:
-        self.requests.append({"spec": spec.to_dict(), "round_index": round_index, "gap_report": dict(gap_report)})
+    def plan(
+        self,
+        spec: RAGSessionSpec,
+        *,
+        round_index: int,
+        gap_report: dict[str, Any],
+        executed_queries: tuple[str, ...] = (),
+    ) -> RetrievalPlanCandidate:
+        self.requests.append({
+            "spec": spec.to_dict(),
+            "round_index": round_index,
+            "gap_report": dict(gap_report),
+            "executed_queries": list(executed_queries),
+        })
         if self.plans:
             return self.plans.pop(0) if len(self.plans) > 1 else self.plans[0]
         query_text = spec.goal.question

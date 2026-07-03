@@ -115,7 +115,12 @@ class BoundedRAGSessionController(RAGSessionController):
                 status = RAGSessionStatus.HALTED
                 break
 
-            plan = self.planner.plan(spec, round_index=round_index, gap_report=state.gap_report)
+            plan = self.planner.plan(
+                spec,
+                round_index=round_index,
+                gap_report=state.gap_report,
+                executed_queries=tuple(sorted(state.executed_queries)),
+            )
             self._event(state, "rag_plan_candidate_created", {"round_index": round_index, "plan": plan.to_dict()})
             projected = _add_snapshots(state.budget_snapshot, policy.projected_usage(plan))
             plan_results = self.gates.verify_plan(

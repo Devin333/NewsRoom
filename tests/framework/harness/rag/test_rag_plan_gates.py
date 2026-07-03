@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from framework.harness import (
     DeterministicRAGPlanner,
+    WorkerRAGPlanner,
     RAGBudget,
     RAGBudgetSnapshot,
     RAGExecutionPolicy,
@@ -11,6 +12,7 @@ from framework.harness import (
     RetrievalStepSpec,
     fake_rag_session_spec,
 )
+from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 
 
 def test_plan_gates_reject_duplicate_queries() -> None:
@@ -99,3 +101,83 @@ def test_deterministic_planner_prefers_missing_evidence_type_when_replanning() -
     assert plan.queries[0].metadata["evidence_type"] == "figure"
     assert plan.queries[0].query is not None
     assert "figure" in plan.queries[0].query
+
+
+def test_worker_rag_planner_uses_fallback_before_min_round_index() -> None:
+    worker = _Worker({
+        "candidate": _candidate_payload("worker-plan", "worker query"),
+    })
+    spec = fake_rag_session_spec()
+
+    plan = WorkerRAGPlanner(worker, min_round_index=1).plan(
+        spec,
+        round_index=0,
+        gap_report={},
+    )
+
+    assert plan.metadata["planner"] == "deterministic"
+    assert worker.requests == []
+
+
+def test_worker_rag_planner_passes_gap_and_executed_queries_to_worker() -> None:
+    worker = _Worker({
+        "candidate": _candidate_payload("worker-plan", "new query"),
+    })
+    spec = fake_rag_session_spec()
+
+    plan = WorkerRAGPlanner(worker, min_round_index=1).plan(
+        spec,
+        round_index=1,
+        gap_report={"missing_evidence_types": ["experiment"]},
+        executed_queries=("old query",),
+    )
+
+    assert plan.candidate_id == "worker-plan"
+    assert worker.requests[0]["task_type"] == "rag_plan_candidate"
+    assert worker.requests[0]["gap_report"] == {"missing_evidence_types": ["experiment"]}
+    assert worker.requests[0]["executed_queries"] == ["old query"]
+    assert "halt_workflow" in worker.requests[0]["forbidden_fields"]
+
+
+def test_worker_rag_planner_falls_back_when_worker_fails() -> None:
+    spec = fake_rag_session_spec(required_evidence_types=("method", "experiment"))
+
+    plan = WorkerRAGPlanner(_Worker({}, status=HarnessWorkerStatus.FAILED), min_round_index=0).plan(
+        spec,
+        round_index=1,
+        gap_report={"missing_evidence_types": ["experiment"]},
+    )
+
+    assert plan.metadata["planner"] == "deterministic"
+    assert plan.queries[0].metadata["evidence_type"] == "experiment"
+
+
+def _candidate_payload(candidate_id: str, query: str) -> dict:
+    return {
+        "candidate_id": candidate_id,
+        "queries": [
+            {
+                "step_id": f"{candidate_id}:query",
+                "operation": RetrievalOperation.SEARCH_CORPUS.value,
+                "query": query,
+                "corpus": "research-papers",
+                "max_results": 3,
+                "metadata": {"evidence_type": "experiment"},
+            }
+        ],
+        "expected_evidence": ["experiment"],
+        "expected_gaps": [],
+        "confidence": 0.8,
+        "metadata": {"planner": "worker"},
+    }
+
+
+class _Worker:
+    def __init__(self, output: dict, *, status: HarnessWorkerStatus = HarnessWorkerStatus.SUCCEEDED) -> None:
+        self.output = output
+        self.status = status
+        self.requests = []
+
+    def generate(self, request: dict) -> HarnessWorkerResult:
+        self.requests.append(request)
+        return HarnessWorkerResult(status=self.status, output=self.output)

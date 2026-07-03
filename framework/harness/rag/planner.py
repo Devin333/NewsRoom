@@ -14,12 +14,26 @@ from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerS
 
 @runtime_checkable
 class RAGPlanner(Protocol):
-    def plan(self, spec: RAGSessionSpec, *, round_index: int, gap_report: dict[str, Any]) -> RetrievalPlanCandidate:
+    def plan(
+        self,
+        spec: RAGSessionSpec,
+        *,
+        round_index: int,
+        gap_report: dict[str, Any],
+        executed_queries: tuple[str, ...] = (),
+    ) -> RetrievalPlanCandidate:
         ...
 
 
 class DeterministicRAGPlanner:
-    def plan(self, spec: RAGSessionSpec, *, round_index: int, gap_report: dict[str, Any]) -> RetrievalPlanCandidate:
+    def plan(
+        self,
+        spec: RAGSessionSpec,
+        *,
+        round_index: int,
+        gap_report: dict[str, Any],
+        executed_queries: tuple[str, ...] = (),
+    ) -> RetrievalPlanCandidate:
         suffix = f"round-{round_index + 1}"
         query_text = spec.goal.question
         missing_evidence_types = tuple(str(item) for item in gap_report.get("missing_evidence_types", ()) if str(item).strip())
@@ -59,17 +73,33 @@ class DeterministicRAGPlanner:
 
 
 class WorkerRAGPlanner:
-    def __init__(self, worker: Any, fallback: RAGPlanner | None = None) -> None:
+    def __init__(self, worker: Any, fallback: RAGPlanner | None = None, *, min_round_index: int = 0) -> None:
         self.worker = worker
         self.fallback = fallback or DeterministicRAGPlanner()
+        self.min_round_index = max(0, int(min_round_index))
         self.requests: list[dict[str, Any]] = []
 
-    def plan(self, spec: RAGSessionSpec, *, round_index: int, gap_report: dict[str, Any]) -> RetrievalPlanCandidate:
+    def plan(
+        self,
+        spec: RAGSessionSpec,
+        *,
+        round_index: int,
+        gap_report: dict[str, Any],
+        executed_queries: tuple[str, ...] = (),
+    ) -> RetrievalPlanCandidate:
+        if round_index < self.min_round_index:
+            return self.fallback.plan(
+                spec,
+                round_index=round_index,
+                gap_report=gap_report,
+                executed_queries=executed_queries,
+            )
         request = {
             "task_type": "rag_plan_candidate",
             "session": spec.to_dict(),
             "round_index": round_index,
             "gap_report": dict(gap_report),
+            "executed_queries": list(executed_queries),
             "forbidden_fields": [
                 "next_step",
                 "quality_passed",
@@ -82,10 +112,20 @@ class WorkerRAGPlanner:
         self.requests.append(request)
         result = self._call_worker(request)
         if result.status != HarnessWorkerStatus.SUCCEEDED:
-            return self.fallback.plan(spec, round_index=round_index, gap_report=gap_report)
+            return self.fallback.plan(
+                spec,
+                round_index=round_index,
+                gap_report=gap_report,
+                executed_queries=executed_queries,
+            )
         candidate_payload = result.output.get("candidate") or result.output.get("retrieval_plan_candidate")
         if candidate_payload is None:
-            return self.fallback.plan(spec, round_index=round_index, gap_report=gap_report)
+            return self.fallback.plan(
+                spec,
+                round_index=round_index,
+                gap_report=gap_report,
+                executed_queries=executed_queries,
+            )
         if isinstance(candidate_payload, RetrievalPlanCandidate):
             return candidate_payload
         if not isinstance(candidate_payload, dict):

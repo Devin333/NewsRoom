@@ -110,7 +110,7 @@ def build_research_retriever(*, with_reranker: bool = True) -> ResearchRetriever
     )
 
 
-def build_paper_rag_session(*, with_reranker: bool = True) -> PaperRAGSession:
+def build_paper_rag_session(*, with_reranker: bool = True, plan_worker=None) -> PaperRAGSession:
     reranker = get_reranker() if with_reranker else None
     retrieval_policy = build_retrieval_policy_from_env()
     return PaperRAGSession(
@@ -120,6 +120,7 @@ def build_paper_rag_session(*, with_reranker: bool = True) -> PaperRAGSession:
         field_reranker=reranker,
         visual_store=build_visual_chunk_store(),
         retrieval_policy=retrieval_policy,
+        plan_worker=plan_worker,
     )
 
 

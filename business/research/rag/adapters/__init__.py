@@ -9,11 +9,13 @@ from business.research.rag.adapters.paper_chunk_adapter import (
 from business.research.rag.adapters.paper_context_projection import paper_chunk_to_context_metadata
 from business.research.rag.adapters.paper_field_text import FIELD_NAMES, PaperChunkFieldText, extract_field_texts
 from business.research.rag.adapters.paper_source_locator import source_locator_from_paper_chunk
+from business.research.rag.adapters.plan_worker import ResearchRAGPlanWorker
 
 __all__ = [
     "FIELD_NAMES",
     "PaperChunkAdapter",
     "PaperChunkFieldText",
+    "ResearchRAGPlanWorker",
     "paper_chunk_to_evidence_metadata",
     "paper_chunk_to_context_metadata",
     "paper_chunk_to_rag_chunk",

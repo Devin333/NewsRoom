@@ -23,9 +23,11 @@ class _FakeRetrievalPort:
 
 class _FakeController:
     last_retrieval = None
+    last_planner = None
 
-    def __init__(self, *, retrieval) -> None:
+    def __init__(self, *, retrieval, planner=None) -> None:
         _FakeController.last_retrieval = retrieval
+        _FakeController.last_planner = planner
 
     def run(self, spec):
         return {"spec": spec}
@@ -57,3 +59,31 @@ def test_paper_rag_session_passes_retrieval_policy_to_inner_retriever(monkeypatc
     assert _FakeRetriever.last_kwargs["policy"] is policy
     assert _FakeRetrievalPort.last_default_section_index == 3
     assert result["spec"].goal.question == "What does the figure show?"
+    assert _FakeController.last_planner is None
+
+
+def test_paper_rag_session_wires_optional_worker_planner(monkeypatch):
+    monkeypatch.setattr(paper_rag_session, "ResearchRetriever", _FakeRetriever)
+    monkeypatch.setattr(paper_rag_session, "PaperChunkRetrievalPort", _FakeRetrievalPort)
+    monkeypatch.setattr(paper_rag_session, "BoundedRAGSessionController", _FakeController)
+    worker = object()
+
+    session = PaperRAGSession(object(), plan_worker=worker, worker_planner_min_round_index=2)
+    session.run(
+        ResearchRetrievalGoal(
+            goal_id="g1",
+            paper_id="p1",
+            question="What does the figure show?",
+            required_evidence_types=["figure"],
+            allowed_source_refs=["paper://p1"],
+            allowed_memory_namespaces=["research"],
+        ),
+        run_id="run-1",
+        workflow_id="workflow-1",
+        step_id="step-1",
+        session_id="session-1",
+    )
+
+    assert _FakeController.last_planner is not None
+    assert _FakeController.last_planner.min_round_index == 2
+    assert _FakeController.last_planner.worker._worker is worker
