@@ -137,7 +137,11 @@ class BoundedRAGSessionController(RAGSessionController):
             state.artifact_refs.extend(_dedupe_texts(ref for result in step_results for ref in result.artifact_refs))
             for step_result in step_results:
                 self._event(state, "rag_step_executed", step_result.to_dict())
-            verification = self.source_verifier.verify(tuple(_result_evidence(step_results)), policy=policy)
+            verification = self.source_verifier.verify(
+                tuple(_result_evidence(step_results)),
+                policy=policy,
+                question=spec.goal.question,
+            )
             state.accepted_evidence.extend(_dedupe_evidence(verification.accepted, state.accepted_evidence))
             state.rejected_evidence.extend(_dedupe_evidence(verification.rejected, state.rejected_evidence))
             state.conflicting_evidence.extend(_dedupe_evidence(verification.conflicting, state.conflicting_evidence))
@@ -150,7 +154,12 @@ class BoundedRAGSessionController(RAGSessionController):
                 memory_context=tuple(state.memory_context),
             )
             self._record_gate_failures(state, source_results)
-            state.gap_report = _gap_report(spec, tuple(state.accepted_evidence), source_results)
+            state.gap_report = _gap_report(
+                spec,
+                tuple(state.accepted_evidence),
+                source_results,
+                rejected=tuple(state.rejected_evidence),
+            )
             if _coverage_passed(source_results):
                 decision = RAGDecision(
                     RAGDecisionType.ASSEMBLE_CONTEXT,
@@ -473,6 +482,7 @@ def _gap_report(
     spec: RAGSessionSpec,
     accepted: tuple[EvidenceCandidate, ...],
     results: tuple[RAGGateResult, ...],
+    rejected: tuple[EvidenceCandidate, ...] = (),
 ) -> dict[str, Any]:
     present = {item.evidence_type for item in accepted}
     missing = [item for item in spec.goal.required_evidence_types if item not in present]
@@ -480,11 +490,23 @@ def _gap_report(
         "missing_evidence_types": missing,
         "accepted_evidence_ids": [item.evidence_id for item in accepted],
         "gate_results": _results(results),
+        "rejection_summary": _rejection_summary(rejected),
     }
 
 
 def _results(results: tuple[RAGGateResult, ...]) -> tuple[dict[str, Any], ...]:
     return tuple(result.to_dict() for result in results)
+
+
+def _rejection_summary(rejected: tuple[EvidenceCandidate, ...]) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    for candidate in rejected:
+        reason = str(candidate.metadata.get("rejection_reason") or "source_verification_failed")
+        entry = summary.setdefault(reason, {"count": 0, "evidence_types": {}})
+        entry["count"] += 1
+        evidence_types = entry["evidence_types"]
+        evidence_types[candidate.evidence_type] = evidence_types.get(candidate.evidence_type, 0) + 1
+    return summary
 
 
 def _default_evidence_type(spec: RAGSessionSpec) -> str:

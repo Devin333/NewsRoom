@@ -19,4 +19,4 @@
 
 - [x] 4.1 Run targeted framework and Research RAG tests.
 - [x] 4.2 Run compile and strict OpenSpec validation.
-- [ ] 4.3 Commit the completed T1 slice.
+- [x] 4.3 Commit the completed T1 slice.

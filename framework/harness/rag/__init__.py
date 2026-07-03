@@ -48,6 +48,7 @@ from framework.harness.rag.models import (
 )
 from framework.harness.rag.planner import DeterministicRAGPlanner, RAGPlanner, WorkerRAGPlanner
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType, RAGExecutionPolicy, budget_exceeded, normalize_query
+from framework.harness.rag.relevance import RAGRelevanceGate, RelevanceScorerPort
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionController, RAGSessionResult, RAGSessionState
 from framework.harness.rag.source_verifier import FakeSourceVerifier, SourceVerificationResult, SourceVerifier
 
@@ -83,6 +84,7 @@ __all__ = [
     "RAGPlanSchemaGate",
     "RAGPlanner",
     "RAGQueryDedupGate",
+    "RAGRelevanceGate",
     "RAGScopeGate",
     "RAGSessionController",
     "RAGSessionRequest",
@@ -98,6 +100,7 @@ __all__ = [
     "RetrievalPlanCandidate",
     "RetrievalStepResult",
     "RetrievalStepSpec",
+    "RelevanceScorerPort",
     "SourceVerificationResult",
     "SourceVerifier",
     "WorkerRAGPlanner",

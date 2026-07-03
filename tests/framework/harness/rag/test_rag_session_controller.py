@@ -7,12 +7,15 @@ from framework.harness import (
     RAGBudget,
     RAGDecisionType,
     RAGSessionStatus,
+    SourceVerifier,
     RetrievalOperation,
     RetrievalPlanCandidate,
     RetrievalStepSpec,
     fake_rag_session_spec,
 )
 from framework.harness.rag.fake import fake_reader_repair_memory, fake_research_evidence_packs
+from framework.harness.rag.relevance import RelevanceScorerPort
+from framework.harness.rag.session import BoundedRAGSessionController
 from framework.harness.retrieval.fake import FakeRetrievalPort
 
 
@@ -113,3 +116,40 @@ def test_controller_plan_failure_uses_replan_then_controlled_halt() -> None:
     assert result.status == RAGSessionStatus.HALTED
     assert result.decision.reason == "plan gate failed and no replan budget remains"
     assert any(event["payload"].get("gate") == "rag_tool_allowlist" for event in result.transcript.events if event["event_type"] == "rag_gate_failed")
+
+
+def test_controller_gap_report_includes_low_relevance_rejection_summary() -> None:
+    spec = fake_rag_session_spec(
+        budget=RAGBudget(
+            max_rounds=1,
+            max_replans=0,
+            max_queries=2,
+            max_source_reads=2,
+            max_memory_hits=2,
+            max_context_items=2,
+            max_context_tokens=512,
+            max_worker_calls=4,
+        )
+    )
+    controller = BoundedRAGSessionController(
+        retrieval=FakeRetrievalPort(fake_research_evidence_packs()[:1]),
+        planner=FakeRAGPlanner(),
+        memory=FakeMemoryPort(fake_reader_repair_memory()),
+        source_verifier=SourceVerifier(relevance_scorer=_Scorer((0.1,))),
+    )
+
+    result = controller.run(spec)
+
+    assert result.status == RAGSessionStatus.INSUFFICIENT_EVIDENCE
+    summary = result.decision.metadata["gap_report"]["rejection_summary"]
+    assert summary == {"low_relevance": {"count": 1, "evidence_types": {"method": 1}}}
+    source_event = [event for event in result.transcript.events if event["event_type"] == "rag_source_verified"][0]
+    assert source_event["payload"]["rejected"][0]["metadata"]["rejection_reason"] == "low_relevance"
+
+
+class _Scorer(RelevanceScorerPort):
+    def __init__(self, scores: tuple[float, ...]) -> None:
+        self.scores = scores
+
+    def score(self, question: str, passages: list[str]) -> list[float]:
+        return list(self.scores)
