@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from framework.harness.rag.kernel_evidence_adapter import evidence_candidate_from_rag_evidence
 from framework.harness.rag.kernel_evidence_adapter import KernelRAGRetrieverHarnessAdapter
+from framework.harness.rag.evidence_typing import MetadataKeyEvidenceTypeResolver
 from framework.harness.retrieval.request import RetrievalRequest
 from framework.rag.core import RAGEvidence, RAGScoreBreakdown, SourceLocator
 
@@ -75,10 +76,89 @@ def test_kernel_rag_retriever_adapter_returns_harness_evidence_pack_collection()
     assert collection.metadata["adapter"] == "kernel_rag_retriever_harness_adapter"
     assert collection.packs[0].evidence_id == "ev-2"
     assert collection.packs[0].metadata["evidence_type"] == "result"
+    assert collection.packs[0].metadata["evidence_type_source"] == "requested_default"
     assert collection.packs[0].metadata["rag_score_breakdown"] == {
         "field_score": 0.5,
         "final_score": 0.67,
     }
+
+
+def test_kernel_rag_retriever_adapter_uses_resolved_evidence_type_per_item():
+    retriever = _FakeKernelRetriever((
+        RAGEvidence(
+            evidence_id="ev-method",
+            chunk_id="chunk-method",
+            document_id="doc-1",
+            text="Method evidence.",
+            score=0.8,
+            score_breakdown=RAGScoreBreakdown(final_score=0.8),
+            source_locator=SourceLocator(source_id="source://doc-1/chunk-method"),
+            metadata={"section_role": ["method"]},
+        ),
+        RAGEvidence(
+            evidence_id="ev-table",
+            chunk_id="chunk-table",
+            document_id="doc-1",
+            text="Table evidence.",
+            score=0.7,
+            score_breakdown=RAGScoreBreakdown(final_score=0.7),
+            source_locator=SourceLocator(source_id="source://doc-1/chunk-table"),
+            metadata={"chunk_type": "table"},
+        ),
+    ))
+    adapter = KernelRAGRetrieverHarnessAdapter(
+        retriever,
+        default_intent="paper_query",
+        default_evidence_type="paper_chunk",
+        evidence_type_resolver=MetadataKeyEvidenceTypeResolver({
+            "section_role": {"method": "method"},
+            "chunk_type": {"table": "experiment"},
+        }),
+    )
+
+    collection = adapter.retrieve(RetrievalRequest(
+        query="What are the findings?",
+        scope="paper-corpus",
+        metadata={"evidence_type": "requested_type"},
+    ))
+
+    assert [pack.metadata["evidence_type"] for pack in collection.packs] == ["method", "experiment"]
+    assert [pack.metadata["evidence_type_source"] for pack in collection.packs] == [
+        "content_resolved",
+        "content_resolved",
+    ]
+
+
+def test_kernel_rag_retriever_adapter_marks_requested_fallback_when_resolver_misses():
+    retriever = _FakeKernelRetriever((
+        RAGEvidence(
+            evidence_id="ev-unknown",
+            chunk_id="chunk-unknown",
+            document_id="doc-1",
+            text="Unclassified evidence.",
+            score=0.6,
+            score_breakdown=RAGScoreBreakdown(final_score=0.6),
+            source_locator=SourceLocator(source_id="source://doc-1/chunk-unknown"),
+            metadata={"section_role": ["other"]},
+        ),
+    ))
+    adapter = KernelRAGRetrieverHarnessAdapter(
+        retriever,
+        default_intent="paper_query",
+        default_evidence_type="paper_chunk",
+        evidence_type_resolver=MetadataKeyEvidenceTypeResolver({
+            "section_role": {"method": "method"},
+        }),
+    )
+
+    collection = adapter.retrieve(RetrievalRequest(
+        query="What are the findings?",
+        scope="paper-corpus",
+        metadata={"evidence_type": "requested_type"},
+    ))
+
+    assert collection.packs[0].metadata["evidence_type"] == "requested_type"
+    assert collection.packs[0].metadata["evidence_type_source"] == "requested_fallback"
 
 
 class _FakeKernelRetriever:

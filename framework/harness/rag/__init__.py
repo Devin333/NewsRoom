@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from framework.harness.rag.context_pack_assembler import FakeRAGContextPackAssembler, RAGContextPackAssembler
+from framework.harness.rag.evidence_typing import EvidenceTypeResolver, MetadataKeyEvidenceTypeResolver
 from framework.harness.rag.fake import (
     FakeRAGGateSuite,
     FakeRAGPlanner,
@@ -55,12 +56,14 @@ __all__ = [
     "BoundedRAGSessionController",
     "DeterministicRAGPlanner",
     "EvidenceCandidate",
+    "EvidenceTypeResolver",
     "FakeRAGContextPackAssembler",
     "FakeRAGGateSuite",
     "FakeRAGPlanner",
     "FakeRAGSessionController",
     "FakeSourceVerifier",
     "KernelRAGRetrieverHarnessAdapter",
+    "MetadataKeyEvidenceTypeResolver",
     "RAGEvidenceConflictGate",
     "RAGEvidenceCoverageGate",
     "RAGEvidenceGateResult",
