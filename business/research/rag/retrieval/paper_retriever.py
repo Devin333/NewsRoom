@@ -31,12 +31,12 @@ from business.research.rag.retrieval.channels.sparse_lexical import (
     formula_sparse_scores,
     sparse_query_tokens,
 )
+from business.research.rag.retrieval.channels.visual import VisualRecallChannel
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings
 from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute, build_retrieval_route
 from business.research.rag.retrieval.paper_visual_retrieval import (
     PaperVisualFusionWeights,
-    fuse_visual_retrieval_scores,
     with_retrieval_scores,
 )
 from business.research.rag.retrieval.policy_config import policy_config_hash
@@ -539,6 +539,7 @@ class ResearchRetriever:
         self._sparse_channel = SparseLexicalChannel(chunk_store)
         self._field_channel = FieldEmbeddingChannel(chunk_store, field_index)
         self._claim_channel = ClaimIndexChannel(chunk_store, claim_index)
+        self._visual_channel = VisualRecallChannel(chunk_store, visual_store)
         self._policy = policy or RetrievalPolicy()
         self._reranker = reranker
         self._field_index = field_index
@@ -1023,23 +1024,7 @@ class ResearchRetriever:
         visual_hits: list[VisualChunkHit],
         paper_id: str,
     ) -> list[tuple[PaperChunk, float]]:
-        out: list[tuple[PaperChunk, float]] = []
-        for hit in visual_hits:
-            chunk = self._store.get_chunk(hit.chunk_id)
-            if chunk is None or chunk.paper_id != paper_id:
-                continue
-            out.append((
-                with_retrieval_scores(
-                    chunk,
-                    text_score=0.0,
-                    visual_score=hit.score,
-                    fused_score=hit.score,
-                    strategy="visual_channel_rrf",
-                ),
-                hit.score,
-            ))
-        out.sort(key=lambda item: item[1], reverse=True)
-        return out
+        return self._visual_channel.ranked_chunks(visual_hits, paper_id)
 
     def _base_reranker_enabled(self, intent: str) -> bool:
         return self._reranker is not None and self._policy.reranker_enabled_for(intent)
@@ -1225,25 +1210,12 @@ class ResearchRetriever:
         if self._visual_store is None or route.intent != "figure_query":
             return []
         limit = request.limit * self._policy.overfetch_multiplier
-        hits_by_id: dict[str, VisualChunkHit] = {}
-        for filters in candidate_filters:
-            try:
-                hits = self._visual_store.search_visual_chunks(
-                    request.paper_id,
-                    request.question,
-                    filters=filters,
-                    limit=limit,
-                )
-            except Exception:
-                logging.getLogger(__name__).warning("visual retrieval failed", exc_info=True)
-                return []
-            for hit in hits:
-                existing = hits_by_id.get(hit.chunk_id)
-                if existing is None or hit.score > existing.score:
-                    hits_by_id[hit.chunk_id] = hit
-        hits = list(hits_by_id.values())
-        hits.sort(key=lambda hit: hit.score, reverse=True)
-        return hits[:limit]
+        return self._visual_channel.search_hits(
+            paper_id=request.paper_id,
+            query_text=request.question,
+            candidate_filters=candidate_filters,
+            limit=limit,
+        )
 
     def _fuse_visual_scores(
         self,
@@ -1257,11 +1229,10 @@ class ResearchRetriever:
         field_rerank_scores: dict[str, float] | None = None,
     ) -> list[tuple[PaperChunk, float]]:
         fused: list[tuple[PaperChunk, float]] = []
-        for fused_chunk, fused_score in fuse_visual_retrieval_scores(
+        for fused_chunk, fused_score in self._visual_channel.fuse_scores(
             scored,
             visual_hits,
             paper_id=paper_id,
-            chunk_lookup=self._store,
             weights=PaperVisualFusionWeights(
                 text=self._policy.visual_fusion_text_weight,
                 visual=self._policy.visual_fusion_visual_weight,

@@ -8,6 +8,7 @@ from business.research.rag.retrieval.channels.sparse_lexical import (
     formula_sparse_scores,
     sparse_query_tokens,
 )
+from business.research.rag.retrieval.channels.visual import VisualRecallChannel
 
 __all__ = [
     "FormulaSparseScores",
@@ -18,6 +19,7 @@ __all__ = [
     "RankedList",
     "RecallChannel",
     "SparseLexicalChannel",
+    "VisualRecallChannel",
     "formula_sparse_scores",
     "sparse_query_tokens",
 ]
