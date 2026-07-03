@@ -23,7 +23,8 @@ from business.research.document.citation_spans import resolve_citation_span
 from business.research.document.models import PaperChunk
 from business.research.rag.adapters.paper_chunk_adapter import paper_chunk_to_rag_evidence
 from business.research.rag.retrieval.paper_claim_index import extract_claim_records
-from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest
+from business.research.rag.retrieval.contracts import RetrievalRequest
+from business.research.rag.retrieval.paper_retriever import ResearchRetriever
 
 EvidenceBehavior = Literal["answer", "abstain"]
 QuestionProfile = Literal["template", "blind_detemplated", "blind_semantic"]

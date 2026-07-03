@@ -27,18 +27,17 @@ from business.research.rag.retrieval.paper_claim_index import (
     PaperClaimSearchPort,
     extract_claim_records,
 )
+from business.research.rag.retrieval.contracts import RetrievalRequest, RetrievalResult
 from business.research.rag.retrieval.metrics import RetrievalMetricsBuilder
-from business.research.rag.retrieval.paper_retriever import (
+from business.research.rag.retrieval.paper_retriever import ResearchRetriever
+from business.research.rag.retrieval.policies import (
     DEFAULT_RETRIEVAL_POLICY,
     NEWS_PAPER_RAG_POLICY_ENV,
     PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
     PAPER_FORMULA_RAG_V1_POLICY,
     PAPER_HYBRID_RRF_RAG_V1_POLICY,
     PAPER_VISUAL_RAG_TUNED_POLICY,
-    ResearchRetriever,
     RetrievalPolicy,
-    RetrievalRequest,
-    RetrievalResult,
     build_retrieval_policy,
     build_retrieval_policy_from_env,
     retrieval_policy_enables_lightweight_reranker,
