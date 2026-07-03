@@ -9,4 +9,4 @@
 - [x] Add tests for PDF URL ingest source normalization, source locator rewriting,
       and failure manifest recording.
 - [x] Validate with targeted document/RAG tests and compile check.
-- [ ] Commit only Marker branch changes.
+- [x] Commit only Marker branch changes.
