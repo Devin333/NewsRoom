@@ -42,6 +42,8 @@ from business.research.rag.retrieval.paper_visual_retrieval import (
 )
 from business.research.rag.retrieval.channels import RankedHit, RankedList, RecallChannel
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
+from business.research.rag.retrieval.policy_config import policy_config_hash, stable_policy_config
+from business.research.rag.retrieval.trace import RetrievalDegradation, RetrievalTrace
 
 __all__ = [
     "AnswerContextAssembler",
@@ -68,6 +70,8 @@ __all__ = [
     "RetrievalRequest",
     "RetrievalResult",
     "RetrievalRoute",
+    "RetrievalDegradation",
+    "RetrievalTrace",
     "build_retrieval_policy",
     "build_retrieval_policy_from_env",
     "build_retrieval_route",
@@ -77,6 +81,8 @@ __all__ = [
     "fuse_ranked_hits",
     "fuse_visual_retrieval_scores",
     "retrieval_policy_enables_lightweight_reranker",
+    "policy_config_hash",
+    "stable_policy_config",
     "visual_fusion_score",
     "with_retrieval_scores",
 ]

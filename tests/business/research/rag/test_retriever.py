@@ -599,6 +599,9 @@ def test_hybrid_sparse_empty_inventory_is_reported_as_degradation():
             "reason": "ChunkStorePort.list_chunks returned no chunks for sparse lexical recall.",
         }
     ]
+    assert result.metadata["retrieval_trace"]["degradations"] == result.metadata["retrieval_degradations"]
+    assert result.metadata["retrieval_trace"]["policy_name"] == PAPER_HYBRID_RRF_RAG_V1_POLICY
+    assert result.metadata["retrieval_trace"]["policy_hash"] == result.metadata["retrieval_policy_config_hash"]
 
 
 def test_formula_policy_uses_formula_sparse_rrf_to_recall_symbol_operator_match():

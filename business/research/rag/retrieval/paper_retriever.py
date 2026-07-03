@@ -31,6 +31,8 @@ from business.research.rag.retrieval.paper_visual_retrieval import (
     fuse_visual_retrieval_scores,
     with_retrieval_scores,
 )
+from business.research.rag.retrieval.policy_config import policy_config_hash
+from business.research.rag.retrieval.trace import RetrievalDegradation, RetrievalTrace
 
 if TYPE_CHECKING:
     from business.research.ports.reranker import RerankerPort
@@ -610,7 +612,16 @@ class ResearchRetriever:
         route = build_retrieval_route(request.question)
         filters = self._build_filters(route)
         candidate_filters = self._candidate_filters(route, filters)
-        retrieval_degradations: list[dict[str, Any]] = []
+        active_policy_hash = policy_config_hash(self._policy)
+        retrieval_trace = RetrievalTrace(
+            policy_name=self._policy.name,
+            policy_hash=active_policy_hash,
+            route={
+                "primary_intent": route.intent,
+                "recall_routes": list(route.recall_routes),
+                "candidate_filters": candidate_filters,
+            },
+        )
 
         # ── 1. vector search (over-fetch for re-ranking) ──────────────────────
         element_query_labels = _element_query_labels(request.question, route.intent)
@@ -630,7 +641,7 @@ class ResearchRetriever:
             route,
             candidate_filters,
             candidate_limit,
-            degradations=retrieval_degradations,
+            trace=retrieval_trace,
         )
         n_recalled = len(candidates)
         field_hits = self._search_field_candidates(request, route, candidate_filters)
@@ -712,6 +723,8 @@ class ResearchRetriever:
         elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
         metrics = {
             "retrieval_policy": self._policy.name,
+            "retrieval_policy_version": 1,
+            "retrieval_policy_config_hash": active_policy_hash,
             "retrieval_policy_overfetch_multiplier": self._policy.overfetch_multiplier,
             "retrieval_policy_element_label_overfetch_multiplier": (
                 self._policy.element_label_overfetch_multiplier
@@ -796,7 +809,8 @@ class ResearchRetriever:
             "field_embedding_score_top": _metadata_extreme(scored, "field_embedding_score", max),
             "field_rerank_top": _metadata_extreme(scored, "field_rerank_score", max),
             "best_matching_fields": _best_matching_fields(scored),
-            "retrieval_degradations": retrieval_degradations,
+            "retrieval_degradations": [item.to_dict() for item in retrieval_trace.degradations],
+            "retrieval_trace": retrieval_trace.to_dict(),
         }
         metrics.update(parent_metrics)
         logging.getLogger(__name__).info("retrieval %s", metrics)
@@ -868,7 +882,7 @@ class ResearchRetriever:
         candidate_filters: list[dict[str, Any]],
         limit: int,
         *,
-        degradations: list[dict[str, Any]],
+        trace: RetrievalTrace,
     ) -> list[tuple[PaperChunk, float]]:
         if self._policy.hybrid_rrf_enabled and intent_allowed(route.intent, _HYBRID_RRF_INTENTS):
             return self._search_hybrid_text_candidates(
@@ -876,7 +890,7 @@ class ResearchRetriever:
                 route,
                 candidate_filters,
                 limit,
-                degradations=degradations,
+                trace=trace,
             )
         by_id: dict[str, tuple[PaperChunk, float]] = {}
         query_texts = _recall_queries_for_policy(request.question, route.intent, self._policy)
@@ -902,7 +916,7 @@ class ResearchRetriever:
         candidate_filters: list[dict[str, Any]],
         limit: int,
         *,
-        degradations: list[dict[str, Any]],
+        trace: RetrievalTrace,
     ) -> list[tuple[PaperChunk, float]]:
         rankings: list[tuple[str, list[tuple[PaperChunk, float]]]] = []
         query_texts = _recall_queries_for_policy(request.question, route.intent, self._policy)
@@ -930,7 +944,7 @@ class ResearchRetriever:
                         formula_sparse_enabled=(
                             self._policy.formula_sparse_enabled and route.intent == "formula_query"
                         ),
-                        degradations=degradations,
+                        trace=trace,
                     )
                     if sparse_hits:
                         rankings.append((f"sparse:{filter_index}:{query_index}", sparse_hits))
@@ -949,13 +963,13 @@ class ResearchRetriever:
         filters: dict[str, Any],
         limit: int,
         formula_sparse_enabled: bool = False,
-        degradations: list[dict[str, Any]] | None = None,
+        trace: RetrievalTrace | None = None,
     ) -> list[tuple[PaperChunk, float]]:
         chunks = self._store.list_chunks(paper_id)
         if not chunks:
-            if degradations is not None:
+            if trace is not None:
                 _append_degradation_once(
-                    degradations,
+                    trace,
                     code="sparse_inventory_empty",
                     stage="sparse_lexical",
                     paper_id=paper_id,
@@ -2548,21 +2562,19 @@ def _merge_chunk_metadata(base: PaperChunk, incoming: PaperChunk) -> PaperChunk:
 
 
 def _append_degradation_once(
-    degradations: list[dict[str, Any]],
+    trace: RetrievalTrace,
     *,
     code: str,
     stage: str,
     paper_id: str,
     reason: str,
 ) -> None:
-    if any(item.get("code") == code and item.get("stage") == stage for item in degradations):
-        return
-    degradations.append({
-        "code": code,
-        "stage": stage,
-        "paper_id": paper_id,
-        "reason": reason,
-    })
+    trace.append_degradation_once(RetrievalDegradation(
+        code=code,
+        stage=stage,
+        paper_id=paper_id,
+        reason=reason,
+    ))
 
 
 def _chunk_matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
