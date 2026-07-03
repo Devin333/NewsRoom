@@ -28,6 +28,8 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
         "memory_claim_history",
         "memory_decisions",
         "memory_preferences",
+        "reader_repair_memory_objects",
+        "reader_repair_memory_versions",
         "agent_conversations",
         "agent_conversation_messages",
         "agent_conversation_state",
@@ -59,6 +61,10 @@ def test_postgres_migration_sql_contains_required_tables() -> None:
     assert "idx_memory_events_run" in sql
     assert "idx_memory_decisions_target" in sql
     assert "idx_memory_preferences_owner" in sql
+    assert "idx_reader_repair_memory_objects_issue" in sql
+    assert "idx_reader_repair_memory_objects_signature" in sql
+    assert "idx_reader_repair_memory_objects_status" in sql
+    assert "idx_reader_repair_memory_versions_object" in sql
     assert "idx_memory_claim_history_claim" in sql
     assert "idx_memory_claim_history_evidence" in sql
     assert "ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'mentioned'" in sql

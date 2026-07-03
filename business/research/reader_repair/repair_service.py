@@ -17,6 +17,7 @@ from business.research.reader_repair.consolidation import ReaderRepairConsolidat
 from business.research.reader_repair.issue_detector import ReaderRepairIssueDetector
 from business.research.reader_repair.repair_context import ReaderRepairContextBuilder
 from business.research.reader_repair.repair_gates import ReaderRepairGateSuite
+from business.research.ports import ReaderRepairMemoryPort
 from business.research.reader_repair.repair_memory import InMemoryReaderRepairMemory, ReaderRepairMemoryService
 from business.research.reader_repair.workflow import build_reader_repair_subagent_specs
 
@@ -59,7 +60,7 @@ class ReaderRepairService:
     def __init__(
         self,
         *,
-        memory: InMemoryReaderRepairMemory | None = None,
+        memory: ReaderRepairMemoryPort | None = None,
         issue_detector: ReaderRepairIssueDetector | None = None,
         context_builder: ReaderRepairContextBuilder | None = None,
         gates: ReaderRepairGateSuite | None = None,
@@ -178,10 +179,10 @@ class ReaderRepairService:
         )
         case_gate_results = self.gates.verify_case(repair_case)
         memory_ref = self.memory_service.commit_case(repair_case)
-        strategies = self.consolidator.consolidate(list(self.memory_service.memory.cases.values()))
+        strategies = self.consolidator.consolidate(list(self.memory_service.list_cases()))
         seed_ref = None
         for strategy in strategies:
-            self.memory_service.memory.write_strategy(strategy)
+            self.memory_service.write_strategy(strategy)
             seed = self.consolidator.skill_candidate_seed(strategy)
             if seed is not None:
                 seed_ref = f"skill-candidate-seed://{seed.seed_id}"

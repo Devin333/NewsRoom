@@ -11,7 +11,7 @@ from business.research.ports.field_embedding_index import (
 )
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
 from business.research.ports.memory import ResearchMemoryPort
-from business.research.ports.repair_memory import ReaderRepairMemoryPort
+from business.research.ports.repair_memory import ReaderRepairMemoryPort, ReaderRepairMemoryVersion
 from business.research.ports.repositories import (
     EvidencePackRepository,
     PaperCardRepository,
@@ -32,6 +32,7 @@ __all__ = [
     "PaperCardRepository",
     "PaperSourceProvider",
     "ReaderRepairMemoryPort",
+    "ReaderRepairMemoryVersion",
     "ReadingSessionRepository",
     "ResearchArtifactStorePort",
     "ResearchCandidateWorkerPort",

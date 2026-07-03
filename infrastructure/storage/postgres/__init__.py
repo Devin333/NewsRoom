@@ -7,6 +7,7 @@ from infrastructure.storage.postgres.lineage import PostgresLineageStore
 from infrastructure.storage.postgres.memory_repository import PostgresIntelligenceMemoryRepository
 from infrastructure.storage.postgres.metrics import PostgresStorageMetricsCollector
 from infrastructure.storage.postgres.migrations import load_migration_sql
+from infrastructure.storage.postgres.repair_memory_repository import PostgresReaderRepairMemoryRepository
 from infrastructure.storage.postgres.repository import PostgresRepository
 from infrastructure.storage.records import ReportDetailRecord, ReportSummaryRecord
 
@@ -18,6 +19,7 @@ __all__ = [
     "PostgresEventStore",
     "PostgresLineageStore",
     "PostgresIntelligenceMemoryRepository",
+    "PostgresReaderRepairMemoryRepository",
     "PostgresStorageMetricsCollector",
     "PostgresRepository",
     "load_migration_sql",

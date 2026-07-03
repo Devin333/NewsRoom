@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Sequence
 
 from framework.harness.memory import MemoryWriteCandidate
 
@@ -12,6 +12,7 @@ from business.research.domain.reader_repair import (
     ReaderRepairMemoryQuery,
     ReaderRepairStrategy,
 )
+from business.research.ports.repair_memory import ReaderRepairMemoryPort, ReaderRepairMemoryVersion
 
 
 class InMemoryReaderRepairMemory:
@@ -19,16 +20,36 @@ class InMemoryReaderRepairMemory:
         self.cases: dict[str, ReaderRepairCase] = {}
         self.strategies: dict[str, ReaderRepairStrategy] = {}
         self.write_candidates: dict[str, MemoryWriteCandidate] = {}
+        self.case_versions: dict[str, list[ReaderRepairMemoryVersion]] = {}
+        self.strategy_versions: dict[str, list[ReaderRepairMemoryVersion]] = {}
 
     def write_case(self, repair_case: ReaderRepairCase, *, namespace: str = READER_REPAIR_NAMESPACE) -> str:
         _require_namespace(namespace)
         self.cases[repair_case.repair_case_id] = repair_case
-        return f"memory://{namespace}/case/{repair_case.repair_case_id}"
+        ref = _memory_ref(namespace, "case", repair_case.repair_case_id)
+        self._append_version(
+            self.case_versions,
+            ref=ref,
+            object_type="case",
+            object_id=repair_case.repair_case_id,
+            payload=repair_case.to_dict(),
+            operation="upsert",
+        )
+        return ref
 
     def write_strategy(self, strategy: ReaderRepairStrategy, *, namespace: str = READER_REPAIR_NAMESPACE) -> str:
         _require_namespace(namespace)
         self.strategies[strategy.strategy_id] = strategy
-        return f"memory://{namespace}/strategy/{strategy.strategy_id}"
+        ref = _memory_ref(namespace, "strategy", strategy.strategy_id)
+        self._append_version(
+            self.strategy_versions,
+            ref=ref,
+            object_type="strategy",
+            object_id=strategy.strategy_id,
+            payload=strategy.to_dict(),
+            operation="upsert",
+        )
+        return ref
 
     def recall_cases(self, query: ReaderRepairMemoryQuery) -> tuple[ReaderRepairCase, ...]:
         _require_namespace(query.namespace)
@@ -47,15 +68,103 @@ class InMemoryReaderRepairMemory:
             if strategy.issue_type == issue_type and strategy.status in {"promoted_memory", "skill_candidate_ready", "validated"}
         ]
 
+    def list_cases(self, *, namespace: str = READER_REPAIR_NAMESPACE) -> tuple[ReaderRepairCase, ...]:
+        _require_namespace(namespace)
+        return tuple(sorted(self.cases.values(), key=lambda case: case.repair_case_id))
+
+    def list_case_versions(
+        self,
+        repair_case_id: str,
+        *,
+        namespace: str = READER_REPAIR_NAMESPACE,
+    ) -> tuple[ReaderRepairMemoryVersion, ...]:
+        _require_namespace(namespace)
+        return tuple(self.case_versions.get(repair_case_id, ()))
+
+    def rollback_case(
+        self,
+        repair_case_id: str,
+        *,
+        namespace: str = READER_REPAIR_NAMESPACE,
+        version: int,
+    ) -> str:
+        _require_namespace(namespace)
+        prior = _version_by_number(self.case_versions.get(repair_case_id, ()), version)
+        case = ReaderRepairCase(**prior.payload)
+        self.cases[repair_case_id] = case
+        ref = _memory_ref(namespace, "case", repair_case_id)
+        self._append_version(
+            self.case_versions,
+            ref=ref,
+            object_type="case",
+            object_id=repair_case_id,
+            payload=case.to_dict(),
+            operation="rollback",
+        )
+        return ref
+
+    def list_strategy_versions(
+        self,
+        strategy_id: str,
+        *,
+        namespace: str = READER_REPAIR_NAMESPACE,
+    ) -> tuple[ReaderRepairMemoryVersion, ...]:
+        _require_namespace(namespace)
+        return tuple(self.strategy_versions.get(strategy_id, ()))
+
+    def rollback_strategy(
+        self,
+        strategy_id: str,
+        *,
+        namespace: str = READER_REPAIR_NAMESPACE,
+        version: int,
+    ) -> str:
+        _require_namespace(namespace)
+        prior = _version_by_number(self.strategy_versions.get(strategy_id, ()), version)
+        strategy = ReaderRepairStrategy(**prior.payload)
+        self.strategies[strategy_id] = strategy
+        ref = _memory_ref(namespace, "strategy", strategy_id)
+        self._append_version(
+            self.strategy_versions,
+            ref=ref,
+            object_type="strategy",
+            object_id=strategy_id,
+            payload=strategy.to_dict(),
+            operation="rollback",
+        )
+        return ref
+
     def propose_write(self, candidate: MemoryWriteCandidate) -> MemoryWriteCandidate:
         _require_namespace(candidate.namespace)
         self.write_candidates[candidate.candidate_id] = candidate
         return candidate
 
+    def _append_version(
+        self,
+        versions: dict[str, list[ReaderRepairMemoryVersion]],
+        *,
+        ref: str,
+        object_type: str,
+        object_id: str,
+        payload: dict[str, Any],
+        operation: str,
+    ) -> None:
+        current = versions.setdefault(object_id, [])
+        current.append(
+            ReaderRepairMemoryVersion(
+                memory_ref=ref,
+                object_type=object_type,  # type: ignore[arg-type]
+                object_id=object_id,
+                version=len(current) + 1,
+                operation=operation,
+                payload=dict(payload),
+            )
+        )
+
 
 @dataclass
 class ReaderRepairMemoryService:
-    memory: InMemoryReaderRepairMemory
+    memory: ReaderRepairMemoryPort
     namespace: str = READER_REPAIR_NAMESPACE
     write_refs: list[str] = field(default_factory=list)
 
@@ -90,10 +199,30 @@ class ReaderRepairMemoryService:
         self.write_refs.append(ref)
         return ref
 
+    def write_strategy(self, strategy: ReaderRepairStrategy) -> str:
+        return self.memory.write_strategy(strategy, namespace=self.namespace)
+
+    def list_cases(self) -> tuple[ReaderRepairCase, ...]:
+        return self.memory.list_cases(namespace=self.namespace)
+
 
 def _require_namespace(namespace: str) -> None:
     if namespace != READER_REPAIR_NAMESPACE:
         raise ValueError("reader repair memory can only use research.reader_repair namespace")
+
+
+def _memory_ref(namespace: str, object_type: str, object_id: str) -> str:
+    return f"memory://{namespace}/{object_type}/{object_id}"
+
+
+def _version_by_number(
+    versions: Sequence[ReaderRepairMemoryVersion],
+    version: int,
+) -> ReaderRepairMemoryVersion:
+    for candidate in versions:
+        if candidate.version == version:
+            return candidate
+    raise KeyError(f"reader repair memory version not found: {version}")
 
 
 __all__ = ["InMemoryReaderRepairMemory", "ReaderRepairMemoryService"]
