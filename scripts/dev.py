@@ -83,23 +83,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "test-sdk":
         return _run(_pytest_command("tests/sdk", "-q"), env=env)
     if args.command == "test-prd-research":
-        return _run(
-            _pytest_command(
-                "tests/framework/harness",
-                "tests/business/research",
-                "tests/interfaces/api/test_research_api.py",
-                "tests/interfaces/services/test_research_service.py",
-                "tests/interfaces/services/test_report_service.py",
-                "tests/interfaces/services/test_mcp_application_service.py",
-                "tests/business/layers/relation/evidence/test_claim_verifier.py",
-                "tests/business/layers/analysis/quality/test_citation_editor.py",
-                "tests/business/layers/analysis/quality/test_support_scoring.py",
-                "tests/infrastructure/storage/test_artifact_store.py",
-                "tests/infrastructure/storage/test_backup_restore.py",
-                "-q",
-            ),
-            env=env,
-        )
+        return _run(_prd_research_regression_command(), env=env)
+    if args.command == "test-prd-daily":
+        return _run(_prd_research_regression_command(), env=env)
     if args.command == "test-api-contracts":
         return _run(
             _pytest_command(
@@ -189,6 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("test-mcp", help="Run MCP interface tests")
     subparsers.add_parser("test-sdk", help="Run SDK tests")
     subparsers.add_parser("test-prd-research", help="Run the PRD-aligned Harness and Research regression sweep")
+    subparsers.add_parser("test-prd-daily", help="Run the PRD-aligned daily regression sweep used by CI")
     subparsers.add_parser("export-openapi", help="Export docs/api/openapi.json")
     subparsers.add_parser("test-api-contracts", help="Run API contract tests")
     subparsers.add_parser("web-check", help="Check Web Console skeleton files")
@@ -279,6 +266,23 @@ def _mcp_smoke_command() -> list[str]:
 
 def _rag_eval_gate_command() -> list[str]:
     return [sys.executable, "-m", "business.research.rag.cli.run_ci_eval_gate"]
+
+
+def _prd_research_regression_command() -> list[str]:
+    return _pytest_command(
+        "tests/framework/harness",
+        "tests/business/research",
+        "tests/interfaces/api/test_research_api.py",
+        "tests/interfaces/services/test_research_service.py",
+        "tests/interfaces/services/test_report_service.py",
+        "tests/interfaces/services/test_mcp_application_service.py",
+        "tests/business/layers/relation/evidence/test_claim_verifier.py",
+        "tests/business/layers/analysis/quality/test_citation_editor.py",
+        "tests/business/layers/analysis/quality/test_support_scoring.py",
+        "tests/infrastructure/storage/test_artifact_store.py",
+        "tests/infrastructure/storage/test_backup_restore.py",
+        "-q",
+    )
 
 
 def _news_command(*args: str) -> list[str]:

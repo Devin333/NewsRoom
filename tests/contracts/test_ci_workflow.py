@@ -14,3 +14,14 @@ def test_ci_workflow_runs_rag_eval_promotion_gate() -> None:
         and step.get("run") == "python -m scripts.dev test-rag-eval-gate"
         for step in steps
     )
+
+
+def test_ci_workflow_runs_registered_prd_daily_sweep() -> None:
+    workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["test"]["steps"]
+
+    assert any(
+        step.get("name") == "Run PRD-aligned daily regression sweep"
+        and step.get("run") == "python -m scripts.dev test-prd-daily"
+        for step in steps
+    )
