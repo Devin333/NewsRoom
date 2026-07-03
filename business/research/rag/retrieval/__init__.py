@@ -32,6 +32,7 @@ from business.research.rag.retrieval.metrics import RetrievalMetricsBuilder
 from business.research.rag.retrieval.paper_retriever import ResearchRetriever
 from business.research.rag.retrieval.policies import (
     DEFAULT_RETRIEVAL_POLICY,
+    NEWS_PAPER_RAG_POLICY_CONFIG_ENV,
     NEWS_PAPER_RAG_POLICY_ENV,
     PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
     PAPER_FORMULA_RAG_V1_POLICY,
@@ -39,6 +40,8 @@ from business.research.rag.retrieval.policies import (
     PAPER_VISUAL_RAG_TUNED_POLICY,
     RetrievalPolicy,
     build_retrieval_policy,
+    build_retrieval_policy_from_config,
+    build_retrieval_policy_from_config_file,
     build_retrieval_policy_from_env,
     retrieval_policy_enables_lightweight_reranker,
 )
@@ -87,6 +90,7 @@ __all__ = [
     "ExpanderSpec",
     "FusionSpec",
     "FormulaContextExpander",
+    "NEWS_PAPER_RAG_POLICY_CONFIG_ENV",
     "NEWS_PAPER_RAG_POLICY_ENV",
     "PAPER_BLIND_SEMANTIC_RAG_V1_POLICY",
     "PAPER_FORMULA_RAG_V1_POLICY",
@@ -117,6 +121,8 @@ __all__ = [
     "SupplementalTableHitExpander",
     "TableContextExpander",
     "build_retrieval_policy",
+    "build_retrieval_policy_from_config",
+    "build_retrieval_policy_from_config_file",
     "build_retrieval_policy_from_env",
     "build_retrieval_route",
     "build_retrieval_pipeline",

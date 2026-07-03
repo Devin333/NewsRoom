@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
-from typing import Mapping
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+from typing import Any, Mapping
 
 from framework.rag.core import intent_allowed, intent_budget, position_decay_score
 
 from business.research.rag.adapters.paper_field_text import FIELD_NAMES
+from business.research.rag.retrieval.policy_config import (
+    RetrievalPolicyConfigError,
+    load_policy_config_payload,
+)
 from business.research.rag.retrieval.scoring import (
     normalized_child_fallback_score_weights,
     normalized_child_final_score_weights,
@@ -31,6 +36,7 @@ PAPER_BLIND_SEMANTIC_RAG_V1_POLICY = "paper_blind_semantic_rag_v1"
 PAPER_HYBRID_RRF_RAG_V1_POLICY = "paper_hybrid_rrf_rag_v1"
 PAPER_FORMULA_RAG_V1_POLICY = "paper_formula_rag_v1"
 NEWS_PAPER_RAG_POLICY_ENV = "NEWS_PAPER_RAG_POLICY"
+NEWS_PAPER_RAG_POLICY_CONFIG_ENV = "NEWS_PAPER_RAG_POLICY_CONFIG"
 HIGH_VALUE_VISUAL_RESULT_INTENTS = ("figure_query", "table_query", "numerical_result", "comparison")
 LIGHTWEIGHT_FIELD_RERANK_INTENTS = (*HIGH_VALUE_VISUAL_RESULT_INTENTS, "formula_query")
 
@@ -280,6 +286,127 @@ def build_retrieval_policy(policy_name: str | None = None) -> RetrievalPolicy:
     )
 
 
+def build_retrieval_policy_from_config_file(
+    path: str | os.PathLike[str],
+    *,
+    base_policy_name: str | None = None,
+) -> RetrievalPolicy:
+    payload = load_policy_config_payload(Path(path))
+    return build_retrieval_policy_from_config(payload, base_policy_name=base_policy_name)
+
+
+def build_retrieval_policy_from_config(
+    payload: Mapping[str, Any],
+    *,
+    base_policy_name: str | None = None,
+) -> RetrievalPolicy:
+    allowed_root_keys = {"base_policy", "overrides"}
+    unknown_root_keys = sorted(set(payload) - allowed_root_keys)
+    if unknown_root_keys:
+        raise RetrievalPolicyConfigError(
+            "unknown retrieval policy config key(s): " + ", ".join(unknown_root_keys)
+        )
+    base_name = payload.get("base_policy") or base_policy_name
+    if base_name is not None and not isinstance(base_name, str):
+        raise RetrievalPolicyConfigError("retrieval policy config base_policy must be a string")
+    base_policy = build_retrieval_policy(base_name)
+    overrides = payload.get("overrides") or {}
+    if not isinstance(overrides, Mapping):
+        raise RetrievalPolicyConfigError("retrieval policy config overrides must be an object")
+    if not overrides:
+        return base_policy
+    field_names = {item.name for item in fields(RetrievalPolicy)}
+    unknown_fields = sorted(str(key) for key in overrides if str(key) not in field_names)
+    if unknown_fields:
+        raise RetrievalPolicyConfigError(
+            "unknown retrieval policy override field(s): " + ", ".join(unknown_fields)
+        )
+    values = {item.name: getattr(base_policy, item.name) for item in fields(RetrievalPolicy)}
+    for key, value in overrides.items():
+        field_name = str(key)
+        values[field_name] = _coerce_policy_override(field_name, value, values[field_name])
+    return RetrievalPolicy(**values)
+
+
+def _coerce_policy_override(field_name: str, value: Any, current_value: Any) -> Any:
+    if isinstance(current_value, bool):
+        if not isinstance(value, bool):
+            raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be a boolean")
+        return value
+    if isinstance(current_value, int) and not isinstance(current_value, bool):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be an integer")
+        return value
+    if isinstance(current_value, float):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be numeric")
+        return float(value)
+    if isinstance(current_value, str):
+        if not isinstance(value, str):
+            raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be a string")
+        return value
+    if isinstance(current_value, tuple):
+        return _coerce_tuple_field(field_name, value, current_value)
+    if isinstance(current_value, dict):
+        return _coerce_dict_field(field_name, value, current_value)
+    return value
+
+
+def _coerce_tuple_field(field_name: str, value: Any, current_value: tuple[Any, ...]) -> tuple[Any, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be a list")
+    sample = next((item for item in current_value if item is not None), "")
+    return tuple(_coerce_scalar(f"{field_name}[]", item, sample) for item in value)
+
+
+def _coerce_dict_field(field_name: str, value: Any, current_value: dict[Any, Any]) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be an object")
+    sample_value = next(iter(current_value.values()), None)
+    if sample_value is None:
+        sample_value = {
+            "element_label_boosts": 0.0,
+        }.get(field_name)
+    return {
+        str(key): _coerce_dict_value(f"{field_name}.{key}", item, sample_value)
+        for key, item in value.items()
+    }
+
+
+def _coerce_dict_value(field_name: str, value: Any, sample_value: Any) -> Any:
+    if isinstance(sample_value, tuple):
+        return _coerce_tuple_field(field_name, value, sample_value)
+    if isinstance(sample_value, Mapping):
+        if not isinstance(value, Mapping):
+            raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be an object")
+        inner_sample = next(iter(sample_value.values()), 0.0)
+        return {
+            str(key): _coerce_scalar(f"{field_name}.{key}", item, inner_sample)
+            for key, item in value.items()
+        }
+    if sample_value is not None:
+        return _coerce_scalar(field_name, value, sample_value)
+    return value
+
+
+def _coerce_scalar(field_name: str, value: Any, sample_value: Any) -> Any:
+    if isinstance(sample_value, bool):
+        if not isinstance(value, bool):
+            raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be a boolean")
+        return value
+    if isinstance(sample_value, int) and not isinstance(sample_value, bool):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be an integer")
+        return value
+    if isinstance(sample_value, float):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be numeric")
+        return float(value)
+    if not isinstance(value, str):
+        raise RetrievalPolicyConfigError(f"retrieval policy field {field_name!r} must be a string")
+    return value
+
+
 def retrieval_policy_enables_lightweight_reranker(policy_name: str | None) -> bool:
     return build_retrieval_policy(policy_name).name in {
         PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
@@ -292,6 +419,12 @@ def build_retrieval_policy_from_env(
     env: Mapping[str, str] | None = None,
 ) -> RetrievalPolicy:
     values = env if env is not None else os.environ
+    config_path = values.get(NEWS_PAPER_RAG_POLICY_CONFIG_ENV)
+    if config_path:
+        return build_retrieval_policy_from_config_file(
+            config_path,
+            base_policy_name=values.get(NEWS_PAPER_RAG_POLICY_ENV),
+        )
     return build_retrieval_policy(values.get(NEWS_PAPER_RAG_POLICY_ENV))
 
 
@@ -299,6 +432,7 @@ __all__ = [
     "DEFAULT_RETRIEVAL_POLICY",
     "HIGH_VALUE_VISUAL_RESULT_INTENTS",
     "LIGHTWEIGHT_FIELD_RERANK_INTENTS",
+    "NEWS_PAPER_RAG_POLICY_CONFIG_ENV",
     "NEWS_PAPER_RAG_POLICY_ENV",
     "PAPER_BLIND_SEMANTIC_RAG_V1_POLICY",
     "PAPER_FORMULA_RAG_V1_POLICY",
@@ -306,6 +440,8 @@ __all__ = [
     "PAPER_VISUAL_RAG_TUNED_POLICY",
     "RetrievalPolicy",
     "build_retrieval_policy",
+    "build_retrieval_policy_from_config",
+    "build_retrieval_policy_from_config_file",
     "build_retrieval_policy_from_env",
     "retrieval_policy_enables_lightweight_reranker",
 ]
