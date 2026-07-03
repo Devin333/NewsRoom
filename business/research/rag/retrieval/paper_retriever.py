@@ -32,6 +32,7 @@ from business.research.rag.retrieval.channels.sparse_lexical import (
     sparse_query_tokens,
 )
 from business.research.rag.retrieval.channels.visual import VisualRecallChannel
+from business.research.rag.retrieval.expanders.cross_ref import CrossRefContextExpander
 from business.research.rag.retrieval.expanders.parent import ParentContextExpander
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings
@@ -539,6 +540,7 @@ class ResearchRetriever:
             self._policy,
             reranker=reranker,
         )
+        self._cross_ref_expander = CrossRefContextExpander(chunk_store)
         self._reranker = reranker
         self._field_index = field_index
         self._field_reranker = field_reranker
@@ -1437,63 +1439,7 @@ class ResearchRetriever:
     def _fetch_refs(
         self, children: list[PaperChunk], paper_id: str
     ) -> list[PaperChunk]:
-        refs: list[tuple[str, str, str]] = []
-        seen = {c.chunk_id for c in children}
-        for child in children:
-            for ref_id in child.references[:1]:   # first-level only per PRD
-                if ref_id not in seen:
-                    refs.append((ref_id, child.chunk_id, "chunk_reference"))
-                    seen.add(ref_id)
-            if child.metadata.get("page_visual"):
-                for ref in child.metadata.get("related_visual_chunks", []):
-                    if not isinstance(ref, dict):
-                        continue
-                    ref_id = str(ref.get("chunk_id") or "")
-                    if ref_id and ref_id not in seen:
-                        refs.append((ref_id, child.chunk_id, "page_visual_related_chunk"))
-                        seen.add(ref_id)
-            if _is_figure_chunk(child):
-                for ref_id, reason, _edge in _figure_context_refs(child):
-                    if ref_id and ref_id not in seen:
-                        refs.append((ref_id, child.chunk_id, reason))
-                        seen.add(ref_id)
-            if _is_formula_chunk(child):
-                for ref_id, reason, _edge in self._formula_context_refs_for_child(child, paper_id):
-                    if ref_id and ref_id not in seen:
-                        refs.append((ref_id, child.chunk_id, reason))
-                        seen.add(ref_id)
-        result: list[PaperChunk] = []
-        for ref_id, source_id, reason in refs:
-            chunk = self._store.get_chunk(ref_id)
-            if chunk:
-                result.append(_with_expansion_metadata(
-                    chunk,
-                    expanded_from_chunk_id=source_id,
-                    reason=reason,
-                    edge=(
-                        "referenced_by_chunks"
-                        if reason in {"formula_body_reference", "figure_body_reference"}
-                        else reason
-                    ),
-                    rank=len(result) + 1,
-                    source_chunk=self._store.get_chunk(source_id),
-                ))
-        return result
-
-    def _formula_context_refs_for_child(
-        self,
-        child: PaperChunk,
-        paper_id: str,
-    ) -> list[tuple[str, str, str]]:
-        refs = list(_formula_context_refs(child))
-        formula_id = child.chunk_id
-        for candidate in self._store.list_chunks(paper_id):
-            if candidate.chunk_id == formula_id or candidate.paper_id != paper_id:
-                continue
-            for ref_id, _reason, edge in _formula_reverse_context_refs(candidate):
-                if ref_id == formula_id:
-                    refs.append((candidate.chunk_id, "formula_reverse_context", edge))
-        return _dedupe_ref_tuples(refs)
+        return self._cross_ref_expander.expand(children, paper_id)
 
 
 def _figure_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
