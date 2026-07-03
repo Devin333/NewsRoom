@@ -30,6 +30,9 @@ from business.research.document.cascade_parser import CascadeArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 from business.research.application.visual_chunk_describer import build_visual_chunk_describer_from_env
 from business.research.application.paper_rag_session import PaperRAGSession
+from business.research.application.llm_client import build_unity_llm_call
+from business.research.rag.adapters import PaperAnswerWorker
+from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
 from business.research.rag.retrieval.paper_retriever import (
     ResearchRetriever,
     build_retrieval_policy_from_env,
@@ -110,9 +113,19 @@ def build_research_retriever(*, with_reranker: bool = True) -> ResearchRetriever
     )
 
 
-def build_paper_rag_session(*, with_reranker: bool = True, plan_worker=None) -> PaperRAGSession:
+def build_paper_rag_session(
+    *,
+    with_reranker: bool = True,
+    plan_worker=None,
+    with_answer_worker: bool = False,
+) -> PaperRAGSession:
     reranker = get_reranker() if with_reranker else None
     retrieval_policy = build_retrieval_policy_from_env()
+    answer_worker = None
+    generation_policy: dict[str, object] = {}
+    if with_answer_worker:
+        answer_worker = PaperAnswerWorker(AnswerGenerator(build_unity_llm_call(max_tokens=600)))
+        generation_policy = {"enabled": True}
     return PaperRAGSession(
         build_chunk_store(),
         reranker=reranker,
@@ -121,6 +134,8 @@ def build_paper_rag_session(*, with_reranker: bool = True, plan_worker=None) -> 
         visual_store=build_visual_chunk_store(),
         retrieval_policy=retrieval_policy,
         plan_worker=plan_worker,
+        answer_worker=answer_worker,
+        generation_policy=generation_policy,
     )
 
 

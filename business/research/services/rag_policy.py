@@ -17,6 +17,7 @@ class ResearchRAGPolicyBuilder:
         allowed_corpora: tuple[str, ...] = ("research_papers",),
         allowed_tools: tuple[str, ...] = ("retrieval.search", "retrieval.read_source"),
         budget: RAGBudget | None = None,
+        generation_policy: dict[str, object] | None = None,
     ) -> RAGSessionSpec:
         return RAGSessionSpec(
             session_id=session_id,
@@ -38,6 +39,7 @@ class ResearchRAGPolicyBuilder:
             source_policy={"allowed_source_refs": list(goal.allowed_source_refs)},
             budget=budget or RAGBudget.safe_default(),
             context_policy={"projection": "research_rag_context", "stable_prefix": False},
+            generation_policy=dict(generation_policy or {}),
             metadata={"paper_id": goal.paper_id},
         )
 

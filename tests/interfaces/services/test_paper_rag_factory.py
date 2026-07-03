@@ -164,3 +164,17 @@ def test_paper_rag_session_factory_passes_optional_plan_worker(monkeypatch):
     paper_rag_factory.build_paper_rag_session(with_reranker=False, plan_worker=plan_worker)
 
     assert _FakeSession.last_kwargs["plan_worker"] is plan_worker
+
+
+def test_paper_rag_session_factory_builds_optional_answer_worker(monkeypatch):
+    monkeypatch.setattr(paper_rag_factory, "PaperRAGSession", _FakeSession)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+    monkeypatch.setattr(paper_rag_factory, "build_unity_llm_call", lambda max_tokens: object())
+
+    paper_rag_factory.build_paper_rag_session(with_reranker=False, with_answer_worker=True)
+
+    assert _FakeSession.last_kwargs["answer_worker"] is not None
+    assert _FakeSession.last_kwargs["generation_policy"] == {"enabled": True}

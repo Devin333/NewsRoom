@@ -31,6 +31,7 @@ class ResearchRagAskRequest(BaseModel):
     sectionIndex: int = 0
     limit: int = Field(default=5, ge=1, le=20)
     generate: bool = False
+    gated: bool = True
 
 
 # Process-wide singleton: the chunk-RAG service holds the resident reranker.
@@ -100,6 +101,7 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 section_index=request.sectionIndex,
                 limit=request.limit,
                 generate=request.generate,
+                gated=request.gated,
             ),
         )
 
