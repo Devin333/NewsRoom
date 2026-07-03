@@ -10,6 +10,7 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     GoldEvidenceAuditItem,
     GoldEvidenceJudgeItem,
     GoldEvidenceJudgeReport,
+    _answer_judge_failure_reasons,
     _evidence_preview,
     _evidence_pack_required_context_ids,
     _gold_fix_record,
@@ -18,10 +19,17 @@ from business.research.rag.evaluation.paper_benchmark_suite import (
     _hydrate_retrieval_with_evidence_pack,
     _spot_check_report_from_annotations,
     _spot_check_schema_errors,
+    _write_answer_fix_artifacts,
     audit_question_ambiguity,
     audit_gold_evidence,
     run_benchmark_suite,
     split_paper_ids,
+)
+from business.research.rag.evaluation.paper_answer_eval import (
+    OVERCONSERVATIVE_ABSTENTION_REASON,
+    WRONG_ABSTENTION_REASON,
+    EvidenceAnswerEvaluator,
+    EvidenceAnswerSample,
 )
 from business.research.rag.evaluation.paper_benchmark_matrix import (
     BenchmarkMatrixConfig,
@@ -31,10 +39,14 @@ from business.research.rag.evaluation.paper_benchmark_matrix import (
 )
 from business.research.document.models import PaperChunk
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
-from business.research.rag.evaluation.paper_generation_eval import GenerationSampleJudgment, GenerationScores
+from business.research.rag.evaluation.paper_generation_eval import (
+    GenerationEvalResult,
+    GenerationSampleJudgment,
+    GenerationScores,
+)
 from business.research.rag.cli.run_benchmark_suite import _parse_thresholds, main
 from business.research.rag.cli.run_benchmark_matrix import _datasets_from_args, _build_parser as _build_matrix_parser
-from business.research.rag.retrieval.paper_answer_generator import AnswerContextAssembler
+from business.research.rag.retrieval.paper_answer_generator import AnswerContextAssembler, GeneratedAnswer
 from business.research.rag.retrieval.paper_retriever import RetrievalResult
 
 
@@ -719,6 +731,124 @@ def test_run_benchmark_suite_writes_answer_fix_manifest_for_answer_judge_failure
     assert "unsupported_claim" in manifest["reason_counts"]
     assert "missing_citation" in manifest["reason_counts"]
     assert manifest["items"][0]["suggested_action"] in {"fix_answer_prompt", "fix_citation_mapping"}
+
+
+def test_answer_failure_taxonomy_splits_abstention_direction() -> None:
+    passing_judge_scores = {
+        "claim_support_rate": 1.0,
+        "contradiction_rate": 0.0,
+        "wrong_citation_rate": 0.0,
+        "missing_citation_rate": 0.0,
+        "citation_claim_support_rate": 1.0,
+    }
+
+    answerable_abstention = {
+        "expected_behavior": "answer",
+        "answer": "Insufficient evidence to answer from the provided context.",
+        "deterministic_scores": {"failure_reason": "abstention_expected"},
+        "llm_judge": {"scores": passing_judge_scores},
+    }
+    expected_abstain_answered = {
+        "expected_behavior": "abstain",
+        "answer": "The method improves accuracy by 7%.",
+        "deterministic_scores": {"failure_reason": "abstention_expected"},
+        "llm_judge": {"scores": passing_judge_scores},
+    }
+
+    over_conservative_reasons = _answer_judge_failure_reasons(answerable_abstention)
+    wrong_answer_reasons = _answer_judge_failure_reasons(expected_abstain_answered)
+
+    assert OVERCONSERVATIVE_ABSTENTION_REASON in over_conservative_reasons
+    assert WRONG_ABSTENTION_REASON not in over_conservative_reasons
+    assert "abstention_expected" not in over_conservative_reasons
+    assert WRONG_ABSTENTION_REASON in wrong_answer_reasons
+    assert OVERCONSERVATIVE_ABSTENTION_REASON not in wrong_answer_reasons
+    assert "abstention_expected" not in wrong_answer_reasons
+
+
+def test_answer_eval_failure_counts_preserve_abstention_direction() -> None:
+    answerable_abstention = EvidenceAnswerSample(
+        pair=EvidenceQAPair(
+            question="What did the method improve?",
+            paper_id="p1",
+            qa_type="table_qa",
+            gold_chunk_ids=["gold-1"],
+            answer_facts=["accuracy improved"],
+            expected_behavior="answer",
+        ),
+        answer="Insufficient evidence to answer from the provided context.",
+        context_chunk_ids=["gold-1"],
+    )
+    expected_abstain_answered = EvidenceAnswerSample(
+        pair=EvidenceQAPair(
+            question="What private dataset was used?",
+            paper_id="p1",
+            qa_type="table_qa",
+            expected_behavior="abstain",
+        ),
+        answer="The private dataset was AlphaBench.",
+    )
+
+    result = EvidenceAnswerEvaluator().evaluate([answerable_abstention, expected_abstain_answered])
+
+    assert result.failure_reason_counts() == {
+        OVERCONSERVATIVE_ABSTENTION_REASON: 1,
+        WRONG_ABSTENTION_REASON: 1,
+    }
+
+
+def test_answer_fix_manifest_counts_over_conservative_abstention(tmp_path: Path) -> None:
+    answer = "Insufficient evidence to answer from the provided context."
+    sample = EvidenceAnswerSample(
+        pair=EvidenceQAPair(
+            question="What changed?",
+            paper_id="p1",
+            qa_type="table_qa",
+            gold_chunk_ids=["gold-1"],
+            answer_facts=["accuracy improved"],
+            expected_behavior="answer",
+        ),
+        answer=answer,
+        context_chunk_ids=["gold-1"],
+    )
+    generated = GeneratedAnswer(
+        question=sample.pair.question,
+        answer=answer,
+        context_chunk_ids=["gold-1"],
+        contexts=["The table reports an accuracy improvement."],
+    )
+    judgment = GenerationSampleJudgment(
+        question=sample.pair.question,
+        answer=answer,
+        scores=GenerationScores(
+            faithfulness=1.0,
+            answer_relevancy=1.0,
+            context_precision=1.0,
+            claim_support_rate=1.0,
+            contradiction_rate=0.0,
+            unsupported_claim_rate=0.0,
+            citation_claim_support_rate=1.0,
+            wrong_citation_rate=0.0,
+            missing_citation_rate=0.0,
+        ),
+        status="pass",
+    )
+
+    _write_answer_fix_artifacts(
+        tmp_path,
+        answer_judge_records=[(sample, generated)],
+        generation_result=GenerationEvalResult(
+            per_sample=[judgment.scores],
+            sample_judgments=[judgment],
+        ),
+        spot_check=None,
+    )
+
+    manifest = json.loads((tmp_path / "answer_fix_manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["reason_counts"] == {OVERCONSERVATIVE_ABSTENTION_REASON: 1}
+    assert manifest["items"][0]["failure_reasons"] == [OVERCONSERVATIVE_ABSTENTION_REASON]
+    assert manifest["items"][0]["suggested_action"] == "fix_answer_prompt"
 
 
 def test_spot_check_schema_validates_extended_boolean_fields() -> None:

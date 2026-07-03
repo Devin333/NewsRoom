@@ -14,7 +14,13 @@ from typing import Any, Iterable, Protocol, Sequence
 from business.research.document.models import PaperChunk
 from business.research.application.llm_client import _browser_ua_transport
 from business.research.rag.adapters.paper_chunk_adapter import paper_chunk_to_rag_evidence
-from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvaluator, EvidenceAnswerSample
+from business.research.rag.evaluation.paper_answer_eval import (
+    OVERCONSERVATIVE_ABSTENTION_REASON,
+    EvidenceAnswerEvaluator,
+    EvidenceAnswerSample,
+    WRONG_ABSTENTION_REASON,
+    abstention_failure_reason,
+)
 from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
@@ -93,11 +99,18 @@ _ANSWER_FIX_REASON_ACTIONS = {
     "contradicted_claim": "fix_answer_prompt",
     "wrong_citation": "fix_citation_mapping",
     "missing_citation": "fix_citation_mapping",
-    "abstention_wrong": "fix_answer_prompt",
+    OVERCONSERVATIVE_ABSTENTION_REASON: "fix_answer_prompt",
+    WRONG_ABSTENTION_REASON: "fix_answer_prompt",
     "gold_evidence_bad": "fix_gold_evidence",
     "judge_human_conflict": "manual_review_required",
     "judge_error": "manual_review_required",
 }
+_ABSTENTION_FAILURE_REASON_ALIASES = frozenset({
+    "abstention_expected",
+    WRONG_ABSTENTION_REASON,
+    "unexpected_abstention",
+    "abstention_mismatch",
+})
 _GOLD_EVIDENCE_PREVIEW_CHARS = 4000
 
 
@@ -1743,9 +1756,17 @@ def _answer_fix_record(record: dict[str, Any], *, reasons: list[str]) -> dict[st
 
 def _answer_judge_failure_reasons(record: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
+    abstention_reason = abstention_failure_reason(
+        str(record.get("expected_behavior") or "answer"),
+        str(record.get("answer") or ""),
+    )
+    if abstention_reason:
+        reasons.append(abstention_reason)
     deterministic = record.get("deterministic_scores") or {}
     deterministic_reason = str(deterministic.get("failure_reason") or "")
-    if deterministic_reason:
+    if deterministic_reason and (
+        not abstention_reason or deterministic_reason not in _ABSTENTION_FAILURE_REASON_ALIASES
+    ):
         reasons.append(deterministic_reason)
     judge = record.get("llm_judge") or {}
     scores = judge.get("scores") or {}

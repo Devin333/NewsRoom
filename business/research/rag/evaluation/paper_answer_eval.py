@@ -5,6 +5,7 @@ from typing import Any
 
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from framework.rag.evaluation import AnswerMetricCase, evidence_support_coverage, score_answer_case
+from framework.rag.evaluation.answer_metrics import looks_like_abstention
 
 
 _ABSTAIN_MARKERS = (
@@ -35,6 +36,18 @@ _ABSTAIN_MARKERS = (
     "没有提到",
     "论文中没有",
 )
+OVERCONSERVATIVE_ABSTENTION_REASON = "abstained_over_conservative"
+WRONG_ABSTENTION_REASON = "abstention_wrong"
+
+
+def abstention_failure_reason(expected_behavior: str, answer: str) -> str:
+    expected = str(expected_behavior or "answer").strip().casefold()
+    abstained = looks_like_abstention(str(answer or ""), abstain_markers=_ABSTAIN_MARKERS)
+    if expected == "answer" and abstained:
+        return OVERCONSERVATIVE_ABSTENTION_REASON
+    if expected == "abstain" and not abstained:
+        return WRONG_ABSTENTION_REASON
+    return ""
 
 
 @dataclass
@@ -226,6 +239,7 @@ class EvidenceAnswerEvaluator:
             success_citation_threshold=self._success_citation_threshold,
             abstain_markers=_ABSTAIN_MARKERS,
         )
+        failure_reason = abstention_failure_reason(pair.expected_behavior, sample.answer) or score.failure_reason
         claim_support_coverage = _claim_support_coverage(sample)
         diagnostic_tags = _diagnostic_tags(
             sample,
@@ -233,7 +247,7 @@ class EvidenceAnswerEvaluator:
             equivalent_context_coverage=score.equivalent_retrieval_context_coverage,
             equivalent_gold_supported=score.equivalent_gold_supported,
             claim_support_coverage=claim_support_coverage,
-            failure_reason=score.failure_reason,
+            failure_reason=failure_reason,
         )
         return EvidenceAnswerScores(
             sample=sample,
@@ -251,7 +265,7 @@ class EvidenceAnswerEvaluator:
             equivalent_gold_supported=score.equivalent_gold_supported,
             claim_support_coverage=claim_support_coverage,
             diagnostic_tags=diagnostic_tags,
-            failure_reason=score.failure_reason,
+            failure_reason=failure_reason,
             matched_facts=score.matched_facts,
             missing_facts=score.missing_facts,
         )
