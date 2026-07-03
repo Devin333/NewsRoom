@@ -60,6 +60,7 @@ from business.research.rag.retrieval.expanders import (
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
 from business.research.rag.retrieval.policy_config import policy_config_hash, stable_policy_config
 from business.research.rag.retrieval.rerank import RerankCascade, field_rerank_passage
+from business.research.rag.retrieval.scoring import ChildCandidateScorer
 from business.research.rag.retrieval.trace import RetrievalDegradation, RetrievalTrace
 
 __all__ = [
@@ -69,6 +70,7 @@ __all__ = [
     "ChannelSpec",
     "ClaimRecord",
     "ClaimSearchHit",
+    "ChildCandidateScorer",
     "ContextExpander",
     "CrossRefContextExpander",
     "DEFAULT_RETRIEVAL_POLICY",
