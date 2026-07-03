@@ -26,6 +26,7 @@ from business.research.rag.retrieval.paper_claim_index import PaperClaimSearchPo
 from business.research.rag.retrieval.paper_policy import QueryIntent
 from business.research.rag.retrieval.pipeline import RetrievalPipeline
 from business.research.rag.retrieval.planner import QueryPlanner
+from business.research.rag.retrieval.ranking_stage import ChildRankingStage
 from business.research.rag.retrieval.recall_stage import CandidateRecallStage
 from business.research.rag.retrieval.rerank import RerankCascade
 from business.research.rag.retrieval.scoring import (
@@ -480,19 +481,23 @@ class ResearchRetriever:
         structural_expander = StructuralContextExpander(chunk_store, self._policy)
         supplemental_table_expander = SupplementalTableHitExpander(chunk_store, self._policy)
         child_scorer = ChildCandidateScorer(self._policy)
+        ranking_stage = ChildRankingStage(
+            policy=self._policy,
+            rerank_cascade=rerank_cascade,
+            child_scorer=child_scorer,
+            visual_channel=self._visual_channel,
+            request_factory=RetrievalRequest,
+        )
         self._pipeline = RetrievalPipeline(
             policy=self._policy,
             planner=planner,
             recall_stage=self._recall_stage,
-            rerank_cascade=rerank_cascade,
-            child_scorer=child_scorer,
-            visual_channel=self._visual_channel,
+            ranking_stage=ranking_stage,
             parent_expander=parent_expander,
             cross_ref_expander=cross_ref_expander,
             table_context_expander=table_context_expander,
             structural_expander=structural_expander,
             supplemental_table_expander=supplemental_table_expander,
-            request_factory=RetrievalRequest,
             result_factory=RetrievalResult,
             reranker_available=reranker is not None,
             field_index_available=field_index is not None,

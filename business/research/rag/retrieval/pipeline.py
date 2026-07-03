@@ -2,21 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
 from typing import Any
 
 from framework.rag.retrieval import dedupe_by_key
 
 from business.research.document.models import PaperChunk
-from business.research.ports.visual_chunk_index import VisualChunkHit
 from business.research.rag.retrieval.metrics import RetrievalMetricsBuilder
-from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute
-from business.research.rag.retrieval.paper_visual_retrieval import (
-    PaperVisualFusionWeights,
-    with_retrieval_scores,
-)
 from business.research.rag.retrieval.policy_config import policy_config_hash
-from business.research.rag.retrieval.scoring import ChildCandidateScorer
 from business.research.rag.retrieval.trace import RetrievalTrace
 
 
@@ -27,15 +19,12 @@ class RetrievalPipeline:
         policy: Any,
         planner: Any,
         recall_stage: Any,
-        rerank_cascade: Any,
-        child_scorer: ChildCandidateScorer,
-        visual_channel: Any,
+        ranking_stage: Any,
         parent_expander: Any,
         cross_ref_expander: Any,
         table_context_expander: Any,
         structural_expander: Any,
         supplemental_table_expander: Any,
-        request_factory: Callable[..., Any],
         result_factory: Callable[..., Any],
         reranker_available: bool,
         field_index_available: bool,
@@ -46,15 +35,12 @@ class RetrievalPipeline:
         self._policy = policy
         self._planner = planner
         self._recall_stage = recall_stage
-        self._rerank_cascade = rerank_cascade
-        self._child_scorer = child_scorer
-        self._visual_channel = visual_channel
+        self._ranking_stage = ranking_stage
         self._parent_expander = parent_expander
         self._cross_ref_expander = cross_ref_expander
         self._table_context_expander = table_context_expander
         self._structural_expander = structural_expander
         self._supplemental_table_expander = supplemental_table_expander
-        self._request_factory = request_factory
         self._result_factory = result_factory
         self._metrics_builder = RetrievalMetricsBuilder(
             policy=policy,
@@ -92,50 +78,15 @@ class RetrievalPipeline:
         n_recalled = recall_result.n_recalled
         n_visual_recalled = recall_result.n_visual_recalled
 
-        base_reranker_enabled = self._rerank_cascade.base_enabled_for(route.intent)
-        field_reranker_enabled = self._rerank_cascade.field_enabled_for(route.intent)
-        base_scores = self._rerank_cascade.base_scores(request.question, candidates, intent=route.intent)
-
-        pairs = list(zip(candidates, base_scores))
-        n_before_filter = len(pairs)
-        if base_reranker_enabled and self._policy.rerank_score_threshold > 0.0:
-            kept = [(candidate, base) for (candidate, base) in pairs if base >= self._policy.rerank_score_threshold]
-            pairs = kept or pairs[:1]
-        n_filtered = n_before_filter - len(pairs)
-        field_rerank_scores = self._rerank_cascade.field_scores(
-            request.question,
-            [chunk for (chunk, _sem), _base in pairs],
-            intent=route.intent,
+        ranking_result = self._ranking_stage.rank(
+            request,
+            route,
+            candidates,
+            visual_hits,
+            limit=request.limit,
         )
-
-        scored = []
-        for (chunk, _sem), base in pairs:
-            retrieved = with_retrieval_scores(
-                chunk,
-                text_score=base,
-                visual_score=None,
-                fused_score=base,
-                strategy="text",
-            )
-            scored.append(self._score_child_candidate(
-                retrieved,
-                request,
-                route,
-                semantic_score=base,
-                field_rerank_score=field_rerank_scores.get(chunk.chunk_id),
-            ))
-        if visual_hits:
-            scored = self._fuse_visual_scores(
-                scored,
-                visual_hits,
-                paper_id=request.paper_id,
-                query_text=request.question,
-                current_section_index=request.current_section_index,
-                intent=route.intent,
-                field_rerank_scores=field_rerank_scores,
-            )
-        scored.sort(key=lambda x: x[1], reverse=True)
-        child_chunks = [chunk for chunk, _score in scored[: request.limit]]
+        scored = ranking_result.scored
+        child_chunks = ranking_result.child_chunks
         child_chunks = self._structural_expander.expand(child_chunks, request, route)
         supplemental_table_chunks = self._supplemental_table_expander.expand(child_chunks, request, route)
         child_chunks.extend(supplemental_table_chunks)
@@ -159,9 +110,9 @@ class RetrievalPipeline:
             claim_hits=claim_hits,
             n_recalled=n_recalled,
             n_visual_recalled=n_visual_recalled,
-            base_reranker_enabled=base_reranker_enabled,
-            field_reranker_enabled=field_reranker_enabled,
-            n_filtered=n_filtered,
+            base_reranker_enabled=ranking_result.base_reranker_enabled,
+            field_reranker_enabled=ranking_result.field_reranker_enabled,
+            n_filtered=ranking_result.n_filtered,
             scored=scored,
             child_chunks=child_chunks,
             parent_chunks=parent_chunks,
@@ -181,57 +132,6 @@ class RetrievalPipeline:
             intent=route.intent,
             metadata=metrics,
         )
-
-    def _score_child_candidate(
-        self,
-        chunk: PaperChunk,
-        request: Any,
-        route: RetrievalRoute,
-        *,
-        semantic_score: float,
-        field_rerank_score: float | None = None,
-    ) -> tuple[PaperChunk, float]:
-        return self._child_scorer.score(
-            chunk,
-            request,
-            route,
-            semantic_score=semantic_score,
-            field_rerank_score=field_rerank_score,
-        )
-
-    def _fuse_visual_scores(
-        self,
-        scored: list[tuple[PaperChunk, float]],
-        visual_hits: list[VisualChunkHit],
-        *,
-        paper_id: str,
-        query_text: str,
-        current_section_index: int,
-        intent: QueryIntent,
-        field_rerank_scores: dict[str, float] | None = None,
-    ) -> list[tuple[PaperChunk, float]]:
-        fused: list[tuple[PaperChunk, float]] = []
-        for fused_chunk, fused_score in self._visual_channel.fuse_scores(
-            scored,
-            visual_hits,
-            paper_id=paper_id,
-            weights=PaperVisualFusionWeights(
-                text=self._policy.visual_fusion_text_weight,
-                visual=self._policy.visual_fusion_visual_weight,
-            ),
-        ):
-            fused.append(self._score_child_candidate(
-                fused_chunk,
-                self._request_factory(
-                    paper_id=paper_id,
-                    question=query_text,
-                    current_section_index=current_section_index,
-                ),
-                RetrievalRoute(intent=intent),
-                semantic_score=fused_score,
-                field_rerank_score=(field_rerank_scores or {}).get(fused_chunk.chunk_id),
-            ))
-        return fused
 
 
 def _dedupe_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:

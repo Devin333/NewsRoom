@@ -62,6 +62,7 @@ from business.research.rag.retrieval.expanders import (
 )
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
 from business.research.rag.retrieval.policy_config import policy_config_hash, stable_policy_config
+from business.research.rag.retrieval.ranking_stage import ChildRankingResult, ChildRankingStage
 from business.research.rag.retrieval.recall_stage import CandidateRecallResult, CandidateRecallStage
 from business.research.rag.retrieval.rerank import RerankCascade, field_rerank_passage
 from business.research.rag.retrieval.scoring import ChildCandidateScorer
@@ -77,6 +78,8 @@ __all__ = [
     "ClaimRecord",
     "ClaimSearchHit",
     "ChildCandidateScorer",
+    "ChildRankingResult",
+    "ChildRankingStage",
     "ContextExpander",
     "CrossRefContextExpander",
     "DEFAULT_RETRIEVAL_POLICY",
