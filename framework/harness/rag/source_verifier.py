@@ -43,8 +43,13 @@ class SourceVerifier:
         policy: RAGExecutionPolicy,
         question: str | None = None,
     ) -> SourceVerificationResult:
+        tenant_eligible = tuple(
+            candidate
+            for candidate in evidence
+            if _tenant_scope_violation(candidate, policy) is None
+        )
         relevance_result = _relevance_result(
-            evidence,
+            tenant_eligible,
             policy=policy,
             question=question,
             scorer=self.relevance_scorer,
@@ -54,11 +59,14 @@ class SourceVerifier:
         conflicting: list[EvidenceCandidate] = []
         for candidate in evidence:
             relevance_threshold = _relevance_threshold(candidate, policy)
+            tenant_violation = _tenant_scope_violation(candidate, policy)
             candidate_results = (
                 self.source_quality.evaluate((candidate,), policy),
                 self.lineage.evaluate((candidate,)),
             )
-            if candidate.metadata.get("conflict") is True or candidate.metadata.get("conflicts_with"):
+            if tenant_violation is not None:
+                rejected.append(_with_tenant_rejection_metadata(candidate, violation=tenant_violation))
+            elif candidate.metadata.get("conflict") is True or candidate.metadata.get("conflicts_with"):
                 conflicting.append(candidate)
             elif (
                 self.relevance_scorer is not None
@@ -81,12 +89,15 @@ class SourceVerifier:
             self.source_quality.evaluate(evidence, policy),
             self.lineage.evaluate(evidence),
         )
-        if self.relevance_scorer is not None and question and evidence:
+        tenant_gate = _tenant_scope_gate(evidence, policy)
+        if tenant_gate is not None:
+            gate_results = (*gate_results, tenant_gate)
+        if self.relevance_scorer is not None and question and tenant_eligible:
             gate_results = (
                 *gate_results,
                 self.relevance_gate.evaluate(
                     question,
-                    evidence,
+                    tenant_eligible,
                     relevance_result.ordered_scores,
                     threshold=_default_relevance_threshold(policy),
                     thresholds_by_evidence_type=_typed_relevance_thresholds(policy),
@@ -176,6 +187,84 @@ def _threshold_keys(candidate: EvidenceCandidate) -> tuple[str, ...]:
     return tuple(dict.fromkeys(key for key in keys if key))
 
 
+def _tenant_scope_gate(
+    evidence: tuple[EvidenceCandidate, ...],
+    policy: RAGExecutionPolicy,
+) -> RAGGateResult | None:
+    tenant_id = _policy_tenant_id(policy)
+    if not tenant_id:
+        return None
+    violations = [
+        violation
+        for candidate in evidence
+        if (violation := _tenant_scope_violation(candidate, policy)) is not None
+    ]
+    return RAGGateResult(
+        "rag_tenant_scope",
+        not violations,
+        None if not violations else "one or more evidence candidates are outside the tenant scope",
+        {
+            "tenant_id": tenant_id,
+            "checked_count": len(evidence),
+            "violations": violations,
+        },
+    )
+
+
+def _tenant_scope_violation(
+    candidate: EvidenceCandidate,
+    policy: RAGExecutionPolicy,
+) -> dict[str, object] | None:
+    tenant_id = _policy_tenant_id(policy)
+    if not tenant_id:
+        return None
+    candidate_tenants = _candidate_tenant_ids(candidate)
+    if not candidate_tenants or tenant_id in candidate_tenants:
+        return None
+    return {
+        "evidence_id": candidate.evidence_id,
+        "tenant_id": tenant_id,
+        "candidate_tenant_ids": sorted(candidate_tenants),
+    }
+
+
+def _policy_tenant_id(policy: RAGExecutionPolicy) -> str:
+    return str(policy.source_policy.get("tenant_id") or "").strip()
+
+
+def _candidate_tenant_ids(candidate: EvidenceCandidate) -> set[str]:
+    values: set[str] = set()
+    metadata = candidate.metadata
+    for key in ("tenant_id", "tenant", "workspace_id"):
+        _add_tenant_value(values, metadata.get(key))
+    for key in ("tenant_ids", "allowed_tenant_ids"):
+        _add_tenant_value(values, metadata.get(key))
+    for ref in (candidate.source_ref, *candidate.span_refs, *candidate.artifact_refs, *candidate.lineage):
+        ref_tenant = _tenant_from_ref(ref)
+        if ref_tenant:
+            values.add(ref_tenant)
+    return values
+
+
+def _add_tenant_value(values: set[str], raw: object) -> None:
+    if raw is None:
+        return
+    if isinstance(raw, (list, tuple, set)):
+        for item in raw:
+            _add_tenant_value(values, item)
+        return
+    text = str(raw).strip()
+    if text:
+        values.add(text)
+
+
+def _tenant_from_ref(ref: object) -> str:
+    text = str(ref or "").strip()
+    if not text.startswith("tenant://"):
+        return ""
+    return text.removeprefix("tenant://").split("/", 1)[0].strip()
+
+
 def _with_rejection_metadata(
     candidate: EvidenceCandidate,
     *,
@@ -200,5 +289,30 @@ def _with_rejection_metadata(
             "rejection_reason": reason,
             "relevance_score": relevance_score,
             "relevance_threshold": relevance_threshold,
+        },
+    )
+
+
+def _with_tenant_rejection_metadata(
+    candidate: EvidenceCandidate,
+    *,
+    violation: dict[str, object],
+) -> EvidenceCandidate:
+    return EvidenceCandidate(
+        evidence_id=candidate.evidence_id,
+        title=candidate.title,
+        summary=candidate.summary,
+        source_ref=candidate.source_ref,
+        span_refs=candidate.span_refs,
+        evidence_type=candidate.evidence_type,
+        claim_refs=candidate.claim_refs,
+        confidence=candidate.confidence,
+        freshness=candidate.freshness,
+        lineage=candidate.lineage,
+        artifact_refs=candidate.artifact_refs,
+        metadata={
+            **candidate.metadata,
+            "rejection_reason": "tenant_scope_violation",
+            "tenant_scope_violation": violation,
         },
     )

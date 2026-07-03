@@ -39,6 +39,7 @@ class ResearchRAGPolicyBuilder:
         budget: RAGBudget | None = None,
         generation_policy: dict[str, object] | None = None,
     ) -> RAGSessionSpec:
+        scope_metadata = _scope_metadata(goal)
         return RAGSessionSpec(
             session_id=session_id,
             run_id=run_id,
@@ -51,7 +52,7 @@ class ResearchRAGPolicyBuilder:
                 target_entities=tuple(goal.target_sections + goal.target_claims),
                 known_context_refs=tuple(goal.allowed_source_refs),
                 constraints=goal.constraints,
-                metadata={"paper_id": goal.paper_id, **goal.metadata},
+                metadata={"paper_id": goal.paper_id, **scope_metadata, **goal.metadata},
             ),
             allowed_corpora=allowed_corpora,
             allowed_memory_namespaces=tuple(goal.allowed_memory_namespaces),
@@ -60,11 +61,12 @@ class ResearchRAGPolicyBuilder:
                 "allowed_source_refs": list(goal.allowed_source_refs),
                 "min_relevance": self._min_relevance,
                 "min_relevance_by_type": dict(self._min_relevance_by_type),
+                **scope_metadata,
             },
             budget=budget or RAGBudget.safe_default(),
             context_policy={"projection": "research_rag_context", "stable_prefix": False},
             generation_policy=dict(generation_policy or {}),
-            metadata={"paper_id": goal.paper_id},
+            metadata={"paper_id": goal.paper_id, **scope_metadata},
         )
 
 
@@ -73,3 +75,12 @@ __all__ = [
     "DEFAULT_MIN_RELEVANCE_BY_TYPE",
     "ResearchRAGPolicyBuilder",
 ]
+
+
+def _scope_metadata(goal: ResearchRetrievalGoal) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for key in ("tenant_id", "user_id", "memory_namespace"):
+        value = str(goal.metadata.get(key) or "").strip()
+        if value:
+            metadata[key] = value
+    return metadata

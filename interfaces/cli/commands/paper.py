@@ -27,6 +27,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     ask_parser.add_argument("--limit", type=int, default=5, help="Number of passages to retrieve")
     ask_parser.add_argument("--no-rerank", action="store_true", help="Disable cross-encoder reranking")
     ask_parser.add_argument("--answer", action="store_true", help="Generate an answer from retrieved context")
+    ask_parser.add_argument("--tenant-id", default=None, help="Tenant id for scoped gated RAG memory and evidence checks")
+    ask_parser.add_argument("--user-id", default=None, help="User id for scoped gated RAG memory")
+    ask_parser.add_argument("--memory-namespace", default=None, help="Explicit scoped memory namespace")
     ask_parser.add_argument(
         "--legacy-direct-answer",
         action="store_true",
@@ -80,6 +83,9 @@ def ask_paper(args: argparse.Namespace) -> int:
         limit=args.limit,
         generate=args.answer,
         gated=not args.legacy_direct_answer,
+        tenant_id=args.tenant_id,
+        user_id=args.user_id,
+        memory_namespace=args.memory_namespace,
     )
 
     if args.json:

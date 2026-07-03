@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from framework.harness import (
     FakeMemoryPort,
     FakeRAGPlanner,
@@ -145,6 +147,38 @@ def test_controller_gap_report_includes_low_relevance_rejection_summary() -> Non
     assert summary == {"low_relevance": {"count": 1, "evidence_types": {"method": 1}}}
     source_event = [event for event in result.transcript.events if event["event_type"] == "rag_source_verified"][0]
     assert source_event["payload"]["rejected"][0]["metadata"]["rejection_reason"] == "low_relevance"
+
+
+def test_controller_propagates_tenant_scope_to_retrieval_request_and_metrics() -> None:
+    base = fake_rag_session_spec()
+    scope = {
+        "tenant_id": "tenant-a",
+        "user_id": "user-1",
+        "memory_namespace": "research:tenant:tenant-a:user:user-1",
+    }
+    spec = replace(
+        base,
+        goal=replace(base.goal, metadata={**base.goal.metadata, **scope}),
+        source_policy={**base.source_policy, "tenant_id": "tenant-a"},
+        metadata={**base.metadata, **scope},
+    )
+    retrieval = FakeRetrievalPort(fake_research_evidence_packs()[:1])
+    controller = BoundedRAGSessionController(
+        retrieval=retrieval,
+        planner=FakeRAGPlanner(),
+        memory=FakeMemoryPort(fake_reader_repair_memory()),
+    )
+
+    result = controller.run(spec)
+
+    assert retrieval.requests[0].filters["tenant_id"] == "tenant-a"
+    assert retrieval.requests[0].metadata["tenant_id"] == "tenant-a"
+    assert retrieval.requests[0].metadata["user_id"] == "user-1"
+    assert retrieval.requests[0].metadata["memory_namespace"] == "research:tenant:tenant-a:user:user-1"
+    assert result.metrics is not None
+    assert result.metrics.tenant_id == "tenant-a"
+    assert result.metrics.user_id == "user-1"
+    assert result.metrics.memory_namespace == "research:tenant:tenant-a:user:user-1"
 
 
 class _Scorer(RelevanceScorerPort):

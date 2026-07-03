@@ -109,6 +109,38 @@ def test_source_verifier_without_scorer_preserves_existing_acceptance() -> None:
     assert [gate.gate_name for gate in result.gate_results] == ["rag_source_quality", "rag_lineage"]
 
 
+def test_source_verifier_rejects_evidence_outside_tenant_scope() -> None:
+    policy = _tenant_policy("tenant-a")
+    scorer = _Scorer((0.9,))
+    verifier = SourceVerifier(relevance_scorer=scorer)
+    allowed = _candidate("method", evidence_id="allowed", metadata={"tenant_id": "tenant-a"})
+    rejected = _candidate("method", evidence_id="rejected", metadata={"tenant_id": "tenant-b"})
+
+    result = verifier.verify((allowed, rejected), policy=policy, question="How does the method work?")
+
+    assert [item.evidence_id for item in result.accepted] == ["allowed"]
+    assert [item.evidence_id for item in result.rejected] == ["rejected"]
+    assert result.rejected[0].metadata["rejection_reason"] == "tenant_scope_violation"
+    tenant_gate = [gate for gate in result.gate_results if gate.gate_name == "rag_tenant_scope"][0]
+    assert tenant_gate.passed is False
+    assert tenant_gate.details["tenant_id"] == "tenant-a"
+    assert tenant_gate.details["violations"][0]["candidate_tenant_ids"] == ["tenant-b"]
+    assert scorer.calls == [("How does the method work?", ["method summary"])]
+
+
+def test_source_verifier_allows_public_evidence_when_tenant_scope_is_declared() -> None:
+    policy = _tenant_policy("tenant-a")
+    verifier = SourceVerifier()
+    public = _candidate("method", evidence_id="public")
+
+    result = verifier.verify((public,), policy=policy, question="How does the method work?")
+
+    assert result.accepted == (public,)
+    assert result.rejected == ()
+    tenant_gate = [gate for gate in result.gate_results if gate.gate_name == "rag_tenant_scope"][0]
+    assert tenant_gate.passed is True
+
+
 def test_source_verifier_without_question_skips_relevance_scoring() -> None:
     policy = RAGExecutionPolicy.from_session_spec(fake_rag_session_spec())
     scorer = _Scorer((0.1,))
@@ -167,4 +199,16 @@ def _candidate(
         confidence=0.9,
         lineage=("retrieval.fake",),
         metadata=dict(metadata or {}),
+    )
+
+
+def _tenant_policy(tenant_id: str) -> RAGExecutionPolicy:
+    policy = RAGExecutionPolicy.from_session_spec(fake_rag_session_spec())
+    return RAGExecutionPolicy(
+        allowed_corpora=policy.allowed_corpora,
+        allowed_memory_namespaces=policy.allowed_memory_namespaces,
+        allowed_tools=policy.allowed_tools,
+        budget=policy.budget,
+        source_policy={**policy.source_policy, "tenant_id": tenant_id},
+        context_policy=policy.context_policy,
     )

@@ -180,3 +180,37 @@ def test_paper_rag_session_wires_optional_memory_port(monkeypatch):
     )
 
     assert _FakeController.last_memory is memory
+
+
+def test_paper_rag_session_propagates_tenant_scope_to_session_spec(monkeypatch):
+    monkeypatch.setattr(paper_rag_session, "ResearchRetriever", _FakeRetriever)
+    monkeypatch.setattr(paper_rag_session, "PaperChunkRetrievalPort", _FakeRetrievalPort)
+    monkeypatch.setattr(paper_rag_session, "BoundedRAGSessionController", _FakeController)
+
+    session = PaperRAGSession(object())
+    result = session.run(
+        ResearchRetrievalGoal(
+            goal_id="g1",
+            paper_id="p1",
+            question="What does the figure show?",
+            required_evidence_types=["figure"],
+            allowed_source_refs=["paper://p1"],
+            allowed_memory_namespaces=["research:tenant:tenant-a:user:user-1"],
+            metadata={
+                "tenant_id": "tenant-a",
+                "user_id": "user-1",
+                "memory_namespace": "research:tenant:tenant-a:user:user-1",
+            },
+        ),
+        run_id="run-1",
+        workflow_id="workflow-1",
+        step_id="step-1",
+        session_id="session-1",
+    )
+
+    spec = result["spec"]
+    assert spec.source_policy["tenant_id"] == "tenant-a"
+    assert spec.metadata["tenant_id"] == "tenant-a"
+    assert spec.metadata["user_id"] == "user-1"
+    assert spec.goal.metadata["memory_namespace"] == "research:tenant:tenant-a:user:user-1"
+    assert spec.allowed_memory_namespaces == ("research:tenant:tenant-a:user:user-1",)

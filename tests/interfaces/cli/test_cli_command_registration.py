@@ -70,6 +70,27 @@ def test_cli_paper_ask_registers_gated_answer_fallback_flag() -> None:
     assert args.legacy_direct_answer is True
 
 
+def test_cli_paper_ask_registers_tenant_scope_flags() -> None:
+    args = build_parser().parse_args([
+        "paper",
+        "ask",
+        "1706.03762",
+        "What is the method?",
+        "--answer",
+        "--tenant-id",
+        "tenant-a",
+        "--user-id",
+        "user-1",
+        "--memory-namespace",
+        "research:tenant:tenant-a:user:user-1",
+    ])
+
+    assert args.paper_command == "ask"
+    assert args.tenant_id == "tenant-a"
+    assert args.user_id == "user-1"
+    assert args.memory_namespace == "research:tenant:tenant-a:user:user-1"
+
+
 def _top_level_subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):

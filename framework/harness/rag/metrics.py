@@ -14,6 +14,9 @@ class RAGSessionMetrics:
     decision_type: str
     transcript_event_count: int
     budget_snapshot: dict[str, int]
+    tenant_id: str | None = None
+    user_id: str | None = None
+    memory_namespace: str | None = None
     accepted_evidence_count: int = 0
     rejected_evidence_count: int = 0
     conflicting_evidence_count: int = 0
@@ -61,6 +64,9 @@ class RAGSessionMetrics:
             "decision_type": self.decision_type,
             "transcript_event_count": self.transcript_event_count,
             "budget_snapshot": dict(self.budget_snapshot),
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "memory_namespace": self.memory_namespace,
             "accepted_evidence_count": self.accepted_evidence_count,
             "rejected_evidence_count": self.rejected_evidence_count,
             "conflicting_evidence_count": self.conflicting_evidence_count,
@@ -93,14 +99,19 @@ def build_rag_session_metrics(
     artifact_refs: tuple[str, ...],
     context_pack: Any | None,
     answer: Any | None,
+    scope_metadata: dict[str, str] | None = None,
 ) -> RAGSessionMetrics:
     event_types = [str(event.get("event_type") or "") for event in events]
     gate_failures_by_gate = _gate_failures_by_gate(events)
+    scope = dict(scope_metadata or {})
     return RAGSessionMetrics(
         status=status,
         decision_type=decision.decision_type.value,
         transcript_event_count=len(events),
         budget_snapshot=budget_snapshot.to_dict(),
+        tenant_id=scope.get("tenant_id") or None,
+        user_id=scope.get("user_id") or None,
+        memory_namespace=scope.get("memory_namespace") or None,
         accepted_evidence_count=len(accepted_evidence),
         rejected_evidence_count=len(rejected_evidence),
         conflicting_evidence_count=len(conflicting_evidence),

@@ -262,6 +262,7 @@ class BoundedRAGSessionController(RAGSessionController):
             artifact_refs=tuple(state.artifact_refs),
             context_pack=pack,
             answer=answer,
+            scope_metadata=_session_scope_metadata(spec),
         )
         return RAGSessionResult(
             status=status,
@@ -581,14 +582,18 @@ class BoundedRAGSessionController(RAGSessionController):
     def _execute_search(self, step: RetrievalStepSpec, state: RAGSessionState) -> RetrievalStepResult:
         query = str(step.query or "")
         state.executed_queries.add(normalize_query(query))
+        scope_metadata = _session_scope_metadata(state.spec)
+        filters = dict(step.metadata.get("filters", {}))
+        if scope_metadata.get("tenant_id"):
+            filters["tenant_id"] = scope_metadata["tenant_id"]
         collection = self.retrieval.retrieve(
             RetrievalRequest(
                 query=query,
                 scope=step.corpus or "default",
-                filters=dict(step.metadata.get("filters", {})),
+                filters=filters,
                 limit=max(step.max_results, 1),
                 context_refs=state.spec.goal.known_context_refs,
-                metadata={"rag_step_id": step.step_id, **dict(step.metadata)},
+                metadata={**dict(step.metadata), "rag_step_id": step.step_id, **scope_metadata},
             )
         )
         evidence_type = str(step.metadata.get("evidence_type") or _default_evidence_type(state.spec))
@@ -832,6 +837,16 @@ def _rejection_summary(rejected: tuple[EvidenceCandidate, ...]) -> dict[str, dic
 
 def _default_evidence_type(spec: RAGSessionSpec) -> str:
     return spec.goal.required_evidence_types[0]
+
+
+def _session_scope_metadata(spec: RAGSessionSpec) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for key in ("tenant_id", "user_id", "memory_namespace"):
+        raw = spec.metadata.get(key) or spec.goal.metadata.get(key)
+        text = str(raw or "").strip()
+        if text:
+            values[key] = text
+    return values
 
 
 def _empty_context_pack(spec: RAGSessionSpec) -> RAGContextPack:

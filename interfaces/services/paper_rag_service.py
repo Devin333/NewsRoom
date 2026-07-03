@@ -35,6 +35,9 @@ class PaperRagApplicationService:
         limit: int = 5,
         generate: bool = False,
         gated: bool = True,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+        memory_namespace: str | None = None,
     ) -> dict[str, Any]:
         if generate and gated:
             return self._gated_ask(
@@ -42,6 +45,9 @@ class PaperRagApplicationService:
                 question,
                 section_index=section_index,
                 limit=limit,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                memory_namespace=memory_namespace,
             )
         result = self._retriever.retrieve(RetrievalRequest(
             paper_id=paper_id,
@@ -49,12 +55,19 @@ class PaperRagApplicationService:
             current_section_index=section_index,
             limit=limit,
         ))
+        passages, filtered_count = _passages_from_retrieval(result, tenant_id=tenant_id)
         payload: dict[str, Any] = {
             "paper_id": paper_id,
             "question": question,
             "intent": result.intent,
-            "passages": _passages_from_retrieval(result),
-            "metrics": result.metadata,
+            "passages": passages,
+            "metrics": _retrieval_metrics(
+                result,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                memory_namespace=memory_namespace,
+                tenant_filtered_passage_count=filtered_count,
+            ),
         }
         if generate:
             payload["answer"] = self._generate(question, result)
@@ -69,6 +82,9 @@ class PaperRagApplicationService:
         *,
         section_index: int,
         limit: int,
+        tenant_id: str | None,
+        user_id: str | None,
+        memory_namespace: str | None,
     ) -> dict[str, Any]:
         session = self._session_factory(
             with_reranker=self._with_reranker,
@@ -79,6 +95,9 @@ class PaperRagApplicationService:
             paper_id=paper_id,
             question=question,
             goal_id=f"paper-rag-ask-{run_suffix}",
+            tenant_id=tenant_id,
+            user_id=user_id,
+            memory_namespace=memory_namespace,
         )
         result = session.run(
             goal,
@@ -104,16 +123,75 @@ class PaperRagApplicationService:
         return asyncio.run(generator.generate(question, retrieval)).answer
 
 
-def _passages_from_retrieval(result: Any) -> list[dict[str, Any]]:
-    return [
+def _passages_from_retrieval(result: Any, *, tenant_id: str | None = None) -> tuple[list[dict[str, Any]], int]:
+    visible_chunks = []
+    filtered_count = 0
+    for chunk in result.child_chunks:
+        if _chunk_visible_to_tenant(chunk, tenant_id=tenant_id):
+            visible_chunks.append(chunk)
+        else:
+            filtered_count += 1
+    passages = [
         {
             "chunk_id": chunk.chunk_id,
             "section_title": chunk.section_title,
             "chunk_type": chunk.chunk_type,
             "content": chunk.content,
         }
-        for chunk in result.child_chunks
+        for chunk in visible_chunks
     ]
+    return passages, filtered_count
+
+
+def _retrieval_metrics(
+    result: Any,
+    *,
+    tenant_id: str | None,
+    user_id: str | None,
+    memory_namespace: str | None,
+    tenant_filtered_passage_count: int,
+) -> dict[str, Any]:
+    metrics = dict(result.metadata)
+    if tenant_id:
+        metrics["tenant_id"] = tenant_id
+    if user_id:
+        metrics["user_id"] = user_id
+    if memory_namespace:
+        metrics["memory_namespace"] = memory_namespace
+    if tenant_filtered_passage_count:
+        metrics["tenant_filtered_passage_count"] = tenant_filtered_passage_count
+    return metrics
+
+
+def _chunk_visible_to_tenant(chunk: Any, *, tenant_id: str | None) -> bool:
+    tenant = str(tenant_id or "").strip()
+    if not tenant:
+        return True
+    chunk_tenants = _metadata_tenant_ids(getattr(chunk, "metadata", {}))
+    return not chunk_tenants or tenant in chunk_tenants
+
+
+def _metadata_tenant_ids(metadata: Any) -> set[str]:
+    if not isinstance(metadata, dict):
+        return set()
+    values: set[str] = set()
+    for key in ("tenant_id", "tenant", "workspace_id"):
+        _add_tenant_value(values, metadata.get(key))
+    for key in ("tenant_ids", "allowed_tenant_ids"):
+        _add_tenant_value(values, metadata.get(key))
+    return values
+
+
+def _add_tenant_value(values: set[str], raw: Any) -> None:
+    if raw is None:
+        return
+    if isinstance(raw, (list, tuple, set)):
+        for item in raw:
+            _add_tenant_value(values, item)
+        return
+    text = str(raw).strip()
+    if text:
+        values.add(text)
 
 
 def _gated_payload(
