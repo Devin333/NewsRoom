@@ -81,7 +81,13 @@ class ChunkManifestManager:
             for chunk, resolved_id in resolved_pairs
         ]
 
-    def write(self, paper_id: str, chunks: list[PaperChunk]) -> Path:
+    def write(
+        self,
+        paper_id: str,
+        chunks: list[PaperChunk],
+        *,
+        document_metadata: dict[str, Any] | None = None,
+    ) -> Path:
         path = self.path_for(paper_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         previous = self._load(paper_id)
@@ -100,6 +106,7 @@ class ChunkManifestManager:
             "paper_id": paper_id,
             "chunks": [_manifest_entry(chunk) for chunk in chunks],
             "stale_chunk_ids": stale_chunk_ids,
+            **_parser_cascade_manifest(document_metadata),
         }
         path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -238,6 +245,15 @@ def _manifest_entry(chunk: PaperChunk) -> dict[str, Any]:
         "source_locator": chunk.metadata.get("source_locator"),
         "source_ref": chunk.metadata.get("source_ref"),
     }
+
+
+def _parser_cascade_manifest(document_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    if not document_metadata:
+        return {}
+    cascade = document_metadata.get("parser_cascade")
+    if not isinstance(cascade, dict):
+        return {}
+    return {"parser_cascade": cascade}
 
 
 __all__ = ["ChunkManifestManager", "default_chunk_manifest_path"]

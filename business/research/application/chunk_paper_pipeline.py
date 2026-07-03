@@ -155,7 +155,11 @@ class ChunkPaperPipeline:
             self._visual_indexer.ensure_collection()
             self._visual_indexer.index_chunks(chunks)
         self._repo.save_chunks(chunks)
-        manifest_path = self._chunk_manifest.write(paper_id, chunks)
+        manifest_path = self._chunk_manifest.write(
+            paper_id,
+            chunks,
+            document_metadata=doc.metadata,
+        )
 
         by_type: dict[str, int] = {}
         for c in chunks:

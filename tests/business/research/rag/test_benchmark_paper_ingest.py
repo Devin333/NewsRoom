@@ -216,7 +216,7 @@ def test_benchmark_ingest_cli_accepts_marker_backend() -> None:
     args = parser.parse_args([
         "1706.03762",
         "--pdf-parser-backend",
-        "marker",
+        "cascade",
     ])
 
-    assert args.pdf_parser_backend == "marker"
+    assert args.pdf_parser_backend == "cascade"

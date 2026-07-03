@@ -6,7 +6,7 @@ from typing import Literal
 from business.research.document.pdf_compiler import PdfDocumentParser
 from business.research.domain.document import ResearchDocument
 
-PdfParserBackendName = Literal["nougat", "mineru", "marker"]
+PdfParserBackendName = Literal["nougat", "mineru", "marker", "cascade"]
 
 
 def pdf_parser_backend_name(value: str | None = None) -> PdfParserBackendName:
@@ -17,15 +17,21 @@ def pdf_parser_backend_name(value: str | None = None) -> PdfParserBackendName:
         return "mineru"
     if raw == "marker":
         return "marker"
+    if raw == "cascade":
+        return "cascade"
     raise ValueError(
-        "NEWSROOM_PDF_PARSER_BACKEND must be one of: nougat, mineru, marker"
+        "NEWSROOM_PDF_PARSER_BACKEND must be one of: nougat, mineru, marker, cascade"
     )
 
 
 def build_pdf_document_parser(
     backend: str | None = None,
-) -> "PdfDocumentParser | MinerUPdfDocumentParser | MarkerPdfDocumentParser":
+) -> "PdfDocumentParser | MinerUPdfDocumentParser | MarkerPdfDocumentParser | CascadeDocumentParser":
     name = pdf_parser_backend_name(backend)
+    if name == "cascade":
+        from business.research.document.cascade_parser import build_default_pdf_cascade_parser
+
+        return build_default_pdf_cascade_parser()
     if name == "mineru":
         from business.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
 

@@ -26,7 +26,7 @@ from business.research.document.chunk_storage import (
     PaperChunkRepositoryAdapter,
     PaperChunkStoreAdapter,
 )
-from business.research.document.arxiv_parser import ArxivDocumentParser
+from business.research.document.cascade_parser import CascadeArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
 from business.research.application.visual_chunk_describer import build_visual_chunk_describer_from_env
 from business.research.application.paper_rag_session import PaperRAGSession
@@ -89,7 +89,7 @@ def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeli
         build_chunk_store(),
         build_chunk_repository(),
         ArxivSourceConnector(),
-        ArxivDocumentParser(),
+        CascadeArxivDocumentParser(),
         field_chunk_indexer=build_field_chunk_store(),
         visual_chunk_indexer=build_visual_chunk_store(),
         visual_chunk_describer=build_visual_chunk_describer_from_env(),
