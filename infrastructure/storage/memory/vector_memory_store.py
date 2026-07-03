@@ -65,6 +65,10 @@ class VectorMemoryStoreAdapter(MemoryStore):
     def search(self, query: MemoryQuery) -> list[MemorySearchResult]:
         filters = dict(query.filters)
         collection = str(filters.pop("collection", self.collection))
+        if query.namespace is not None:
+            filters.setdefault("namespace", query.namespace)
+        if query.tenant_id is not None:
+            filters.setdefault("tenant_id", query.tenant_id)
         vector_query = VectorSearchQuery(
             collection=collection,
             text=query.query,
@@ -118,6 +122,8 @@ def _vector_document_from_record(record: MemoryRecord, *, collection: str) -> Ve
         "importance": record.importance,
         "embedding": list(record.embedding) if record.embedding is not None else None,
         "actor": record.actor,
+        "namespace": record.namespace,
+        "tenant_id": record.tenant_id,
         "created_at": record.created_at.isoformat().replace("+00:00", "Z"),
         "updated_at": record.updated_at.isoformat().replace("+00:00", "Z") if record.updated_at else None,
         "expires_at": record.expires_at.isoformat().replace("+00:00", "Z") if record.expires_at else None,
@@ -167,6 +173,8 @@ def _record_from_vector_result(result: VectorSearchResult) -> MemoryRecord:
                 "importance",
                 "embedding",
                 "actor",
+                "namespace",
+                "tenant_id",
                 "created_at",
                 "updated_at",
                 "expires_at",
@@ -186,6 +194,8 @@ def _record_from_vector_result(result: VectorSearchResult) -> MemoryRecord:
         importance=_optional_float(payload.get("importance")),
         embedding=_optional_float_list(payload.get("embedding")),
         actor=_optional_str(payload.get("actor")),
+        namespace=_optional_str(payload.get("namespace")),
+        tenant_id=_optional_str(payload.get("tenant_id")),
         created_at=parse_datetime(payload.get("created_at")) or utc_now(),
         updated_at=parse_datetime(payload.get("updated_at")),
         expires_at=parse_datetime(payload.get("expires_at")),
@@ -202,6 +212,10 @@ def _matches_scope_and_kind(record: MemoryRecord, query: MemoryQuery) -> bool:
     if query.scopes and record.scope not in query.scopes:
         return False
     if query.kinds and record.kind not in query.kinds:
+        return False
+    if query.namespace is not None and record.namespace != query.namespace:
+        return False
+    if query.tenant_id is not None and record.tenant_id != query.tenant_id:
         return False
     if query.time_window is not None:
         if query.time_window.start is not None and record.created_at < query.time_window.start:

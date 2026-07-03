@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from framework.harness.memory.ports import MemoryPort
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionResult
 from framework.harness.rag.models import RAGBudget
 from framework.harness.rag.planner import WorkerRAGPlanner
@@ -49,6 +50,7 @@ class PaperRAGSession:
         answer_worker: "AnswerWorkerPort | None" = None,
         generation_policy: dict[str, object] | None = None,
         relevance_scorer: RelevanceScorerPort | None = None,
+        memory: MemoryPort | None = None,
     ) -> None:
         self._chunk_store = chunk_store
         self._policy_builder = ResearchRAGPolicyBuilder()
@@ -63,6 +65,7 @@ class PaperRAGSession:
         self._answer_worker = answer_worker
         self._generation_policy = dict(generation_policy or {})
         self._relevance_scorer = relevance_scorer
+        self._memory = memory
 
     def run(
         self,
@@ -92,7 +95,7 @@ class PaperRAGSession:
                 ResearchRAGPlanWorker(self._plan_worker),
                 min_round_index=self._worker_planner_min_round_index,
             )
-        controller_kwargs = {"retrieval": retrieval_port, "planner": planner}
+        controller_kwargs = {"retrieval": retrieval_port, "planner": planner, "memory": self._memory}
         if self._relevance_scorer is not None:
             controller_kwargs["source_verifier"] = SourceVerifier(
                 relevance_scorer=self._relevance_scorer

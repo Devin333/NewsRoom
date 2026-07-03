@@ -11,6 +11,8 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
         content="Workflow memory runtime uses a vector-backed store.",
         kind=MemoryKind.SEMANTIC,
         scope=MemoryScope.WORKFLOW,
+        namespace="research.public",
+        tenant_id="tenant-1",
         refs={"run_id": "run-1"},
         metadata={"workflow_id": "wf-1"},
         embedding=[0.1, 0.2, 0.3],
@@ -22,6 +24,18 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
             query="workflow vector memory",
             scopes=[MemoryScope.WORKFLOW],
             kinds=[MemoryKind.SEMANTIC],
+            namespace="research.public",
+            tenant_id="tenant-1",
+            limit=3,
+        )
+    )
+    wrong_namespace_results = adapter.search(
+        MemoryQuery(
+            query="workflow vector memory",
+            scopes=[MemoryScope.WORKFLOW],
+            kinds=[MemoryKind.SEMANTIC],
+            namespace="research.private",
+            tenant_id="tenant-1",
             limit=3,
         )
     )
@@ -29,10 +43,13 @@ def test_vector_memory_store_adapter_writes_and_searches_memory_records() -> Non
 
     assert write.written_count == 1
     assert results[0].record.memory_id == "mem-1"
+    assert wrong_namespace_results == []
     assert results[0].record.refs["run_id"] == "run-1"
     assert fetched is not None
     assert fetched.memory_id == record.memory_id
     assert fetched.content == record.content
+    assert fetched.namespace == "research.public"
+    assert fetched.tenant_id == "tenant-1"
     assert fetched.refs["run_id"] == "run-1"
     assert fetched.embedding == [0.1, 0.2, 0.3]
 

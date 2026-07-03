@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from business.research.rag.adapters.answer_worker import PaperAnswerWorker
 from business.research.rag.adapters.llm_plan_worker import LLMResearchRAGPlanCandidateWorker
+from business.research.rag.adapters.memory_port import ResearchRAGMemoryPort
 from business.research.rag.adapters.paper_chunk_adapter import (
     PaperChunkAdapter,
     paper_chunk_to_evidence_metadata,
@@ -20,6 +21,7 @@ __all__ = [
     "PaperChunkFieldText",
     "PaperAnswerWorker",
     "LLMResearchRAGPlanCandidateWorker",
+    "ResearchRAGMemoryPort",
     "ResearchRAGPlanWorker",
     "RerankerRelevanceScorer",
     "paper_chunk_to_evidence_metadata",

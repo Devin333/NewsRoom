@@ -27,12 +27,14 @@ class _FakeController:
     last_planner = None
     last_answer_worker = None
     last_source_verifier = None
+    last_memory = None
 
-    def __init__(self, *, retrieval, planner=None, answer_worker=None, source_verifier=None) -> None:
+    def __init__(self, *, retrieval, planner=None, answer_worker=None, source_verifier=None, memory=None) -> None:
         _FakeController.last_retrieval = retrieval
         _FakeController.last_planner = planner
         _FakeController.last_answer_worker = answer_worker
         _FakeController.last_source_verifier = source_verifier
+        _FakeController.last_memory = memory
 
     def run(self, spec):
         return {"spec": spec}
@@ -153,3 +155,28 @@ def test_paper_rag_session_wires_optional_relevance_scorer_and_policy_thresholds
         "formula": 0.2,
         "table": 0.2,
     }
+
+
+def test_paper_rag_session_wires_optional_memory_port(monkeypatch):
+    monkeypatch.setattr(paper_rag_session, "ResearchRetriever", _FakeRetriever)
+    monkeypatch.setattr(paper_rag_session, "PaperChunkRetrievalPort", _FakeRetrievalPort)
+    monkeypatch.setattr(paper_rag_session, "BoundedRAGSessionController", _FakeController)
+    memory = object()
+
+    session = PaperRAGSession(object(), memory=memory)
+    session.run(
+        ResearchRetrievalGoal(
+            goal_id="g1",
+            paper_id="p1",
+            question="What does the figure show?",
+            required_evidence_types=["figure"],
+            allowed_source_refs=["paper://p1"],
+            allowed_memory_namespaces=["research"],
+        ),
+        run_id="run-1",
+        workflow_id="workflow-1",
+        step_id="step-1",
+        session_id="session-1",
+    )
+
+    assert _FakeController.last_memory is memory

@@ -8,6 +8,8 @@ from interfaces.services import paper_rag_factory
 @pytest.fixture(autouse=True)
 def _disable_llm_planner_env(monkeypatch):
     monkeypatch.delenv("NEWS_RAG_LLM_PLANNER", raising=False)
+    monkeypatch.delenv("NEWS_RAG_MEMORY", raising=False)
+    monkeypatch.delenv("NEWS_RAG_MEMORY_COLLECTION", raising=False)
 
 
 class _FakeStore:
@@ -33,6 +35,24 @@ class _FakeVisualStore:
 
     def ensure_collection(self) -> None:
         self.ensure_called = True
+
+
+class _FakeVectorMemoryStore:
+    def __init__(self) -> None:
+        self.collections = []
+
+    def ensure_collections(self, collections):
+        self.collections = list(collections)
+        return []
+
+    def upsert_documents(self, docs):
+        pass
+
+    def search(self, query):
+        return []
+
+    def get_document(self, collection, document_id):
+        return None
 
 
 class _FakePipeline:
@@ -183,6 +203,37 @@ def test_paper_rag_session_factory_leaves_llm_planner_disabled_by_default(monkey
     paper_rag_factory.build_paper_rag_session(with_reranker=False)
 
     assert _FakeSession.last_kwargs["plan_worker"] is None
+    assert _FakeSession.last_kwargs["memory"] is None
+
+
+def test_build_rag_memory_port_is_disabled_by_default() -> None:
+    assert paper_rag_factory.build_rag_memory_port() is None
+
+
+def test_build_rag_memory_port_uses_vector_memory_store_when_enabled(monkeypatch):
+    vector_store = _FakeVectorMemoryStore()
+    monkeypatch.setenv("NEWS_RAG_MEMORY", "1")
+    monkeypatch.setenv("NEWS_RAG_MEMORY_COLLECTION", "rag_memories")
+    monkeypatch.setattr(paper_rag_factory, "qdrant_store_from_env", lambda: vector_store)
+
+    memory = paper_rag_factory.build_rag_memory_port()
+
+    assert isinstance(memory, paper_rag_factory.ResearchRAGMemoryPort)
+    assert vector_store.collections == ["rag_memories"]
+
+
+def test_paper_rag_session_factory_wires_memory_port_when_enabled(monkeypatch):
+    memory = object()
+    monkeypatch.setattr(paper_rag_factory, "PaperRAGSession", _FakeSession)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+    monkeypatch.setattr(paper_rag_factory, "build_rag_memory_port", lambda: memory)
+
+    paper_rag_factory.build_paper_rag_session(with_reranker=False)
+
+    assert _FakeSession.last_kwargs["memory"] is memory
 
 
 def test_paper_rag_session_factory_false_env_leaves_llm_planner_disabled(monkeypatch):

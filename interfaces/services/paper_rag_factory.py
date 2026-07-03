@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 
+from framework.memory.runtime import MemoryRuntime
 from infrastructure.external.reranker import CrossEncoderReranker
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
@@ -21,6 +22,7 @@ from infrastructure.storage.vector.paper_visual_chunk_store import (
     paper_visual_chunk_store_from_env,
 )
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
+from infrastructure.storage.memory import DEFAULT_MEMORY_COLLECTION, VectorMemoryStoreAdapter
 
 from business.research.document.chunk_storage import (
     PaperChunkRepositoryAdapter,
@@ -34,6 +36,7 @@ from business.research.application.llm_client import build_unity_llm_call
 from business.research.rag.adapters import (
     LLMResearchRAGPlanCandidateWorker,
     PaperAnswerWorker,
+    ResearchRAGMemoryPort,
     RerankerRelevanceScorer,
 )
 from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
@@ -54,6 +57,8 @@ def _dsn() -> str:
 # Process-wide singleton: loading the cross-encoder weights costs ~18s, so the
 # reranker is built once and reused across requests (kept resident in memory).
 _RERANKER_SINGLETON: CrossEncoderReranker | None = None
+NEWS_RAG_MEMORY_ENV = "NEWS_RAG_MEMORY"
+NEWS_RAG_MEMORY_COLLECTION_ENV = "NEWS_RAG_MEMORY_COLLECTION"
 
 
 def get_reranker() -> CrossEncoderReranker:
@@ -91,6 +96,18 @@ def build_visual_chunk_store() -> PaperVisualChunkStore | None:
     return store
 
 
+def build_rag_memory_port() -> ResearchRAGMemoryPort | None:
+    if not _env_truthy(os.environ.get(NEWS_RAG_MEMORY_ENV)):
+        return None
+    collection = os.environ.get(NEWS_RAG_MEMORY_COLLECTION_ENV) or DEFAULT_MEMORY_COLLECTION
+    vector_store = qdrant_store_from_env()
+    ensure_collections = getattr(vector_store, "ensure_collections", None)
+    if callable(ensure_collections):
+        ensure_collections([collection])
+    memory_runtime = MemoryRuntime(VectorMemoryStoreAdapter(vector_store, collection=collection))
+    return ResearchRAGMemoryPort(memory_runtime)
+
+
 def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeline:
     return ChunkPaperPipeline(
         build_chunk_store(),
@@ -125,6 +142,7 @@ def build_paper_rag_session(
 ) -> PaperRAGSession:
     reranker = get_reranker() if with_reranker else None
     relevance_scorer = RerankerRelevanceScorer(reranker) if reranker is not None else None
+    memory = build_rag_memory_port()
     retrieval_policy = build_retrieval_policy_from_env()
     answer_worker = None
     generation_policy: dict[str, object] = {}
@@ -147,6 +165,7 @@ def build_paper_rag_session(
         answer_worker=answer_worker,
         generation_policy=generation_policy,
         relevance_scorer=relevance_scorer,
+        memory=memory,
     )
 
 
@@ -159,6 +178,7 @@ __all__ = [
     "build_chunk_repository",
     "build_chunk_store",
     "build_field_chunk_store",
+    "build_rag_memory_port",
     "build_visual_chunk_store",
     "build_paper_rag_session",
     "build_research_retriever",
