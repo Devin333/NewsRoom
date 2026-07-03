@@ -52,6 +52,7 @@ from business.research.rag.retrieval.channels import RankedHit, RankedList, Reca
 from business.research.rag.retrieval.expanders import (
     ContextExpander,
     CrossRefContextExpander,
+    FormulaContextExpander,
     ParentContextExpander,
     TableContextExpander,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "GeneratedAnswer",
     "ExpanderSpec",
     "FusionSpec",
+    "FormulaContextExpander",
     "NEWS_PAPER_RAG_POLICY_ENV",
     "PAPER_BLIND_SEMANTIC_RAG_V1_POLICY",
     "PAPER_FORMULA_RAG_V1_POLICY",
