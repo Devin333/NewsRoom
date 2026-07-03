@@ -27,6 +27,7 @@ from business.research.rag.retrieval.paper_claim_index import (
     PaperClaimSearchPort,
     extract_claim_records,
 )
+from business.research.rag.retrieval.metrics import RetrievalMetricsBuilder
 from business.research.rag.retrieval.paper_retriever import (
     DEFAULT_RETRIEVAL_POLICY,
     NEWS_PAPER_RAG_POLICY_ENV,
@@ -107,6 +108,7 @@ __all__ = [
     "RerankSpec",
     "RerankCascade",
     "RetrievalDegradation",
+    "RetrievalMetricsBuilder",
     "RetrievalTrace",
     "StructuralContextExpander",
     "SupplementalTableHitExpander",
