@@ -10,7 +10,6 @@ from typing import Any, Mapping, TYPE_CHECKING
 from framework.rag.core import intent_allowed, intent_budget, position_decay_score
 from framework.rag.retrieval import (
     dedupe_by_key,
-    expansion_metadata,
     normalize_score_weights,
     weighted_component_score,
 )
@@ -33,6 +32,7 @@ from business.research.rag.retrieval.channels.visual import VisualRecallChannel
 from business.research.rag.retrieval.expanders.cross_ref import CrossRefContextExpander
 from business.research.rag.retrieval.expanders.formula_context import FormulaContextExpander
 from business.research.rag.retrieval.expanders.parent import ParentContextExpander
+from business.research.rag.retrieval.expanders.structural import StructuralContextExpander
 from business.research.rag.retrieval.expanders.table_context import TableContextExpander
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings
@@ -546,6 +546,7 @@ class ResearchRetriever:
             reranker=reranker,
         )
         self._formula_context_expander = FormulaContextExpander(self._policy)
+        self._structural_expander = StructuralContextExpander(chunk_store, self._policy)
         self._reranker = reranker
         self._field_index = field_index
         self._field_reranker = field_reranker
@@ -1162,47 +1163,7 @@ class ResearchRetriever:
         request: RetrievalRequest,
         route: RetrievalRoute,
     ) -> list[PaperChunk]:
-        if not chunks:
-            return chunks
-        out: list[PaperChunk] = []
-        seen: set[str] = set()
-        for chunk in chunks:
-            if chunk.chunk_id not in seen:
-                out.append(chunk)
-                seen.add(chunk.chunk_id)
-            added = 0
-            for ref_id, reason, edge in self._structural_context_refs(chunk, request, route):
-                if ref_id in seen:
-                    continue
-                ref = self._store.get_chunk(ref_id)
-                if ref is None or ref.paper_id != request.paper_id:
-                    continue
-                seen.add(ref.chunk_id)
-                added += 1
-                out.append(_with_expansion_metadata(
-                    ref,
-                    expanded_from_chunk_id=chunk.chunk_id,
-                    reason=reason,
-                    edge=edge,
-                    rank=added,
-                    source_chunk=chunk,
-                ))
-        return out
-
-    def _structural_context_refs(
-        self,
-        chunk: PaperChunk,
-        request: RetrievalRequest,
-        route: RetrievalRoute,
-    ) -> list[tuple[str, str, str]]:
-        if route.intent == "figure_query" and self._policy.max_figure_context_chunks > 0 and _is_figure_chunk(chunk):
-            return _figure_context_refs(chunk)[: self._policy.max_figure_context_chunks]
-        if _is_table_chunk(chunk) and _should_expand_result_context(route.intent, request.question):
-            return _table_context_refs(chunk)[: self._policy.max_table_context_chunks]
-        formula_refs = self._formula_context_expander.refs_for(chunk, request, route)
-        if formula_refs:
-            return formula_refs
-        return []
+        return self._structural_expander.expand(chunks, request, route)
 
 
     def _supplemental_table_hits(
@@ -1269,40 +1230,6 @@ class ResearchRetriever:
         self, children: list[PaperChunk], paper_id: str
     ) -> list[PaperChunk]:
         return self._cross_ref_expander.expand(children, paper_id)
-
-
-def _figure_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
-    refs: list[tuple[str, str, str]] = []
-    nearby_id = str(chunk.metadata.get("nearby_context_chunk_id") or "")
-    if nearby_id:
-        refs.append((nearby_id, "figure_nearby_context", "nearby_context_chunk_id"))
-    for ref in chunk.metadata.get("referenced_by_chunks", []):
-        if not isinstance(ref, dict):
-            continue
-        ref_id = str(ref.get("chunk_id") or "")
-        if ref_id:
-            refs.append((ref_id, "figure_body_reference", "referenced_by_chunks"))
-    return refs
-
-
-def _table_context_refs(chunk: PaperChunk) -> list[tuple[str, str, str]]:
-    refs: list[tuple[str, str, str]] = []
-    nearby_id = str(chunk.metadata.get("nearby_context_chunk_id") or "")
-    if nearby_id:
-        refs.append((nearby_id, "table_nearby_context", "nearby_context_chunk_id"))
-    for ref in chunk.metadata.get("referenced_by_chunks", []):
-        if not isinstance(ref, dict):
-            continue
-        ref_id = str(ref.get("chunk_id") or "")
-        if ref_id:
-            refs.append((ref_id, "table_body_reference", "referenced_by_chunks"))
-    parent_table_id = str(chunk.metadata.get("parent_table_chunk_id") or "")
-    if parent_table_id:
-        refs.append((parent_table_id, "table_row_group_parent", "parent_table_chunk_id"))
-    parent_id = chunk.parent_chunk_id or ""
-    if parent_id:
-        refs.append((parent_id, "table_parent_context", "parent_chunk_id"))
-    return refs
 
 
 def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float:
@@ -1822,48 +1749,6 @@ def _result_title_rank(text: str) -> int:
         if keyword in normalized:
             return index
     return 100
-
-
-def _with_expansion_metadata(
-    chunk: PaperChunk,
-    *,
-    expanded_from_chunk_id: str,
-    reason: str,
-    edge: str,
-    rank: int,
-    source_chunk: PaperChunk | None = None,
-) -> PaperChunk:
-    metadata = dict(chunk.metadata)
-    _preserve_source_locator(metadata, source_chunk)
-    metadata["graph_score"] = max(_metadata_float(metadata, "graph_score", 0.0), 1.0)
-    metadata.update(expansion_metadata(
-        expanded_from_id=expanded_from_chunk_id,
-        reason=reason,
-        edge=edge,
-        rank=rank,
-    ))
-    return chunk.model_copy(update={"metadata": metadata})
-
-
-def _preserve_source_locator(metadata: dict[str, Any], source_chunk: PaperChunk | None) -> None:
-    if source_chunk is None:
-        return
-    if metadata.get("source_locator"):
-        return
-    source_locator = str(
-        source_chunk.metadata.get("source_locator")
-        or source_chunk.metadata.get("source_ref")
-        or ""
-    )
-    if not source_locator:
-        return
-    metadata["source_locator"] = source_locator
-    metadata["source_locator_inherited"] = True
-    metadata["source_locator_origin_chunk_id"] = source_chunk.chunk_id
-    source_locators = source_chunk.metadata.get("source_locators")
-    if source_locators and not metadata.get("source_locators"):
-        metadata["source_locators"] = source_locators
-
 
 
 __all__ = [

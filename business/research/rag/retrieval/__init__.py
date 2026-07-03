@@ -54,6 +54,7 @@ from business.research.rag.retrieval.expanders import (
     CrossRefContextExpander,
     FormulaContextExpander,
     ParentContextExpander,
+    StructuralContextExpander,
     TableContextExpander,
 )
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
@@ -99,6 +100,7 @@ __all__ = [
     "RerankCascade",
     "RetrievalDegradation",
     "RetrievalTrace",
+    "StructuralContextExpander",
     "TableContextExpander",
     "build_retrieval_policy",
     "build_retrieval_policy_from_env",
