@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from framework.harness import (
+    EvidenceCandidate,
     RAGBudget,
     RAGBudgetSnapshot,
     RetrievalOperation,
@@ -10,6 +11,7 @@ from framework.harness import (
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.rag import ensure_jsonable_rag_model
+from framework.harness.retrieval.evidence_pack import EvidencePack
 
 
 def test_rag_session_spec_requires_explicit_allowlists_and_budget() -> None:
@@ -44,3 +46,26 @@ def test_rag_models_are_json_serializable() -> None:
     ensure_jsonable_rag_model({"budget": budget, "snapshot": snapshot, "spec": fake_rag_session_spec()})
 
     assert snapshot.queries_used == 2
+
+
+def test_evidence_candidate_from_pack_preserves_content_resolved_evidence_type() -> None:
+    pack = EvidencePack(
+        evidence_id="method-1",
+        title="Method paragraph",
+        summary="The method describes the architecture.",
+        source_refs=("paper://p1/method-1",),
+        confidence=0.85,
+        freshness="unknown",
+        lineage=("p1",),
+        metadata={
+            "evidence_type": "method",
+            "evidence_type_source": "content_resolved",
+        },
+    )
+
+    candidate = EvidenceCandidate.from_evidence_pack(
+        pack,
+        evidence_type="experiment",
+    )
+
+    assert candidate.evidence_type == "method"

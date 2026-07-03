@@ -363,13 +363,19 @@ class EvidenceCandidate:
         artifact_refs: tuple[str, ...] = (),
     ) -> "EvidenceCandidate":
         pack_artifact_refs = _artifact_refs_from_metadata(pack.metadata)
+        resolved_evidence_type = str(pack.metadata.get("evidence_type") or "").strip()
+        candidate_evidence_type = (
+            resolved_evidence_type
+            if pack.metadata.get("evidence_type_source") == "content_resolved" and resolved_evidence_type
+            else evidence_type
+        )
         return cls(
             evidence_id=pack.evidence_id,
             title=pack.title,
             summary=pack.summary,
             source_ref=pack.source_refs[0],
             span_refs=tuple(pack.metadata.get("section_refs", pack.source_refs)),
-            evidence_type=evidence_type,
+            evidence_type=candidate_evidence_type,
             claim_refs=tuple(pack.metadata.get("claim_refs", ())),
             confidence=pack.confidence,
             freshness=pack.freshness,

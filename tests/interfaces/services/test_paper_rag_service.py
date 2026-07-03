@@ -11,6 +11,7 @@ from framework.harness.rag.models import (
     RAGTranscript,
 )
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType
+from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from interfaces.services.paper_rag_service import PaperRagApplicationService
 
 
@@ -110,6 +111,31 @@ def test_rag_ask_gated_generation_returns_abstained_payload_without_answer_text(
     assert payload["answer"] is None
     assert payload["answer_candidate"]["abstained"] is True
     assert payload["decision"]["decision_type"] == "abstain"
+
+
+def test_rag_ask_gated_generation_respects_expected_abstention_golden_case() -> None:
+    pair = EvidenceQAPair.negative(
+        question="Does this paper report a GPT-5 training run?",
+        paper_id="p1",
+    )
+    result = _session_result(
+        status=RAGSessionStatus.ABSTAINED,
+        decision_type=RAGDecisionType.ABSTAIN,
+        answer=_answer(abstained=True),
+    )
+    service = PaperRagApplicationService(
+        retriever=_Retriever(),
+        session_factory=lambda **kwargs: _Session(result),
+    )
+
+    payload = service.rag_ask(pair.paper_id, pair.question, generate=True)
+
+    assert pair.expected_behavior == "abstain"
+    assert payload["status"] == "abstained"
+    assert payload["answer"] is None
+    assert payload["claims"] == []
+    assert payload["citations"] == []
+    assert payload["answer_candidate"]["abstained"] is True
 
 
 def test_rag_ask_legacy_fallback_marks_generation_mode(monkeypatch) -> None:

@@ -156,11 +156,15 @@ class EvidenceQAPair:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EvidenceQAPair":
+        gold_chunk_ids = list(data.get("gold_chunk_ids") or [])
+        legacy_source_chunk_id = str(data.get("source_chunk_id") or "").strip()
+        if not gold_chunk_ids and legacy_source_chunk_id:
+            gold_chunk_ids = [legacy_source_chunk_id]
         return cls(
             question=str(data["question"]),
             paper_id=str(data["paper_id"]),
-            qa_type=str(data["qa_type"]),
-            gold_chunk_ids=list(data.get("gold_chunk_ids") or []),
+            qa_type=str(data.get("qa_type") or "legacy_qa"),
+            gold_chunk_ids=gold_chunk_ids,
             equivalent_gold_chunk_ids=list(data.get("equivalent_gold_chunk_ids") or []),
             supporting_evidence_group_id=str(data.get("supporting_evidence_group_id") or ""),
             required_primary_evidence_ids=list(data.get("required_primary_evidence_ids") or []),
@@ -175,7 +179,10 @@ class EvidenceQAPair:
             expected_behavior=_coerce_behavior(data.get("expected_behavior", _ANSWER_BEHAVIOR)),
             difficulty=str(data.get("difficulty") or ""),
             domain=str(data.get("domain") or ""),
-            metadata=dict(data.get("metadata") or {}),
+            metadata={
+                **({"source_chunk_id": legacy_source_chunk_id} if legacy_source_chunk_id else {}),
+                **dict(data.get("metadata") or {}),
+            },
         )
 
 

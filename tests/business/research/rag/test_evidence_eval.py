@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from business.research.document.citation_spans import build_paragraph_span_metadata
@@ -88,6 +90,16 @@ def test_negative_qa_can_have_no_gold_chunks() -> None:
     assert pair.expected_behavior == "abstain"
     assert pair.gold_chunk_ids == []
     assert pair.qa_type == "negative_qa"
+
+
+def test_repository_legacy_golden_set_loads_with_default_answer_behavior() -> None:
+    pairs = load_evidence_golden_set(Path("data/eval/golden_set.json"))
+
+    assert len(pairs) == 67
+    assert {pair.expected_behavior for pair in pairs} == {"answer"}
+    assert all(pair.qa_type == "legacy_qa" for pair in pairs)
+    assert all(pair.gold_chunk_ids for pair in pairs)
+    assert pairs[0].metadata["source_chunk_id"] == pairs[0].gold_chunk_ids[0]
 
 
 def test_answerable_evidence_qa_requires_gold_chunk() -> None:
