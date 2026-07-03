@@ -41,6 +41,7 @@ from business.research.rag.retrieval.paper_visual_retrieval import (
 )
 from business.research.rag.retrieval.planner import QueryPlanner
 from business.research.rag.retrieval.policy_config import policy_config_hash
+from business.research.rag.retrieval.rerank import RerankCascade
 from business.research.rag.retrieval.trace import RetrievalDegradation, RetrievalTrace
 
 if TYPE_CHECKING:
@@ -543,6 +544,11 @@ class ResearchRetriever:
         self._visual_channel = VisualRecallChannel(chunk_store, visual_store)
         self._policy = policy or RetrievalPolicy()
         self._planner = QueryPlanner(self._policy)
+        self._rerank_cascade = RerankCascade(
+            self._policy,
+            reranker=reranker,
+            field_reranker=field_reranker,
+        )
         self._reranker = reranker
         self._field_index = field_index
         self._field_reranker = field_reranker
@@ -598,9 +604,9 @@ class ResearchRetriever:
             )
 
         # ── 2. base relevance: reranker (if available) else vector score ──────
-        base_reranker_enabled = self._base_reranker_enabled(route.intent)
-        field_reranker_enabled = self._field_reranker_enabled(route.intent)
-        base_scores = self._base_scores(request.question, candidates, intent=route.intent)
+        base_reranker_enabled = self._rerank_cascade.base_enabled_for(route.intent)
+        field_reranker_enabled = self._rerank_cascade.field_enabled_for(route.intent)
+        base_scores = self._rerank_cascade.base_scores(request.question, candidates, intent=route.intent)
 
         # ── 2b. rerank score threshold: drop low-relevance candidates (reranker only) ──
         pairs = list(zip(candidates, base_scores))
@@ -609,7 +615,7 @@ class ResearchRetriever:
             kept = [(c, b) for (c, b) in pairs if b >= self._policy.rerank_score_threshold]
             pairs = kept or pairs[:1]  # never drop everything — keep top-1 as fallback
         n_filtered = n_before_filter - len(pairs)
-        field_rerank_scores = self._field_rerank_scores(
+        field_rerank_scores = self._rerank_cascade.field_scores(
             request.question,
             [chunk for (chunk, _sem), _base in pairs],
             intent=route.intent,
@@ -758,35 +764,6 @@ class ResearchRetriever:
         )
 
     # ── private ───────────────────────────────────────────────────────────────
-
-    def _base_scores(
-        self,
-        question: str,
-        candidates: list[tuple[PaperChunk, float]],
-        *,
-        intent: str,
-    ) -> list[float]:
-        """Base relevance per candidate: reranker cross-encoder score if available,
-        else the vector semantic score. Reranker scores replace (not add to) vector
-        scores since the cross-encoder is a stronger relevance signal."""
-        if self._reranker is None or not candidates or not self._policy.reranker_enabled_for(intent):
-            return [sem for _chunk, sem in candidates]
-        passages = [chunk.content for chunk, _ in candidates]
-        try:
-            scores = self._reranker.score(question, passages)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).warning("reranker failed, falling back to vector scores")
-            return [sem for _chunk, sem in candidates]
-        normalized_scores = RerankScoreSet.from_raw(scores, expected_count=len(candidates))
-        if normalized_scores is None:
-            logging.getLogger(__name__).warning(
-                "reranker returned %s scores for %s candidates",
-                len(scores),
-                len(candidates),
-            )
-            return [sem for _chunk, sem in candidates]
-        return list(normalized_scores.scores)
 
     def _search_text_candidates(
         self,
@@ -989,40 +966,6 @@ class ResearchRetriever:
         paper_id: str,
     ) -> list[tuple[PaperChunk, float]]:
         return self._visual_channel.ranked_chunks(visual_hits, paper_id)
-
-    def _base_reranker_enabled(self, intent: str) -> bool:
-        return self._reranker is not None and self._policy.reranker_enabled_for(intent)
-
-    def _field_reranker_enabled(self, intent: str) -> bool:
-        return self._field_reranker is not None and self._policy.field_reranker_enabled_for(intent)
-
-    def _field_rerank_scores(
-        self,
-        question: str,
-        chunks: list[PaperChunk],
-        *,
-        intent: str,
-    ) -> dict[str, float]:
-        if (
-            not self._field_reranker_enabled(intent)
-            or not chunks
-        ):
-            return {}
-        passages = [_field_rerank_passage(chunk) for chunk in chunks]
-        try:
-            scores = self._field_reranker.score(question, passages)
-        except Exception:
-            logging.getLogger(__name__).warning("field reranker failed", exc_info=True)
-            return {}
-        normalized_scores = RerankScoreSet.from_raw(scores, expected_count=len(chunks))
-        if normalized_scores is None:
-            logging.getLogger(__name__).warning(
-                "field reranker returned %s scores for %s candidates",
-                len(scores),
-                len(chunks),
-            )
-            return {}
-        return normalized_scores.as_id_map([chunk.chunk_id for chunk in chunks])
 
     def _score_child_candidate(
         self,
@@ -1603,7 +1546,7 @@ class ResearchRetriever:
             return []
         rerank_query = ""
         rerank_scores: list[float] | None = None
-        if self._base_reranker_enabled(route.intent):
+        if self._rerank_cascade.base_enabled_for(route.intent):
             rerank_query = _parent_context_rerank_query(request, route, candidates)
             passages = [_parent_context_rerank_passage(candidate) for candidate in candidates]
             try:
@@ -2004,31 +1947,6 @@ def _best_matching_field(field_summary: _FieldEmbeddingSummary, field_scores: _F
     }
     field_name, score = _best_score_item(deterministic)
     return field_name if score > 0.0 else ""
-
-
-def _field_rerank_passage(chunk: PaperChunk) -> str:
-    field_texts = extract_field_texts(chunk)
-    labels = {
-        "title": "Title",
-        "abstract": "Abstract",
-        "caption": "Caption",
-        "equation": "Equation",
-        "body": "Body",
-        "table_rows": "Table rows",
-        "table_columns": "Table columns",
-        "visual_description": "Visual description",
-        "referenced_text": "Referenced text",
-    }
-    lines = [
-        f"Section: {chunk.section_title or ''}".strip(),
-        f"Chunk type: {chunk.chunk_type}",
-    ]
-    for field_name in FIELD_NAMES:
-        text = field_texts.text_for(field_name)
-        if not text:
-            continue
-        lines.extend([f"{labels.get(field_name, field_name)}:", text[:1600], ""])
-    return "\n".join(lines).strip() or chunk.content[:2000]
 
 
 def _child_graph_score(chunk: PaperChunk) -> float:

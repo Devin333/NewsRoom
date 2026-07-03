@@ -51,6 +51,7 @@ from business.research.rag.retrieval.paper_visual_retrieval import (
 from business.research.rag.retrieval.channels import RankedHit, RankedList, RecallChannel
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
 from business.research.rag.retrieval.policy_config import policy_config_hash, stable_policy_config
+from business.research.rag.retrieval.rerank import RerankCascade, field_rerank_passage
 from business.research.rag.retrieval.trace import RetrievalDegradation, RetrievalTrace
 
 __all__ = [
@@ -84,6 +85,7 @@ __all__ = [
     "RetrievalResult",
     "RetrievalRoute",
     "RerankSpec",
+    "RerankCascade",
     "RetrievalDegradation",
     "RetrievalTrace",
     "build_retrieval_policy",
@@ -91,6 +93,7 @@ __all__ = [
     "build_retrieval_route",
     "classify_query_intent",
     "extract_claim_records",
+    "field_rerank_passage",
     "fuse_chunk_rankings",
     "fuse_ranked_hits",
     "fuse_visual_retrieval_scores",
