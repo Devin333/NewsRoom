@@ -50,6 +50,7 @@ from framework.harness.rag.models import (
     RetrievalStepSpec,
     ensure_jsonable_rag_model,
 )
+from framework.harness.rag.metrics import RAGSessionMetrics, build_rag_session_metrics
 from framework.harness.rag.planner import DeterministicRAGPlanner, RAGPlanner, WorkerRAGPlanner
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType, RAGExecutionPolicy, budget_exceeded, normalize_query
 from framework.harness.rag.relevance import RAGRelevanceGate, RelevanceScorerPort
@@ -97,6 +98,7 @@ __all__ = [
     "RAGReplayCheck",
     "RAGScopeGate",
     "RAGSessionController",
+    "RAGSessionMetrics",
     "RAGSessionReplayResult",
     "RAGSessionReplayRunner",
     "RAGSessionRequest",
@@ -117,6 +119,7 @@ __all__ = [
     "SourceVerifier",
     "WorkerRAGPlanner",
     "budget_exceeded",
+    "build_rag_session_metrics",
     "evidence_candidate_from_rag_evidence",
     "ensure_jsonable_rag_model",
     "failed_gate_dicts",

@@ -32,6 +32,16 @@ def test_generation_phase_returns_answered_when_answer_gate_passes() -> None:
     assert result.answer is not None
     assert result.answer.answer_text == "The method retrieves evidence. [ev-1]"
     assert any(event["event_type"] == "rag_answer_returned" for event in result.transcript.events)
+    assert result.metrics is not None
+    assert result.metrics.status == RAGSessionStatus.ANSWERED
+    assert result.metrics.decision_type == RAGDecisionType.RETURN_ANSWER.value
+    assert result.metrics.transcript_event_count == len(result.transcript.events)
+    assert result.metrics.budget_snapshot["rounds_used"] == 1
+    assert result.metrics.accepted_evidence_count == 1
+    assert result.metrics.answer_attempts == 1
+    assert result.metrics.answer_present is True
+    assert result.metrics.gate_failures_count == 0
+    assert result.to_dict()["metrics"]["status"] == "answered"
 
 
 def test_generation_phase_abstains_when_answer_gate_fails() -> None:
@@ -48,6 +58,12 @@ def test_generation_phase_abstains_when_answer_gate_fails() -> None:
     assert result.decision.decision_type == RAGDecisionType.ABSTAIN
     assert result.decision.reason == "answer gate failed"
     assert any(item["gate"] == "rag_answer_citation_integrity" for item in result.decision.gate_results)
+    assert result.metrics is not None
+    assert result.metrics.status == RAGSessionStatus.ABSTAINED
+    assert result.metrics.answer_attempts == 1
+    assert result.metrics.gate_failures_by_gate == {"rag_answer_citation_integrity": 1}
+    assert result.metrics.answer_present is True
+    assert result.metrics.answer_abstained is False
 
 
 def test_generation_phase_returns_verified_abstention() -> None:
@@ -95,6 +111,11 @@ def test_generation_phase_retries_after_supplemental_round_and_returns_answered(
     assert "The experiment table reports repair accuracy." in retrieval.requests[1].query
     assert any(event["event_type"] == "rag_answer_supplemental_gap_created" for event in result.transcript.events)
     assert any(event["event_type"] == "rag_answer_supplemental_round_completed" for event in result.transcript.events)
+    assert result.metrics is not None
+    assert result.metrics.answer_attempts == 2
+    assert result.metrics.supplemental_rounds_started == 1
+    assert result.metrics.supplemental_rounds_completed == 1
+    assert result.metrics.gate_failures_by_gate == {"rag_answer_claim_coverage": 1}
 
 
 def test_generation_phase_abstains_when_supplemental_retry_still_fails() -> None:
@@ -143,6 +164,9 @@ def test_generation_phase_does_not_retry_when_supplemental_budget_is_exhausted()
     assert len(retrieval.requests) == 1
     assert any(event["event_type"] == "rag_answer_supplemental_gap_created" for event in result.transcript.events)
     assert any(event["event_type"] == "rag_answer_supplemental_round_skipped" for event in result.transcript.events)
+    assert result.metrics is not None
+    assert result.metrics.supplemental_rounds_skipped == 1
+    assert result.metrics.gate_failures_by_gate == {"rag_answer_claim_coverage": 1}
 
 
 def _controller(

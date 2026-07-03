@@ -27,6 +27,7 @@ from framework.harness.rag.models import (
     RetrievalStepResult,
     RetrievalStepSpec,
 )
+from framework.harness.rag.metrics import RAGSessionMetrics, build_rag_session_metrics
 from framework.harness.rag.planner import DeterministicRAGPlanner, RAGPlanner
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType, RAGExecutionPolicy, normalize_query
 from framework.harness.rag.source_verifier import SourceVerifier
@@ -48,6 +49,7 @@ class RAGSessionResult:
     transcript: RAGTranscript
     decision: RAGDecision
     answer: GroundedAnswerCandidate | None = None
+    metrics: RAGSessionMetrics | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +58,7 @@ class RAGSessionResult:
             "transcript": self.transcript.to_dict(),
             "decision": self.decision.to_dict(),
             "answer": self.answer.to_dict() if self.answer else None,
+            "metrics": self.metrics.to_dict() if self.metrics else {},
         }
 
 
@@ -247,7 +250,27 @@ class BoundedRAGSessionController(RAGSessionController):
             events=tuple(state.events),
             status=status,
         )
-        return RAGSessionResult(status=status, context_pack=pack, transcript=transcript, decision=decision, answer=answer)
+        metrics = build_rag_session_metrics(
+            status=status,
+            decision=decision,
+            events=tuple(state.events),
+            budget_snapshot=state.budget_snapshot,
+            accepted_evidence=tuple(state.accepted_evidence),
+            rejected_evidence=tuple(state.rejected_evidence),
+            conflicting_evidence=tuple(state.conflicting_evidence),
+            memory_context=tuple(state.memory_context),
+            artifact_refs=tuple(state.artifact_refs),
+            context_pack=pack,
+            answer=answer,
+        )
+        return RAGSessionResult(
+            status=status,
+            context_pack=pack,
+            transcript=transcript,
+            decision=decision,
+            answer=answer,
+            metrics=metrics,
+        )
 
     def _run_generation_phase(
         self,

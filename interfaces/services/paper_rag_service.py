@@ -137,15 +137,23 @@ def _gated_payload(
         "claims": [claim.to_dict() for claim in answer.claims] if answer else [],
         "citations": _citations_from_answer(answer, pack),
         "passages": _passages_from_pack(pack, limit=limit),
-        "metrics": {
-            "context_pack_id": pack.pack_id if pack else None,
-            "accepted_evidence_count": len(pack.accepted_evidence) if pack else 0,
-            "decision_type": result.decision.decision_type.value,
-        },
+        "metrics": _gated_metrics(result, pack),
         "decision": result.decision.to_dict(),
         "gate_results": list(result.decision.gate_results),
         "transcript_id": result.transcript.transcript_id,
         "context_pack": _context_pack_summary(pack),
+    }
+
+
+def _gated_metrics(result: Any, pack: Any | None) -> dict[str, Any]:
+    session_metrics = result.metrics.to_dict() if getattr(result, "metrics", None) is not None else {}
+    return {
+        **session_metrics,
+        "context_pack_id": pack.pack_id if pack else session_metrics.get("context_pack_id"),
+        "accepted_evidence_count": len(pack.accepted_evidence)
+        if pack
+        else session_metrics.get("accepted_evidence_count", 0),
+        "decision_type": result.decision.decision_type.value,
     }
 
 

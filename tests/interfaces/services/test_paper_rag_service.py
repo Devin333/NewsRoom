@@ -10,6 +10,7 @@ from framework.harness.rag.models import (
     RAGSessionStatus,
     RAGTranscript,
 )
+from framework.harness.rag.metrics import RAGSessionMetrics
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from interfaces.services.paper_rag_service import PaperRagApplicationService
@@ -90,6 +91,13 @@ def test_rag_ask_gated_generation_returns_answered_payload() -> None:
     assert payload["citations"][0]["evidence_id"] == "ev-1"
     assert payload["context_pack"]["accepted_evidence_ids"] == ["ev-1"]
     assert payload["transcript_id"] == "transcript-1"
+    assert payload["metrics"]["status"] == "answered"
+    assert payload["metrics"]["decision_type"] == "return_answer"
+    assert payload["metrics"]["context_pack_id"] == "pack-1"
+    assert payload["metrics"]["accepted_evidence_count"] == 1
+    assert payload["metrics"]["transcript_event_count"] == 3
+    assert payload["metrics"]["answer_attempts"] == 1
+    assert payload["metrics"]["budget_snapshot"]["rounds_used"] == 1
     assert session.calls[0][0].required_evidence_types == ["method"]
     assert session.calls[0][1]["current_section_index"] == 0
 
@@ -111,6 +119,8 @@ def test_rag_ask_gated_generation_returns_abstained_payload_without_answer_text(
     assert payload["answer"] is None
     assert payload["answer_candidate"]["abstained"] is True
     assert payload["decision"]["decision_type"] == "abstain"
+    assert payload["metrics"]["status"] == "abstained"
+    assert payload["metrics"]["answer_abstained"] is True
 
 
 def test_rag_ask_gated_generation_respects_expected_abstention_golden_case() -> None:
@@ -171,6 +181,26 @@ def _session_result(*, status: RAGSessionStatus, decision_type: RAGDecisionType,
         ),
         decision=decision,
         answer=answer,
+        metrics=RAGSessionMetrics(
+            status=status,
+            decision_type=decision_type.value,
+            transcript_event_count=3,
+            budget_snapshot={
+                "rounds_used": 1,
+                "replans_used": 0,
+                "queries_used": 1,
+                "source_reads_used": 0,
+                "memory_hits_used": 0,
+                "context_items_used": 0,
+                "context_tokens_used": 0,
+                "worker_calls_used": 1,
+            },
+            accepted_evidence_count=1,
+            context_pack_id="pack-1",
+            answer_present=True,
+            answer_abstained=answer.abstained,
+            answer_attempts=1,
+        ),
     )
 
 
