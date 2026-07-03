@@ -60,6 +60,7 @@ def test_interface_acceptance_dev_commands_are_registered() -> None:
         ["test-cli"],
         ["test-mcp"],
         ["test-sdk"],
+        ["test-rag-eval-gate"],
         ["web-check"],
         ["interface-smoke"],
     ]:

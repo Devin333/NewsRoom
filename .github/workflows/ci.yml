@@ -34,6 +34,9 @@ jobs:
       - name: Run service tests
         run: python -m scripts.dev test-services
 
+      - name: Run RAG eval promotion gate
+        run: python -m scripts.dev test-rag-eval-gate
+
       - name: Run PRD-aligned daily regression sweep
         run: python -m scripts.dev test-prd-daily
 

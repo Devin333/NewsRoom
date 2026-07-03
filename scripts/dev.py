@@ -64,6 +64,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "test-services":
         return _run(_pytest_command("tests/interfaces/services", "-q"), env=env)
+    if args.command == "test-rag-eval-gate":
+        return _run(_rag_eval_gate_command(), env=env)
     if args.command == "test-interfaces":
         return _run(
             _pytest_command(
@@ -180,6 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser("test-workflow-domain", help="Run workflow domain tests")
     subparsers.add_parser("test-services", help="Run interface service tests")
+    subparsers.add_parser("test-rag-eval-gate", help="Run the deterministic Paper RAG eval CI gate")
     subparsers.add_parser("test-interfaces", help="Run interface acceptance tests")
     subparsers.add_parser("test-api", help="Run HTTP API interface tests")
     subparsers.add_parser("test-cli", help="Run CLI interface tests")
@@ -272,6 +275,10 @@ def _api_smoke_command() -> list[str]:
 
 def _mcp_smoke_command() -> list[str]:
     return [sys.executable, "-m", "scripts.smoke.mcp_smoke"]
+
+
+def _rag_eval_gate_command() -> list[str]:
+    return [sys.executable, "-m", "business.research.rag.cli.run_ci_eval_gate"]
 
 
 def _news_command(*args: str) -> list[str]:
