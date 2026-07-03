@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Mapping, TYPE_CHECKING
@@ -10,8 +9,8 @@ from framework.rag.retrieval import dedupe_by_key
 
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
-from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
-from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
+from business.research.ports.field_embedding_index import FieldEmbeddingSearchPort
+from business.research.ports.visual_chunk_index import VisualChunkSearchPort
 from business.research.rag.adapters.paper_field_text import FIELD_NAMES
 from business.research.rag.retrieval.channels.claim_index import ClaimIndexChannel
 from business.research.rag.retrieval.channels.dense_text import DenseTextChannel
@@ -19,19 +18,14 @@ from business.research.rag.retrieval.channels.field_embedding import FieldEmbedd
 from business.research.rag.retrieval.channels.sparse_lexical import SparseLexicalChannel
 from business.research.rag.retrieval.channels.visual import VisualRecallChannel
 from business.research.rag.retrieval.expanders.cross_ref import CrossRefContextExpander
-from business.research.rag.retrieval.expanders.formula_context import FormulaContextExpander
 from business.research.rag.retrieval.expanders.parent import ParentContextExpander
 from business.research.rag.retrieval.expanders.structural import StructuralContextExpander
 from business.research.rag.retrieval.expanders.supplemental_table import SupplementalTableHitExpander
 from business.research.rag.retrieval.expanders.table_context import TableContextExpander
 from business.research.rag.retrieval.paper_claim_index import PaperClaimSearchPort
-from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute
-from business.research.rag.retrieval.paper_visual_retrieval import (
-    PaperVisualFusionWeights,
-    with_retrieval_scores,
-)
+from business.research.rag.retrieval.paper_policy import QueryIntent
+from business.research.rag.retrieval.pipeline import RetrievalPipeline
 from business.research.rag.retrieval.planner import QueryPlanner
-from business.research.rag.retrieval.policy_config import policy_config_hash
 from business.research.rag.retrieval.recall_stage import CandidateRecallStage
 from business.research.rag.retrieval.rerank import RerankCascade
 from business.research.rag.retrieval.scoring import (
@@ -40,14 +34,12 @@ from business.research.rag.retrieval.scoring import (
     normalized_child_final_score_weights,
     normalized_field_score_weights,
     normalized_parent_score_weights,
-    round_score,
 )
-from business.research.rag.retrieval.trace import RetrievalTrace
 
 if TYPE_CHECKING:
     from business.research.ports.reranker import RerankerPort
 
-# Default position weight α per intent (0 = no position bias)
+# Default position weight per intent (0 = no position bias)
 _DEFAULT_ALPHA: dict[str, float] = {
     "figure_query":    0.0,
     "table_query":     0.0,
@@ -66,21 +58,12 @@ PAPER_FORMULA_RAG_V1_POLICY = "paper_formula_rag_v1"
 NEWS_PAPER_RAG_POLICY_ENV = "NEWS_PAPER_RAG_POLICY"
 HIGH_VALUE_VISUAL_RESULT_INTENTS = ("figure_query", "table_query", "numerical_result", "comparison")
 LIGHTWEIGHT_FIELD_RERANK_INTENTS = (*HIGH_VALUE_VISUAL_RESULT_INTENTS, "formula_query")
-_FORMULA_CONTEXT_REASONS = frozenset({
-    "formula_nearby_context",
-    "formula_explained_by",
-    "formula_body_reference",
-    "formula_explicit_reference",
-    "formula_parent_context",
-    "formula_reverse_context",
-    "formula_reverse_reference",
-})
 @dataclass(frozen=True)
 class RetrievalPolicy:
     """Tunable retrieval parameters (position weighting + over-fetch + rerank filter)."""
     name: str = DEFAULT_RETRIEVAL_POLICY
     position_alpha: dict[str, float] = field(default_factory=lambda: dict(_DEFAULT_ALPHA))
-    default_alpha: float = 0.2          # fallback α for unlisted intents
+    default_alpha: float = 0.2          # fallback for unlisted intents
     sigma: float = 3.0                  # position decay rate, in sections
     overfetch_multiplier: int = 3       # fetch limit*N candidates before re-rank
     element_label_overfetch_multiplier: int = 25
@@ -444,8 +427,8 @@ class ResearchRetriever:
     """
     Agent-callable retrieval tool.
 
-    Flow: intent classification → vector search (limit*3) →
-          position-aware re-rank → parent expansion → cross-ref expansion
+    Flow: intent classification -> vector search (limit*3) ->
+          position-aware re-rank -> parent expansion -> cross-ref expansion
     """
 
     def __init__(
@@ -477,32 +460,46 @@ class ResearchRetriever:
             visual_store=visual_store,
             policy=self._policy,
         )
-        self._planner = QueryPlanner(self._policy)
-        self._rerank_cascade = RerankCascade(
+        planner = QueryPlanner(self._policy)
+        rerank_cascade = RerankCascade(
             self._policy,
             reranker=reranker,
             field_reranker=field_reranker,
         )
-        self._parent_expander = ParentContextExpander(
+        parent_expander = ParentContextExpander(
             chunk_store,
             self._policy,
             reranker=reranker,
         )
-        self._cross_ref_expander = CrossRefContextExpander(chunk_store)
-        self._table_context_expander = TableContextExpander(
+        cross_ref_expander = CrossRefContextExpander(chunk_store)
+        table_context_expander = TableContextExpander(
             chunk_store,
             self._policy,
             reranker=reranker,
         )
-        self._formula_context_expander = FormulaContextExpander(self._policy)
-        self._structural_expander = StructuralContextExpander(chunk_store, self._policy)
-        self._supplemental_table_expander = SupplementalTableHitExpander(chunk_store, self._policy)
-        self._child_scorer = ChildCandidateScorer(self._policy)
-        self._reranker = reranker
-        self._field_index = field_index
-        self._field_reranker = field_reranker
-        self._visual_store = visual_store
-        self._claim_index = claim_index
+        structural_expander = StructuralContextExpander(chunk_store, self._policy)
+        supplemental_table_expander = SupplementalTableHitExpander(chunk_store, self._policy)
+        child_scorer = ChildCandidateScorer(self._policy)
+        self._pipeline = RetrievalPipeline(
+            policy=self._policy,
+            planner=planner,
+            recall_stage=self._recall_stage,
+            rerank_cascade=rerank_cascade,
+            child_scorer=child_scorer,
+            visual_channel=self._visual_channel,
+            parent_expander=parent_expander,
+            cross_ref_expander=cross_ref_expander,
+            table_context_expander=table_context_expander,
+            structural_expander=structural_expander,
+            supplemental_table_expander=supplemental_table_expander,
+            request_factory=RetrievalRequest,
+            result_factory=RetrievalResult,
+            reranker_available=reranker is not None,
+            field_index_available=field_index is not None,
+            field_reranker_available=field_reranker is not None,
+            visual_store_available=visual_store is not None,
+            claim_index_available=claim_index is not None,
+        )
 
     @property
     def policy(self) -> RetrievalPolicy:
@@ -513,326 +510,7 @@ class ResearchRetriever:
         return self._store.get_chunk(chunk_id)
 
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
-        import time
-        t0 = time.perf_counter()
-        plan = self._planner.build(request)
-        route = plan.route
-        candidate_filters = [dict(item) for item in plan.candidate_filters]
-        active_policy_hash = policy_config_hash(self._policy)
-        retrieval_trace = RetrievalTrace(
-            policy_name=self._policy.name,
-            policy_hash=active_policy_hash,
-            route=plan.route_dict(),
-        )
-
-        # ── 1. vector search (over-fetch for re-ranking) ──────────────────────
-        element_query_labels = set(plan.element_query_labels)
-        candidate_limit = plan.candidate_limit
-        recall_result = self._recall_stage.recall(
-            request,
-            route,
-            candidate_filters,
-            candidate_limit,
-            trace=retrieval_trace,
-        )
-        candidates = recall_result.candidates
-        field_hits = recall_result.field_hits
-        claim_hits = recall_result.claim_hits
-        visual_hits = recall_result.visual_hits
-        n_recalled = recall_result.n_recalled
-        n_visual_recalled = recall_result.n_visual_recalled
-
-        # ── 2. base relevance: reranker (if available) else vector score ──────
-        base_reranker_enabled = self._rerank_cascade.base_enabled_for(route.intent)
-        field_reranker_enabled = self._rerank_cascade.field_enabled_for(route.intent)
-        base_scores = self._rerank_cascade.base_scores(request.question, candidates, intent=route.intent)
-
-        # ── 2b. rerank score threshold: drop low-relevance candidates (reranker only) ──
-        pairs = list(zip(candidates, base_scores))
-        n_before_filter = len(pairs)
-        if base_reranker_enabled and self._policy.rerank_score_threshold > 0.0:
-            kept = [(c, b) for (c, b) in pairs if b >= self._policy.rerank_score_threshold]
-            pairs = kept or pairs[:1]  # never drop everything — keep top-1 as fallback
-        n_filtered = n_before_filter - len(pairs)
-        field_rerank_scores = self._rerank_cascade.field_scores(
-            request.question,
-            [chunk for (chunk, _sem), _base in pairs],
-            intent=route.intent,
-        )
-
-        # ── 3. position-aware re-rank ─────────────────────────────────────────
-        scored = []
-        for (chunk, _sem), base in pairs:
-            retrieved = with_retrieval_scores(
-                chunk,
-                text_score=base,
-                visual_score=None,
-                fused_score=base,
-                strategy="text",
-            )
-            scored.append(self._score_child_candidate(
-                retrieved,
-                request,
-                route,
-                semantic_score=base,
-                field_rerank_score=field_rerank_scores.get(chunk.chunk_id),
-            ))
-        if visual_hits:
-            scored = self._fuse_visual_scores(
-                scored,
-                visual_hits,
-                paper_id=request.paper_id,
-                query_text=request.question,
-                current_section_index=request.current_section_index,
-                intent=route.intent,
-                field_rerank_scores=field_rerank_scores,
-            )
-        scored.sort(key=lambda x: x[1], reverse=True)
-        child_chunks = [c for c, _ in scored[: request.limit]]
-        child_chunks = self._interleave_structural_context(child_chunks, request, route)
-        supplemental_table_chunks = self._supplemental_table_hits(child_chunks, request, route)
-        child_chunks.extend(supplemental_table_chunks)
-        top_score = scored[0][1] if scored else 0.0
-
-        # ── 3. parent expansion ───────────────────────────────────────────────
-        parent_chunks, parent_metrics = self._fetch_parents(child_chunks, request, route)
-
-        # ── 4. cross-reference expansion ──────────────────────────────────────
-        cross_ref_chunks = self._fetch_refs(child_chunks, request.paper_id)
-        table_context_chunks = self._fetch_table_context(child_chunks, request, route)
-        ref_chunks = _dedupe_chunks([*cross_ref_chunks, *table_context_chunks])
-
-        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
-        metrics = {
-            "retrieval_policy": self._policy.name,
-            "retrieval_policy_version": 1,
-            "retrieval_policy_config_hash": active_policy_hash,
-            "retrieval_policy_overfetch_multiplier": self._policy.overfetch_multiplier,
-            "retrieval_policy_element_label_overfetch_multiplier": (
-                self._policy.element_label_overfetch_multiplier
-            ),
-            "candidate_limit": candidate_limit,
-            "candidate_filters": candidate_filters,
-            "candidate_filter_group_count": len(candidate_filters),
-            "hybrid_rrf_enabled": self._policy.hybrid_rrf_enabled,
-            "multi_query_enabled": self._policy.multi_query_enabled,
-            "sparse_lexical_enabled": self._policy.sparse_lexical_enabled,
-            "formula_sparse_enabled": self._policy.formula_sparse_enabled,
-            "sparse_recalled": sum(
-                1 for chunk, _score in candidates
-                if chunk.metadata.get("sparse_lexical_hit")
-            ),
-            "formula_sparse_recalled": sum(
-                1 for chunk, _score in candidates
-                if chunk.metadata.get("formula_sparse_hit")
-            ),
-            "hybrid_rrf_recalled": sum(
-                1 for chunk, _score in candidates
-                if chunk.metadata.get("hybrid_rrf_fusion")
-            ),
-            "query_variants": recall_result.query_variants,
-            "element_query_labels": sorted(element_query_labels),
-            "retrieval_policy_visual_fusion_weights": {
-                "text": self._policy.visual_fusion_text_weight,
-                "visual": self._policy.visual_fusion_visual_weight,
-            },
-            "intent": route.intent,
-            "recall_routes": list(route.recall_routes),
-            "route_plan": plan.route_dict(),
-            "retrieval_plan": plan.to_dict(),
-            "reranker": self._reranker is not None,
-            "reranker_enabled_for_intent": base_reranker_enabled,
-            "reranker_intent_scope": self._policy.reranking_intents,
-            "recalled": n_recalled,
-            "visual_recalled": n_visual_recalled,
-            "visual_fusion_enabled": self._visual_store is not None,
-            "field_embedding_enabled": self._field_index is not None and self._policy.field_embedding_enabled,
-            "field_reranker_enabled": self._field_reranker is not None and self._policy.field_reranking_enabled,
-            "field_reranker_enabled_for_intent": field_reranker_enabled,
-            "field_reranker_intent_scope": self._policy.field_reranking_intents,
-            "field_search_fields": self._policy.field_search_fields_for(route.intent),
-            "field_hits_count": len(field_hits),
-            "field_hits_by_name": _field_hits_by_name(field_hits),
-            "claim_index_enabled": self._claim_index is not None,
-            "claim_index_hits": len(claim_hits),
-            "claim_index_top_claim_ids": [hit.record.claim_id for hit in claim_hits[:5]],
-            "threshold_filtered": n_filtered,
-            "child_returned": len(child_chunks),
-            "parent_returned": len(parent_chunks),
-            "ref_returned": len(ref_chunks),
-            "supplemental_table_returned": len(supplemental_table_chunks),
-            "table_context_returned": len(table_context_chunks),
-            "figure_context_returned": sum(
-                1 for chunk in child_chunks
-                if chunk.metadata.get("expansion_reason") in {"figure_nearby_context", "figure_body_reference"}
-            ),
-            "formula_context_returned": sum(
-                1 for chunk in child_chunks
-                if chunk.metadata.get("expansion_reason") in _FORMULA_CONTEXT_REASONS
-            ) + sum(
-                1 for chunk in ref_chunks
-                if chunk.metadata.get("expansion_reason") in _FORMULA_CONTEXT_REASONS
-            ),
-            "interleaved_table_context_returned": sum(
-                1 for chunk in child_chunks
-                if str(chunk.metadata.get("expansion_reason") or "").startswith("table_")
-            ),
-            "top_score": round(top_score, 4),
-            "elapsed_ms": elapsed_ms,
-            "field_scoring_enabled": self._policy.field_scoring_enabled,
-            "field_score_weights": self._policy.field_score_weights_for(route.intent),
-            "child_score_weights": self._policy.normalized_child_score_weights(),
-            "field_scored_count": len(scored),
-            "field_score_top": _metadata_extreme(scored, "field_score", max),
-            "field_score_min": _metadata_extreme(scored, "field_score", min),
-            "field_embedding_score_top": _metadata_extreme(scored, "field_embedding_score", max),
-            "field_rerank_top": _metadata_extreme(scored, "field_rerank_score", max),
-            "best_matching_fields": _best_matching_fields(scored),
-            "retrieval_degradations": [item.to_dict() for item in retrieval_trace.degradations],
-            "retrieval_trace": retrieval_trace.to_dict(),
-        }
-        metrics.update(parent_metrics)
-        logging.getLogger(__name__).info("retrieval %s", metrics)
-
-        return RetrievalResult(
-            parent_chunks=parent_chunks,
-            child_chunks=child_chunks,
-            ref_chunks=ref_chunks,
-            intent=route.intent,
-            metadata=metrics,
-        )
-
-    # ── private ───────────────────────────────────────────────────────────────
-
-    def _score_child_candidate(
-        self,
-        chunk: PaperChunk,
-        request: RetrievalRequest,
-        route: RetrievalRoute,
-        *,
-        semantic_score: float,
-        field_rerank_score: float | None = None,
-    ) -> tuple[PaperChunk, float]:
-        return self._child_scorer.score(
-            chunk,
-            request,
-            route,
-            semantic_score=semantic_score,
-            field_rerank_score=field_rerank_score,
-        )
-
-    def _fuse_visual_scores(
-        self,
-        scored: list[tuple[PaperChunk, float]],
-        visual_hits: list[VisualChunkHit],
-        *,
-        paper_id: str,
-        query_text: str,
-        current_section_index: int,
-        intent: QueryIntent,
-        field_rerank_scores: dict[str, float] | None = None,
-    ) -> list[tuple[PaperChunk, float]]:
-        fused: list[tuple[PaperChunk, float]] = []
-        for fused_chunk, fused_score in self._visual_channel.fuse_scores(
-            scored,
-            visual_hits,
-            paper_id=paper_id,
-            weights=PaperVisualFusionWeights(
-                text=self._policy.visual_fusion_text_weight,
-                visual=self._policy.visual_fusion_visual_weight,
-            ),
-        ):
-            fused.append(self._score_child_candidate(
-                fused_chunk,
-                RetrievalRequest(
-                    paper_id=paper_id,
-                    question=query_text,
-                    current_section_index=current_section_index,
-                ),
-                RetrievalRoute(intent=intent),
-                semantic_score=fused_score,
-                field_rerank_score=(field_rerank_scores or {}).get(fused_chunk.chunk_id),
-            ))
-        return fused
-
-
-    def _interleave_structural_context(
-        self,
-        chunks: list[PaperChunk],
-        request: RetrievalRequest,
-        route: RetrievalRoute,
-    ) -> list[PaperChunk]:
-        return self._structural_expander.expand(chunks, request, route)
-
-
-    def _supplemental_table_hits(
-        self,
-        child_chunks: list[PaperChunk],
-        request: RetrievalRequest,
-        route: RetrievalRoute,
-    ) -> list[PaperChunk]:
-        return self._supplemental_table_expander.expand(child_chunks, request, route)
-
-    def _fetch_table_context(
-        self,
-        chunks: list[PaperChunk],
-        request: RetrievalRequest,
-        route: RetrievalRoute,
-    ) -> list[PaperChunk]:
-        return self._table_context_expander.expand(chunks, request, route)
-
-    def _fetch_parents(
-        self,
-        children: list[PaperChunk],
-        request: RetrievalRequest,
-        route: RetrievalRoute,
-    ) -> tuple[list[PaperChunk], dict[str, Any]]:
-        return self._parent_expander.expand(children, request, route)
-
-    def _fetch_refs(
-        self, children: list[PaperChunk], paper_id: str
-    ) -> list[PaperChunk]:
-        return self._cross_ref_expander.expand(children, paper_id)
-
-
-def _metadata_float(metadata: dict[str, Any], key: str, default: float) -> float:
-    value = metadata.get(key, default)
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _metadata_extreme(
-    scored: list[tuple[PaperChunk, float]],
-    key: str,
-    reducer: Any,
-) -> float | None:
-    values = [
-        _metadata_float(chunk.metadata, key, 0.0)
-        for chunk, _score in scored
-        if key in chunk.metadata
-    ]
-    if not values:
-        return None
-    return round_score(reducer(values))
-
-
-def _field_hits_by_name(hits: list[FieldEmbeddingHit]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for hit in hits:
-        counts[hit.field_name] = counts.get(hit.field_name, 0) + 1
-    return counts
-
-
-def _best_matching_fields(scored: list[tuple[PaperChunk, float]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for chunk, _score in scored:
-        field_name = str(chunk.metadata.get("best_matching_field") or "")
-        if not field_name:
-            continue
-        counts[field_name] = counts.get(field_name, 0) + 1
-    return counts
+        return self._pipeline.retrieve(request)
 
 
 def _dedupe_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:

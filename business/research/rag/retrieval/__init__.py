@@ -48,6 +48,7 @@ from business.research.rag.retrieval.paper_visual_retrieval import (
     visual_fusion_score,
     with_retrieval_scores,
 )
+from business.research.rag.retrieval.pipeline import RetrievalPipeline
 from business.research.rag.retrieval.channels import RankedHit, RankedList, RecallChannel
 from business.research.rag.retrieval.expanders import (
     ContextExpander,
@@ -99,6 +100,7 @@ __all__ = [
     "ResearchRetriever",
     "RetrievalPolicy",
     "RetrievalPlan",
+    "RetrievalPipeline",
     "RetrievalRequest",
     "RetrievalResult",
     "RetrievalRoute",
