@@ -22,6 +22,7 @@ from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
 from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
 from business.research.rag.adapters.paper_field_text import CORE_FIELD_NAMES, FIELD_NAMES, extract_field_texts
+from business.research.rag.retrieval.channels.claim_index import ClaimIndexChannel
 from business.research.rag.retrieval.channels.dense_text import DenseTextChannel
 from business.research.rag.retrieval.channels.sparse_lexical import (
     FormulaSparseScores,
@@ -535,6 +536,7 @@ class ResearchRetriever:
         self._store = chunk_store
         self._dense_channel = DenseTextChannel(chunk_store)
         self._sparse_channel = SparseLexicalChannel(chunk_store)
+        self._claim_channel = ClaimIndexChannel(chunk_store, claim_index)
         self._policy = policy or RetrievalPolicy()
         self._reranker = reranker
         self._field_index = field_index
@@ -983,15 +985,11 @@ class ResearchRetriever:
     ) -> list[ClaimSearchHit]:
         if self._claim_index is None or route.intent != "citation_query":
             return []
-        try:
-            return self._claim_index.search_claims(
-                request.paper_id,
-                request.question,
-                limit=limit,
-            )
-        except Exception:
-            logging.getLogger(__name__).warning("claim index retrieval failed", exc_info=True)
-            return []
+        return self._claim_channel.search_hits(
+            paper_id=request.paper_id,
+            query_text=request.question,
+            limit=limit,
+        )
 
     def _merge_claim_hits(
         self,
@@ -999,26 +997,7 @@ class ResearchRetriever:
         claim_hits: list[ClaimSearchHit],
         paper_id: str,
     ) -> list[tuple[PaperChunk, float]]:
-        if not claim_hits:
-            return candidates
-        by_id: dict[str, tuple[PaperChunk, float]] = {
-            chunk.chunk_id: (chunk, score)
-            for chunk, score in candidates
-        }
-        for hit in claim_hits:
-            record = hit.record
-            if record.paper_id != paper_id:
-                continue
-            existing = by_id.get(record.chunk_id)
-            chunk = existing[0] if existing else self._store.get_chunk(record.chunk_id)
-            if chunk is None or chunk.paper_id != paper_id:
-                continue
-            merged_chunk = _merge_claim_index_hit(chunk, hit)
-            by_id[merged_chunk.chunk_id] = (
-                merged_chunk,
-                max(existing[1] if existing else 0.0, hit.score),
-            )
-        return list(by_id.values())
+        return self._claim_channel.merge_hits(candidates, claim_hits, paper_id)
 
     def _fuse_hybrid_candidate_channels(
         self,
@@ -1076,17 +1055,7 @@ class ResearchRetriever:
         claim_hits: list[ClaimSearchHit],
         paper_id: str,
     ) -> list[tuple[PaperChunk, float]]:
-        out: list[tuple[PaperChunk, float]] = []
-        for hit in claim_hits:
-            record = hit.record
-            if record.paper_id != paper_id:
-                continue
-            chunk = self._store.get_chunk(record.chunk_id)
-            if chunk is None or chunk.paper_id != paper_id:
-                continue
-            out.append((_merge_claim_index_hit(chunk, hit), hit.score))
-        out.sort(key=lambda item: item[1], reverse=True)
-        return out
+        return self._claim_channel.ranked_chunks(claim_hits, paper_id)
 
     def _visual_hit_ranking(
         self,
@@ -2133,24 +2102,6 @@ def _merge_field_embedding_hit(
     out["field_embedding_hits"] = hit_records[:8]
     out["field_embedding_hit_count"] = len(hit_records)
     return out
-
-
-def _merge_claim_index_hit(chunk: PaperChunk, hit: ClaimSearchHit) -> PaperChunk:
-    record = hit.record
-    metadata = dict(chunk.metadata)
-    existing_score = _metadata_float(metadata, "claim_index_score", 0.0)
-    if existing_score > hit.score:
-        return chunk
-    metadata.update({
-        "claim_index_hit": True,
-        "claim_index_score": _round_score(hit.score),
-        "claim_id": record.claim_id,
-        "claim_text": record.claim_text,
-        "claim_type": record.claim_type,
-        "claim_source_locator": record.source_locator,
-        "claim_section_title": record.section_title,
-    })
-    return chunk.model_copy(update={"metadata": metadata})
 
 
 def _field_embedding_summary_from_metadata(metadata: dict[str, Any]) -> _FieldEmbeddingSummary:
