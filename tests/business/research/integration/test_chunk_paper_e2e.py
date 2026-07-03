@@ -1,7 +1,8 @@
 """
 Integration test: end-to-end chunk pipeline for 1706.03762 (Attention Is All You Need).
 
-Requires:
+Requires explicit opt-in because this is a live integration test:
+  NEWS_RUN_LIVE_RESEARCH_E2E=1
   NEWS_QDRANT_URL   (default: http://127.0.0.1:6333)
   NEWS_DATABASE_DSN (e.g.  postgresql://user:pw@localhost/newsroom)
 
@@ -28,12 +29,21 @@ from business.research.application.chunk_paper_pipeline import ChunkPaperPipelin
 ARXIV_ID = "1706.03762"
 PAPER_ID  = "1706.03762"
 
-_has_qdrant = bool(os.getenv("NEWS_QDRANT_URL", "http://127.0.0.1:6333"))
+_run_live_e2e = os.getenv("NEWS_RUN_LIVE_RESEARCH_E2E", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_has_qdrant = bool(os.getenv("NEWS_QDRANT_URL"))
 _has_postgres = bool(os.getenv("NEWS_DATABASE_DSN"))
 
 pytestmark = pytest.mark.skipif(
-    not _has_postgres,
-    reason="NEWS_DATABASE_DSN not set",
+    not (_run_live_e2e and _has_qdrant and _has_postgres),
+    reason=(
+        "set NEWS_RUN_LIVE_RESEARCH_E2E=1 with NEWS_QDRANT_URL "
+        "and NEWS_DATABASE_DSN to run live chunk paper e2e"
+    ),
 )
 
 
