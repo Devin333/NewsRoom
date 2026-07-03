@@ -178,3 +178,41 @@ def test_paper_rag_session_factory_builds_optional_answer_worker(monkeypatch):
 
     assert _FakeSession.last_kwargs["answer_worker"] is not None
     assert _FakeSession.last_kwargs["generation_policy"] == {"enabled": True}
+
+
+def test_paper_rag_session_factory_wires_relevance_scorer_from_reranker(monkeypatch):
+    reranker = _FakeReranker()
+    monkeypatch.setattr(paper_rag_factory, "PaperRAGSession", _FakeSession)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+    monkeypatch.setattr(paper_rag_factory, "get_reranker", lambda: reranker)
+
+    paper_rag_factory.build_paper_rag_session(with_reranker=True)
+
+    scorer = _FakeSession.last_kwargs["relevance_scorer"]
+    assert scorer is not None
+    assert scorer.score("question", ["passage"])[0] > 0.5
+    assert reranker.calls == [("question", ["passage"])]
+
+
+def test_paper_rag_session_factory_leaves_relevance_scorer_disabled_without_reranker(monkeypatch):
+    monkeypatch.setattr(paper_rag_factory, "PaperRAGSession", _FakeSession)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+
+    paper_rag_factory.build_paper_rag_session(with_reranker=False)
+
+    assert _FakeSession.last_kwargs["relevance_scorer"] is None
+
+
+class _FakeReranker:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def score(self, query: str, passages: list[str]) -> list[float]:
+        self.calls.append((query, passages))
+        return [1.0 for _ in passages]

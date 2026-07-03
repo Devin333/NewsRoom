@@ -49,11 +49,11 @@ class SourceVerifier:
             question=question,
             scorer=self.relevance_scorer,
         )
-        relevance_threshold = float(policy.source_policy.get("min_relevance", 0.30))
         accepted: list[EvidenceCandidate] = []
         rejected: list[EvidenceCandidate] = []
         conflicting: list[EvidenceCandidate] = []
         for candidate in evidence:
+            relevance_threshold = _relevance_threshold(candidate, policy)
             candidate_results = (
                 self.source_quality.evaluate((candidate,), policy),
                 self.lineage.evaluate((candidate,)),
@@ -88,7 +88,8 @@ class SourceVerifier:
                     question,
                     evidence,
                     relevance_result.ordered_scores,
-                    threshold=relevance_threshold,
+                    threshold=_default_relevance_threshold(policy),
+                    thresholds_by_evidence_type=_typed_relevance_thresholds(policy),
                 ),
             )
         return SourceVerificationResult(
@@ -136,6 +137,43 @@ def _relevance_result(
         },
         ordered_scores=clamped_scores,
     )
+
+
+def _default_relevance_threshold(policy: RAGExecutionPolicy) -> float:
+    return _safe_float(policy.source_policy.get("min_relevance"), default=0.30)
+
+
+def _typed_relevance_thresholds(policy: RAGExecutionPolicy) -> dict[str, float]:
+    raw = policy.source_policy.get("min_relevance_by_type", {})
+    if not isinstance(raw, dict):
+        return {}
+    thresholds: dict[str, float] = {}
+    for key, value in raw.items():
+        thresholds[str(key)] = _safe_float(value, default=_default_relevance_threshold(policy))
+    return thresholds
+
+
+def _relevance_threshold(candidate: EvidenceCandidate, policy: RAGExecutionPolicy) -> float:
+    typed_thresholds = _typed_relevance_thresholds(policy)
+    for key in _threshold_keys(candidate):
+        if key in typed_thresholds:
+            return typed_thresholds[key]
+    return _default_relevance_threshold(policy)
+
+
+def _safe_float(value: object, *, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _threshold_keys(candidate: EvidenceCandidate) -> tuple[str, ...]:
+    keys = [candidate.evidence_type]
+    chunk_type = candidate.metadata.get("chunk_type")
+    if chunk_type is not None:
+        keys.append(str(chunk_type))
+    return tuple(dict.fromkeys(key for key in keys if key))
 
 
 def _with_rejection_metadata(

@@ -28,8 +28,13 @@ class RAGRelevanceGate:
         scores: tuple[float, ...],
         *,
         threshold: float | None = None,
+        thresholds_by_evidence_type: dict[str, float] | None = None,
     ) -> RAGGateResult:
         limit = self._default_threshold if threshold is None else float(threshold)
+        typed_thresholds = {
+            str(key): float(value)
+            for key, value in (thresholds_by_evidence_type or {}).items()
+        }
         mismatched = len(scores) != len(evidence)
         low_relevance = [
             {
@@ -38,7 +43,7 @@ class RAGRelevanceGate:
                 "score": round(float(score), 4),
             }
             for item, score in zip(evidence, scores)
-            if float(score) < limit
+            if float(score) < _threshold_for(item, limit, typed_thresholds)
         ]
         passed = not mismatched and not low_relevance
         return RAGGateResult(
@@ -48,6 +53,7 @@ class RAGRelevanceGate:
             {
                 "question": question,
                 "threshold": limit,
+                "thresholds_by_evidence_type": typed_thresholds,
                 "scored": len(scores),
                 "evidence_count": len(evidence),
                 "score_count_mismatch": mismatched,
@@ -60,3 +66,22 @@ __all__ = [
     "RAGRelevanceGate",
     "RelevanceScorerPort",
 ]
+
+
+def _threshold_for(
+    item: EvidenceCandidate,
+    default: float,
+    typed_thresholds: dict[str, float],
+) -> float:
+    for key in _threshold_keys(item):
+        if key in typed_thresholds:
+            return typed_thresholds[key]
+    return default
+
+
+def _threshold_keys(item: EvidenceCandidate) -> tuple[str, ...]:
+    keys = [item.evidence_type]
+    chunk_type = item.metadata.get("chunk_type")
+    if chunk_type is not None:
+        keys.append(str(chunk_type))
+    return tuple(dict.fromkeys(key for key in keys if key))

@@ -33,7 +33,37 @@ def test_rag_relevance_gate_fails_on_score_count_mismatch() -> None:
     assert result.details["score_count_mismatch"] is True
 
 
-def _candidate(evidence_type: str, *, evidence_id: str = "ev-1") -> EvidenceCandidate:
+def test_rag_relevance_gate_honors_evidence_type_thresholds() -> None:
+    gate = RAGRelevanceGate(default_threshold=0.3)
+    result = gate.evaluate(
+        "question",
+        (_candidate("table"), _candidate("method", evidence_id="ev-2")),
+        (0.25, 0.31),
+        thresholds_by_evidence_type={"table": 0.2},
+    )
+
+    assert result.passed is True
+    assert result.details["thresholds_by_evidence_type"] == {"table": 0.2}
+
+
+def test_rag_relevance_gate_honors_chunk_type_thresholds() -> None:
+    gate = RAGRelevanceGate(default_threshold=0.3)
+    result = gate.evaluate(
+        "question",
+        (_candidate("experiment", metadata={"chunk_type": "table"}),),
+        (0.25,),
+        thresholds_by_evidence_type={"table": 0.2},
+    )
+
+    assert result.passed is True
+
+
+def _candidate(
+    evidence_type: str,
+    *,
+    evidence_id: str = "ev-1",
+    metadata: dict | None = None,
+) -> EvidenceCandidate:
     return EvidenceCandidate(
         evidence_id=evidence_id,
         title=evidence_id,
@@ -43,4 +73,5 @@ def _candidate(evidence_type: str, *, evidence_id: str = "ev-1") -> EvidenceCand
         evidence_type=evidence_type,
         confidence=0.9,
         lineage=("retrieval.fake",),
+        metadata=dict(metadata or {}),
     )

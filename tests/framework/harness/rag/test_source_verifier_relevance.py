@@ -43,6 +43,60 @@ def test_source_verifier_uses_source_policy_relevance_threshold() -> None:
     assert result.rejected[0].metadata["relevance_threshold"] == 0.8
 
 
+def test_source_verifier_uses_evidence_type_relevance_threshold() -> None:
+    spec = fake_rag_session_spec()
+    policy = RAGExecutionPolicy.from_session_spec(spec)
+    policy = RAGExecutionPolicy(
+        allowed_corpora=policy.allowed_corpora,
+        allowed_memory_namespaces=policy.allowed_memory_namespaces,
+        allowed_tools=policy.allowed_tools,
+        budget=policy.budget,
+        source_policy={
+            **policy.source_policy,
+            "min_relevance": 0.8,
+            "min_relevance_by_type": {"table": 0.2},
+        },
+        context_policy=policy.context_policy,
+    )
+    verifier = SourceVerifier(relevance_scorer=_Scorer((0.3,)))
+
+    result = verifier.verify((_candidate("table"),), policy=policy, question="Which table supports it?")
+
+    assert result.accepted[0].evidence_type == "table"
+    assert result.rejected == ()
+    relevance_gate = [gate for gate in result.gate_results if gate.gate_name == "rag_relevance"][0]
+    assert relevance_gate.passed is True
+    assert relevance_gate.details["thresholds_by_evidence_type"] == {"table": 0.2}
+
+
+def test_source_verifier_uses_chunk_type_relevance_threshold() -> None:
+    spec = fake_rag_session_spec()
+    policy = RAGExecutionPolicy.from_session_spec(spec)
+    policy = RAGExecutionPolicy(
+        allowed_corpora=policy.allowed_corpora,
+        allowed_memory_namespaces=policy.allowed_memory_namespaces,
+        allowed_tools=policy.allowed_tools,
+        budget=policy.budget,
+        source_policy={
+            **policy.source_policy,
+            "min_relevance": 0.8,
+            "min_relevance_by_type": {"table": 0.2},
+        },
+        context_policy=policy.context_policy,
+    )
+    verifier = SourceVerifier(relevance_scorer=_Scorer((0.3,)))
+
+    result = verifier.verify(
+        (_candidate("experiment", metadata={"chunk_type": "table"}),),
+        policy=policy,
+        question="Which table supports it?",
+    )
+
+    assert result.accepted[0].metadata["chunk_type"] == "table"
+    relevance_gate = [gate for gate in result.gate_results if gate.gate_name == "rag_relevance"][0]
+    assert relevance_gate.passed is True
+
+
 def test_source_verifier_without_scorer_preserves_existing_acceptance() -> None:
     policy = RAGExecutionPolicy.from_session_spec(fake_rag_session_spec())
     verifier = SourceVerifier()
@@ -97,7 +151,12 @@ class _Scorer(RelevanceScorerPort):
         return list(self.scores)
 
 
-def _candidate(evidence_type: str, *, evidence_id: str = "ev-1") -> EvidenceCandidate:
+def _candidate(
+    evidence_type: str,
+    *,
+    evidence_id: str = "ev-1",
+    metadata: dict | None = None,
+) -> EvidenceCandidate:
     return EvidenceCandidate(
         evidence_id=evidence_id,
         title=evidence_id,
@@ -107,4 +166,5 @@ def _candidate(evidence_type: str, *, evidence_id: str = "ev-1") -> EvidenceCand
         evidence_type=evidence_type,
         confidence=0.9,
         lineage=("retrieval.fake",),
+        metadata=dict(metadata or {}),
     )

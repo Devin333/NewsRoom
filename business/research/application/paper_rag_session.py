@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionResult
 from framework.harness.rag.models import RAGBudget
 from framework.harness.rag.planner import WorkerRAGPlanner
+from framework.harness.rag.relevance import RelevanceScorerPort
+from framework.harness.rag.source_verifier import SourceVerifier
 
 from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.adapters import ResearchRAGPlanWorker
@@ -46,6 +48,7 @@ class PaperRAGSession:
         worker_planner_min_round_index: int = 1,
         answer_worker: "AnswerWorkerPort | None" = None,
         generation_policy: dict[str, object] | None = None,
+        relevance_scorer: RelevanceScorerPort | None = None,
     ) -> None:
         self._chunk_store = chunk_store
         self._policy_builder = ResearchRAGPolicyBuilder()
@@ -59,6 +62,7 @@ class PaperRAGSession:
         self._worker_planner_min_round_index = max(0, worker_planner_min_round_index)
         self._answer_worker = answer_worker
         self._generation_policy = dict(generation_policy or {})
+        self._relevance_scorer = relevance_scorer
 
     def run(
         self,
@@ -89,6 +93,10 @@ class PaperRAGSession:
                 min_round_index=self._worker_planner_min_round_index,
             )
         controller_kwargs = {"retrieval": retrieval_port, "planner": planner}
+        if self._relevance_scorer is not None:
+            controller_kwargs["source_verifier"] = SourceVerifier(
+                relevance_scorer=self._relevance_scorer
+            )
         if self._answer_worker is not None:
             controller_kwargs["answer_worker"] = self._answer_worker
         controller = BoundedRAGSessionController(**controller_kwargs)
