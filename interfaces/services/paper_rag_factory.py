@@ -31,7 +31,11 @@ from business.research.application.chunk_paper_pipeline import ChunkPaperPipelin
 from business.research.application.visual_chunk_describer import build_visual_chunk_describer_from_env
 from business.research.application.paper_rag_session import PaperRAGSession
 from business.research.application.llm_client import build_unity_llm_call
-from business.research.rag.adapters import PaperAnswerWorker, RerankerRelevanceScorer
+from business.research.rag.adapters import (
+    LLMResearchRAGPlanCandidateWorker,
+    PaperAnswerWorker,
+    RerankerRelevanceScorer,
+)
 from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
 from business.research.rag.retrieval.paper_retriever import (
     ResearchRetriever,
@@ -127,6 +131,11 @@ def build_paper_rag_session(
     if with_answer_worker:
         answer_worker = PaperAnswerWorker(AnswerGenerator(build_unity_llm_call(max_tokens=600)))
         generation_policy = {"enabled": True, "max_attempts": 2}
+    resolved_plan_worker = plan_worker
+    if resolved_plan_worker is None and _env_truthy(os.environ.get("NEWS_RAG_LLM_PLANNER")):
+        resolved_plan_worker = LLMResearchRAGPlanCandidateWorker(
+            build_unity_llm_call(max_tokens=900, temperature=0.0)
+        )
     return PaperRAGSession(
         build_chunk_store(),
         reranker=reranker,
@@ -134,11 +143,15 @@ def build_paper_rag_session(
         field_reranker=reranker,
         visual_store=build_visual_chunk_store(),
         retrieval_policy=retrieval_policy,
-        plan_worker=plan_worker,
+        plan_worker=resolved_plan_worker,
         answer_worker=answer_worker,
         generation_policy=generation_policy,
         relevance_scorer=relevance_scorer,
     )
+
+
+def _env_truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 __all__ = [

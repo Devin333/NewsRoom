@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from interfaces.services import paper_rag_factory
+
+
+@pytest.fixture(autouse=True)
+def _disable_llm_planner_env(monkeypatch):
+    monkeypatch.delenv("NEWS_RAG_LLM_PLANNER", raising=False)
 
 
 class _FakeStore:
@@ -160,6 +167,71 @@ def test_paper_rag_session_factory_passes_optional_plan_worker(monkeypatch):
     monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
     monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
     monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+
+    paper_rag_factory.build_paper_rag_session(with_reranker=False, plan_worker=plan_worker)
+
+    assert _FakeSession.last_kwargs["plan_worker"] is plan_worker
+
+
+def test_paper_rag_session_factory_leaves_llm_planner_disabled_by_default(monkeypatch):
+    monkeypatch.setattr(paper_rag_factory, "PaperRAGSession", _FakeSession)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+
+    paper_rag_factory.build_paper_rag_session(with_reranker=False)
+
+    assert _FakeSession.last_kwargs["plan_worker"] is None
+
+
+def test_paper_rag_session_factory_false_env_leaves_llm_planner_disabled(monkeypatch):
+    monkeypatch.setenv("NEWS_RAG_LLM_PLANNER", "0")
+    monkeypatch.setattr(paper_rag_factory, "PaperRAGSession", _FakeSession)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+
+    paper_rag_factory.build_paper_rag_session(with_reranker=False)
+
+    assert _FakeSession.last_kwargs["plan_worker"] is None
+
+
+def test_paper_rag_session_factory_builds_llm_planner_when_enabled(monkeypatch):
+    llm_call = object()
+    monkeypatch.setenv("NEWS_RAG_LLM_PLANNER", "true")
+    monkeypatch.setattr(paper_rag_factory, "PaperRAGSession", _FakeSession)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+    monkeypatch.setattr(
+        paper_rag_factory,
+        "build_unity_llm_call",
+        lambda max_tokens, temperature=None: llm_call,
+    )
+
+    paper_rag_factory.build_paper_rag_session(with_reranker=False)
+
+    plan_worker = _FakeSession.last_kwargs["plan_worker"]
+    assert isinstance(plan_worker, paper_rag_factory.LLMResearchRAGPlanCandidateWorker)
+    assert plan_worker._llm_call is llm_call
+
+
+def test_paper_rag_session_factory_explicit_plan_worker_takes_precedence(monkeypatch):
+    plan_worker = object()
+    monkeypatch.setenv("NEWS_RAG_LLM_PLANNER", "true")
+    monkeypatch.setattr(paper_rag_factory, "PaperRAGSession", _FakeSession)
+    monkeypatch.setattr(paper_rag_factory, "build_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_field_chunk_store", lambda: _FakeStore())
+    monkeypatch.setattr(paper_rag_factory, "build_visual_chunk_store", lambda: None)
+    monkeypatch.setattr(paper_rag_factory, "build_retrieval_policy_from_env", lambda: object())
+
+    def fail_build_unity_llm_call(*args, **kwargs):
+        raise AssertionError("explicit plan_worker should skip LLM planner construction")
+
+    monkeypatch.setattr(paper_rag_factory, "build_unity_llm_call", fail_build_unity_llm_call)
 
     paper_rag_factory.build_paper_rag_session(with_reranker=False, plan_worker=plan_worker)
 
