@@ -222,6 +222,7 @@ def _grounded_answer(
                 "c1",
                 claim_text,
                 (evidence_id,),
+                span_refs=(_span_ref_for_evidence_id(evidence_id),),
             ),
         ),
     )
@@ -235,6 +236,12 @@ def _unsupported_answer(answer_id: str) -> GroundedAnswerCandidate:
         cited_evidence_ids=(),
         claims=(AnswerClaim("c1", "The experiment table reports repair accuracy.", ()),),
     )
+
+
+def _span_ref_for_evidence_id(evidence_id: str) -> str:
+    if evidence_id.endswith(":experiment"):
+        return "source://paper/sparse-mixture-reader#table=2"
+    return "source://paper/sparse-mixture-reader#paragraph=method-3"
 
 
 class _AnswerWorker:

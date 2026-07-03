@@ -109,7 +109,9 @@ def test_rag_ask_gated_generation_returns_answered_payload() -> None:
     assert payload["generation_mode"] == "gated_harness"
     assert payload["answer"] == "The method retrieves evidence."
     assert payload["claims"][0]["evidence_ids"] == ["ev-1"]
+    assert payload["claims"][0]["span_refs"] == ["paper://p1/pdf#page=1"]
     assert payload["citations"][0]["evidence_id"] == "ev-1"
+    assert payload["citations"][0]["span_refs"] == ["paper://p1/pdf#page=1"]
     assert payload["context_pack"]["accepted_evidence_ids"] == ["ev-1"]
     assert payload["transcript_id"] == "transcript-1"
     assert payload["metrics"]["status"] == "answered"
@@ -274,7 +276,16 @@ def _answer(*, abstained: bool) -> GroundedAnswerCandidate:
         question="How does it work?",
         answer_text="" if abstained else "The method retrieves evidence.",
         cited_evidence_ids=() if abstained else ("ev-1",),
-        claims=() if abstained else (AnswerClaim("claim-1", "The method retrieves evidence.", ("ev-1",)),),
+        claims=()
+        if abstained
+        else (
+            AnswerClaim(
+                "claim-1",
+                "The method retrieves evidence.",
+                ("ev-1",),
+                span_refs=("paper://p1/pdf#page=1",),
+            ),
+        ),
         abstained=abstained,
     )
 

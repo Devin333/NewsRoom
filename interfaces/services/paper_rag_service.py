@@ -250,6 +250,7 @@ def _citations_from_answer(answer: Any | None, pack: Any | None) -> list[dict[st
         citations.append({
             "evidence_id": evidence_id,
             "chunk_id": evidence.metadata.get("rag_chunk_id", evidence_id) if evidence else evidence_id,
+            "span_refs": _citation_span_refs(answer, evidence_id, evidence),
             "source_locator": (
                 evidence.metadata.get("source_locator")
                 or evidence.source_ref
@@ -259,6 +260,23 @@ def _citations_from_answer(answer: Any | None, pack: Any | None) -> list[dict[st
             "title": evidence.title if evidence else "",
         })
     return citations
+
+
+def _citation_span_refs(answer: Any, evidence_id: str, evidence: Any | None) -> list[str]:
+    available = set(evidence.span_refs) if evidence else None
+    span_refs: list[str] = []
+    seen: set[str] = set()
+    for claim in answer.claims:
+        if evidence_id not in claim.evidence_ids:
+            continue
+        for span_ref in claim.span_refs:
+            if available is not None and span_ref not in available:
+                continue
+            if span_ref in seen:
+                continue
+            seen.add(span_ref)
+            span_refs.append(span_ref)
+    return span_refs
 
 
 def _context_pack_summary(pack: Any | None) -> dict[str, Any] | None:

@@ -33,8 +33,10 @@ def test_paper_answer_worker_maps_generated_chunk_ids_to_evidence_ids() -> None:
     assert candidate.answer_text == "The paper uses a retrieval method supported by context [1]."
     assert candidate.cited_evidence_ids == ("ev-method",)
     assert candidate.claims[0].evidence_ids == ("ev-method",)
+    assert candidate.claims[0].span_refs == ("chunk-method",)
     assert candidate.metadata["context_chunk_ids"] == ["chunk-method"]
     assert candidate.metadata["chunk_to_evidence_id"] == {"chunk-method": "ev-method"}
+    assert candidate.metadata["evidence_id_to_span_refs"] == {"ev-method": ["chunk-method"]}
     assert candidate.metadata["claims_degraded"] is True
 
 
@@ -70,6 +72,7 @@ def test_paper_answer_worker_can_rebuild_chunk_from_flat_evidence_metadata() -> 
 
     assert candidate.abstained is False
     assert candidate.cited_evidence_ids == ("ev-table",)
+    assert candidate.claims[0].span_refs == ("chunk-table",)
     assert candidate.metadata["context_chunk_ids"] == ["chunk-table"]
 
 

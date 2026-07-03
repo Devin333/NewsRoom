@@ -17,6 +17,7 @@ from framework.harness.rag.models import AnswerClaim, GroundedAnswerCandidate, R
 class _ProjectedContext:
     retrieval: RetrievalResult
     chunk_to_evidence_id: dict[str, str]
+    evidence_id_to_span_refs: dict[str, tuple[str, ...]]
 
 
 class PaperAnswerWorker:
@@ -49,12 +50,16 @@ class PaperAnswerWorker:
             question=question,
             answer_text=generated.answer,
             cited_evidence_ids=tuple(cited_evidence_ids),
-            claims=(_conservative_claim(generated, cited_evidence_ids),),
+            claims=(_conservative_claim(generated, cited_evidence_ids, projected.evidence_id_to_span_refs),),
             metadata={
                 "worker": "paper_answer_worker",
                 "context_pack_id": pack.pack_id,
                 "context_chunk_ids": list(generated.context_chunk_ids),
                 "chunk_to_evidence_id": dict(projected.chunk_to_evidence_id),
+                "evidence_id_to_span_refs": {
+                    evidence_id: list(span_refs)
+                    for evidence_id, span_refs in projected.evidence_id_to_span_refs.items()
+                },
                 "claims_degraded": True,
                 "generated_answer_metadata": dict(generated.context_metadata),
             },
@@ -64,6 +69,7 @@ class PaperAnswerWorker:
 def _project_context_pack(pack: RAGContextPack, *, question: str) -> _ProjectedContext | None:
     chunks: list[PaperChunk] = []
     chunk_to_evidence_id: dict[str, str] = {}
+    evidence_id_to_span_refs: dict[str, tuple[str, ...]] = {}
     for evidence in pack.accepted_evidence:
         chunk = _paper_chunk_from_metadata(evidence.metadata.get("paper_chunk"))
         if chunk is None:
@@ -72,6 +78,7 @@ def _project_context_pack(pack: RAGContextPack, *, question: str) -> _ProjectedC
             continue
         chunks.append(chunk)
         chunk_to_evidence_id.setdefault(chunk.chunk_id, evidence.evidence_id)
+        evidence_id_to_span_refs.setdefault(evidence.evidence_id, tuple(evidence.span_refs))
 
     chunks = _dedupe_chunks(chunks)
     if not chunks:
@@ -88,7 +95,11 @@ def _project_context_pack(pack: RAGContextPack, *, question: str) -> _ProjectedC
             "accepted_evidence_ids": [item.evidence_id for item in pack.accepted_evidence],
         },
     )
-    return _ProjectedContext(retrieval=retrieval, chunk_to_evidence_id=chunk_to_evidence_id)
+    return _ProjectedContext(
+        retrieval=retrieval,
+        chunk_to_evidence_id=chunk_to_evidence_id,
+        evidence_id_to_span_refs=evidence_id_to_span_refs,
+    )
 
 
 def _paper_chunk_from_metadata(raw: Any) -> PaperChunk | None:
@@ -164,12 +175,32 @@ def _text_list(raw: Any) -> list[str]:
     return []
 
 
-def _conservative_claim(generated: GeneratedAnswer, cited_evidence_ids: list[str]) -> AnswerClaim:
+def _conservative_claim(
+    generated: GeneratedAnswer,
+    cited_evidence_ids: list[str],
+    evidence_id_to_span_refs: dict[str, tuple[str, ...]],
+) -> AnswerClaim:
     return AnswerClaim(
         claim_id="claim-1",
         text=generated.answer.strip(),
         evidence_ids=tuple(cited_evidence_ids),
+        span_refs=_claim_span_refs(cited_evidence_ids, evidence_id_to_span_refs),
     )
+
+
+def _claim_span_refs(
+    cited_evidence_ids: list[str],
+    evidence_id_to_span_refs: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for evidence_id in cited_evidence_ids:
+        for span_ref in evidence_id_to_span_refs.get(evidence_id, ()):
+            if span_ref in seen:
+                continue
+            seen.add(span_ref)
+            out.append(span_ref)
+    return tuple(out)
 
 
 def _abstention(

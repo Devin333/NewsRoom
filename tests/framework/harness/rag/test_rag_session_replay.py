@@ -101,6 +101,7 @@ class _AnswerWorker(AnswerWorkerPort):
                     claim_id="claim-1",
                     text="The paper uses source-backed method evidence.",
                     evidence_ids=(pack.accepted_evidence[0].evidence_id,),
+                    span_refs=(pack.accepted_evidence[0].span_refs[0],),
                 ),
             ),
         )

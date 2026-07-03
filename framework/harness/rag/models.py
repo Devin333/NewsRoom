@@ -637,6 +637,7 @@ class AnswerClaim:
     claim_id: str
     text: str
     evidence_ids: tuple[str, ...]
+    span_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not str(self.claim_id).strip():
@@ -644,12 +645,14 @@ class AnswerClaim:
         if not str(self.text).strip():
             raise HarnessValidationError("claim text is required")
         object.__setattr__(self, "evidence_ids", tuple(str(item) for item in self.evidence_ids))
+        object.__setattr__(self, "span_refs", tuple(str(item) for item in self.span_refs))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "claim_id": self.claim_id,
             "text": self.text,
             "evidence_ids": list(self.evidence_ids),
+            "span_refs": list(self.span_refs),
         }
 
 
