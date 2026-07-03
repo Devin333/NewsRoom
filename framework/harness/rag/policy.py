@@ -22,6 +22,8 @@ class RAGDecisionType(StrEnum):
     READ_MORE_SOURCES = "read_more_sources"
     ASSEMBLE_CONTEXT = "assemble_context"
     RETURN_CONTEXT_PACK = "return_context_pack"
+    RETURN_ANSWER = "return_answer"
+    ABSTAIN = "abstain"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     WAIT_FOR_APPROVAL = "wait_for_approval"
     HALTED = "halted"
@@ -61,6 +63,7 @@ class RAGExecutionPolicy:
     budget: RAGBudget
     source_policy: dict[str, Any] = field(default_factory=dict)
     context_policy: dict[str, Any] = field(default_factory=dict)
+    generation_policy: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.allowed_corpora:
@@ -80,6 +83,7 @@ class RAGExecutionPolicy:
         object.__setattr__(self, "allowed_tools", tuple(str(item) for item in self.allowed_tools))
         object.__setattr__(self, "source_policy", dict(self.source_policy))
         object.__setattr__(self, "context_policy", dict(self.context_policy))
+        object.__setattr__(self, "generation_policy", dict(self.generation_policy))
 
     @classmethod
     def from_session_spec(cls, spec: RAGSessionSpec) -> "RAGExecutionPolicy":
@@ -90,7 +94,16 @@ class RAGExecutionPolicy:
             budget=spec.budget,
             source_policy=spec.source_policy,
             context_policy=spec.context_policy,
+            generation_policy=spec.generation_policy,
         )
+
+    @property
+    def generation_enabled(self) -> bool:
+        return bool(self.generation_policy.get("enabled", False))
+
+    @property
+    def max_generation_attempts(self) -> int:
+        return max(1, int(self.generation_policy.get("max_attempts", 1)))
 
     def allows_step(self, step: RetrievalStepSpec) -> bool:
         if step.operation == RetrievalOperation.SEARCH_CORPUS:
@@ -136,6 +149,7 @@ class RAGExecutionPolicy:
             "budget": self.budget.to_dict(),
             "source_policy": to_jsonable(self.source_policy),
             "context_policy": to_jsonable(self.context_policy),
+            "generation_policy": to_jsonable(self.generation_policy),
         }
 
 
