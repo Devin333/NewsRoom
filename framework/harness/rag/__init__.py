@@ -53,6 +53,7 @@ from framework.harness.rag.models import (
 from framework.harness.rag.planner import DeterministicRAGPlanner, RAGPlanner, WorkerRAGPlanner
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType, RAGExecutionPolicy, budget_exceeded, normalize_query
 from framework.harness.rag.relevance import RAGRelevanceGate, RelevanceScorerPort
+from framework.harness.rag.replay import RAGReplayCheck, RAGSessionReplayResult, RAGSessionReplayRunner, replay_rag_session
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionController, RAGSessionResult, RAGSessionState
 from framework.harness.rag.source_verifier import FakeSourceVerifier, SourceVerificationResult, SourceVerifier
 
@@ -93,8 +94,11 @@ __all__ = [
     "RAGPlanner",
     "RAGQueryDedupGate",
     "RAGRelevanceGate",
+    "RAGReplayCheck",
     "RAGScopeGate",
     "RAGSessionController",
+    "RAGSessionReplayResult",
+    "RAGSessionReplayRunner",
     "RAGSessionRequest",
     "RAGSessionResult",
     "RAGSessionSpec",
@@ -120,6 +124,7 @@ __all__ = [
     "fake_reader_repair_memory",
     "fake_research_evidence_packs",
     "normalize_query",
+    "replay_rag_session",
     "validate_rag_evidence_refs",
     "unsupported_claims_from_answer_gate",
 ]

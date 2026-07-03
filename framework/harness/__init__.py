@@ -126,7 +126,10 @@ from framework.harness.rag import (
     RAGGateSuite,
     RAGPlanSchemaGate,
     RAGRelevanceGate,
+    RAGReplayCheck,
     RAGSessionController,
+    RAGSessionReplayResult,
+    RAGSessionReplayRunner,
     RAGSessionRequest,
     RAGSessionResult,
     RAGSessionSpec,
@@ -141,6 +144,7 @@ from framework.harness.rag import (
     SourceVerifier,
     WorkerRAGPlanner,
     fake_rag_session_spec,
+    replay_rag_session,
     validate_rag_evidence_refs,
 )
 from framework.harness.retrieval import EvidencePack, EvidencePackCollection, FakeRetrievalPort, RetrievalPort, RetrievalRequest
@@ -395,7 +399,10 @@ __all__ = [
     "RAGGateSuite",
     "RAGPlanSchemaGate",
     "RAGRelevanceGate",
+    "RAGReplayCheck",
     "RAGSessionController",
+    "RAGSessionReplayResult",
+    "RAGSessionReplayRunner",
     "RAGSessionRequest",
     "RAGSessionResult",
     "RAGSessionSpec",
@@ -472,6 +479,7 @@ __all__ = [
     "event_log_entry_from_harness_event",
     "fake_rag_session_spec",
     "fake_subagent_spec",
+    "replay_rag_session",
     "transcript_entry_from_event",
     "validate_rag_evidence_refs",
 ]
