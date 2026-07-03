@@ -25,6 +25,7 @@ from business.research.rag.retrieval.expanders.cross_ref import CrossRefContextE
 from business.research.rag.retrieval.expanders.formula_context import FormulaContextExpander
 from business.research.rag.retrieval.expanders.parent import ParentContextExpander
 from business.research.rag.retrieval.expanders.structural import StructuralContextExpander
+from business.research.rag.retrieval.expanders.supplemental_table import SupplementalTableHitExpander
 from business.research.rag.retrieval.expanders.table_context import TableContextExpander
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings
@@ -61,20 +62,6 @@ _DEFAULT_ALPHA: dict[str, float] = {
     "comparison":      0.2,
 }
 
-_TABLE_EXPANSION_INTENTS = frozenset({"table_query", "numerical_result", "comparison"})
-_RESULT_QUESTION_KEYWORDS = (
-    "result",
-    "results",
-    "experiment",
-    "experiments",
-    "accuracy",
-    "f1",
-    "score",
-    "ablation",
-    "\u5b9e\u9a8c\u7ed3\u679c",
-    "\u7ed3\u679c",
-    "\u8868\u660e",
-)
 DEFAULT_RETRIEVAL_POLICY = "default"
 PAPER_VISUAL_RAG_TUNED_POLICY = "paper_visual_rag_tuned"
 PAPER_BLIND_SEMANTIC_RAG_V1_POLICY = "paper_blind_semantic_rag_v1"
@@ -503,6 +490,7 @@ class ResearchRetriever:
         )
         self._formula_context_expander = FormulaContextExpander(self._policy)
         self._structural_expander = StructuralContextExpander(chunk_store, self._policy)
+        self._supplemental_table_expander = SupplementalTableHitExpander(chunk_store, self._policy)
         self._child_scorer = ChildCandidateScorer(self._policy)
         self._reranker = reranker
         self._field_index = field_index
@@ -1005,43 +993,7 @@ class ResearchRetriever:
         request: RetrievalRequest,
         route: RetrievalRoute,
     ) -> list[PaperChunk]:
-        if not _should_expand_result_context(route.intent, request.question):
-            return []
-        if any(_is_table_chunk(chunk) for chunk in child_chunks):
-            return []
-        seen = {chunk.chunk_id for chunk in child_chunks}
-        try:
-            candidates = self._store.search_with_scores(
-                request.paper_id,
-                request.question,
-                filters={"chunk_type": "table"},
-                limit=self._policy.supplemental_table_result_limit,
-            )
-        except Exception:
-            logging.getLogger(__name__).warning("supplemental table retrieval failed", exc_info=True)
-            return []
-        out: list[PaperChunk] = []
-        for chunk, score in candidates:
-            if chunk.paper_id != request.paper_id or chunk.chunk_id in seen or not _is_table_chunk(chunk):
-                continue
-            seen.add(chunk.chunk_id)
-            scored = with_retrieval_scores(
-                chunk,
-                text_score=score,
-                visual_score=None,
-                fused_score=score,
-                strategy="supplemental_table_text",
-            )
-            scored, _final_score = self._score_child_candidate(
-                scored,
-                request,
-                route,
-                semantic_score=score,
-            )
-            metadata = dict(scored.metadata)
-            metadata["supplemental_reason"] = "result_intent_table_search"
-            out.append(scored.model_copy(update={"metadata": metadata}))
-        return out
+        return self._supplemental_table_expander.expand(child_chunks, request, route)
 
     def _fetch_table_context(
         self,
@@ -1191,22 +1143,6 @@ def _unique_nonempty_texts(values: list[str]) -> list[str]:
 
 def _dedupe_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:
     return dedupe_by_key(chunks, key=lambda chunk: chunk.chunk_id)
-
-
-def _is_table_chunk(chunk: PaperChunk) -> bool:
-    return (
-        chunk.chunk_type == "table"
-        or chunk.has_table
-        or bool(chunk.metadata.get("table_id"))
-        or bool(chunk.metadata.get("parent_table_chunk_id"))
-    )
-
-
-def _should_expand_result_context(intent: str, question: str) -> bool:
-    if intent in _TABLE_EXPANSION_INTENTS:
-        return True
-    normalized = question.casefold()
-    return any(keyword in normalized for keyword in _RESULT_QUESTION_KEYWORDS)
 
 
 __all__ = [

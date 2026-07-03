@@ -55,6 +55,7 @@ from business.research.rag.retrieval.expanders import (
     FormulaContextExpander,
     ParentContextExpander,
     StructuralContextExpander,
+    SupplementalTableHitExpander,
     TableContextExpander,
 )
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
@@ -103,6 +104,7 @@ __all__ = [
     "RetrievalDegradation",
     "RetrievalTrace",
     "StructuralContextExpander",
+    "SupplementalTableHitExpander",
     "TableContextExpander",
     "build_retrieval_policy",
     "build_retrieval_policy_from_env",
