@@ -24,6 +24,7 @@ from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChu
 from business.research.rag.adapters.paper_field_text import CORE_FIELD_NAMES, FIELD_NAMES, extract_field_texts
 from business.research.rag.retrieval.channels.claim_index import ClaimIndexChannel
 from business.research.rag.retrieval.channels.dense_text import DenseTextChannel
+from business.research.rag.retrieval.channels.field_embedding import FieldEmbeddingChannel
 from business.research.rag.retrieval.channels.sparse_lexical import (
     FormulaSparseScores,
     SparseLexicalChannel,
@@ -536,6 +537,7 @@ class ResearchRetriever:
         self._store = chunk_store
         self._dense_channel = DenseTextChannel(chunk_store)
         self._sparse_channel = SparseLexicalChannel(chunk_store)
+        self._field_channel = FieldEmbeddingChannel(chunk_store, field_index)
         self._claim_channel = ClaimIndexChannel(chunk_store, claim_index)
         self._policy = policy or RetrievalPolicy()
         self._reranker = reranker
@@ -931,27 +933,13 @@ class ResearchRetriever:
             * self._policy.overfetch_multiplier
             * max(1, self._policy.field_embedding_search_limit_multiplier),
         )
-        hits_by_key: dict[tuple[str, str], FieldEmbeddingHit] = {}
-        for filters in candidate_filters:
-            try:
-                hits = self._field_index.search_field_vectors(
-                    request.paper_id,
-                    request.question,
-                    field_names=self._policy.field_search_fields_for(route.intent),
-                    filters=filters,
-                    limit=limit,
-                )
-            except Exception:
-                logging.getLogger(__name__).warning("field embedding retrieval failed", exc_info=True)
-                return []
-            for hit in hits:
-                key = (hit.chunk_id, hit.field_name)
-                existing = hits_by_key.get(key)
-                if existing is None or hit.score > existing.score:
-                    hits_by_key[key] = hit
-        hits = list(hits_by_key.values())
-        hits.sort(key=lambda hit: hit.score, reverse=True)
-        return hits[:limit]
+        return self._field_channel.search_hits(
+            paper_id=request.paper_id,
+            query_text=request.question,
+            field_names=self._policy.field_search_fields_for(route.intent),
+            candidate_filters=candidate_filters,
+            limit=limit,
+        )
 
     def _merge_field_hits(
         self,
@@ -959,22 +947,7 @@ class ResearchRetriever:
         field_hits: list[FieldEmbeddingHit],
         paper_id: str,
     ) -> list[tuple[PaperChunk, float]]:
-        if not field_hits:
-            return candidates
-
-        by_id: dict[str, tuple[PaperChunk, float]] = {
-            chunk.chunk_id: (chunk, score)
-            for chunk, score in candidates
-        }
-        for hit in field_hits:
-            existing = by_id.get(hit.chunk_id)
-            chunk = existing[0] if existing else self._store.get_chunk(hit.chunk_id)
-            if chunk is None or chunk.paper_id != paper_id:
-                continue
-            metadata = _merge_field_embedding_hit(chunk.metadata, hit)
-            merged_chunk = chunk.model_copy(update={"metadata": metadata})
-            by_id[merged_chunk.chunk_id] = (merged_chunk, existing[1] if existing else 0.0)
-        return list(by_id.values())
+        return self._field_channel.merge_hits(candidates, field_hits, paper_id)
 
     def _search_claim_candidates(
         self,
@@ -1036,19 +1009,7 @@ class ResearchRetriever:
         field_hits: list[FieldEmbeddingHit],
         paper_id: str,
     ) -> list[tuple[PaperChunk, float]]:
-        by_id: dict[str, tuple[PaperChunk, float]] = {}
-        for hit in field_hits:
-            existing = by_id.get(hit.chunk_id)
-            chunk = existing[0] if existing else self._store.get_chunk(hit.chunk_id)
-            if chunk is None or chunk.paper_id != paper_id:
-                continue
-            metadata = _merge_field_embedding_hit(chunk.metadata, hit)
-            merged = chunk.model_copy(update={"metadata": metadata})
-            if existing is None or hit.score > existing[1]:
-                by_id[hit.chunk_id] = (merged, hit.score)
-        ranked = list(by_id.values())
-        ranked.sort(key=lambda item: item[1], reverse=True)
-        return ranked
+        return self._field_channel.ranked_chunks(field_hits, paper_id)
 
     def _claim_hit_ranking(
         self,
@@ -2059,49 +2020,6 @@ def _best_matching_fields(scored: list[tuple[PaperChunk, float]]) -> dict[str, i
             continue
         counts[field_name] = counts.get(field_name, 0) + 1
     return counts
-
-
-def _merge_field_embedding_hit(
-    metadata: dict[str, Any],
-    hit: FieldEmbeddingHit,
-) -> dict[str, Any]:
-    out = dict(metadata)
-    field_name = str(hit.field_name).casefold()
-    if field_name not in FIELD_NAMES:
-        return out
-
-    raw_scores = out.get("field_embedding_scores")
-    scores = {
-        str(key): _clamp_score(float(value))
-        for key, value in (raw_scores.items() if isinstance(raw_scores, dict) else [])
-        if str(key) in FIELD_NAMES
-    }
-    scores[field_name] = max(scores.get(field_name, 0.0), _clamp_score(hit.score))
-
-    raw_hits = out.get("field_embedding_hits")
-    hit_records = [
-        dict(item)
-        for item in raw_hits
-        if isinstance(raw_hits, list) and isinstance(item, dict)
-    ] if isinstance(raw_hits, list) else []
-    hit_records.append({
-        "field_name": field_name,
-        "score": _round_score(_clamp_score(hit.score)),
-        "field_text_preview": " ".join(hit.field_text.split())[:240],
-        "source_locator": hit.metadata.get("source_locator", ""),
-        "caption_source_locator": hit.metadata.get("caption_source_locator", ""),
-    })
-    hit_records.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
-
-    best_field, best_score = _best_score_item(scores)
-    out["field_embedding_scores"] = {name: _round_score(score) for name, score in scores.items()}
-    for name in FIELD_NAMES:
-        out[f"{name}_embedding_score"] = _round_score(scores.get(name, 0.0))
-    out["field_embedding_score"] = _round_score(best_score)
-    out["best_embedding_field"] = best_field
-    out["field_embedding_hits"] = hit_records[:8]
-    out["field_embedding_hit_count"] = len(hit_records)
-    return out
 
 
 def _field_embedding_summary_from_metadata(metadata: dict[str, Any]) -> _FieldEmbeddingSummary:
