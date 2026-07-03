@@ -34,11 +34,12 @@ from business.research.rag.retrieval.channels.sparse_lexical import (
 from business.research.rag.retrieval.channels.visual import VisualRecallChannel
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings
-from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute, build_retrieval_route
+from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute
 from business.research.rag.retrieval.paper_visual_retrieval import (
     PaperVisualFusionWeights,
     with_retrieval_scores,
 )
+from business.research.rag.retrieval.planner import QueryPlanner
 from business.research.rag.retrieval.policy_config import policy_config_hash
 from business.research.rag.retrieval.trace import RetrievalDegradation, RetrievalTrace
 
@@ -541,6 +542,7 @@ class ResearchRetriever:
         self._claim_channel = ClaimIndexChannel(chunk_store, claim_index)
         self._visual_channel = VisualRecallChannel(chunk_store, visual_store)
         self._policy = policy or RetrievalPolicy()
+        self._planner = QueryPlanner(self._policy)
         self._reranker = reranker
         self._field_index = field_index
         self._field_reranker = field_reranker
@@ -558,33 +560,19 @@ class ResearchRetriever:
     def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
         import time
         t0 = time.perf_counter()
-        route = build_retrieval_route(request.question)
-        filters = self._build_filters(route)
-        candidate_filters = self._candidate_filters(route, filters)
+        plan = self._planner.build(request)
+        route = plan.route
+        candidate_filters = [dict(item) for item in plan.candidate_filters]
         active_policy_hash = policy_config_hash(self._policy)
         retrieval_trace = RetrievalTrace(
             policy_name=self._policy.name,
             policy_hash=active_policy_hash,
-            route={
-                "primary_intent": route.intent,
-                "recall_routes": list(route.recall_routes),
-                "candidate_filters": candidate_filters,
-            },
+            route=plan.route_dict(),
         )
 
         # ── 1. vector search (over-fetch for re-ranking) ──────────────────────
-        element_query_labels = _element_query_labels(request.question, route.intent)
-        candidate_limit = request.limit * self._policy.overfetch_multiplier
-        if element_query_labels:
-            candidate_limit = max(
-                candidate_limit,
-                request.limit * self._policy.element_label_overfetch_multiplier,
-            )
-        if route.intent == "citation_query":
-            candidate_limit = max(
-                candidate_limit,
-                request.limit * self._policy.citation_claim_overfetch_multiplier,
-            )
+        element_query_labels = set(plan.element_query_labels)
+        candidate_limit = plan.candidate_limit
         candidates = self._search_text_candidates(
             request,
             route,
@@ -705,11 +693,8 @@ class ResearchRetriever:
             },
             "intent": route.intent,
             "recall_routes": list(route.recall_routes),
-            "route_plan": {
-                "primary_intent": route.intent,
-                "recall_routes": list(route.recall_routes),
-                "candidate_filters": candidate_filters,
-            },
+            "route_plan": plan.route_dict(),
+            "retrieval_plan": plan.to_dict(),
             "reranker": self._reranker is not None,
             "reranker_enabled_for_intent": base_reranker_enabled,
             "reranker_intent_scope": self._policy.reranking_intents,
@@ -802,27 +787,6 @@ class ResearchRetriever:
             )
             return [sem for _chunk, sem in candidates]
         return list(normalized_scores.scores)
-
-    def _build_filters(self, route: RetrievalRoute) -> dict[str, Any]:
-        filters: dict[str, Any] = {}
-        if route.extra_filters:
-            filters.update(route.extra_filters)
-        return filters
-
-    def _candidate_filters(self, route: RetrievalRoute, base_filters: dict[str, Any]) -> list[dict[str, Any]]:
-        if route.intent == "formula_query" and self._policy.formula_sparse_enabled:
-            return [{"chunk_type": "formula"}]
-        if route.candidate_filter_groups:
-            return _dedupe_filters([
-                {**base_filters, **dict(filters)}
-                for filters in route.candidate_filter_groups
-            ])
-        if "chunk_type" in base_filters or not route.chunk_type_filter:
-            return [dict(base_filters)]
-        return [
-            {**base_filters, "chunk_type": chunk_type}
-            for chunk_type in route.chunk_type_filter
-        ]
 
     def _search_text_candidates(
         self,
@@ -2485,18 +2449,6 @@ def _round_score(value: float) -> float:
 
 def _dedupe_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:
     return dedupe_by_key(chunks, key=lambda chunk: chunk.chunk_id)
-
-
-def _dedupe_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[tuple[str, str], ...]] = set()
-    out: list[dict[str, Any]] = []
-    for item in filters:
-        normalized = tuple(sorted((str(key), repr(value)) for key, value in item.items()))
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        out.append(item)
-    return out or [{}]
 
 
 def _is_table_chunk(chunk: PaperChunk) -> bool:
