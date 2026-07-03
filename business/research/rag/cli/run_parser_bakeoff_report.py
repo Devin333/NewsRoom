@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Sequence
 
 from business.research.rag.evaluation.paper_parser_bakeoff_report import (
+    DEFAULT_ACCEPTANCE_THRESHOLDS,
     ParserArtifactInput,
     ParserBakeoffReportConfig,
     build_parser_bakeoff_report,
@@ -33,6 +34,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         inputs=inputs,
         output_json=Path(args.output_json),
         output_markdown=Path(args.output_markdown),
+        acceptance_thresholds=_parse_thresholds(args.acceptance_threshold),
     ))
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), end="\n")
     return 0
@@ -79,6 +81,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-markdown",
         default=".newsroom/eval/parser-bakeoff-report.md",
     )
+    parser.add_argument(
+        "--acceptance-threshold",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Override a cascade acceptance threshold such as min_requested_papers=20.",
+    )
     return parser
 
 
@@ -92,6 +101,25 @@ def _parse_named_paths(values: Sequence[str]) -> dict[str, Path]:
         if not name:
             raise ValueError(f"parser name is empty: {raw!r}")
         out[name] = Path(path.strip())
+    return out
+
+
+def _parse_thresholds(values: Sequence[str]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError(f"expected KEY=VALUE acceptance threshold: {raw!r}")
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"acceptance threshold key is empty: {raw!r}")
+        if key not in DEFAULT_ACCEPTANCE_THRESHOLDS:
+            expected = ", ".join(sorted(DEFAULT_ACCEPTANCE_THRESHOLDS))
+            raise ValueError(f"unknown acceptance threshold {key!r}; expected one of: {expected}")
+        try:
+            out[key] = float(value)
+        except ValueError as exc:
+            raise ValueError(f"acceptance threshold value must be numeric: {raw!r}") from exc
     return out
 
 

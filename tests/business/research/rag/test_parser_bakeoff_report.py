@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from business.research.rag.cli.run_parser_bakeoff_report import _build_parser, _parse_thresholds
 from business.research.rag.evaluation.paper_parser_bakeoff_report import (
     ParserArtifactInput,
     ParserBakeoffReportConfig,
@@ -232,6 +235,124 @@ def test_bakeoff_report_uses_ingest_manifest_for_requested_and_failed_items(tmp_
     assert "failed `paper2`" in markdown
 
 
+def test_bakeoff_report_penalizes_ingest_failures(tmp_path: Path) -> None:
+    parser_dir = tmp_path / "papers-mineru"
+    _write_doc(
+        parser_dir / "paper1" / "research_document.json",
+        paper_id="paper1",
+        sections=[{"text": "x" * 4000}],
+        figures=[],
+        tables=[],
+        equations=[],
+    )
+    manifest_path = _write_manifest(
+        tmp_path / "mineru-ingest.json",
+        parser_dir=parser_dir,
+        succeeded_ids=["paper1"],
+        failed_ids=["paper2"],
+    )
+
+    report = build_parser_bakeoff_report(ParserBakeoffReportConfig(
+        inputs=(ParserArtifactInput("mineru", parser_dir, ingest_manifest_path=manifest_path),),
+        output_json=tmp_path / "report.json",
+        output_markdown=tmp_path / "report.md",
+    ))
+
+    penalized = report.to_dict()["parsers"]["mineru"]["penalized_metrics"]
+    penalty_ids = {
+        detail["penalty_id"]
+        for detail in penalized["penalty_details"]
+    }
+    assert "ingest_failure_rate" in penalty_ids
+    assert penalized["penalty_total"] > 0
+    assert penalized["penalized_quality_score"] < penalized["raw_quality_score"]
+    markdown = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Parser Scoring" in markdown
+    assert "ingest_failure_rate" in markdown
+
+
+def test_bakeoff_report_marks_cascade_acceptance_ready_when_thresholds_pass(tmp_path: Path) -> None:
+    parser_dir = tmp_path / "papers-cascade"
+    paper_ids = [f"paper{i:02d}" for i in range(20)]
+    for paper_id in paper_ids:
+        _write_high_quality_doc(parser_dir / paper_id / "research_document.json", paper_id=paper_id)
+    manifest_path = _write_manifest(
+        tmp_path / "cascade-ingest.json",
+        parser_dir=parser_dir,
+        succeeded_ids=paper_ids,
+        failed_ids=[],
+    )
+    rag_report = _write_rag_report(tmp_path / "cascade-rag.json")
+
+    report = build_parser_bakeoff_report(ParserBakeoffReportConfig(
+        inputs=(ParserArtifactInput("cascade", parser_dir, rag_report, manifest_path),),
+        output_json=tmp_path / "report.json",
+        output_markdown=tmp_path / "report.md",
+    ))
+
+    recommendations = report.to_dict()["recommendations"]
+    acceptance = recommendations["cascade_acceptance"]
+    assert recommendations["best_penalized_parser"] == "cascade"
+    assert acceptance["ready"] is True
+    assert {check["status"] for check in acceptance["checks"]} == {"pass"}
+    assert acceptance["thresholds"]["min_requested_papers"] == 20.0
+    markdown = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Cascade Acceptance" in markdown
+    assert "min_requested_papers" in markdown
+
+
+def test_bakeoff_report_marks_cascade_acceptance_failed_when_thresholds_fail(tmp_path: Path) -> None:
+    parser_dir = tmp_path / "papers-cascade"
+    _write_doc(
+        parser_dir / "paper1" / "research_document.json",
+        paper_id="paper1",
+        sections=[{"text": "short"}],
+        figures=[],
+        tables=[],
+        equations=[],
+    )
+
+    report = build_parser_bakeoff_report(ParserBakeoffReportConfig(
+        inputs=(ParserArtifactInput("cascade", parser_dir),),
+        output_json=tmp_path / "report.json",
+        output_markdown=tmp_path / "report.md",
+    ))
+
+    acceptance = report.to_dict()["recommendations"]["cascade_acceptance"]
+    failing_checks = [
+        check
+        for check in acceptance["checks"]
+        if check["status"] == "fail"
+    ]
+    assert acceptance["ready"] is False
+    assert any(
+        check["check_id"] == "min_requested_papers"
+        and check["actual"] == 1
+        and check["threshold"] == 20.0
+        for check in failing_checks
+    )
+    assert all("actual" in check and "threshold" in check for check in failing_checks)
+
+
+def test_run_parser_bakeoff_report_parses_acceptance_thresholds() -> None:
+    parser = _build_parser()
+    args = parser.parse_args([
+        "--parser",
+        "cascade=.newsroom/eval/cascade",
+        "--acceptance-threshold",
+        "min_requested_papers=10",
+        "--acceptance-threshold",
+        "min_rag_hit_at_10=0.75",
+    ])
+
+    assert _parse_thresholds(args.acceptance_threshold) == {
+        "min_requested_papers": 10.0,
+        "min_rag_hit_at_10": 0.75,
+    }
+    with pytest.raises(ValueError, match="KEY=VALUE"):
+        _parse_thresholds(["min_requested_papers"])
+
+
 def _write_doc(
     path: Path,
     *,
@@ -258,3 +379,93 @@ def _write_doc(
         }),
         encoding="utf-8",
     )
+
+
+def _write_high_quality_doc(path: Path, *, paper_id: str) -> None:
+    located_element = {
+        "caption": "Located artifact",
+        "source_ref": "pdf#page=1",
+        "metadata": {"source_locator": "pdf#page=1", "pdf_rect": [1, 2, 3, 4]},
+    }
+    _write_doc(
+        path,
+        paper_id=paper_id,
+        sections=[{"text": "x" * 8000, "metadata": {"source_locator": "pdf#page=1"}}],
+        figures=[{**located_element, "image_ref": "figure.png"}],
+        tables=[{**located_element, "rows": [{"Model": "cascade"}]}],
+        equations=[{**located_element, "latex": "E=mc^2"}],
+    )
+
+
+def _write_manifest(
+    path: Path,
+    *,
+    parser_dir: Path,
+    succeeded_ids: list[str],
+    failed_ids: list[str],
+) -> Path:
+    items = [
+        {
+            "arxiv_id": paper_id,
+            "paper_id": paper_id,
+            "status": "succeeded",
+            "backend": path.stem,
+            "output_path": str(parser_dir / paper_id / "research_document.json"),
+        }
+        for paper_id in succeeded_ids
+    ]
+    items.extend(
+        {
+            "arxiv_id": paper_id,
+            "paper_id": paper_id,
+            "status": "failed",
+            "backend": path.stem,
+            "reason": "RuntimeError: parser failed",
+            "output_path": str(parser_dir / paper_id / "research_document.json"),
+        }
+        for paper_id in failed_ids
+    )
+    path.write_text(
+        json.dumps({
+            "backend": path.stem,
+            "papers_dir": str(parser_dir),
+            "requested": len(succeeded_ids) + len(failed_ids),
+            "succeeded": len(succeeded_ids),
+            "skipped": 0,
+            "failed": len(failed_ids),
+            "items": items,
+        }),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_rag_report(path: Path) -> Path:
+    path.write_text(
+        json.dumps({
+            "papers_total": 20,
+            "chunks_total": 200,
+            "pairs_total": 80,
+            "candidate_test_report": {
+                "retrieval": {
+                    "mrr": 0.7,
+                    "by_k": {
+                        "5": {
+                            "hit_rate": 0.72,
+                            "ndcg": 0.66,
+                            "evidence_coverage": 0.64,
+                            "source_locator_coverage": 0.9,
+                        },
+                        "10": {
+                            "hit_rate": 0.82,
+                            "equivalent_hit_rate": 0.9,
+                            "evidence_coverage": 0.7,
+                            "source_locator_coverage": 0.92,
+                        },
+                    },
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    return path

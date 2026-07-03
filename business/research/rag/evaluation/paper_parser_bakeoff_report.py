@@ -3,7 +3,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
+
+
+DEFAULT_ACCEPTANCE_THRESHOLDS: dict[str, float] = {
+    "min_requested_papers": 20.0,
+    "min_parse_success_rate": 0.95,
+    "min_penalized_quality_score": 0.65,
+    "min_element_source_locator_coverage": 0.80,
+    "min_bbox_coverage": 0.50,
+    "min_rag_hit_at_10": 0.55,
+    "min_rag_evidence_coverage_at_5": 0.45,
+    "min_rag_source_locator_coverage_at_5": 0.80,
+}
 
 
 @dataclass(frozen=True)
@@ -19,6 +31,7 @@ class ParserBakeoffReportConfig:
     inputs: tuple[ParserArtifactInput, ...]
     output_json: Path
     output_markdown: Path
+    acceptance_thresholds: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_ACCEPTANCE_THRESHOLDS))
 
 
 @dataclass(frozen=True)
@@ -58,7 +71,7 @@ def build_parser_bakeoff_report(config: ParserBakeoffReportConfig) -> ParserBake
         parser_count=len(parser_payloads),
         paper_ids=tuple(sorted(all_paper_ids)),
         parsers=parser_payloads,
-        recommendations=_recommend(parser_payloads),
+        recommendations=_recommend(parser_payloads, config.acceptance_thresholds),
     )
     _write_report(report, config.output_json, config.output_markdown)
     return report
@@ -158,7 +171,7 @@ def _parser_summary(
     rag_metrics = _rag_metrics(rag_report_path)
     requested_ids = _manifest_paper_ids(ingest_manifest)
     paper_ids = requested_ids or [_artifact_paper_id(doc) for doc in documents if _artifact_paper_id(doc)]
-    return {
+    summary = {
         "name": name,
         "papers_dir": str(papers_dir),
         "paper_count": manifest_summary.get("requested") or len(documents),
@@ -176,6 +189,8 @@ def _parser_summary(
             if isinstance(doc.get("_paper_id_mismatch"), dict)
         ],
     }
+    summary["penalized_metrics"] = _penalized_metrics(summary)
+    return summary
 
 
 def _manifest_summary(
@@ -404,15 +419,20 @@ def _artifact_paper_id(document: dict[str, Any]) -> str:
     return str(document.get("_artifact_paper_id") or document.get("paper_id") or "")
 
 
-def _recommend(parser_payloads: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _recommend(
+    parser_payloads: dict[str, dict[str, Any]],
+    acceptance_thresholds: Mapping[str, float],
+) -> dict[str, Any]:
     return {
         "best_overall_parser": _best_parser(parser_payloads, _overall_score),
+        "best_penalized_parser": _best_parser(parser_payloads, _penalized_score),
         "best_formula_parser": _best_parser(parser_payloads, lambda item: _metric(item, "formula_count_avg") + _metric(item, "bbox_coverage")),
         "best_table_parser": _best_parser(parser_payloads, lambda item: _metric(item, "table_count_avg") + _metric(item, "table_rows_coverage")),
         "best_figure_parser": _best_parser(parser_payloads, lambda item: _metric(item, "figure_count_avg") + _metric(item, "image_ref_coverage")),
         "deployment_cost_notes": "Compare GPU time, image size, model cache size, and Docker network reliability before choosing a default.",
-        "recommended_default_parser": _best_parser(parser_payloads, _overall_score),
-        "recommended_fallback_parser": _second_best_parser(parser_payloads, _overall_score),
+        "recommended_default_parser": _best_parser(parser_payloads, _penalized_score),
+        "recommended_fallback_parser": _second_best_parser(parser_payloads, _penalized_score),
+        "cascade_acceptance": _cascade_acceptance(parser_payloads, acceptance_thresholds),
     }
 
 
@@ -431,6 +451,257 @@ def _overall_score(item: dict[str, Any]) -> float:
         - min(float(metrics.get("parser_warning_count_avg") or 0.0), 5.0) * 0.1
     )
     return quality_score * parse_success_rate
+
+
+def _penalized_metrics(item: dict[str, Any]) -> dict[str, Any]:
+    raw_quality_score = _raw_quality_score(item)
+    penalty_details = _penalty_details(item)
+    penalty_total = min(1.0, sum(float(detail["penalty"]) for detail in penalty_details))
+    return {
+        "raw_quality_score": round(raw_quality_score, 6),
+        "penalty_total": round(penalty_total, 6),
+        "penalized_quality_score": round(max(0.0, raw_quality_score - penalty_total), 6),
+        "penalty_details": penalty_details,
+    }
+
+
+def _raw_quality_score(item: dict[str, Any]) -> float:
+    metrics = item.get("parser_metrics") or {}
+    rag = item.get("rag_metrics") or {}
+    coverage_score = _avg_available([
+        metrics.get("caption_source_locator_coverage"),
+        metrics.get("element_source_locator_coverage"),
+        metrics.get("bbox_coverage"),
+        metrics.get("table_rows_coverage"),
+        metrics.get("image_ref_coverage"),
+    ])
+    yield_score = _avg_available([
+        _bounded_ratio(metrics.get("section_count_avg"), 6.0),
+        _bounded_ratio(metrics.get("text_chars_avg"), 8000.0),
+        _bounded_ratio(metrics.get("formula_count_avg"), 2.0),
+        _bounded_ratio(metrics.get("table_count_avg"), 2.0),
+        _bounded_ratio(metrics.get("figure_count_avg"), 2.0),
+    ])
+    rag_score = _avg_available([
+        rag.get("hit_at_5"),
+        rag.get("hit_at_10"),
+        rag.get("mrr"),
+        rag.get("evidence_coverage_at_5"),
+        rag.get("source_locator_coverage_at_5"),
+    ])
+    if rag.get("status") == "loaded":
+        return _clamp(0.45 * coverage_score + 0.25 * yield_score + 0.30 * rag_score)
+    return _clamp(0.65 * coverage_score + 0.35 * yield_score)
+
+
+def _penalty_details(item: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics = item.get("parser_metrics") or {}
+    rag = item.get("rag_metrics") or {}
+    manifest = item.get("ingest_manifest") or {}
+    requested = max(1, int(metrics.get("parse_requested_count") or item.get("paper_count") or 0))
+    parse_failure_rate = 1.0 - float(metrics.get("parse_success_rate") or 0.0)
+    missing_successful_items = manifest.get("missing_successful_items") or []
+    load_errors = item.get("load_errors") or []
+    warning_avg = float(metrics.get("parser_warning_count_avg") or 0.0)
+    penalties = [
+        _penalty(
+            "ingest_failure_rate",
+            "Requested papers without loaded parser artifacts",
+            parse_failure_rate,
+            0.45,
+        ),
+        _penalty(
+            "missing_successful_artifact_rate",
+            "Manifest-successful papers missing from artifact directory",
+            _safe_div(len(missing_successful_items), requested),
+            0.25,
+        ),
+        _penalty(
+            "load_error_rate",
+            "research_document.json artifacts that could not be loaded",
+            _safe_div(len(load_errors), requested),
+            0.25,
+        ),
+        _penalty(
+            "parser_warning_rate",
+            "Average parser warnings per loaded document",
+            min(warning_avg / 5.0, 1.0),
+            0.10,
+        ),
+        _penalty(
+            "source_locator_gap",
+            "Missing element source locators",
+            1.0 - float(metrics.get("element_source_locator_coverage") or 0.0),
+            0.15,
+        ),
+        _penalty(
+            "bbox_gap",
+            "Missing parser element bounding boxes",
+            1.0 - float(metrics.get("bbox_coverage") or 0.0),
+            0.10,
+        ),
+    ]
+    if rag.get("status") != "loaded":
+        penalties.append(_penalty(
+            "rag_report_unavailable",
+            "RAG benchmark report is not loaded for this parser",
+            1.0,
+            0.15,
+            actual=rag.get("status"),
+        ))
+    return [penalty for penalty in penalties if float(penalty["penalty"]) > 0.0]
+
+
+def _penalty(
+    penalty_id: str,
+    label: str,
+    rate: float,
+    weight: float,
+    *,
+    actual: Any | None = None,
+) -> dict[str, Any]:
+    bounded = _clamp(rate)
+    return {
+        "penalty_id": penalty_id,
+        "label": label,
+        "rate": round(bounded, 6),
+        "weight": weight,
+        "penalty": round(bounded * weight, 6),
+        "actual": actual if actual is not None else round(bounded, 6),
+    }
+
+
+def _cascade_acceptance(
+    parser_payloads: dict[str, dict[str, Any]],
+    acceptance_thresholds: Mapping[str, float],
+) -> dict[str, Any]:
+    thresholds = dict(DEFAULT_ACCEPTANCE_THRESHOLDS)
+    thresholds.update({key: float(value) for key, value in acceptance_thresholds.items()})
+    cascade = parser_payloads.get("cascade")
+    if cascade is None:
+        checks = [_acceptance_check(
+            "parser_present",
+            "Parser named cascade is present",
+            False,
+            actual=sorted(parser_payloads),
+            threshold="cascade",
+        )]
+        return {
+            "parser": "cascade",
+            "ready": False,
+            "thresholds": thresholds,
+            "checks": checks,
+        }
+
+    metrics = cascade.get("parser_metrics") or {}
+    rag = cascade.get("rag_metrics") or {}
+    manifest = cascade.get("ingest_manifest") or {}
+    requested_source = "ingest_manifest" if manifest.get("status") == "loaded" else "artifact_count"
+    requested_count = int(cascade.get("paper_count") or 0)
+    checks = [
+        _acceptance_check(
+            "parser_present",
+            "Parser named cascade is present",
+            True,
+            actual="cascade",
+            threshold="cascade",
+        ),
+        _acceptance_check(
+            "min_requested_papers",
+            "Cascade bake-off requested paper count meets threshold",
+            requested_count >= thresholds["min_requested_papers"],
+            actual=requested_count,
+            threshold=thresholds["min_requested_papers"],
+            details=f"source={requested_source}",
+        ),
+        _metric_acceptance_check(
+            "min_parse_success_rate",
+            "Cascade parse success rate meets threshold",
+            metrics.get("parse_success_rate"),
+            thresholds["min_parse_success_rate"],
+        ),
+        _metric_acceptance_check(
+            "min_penalized_quality_score",
+            "Cascade penalized quality score meets threshold",
+            (cascade.get("penalized_metrics") or {}).get("penalized_quality_score"),
+            thresholds["min_penalized_quality_score"],
+        ),
+        _metric_acceptance_check(
+            "min_element_source_locator_coverage",
+            "Cascade element source locator coverage meets threshold",
+            metrics.get("element_source_locator_coverage"),
+            thresholds["min_element_source_locator_coverage"],
+        ),
+        _metric_acceptance_check(
+            "min_bbox_coverage",
+            "Cascade bounding-box coverage meets threshold",
+            metrics.get("bbox_coverage"),
+            thresholds["min_bbox_coverage"],
+        ),
+        _metric_acceptance_check(
+            "min_rag_hit_at_10",
+            "Cascade RAG Hit@10 meets threshold",
+            rag.get("hit_at_10"),
+            thresholds["min_rag_hit_at_10"],
+        ),
+        _metric_acceptance_check(
+            "min_rag_evidence_coverage_at_5",
+            "Cascade RAG evidence coverage@5 meets threshold",
+            rag.get("evidence_coverage_at_5"),
+            thresholds["min_rag_evidence_coverage_at_5"],
+        ),
+        _metric_acceptance_check(
+            "min_rag_source_locator_coverage_at_5",
+            "Cascade RAG source locator coverage@5 meets threshold",
+            rag.get("source_locator_coverage_at_5"),
+            thresholds["min_rag_source_locator_coverage_at_5"],
+        ),
+    ]
+    return {
+        "parser": "cascade",
+        "ready": all(check["status"] == "pass" for check in checks),
+        "thresholds": thresholds,
+        "checks": checks,
+    }
+
+
+def _metric_acceptance_check(
+    check_id: str,
+    label: str,
+    actual: Any,
+    threshold: float,
+) -> dict[str, Any]:
+    value = _float_or_none(actual)
+    return _acceptance_check(
+        check_id,
+        label,
+        value is not None and value >= threshold,
+        actual=value,
+        threshold=threshold,
+    )
+
+
+def _acceptance_check(
+    check_id: str,
+    label: str,
+    passed: bool,
+    *,
+    actual: Any,
+    threshold: Any,
+    details: str = "",
+) -> dict[str, Any]:
+    return {
+        "check_id": check_id,
+        "label": label,
+        "status": "pass" if passed else "fail",
+        "actual": actual,
+        "threshold": threshold,
+        "details": details,
+    }
+
+
+def _penalized_score(item: dict[str, Any]) -> float:
+    return float((item.get("penalized_metrics") or {}).get("penalized_quality_score") or 0.0)
 
 
 def _metric(item: dict[str, Any], name: str) -> float:
@@ -520,6 +791,55 @@ def _markdown(payload: dict[str, Any]) -> str:
             ])
             + " |"
         )
+    lines.extend([
+        "",
+        "## Parser Scoring",
+        "",
+        "| Parser | raw quality | penalty total | penalized quality | top penalties |",
+        "|---|---:|---:|---:|---|",
+    ])
+    for name, item in (payload.get("parsers") or {}).items():
+        metrics = item.get("penalized_metrics") or {}
+        penalties = metrics.get("penalty_details") or []
+        top_penalties = ", ".join(
+            f"{penalty.get('penalty_id')}={_fmt_num(penalty.get('penalty'))}"
+            for penalty in penalties[:3]
+        )
+        lines.append(
+            "| "
+            + " | ".join([
+                name,
+                _fmt_num(metrics.get("raw_quality_score")),
+                _fmt_num(metrics.get("penalty_total")),
+                _fmt_num(metrics.get("penalized_quality_score")),
+                top_penalties or "-",
+            ])
+            + " |"
+        )
+    acceptance = (payload.get("recommendations") or {}).get("cascade_acceptance")
+    if isinstance(acceptance, dict):
+        lines.extend([
+            "",
+            "## Cascade Acceptance",
+            "",
+            f"- parser: `{acceptance.get('parser')}`",
+            f"- ready: `{bool(acceptance.get('ready'))}`",
+            "",
+            "| Check | status | actual | threshold | details |",
+            "|---|---|---:|---:|---|",
+        ])
+        for check in acceptance.get("checks") or []:
+            lines.append(
+                "| "
+                + " | ".join([
+                    str(check.get("check_id") or ""),
+                    str(check.get("status") or ""),
+                    _fmt_value(check.get("actual")),
+                    _fmt_value(check.get("threshold")),
+                    str(check.get("details") or "-"),
+                ])
+                + " |"
+            )
     failure_lines: list[str] = []
     for name, item in (payload.get("parsers") or {}).items():
         failed_items = item.get("failed_items") or []
@@ -538,6 +858,8 @@ def _markdown(payload: dict[str, Any]) -> str:
         lines.extend(["", "## Ingest Failures", "", *failure_lines])
     lines.extend(["", "## Recommendations", ""])
     for key, value in (payload.get("recommendations") or {}).items():
+        if key == "cascade_acceptance":
+            continue
         lines.append(f"- {key}: `{value}`")
     return "\n".join(lines) + "\n"
 
@@ -554,6 +876,18 @@ def _fmt_num(value: Any) -> str:
     return f"{float(value):.2f}"
 
 
+def _fmt_value(value: Any) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        return _fmt_num(value)
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value) or "-"
+    return str(value)
+
+
 def _safe_div(numerator: int | float, denominator: int | float) -> float:
     if not denominator:
         return 0.0
@@ -564,6 +898,29 @@ def _avg(values: Sequence[int | float]) -> float:
     if not values:
         return 0.0
     return float(sum(values)) / float(len(values))
+
+
+def _avg_available(values: Sequence[Any]) -> float:
+    numeric_values = [
+        value
+        for value in (_float_or_none(value) for value in values)
+        if value is not None
+    ]
+    return _avg(numeric_values)
+
+
+def _bounded_ratio(value: Any, target: float) -> float | None:
+    numeric = _float_or_none(value)
+    if numeric is None:
+        return None
+    return _clamp(_safe_div(numeric, target))
+
+
+def _clamp(value: Any, lower: float = 0.0, upper: float = 1.0) -> float:
+    numeric = _float_or_none(value)
+    if numeric is None:
+        return lower
+    return max(lower, min(upper, numeric))
 
 
 def _float_or_none(value: Any) -> float | None:
