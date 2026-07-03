@@ -5,7 +5,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, TYPE_CHECKING
+from typing import Any, Mapping, TYPE_CHECKING
 
 from framework.rag.core import intent_allowed, intent_budget, position_decay_score
 from framework.rag.retrieval import (
@@ -22,8 +22,12 @@ from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
 from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
 from business.research.rag.adapters.paper_field_text import CORE_FIELD_NAMES, FIELD_NAMES, extract_field_texts
-from business.research.rag.formula_normalizer import FormulaRetrievalMetadata, normalize_formula_metadata
-from business.research.rag.retrieval.bm25_index import PaperBM25Index, load_bm25_index
+from business.research.rag.retrieval.channels.sparse_lexical import (
+    FormulaSparseScores,
+    SparseLexicalChannel,
+    formula_sparse_scores,
+    sparse_query_tokens,
+)
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit, PaperClaimSearchPort
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings
 from business.research.rag.retrieval.paper_policy import QueryIntent, RetrievalRoute, build_retrieval_route
@@ -107,48 +111,6 @@ _FORMULA_CONTEXT_REASONS = frozenset({
     "formula_reverse_context",
     "formula_reverse_reference",
 })
-_SPARSE_STOP_WORDS = {
-    "about",
-    "caption",
-    "define",
-    "defined",
-    "does",
-    "evidence",
-    "explain",
-    "explained",
-    "explanation",
-    "equation",
-    "fig",
-    "figure",
-    "for",
-    "formula",
-    "from",
-    "how",
-    "latex",
-    "mathematical",
-    "mean",
-    "means",
-    "paper",
-    "relation",
-    "reported",
-    "reports",
-    "result",
-    "results",
-    "show",
-    "shows",
-    "surrounding",
-    "symbol",
-    "symbols",
-    "table",
-    "text",
-    "the",
-    "this",
-    "what",
-    "which",
-    "with",
-}
-
-
 @dataclass(frozen=True)
 class RetrievalPolicy:
     """Tunable retrieval parameters (position weighting + over-fetch + rerank filter)."""
@@ -443,28 +405,6 @@ class _FieldEmbeddingSummary:
     hits: tuple[dict[str, Any], ...] = ()
 
 
-@dataclass(frozen=True)
-class _FormulaSparseScores:
-    symbol_score: float = 0.0
-    operator_score: float = 0.0
-    label_score: float = 0.0
-    structure_score: float = 0.0
-    context_score: float = 0.0
-    sparse_score: float = 0.0
-    strategy: str = ""
-
-    def as_metadata(self) -> dict[str, Any]:
-        return {
-            "formula_symbol_score": _round_score(self.symbol_score),
-            "formula_operator_score": _round_score(self.operator_score),
-            "formula_label_score": _round_score(self.label_score),
-            "formula_structure_score": _round_score(self.structure_score),
-            "formula_context_score": _round_score(self.context_score),
-            "formula_sparse_score": _round_score(self.sparse_score),
-            "formula_sparse_strategy": self.strategy,
-        }
-
-
 @dataclass
 class RetrievalRequest:
     paper_id: str
@@ -592,6 +532,7 @@ class ResearchRetriever:
         claim_index: PaperClaimSearchPort | None = None,
     ) -> None:
         self._store = chunk_store
+        self._sparse_channel = SparseLexicalChannel(chunk_store)
         self._policy = policy or RetrievalPolicy()
         self._reranker = reranker
         self._field_index = field_index
@@ -966,96 +907,14 @@ class ResearchRetriever:
         formula_sparse_enabled: bool = False,
         trace: RetrievalTrace | None = None,
     ) -> list[tuple[PaperChunk, float]]:
-        index, index_source, chunks = self._load_sparse_bm25_index(paper_id, trace)
-        if not chunks:
-            if trace is not None:
-                _append_degradation_once(
-                    trace,
-                    code="sparse_inventory_empty",
-                    stage="sparse_lexical",
-                    paper_id=paper_id,
-                    reason="ChunkStorePort.list_chunks returned no chunks for sparse lexical recall.",
-                )
-            return []
-        scored_by_id: dict[str, tuple[PaperChunk, float]] = {}
-        bm25_query = " ".join(_sparse_query_tokens(query_text)) or query_text
-        for hit in index.search(bm25_query, limit=max(limit * 3, limit)):
-            chunk = hit.chunk
-            if chunk.paper_id != paper_id or not _chunk_matches_filters(chunk, filters):
-                continue
-            lexical_score = _sparse_lexical_score(query_text, chunk)
-            formula_scores = _formula_sparse_scores(query_text, chunk) if formula_sparse_enabled else _FormulaSparseScores()
-            score = max(hit.score, lexical_score, formula_scores.sparse_score)
-            if score <= 0.0:
-                continue
-            metadata = dict(chunk.metadata)
-            metadata.update({
-                "sparse_lexical_hit": True,
-                "sparse_lexical_score": _round_score(lexical_score),
-                "sparse_bm25_score": _round_score(hit.score),
-                "sparse_lexical_strategy": "bm25_index",
-                "sparse_candidate_source": index_source,
-            })
-            if formula_sparse_enabled:
-                metadata.update(formula_scores.as_metadata())
-                metadata["formula_sparse_hit"] = formula_scores.sparse_score > 0.0
-            scored_by_id[chunk.chunk_id] = (chunk.model_copy(update={"metadata": metadata}), score)
-        if formula_sparse_enabled:
-            for chunk in chunks:
-                if chunk.chunk_id in scored_by_id:
-                    continue
-                if chunk.paper_id != paper_id or not _chunk_matches_filters(chunk, filters):
-                    continue
-                formula_scores = _formula_sparse_scores(query_text, chunk)
-                if formula_scores.sparse_score <= 0.0:
-                    continue
-                lexical_score = _sparse_lexical_score(query_text, chunk)
-                metadata = dict(chunk.metadata)
-                metadata.update({
-                    "sparse_lexical_hit": True,
-                    "sparse_lexical_score": _round_score(lexical_score),
-                    "sparse_bm25_score": 0.0,
-                    "sparse_lexical_strategy": "bm25_index_with_formula_fallback",
-                    "sparse_candidate_source": index_source,
-                    **formula_scores.as_metadata(),
-                    "formula_sparse_hit": True,
-                })
-                scored_by_id[chunk.chunk_id] = (
-                    chunk.model_copy(update={"metadata": metadata}),
-                    formula_scores.sparse_score,
-                )
-        scored = list(scored_by_id.values())
-        scored.sort(key=lambda item: (-item[1], item[0].section_index, item[0].chunk_id))
-        return scored[:limit]
-
-    def _load_sparse_bm25_index(
-        self,
-        paper_id: str,
-        trace: RetrievalTrace | None,
-    ) -> tuple[PaperBM25Index, str, list[PaperChunk]]:
-        try:
-            index = load_bm25_index(paper_id)
-            return index, "bm25_index", index.chunks
-        except FileNotFoundError:
-            if trace is not None:
-                _append_degradation_once(
-                    trace,
-                    code="sparse_bm25_index_missing",
-                    stage="sparse_lexical",
-                    paper_id=paper_id,
-                    reason="Persisted BM25 index was not found; rebuilding sparse lexical inventory from ChunkStorePort.list_chunks.",
-                )
-        except Exception as exc:
-            if trace is not None:
-                _append_degradation_once(
-                    trace,
-                    code="sparse_bm25_index_unreadable",
-                    stage="sparse_lexical",
-                    paper_id=paper_id,
-                    reason=f"Persisted BM25 index could not be loaded: {exc}",
-                )
-        chunks = self._store.list_chunks(paper_id)
-        return PaperBM25Index.build(paper_id, chunks), "bm25_list_chunks_fallback", chunks
+        return self._sparse_channel.recall_chunks(
+            paper_id=paper_id,
+            query_text=query_text,
+            filters=filters,
+            limit=limit,
+            formula_sparse_enabled=formula_sparse_enabled,
+            trace=trace,
+        )
 
     def _search_field_candidates(
         self,
@@ -1315,9 +1174,9 @@ class ResearchRetriever:
         route_match_score = _route_match_score(route, chunk)
         claim_index_score = _metadata_float(chunk.metadata, "claim_index_score", 0.0)
         formula_scores = (
-            _formula_sparse_scores(request.question, chunk)
+            formula_sparse_scores(request.question, chunk)
             if self._policy.formula_sparse_enabled and route.intent == "formula_query"
-            else _FormulaSparseScores()
+            else FormulaSparseScores()
         )
         if route.intent == "citation_query":
             graph_score = max(graph_score, claim_index_score)
@@ -2577,7 +2436,7 @@ def _recall_queries_for_policy(question: str, intent: str, policy: RetrievalPoli
     queries = _text_recall_queries(question, intent)
     if not policy.multi_query_enabled:
         return queries
-    sparse_terms = " ".join(_sparse_query_tokens(question))
+    sparse_terms = " ".join(sparse_query_tokens(question))
     if sparse_terms:
         queries.append(sparse_terms)
     intent_suffixes = {
@@ -2634,206 +2493,6 @@ def _append_degradation_once(
         paper_id=paper_id,
         reason=reason,
     ))
-
-
-def _chunk_matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
-    for key, expected in (filters or {}).items():
-        actual = getattr(chunk, key, None)
-        if actual is None:
-            actual = chunk.metadata.get(key)
-        if actual != expected:
-            return False
-    return True
-
-
-def _sparse_lexical_score(query_text: str, chunk: PaperChunk) -> float:
-    query_tokens = _sparse_query_tokens(query_text)
-    if not query_tokens:
-        return 0.0
-    field_texts = extract_field_texts(chunk)
-    field_values = field_texts.non_empty()
-    if not field_values:
-        field_values = {"body": chunk.content}
-    query_set = set(query_tokens)
-    best = 0.0
-    for field_name, text in field_values.items():
-        field_tokens = set(_sparse_query_tokens(text))
-        if not field_tokens:
-            continue
-        overlap = len(query_set & field_tokens) / len(query_set)
-        if field_name in {"caption", "equation", "table_rows", "table_columns", "visual_description", "referenced_text"}:
-            overlap *= 1.1
-        best = max(best, overlap)
-    query_phrase = " ".join(query_tokens)
-    content_phrase = " ".join(_sparse_query_tokens("\n".join(field_values.values())))
-    if query_phrase and query_phrase in content_phrase:
-        best = max(best, 0.95)
-    return _clamp_score(best)
-
-
-def _formula_sparse_scores(query_text: str, chunk: PaperChunk) -> _FormulaSparseScores:
-    if not _is_formula_chunk(chunk) and not _chunk_has_formula_context(chunk):
-        return _FormulaSparseScores()
-    query_formula = normalize_formula_metadata(str(query_text or ""), content=str(query_text or ""))
-    chunk_formula = _formula_metadata_for_chunk(chunk)
-
-    query_symbols = _casefold_set([*query_formula.symbols])
-    query_operators = _casefold_set([*query_formula.operators])
-    query_labels = {
-        _normalize_element_label(value)
-        for value in [*query_formula.reference_labels, *_element_query_labels(query_text, "formula_query")]
-        if _normalize_element_label(value)
-    }
-    query_structure = _casefold_set(query_formula.structure_tokens)
-    query_context = _casefold_set([
-        *query_formula.symbols,
-        *query_formula.operators,
-        *query_formula.structure_tokens,
-        *query_formula.context_terms,
-        *_sparse_query_tokens(query_formula.normalized_latex),
-        *_sparse_query_tokens(query_text),
-    ])
-
-    chunk_symbols = _casefold_set([
-        *chunk_formula.symbols,
-        *_metadata_text_values(chunk.metadata.get("formula_symbols")),
-    ])
-    chunk_operators = _casefold_set([
-        *chunk_formula.operators,
-        *_metadata_text_values(chunk.metadata.get("formula_operators")),
-    ])
-    chunk_labels = {
-        _normalize_element_label(value)
-        for value in [
-            *chunk_formula.reference_labels,
-            *_metadata_text_values(chunk.metadata.get("formula_reference_labels")),
-            *_metadata_text_values(chunk.metadata.get("reference_labels")),
-            str(chunk.metadata.get("equation_id") or ""),
-            str(chunk.metadata.get("equation_label") or ""),
-            str(chunk.metadata.get("equation_number") or ""),
-            str(chunk.metadata.get("element_label") or ""),
-        ]
-        if _normalize_element_label(value)
-    }
-    chunk_structure = _casefold_set([
-        *chunk_formula.structure_tokens,
-        *_metadata_text_values(chunk.metadata.get("formula_structure_tokens")),
-    ])
-    chunk_context = _casefold_set([
-        *chunk_formula.symbols,
-        *chunk_formula.operators,
-        *chunk_formula.structure_tokens,
-        *_sparse_query_tokens(chunk_formula.normalized_latex),
-        *chunk_formula.context_terms,
-        *_metadata_text_values(chunk.metadata.get("formula_context_terms")),
-        *_sparse_query_tokens(chunk.formula_description),
-        *_sparse_query_tokens(_metadata_join(chunk.metadata.get("formula_referenced_text"))),
-        *_sparse_query_tokens(chunk.content),
-    ])
-
-    symbol_score = _overlap_score(query_symbols, chunk_symbols)
-    operator_score = max(
-        _overlap_score(query_operators, chunk_operators),
-        _overlap_score(query_context, chunk_operators),
-    )
-    label_score = _overlap_score(query_labels, chunk_labels)
-    structure_score = _overlap_score(query_structure, chunk_structure)
-    context_score = _overlap_score(query_context, chunk_context)
-    weighted = weighted_component_score(
-        {
-            "symbol": symbol_score,
-            "operator": operator_score,
-            "label": label_score,
-            "structure": structure_score,
-            "context": context_score,
-        },
-        {
-            "symbol": 0.25,
-            "operator": 0.20,
-            "label": 0.30,
-            "structure": 0.10,
-            "context": 0.15,
-        },
-    )
-    sparse_score = max(weighted, label_score, (symbol_score + operator_score) / 2.0)
-    if sparse_score <= 0.0:
-        return _FormulaSparseScores()
-    return _FormulaSparseScores(
-        symbol_score=_round_score(symbol_score),
-        operator_score=_round_score(operator_score),
-        label_score=_round_score(label_score),
-        structure_score=_round_score(structure_score),
-        context_score=_round_score(context_score),
-        sparse_score=_round_score(_clamp_score(sparse_score)),
-        strategy="deterministic_formula_overlap",
-    )
-
-
-def _formula_metadata_for_chunk(chunk: PaperChunk) -> FormulaRetrievalMetadata:
-    formula_latex = chunk.formula_latex or (chunk.content if _is_formula_chunk(chunk) else "")
-    return normalize_formula_metadata(
-        formula_latex,
-        formula_description=chunk.formula_description,
-        content=chunk.content,
-        metadata=chunk.metadata,
-    )
-
-
-def _chunk_has_formula_context(chunk: PaperChunk) -> bool:
-    metadata = chunk.metadata
-    return bool(
-        metadata.get("formula_referenced_text")
-        or metadata.get("formula_symbols")
-        or metadata.get("formula_operators")
-        or metadata.get("formula_reference_labels")
-        or metadata.get("formula_context_terms")
-        or metadata.get("formula_chunk_id")
-        or metadata.get("linked_formula_chunk_id")
-    )
-
-
-def _overlap_score(query_terms: set[str], candidate_terms: set[str]) -> float:
-    if not query_terms or not candidate_terms:
-        return 0.0
-    return _clamp_score(len(query_terms & candidate_terms) / len(query_terms))
-
-
-def _casefold_set(values: Iterable[Any]) -> set[str]:
-    return {
-        str(value).casefold().strip()
-        for value in values
-        if str(value or "").strip()
-    }
-
-
-def _metadata_text_values(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, dict):
-        out: list[str] = []
-        for item in value.values():
-            out.extend(_metadata_text_values(item))
-        return out
-    if isinstance(value, (list, tuple, set)):
-        out = []
-        for item in value:
-            out.extend(_metadata_text_values(item))
-        return out
-    return [str(value).strip()] if str(value).strip() else []
-
-
-def _metadata_join(value: Any) -> str:
-    return " ".join(_metadata_text_values(value))
-
-
-def _sparse_query_tokens(text: str) -> list[str]:
-    tokens = []
-    for match in _TOKEN_RE.finditer(str(text or "")):
-        token = match.group(0).casefold().strip()
-        if len(token) <= 1 or token in _SPARSE_STOP_WORDS:
-            continue
-        tokens.append(token)
-    return tokens
 
 
 def _unique_nonempty_texts(values: list[str]) -> list[str]:
