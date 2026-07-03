@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from business.foundation import (
     BoardCard,
     BoardType,
@@ -26,6 +28,7 @@ class ReportBuilder:
         report_type: ReportType = ReportType.BOARD,
         title: str | None = None,
         summary: str | None = None,
+        retrieved_context: dict[str, Any] | None = None,
     ) -> Report:
         sections = [
             ReportSection(
@@ -49,6 +52,23 @@ class ReportBuilder:
                     related_refs=[item.technology_ref for item in radar_items],
                 )
             )
+        if retrieved_context is not None:
+            prompt_context = str(retrieved_context.get("prompt_context") or "").strip()
+            if prompt_context:
+                sections.append(
+                    ReportSection(
+                        title="Retrieved Context",
+                        section_type=DetailSectionType.EVIDENCE,
+                        content=prompt_context,
+                        metadata={
+                            "source": "report_memory_context",
+                            "topic": retrieved_context.get("topic"),
+                        },
+                    )
+                )
+        metadata = {"board_type": board_type.value}
+        if retrieved_context is not None:
+            metadata["rag_context"] = dict(retrieved_context)
         return Report(
             report_id=build_stable_id("report", board_type.value, report_type.value, title or board_type.value),
             report_type=report_type,
@@ -59,7 +79,7 @@ class ReportBuilder:
             insights=list(insights),
             cards=list(cards),
             detail_pages=list(detail_pages),
-            metadata={"board_type": board_type.value},
+            metadata=metadata,
         )
 
 

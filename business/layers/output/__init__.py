@@ -12,6 +12,8 @@ from business.layers.output.insight_builder import InsightBuilder
 from business.layers.output.models import BoardOutput, BoardOutputSection, BoardOutputStats
 from business.layers.output.pipeline import (
     BoardOutputPipeline,
+    ReportContextProvider,
+    ReportContextRequest,
 )
 from business.layers.output.report_builder import ReportBuilder
 from business.layers.output.worker_handlers import MemoryReindexTaskHandler
@@ -32,5 +34,7 @@ __all__ = [
     "OutputSourceHealth",
     "OutputSourceHealthStatus",
     "ReportBuilder",
+    "ReportContextProvider",
+    "ReportContextRequest",
     "render_output_report_markdown",
 ]

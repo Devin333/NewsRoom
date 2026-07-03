@@ -29,6 +29,7 @@ from business.foundation import (
     Trend,
     TrendDirection,
 )
+from business.foundation.context import RunContext
 from business.layers.analysis.pipeline import AnalysisResult, TechnologyRadarItem
 from business.layers.extraction.models import ExtractionResult
 from business.layers.output import BoardOutputPipeline
@@ -36,6 +37,9 @@ from business.layers.output.board_card_builder import BoardCardBuilder
 from business.layers.output.detail_page_builder import DetailBuildContext, DetailPageBuilder
 from business.layers.output.insight_builder import InsightBuilder
 from business.layers.output.report_builder import ReportBuilder
+from business.memory.intelligence_context import IntelligenceMemoryContext
+from business.memory.intelligence_models import ClaimMemory
+from business.memory.report_memory_context import ReportMemoryContextResult
 
 
 def test_board_card_serializes_without_raw_payload_and_keeps_output_contract() -> None:
@@ -103,6 +107,64 @@ def test_board_output_pipeline_runs_with_split_builders() -> None:
     assert output.metadata["report"]["cards"]
     assert output.metadata["report"]["insights"]
     assert output.metadata["report"]["sections"]
+    assert "rag_context" not in output.metadata["report"]["metadata"]
+    assert all(section["title"] != "Retrieved Context" for section in output.metadata["report"]["sections"])
+
+
+def test_board_output_pipeline_projects_report_memory_context_into_report() -> None:
+    signal, extraction, relations, analysis, _ = _pipeline_inputs()
+    provider = _FakeReportContextProvider()
+    context = AnalysisContext(
+        board_type=BoardType.AI_NEWS,
+        run_context=RunContext(
+            run_id="run-daily-1",
+            run_type="daily",
+            options={"topic": "AI agents"},
+        ),
+        metadata={"report_memory_limit": 2},
+    )
+
+    output = BoardOutputPipeline(report_context_provider=provider).build_board_output(
+        BoardType.AI_NEWS,
+        [signal],
+        [extraction],
+        relations,
+        analysis,
+        context,
+    )
+
+    [request] = provider.requests
+    assert request.topic == "AI agents"
+    assert request.run_id == "run-daily-1"
+    assert request.limit == 2
+    report = output.metadata["report"]
+    assert report["metadata"]["rag_context"]["topic"] == "AI agents"
+    assert report["metadata"]["rag_context"]["context"]["claims"][0]["text"] == "Known historical claim"
+    retrieved_section = next(section for section in report["sections"] if section["title"] == "Retrieved Context")
+    assert "Known claims:" in retrieved_section["content"]
+    assert any(section.title == "Retrieved Context" for section in output.sections)
+    assert output.metadata["rag_context"]["topic"] == "AI agents"
+
+
+def test_board_output_pipeline_records_report_context_failure_without_failing_report() -> None:
+    signal, extraction, relations, analysis, context = _pipeline_inputs()
+
+    output = BoardOutputPipeline(report_context_provider=_FailingReportContextProvider()).build_board_output(
+        BoardType.AI_NEWS,
+        [signal],
+        [extraction],
+        relations,
+        analysis,
+        context,
+    )
+
+    report = output.metadata["report"]
+    assert report["cards"]
+    rag_context = report["metadata"]["rag_context"]
+    assert rag_context["topic"] == "ai news"
+    assert rag_context["context"]["metadata"]["memory_available"] is False
+    assert rag_context["context"]["metadata"]["reason"] == "report_context_failed:RuntimeError"
+    assert all(section["title"] != "Retrieved Context" for section in report["sections"])
 
 
 def _pipeline_inputs() -> tuple[Signal, ExtractionResult, list[Relation], AnalysisResult, AnalysisContext]:
@@ -201,3 +263,32 @@ def _pipeline_inputs() -> tuple[Signal, ExtractionResult, list[Relation], Analys
     )
     context = AnalysisContext(board_type=BoardType.AI_NEWS)
     return signal, extraction, [relation], analysis, context
+
+
+class _FakeReportContextProvider:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def build_context(self, request):
+        self.requests.append(request)
+        return ReportMemoryContextResult(
+            topic=request.topic,
+            context=IntelligenceMemoryContext(
+                query=request.topic,
+                topic=request.topic,
+                claims=[
+                    ClaimMemory(
+                        claim_id="claim-1",
+                        run_id="older-run",
+                        text="Known historical claim",
+                    )
+                ],
+                metadata={"memory_available": True},
+            ),
+            prompt_context="Known claims:\n- Known historical claim",
+        )
+
+
+class _FailingReportContextProvider:
+    def build_context(self, request):
+        raise RuntimeError("memory backend unavailable")
