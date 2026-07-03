@@ -60,6 +60,7 @@ from business.research.rag.retrieval.expanders import (
 )
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
 from business.research.rag.retrieval.policy_config import policy_config_hash, stable_policy_config
+from business.research.rag.retrieval.recall_stage import CandidateRecallResult, CandidateRecallStage
 from business.research.rag.retrieval.rerank import RerankCascade, field_rerank_passage
 from business.research.rag.retrieval.scoring import ChildCandidateScorer
 from business.research.rag.retrieval.trace import RetrievalDegradation, RetrievalTrace
@@ -69,6 +70,8 @@ __all__ = [
     "AnswerContextSelection",
     "AnswerGenerator",
     "ChannelSpec",
+    "CandidateRecallResult",
+    "CandidateRecallStage",
     "ClaimRecord",
     "ClaimSearchHit",
     "ChildCandidateScorer",
