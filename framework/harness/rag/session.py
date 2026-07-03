@@ -7,7 +7,7 @@ from uuid import uuid4
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.memory.ports import MemoryPort
 from framework.harness.mcp.policy import MCPToolRequest
-from framework.harness.rag.answer_gate import RAGAnswerGate
+from framework.harness.rag.answer_gate import RAGAnswerGate, unsupported_claims_from_answer_gate
 from framework.harness.rag.answer_worker import AnswerWorkerPort
 from framework.harness.rag.context_pack_assembler import RAGContextPackAssembler
 from framework.harness.rag.gates import RAGGateSuite, RAGGateResult, failed_gate_dicts
@@ -221,7 +221,7 @@ class BoundedRAGSessionController(RAGSessionController):
             self._record_gate_failures(state, pack_results)
             if all(result.passed for result in pack_results):
                 if policy.generation_enabled and self.answer_worker is not None:
-                    answer, decision, status = self._run_generation_phase(state, spec, policy, pack)
+                    answer, decision, status, pack = self._run_generation_phase(state, spec, policy, pack)
                 else:
                     decision = RAGDecision(
                         RAGDecisionType.RETURN_CONTEXT_PACK,
@@ -255,7 +255,7 @@ class BoundedRAGSessionController(RAGSessionController):
         spec: RAGSessionSpec,
         policy: RAGExecutionPolicy,
         pack: RAGContextPack,
-    ) -> tuple[GroundedAnswerCandidate | None, RAGDecision, RAGSessionStatus]:
+    ) -> tuple[GroundedAnswerCandidate | None, RAGDecision, RAGSessionStatus, RAGContextPack]:
         if self.answer_worker is None:
             decision = RAGDecision(
                 RAGDecisionType.RETURN_CONTEXT_PACK,
@@ -263,40 +263,261 @@ class BoundedRAGSessionController(RAGSessionController):
                 budget_snapshot=pack.budget_snapshot,
                 metadata={"context_pack_id": pack.pack_id},
             )
-            return None, decision, RAGSessionStatus.SUCCEEDED
-        candidate = self.answer_worker.generate_answer(question=spec.goal.question, pack=pack)
-        self._event(state, "rag_answer_candidate_created", candidate.to_dict())
-        answer_results = self.answer_gate.evaluate(candidate, pack)
-        self._event(state, "rag_answer_verified", {"gate_results": _results(answer_results)})
-        if all(result.passed for result in answer_results):
-            if candidate.abstained:
-                decision = RAGDecision(
-                    RAGDecisionType.ABSTAIN,
-                    "answer worker produced a verified abstention",
-                    gate_results=_results(answer_results),
-                    budget_snapshot=pack.budget_snapshot,
-                    metadata={"context_pack_id": pack.pack_id, "answer_id": candidate.answer_id},
-                )
-                self._event(state, "rag_abstained", decision.to_dict())
-                return candidate, decision, RAGSessionStatus.ABSTAINED
-            decision = RAGDecision(
-                RAGDecisionType.RETURN_ANSWER,
-                "answer verified",
-                gate_results=_results(answer_results),
-                budget_snapshot=pack.budget_snapshot,
-                metadata={"context_pack_id": pack.pack_id, "answer_id": candidate.answer_id},
+            return None, decision, RAGSessionStatus.SUCCEEDED, pack
+        current_pack = pack
+        max_attempts = policy.max_generation_attempts
+        for attempt_index in range(max_attempts):
+            candidate = self.answer_worker.generate_answer(question=spec.goal.question, pack=current_pack)
+            self._event(
+                state,
+                "rag_answer_candidate_created",
+                {
+                    **candidate.to_dict(),
+                    "generation_attempt": attempt_index + 1,
+                    "max_generation_attempts": max_attempts,
+                },
             )
-            self._event(state, "rag_answer_returned", decision.to_dict())
-            return candidate, decision, RAGSessionStatus.ANSWERED
-        decision = RAGDecision(
-            RAGDecisionType.ABSTAIN,
-            "answer gate failed",
-            gate_results=failed_gate_dicts(answer_results),
-            budget_snapshot=pack.budget_snapshot,
-            metadata={"context_pack_id": pack.pack_id, "answer_id": candidate.answer_id},
+            answer_results = self.answer_gate.evaluate(candidate, current_pack)
+            self._event(
+                state,
+                "rag_answer_verified",
+                {
+                    "generation_attempt": attempt_index + 1,
+                    "max_generation_attempts": max_attempts,
+                    "gate_results": _results(answer_results),
+                },
+            )
+            if all(result.passed for result in answer_results):
+                if candidate.abstained:
+                    decision = RAGDecision(
+                        RAGDecisionType.ABSTAIN,
+                        "answer worker produced a verified abstention",
+                        gate_results=_results(answer_results),
+                        budget_snapshot=current_pack.budget_snapshot,
+                        metadata={"context_pack_id": current_pack.pack_id, "answer_id": candidate.answer_id},
+                    )
+                    self._event(state, "rag_abstained", decision.to_dict())
+                    return candidate, decision, RAGSessionStatus.ABSTAINED, current_pack
+                decision = RAGDecision(
+                    RAGDecisionType.RETURN_ANSWER,
+                    "answer verified",
+                    gate_results=_results(answer_results),
+                    budget_snapshot=current_pack.budget_snapshot,
+                    metadata={"context_pack_id": current_pack.pack_id, "answer_id": candidate.answer_id},
+                )
+                self._event(state, "rag_answer_returned", decision.to_dict())
+                return candidate, decision, RAGSessionStatus.ANSWERED, current_pack
+
+            unsupported_claims = unsupported_claims_from_answer_gate(answer_results)
+            if unsupported_claims and attempt_index + 1 < max_attempts:
+                supplemental_pack = self._run_supplemental_round(
+                    state,
+                    spec,
+                    policy,
+                    unsupported_claims=unsupported_claims,
+                    failed_answer_results=answer_results,
+                    attempt_index=attempt_index,
+                )
+                if supplemental_pack is not None:
+                    current_pack = supplemental_pack
+                    continue
+
+            decision = RAGDecision(
+                RAGDecisionType.ABSTAIN,
+                "answer gate failed",
+                gate_results=failed_gate_dicts(answer_results),
+                budget_snapshot=state.budget_snapshot,
+                metadata={
+                    "context_pack_id": current_pack.pack_id,
+                    "answer_id": candidate.answer_id,
+                    "generation_attempt": attempt_index + 1,
+                    "max_generation_attempts": max_attempts,
+                    "unsupported_claims": list(unsupported_claims),
+                },
+            )
+            self._event(state, "rag_abstained", decision.to_dict())
+            return candidate, decision, RAGSessionStatus.ABSTAINED, current_pack
+
+        raise AssertionError("generation loop must return from an answer attempt")
+
+    def _run_supplemental_round(
+        self,
+        state: RAGSessionState,
+        spec: RAGSessionSpec,
+        policy: RAGExecutionPolicy,
+        *,
+        unsupported_claims: tuple[dict[str, Any], ...],
+        failed_answer_results: tuple[RAGGateResult, ...],
+        attempt_index: int,
+    ) -> RAGContextPack | None:
+        generation_attempt = attempt_index + 1
+        state.gap_report = _with_unsupported_claims(state.gap_report, unsupported_claims)
+        self._event(
+            state,
+            "rag_answer_supplemental_gap_created",
+            {
+                "generation_attempt": generation_attempt,
+                "unsupported_claims": list(unsupported_claims),
+                "gate_results": failed_gate_dicts(failed_answer_results),
+            },
         )
-        self._event(state, "rag_abstained", decision.to_dict())
-        return candidate, decision, RAGSessionStatus.ABSTAINED
+        if not self._can_replan(state, spec):
+            self._event(
+                state,
+                "rag_answer_supplemental_round_skipped",
+                {
+                    "generation_attempt": generation_attempt,
+                    "reason": "no controlled replan budget remains",
+                    "budget_snapshot": state.budget_snapshot.to_dict(),
+                },
+            )
+            return None
+
+        state.budget_snapshot = state.budget_snapshot.with_usage(rounds=1, replans=1)
+        budget_gate = self.gates.budget.evaluate(state.budget_snapshot, policy)
+        if not budget_gate.passed:
+            self._event(state, "rag_gate_failed", budget_gate.to_dict())
+            self._event(
+                state,
+                "rag_answer_supplemental_round_skipped",
+                {
+                    "generation_attempt": generation_attempt,
+                    "reason": "supplemental budget gate failed",
+                    "gate_results": (budget_gate.to_dict(),),
+                },
+            )
+            return None
+
+        round_index = max(state.budget_snapshot.rounds_used - 1, 0)
+        self._event(
+            state,
+            "rag_answer_supplemental_round_started",
+            {
+                "generation_attempt": generation_attempt,
+                "round_index": round_index,
+                "gap_report": to_jsonable(state.gap_report),
+            },
+        )
+        plan = self.planner.plan(
+            spec,
+            round_index=round_index,
+            gap_report=state.gap_report,
+            executed_queries=tuple(sorted(state.executed_queries)),
+        )
+        self._event(
+            state,
+            "rag_plan_candidate_created",
+            {"round_index": round_index, "supplemental": True, "plan": plan.to_dict()},
+        )
+        projected = _add_snapshots(state.budget_snapshot, policy.projected_usage(plan))
+        plan_results = self.gates.verify_plan(
+            plan,
+            spec=spec,
+            policy=policy,
+            executed_queries=state.executed_queries,
+            projected_snapshot=projected,
+        )
+        self._event(
+            state,
+            "rag_plan_verified",
+            {"round_index": round_index, "supplemental": True, "gate_results": _results(plan_results)},
+        )
+        if any(result.passed is False for result in plan_results):
+            self._record_gate_failures(state, plan_results)
+            self._event(
+                state,
+                "rag_answer_supplemental_round_failed",
+                {
+                    "generation_attempt": generation_attempt,
+                    "reason": "supplemental plan gate failed",
+                    "gate_results": failed_gate_dicts(plan_results),
+                },
+            )
+            return None
+
+        step_results = self._execute_plan(plan, state, policy)
+        state.artifact_refs.extend(_dedupe_texts(ref for result in step_results for ref in result.artifact_refs))
+        for step_result in step_results:
+            self._event(state, "rag_step_executed", {**step_result.to_dict(), "supplemental": True})
+        verification = self.source_verifier.verify(
+            tuple(_result_evidence(step_results)),
+            policy=policy,
+            question=spec.goal.question,
+        )
+        state.accepted_evidence.extend(_dedupe_evidence(verification.accepted, state.accepted_evidence))
+        state.rejected_evidence.extend(_dedupe_evidence(verification.rejected, state.rejected_evidence))
+        state.conflicting_evidence.extend(_dedupe_evidence(verification.conflicting, state.conflicting_evidence))
+        self._event(state, "rag_source_verified", {**verification.to_dict(), "supplemental": True})
+
+        source_results = self.gates.verify_sources(
+            tuple(state.accepted_evidence),
+            spec=spec,
+            policy=policy,
+            memory_context=tuple(state.memory_context),
+        )
+        self._record_gate_failures(state, source_results)
+        state.gap_report = _with_unsupported_claims(
+            _gap_report(
+                spec,
+                tuple(state.accepted_evidence),
+                source_results,
+                rejected=tuple(state.rejected_evidence),
+            ),
+            unsupported_claims,
+        )
+        if not _coverage_passed(source_results):
+            self._event(
+                state,
+                "rag_answer_supplemental_round_failed",
+                {
+                    "generation_attempt": generation_attempt,
+                    "reason": "supplemental evidence coverage incomplete",
+                    "gap_report": to_jsonable(state.gap_report),
+                    "gate_results": failed_gate_dicts(source_results),
+                },
+            )
+            return None
+
+        pack = self.context_pack_assembler.assemble(
+            spec=spec,
+            accepted_evidence=tuple(state.accepted_evidence[: spec.budget.max_context_items]),
+            rejected_evidence=tuple(state.rejected_evidence),
+            conflicting_evidence=tuple(state.conflicting_evidence),
+            memory_context=tuple(state.memory_context[: spec.budget.max_memory_hits]),
+            artifact_refs=_dedupe_texts(state.artifact_refs),
+            gap_report=state.gap_report,
+            budget_snapshot=state.budget_snapshot,
+            policy=policy,
+        )
+        pack_results = self.gates.verify_context_pack(pack, policy=policy)
+        self._event(
+            state,
+            "rag_context_pack_assembled",
+            {"supplemental": True, "pack": pack.to_dict(), "gate_results": _results(pack_results)},
+        )
+        self._record_gate_failures(state, pack_results)
+        if not all(result.passed for result in pack_results):
+            self._event(
+                state,
+                "rag_answer_supplemental_round_failed",
+                {
+                    "generation_attempt": generation_attempt,
+                    "reason": "supplemental context pack gate failed",
+                    "gate_results": failed_gate_dicts(pack_results),
+                },
+            )
+            return None
+
+        self._event(
+            state,
+            "rag_answer_supplemental_round_completed",
+            {
+                "generation_attempt": generation_attempt,
+                "context_pack_id": pack.pack_id,
+                "accepted_evidence_ids": [item.evidence_id for item in pack.accepted_evidence],
+            },
+        )
+        return pack
 
     def _execute_plan(
         self,
@@ -558,6 +779,16 @@ def _gap_report(
         "accepted_evidence_ids": [item.evidence_id for item in accepted],
         "gate_results": _results(results),
         "rejection_summary": _rejection_summary(rejected),
+    }
+
+
+def _with_unsupported_claims(
+    gap_report: dict[str, Any],
+    unsupported_claims: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    return {
+        **dict(gap_report),
+        "unsupported_claims": [dict(item) for item in unsupported_claims],
     }
 
 

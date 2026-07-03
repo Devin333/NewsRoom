@@ -103,6 +103,19 @@ def test_deterministic_planner_prefers_missing_evidence_type_when_replanning() -
     assert "figure" in plan.queries[0].query
 
 
+def test_deterministic_planner_includes_unsupported_claims_in_replan_query() -> None:
+    spec = fake_rag_session_spec()
+
+    plan = DeterministicRAGPlanner().plan(
+        spec,
+        round_index=1,
+        gap_report={"unsupported_claims": [{"claim_id": "c1", "text": "experiment table accuracy"}]},
+    )
+
+    assert plan.queries[0].query is not None
+    assert "experiment table accuracy" in plan.queries[0].query
+
+
 def test_worker_rag_planner_uses_fallback_before_min_round_index() -> None:
     worker = _Worker({
         "candidate": _candidate_payload("worker-plan", "worker query"),

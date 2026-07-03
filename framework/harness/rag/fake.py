@@ -48,6 +48,9 @@ class FakeRAGPlanner(DeterministicRAGPlanner):
         missing = tuple(gap_report.get("missing_evidence_types", ()))
         if missing:
             query_text = f"{query_text} {' '.join(missing)}"
+        unsupported_claims = _unsupported_claim_texts(gap_report)
+        if unsupported_claims:
+            query_text = f"{query_text} {' '.join(unsupported_claims)}"
         return RetrievalPlanCandidate(
             candidate_id=f"fake-plan:{spec.session_id}:{round_index + 1}",
             queries=(
@@ -238,6 +241,18 @@ def fake_reader_repair_memory() -> tuple[dict[str, Any], ...]:
 
 def _per_round_memory_limit(total: int, rounds: int) -> int:
     return max(1, min(4, total // max(rounds, 1) or total or 1))
+
+
+def _unsupported_claim_texts(gap_report: dict[str, Any]) -> tuple[str, ...]:
+    texts: list[str] = []
+    for item in gap_report.get("unsupported_claims", ()):
+        if isinstance(item, dict):
+            text = str(item.get("text", "")).strip()
+        else:
+            text = str(item).strip()
+        if text:
+            texts.append(text[:160])
+    return tuple(dict.fromkeys(texts[:3]))
 
 
 __all__ = [

@@ -126,7 +126,7 @@ def build_paper_rag_session(
     generation_policy: dict[str, object] = {}
     if with_answer_worker:
         answer_worker = PaperAnswerWorker(AnswerGenerator(build_unity_llm_call(max_tokens=600)))
-        generation_policy = {"enabled": True}
+        generation_policy = {"enabled": True, "max_attempts": 2}
     return PaperRAGSession(
         build_chunk_store(),
         reranker=reranker,

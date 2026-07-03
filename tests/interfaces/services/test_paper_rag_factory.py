@@ -177,7 +177,7 @@ def test_paper_rag_session_factory_builds_optional_answer_worker(monkeypatch):
     paper_rag_factory.build_paper_rag_session(with_reranker=False, with_answer_worker=True)
 
     assert _FakeSession.last_kwargs["answer_worker"] is not None
-    assert _FakeSession.last_kwargs["generation_policy"] == {"enabled": True}
+    assert _FakeSession.last_kwargs["generation_policy"] == {"enabled": True, "max_attempts": 2}
 
 
 def test_paper_rag_session_factory_wires_relevance_scorer_from_reranker(monkeypatch):

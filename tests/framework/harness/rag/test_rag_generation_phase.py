@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from framework.harness import FakeMemoryPort, RAGDecisionType, RAGSessionStatus, fake_rag_session_spec
+from framework.harness import FakeMemoryPort, RAGBudget, RAGDecisionType, RAGSessionStatus, fake_rag_session_spec
 from framework.harness.rag.fake import FakeRAGPlanner, fake_reader_repair_memory, fake_research_evidence_packs
 from framework.harness.rag.models import AnswerClaim, GroundedAnswerCandidate, RAGContextPack
 from framework.harness.rag.session import BoundedRAGSessionController
+from framework.harness.retrieval.evidence_pack import EvidencePack, EvidencePackCollection
 from framework.harness.retrieval.fake import FakeRetrievalPort
+from framework.harness.retrieval.request import RetrievalRequest
 
 
 def test_generation_phase_is_disabled_by_default() -> None:
@@ -65,16 +67,102 @@ def test_generation_phase_returns_verified_abstention() -> None:
     assert result.answer.abstained is True
 
 
-def _controller(worker: _AnswerWorker) -> BoundedRAGSessionController:
+def test_generation_phase_retries_after_supplemental_round_and_returns_answered() -> None:
+    packs = fake_research_evidence_packs()
+    retrieval = _SequentialRetrievalPort(((packs[0],), (packs[1],)))
+    worker = _AnswerWorker(
+        _unsupported_answer("ans-1"),
+        _grounded_answer(
+            answer_id="ans-2",
+            answer_text="The repair accuracy is reported in the experiment table. [ev-2]",
+            evidence_id="evidence:sparse-mixture-reader:experiment",
+            claim_text="The repair accuracy is reported in the experiment table.",
+        ),
+    )
+
+    result = _controller(worker, retrieval=retrieval).run(
+        _generation_spec(generation_policy={"enabled": True, "max_attempts": 2})
+    )
+
+    assert result.status == RAGSessionStatus.ANSWERED
+    assert result.decision.decision_type == RAGDecisionType.RETURN_ANSWER
+    assert len(worker.calls) == 2
+    assert len(retrieval.requests) == 2
+    assert result.context_pack is not None
+    assert "evidence:sparse-mixture-reader:experiment" in {
+        item.evidence_id for item in result.context_pack.accepted_evidence
+    }
+    assert "The experiment table reports repair accuracy." in retrieval.requests[1].query
+    assert any(event["event_type"] == "rag_answer_supplemental_gap_created" for event in result.transcript.events)
+    assert any(event["event_type"] == "rag_answer_supplemental_round_completed" for event in result.transcript.events)
+
+
+def test_generation_phase_abstains_when_supplemental_retry_still_fails() -> None:
+    packs = fake_research_evidence_packs()
+    retrieval = _SequentialRetrievalPort(((packs[0],), (packs[1],)))
+    worker = _AnswerWorker(
+        _unsupported_answer("ans-1"),
+        _unsupported_answer("ans-2"),
+    )
+
+    result = _controller(worker, retrieval=retrieval).run(
+        _generation_spec(generation_policy={"enabled": True, "max_attempts": 2})
+    )
+
+    assert result.status == RAGSessionStatus.ABSTAINED
+    assert result.decision.decision_type == RAGDecisionType.ABSTAIN
+    assert len(worker.calls) == 2
+    assert len(retrieval.requests) == 2
+    assert any(item["gate"] == "rag_answer_claim_coverage" for item in result.decision.gate_results)
+    assert any(event["event_type"] == "rag_answer_supplemental_round_completed" for event in result.transcript.events)
+
+
+def test_generation_phase_does_not_retry_when_supplemental_budget_is_exhausted() -> None:
+    retrieval = _SequentialRetrievalPort(((fake_research_evidence_packs()[0],),))
+    worker = _AnswerWorker(_unsupported_answer("ans-1"))
+    budget = RAGBudget(
+        max_rounds=1,
+        max_replans=0,
+        max_queries=2,
+        max_source_reads=2,
+        max_memory_hits=2,
+        max_context_items=4,
+        max_context_tokens=1024,
+        max_worker_calls=4,
+    )
+
+    result = _controller(worker, retrieval=retrieval).run(
+        _generation_spec(
+            budget=budget,
+            generation_policy={"enabled": True, "max_attempts": 2},
+        )
+    )
+
+    assert result.status == RAGSessionStatus.ABSTAINED
+    assert len(worker.calls) == 1
+    assert len(retrieval.requests) == 1
+    assert any(event["event_type"] == "rag_answer_supplemental_gap_created" for event in result.transcript.events)
+    assert any(event["event_type"] == "rag_answer_supplemental_round_skipped" for event in result.transcript.events)
+
+
+def _controller(
+    worker: _AnswerWorker,
+    *,
+    retrieval: FakeRetrievalPort | _SequentialRetrievalPort | None = None,
+) -> BoundedRAGSessionController:
     return BoundedRAGSessionController(
-        retrieval=FakeRetrievalPort(fake_research_evidence_packs()[:1]),
+        retrieval=retrieval or FakeRetrievalPort(fake_research_evidence_packs()[:1]),
         planner=FakeRAGPlanner(),
         memory=FakeMemoryPort(fake_reader_repair_memory()),
         answer_worker=worker,
     )
 
 
-def _generation_spec():
+def _generation_spec(
+    *,
+    generation_policy: dict[str, object] | None = None,
+    budget: RAGBudget | None = None,
+):
     spec = fake_rag_session_spec()
     return type(spec)(
         session_id=spec.session_id,
@@ -86,34 +174,66 @@ def _generation_spec():
         allowed_memory_namespaces=spec.allowed_memory_namespaces,
         allowed_tools=spec.allowed_tools,
         source_policy=spec.source_policy,
-        budget=spec.budget,
+        budget=budget or spec.budget,
         context_policy=spec.context_policy,
-        generation_policy={"enabled": True},
+        generation_policy=generation_policy or {"enabled": True},
         metadata=spec.metadata,
     )
 
 
-def _grounded_answer() -> GroundedAnswerCandidate:
+def _grounded_answer(
+    *,
+    answer_id: str = "ans-1",
+    answer_text: str = "The method retrieves evidence. [ev-1]",
+    evidence_id: str = "evidence:sparse-mixture-reader:method",
+    claim_text: str = "The method retrieves evidence.",
+) -> GroundedAnswerCandidate:
     return GroundedAnswerCandidate(
-        answer_id="ans-1",
+        answer_id=answer_id,
         question="Q?",
-        answer_text="The method retrieves evidence. [ev-1]",
-        cited_evidence_ids=("evidence:sparse-mixture-reader:method",),
+        answer_text=answer_text,
+        cited_evidence_ids=(evidence_id,),
         claims=(
             AnswerClaim(
                 "c1",
-                "The method retrieves evidence.",
-                ("evidence:sparse-mixture-reader:method",),
+                claim_text,
+                (evidence_id,),
             ),
         ),
     )
 
 
+def _unsupported_answer(answer_id: str) -> GroundedAnswerCandidate:
+    return GroundedAnswerCandidate(
+        answer_id=answer_id,
+        question="Q?",
+        answer_text="Unsupported answer.",
+        cited_evidence_ids=(),
+        claims=(AnswerClaim("c1", "The experiment table reports repair accuracy.", ()),),
+    )
+
+
 class _AnswerWorker:
-    def __init__(self, candidate: GroundedAnswerCandidate) -> None:
-        self.candidate = candidate
+    def __init__(self, *candidates: GroundedAnswerCandidate) -> None:
+        self.candidates = list(candidates)
         self.calls: list[tuple[str, str]] = []
 
     def generate_answer(self, *, question: str, pack: RAGContextPack) -> GroundedAnswerCandidate:
         self.calls.append((question, pack.pack_id))
-        return self.candidate
+        index = min(len(self.calls) - 1, len(self.candidates) - 1)
+        return self.candidates[index]
+
+
+class _SequentialRetrievalPort:
+    def __init__(self, rounds: tuple[tuple[EvidencePack, ...], ...]) -> None:
+        self.rounds = rounds
+        self.requests: list[RetrievalRequest] = []
+
+    def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection:
+        self.requests.append(request)
+        index = min(len(self.requests) - 1, len(self.rounds) - 1)
+        return EvidencePackCollection(
+            packs=self.rounds[index][: request.limit],
+            request_ref=f"retrieval://sequential/{len(self.requests)}",
+            metadata={"query": request.query, "scope": request.scope},
+        )

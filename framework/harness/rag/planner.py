@@ -39,6 +39,9 @@ class DeterministicRAGPlanner:
         missing_evidence_types = tuple(str(item) for item in gap_report.get("missing_evidence_types", ()) if str(item).strip())
         if missing_evidence_types:
             query_text = f"{query_text} {' '.join(missing_evidence_types)}"
+        unsupported_claims = _unsupported_claim_texts(gap_report)
+        if unsupported_claims:
+            query_text = f"{query_text} {' '.join(unsupported_claims)}"
         evidence_type = (
             missing_evidence_types[0]
             if missing_evidence_types
@@ -144,6 +147,18 @@ class WorkerRAGPlanner:
 
 def _per_round_limit(total: int, rounds: int, *, ceiling: int) -> int:
     return max(1, min(ceiling, total // max(rounds, 1) or total or 1))
+
+
+def _unsupported_claim_texts(gap_report: dict[str, Any]) -> tuple[str, ...]:
+    texts: list[str] = []
+    for item in gap_report.get("unsupported_claims", ()):
+        if isinstance(item, dict):
+            text = str(item.get("text", "")).strip()
+        else:
+            text = str(item).strip()
+        if text:
+            texts.append(text[:160])
+    return tuple(dict.fromkeys(texts[:3]))
 
 
 __all__ = ["DeterministicRAGPlanner", "RAGPlanner", "WorkerRAGPlanner"]
