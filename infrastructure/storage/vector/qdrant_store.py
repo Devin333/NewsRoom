@@ -95,6 +95,33 @@ class QdrantVectorStore:
             return None
         return VectorSearchResult.from_payload(score=1.0, payload=dict(points[0].payload or {}))
 
+    def list_payloads(
+        self,
+        collection: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        batch_size: int = 256,
+    ) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        offset: Any = None
+        while True:
+            response = self.client.scroll(
+                collection_name=collection,
+                scroll_filter=_qdrant_filter(filters or {}),
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if isinstance(response, tuple):
+                points, offset = response
+            else:
+                points = getattr(response, "points", response)
+                offset = getattr(response, "next_page_offset", None)
+            payloads.extend(dict(point.payload or {}) for point in points)
+            if offset is None or not points:
+                return payloads
+
     def ensure_collections(self, collections: list[str]) -> list[VectorCollectionStatus]:
         statuses = []
         for collection in collections:

@@ -13,6 +13,8 @@ from interfaces.models.common import ApiActionResult
 from infrastructure.storage.lineage.evidence import quality_lineage_summary
 from infrastructure.storage.local_json import LocalJsonRepository
 
+_DEFAULT_ARTIFACT_ROOT = Path(".newsroom/runs")
+
 
 @dataclass(frozen=True)
 class ReportSearchResultSet:
@@ -222,7 +224,11 @@ def _report_repository(
     env: dict[str, str] | None,
 ) -> Any:
     values = env if env is not None else os.environ
-    dsn = database_dsn or values.get("NEWS_DATABASE_DSN")
+    dsn = database_dsn or (
+        values.get("NEWS_DATABASE_DSN")
+        if env is not None or Path(artifact_root) == _DEFAULT_ARTIFACT_ROOT
+        else None
+    )
     if dsn:
         from infrastructure.storage.postgres import PostgresRepository
 

@@ -32,11 +32,10 @@ from business.research.rag.cli.run_evidence_eval import (
     _lightweight_reranker_enabled,
     _load_chunks_from_papers_dir,
 )
-from business.research.rag.retrieval.paper_retriever import (
+from business.research.rag.retrieval.contracts import RetrievalRequest, RetrievalResult
+from business.research.rag.retrieval.policies import (
     PAPER_BLIND_SEMANTIC_RAG_V1_POLICY,
     PAPER_HYBRID_RRF_RAG_V1_POLICY,
-    RetrievalRequest,
-    RetrievalResult,
 )
 from framework.llm.clients.openai_compatible import LLMRetryPolicy, OpenAICompatibleClient, OpenAICompatibleConfig
 from framework.llm.models.request import LLMRequest

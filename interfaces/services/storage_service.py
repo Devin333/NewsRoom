@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,6 +20,8 @@ from infrastructure.storage.lifecycle import (
 from infrastructure.storage.lineage import LineageRef, lineage_store_from_env
 from infrastructure.storage.metrics import StorageMetrics, storage_metrics_collector_from_env
 from infrastructure.storage.persistence import repository_from_env
+
+_DEFAULT_ARTIFACT_ROOT = Path(".newsroom/runs")
 
 
 @dataclass(frozen=True)
@@ -158,16 +161,30 @@ class StorageApplicationService:
         lineage_store: Any | None = None,
         metrics_collector: Any | None = None,
         repository: Any | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
-        self.artifact_index = artifact_index_store or artifact_index_store_from_env(
-            artifact_root=self.artifact_root
+        factory_env = _factory_env(self.artifact_root, env)
+        self.artifact_index = artifact_index_store or _call_storage_factory(
+            artifact_index_store_from_env,
+            artifact_root=self.artifact_root,
+            env=factory_env,
         )
-        self.metrics_collector = metrics_collector or storage_metrics_collector_from_env(
-            artifact_root=self.artifact_root
+        self.metrics_collector = metrics_collector or _call_storage_factory(
+            storage_metrics_collector_from_env,
+            artifact_root=self.artifact_root,
+            env=factory_env,
         )
-        self.lineage_store = lineage_store or lineage_store_from_env(artifact_root=self.artifact_root)
-        self.repository = repository or repository_from_env(artifact_root=self.artifact_root)
+        self.lineage_store = lineage_store or _call_storage_factory(
+            lineage_store_from_env,
+            artifact_root=self.artifact_root,
+            env=factory_env,
+        )
+        self.repository = repository or _call_storage_factory(
+            repository_from_env,
+            artifact_root=self.artifact_root,
+            env=factory_env,
+        )
 
     def metrics(self) -> StorageMetrics:
         return self.metrics_collector.collect()
@@ -342,6 +359,23 @@ class StorageApplicationService:
 
 def _is_postgres_repository(repository: Any) -> bool:
     return "Postgres" in repository.__class__.__name__
+
+
+def _factory_env(artifact_root: Path, env: dict[str, str] | None) -> dict[str, str] | None:
+    if env is not None:
+        return env
+    return None if artifact_root == _DEFAULT_ARTIFACT_ROOT else {}
+
+
+def _call_storage_factory(
+    factory: Any,
+    *,
+    artifact_root: Path,
+    env: dict[str, str] | None,
+) -> Any:
+    if env is None or "env" not in inspect.signature(factory).parameters:
+        return factory(artifact_root=artifact_root)
+    return factory(artifact_root=artifact_root, env=env)
 
 
 def _manifest_artifact_paths(manifest: dict[str, Any]) -> dict[str, str]:

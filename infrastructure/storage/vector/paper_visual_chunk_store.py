@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 from infrastructure.external.visual_embeddings import visual_embedding_model_from_env
 from infrastructure.storage.vector.embeddings import DeterministicEmbeddingModel
 from infrastructure.storage.vector.models import VectorDocument, VectorSearchQuery
 from infrastructure.storage.vector.qdrant_store import DEFAULT_QDRANT_URL, QdrantVectorStore
-
-from business.research.document.models import PaperChunk
-from business.research.ports.visual_chunk_index import VisualChunkHit, VisualEmbeddingPort
 
 PAPER_VISUAL_CHUNKS_COLLECTION = "paper_visual_chunks"
 
@@ -23,6 +21,24 @@ _PAYLOAD_INDEXES: dict[str, str] = {
     "figure_id": "keyword",
     "section_index": "integer",
 }
+
+
+@runtime_checkable
+class VisualEmbeddingPort(Protocol):
+    dimension: int
+
+    def embed_text(self, text: str) -> list[float]: ...
+
+    def embed_image(self, image_path: str) -> list[float]: ...
+
+    def embed_images(self, image_paths: list[str]) -> list[list[float]]: ...
+
+
+@dataclass(frozen=True)
+class VisualChunkHit:
+    chunk_id: str
+    score: float
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class PaperVisualChunkStore:
@@ -49,7 +65,7 @@ class PaperVisualChunkStore:
         self._store.ensure_collections([PAPER_VISUAL_CHUNKS_COLLECTION])
         self._store.ensure_payload_indexes([PAPER_VISUAL_CHUNKS_COLLECTION], _PAYLOAD_INDEXES)
 
-    def index_chunks(self, chunks: list[PaperChunk]) -> None:
+    def index_chunks(self, chunks: list[Any]) -> None:
         visual_chunks = [chunk for chunk in chunks if _should_index_visual_chunk(chunk)]
         if not visual_chunks:
             return
@@ -174,12 +190,12 @@ def paper_visual_chunk_store_from_env(
     )
 
 
-def _should_index_visual_chunk(chunk: PaperChunk) -> bool:
+def _should_index_visual_chunk(chunk: Any) -> bool:
     return chunk.chunk_type == "figure" and bool(chunk.metadata.get("image_ref"))
 
 
 def _chunk_to_visual_doc(
-    chunk: PaperChunk,
+    chunk: Any,
     *,
     vector: list[float],
     image_ref: str,

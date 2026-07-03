@@ -2,13 +2,24 @@ from __future__ import annotations
 
 import os
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterator, Literal
 
 from framework.llm import DEFAULT_MODELS_CONFIG_PATH, load_openai_compatible_deployment
 from framework.llm.clients.openai_compatible import LLMConfigurationError
 from business.layers.signal.source_config import SourceConfigError, build_default_source_registry
+
+_LLM_ENV_OVERRIDE_KEYS = (
+    "NEWS_LLM_API_KEY",
+    "NEWS_LLM_API_KEY_ENV",
+    "NEWS_LLM_BASE_URL",
+    "NEWS_LLM_MODEL",
+    "NEWS_LLM_PROVIDER",
+    "NEWS_LLM_PROVIDER_NAME",
+    "NEWS_MODELS_CONFIG",
+)
 
 
 CheckStatus = Literal["ok", "warning", "error", "skipped"]
@@ -148,10 +159,11 @@ class DiagnosticApplicationService:
         configured = bool(self.env.get("NEWS_MODELS_CONFIG"))
         path = Path(self.env.get("NEWS_MODELS_CONFIG") or DEFAULT_MODELS_CONFIG_PATH)
         try:
-            deployment = load_openai_compatible_deployment(
-                path,
-                route_id="daily-intelligence-writer",
-            )
+            with _llm_env_overrides(self.env):
+                deployment = load_openai_compatible_deployment(
+                    path,
+                    route_id="daily-intelligence-writer",
+                )
         except LLMConfigurationError as exc:
             return DiagnoseCheck(
                 check_id="model_config",
@@ -258,4 +270,25 @@ class DiagnosticApplicationService:
             message="PostgreSQL connection check succeeded.",
             details={"configured": True},
         )
+
+
+@contextmanager
+def _llm_env_overrides(env: Any) -> Iterator[None]:
+    if env is os.environ:
+        yield
+        return
+    snapshot = {key: os.environ.get(key) for key in _LLM_ENV_OVERRIDE_KEYS}
+    try:
+        for key in _LLM_ENV_OVERRIDE_KEYS:
+            if key in env:
+                os.environ[key] = str(env[key])
+            else:
+                os.environ.pop(key, None)
+        yield
+    finally:
+        for key, value in snapshot.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 

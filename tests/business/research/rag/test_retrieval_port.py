@@ -97,6 +97,18 @@ def test_section_index_echoed_in_collection_metadata():
     assert result.request_ref == "rag-kernel://retrieval/paper_query/how-does-attention-work"
 
 
+def test_paper_retrieval_port_derives_evidence_type_from_content_not_request_label():
+    spy = _SpyRetriever()
+    port = PaperChunkRetrievalPort(spy)  # type: ignore[arg-type]
+
+    result = port.retrieve(_request({"evidence_type": "experiment"}))
+
+    assert result.packs[0].metadata["chunk_type"] == "paragraph"
+    assert result.packs[0].metadata["section_role"] == ["method"]
+    assert result.packs[0].metadata["evidence_type"] == "method"
+    assert result.packs[0].metadata["evidence_type_source"] == "content_resolved"
+
+
 def test_paper_kernel_rag_retriever_projects_chunks_to_rag_evidence():
     spy = _SpyRetriever()
     retriever = PaperKernelRAGRetriever(spy, default_section_index=5)  # type: ignore[arg-type]

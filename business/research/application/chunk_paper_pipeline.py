@@ -24,6 +24,7 @@ from business.research.ports.field_embedding_index import FieldEmbeddingIndexerP
 from business.research.ports.source_fetcher import SourceFetcherPort
 from business.research.ports.visual_description import VisualChunkDescriptionPort
 from business.research.ports.visual_chunk_index import VisualChunkIndexerPort
+from business.research.rag.retrieval.bm25_index import write_bm25_index
 
 
 @dataclass
@@ -35,6 +36,7 @@ class ChunkPipelineResult:
     structure_detected: bool
     parse_source: str
     chunk_manifest_path: str = ""
+    bm25_index_path: str = ""
     visual_described_chunks: int = 0
 
 
@@ -155,7 +157,16 @@ class ChunkPaperPipeline:
             self._visual_indexer.ensure_collection()
             self._visual_indexer.index_chunks(chunks)
         self._repo.save_chunks(chunks)
-        manifest_path = self._chunk_manifest.write(paper_id, chunks)
+        bm25_index_path = write_bm25_index(
+            paper_id,
+            chunks,
+            self._chunk_manifest.path_for(paper_id).with_name("bm25_index.json"),
+        )
+        manifest_path = self._chunk_manifest.write(
+            paper_id,
+            chunks,
+            document_metadata=doc.metadata,
+        )
 
         by_type: dict[str, int] = {}
         for c in chunks:
@@ -169,6 +180,7 @@ class ChunkPaperPipeline:
             structure_detected=any(c.structure_detected for c in chunks),
             parse_source=parse_source,
             chunk_manifest_path=str(manifest_path),
+            bm25_index_path=str(bm25_index_path),
             visual_described_chunks=visual_described_chunks,
         )
 

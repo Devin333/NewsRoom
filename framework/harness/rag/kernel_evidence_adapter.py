@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from framework.harness.rag.evidence_typing import EvidenceTypeResolver
 from framework.harness.rag.models import EvidenceCandidate
 from framework.harness.retrieval.evidence_pack import EvidencePackCollection
 from framework.harness.retrieval.request import RetrievalRequest
@@ -49,17 +50,19 @@ class KernelRAGRetrieverHarnessAdapter:
         *,
         default_intent: str = "general",
         default_evidence_type: str = "rag_evidence",
+        evidence_type_resolver: EvidenceTypeResolver | None = None,
     ) -> None:
         self._retriever = retriever
         self._default_intent = str(default_intent or "general")
         self._default_evidence_type = str(default_evidence_type or "rag_evidence")
+        self._evidence_type_resolver = evidence_type_resolver
 
     def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection:
         query = _rag_query_from_harness_request(request, default_intent=self._default_intent)
         evidence = tuple(self._retriever.retrieve(query))
-        evidence_type = str(request.metadata.get("evidence_type") or self._default_evidence_type)
+        requested_type = str(request.metadata.get("evidence_type") or self._default_evidence_type)
         candidates = tuple(
-            evidence_candidate_from_rag_evidence(item, evidence_type=evidence_type)
+            self._candidate_from_evidence(item, requested_type=requested_type)
             for item in evidence
         )
         return EvidencePackCollection(
@@ -71,6 +74,24 @@ class KernelRAGRetrieverHarnessAdapter:
                 "adapter": "kernel_rag_retriever_harness_adapter",
             },
         )
+
+    def _candidate_from_evidence(self, evidence: RAGEvidence, *, requested_type: str) -> EvidenceCandidate:
+        resolved_type = (
+            self._evidence_type_resolver.resolve(evidence.metadata)
+            if self._evidence_type_resolver is not None
+            else None
+        )
+        candidate = evidence_candidate_from_rag_evidence(
+            evidence,
+            evidence_type=resolved_type or requested_type,
+        )
+        if resolved_type:
+            candidate.metadata["evidence_type_source"] = "content_resolved"
+        elif self._evidence_type_resolver is not None:
+            candidate.metadata["evidence_type_source"] = "requested_fallback"
+        else:
+            candidate.metadata["evidence_type_source"] = "requested_default"
+        return candidate
 
 
 def _source_ref(evidence: RAGEvidence) -> str:

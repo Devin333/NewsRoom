@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from framework.harness.rag.answer_gate import RAGAnswerGate, unsupported_claims_from_answer_gate
+from framework.harness.rag.answer_worker import AnswerWorkerPort
 from framework.harness.rag.context_pack_assembler import FakeRAGContextPackAssembler, RAGContextPackAssembler
+from framework.harness.rag.evidence_typing import EvidenceTypeResolver, MetadataKeyEvidenceTypeResolver
 from framework.harness.rag.fake import (
     FakeRAGGateSuite,
     FakeRAGPlanner,
@@ -30,7 +33,9 @@ from framework.harness.rag.gates import (
 )
 from framework.harness.rag.models import (
     FORBIDDEN_RAG_PLAN_KEYS,
+    AnswerClaim,
     EvidenceCandidate,
+    GroundedAnswerCandidate,
     RAGBudget,
     RAGBudgetSnapshot,
     RAGContextPack,
@@ -47,23 +52,30 @@ from framework.harness.rag.models import (
 )
 from framework.harness.rag.planner import DeterministicRAGPlanner, RAGPlanner, WorkerRAGPlanner
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType, RAGExecutionPolicy, budget_exceeded, normalize_query
+from framework.harness.rag.relevance import RAGRelevanceGate, RelevanceScorerPort
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionController, RAGSessionResult, RAGSessionState
 from framework.harness.rag.source_verifier import FakeSourceVerifier, SourceVerificationResult, SourceVerifier
 
 __all__ = [
     "FORBIDDEN_RAG_PLAN_KEYS",
+    "AnswerClaim",
+    "AnswerWorkerPort",
     "BoundedRAGSessionController",
     "DeterministicRAGPlanner",
     "EvidenceCandidate",
+    "EvidenceTypeResolver",
     "FakeRAGContextPackAssembler",
     "FakeRAGGateSuite",
     "FakeRAGPlanner",
     "FakeRAGSessionController",
     "FakeSourceVerifier",
+    "GroundedAnswerCandidate",
     "KernelRAGRetrieverHarnessAdapter",
+    "MetadataKeyEvidenceTypeResolver",
     "RAGEvidenceConflictGate",
     "RAGEvidenceCoverageGate",
     "RAGEvidenceGateResult",
+    "RAGAnswerGate",
     "RAGBudget",
     "RAGBudgetGate",
     "RAGBudgetSnapshot",
@@ -80,6 +92,7 @@ __all__ = [
     "RAGPlanSchemaGate",
     "RAGPlanner",
     "RAGQueryDedupGate",
+    "RAGRelevanceGate",
     "RAGScopeGate",
     "RAGSessionController",
     "RAGSessionRequest",
@@ -95,6 +108,7 @@ __all__ = [
     "RetrievalPlanCandidate",
     "RetrievalStepResult",
     "RetrievalStepSpec",
+    "RelevanceScorerPort",
     "SourceVerificationResult",
     "SourceVerifier",
     "WorkerRAGPlanner",
@@ -107,4 +121,5 @@ __all__ = [
     "fake_research_evidence_packs",
     "normalize_query",
     "validate_rag_evidence_refs",
+    "unsupported_claims_from_answer_gate",
 ]

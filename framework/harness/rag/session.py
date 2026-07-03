@@ -7,10 +7,13 @@ from uuid import uuid4
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.memory.ports import MemoryPort
 from framework.harness.mcp.policy import MCPToolRequest
+from framework.harness.rag.answer_gate import RAGAnswerGate
+from framework.harness.rag.answer_worker import AnswerWorkerPort
 from framework.harness.rag.context_pack_assembler import RAGContextPackAssembler
 from framework.harness.rag.gates import RAGGateSuite, RAGGateResult, failed_gate_dicts
 from framework.harness.rag.models import (
     EvidenceCandidate,
+    GroundedAnswerCandidate,
     RAGBudget,
     RAGBudgetSnapshot,
     RAGContextPack,
@@ -44,6 +47,7 @@ class RAGSessionResult:
     context_pack: RAGContextPack | None
     transcript: RAGTranscript
     decision: RAGDecision
+    answer: GroundedAnswerCandidate | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +55,7 @@ class RAGSessionResult:
             "context_pack": self.context_pack.to_dict() if self.context_pack else None,
             "transcript": self.transcript.to_dict(),
             "decision": self.decision.to_dict(),
+            "answer": self.answer.to_dict() if self.answer else None,
         }
 
 
@@ -78,6 +83,8 @@ class BoundedRAGSessionController(RAGSessionController):
         planner: RAGPlanner | None = None,
         source_verifier: SourceVerifier | None = None,
         context_pack_assembler: RAGContextPackAssembler | None = None,
+        answer_worker: AnswerWorkerPort | None = None,
+        answer_gate: RAGAnswerGate | None = None,
         gates: RAGGateSuite | None = None,
     ) -> None:
         self.retrieval = retrieval
@@ -86,6 +93,8 @@ class BoundedRAGSessionController(RAGSessionController):
         self.planner = planner or DeterministicRAGPlanner()
         self.source_verifier = source_verifier or SourceVerifier()
         self.context_pack_assembler = context_pack_assembler or RAGContextPackAssembler()
+        self.answer_worker = answer_worker
+        self.answer_gate = answer_gate or RAGAnswerGate()
         self.gates = gates or RAGGateSuite()
 
     def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
@@ -106,6 +115,7 @@ class BoundedRAGSessionController(RAGSessionController):
         decision = RAGDecision(RAGDecisionType.CONTINUE_RETRIEVAL, "session started", budget_snapshot=state.budget_snapshot)
         status = RAGSessionStatus.INSUFFICIENT_EVIDENCE
         pack: RAGContextPack | None = None
+        answer: GroundedAnswerCandidate | None = None
 
         for round_index in range(spec.budget.max_rounds):
             state.budget_snapshot = state.budget_snapshot.with_usage(rounds=1)
@@ -115,7 +125,12 @@ class BoundedRAGSessionController(RAGSessionController):
                 status = RAGSessionStatus.HALTED
                 break
 
-            plan = self.planner.plan(spec, round_index=round_index, gap_report=state.gap_report)
+            plan = self.planner.plan(
+                spec,
+                round_index=round_index,
+                gap_report=state.gap_report,
+                executed_queries=tuple(sorted(state.executed_queries)),
+            )
             self._event(state, "rag_plan_candidate_created", {"round_index": round_index, "plan": plan.to_dict()})
             projected = _add_snapshots(state.budget_snapshot, policy.projected_usage(plan))
             plan_results = self.gates.verify_plan(
@@ -137,7 +152,11 @@ class BoundedRAGSessionController(RAGSessionController):
             state.artifact_refs.extend(_dedupe_texts(ref for result in step_results for ref in result.artifact_refs))
             for step_result in step_results:
                 self._event(state, "rag_step_executed", step_result.to_dict())
-            verification = self.source_verifier.verify(tuple(_result_evidence(step_results)), policy=policy)
+            verification = self.source_verifier.verify(
+                tuple(_result_evidence(step_results)),
+                policy=policy,
+                question=spec.goal.question,
+            )
             state.accepted_evidence.extend(_dedupe_evidence(verification.accepted, state.accepted_evidence))
             state.rejected_evidence.extend(_dedupe_evidence(verification.rejected, state.rejected_evidence))
             state.conflicting_evidence.extend(_dedupe_evidence(verification.conflicting, state.conflicting_evidence))
@@ -150,7 +169,12 @@ class BoundedRAGSessionController(RAGSessionController):
                 memory_context=tuple(state.memory_context),
             )
             self._record_gate_failures(state, source_results)
-            state.gap_report = _gap_report(spec, tuple(state.accepted_evidence), source_results)
+            state.gap_report = _gap_report(
+                spec,
+                tuple(state.accepted_evidence),
+                source_results,
+                rejected=tuple(state.rejected_evidence),
+            )
             if _coverage_passed(source_results):
                 decision = RAGDecision(
                     RAGDecisionType.ASSEMBLE_CONTEXT,
@@ -196,15 +220,18 @@ class BoundedRAGSessionController(RAGSessionController):
             self._event(state, "rag_context_pack_assembled", {"pack": pack.to_dict(), "gate_results": _results(pack_results)})
             self._record_gate_failures(state, pack_results)
             if all(result.passed for result in pack_results):
-                decision = RAGDecision(
-                    RAGDecisionType.RETURN_CONTEXT_PACK,
-                    "context pack verified",
-                    gate_results=_results(pack_results),
-                    budget_snapshot=pack.budget_snapshot,
-                    metadata={"context_pack_id": pack.pack_id},
-                )
-                status = RAGSessionStatus.SUCCEEDED
-                self._event(state, "rag_context_pack_returned", decision.to_dict())
+                if policy.generation_enabled and self.answer_worker is not None:
+                    answer, decision, status = self._run_generation_phase(state, spec, policy, pack)
+                else:
+                    decision = RAGDecision(
+                        RAGDecisionType.RETURN_CONTEXT_PACK,
+                        "context pack verified",
+                        gate_results=_results(pack_results),
+                        budget_snapshot=pack.budget_snapshot,
+                        metadata={"context_pack_id": pack.pack_id},
+                    )
+                    status = RAGSessionStatus.SUCCEEDED
+                    self._event(state, "rag_context_pack_returned", decision.to_dict())
             else:
                 decision = self._halt(state, "context pack gate failed", pack_results)
                 status = RAGSessionStatus.HALTED
@@ -220,7 +247,56 @@ class BoundedRAGSessionController(RAGSessionController):
             events=tuple(state.events),
             status=status,
         )
-        return RAGSessionResult(status=status, context_pack=pack, transcript=transcript, decision=decision)
+        return RAGSessionResult(status=status, context_pack=pack, transcript=transcript, decision=decision, answer=answer)
+
+    def _run_generation_phase(
+        self,
+        state: RAGSessionState,
+        spec: RAGSessionSpec,
+        policy: RAGExecutionPolicy,
+        pack: RAGContextPack,
+    ) -> tuple[GroundedAnswerCandidate | None, RAGDecision, RAGSessionStatus]:
+        if self.answer_worker is None:
+            decision = RAGDecision(
+                RAGDecisionType.RETURN_CONTEXT_PACK,
+                "context pack verified",
+                budget_snapshot=pack.budget_snapshot,
+                metadata={"context_pack_id": pack.pack_id},
+            )
+            return None, decision, RAGSessionStatus.SUCCEEDED
+        candidate = self.answer_worker.generate_answer(question=spec.goal.question, pack=pack)
+        self._event(state, "rag_answer_candidate_created", candidate.to_dict())
+        answer_results = self.answer_gate.evaluate(candidate, pack)
+        self._event(state, "rag_answer_verified", {"gate_results": _results(answer_results)})
+        if all(result.passed for result in answer_results):
+            if candidate.abstained:
+                decision = RAGDecision(
+                    RAGDecisionType.ABSTAIN,
+                    "answer worker produced a verified abstention",
+                    gate_results=_results(answer_results),
+                    budget_snapshot=pack.budget_snapshot,
+                    metadata={"context_pack_id": pack.pack_id, "answer_id": candidate.answer_id},
+                )
+                self._event(state, "rag_abstained", decision.to_dict())
+                return candidate, decision, RAGSessionStatus.ABSTAINED
+            decision = RAGDecision(
+                RAGDecisionType.RETURN_ANSWER,
+                "answer verified",
+                gate_results=_results(answer_results),
+                budget_snapshot=pack.budget_snapshot,
+                metadata={"context_pack_id": pack.pack_id, "answer_id": candidate.answer_id},
+            )
+            self._event(state, "rag_answer_returned", decision.to_dict())
+            return candidate, decision, RAGSessionStatus.ANSWERED
+        decision = RAGDecision(
+            RAGDecisionType.ABSTAIN,
+            "answer gate failed",
+            gate_results=failed_gate_dicts(answer_results),
+            budget_snapshot=pack.budget_snapshot,
+            metadata={"context_pack_id": pack.pack_id, "answer_id": candidate.answer_id},
+        )
+        self._event(state, "rag_abstained", decision.to_dict())
+        return candidate, decision, RAGSessionStatus.ABSTAINED
 
     def _execute_plan(
         self,
@@ -473,6 +549,7 @@ def _gap_report(
     spec: RAGSessionSpec,
     accepted: tuple[EvidenceCandidate, ...],
     results: tuple[RAGGateResult, ...],
+    rejected: tuple[EvidenceCandidate, ...] = (),
 ) -> dict[str, Any]:
     present = {item.evidence_type for item in accepted}
     missing = [item for item in spec.goal.required_evidence_types if item not in present]
@@ -480,11 +557,23 @@ def _gap_report(
         "missing_evidence_types": missing,
         "accepted_evidence_ids": [item.evidence_id for item in accepted],
         "gate_results": _results(results),
+        "rejection_summary": _rejection_summary(rejected),
     }
 
 
 def _results(results: tuple[RAGGateResult, ...]) -> tuple[dict[str, Any], ...]:
     return tuple(result.to_dict() for result in results)
+
+
+def _rejection_summary(rejected: tuple[EvidenceCandidate, ...]) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    for candidate in rejected:
+        reason = str(candidate.metadata.get("rejection_reason") or "source_verification_failed")
+        entry = summary.setdefault(reason, {"count": 0, "evidence_types": {}})
+        entry["count"] += 1
+        evidence_types = entry["evidence_types"]
+        evidence_types[candidate.evidence_type] = evidence_types.get(candidate.evidence_type, 0) + 1
+    return summary
 
 
 def _default_evidence_type(spec: RAGSessionSpec) -> str:

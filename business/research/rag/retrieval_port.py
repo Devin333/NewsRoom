@@ -8,7 +8,9 @@ from framework.rag.core import RAGEvidence, RAGQuery
 
 from business.research.document.models import PaperChunk
 from business.research.rag.adapters import PaperChunkAdapter
-from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest as ResearchRetrievalRequest
+from business.research.rag.evidence_typing import build_research_evidence_type_resolver
+from business.research.rag.retrieval.contracts import RetrievalRequest as ResearchRetrievalRequest
+from business.research.rag.retrieval.paper_retriever import ResearchRetriever
 
 
 def _extract_paper_id(request: RetrievalRequest) -> str:
@@ -44,6 +46,7 @@ class PaperChunkRetrievalPort:
             self._kernel_retriever,
             default_intent="paper_query",
             default_evidence_type="paper_chunk",
+            evidence_type_resolver=build_research_evidence_type_resolver(),
         )
         self._retriever = retriever
         self._default_section_index = max(0, default_section_index)

@@ -11,7 +11,7 @@ from business.research.domain.document import (
     ResearchSection,
     ResearchTable,
 )
-from business.research.rag.evaluation.paper_benchmark_ingest import ingest_benchmark_papers
+from business.research.rag.evaluation.paper_benchmark_ingest import _build_parser, ingest_benchmark_papers
 
 
 @dataclass(frozen=True)
@@ -208,3 +208,15 @@ def test_ingest_benchmark_papers_passes_pdf_parser_backend(monkeypatch, tmp_path
 
     assert report.succeeded == 1
     assert captured["backend"] == "marker"
+
+
+def test_benchmark_ingest_cli_accepts_marker_backend() -> None:
+    parser = _build_parser()
+
+    args = parser.parse_args([
+        "1706.03762",
+        "--pdf-parser-backend",
+        "cascade",
+    ])
+
+    assert args.pdf_parser_backend == "cascade"

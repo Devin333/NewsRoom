@@ -26,6 +26,8 @@ class RetrievalOperation(StrEnum):
 
 class RAGSessionStatus(StrEnum):
     SUCCEEDED = "succeeded"
+    ANSWERED = "answered"
+    ABSTAINED = "abstained"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
     HALTED = "halted"
     FAILED = "failed"
@@ -136,6 +138,7 @@ class RAGSessionSpec:
     source_policy: dict[str, Any] = field(default_factory=dict)
     budget: RAGBudget = field(default_factory=RAGBudget.safe_default)
     context_policy: dict[str, Any] = field(default_factory=dict)
+    generation_policy: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -161,6 +164,7 @@ class RAGSessionSpec:
         object.__setattr__(self, "allowed_tools", tuple(str(item) for item in self.allowed_tools))
         object.__setattr__(self, "source_policy", dict(self.source_policy))
         object.__setattr__(self, "context_policy", dict(self.context_policy))
+        object.__setattr__(self, "generation_policy", dict(self.generation_policy))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
@@ -176,6 +180,7 @@ class RAGSessionSpec:
             "source_policy": to_jsonable(self.source_policy),
             "budget": self.budget.to_dict(),
             "context_policy": to_jsonable(self.context_policy),
+            "generation_policy": to_jsonable(self.generation_policy),
             "metadata": to_jsonable(self.metadata),
         }
 
@@ -621,6 +626,63 @@ class RAGTranscript:
         }
 
 
+@dataclass(frozen=True)
+class AnswerClaim:
+    claim_id: str
+    text: str
+    evidence_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not str(self.claim_id).strip():
+            raise HarnessValidationError("claim_id is required")
+        if not str(self.text).strip():
+            raise HarnessValidationError("claim text is required")
+        object.__setattr__(self, "evidence_ids", tuple(str(item) for item in self.evidence_ids))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "claim_id": self.claim_id,
+            "text": self.text,
+            "evidence_ids": list(self.evidence_ids),
+        }
+
+
+@dataclass(frozen=True)
+class GroundedAnswerCandidate:
+    answer_id: str
+    question: str
+    answer_text: str
+    cited_evidence_ids: tuple[str, ...]
+    claims: tuple[AnswerClaim, ...]
+    abstained: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not str(self.answer_id).strip():
+            raise HarnessValidationError("answer_id is required")
+        if not str(self.question).strip():
+            raise HarnessValidationError("answer question is required")
+        object.__setattr__(self, "answer_text", str(self.answer_text))
+        object.__setattr__(self, "cited_evidence_ids", tuple(str(item) for item in self.cited_evidence_ids))
+        object.__setattr__(
+            self,
+            "claims",
+            tuple(item if isinstance(item, AnswerClaim) else AnswerClaim(**item) for item in self.claims),
+        )
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "answer_id": self.answer_id,
+            "question": self.question,
+            "answer_text": self.answer_text,
+            "cited_evidence_ids": list(self.cited_evidence_ids),
+            "claims": [claim.to_dict() for claim in self.claims],
+            "abstained": self.abstained,
+            "metadata": to_jsonable(self.metadata),
+        }
+
+
 def ensure_jsonable_rag_model(value: Any) -> None:
     stable_json_dumps(to_jsonable(value))
 
@@ -636,7 +698,9 @@ def _artifact_refs_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
 
 __all__ = [
     "FORBIDDEN_RAG_PLAN_KEYS",
+    "AnswerClaim",
     "EvidenceCandidate",
+    "GroundedAnswerCandidate",
     "RAGBudget",
     "RAGBudgetSnapshot",
     "RAGContextPack",

@@ -223,8 +223,9 @@ def _build_live_retriever(
     retrieval_policy: str | None = None,
     lightweight_reranker: bool = False,
 ):
-    from business.research.rag.retrieval.paper_retriever import ResearchRetriever, build_retrieval_policy
     from business.research.rag.retrieval.paper_claim_index import PaperClaimIndex
+    from business.research.rag.retrieval.paper_retriever import ResearchRetriever
+    from business.research.rag.retrieval.policies import build_retrieval_policy
 
     chunk_store = _InMemoryChunkStore()
     chunk_store.ensure_collection()
@@ -262,7 +263,7 @@ def _build_live_retriever(
 def _lightweight_reranker_enabled(retrieval_policy: str | None, *, explicit: bool) -> bool:
     if explicit:
         return True
-    from business.research.rag.retrieval.paper_retriever import retrieval_policy_enables_lightweight_reranker
+    from business.research.rag.retrieval.policies import retrieval_policy_enables_lightweight_reranker
 
     return retrieval_policy_enables_lightweight_reranker(retrieval_policy)
 

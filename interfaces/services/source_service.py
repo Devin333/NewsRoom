@@ -181,6 +181,10 @@ class SourceApplicationService:
         github_connector: Any | None = None,
         source_router: SourceConnectorRouter | None = None,
     ) -> None:
+        explicit_components = any(
+            component is not None
+            for component in (source_registry, arxiv_connector, github_connector, source_router)
+        )
         if source_registry is None:
             source_registry = build_default_source_registry(source_config_path=source_config_path)
         if fetch_policy is None:
@@ -188,7 +192,9 @@ class SourceApplicationService:
         self.source_registry = source_registry
         self.fetch_policy = _infra_fetch_policy(fetch_policy)
         self.rate_limiter = rate_limiter or DomainRateLimiter()
-        self.source_health_store = source_health_store or source_health_store_from_env()
+        self.source_health_store = source_health_store or (
+            None if explicit_components else source_health_store_from_env()
+        )
         self.health_manager = health_manager or BasicSourceHealthManager(
             health_store=self.source_health_store
         )

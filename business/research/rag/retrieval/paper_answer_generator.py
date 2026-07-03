@@ -7,7 +7,7 @@ from typing import Any
 
 from business.research.document.models import PaperChunk
 from business.research.rag.adapters.paper_field_text import extract_field_texts
-from business.research.rag.retrieval.paper_retriever import RetrievalResult
+from business.research.rag.retrieval.contracts import RetrievalResult
 from framework.rag.context import collect_nearby_context_ids
 from framework.rag.generation import (
     DEFAULT_GROUNDED_SYSTEM_INSTRUCTION,

@@ -15,6 +15,7 @@ import pytest
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.storage.postgres.migrations import load_migration_sql
 from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
+from infrastructure.storage.vector.embeddings import DeterministicEmbeddingModel
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
 from business.research.document.chunk_storage import (
@@ -38,7 +39,9 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def chunk_store():
-    store = PaperChunkStoreAdapter(PaperChunkStore(qdrant_store_from_env()))
+    store = PaperChunkStoreAdapter(PaperChunkStore(qdrant_store_from_env(
+        embedding_model=DeterministicEmbeddingModel(dimension=_vector_size_from_env()),
+    )))
     store.ensure_collection()
     return store
 
@@ -116,3 +119,7 @@ def test_chunk_summary(pipeline_result):
     print(f"  total     : {pipeline_result.total_chunks}")
     print(f"  by type   : {pipeline_result.by_type}")
     print(f"  structure : {pipeline_result.structure_detected}")
+
+
+def _vector_size_from_env() -> int:
+    return int(os.getenv("NEWS_VECTOR_SIZE") or os.getenv("NEWS_EMBEDDING_DIMENSIONS") or "64")

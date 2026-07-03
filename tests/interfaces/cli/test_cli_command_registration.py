@@ -19,6 +19,7 @@ def test_cli_build_parser_and_top_level_commands_exist() -> None:
         "worker",
         "workers",
         "memory",
+        "paper",
         "sources",
         "mcp",
         "diagnose",
@@ -43,6 +44,7 @@ def test_cli_key_subcommands_and_handlers_are_bound() -> None:
         ["worker", "status"],
         ["workers", "status"],
         ["memory", "bootstrap"],
+        ["paper", "ask", "1706.03762", "What is the method?", "--answer", "--legacy-direct-answer"],
         ["sources", "list"],
         ["mcp", "catalog"],
         ["storage", "metrics"],
@@ -51,6 +53,21 @@ def test_cli_key_subcommands_and_handlers_are_bound() -> None:
     ]:
         args = parser.parse_args(argv)
         assert callable(args.handler)
+
+
+def test_cli_paper_ask_registers_gated_answer_fallback_flag() -> None:
+    args = build_parser().parse_args([
+        "paper",
+        "ask",
+        "1706.03762",
+        "What is the method?",
+        "--answer",
+        "--legacy-direct-answer",
+    ])
+
+    assert args.paper_command == "ask"
+    assert args.answer is True
+    assert args.legacy_direct_answer is True
 
 
 def _top_level_subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:

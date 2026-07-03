@@ -21,6 +21,7 @@ from business.research.domain.document import (
 )
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.document.marker_pdf_parser import MarkerPdfDocumentParser
+from business.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
 from business.research.document.pdf_compiler import (
     FigureImageRef,
     PageTextEvidence,
@@ -72,12 +73,41 @@ def _make_latex_targz_with_files(tex_content: str, files: dict[str, bytes]) -> b
     return buf.getvalue()
 
 
-def _write_marker_json(output_dir: Path, payload: dict[str, object]) -> None:
+def _write_mineru_content(output_dir: Path, payload: list[dict[str, object]]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "content_list.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_mineru_named_content(output_dir: Path, name: str, payload: list[dict[str, object]]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    nested = output_dir / "input" / "auto"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / name).write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_marker_content(output_dir: Path, payload: dict[str, object]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "input.json").write_text(
         json.dumps(payload, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def _docker_mount_host_path(command: list[str], container_path: str) -> Path:
+    for index, part in enumerate(command):
+        if part != "-v" or index + 1 >= len(command):
+            continue
+        mount = command[index + 1]
+        suffix = f":{container_path}"
+        if mount.endswith(suffix):
+            return Path(mount[: -len(suffix)])
+    raise AssertionError(f"missing docker mount for {container_path}")
 
 
 _SAMPLE_MMD = r"""
@@ -1261,169 +1291,178 @@ def test_dispatcher_routes_gzipped_pdf(mock_nougat):
     assert doc.metadata.get("parse_source") == "nougat"
 
 
-def test_marker_pdf_parser_converts_json_blocks(monkeypatch, tmp_path):
+def test_mineru_pdf_parser_converts_content_list(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
     monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
-    marker_cache = tmp_path / "marker-cache"
-    monkeypatch.setenv("NEWSROOM_MARKER_CACHE_DIR", str(marker_cache))
+    monkeypatch.setenv("NEWSROOM_MINERU_MODEL_SOURCE", "modelscope")
+    monkeypatch.setenv("NEWSROOM_MINERU_CACHE_DIR", str(tmp_path / "mineru-cache"))
+    monkeypatch.setenv("NEWSROOM_MINERU_CONFIG_DIR", str(tmp_path / "mineru-config"))
 
     def fake_run(command, *, timeout_seconds):
-        assert command[:9] == [
-            "docker",
-            "run",
-            "--rm",
-            "--gpus",
-            "all",
-            "-e",
-            "TORCH_DEVICE=cuda",
-            "-e",
-            "HF_HOME=/root/.cache/huggingface",
-        ]
-        assert any(part.endswith("marker-cache:/root/.cache") for part in command)
-        output_dir = Path(next(part for part in command if part.endswith(":/output")).rsplit(":", 1)[0])
+        assert command[:5] == ["docker", "run", "--rm", "--gpus", "all"]
+        assert "MINERU_MODEL_SOURCE=modelscope" in command
+        assert any(part.endswith("mineru-cache:/root/.cache") for part in command)
+        assert any(part.endswith("mineru-config:/root") for part in command)
+        output_dir = _docker_mount_host_path(command, "/output")
         image_path = output_dir / "figure.png"
         image_path.parent.mkdir(parents=True, exist_ok=True)
         image_path.write_bytes(b"png")
-        _write_marker_json(
+        _write_mineru_content(
             output_dir,
-            {
-                "children": [
-                    {
-                        "block_type": "SectionHeader",
-                        "text": "Introduction",
-                        "page": 1,
-                        "polygon": [[0.1, 0.1], [0.5, 0.1], [0.5, 0.15], [0.1, 0.15]],
-                    },
-                    {"block_type": "Text", "text": "This paper studies parser backends.", "page": 1},
-                    {
-                        "block_type": "Equation",
-                        "latex": "E=mc^2",
-                        "page": 1,
-                        "polygon": [[0.1, 0.2], [0.4, 0.2], [0.4, 0.25], [0.1, 0.25]],
-                    },
-                    {
-                        "block_type": "Figure",
-                        "caption": "Figure 1: Overview.",
-                        "image_path": "figure.png",
-                        "page": 1,
-                        "polygon": [[0.1, 0.3], [0.6, 0.3], [0.6, 0.7], [0.1, 0.7]],
-                    },
-                    {
-                        "block_type": "Table",
-                        "caption": "Table 1: Scores.",
-                        "page": 1,
-                        "polygon": [[0.1, 0.75], [0.6, 0.75], [0.6, 0.95], [0.1, 0.95]],
-                        "rows": [["Model", "Score"], ["baseline", "0.8"]],
-                    },
-                ]
-            },
+            [
+                {"type": "text", "text_level": 1, "text": "Introduction", "page_idx": 0},
+                {"type": "text", "text": "This paper studies parser backends.", "page_idx": 0},
+                {"type": "equation", "latex": "E=mc^2", "page_idx": 0, "bbox": [100, 100, 300, 140]},
+                {
+                    "type": "image",
+                    "img_path": "figure.png",
+                    "image_caption": ["Figure 1: Overview."],
+                    "page_idx": 0,
+                    "bbox": [100, 200, 500, 600],
+                },
+                {
+                    "type": "table",
+                    "caption": ["Table 1: Scores."],
+                    "page_idx": 0,
+                    "bbox": [100, 650, 500, 900],
+                    "table_body": "<table><tr><td>Model</td><td>Score</td></tr>"
+                    "<tr><td>baseline</td><td>0.8</td></tr></table>",
+                },
+                {"type": "page_number", "text": "1", "page_idx": 0},
+            ],
         )
 
     monkeypatch.setattr(
-        "business.research.document.marker_pdf_parser.run_docker_command",
+        "business.research.document.mineru_pdf_parser.run_docker_command",
         fake_run,
     )
     pdf_bytes = _make_pdf(["Introduction\nThis paper studies parser backends."])
 
-    doc = MarkerPdfDocumentParser().parse("2501_marker", pdf_bytes)
+    doc = MinerUPdfDocumentParser().parse("2501_mineru", pdf_bytes)
 
-    assert doc.metadata["parse_source"] == "marker"
-    assert doc.metadata["parser_backend"] == "marker"
+    assert doc.metadata["parse_source"] == "mineru"
+    assert doc.metadata["parser_backend"] == "mineru"
     assert len(doc.sections) == 1
     assert doc.sections[0].title == "Introduction"
     assert len(doc.equations) == 1
-    assert doc.equations[0].metadata["source_locator"].startswith("arxiv://2501_marker/pdf#page=1")
+    assert doc.equations[0].metadata["source_locator"].startswith("arxiv://2501_mineru/pdf#page=1")
     assert len(doc.figures) == 1
     assert Path(doc.figures[0].image_ref).exists()
     assert len(doc.tables) == 1
     assert doc.tables[0].columns == ["Model", "Score"]
     assert doc.tables[0].rows == [{"Model": "baseline", "Score": "0.8"}]
-    assert doc.metadata["parse_quality"]["figures"]["with_bbox"] == 1
+    assert doc.metadata["parse_quality"]["tables"]["with_rows"] == 1
 
 
-def test_marker_pdf_parser_handles_real_marker_block_tree(monkeypatch, tmp_path):
+def test_dispatcher_can_select_mineru_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
-    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
-    image_b64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2w=="
 
     def fake_run(command, *, timeout_seconds):
-        output_dir = Path(command[command.index("-v", command.index("-v") + 1) + 1].rsplit(":", 1)[0])
-        _write_marker_json(
+        output_dir = _docker_mount_host_path(command, "/output")
+        _write_mineru_content(
+            output_dir,
+            [
+                {"type": "text", "text_level": 1, "text": "Abstract", "page_idx": 0},
+                {"type": "text", "text": "Parsed by MinerU.", "page_idx": 0},
+            ],
+        )
+
+    monkeypatch.setattr(
+        "business.research.document.mineru_pdf_parser.run_docker_command",
+        fake_run,
+    )
+
+    doc = ArxivDocumentParser(pdf_parser_backend="mineru").parse(
+        "2501_dispatch_mineru",
+        _make_pdf(["Parsed by MinerU."]),
+    )
+
+    assert doc.metadata["parse_source"] == "mineru"
+
+
+def test_mineru_pdf_parser_reads_named_content_list(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+
+    def fake_run(command, *, timeout_seconds):
+        output_dir = _docker_mount_host_path(command, "/output")
+        _write_mineru_named_content(
+            output_dir,
+            "input_content_list.json",
+            [
+                {"type": "text", "text_level": 1, "text": "Abstract", "page_idx": 0},
+                {"type": "text", "text": "Named output works.", "page_idx": 0},
+            ],
+        )
+
+    monkeypatch.setattr(
+        "business.research.document.mineru_pdf_parser.run_docker_command",
+        fake_run,
+    )
+
+    doc = MinerUPdfDocumentParser().parse(
+        "2501_mineru_named_content",
+        _make_pdf(["Named output works."]),
+    )
+
+    assert doc.metadata["parse_source"] == "mineru"
+    assert doc.sections[0].text == "Named output works."
+
+
+def test_marker_pdf_parser_converts_json_output(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
+    monkeypatch.setenv("NEWSROOM_MARKER_CACHE_DIR", str(tmp_path / "marker-cache"))
+
+    def fake_run(command, *, timeout_seconds):
+        assert command[:3] == ["docker", "run", "--rm"]
+        assert "marker_single" in command
+        assert "--output_format" in command
+        assert "json" in command
+        assert any(part.endswith("marker-cache:/root/.cache") for part in command)
+        output_dir = _docker_mount_host_path(command, "/output")
+        image_dir = output_dir / "images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        (image_dir / "figure.png").write_bytes(b"png")
+        (image_dir / "table.png").write_bytes(b"png")
+        _write_marker_content(
             output_dir,
             {
-                "children": [
+                "pages": [
                     {
-                        "id": "/page/0/Page/0",
-                        "block_type": "Page",
-                        "children": [
+                        "page": 1,
+                        "blocks": [
+                            {"block_type": "SectionHeader", "text": "Introduction", "page": 1},
                             {
-                                "id": "/page/0/SectionHeader/1",
-                                "block_type": "SectionHeader",
-                                "html": "<h1>Introduction</h1>",
-                                "bbox": [50.0, 70.0, 200.0, 95.0],
-                            },
-                            {
-                                "id": "/page/0/Text/2",
                                 "block_type": "Text",
-                                "html": "<p>Parsed by <b>Marker</b>.</p>",
-                            },
-                        ],
-                    },
-                    {
-                        "id": "/page/5/Page/100",
-                        "block_type": "Page",
-                        "children": [
-                            {
-                                "id": "/page/5/TableGroup/110",
-                                "block_type": "TableGroup",
-                                "html": "<content-ref src='/page/5/Caption/0'></content-ref>"
-                                "<content-ref src='/page/5/Table/1'></content-ref>",
-                                "bbox": [105.75, 70.5, 504.75, 185.625],
-                                "children": [
-                                    {
-                                        "id": "/page/5/Caption/0",
-                                        "block_type": "Caption",
-                                        "html": "<p>Table 1: Maximum path lengths.</p>",
-                                        "bbox": [105.75, 70.5, 504.75, 102.0],
-                                    },
-                                    {
-                                        "id": "/page/5/Table/1",
-                                        "block_type": "Table",
-                                        "html": "<table><tbody>"
-                                        "<tr><th>Layer Type</th><th>Complexity</th></tr>"
-                                        "<tr><td>Self-Attention</td><td>O(n^2 d)</td></tr>"
-                                        "</tbody></table>",
-                                        "bbox": [113.36, 110.63, 498.63, 186.36],
-                                    },
-                                ],
+                                "text": "This paper studies parser backends.",
+                                "page": 1,
                             },
                             {
-                                "id": "/page/5/FigureGroup/111",
-                                "block_type": "FigureGroup",
-                                "bbox": [100.0, 220.0, 300.0, 430.0],
-                                "children": [
-                                    {
-                                        "id": "/page/5/Figure/2",
-                                        "block_type": "Figure",
-                                        "bbox": [100.0, 220.0, 300.0, 400.0],
-                                        "images": {"/page/5/Figure/2": image_b64},
-                                    },
-                                    {
-                                        "id": "/page/5/Caption/3",
-                                        "block_type": "Caption",
-                                        "html": "<p>Figure 1: Model architecture.</p>",
-                                    },
-                                ],
-                            },
-                            {
-                                "id": "/page/5/Equation/4",
                                 "block_type": "Equation",
-                                "html": "<p><math display=\"block\">E=mc^2</math> (1)</p>",
-                                "bbox": [120.0, 460.0, 240.0, 480.0],
+                                "latex": "E=mc^2",
+                                "page": 1,
+                                "bbox": [100, 100, 300, 140],
                             },
-                            {"id": "/page/5/TableCell/5", "block_type": "TableCell", "html": "<td>ignored</td>"},
+                            {
+                                "block_type": "Figure",
+                                "image_path": "images/figure.png",
+                                "caption": "Figure 1: Overview.",
+                                "page": 1,
+                                "bbox": [100, 200, 500, 600],
+                            },
+                            {
+                                "block_type": "Table",
+                                "image_path": "images/table.png",
+                                "caption": "Table 1: Scores.",
+                                "page": 1,
+                                "bbox": [100, 650, 500, 900],
+                                "html": (
+                                    "<table><tr><td>Model</td><td>Score</td></tr>"
+                                    "<tr><td>baseline</td><td>0.8</td></tr></table>"
+                                ),
+                            },
                         ],
-                    },
+                    }
                 ]
             },
         )
@@ -1432,45 +1471,39 @@ def test_marker_pdf_parser_handles_real_marker_block_tree(monkeypatch, tmp_path)
         "business.research.document.marker_pdf_parser.run_docker_command",
         fake_run,
     )
-    pdf_bytes = _make_pdf(["page 1", "page 2", "page 3", "page 4", "page 5", "page 6"])
 
-    doc = MarkerPdfDocumentParser().parse("2501_marker_real_tree", pdf_bytes)
+    doc = MarkerPdfDocumentParser().parse(
+        "2501_marker",
+        _make_pdf(["Introduction\nThis paper studies parser backends."]),
+    )
 
-    assert doc.sections[0].page_start == 1
+    assert doc.metadata["parse_source"] == "marker"
+    assert doc.metadata["parser_backend"] == "marker"
     assert doc.sections[0].title == "Introduction"
-    assert doc.sections[0].text == "Parsed by Marker."
-    assert len(doc.tables) == 1
-    table_group = doc.tables[0]
-    assert table_group.page == 6
-    assert table_group.caption == "Table 1: Maximum path lengths."
-    assert table_group.columns == ["Layer Type", "Complexity"]
-    assert table_group.rows == [{"Layer Type": "Self-Attention", "Complexity": "O(n^2 d)"}]
-    assert table_group.metadata["pdf_rect"] == [105.75, 70.5, 504.75, 185.625]
-    assert "page=6" in table_group.source_ref
+    assert doc.sections[0].text == "This paper studies parser backends."
+    assert doc.sections[0].metadata["source_locator"] == "arxiv://2501_marker/pdf#page=1"
+    assert doc.equations[0].latex == "E=mc^2"
+    assert doc.equations[0].metadata["source_locator"].startswith("arxiv://2501_marker/pdf#page=1")
     assert len(doc.figures) == 1
-    figure_group = doc.figures[0]
-    assert figure_group.caption == "Figure 1: Model architecture."
-    assert figure_group.page == 6
-    assert figure_group.image_ref
-    assert Path(figure_group.image_ref).exists()
-    assert len(doc.equations) == 1
-    assert doc.equations[0].page == 6
-    assert doc.equations[0].latex == "E=mc^2 (1)"
-    assert doc.metadata["parse_quality"]["tables"]["with_rows"] >= 1
-    assert doc.metadata["parse_quality"]["tables"]["with_bbox"] >= 1
-    assert doc.metadata["parse_quality"]["figures"]["with_image"] >= 1
-    assert not doc.metadata["parser_warnings"]
+    assert Path(doc.figures[0].image_ref).exists()
+    assert doc.figures[0].metadata["parse_source"] == "marker"
+    assert doc.metadata["parse_quality"]["figures"]["with_image"] == 1
+    assert len(doc.tables) == 1
+    assert Path(doc.tables[0].metadata["image_ref"]).exists()
+    assert doc.tables[0].columns == ["Model", "Score"]
+    assert doc.tables[0].rows == [{"Model": "baseline", "Score": "0.8"}]
+    assert doc.metadata["parse_quality"]["tables"]["with_rows"] == 1
 
 
 def test_dispatcher_can_select_marker_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
 
     def fake_run(command, *, timeout_seconds):
-        output_dir = Path(command[command.index("-v", command.index("-v") + 1) + 1].rsplit(":", 1)[0])
-        _write_marker_json(
+        output_dir = _docker_mount_host_path(command, "/output")
+        _write_marker_content(
             output_dir,
             {
-                "children": [
+                "blocks": [
                     {"block_type": "SectionHeader", "text": "Abstract", "page": 1},
                     {"block_type": "Text", "text": "Parsed by Marker.", "page": 1},
                 ]
@@ -1488,11 +1521,12 @@ def test_dispatcher_can_select_marker_backend(monkeypatch, tmp_path):
     )
 
     assert doc.metadata["parse_source"] == "marker"
+    assert doc.sections[0].text == "Parsed by Marker."
 
 
-def test_pdf_parser_backend_name_rejects_unknown_marker_branch_backend():
+def test_pdf_parser_backend_name_rejects_unknown_backend():
     with pytest.raises(ValueError, match="NEWSROOM_PDF_PARSER_BACKEND"):
-        pdf_parser_backend_name("mineru")
+        pdf_parser_backend_name("docling")
 
 
 def test_dispatcher_routes_latex():

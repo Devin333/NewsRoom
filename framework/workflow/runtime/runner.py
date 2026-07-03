@@ -38,6 +38,7 @@ from framework.workflow.operations import (
     OperationActor,
     OperationResult,
     WorkflowRunOperationService,
+    checkpoint_from_run_artifacts,
 )
 from framework.workflow.runtime.result import WorkflowResult
 from framework.workflow.routing import RoutingEngine
@@ -244,6 +245,8 @@ class WorkflowRunner:
         if not approval_run_id:
             raise ValueError("approval resume context does not include an original run id")
         checkpoint = self._checkpoint_store.get_latest_checkpoint(approval_run_id)
+        if checkpoint is None:
+            checkpoint = checkpoint_from_run_artifacts(self._artifact_root, run_id=approval_run_id)
         if checkpoint is None:
             raise ValueError(f"checkpoint not found for approval run id: {approval_run_id}")
         resume_metadata = dict(context.get("resume_metadata") or {})

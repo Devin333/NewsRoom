@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from framework.harness.rag.gates import RAGGateResult, RAGLineageGate, RAGSourceQualityGate
 from framework.harness.rag.models import EvidenceCandidate
 from framework.harness.rag.policy import RAGExecutionPolicy
+from framework.harness.rag.relevance import RAGRelevanceGate, RelevanceScorerPort
 
 
 @dataclass(frozen=True)
@@ -24,16 +25,31 @@ class SourceVerificationResult:
 
 
 class SourceVerifier:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        relevance_scorer: RelevanceScorerPort | None = None,
+        relevance_gate: RAGRelevanceGate | None = None,
+    ) -> None:
         self.source_quality = RAGSourceQualityGate()
         self.lineage = RAGLineageGate()
+        self.relevance_scorer = relevance_scorer
+        self.relevance_gate = relevance_gate or RAGRelevanceGate()
 
     def verify(
         self,
         evidence: tuple[EvidenceCandidate, ...],
         *,
         policy: RAGExecutionPolicy,
+        question: str | None = None,
     ) -> SourceVerificationResult:
+        relevance_result = _relevance_result(
+            evidence,
+            policy=policy,
+            question=question,
+            scorer=self.relevance_scorer,
+        )
+        relevance_threshold = float(policy.source_policy.get("min_relevance", 0.30))
         accepted: list[EvidenceCandidate] = []
         rejected: list[EvidenceCandidate] = []
         conflicting: list[EvidenceCandidate] = []
@@ -44,6 +60,19 @@ class SourceVerifier:
             )
             if candidate.metadata.get("conflict") is True or candidate.metadata.get("conflicts_with"):
                 conflicting.append(candidate)
+            elif (
+                self.relevance_scorer is not None
+                and candidate.evidence_id in relevance_result.scores_by_id
+                and relevance_result.scores_by_id[candidate.evidence_id] < relevance_threshold
+            ):
+                rejected.append(_with_rejection_metadata(
+                    candidate,
+                    reason="low_relevance"
+                    if len(relevance_result.ordered_scores) == len(evidence)
+                    else "relevance_score_unavailable",
+                    relevance_score=relevance_result.scores_by_id[candidate.evidence_id],
+                    relevance_threshold=relevance_threshold,
+                ))
             elif all(result.passed for result in candidate_results):
                 accepted.append(candidate)
             else:
@@ -52,6 +81,16 @@ class SourceVerifier:
             self.source_quality.evaluate(evidence, policy),
             self.lineage.evaluate(evidence),
         )
+        if self.relevance_scorer is not None and question and evidence:
+            gate_results = (
+                *gate_results,
+                self.relevance_gate.evaluate(
+                    question,
+                    evidence,
+                    relevance_result.ordered_scores,
+                    threshold=relevance_threshold,
+                ),
+            )
         return SourceVerificationResult(
             accepted=tuple(accepted),
             rejected=tuple(rejected),
@@ -65,3 +104,63 @@ class FakeSourceVerifier(SourceVerifier):
 
 
 __all__ = ["FakeSourceVerifier", "SourceVerificationResult", "SourceVerifier"]
+
+
+@dataclass(frozen=True)
+class _RelevanceResult:
+    scores_by_id: dict[str, float]
+    ordered_scores: tuple[float, ...]
+
+
+def _relevance_result(
+    evidence: tuple[EvidenceCandidate, ...],
+    *,
+    policy: RAGExecutionPolicy,
+    question: str | None,
+    scorer: RelevanceScorerPort | None,
+) -> _RelevanceResult:
+    if scorer is None or not question or not evidence:
+        return _RelevanceResult(scores_by_id={}, ordered_scores=())
+    scores = scorer.score(question, [item.summary for item in evidence])
+    if len(scores) != len(evidence):
+        threshold = float(policy.source_policy.get("min_relevance", 0.30))
+        return _RelevanceResult(
+            scores_by_id={item.evidence_id: threshold - 1.0 for item in evidence},
+            ordered_scores=tuple(float(score) for score in scores),
+        )
+    clamped_scores = tuple(max(0.0, min(float(score), 1.0)) for score in scores)
+    return _RelevanceResult(
+        scores_by_id={
+            item.evidence_id: score
+            for item, score in zip(evidence, clamped_scores)
+        },
+        ordered_scores=clamped_scores,
+    )
+
+
+def _with_rejection_metadata(
+    candidate: EvidenceCandidate,
+    *,
+    reason: str,
+    relevance_score: float,
+    relevance_threshold: float,
+) -> EvidenceCandidate:
+    return EvidenceCandidate(
+        evidence_id=candidate.evidence_id,
+        title=candidate.title,
+        summary=candidate.summary,
+        source_ref=candidate.source_ref,
+        span_refs=candidate.span_refs,
+        evidence_type=candidate.evidence_type,
+        claim_refs=candidate.claim_refs,
+        confidence=candidate.confidence,
+        freshness=candidate.freshness,
+        lineage=candidate.lineage,
+        artifact_refs=candidate.artifact_refs,
+        metadata={
+            **candidate.metadata,
+            "rejection_reason": reason,
+            "relevance_score": relevance_score,
+            "relevance_threshold": relevance_threshold,
+        },
+    )

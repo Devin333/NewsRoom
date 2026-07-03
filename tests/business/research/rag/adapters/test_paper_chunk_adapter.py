@@ -66,6 +66,7 @@ def test_paper_chunk_projects_to_rag_chunk_with_fields_and_locator():
     assert rag_chunk.source_locator.bbox == (1.0, 2.0, 3.0, 4.0)
     assert rag_chunk.source_locator.raw_locator == "paper://paper-1/pdf#page=6&pdf_rect=1,2,3,4"
     assert rag_chunk.metadata["paper_id"] == "paper-1"
+    assert rag_chunk.metadata["chunk_type"] == "formula"
     assert rag_chunk.metadata["parent_chunk_id"] == "parent-1"
     assert rag_chunk.metadata["section_role"] == ["method"]
 
@@ -105,6 +106,7 @@ def test_paper_chunk_projects_to_evidence_metadata_for_harness_pack():
     metadata = paper_chunk_to_evidence_metadata(_chunk())
 
     assert metadata["chunk_type"] == "formula"
+    assert metadata["section_role"] == ["method"]
     assert metadata["parent_chunk_id"] == "parent-1"
     assert metadata["has_formula"] is True
     assert metadata["formula_latex"] == "y = Wx"

@@ -8,13 +8,14 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, Sequence
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.document.pdf_visual_sidecar import merge_pdf_visual_sidecar
 from business.research.document.source_format import detect_source_format
 from business.research.domain.document import ResearchDocument
 from framework.shared.env import load_root_env
-from infrastructure.external.sources.arxiv import ArxivSourceConnector, normalize_arxiv_id
 
 DEFAULT_BENCHMARK_ARXIV_IDS = (
     # NLP / ML systems / vision / speech / bio / optimization / IR / robotics / graphs
@@ -59,6 +60,39 @@ class SourcePackageFetcher(Protocol):
 class DocumentParser(Protocol):
     def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
         ...
+
+
+@dataclass(frozen=True)
+class ArxivSourcePackage:
+    arxiv_id: str
+    content: bytes
+
+
+class UrllibArxivSourcePackageFetcher:
+    def __init__(self, *, timeout_seconds: int = 120) -> None:
+        self._timeout_seconds = timeout_seconds
+
+    def fetch_source_package(self, arxiv_id: str) -> ArxivSourcePackage:
+        normalized = _normalize_arxiv_id(arxiv_id)
+        return ArxivSourcePackage(
+            arxiv_id=normalized,
+            content=self._fetch_bytes(f"https://arxiv.org/e-print/{quote(normalized, safe='.')}"),
+        )
+
+    def fetch_pdf_package(self, arxiv_id: str) -> ArxivSourcePackage:
+        normalized = _normalize_arxiv_id(arxiv_id)
+        return ArxivSourcePackage(
+            arxiv_id=normalized,
+            content=self._fetch_bytes(f"https://arxiv.org/pdf/{quote(normalized, safe='/.')}"),
+        )
+
+    def _fetch_bytes(self, url: str) -> bytes:
+        request = Request(
+            url,
+            headers={"User-Agent": "NewsRoom paper benchmark ingest/1.0"},
+        )
+        with urlopen(request, timeout=self._timeout_seconds) as response:
+            return response.read()
 
 
 @dataclass(frozen=True)
@@ -144,7 +178,7 @@ def ingest_benchmark_papers(
     ids = _normalize_ids(arxiv_ids)
     if max_papers is not None:
         ids = ids[:max(0, max_papers)]
-    fetcher = fetcher or ArxivSourceConnector()
+    fetcher = fetcher or _default_source_fetcher()
     parser = parser or ArxivDocumentParser(pdf_parser_backend=pdf_parser_backend)
 
     items: list[PaperIngestItem] = []
@@ -261,7 +295,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force", action="store_true", help="Re-parse papers even when research_document.json exists.")
     parser.add_argument(
         "--pdf-parser-backend",
-        choices=("nougat", "marker"),
+        choices=("nougat", "mineru", "marker", "cascade"),
         default=None,
         help="PDF parser backend for PDF source packages. Defaults to NEWSROOM_PDF_PARSER_BACKEND or nougat.",
     )
@@ -294,12 +328,31 @@ def _normalize_ids(values: Sequence[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for value in values:
-        normalized = normalize_arxiv_id(value)
+        normalized = _normalize_arxiv_id(value)
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
         out.append(normalized)
     return out
+
+
+def _default_source_fetcher() -> SourcePackageFetcher:
+    return UrllibArxivSourcePackageFetcher()
+
+
+def _normalize_arxiv_id(value: str) -> str:
+    text = value.strip().rstrip(".,;:)]}>'\"")
+    marker_found = False
+    for marker in ("arxiv.org/abs/", "arxiv.org/pdf/", "arxiv.org/e-print/", "arxiv.org/src/"):
+        if marker in text:
+            text = text.rsplit(marker, 1)[-1]
+            marker_found = True
+            break
+    if "://" in text and not marker_found:
+        return ""
+    if text.endswith(".pdf"):
+        text = text[:-4]
+    return text.split("?", 1)[0].split("#", 1)[0].strip("/")
 
 
 def _read_ids_file(path: Path) -> list[str]:
@@ -312,7 +365,7 @@ def _read_ids_file(path: Path) -> list[str]:
 
 
 def _paper_id(arxiv_id: str) -> str:
-    return normalize_arxiv_id(arxiv_id).replace("/", "_")
+    return _normalize_arxiv_id(arxiv_id).replace("/", "_")
 
 
 def _write_document(document: ResearchDocument, output_path: Path) -> None:

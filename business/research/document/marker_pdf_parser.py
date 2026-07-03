@@ -14,10 +14,10 @@ from typing import Any
 
 from business.foundation import build_stable_id
 from business.research.document.docker_pdf_parser import (
-    coerce_rect,
     first_existing_file,
     metadata_text,
     page_rects,
+    rect_to_pdf_points,
     run_docker_command,
     safe_paper_id,
     source_locator,
@@ -34,7 +34,7 @@ from business.research.domain.document import (
 
 
 class MarkerPdfDocumentParser:
-    """Docker-backed Marker parser for PDF parser bake-off experiments."""
+    """Docker-backed Marker parser for PDF parser bake-off and cascade use."""
 
     def parse(self, paper_id: str, source_bytes: bytes) -> ResearchDocument:
         source_hash = sha256(source_bytes).hexdigest()
@@ -92,8 +92,6 @@ def _marker_command(*, input_dir: Path, output_dir: Path) -> list[str]:
         "json",
         "--output_dir",
         "/output",
-        "--paginate_output",
-        "--debug",
     ]
 
 
@@ -123,8 +121,7 @@ def _document_from_marker_output(
     command: list[str],
 ) -> ResearchDocument:
     json_path = _marker_json_path(output_dir)
-    payload = json.loads(json_path.read_text(encoding="utf-8"))
-    blocks = _extract_blocks(payload)
+    markdown_path = _marker_markdown_path(output_dir)
     rects = page_rects(pdf_bytes)
     artifact_root = _paper_artifact_dir(paper_id)
     figures_dir = artifact_root / "figures"
@@ -132,12 +129,159 @@ def _document_from_marker_output(
     figures_dir.mkdir(parents=True, exist_ok=True)
     tables_dir.mkdir(parents=True, exist_ok=True)
 
-    sections: list[ResearchSection] = []
-    equations: list[ResearchEquation] = []
-    figures: list[ResearchFigure] = []
-    tables: list[ResearchTable] = []
     warnings: list[str] = []
+    if json_path is not None:
+        blocks = _load_marker_blocks(json_path)
+        components = _components_from_blocks(
+            paper_id=paper_id,
+            source_ref=source_ref,
+            blocks=blocks,
+            page_rects_by_number=rects,
+            output_root=json_path.parent,
+            figures_dir=figures_dir,
+            tables_dir=tables_dir,
+            warnings=warnings,
+        )
+        parser_content_ref = str(json_path)
+    elif markdown_path is not None:
+        components = _components_from_markdown(
+            paper_id=paper_id,
+            source_ref=source_ref,
+            markdown=markdown_path.read_text(encoding="utf-8"),
+        )
+        parser_content_ref = str(markdown_path)
+        warnings.append("json artifact missing; parsed markdown fallback")
+    else:
+        raise FileNotFoundError(f"Marker did not produce JSON or Markdown output under {output_dir}")
 
+    metadata = {
+        "parse_source": "marker",
+        "parser_backend": "marker",
+        "parser_output_ref": str(output_dir),
+        "parser_content_ref": parser_content_ref,
+        "parser_duration_seconds": round(duration_seconds, 3),
+        "parser_command": _redacted_command(command),
+        "parser_warnings": warnings,
+        "parse_quality": _parse_quality(
+            components.sections,
+            components.figures,
+            components.tables,
+            components.equations,
+        ),
+    }
+    return ResearchDocument(
+        paper_id=paper_id,
+        source_hash=source_hash,
+        sections=components.sections,
+        figures=components.figures,
+        tables=components.tables,
+        equations=components.equations,
+        lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
+        metadata=metadata,
+    )
+
+
+class _Components:
+    def __init__(self) -> None:
+        self.sections: list[ResearchSection] = []
+        self.figures: list[ResearchFigure] = []
+        self.tables: list[ResearchTable] = []
+        self.equations: list[ResearchEquation] = []
+
+
+def _marker_json_path(output_dir: Path) -> Path | None:
+    direct = first_existing_file(
+        output_dir,
+        (
+            "input.json",
+            "input_meta.json",
+            "input_content.json",
+            "output.json",
+            "document.json",
+        ),
+    )
+    if direct is not None:
+        return direct
+    candidates = [
+        path for path in output_dir.rglob("*.json")
+        if path.is_file() and not path.name.startswith(".")
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda path: (path.name.endswith("_meta.json"), len(path.parts), path.name))
+    return candidates[0]
+
+
+def _marker_markdown_path(output_dir: Path) -> Path | None:
+    return first_existing_file(output_dir, ("input.md", "output.md", "document.md"))
+
+
+def _load_marker_blocks(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    blocks = _extract_blocks(payload)
+    if not blocks:
+        raise ValueError(f"Marker JSON did not contain parse blocks: {path}")
+    return blocks
+
+
+def _extract_blocks(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("blocks", "children", "items", "content", "pages"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            if key == "pages":
+                return _flatten_pages(value)
+            return _flatten_blocks(value)
+    if any(key in payload for key in ("text", "html", "markdown", "block_type", "type")):
+        return [payload]
+    return []
+
+
+def _flatten_pages(pages: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for page_index, page in enumerate(pages, start=1):
+        if not isinstance(page, dict):
+            continue
+        raw_blocks = page.get("blocks") or page.get("children") or page.get("items") or []
+        if not isinstance(raw_blocks, list):
+            continue
+        page_number = _page_number(page, default=page_index)
+        for block in _flatten_blocks(raw_blocks):
+            block.setdefault("page", page_number)
+            out.append(block)
+    return out
+
+
+def _flatten_blocks(blocks: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in blocks:
+        if not isinstance(item, dict):
+            continue
+        out.append(item)
+        children = item.get("children") or item.get("blocks") or item.get("items")
+        if isinstance(children, list):
+            for child in _flatten_blocks(children):
+                child.setdefault("page", _page_number(item, default=None))
+                child.setdefault("_marker_parent_kind", _block_kind(item))
+                out.append(child)
+    return out
+
+
+def _components_from_blocks(
+    *,
+    paper_id: str,
+    source_ref: str,
+    blocks: list[dict[str, Any]],
+    page_rects_by_number: dict[int, Any],
+    output_root: Path,
+    figures_dir: Path,
+    tables_dir: Path,
+    warnings: list[str],
+) -> _Components:
+    components = _Components()
     current_title = "Document"
     current_level = 1
     current_parts: list[str] = []
@@ -151,8 +295,8 @@ def _document_from_marker_output(
             current_parts = []
             return
         locator = source_locator(source_ref, page=current_page)
-        sections.append(ResearchSection(
-            section_id=build_stable_id("sec", paper_id, current_title, str(section_index)),
+        components.sections.append(ResearchSection(
+            section_id=build_stable_id("sec", paper_id, "marker", current_title, str(section_index)),
             title=current_title,
             level=max(1, current_level),
             text=text,
@@ -171,26 +315,30 @@ def _document_from_marker_output(
         kind = _block_kind(block)
         if _is_group_child_element(block):
             continue
-        page = _block_page(block)
-        pdf_rect = _block_pdf_rect(block, rects)
+        page = _page_number(block, default=current_page)
+        pdf_rect = _block_pdf_rect(block, page_rects_by_number)
         locator = source_locator(source_ref, page=page, pdf_rect=pdf_rect)
-        if kind == "sectionheader":
+        if kind == "heading":
+            text = _block_text(block)
+            if not text:
+                continue
             flush_section()
-            current_title = _block_text(block) or f"Section {section_index + 1}"
+            current_title = text[:160]
             current_level = _heading_level(block)
             current_page = page
             continue
-        if kind in {"text", "textinlinemath", "listitem"}:
+        if kind == "text":
             text = _block_text(block)
-            if text:
-                if current_page is None:
-                    current_page = page
-                current_parts.append(text)
+            if not text:
+                continue
+            if current_page is None:
+                current_page = page
+            current_parts.append(text)
             continue
         if kind == "equation":
-            latex = _block_text(block)
+            latex = _block_equation_text(block)
             if latex:
-                equations.append(ResearchEquation(
+                components.equations.append(ResearchEquation(
                     equation_id=build_stable_id("eq", paper_id, "marker", str(index), latex[:80]),
                     latex=latex,
                     source_ref=locator,
@@ -203,10 +351,10 @@ def _document_from_marker_output(
                     },
                 ))
             continue
-        if kind in {"figure", "figuregroup", "picture", "picturegroup"}:
-            caption = _block_caption(block) or _block_text(block) or f"Figure from page {page or '?'}"
-            image_ref = _copy_marker_asset(block, json_path.parent, figures_dir)
-            figures.append(ResearchFigure(
+        if kind == "figure":
+            caption = _block_caption(block) or f"Figure from page {page or '?'}"
+            image_ref = _copy_block_asset(block, output_root, figures_dir)
+            components.figures.append(ResearchFigure(
                 figure_id=build_stable_id("fig", paper_id, "marker", str(index), caption),
                 caption=caption[:500],
                 source_ref=locator,
@@ -221,11 +369,11 @@ def _document_from_marker_output(
                 },
             ))
             continue
-        if kind in {"table", "tablegroup"}:
+        if kind == "table":
             caption = _block_caption(block) or f"Table from page {page or '?'}"
             columns, rows = _table_rows(block)
-            image_ref = _copy_marker_asset(block, json_path.parent, tables_dir)
-            tables.append(ResearchTable(
+            image_ref = _copy_block_asset(block, output_root, tables_dir)
+            components.tables.append(ResearchTable(
                 table_id=build_stable_id("tbl", paper_id, "marker", str(index), caption),
                 caption=caption[:500],
                 source_ref=locator,
@@ -244,113 +392,123 @@ def _document_from_marker_output(
             continue
         if kind in _IGNORED_BLOCK_KINDS:
             continue
-        warnings.append(f"block_{index}: unsupported Marker block_type {kind!r}")
+        warnings.append(f"block_{index}: unsupported Marker type {kind!r}")
 
     flush_section()
-    return ResearchDocument(
-        paper_id=paper_id,
-        source_hash=source_hash,
-        sections=sections,
-        figures=figures,
-        tables=tables,
-        equations=equations,
-        lineage=SourceLineage(source_refs=[source_ref], source_hash=source_hash),
-        metadata={
-            "parse_source": "marker",
-            "parser_backend": "marker",
-            "parser_output_ref": str(output_dir),
-            "parser_duration_seconds": round(duration_seconds, 3),
-            "parser_command": _redacted_command(command),
-            "parser_warnings": warnings,
-            "parse_quality": _parse_quality(sections, figures, tables, equations),
-        },
-    )
+    if not components.sections:
+        text = "\n\n".join(_block_text(block) for block in blocks if _block_text(block)).strip()
+        if text:
+            locator = source_locator(source_ref, page=None)
+            components.sections.append(ResearchSection(
+                section_id=build_stable_id("sec", paper_id, "marker", "fallback"),
+                title="Document",
+                level=1,
+                text=text,
+                source_ref=locator,
+                metadata={"parse_source": "marker", "source_locator": locator},
+            ))
+    return components
 
 
-def _marker_json_path(output_dir: Path) -> Path:
-    path = first_existing_file(output_dir, ("input.json", "input_meta.json", "output.json"))
-    if path is not None:
-        return path
-    matches = [path for path in output_dir.rglob("*.json") if path.is_file()]
-    if not matches:
-        raise FileNotFoundError(f"Marker did not produce a JSON file under {output_dir}")
-    return matches[0]
+def _components_from_markdown(*, paper_id: str, source_ref: str, markdown: str) -> _Components:
+    components = _Components()
+    matches = list(_MARKDOWN_HEADING_RE.finditer(markdown))
+    preamble = markdown[: matches[0].start()].strip() if matches else markdown.strip()
+    if preamble:
+        components.sections.append(ResearchSection(
+            section_id=build_stable_id("sec", paper_id, "marker", "preamble"),
+            title="Document",
+            level=1,
+            text=preamble,
+            source_ref=source_ref,
+            metadata={"parse_source": "marker", "source_locator": source_ref},
+        ))
+    for index, match in enumerate(matches):
+        title = match.group(2).strip()
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
+        body = markdown[start:end].strip()
+        if not body:
+            continue
+        components.sections.append(ResearchSection(
+            section_id=build_stable_id("sec", paper_id, "marker", title, str(index)),
+            title=title,
+            level=len(match.group(1)),
+            text=body,
+            source_ref=source_ref,
+            metadata={"parse_source": "marker", "source_locator": source_ref},
+        ))
+    return components
 
 
-def _extract_blocks(payload: Any) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = []
-
-    def visit(
-        node: Any,
-        inherited_page: int | None = None,
-        parent_kind: str | None = None,
-    ) -> None:
-        if isinstance(node, list):
-            for item in node:
-                visit(item, inherited_page, parent_kind)
-            return
-        if not isinstance(node, dict):
-            return
-        page = _block_page(node) or inherited_page
-        children = node.get("children") or node.get("blocks")
-        kind = _block_kind(node)
-        if kind not in {"document", "page", "unknown"}:
-            block = dict(node)
-            if page is not None and "page" not in block and "page_id" not in block:
-                block["page"] = page
-            if parent_kind:
-                block["_marker_parent_kind"] = parent_kind
-            blocks.append(block)
-        if children is not None:
-            visit(children, page, kind)
-        for key in ("pages",):
-            if key in node:
-                visit(node[key], page, kind)
-
-    visit(payload)
-    return blocks
+_MARKDOWN_HEADING_RE = re.compile(r"(?m)^(#{1,6})\s+(.+?)\s*$")
 
 
 def _block_kind(block: dict[str, Any]) -> str:
-    raw = block.get("block_type") or block.get("type") or block.get("kind") or ""
-    kind = str(raw).strip().lower().replace("_", "")
-    return kind or "unknown"
+    raw = (
+        block.get("type")
+        or block.get("block_type")
+        or block.get("blockType")
+        or block.get("category")
+        or ""
+    )
+    value = str(raw).strip().lower().replace("-", "_")
+    aliases = {
+        "caption": "caption",
+        "code": "text",
+        "document": "ignored",
+        "equation": "equation",
+        "figure": "figure",
+        "figuregroup": "figure",
+        "form": "ignored",
+        "handwriting": "text",
+        "heading": "heading",
+        "image": "figure",
+        "line": "text",
+        "list": "text",
+        "listgroup": "text",
+        "page": "ignored",
+        "pagefooter": "ignored",
+        "pageheader": "ignored",
+        "pagenumber": "ignored",
+        "picture": "figure",
+        "picturegroup": "figure",
+        "sectionheader": "heading",
+        "table": "table",
+        "tablegroup": "table",
+        "tableofcontents": "ignored",
+        "text": "text",
+        "textinlineequation": "text",
+        "textinlinemath": "text",
+        "title": "heading",
+    }
+    return aliases.get(value, value or "text")
 
 
-_IGNORED_BLOCK_KINDS = {
-    "caption",
-    "footnote",
-    "listgroup",
-    "pagefooter",
-    "pageheader",
-    "reference",
-    "tablecell",
-}
+_IGNORED_BLOCK_KINDS = {"caption", "ignored", "pagefooter", "pageheader", "pagenumber"}
 
 
 def _is_group_child_element(block: dict[str, Any]) -> bool:
     kind = _block_kind(block)
     parent_kind = metadata_text(block.get("_marker_parent_kind"))
-    if parent_kind == "tablegroup" and kind == "table":
+    if parent_kind == "table" and kind == "table":
         return True
-    if parent_kind in {"figuregroup", "picturegroup"} and kind in {"figure", "picture"}:
+    if parent_kind == "figure" and kind == "figure":
         return True
     return False
 
 
-def _block_page(block: dict[str, Any]) -> int | None:
-    for key in ("page", "page_id", "page_number"):
-        if key not in block:
-            continue
-        try:
-            value = int(block[key])
-        except (TypeError, ValueError):
-            continue
-        return value + 1 if value == 0 else value
+def _page_number(block: dict[str, Any], default: int | None = None) -> int | None:
+    for key in ("page", "page_number"):
+        if key in block:
+            return _to_int(block.get(key), offset=0)
+    for key in ("page_idx", "page_id", "page_index"):
+        if key in block:
+            return _to_int(block.get(key), offset=1)
     page = _page_from_marker_id(metadata_text(block.get("id")))
     if page is not None:
         return page
-    return None
+    return default
 
 
 _MARKER_PAGE_ID_RE = re.compile(r"(?:^|/)page/(\d+)(?:/|$)", re.IGNORECASE)
@@ -363,45 +521,16 @@ def _page_from_marker_id(value: str) -> int | None:
     return int(match.group(1)) + 1
 
 
-def _block_pdf_rect(
-    block: dict[str, Any],
-    rects: dict[int, Any],
-) -> tuple[float, float, float, float] | None:
-    page = _block_page(block)
-    page_rect = rects.get(page or -1)
-    if page_rect is None:
+def _to_int(value: Any, *, offset: int) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
         return None
-    rect = coerce_rect(block.get("polygon") or block.get("bbox") or block.get("poly"))
-    if rect is None:
-        return None
-    x0, y0, x1, y1 = rect
-    max_value = max(abs(value) for value in rect)
-    if max_value <= 1.5:
-        return (
-            x0 * page_rect.width,
-            y0 * page_rect.height,
-            x1 * page_rect.width,
-            y1 * page_rect.height,
-        )
-    if (
-        0 <= x0 <= page_rect.width
-        and 0 <= x1 <= page_rect.width + 2
-        and 0 <= y0 <= page_rect.height
-        and 0 <= y1 <= page_rect.height + 2
-    ):
-        return rect
-    if max_value <= 1000.0:
-        return (
-            x0 / 1000.0 * page_rect.width,
-            y0 / 1000.0 * page_rect.height,
-            x1 / 1000.0 * page_rect.width,
-            y1 / 1000.0 * page_rect.height,
-        )
-    return rect
+    return parsed + offset
 
 
 def _heading_level(block: dict[str, Any]) -> int:
-    for key in ("heading_level", "level"):
+    for key in ("heading_level", "level", "text_level"):
         try:
             return max(1, int(block[key]))
         except (KeyError, TypeError, ValueError):
@@ -409,34 +538,112 @@ def _heading_level(block: dict[str, Any]) -> int:
     return 1
 
 
+def _block_pdf_rect(
+    block: dict[str, Any],
+    rects: dict[int, Any],
+) -> tuple[float, float, float, float] | None:
+    page = _page_number(block)
+    page_rect = rects.get(page or -1)
+    bbox = (
+        block.get("bbox")
+        or block.get("box")
+        or block.get("polygon")
+        or block.get("poly")
+    )
+    if page_rect is None:
+        return None
+    return rect_to_pdf_points(bbox, page_rect=page_rect)
+
+
 def _block_text(block: dict[str, Any]) -> str:
     return _html_to_text(metadata_text(
-        block.get("html")
+        block.get("text")
+        or block.get("content")
+        or block.get("html")
+        or block.get("markdown")
+        or block.get("md")
+    ))
+
+
+def _block_equation_text(block: dict[str, Any]) -> str:
+    return _html_to_text(metadata_text(
+        block.get("latex")
+        or block.get("tex")
         or block.get("text")
         or block.get("content")
-        or block.get("markdown")
-        or block.get("latex")
+        or block.get("html")
     ))
 
 
 def _block_caption(block: dict[str, Any]) -> str:
-    direct = _html_to_text(metadata_text(
+    direct = metadata_text(
         block.get("caption")
         or block.get("caption_text")
-        or block.get("description")
-    ))
+        or block.get("image_caption")
+        or block.get("table_caption")
+    )
     if direct:
-        return direct
-    for child in _block_children(block):
-        if _block_kind(child) == "caption":
-            text = _block_text(child)
-            if text:
-                return text
+        return _strip_caption_prefix(direct)
+    children = block.get("children") or block.get("blocks") or []
+    if isinstance(children, list):
+        for child in children:
+            if not isinstance(child, dict):
+                continue
+            if _block_kind(child) == "caption":
+                text = _block_text(child)
+                if text:
+                    return _strip_caption_prefix(text)
     return ""
 
 
+def _strip_caption_prefix(value: str) -> str:
+    return _html_to_text(value)
+
+
+def _table_rows(block: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    for table_block in _candidate_table_blocks(block):
+        rows_value = table_block.get("table_rows") or table_block.get("rows")
+        if isinstance(rows_value, list) and rows_value:
+            if all(isinstance(row, dict) for row in rows_value):
+                columns: list[str] = []
+                for row in rows_value:
+                    for key in row:
+                        if str(key) not in columns:
+                            columns.append(str(key))
+                return columns, [dict(row) for row in rows_value if isinstance(row, dict)]
+            if all(isinstance(row, list) for row in rows_value):
+                matrix = [[metadata_text(cell) for cell in row] for row in rows_value]
+                return _matrix_to_rows(matrix)
+        html = metadata_text(
+            table_block.get("html")
+            or table_block.get("table_html")
+            or table_block.get("table_body")
+            or table_block.get("content")
+        )
+        if "<table" in html.lower():
+            columns, rows = _html_table_rows(html)
+            if columns or rows:
+                return columns, rows
+        if "|" in html:
+            matrix = [
+                [cell.strip() for cell in line.strip("|").split("|")]
+                for line in html.splitlines()
+                if "|" in line
+            ]
+            return _matrix_to_rows(matrix)
+    return [], []
+
+
+def _candidate_table_blocks(block: dict[str, Any]) -> list[dict[str, Any]]:
+    out = [block] if _block_kind(block) == "table" else []
+    for child in _block_children(block):
+        if _block_kind(child) == "table":
+            out.append(child)
+    return out or [block]
+
+
 def _block_children(block: dict[str, Any]) -> list[dict[str, Any]]:
-    children = block.get("children") or block.get("blocks") or []
+    children = block.get("children") or block.get("blocks") or block.get("items") or []
     if not isinstance(children, list):
         return []
     return [child for child in children if isinstance(child, dict)]
@@ -469,51 +676,6 @@ def _html_to_text(value: str) -> str:
     return _normalize_text(" ".join(parser.parts))
 
 
-def _normalize_text(value: str) -> str:
-    normalized = re.sub(r"\s+", " ", value).strip()
-    return re.sub(r"\s+([,.;:!?])", r"\1", normalized)
-
-
-def _table_rows(block: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
-    rows_value = block.get("rows") or block.get("table_rows")
-    if isinstance(rows_value, list) and rows_value:
-        if all(isinstance(row, dict) for row in rows_value):
-            columns: list[str] = []
-            for row in rows_value:
-                for key in row:
-                    if str(key) not in columns:
-                        columns.append(str(key))
-            return columns, [dict(row) for row in rows_value if isinstance(row, dict)]
-        if all(isinstance(row, list) for row in rows_value):
-            matrix = [[metadata_text(cell) for cell in row] for row in rows_value]
-            return _matrix_to_rows(matrix)
-    for table_block in _candidate_table_blocks(block):
-        html = metadata_text(table_block.get("html"))
-        if "<table" in html.lower():
-            columns, rows = _html_table_rows(html)
-            if columns or rows:
-                return columns, rows
-    html = _block_text(block)
-    if "|" in html:
-        matrix = [
-            [cell.strip() for cell in line.strip("|").split("|")]
-            for line in html.splitlines()
-            if "|" in line
-        ]
-        return _matrix_to_rows(matrix)
-    return [], []
-
-
-def _candidate_table_blocks(block: dict[str, Any]) -> list[dict[str, Any]]:
-    if _block_kind(block) == "table":
-        return [block]
-    out: list[dict[str, Any]] = []
-    for child in _block_children(block):
-        if _block_kind(child) == "table":
-            out.append(child)
-    return out or [block]
-
-
 class _TableHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -534,8 +696,7 @@ class _TableHTMLParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
         if tag in {"td", "th"} and self._row is not None and self._cell_parts is not None:
-            cell = _normalize_text(" ".join(self._cell_parts))
-            self._row.append(cell)
+            self._row.append(_normalize_text(" ".join(self._cell_parts)))
             self._cell_parts = None
             self._in_cell = False
             return
@@ -553,6 +714,11 @@ def _html_table_rows(html: str) -> tuple[list[str], list[dict[str, Any]]]:
     parser = _TableHTMLParser()
     parser.feed(html)
     return _matrix_to_rows(parser.rows)
+
+
+def _normalize_text(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", value).strip()
+    return re.sub(r"\s+([,.;:!?])", r"\1", normalized)
 
 
 def _matrix_to_rows(matrix: list[list[str]]) -> tuple[list[str], list[dict[str, Any]]]:
@@ -580,12 +746,14 @@ def _unique_columns(values: list[str]) -> list[str]:
     return out
 
 
-def _copy_marker_asset(block: dict[str, Any], output_root: Path, target_dir: Path) -> str | None:
+def _copy_block_asset(block: dict[str, Any], output_root: Path, target_dir: Path) -> str | None:
     for asset_block in _candidate_asset_blocks(block):
         raw = metadata_text(
             asset_block.get("image_path")
             or asset_block.get("img_path")
+            or asset_block.get("path")
             or asset_block.get("file_path")
+            or asset_block.get("table_img_path")
         )
         if raw:
             copied = _copy_marker_path_asset(raw, output_root, target_dir)
@@ -627,7 +795,7 @@ def _copy_marker_path_asset(raw: str, output_root: Path, target_dir: Path) -> st
     if not source.is_absolute():
         source = output_root / source
     if not source.exists():
-        return None
+        return raw
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / source.name
     if source.resolve() != target.resolve():
@@ -693,14 +861,19 @@ def _paper_artifact_dir(paper_id: str) -> Path:
 
 def _compact_block_metadata(block: dict[str, Any]) -> dict[str, Any]:
     keys = (
-        "block_type",
         "type",
+        "block_type",
         "page",
+        "page_idx",
         "page_id",
-        "polygon",
         "bbox",
+        "box",
+        "polygon",
+        "heading_level",
+        "level",
         "image_path",
         "img_path",
+        "table_img_path",
     )
     return {key: block[key] for key in keys if key in block}
 
@@ -720,6 +893,7 @@ def _parse_quality(
         "figures": {
             "total": len(figures),
             "with_image": sum(1 for item in figures if item.image_ref),
+            "with_page": sum(1 for item in figures if item.page is not None),
             "with_bbox": sum(1 for item in figures if item.metadata.get("pdf_rect")),
             "with_source_locator": sum(1 for item in figures if item.metadata.get("source_locator")),
         },
@@ -732,6 +906,7 @@ def _parse_quality(
         },
         "equations": {
             "total": len(equations),
+            "with_page": sum(1 for item in equations if item.page is not None),
             "with_bbox": sum(1 for item in equations if item.metadata.get("pdf_rect")),
             "with_source_locator": sum(1 for item in equations if item.metadata.get("source_locator")),
         },

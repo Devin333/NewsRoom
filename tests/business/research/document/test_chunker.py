@@ -658,7 +658,7 @@ def test_structure_detected_flag():
 
 def test_parse_source_propagated():
     doc = _structured_doc()
-    for source in ("latex", "marker", "pymupdf", "nougat"):
+    for source in ("latex", "marker", "pymupdf", "nougat", "mineru"):
         chunks = CHUNKER.chunk(doc, source)  # type: ignore[arg-type]
         assert all(c.parse_source == source for c in chunks)
 
@@ -826,6 +826,25 @@ def test_chunk_manifest_reuses_id_when_paragraph_index_shifts(tmp_path):
     manifest = json.loads((tmp_path / "chunk_manifest.json").read_text(encoding="utf-8"))
     entries = {entry["semantic_key"]: entry for entry in manifest["chunks"]}
     assert entries[first_target.metadata["semantic_key"]]["chunk_id"] == first_target.chunk_id
+
+
+def test_chunk_manifest_includes_parser_cascade_metadata(tmp_path):
+    manager = ChunkManifestManager(tmp_path / "chunk_manifest.json")
+    doc = make_doc(sections=[make_section("s0", "Introduction", "Intro.")]).model_copy(update={
+        "metadata": {
+            "parser_cascade": {
+                "used_backend": "marker",
+                "degraded": False,
+                "attempts": [{"backend": "marker", "status": "success"}],
+            }
+        }
+    })
+    chunks = manager.resolve_chunk_ids(doc.paper_id, CHUNKER.chunk(doc, "marker"))
+
+    manager.write(doc.paper_id, chunks, document_metadata=doc.metadata)
+
+    manifest = json.loads((tmp_path / "chunk_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["parser_cascade"] == doc.metadata["parser_cascade"]
 
 
 def test_chunk_manifest_splits_duplicate_generated_chunk_ids(tmp_path):

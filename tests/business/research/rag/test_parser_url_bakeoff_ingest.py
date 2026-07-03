@@ -8,6 +8,7 @@ from business.research.domain.common import SourceLineage
 from business.research.domain.document import ResearchDocument, ResearchFigure, ResearchSection
 from business.research.rag.evaluation.paper_parser_url_bakeoff_ingest import (
     PdfUrlIngestSource,
+    _build_parser,
     acl_long_pdf_sources,
     ingest_parser_bakeoff_pdf_urls,
 )
@@ -108,7 +109,7 @@ def test_url_bakeoff_ingest_fetches_pdf_and_rewrites_source_refs(tmp_path: Path)
 def test_url_bakeoff_ingest_records_failures(tmp_path: Path) -> None:
     report = ingest_parser_bakeoff_pdf_urls(
         ["https://example.test/paper.pdf"],
-        backend="marker",
+        backend="mineru",
         papers_dir=tmp_path / "papers",
         fetcher=_FakeUrlFetcher(),
         parser=_FailingParser(),
@@ -117,3 +118,19 @@ def test_url_bakeoff_ingest_records_failures(tmp_path: Path) -> None:
     assert report.failed == 1
     assert report.items[0].status == "failed"
     assert "RuntimeError: parse failed" in report.items[0].reason
+
+
+def test_url_bakeoff_cli_accepts_marker_backend() -> None:
+    parser = _build_parser()
+
+    args = parser.parse_args([
+        "2025.acl-long.1",
+        "--papers-dir",
+        "papers",
+        "--manifest",
+        "manifest.json",
+        "--pdf-parser-backend",
+        "marker",
+    ])
+
+    assert args.pdf_parser_backend == "marker"

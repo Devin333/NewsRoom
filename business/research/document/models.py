@@ -7,7 +7,7 @@ from pydantic import Field, field_validator
 from business.foundation import PrimitiveModel
 from business.research.domain.common import require_text
 
-ParseSource = Literal["latex", "marker", "pymupdf", "nougat"]
+ParseSource = Literal["latex", "marker", "pymupdf", "nougat", "mineru"]
 ChunkType = Literal["abstract", "paragraph", "proposition", "formula", "figure", "table"]
 SectionRole = Literal["background", "related_work", "method", "experiment", "analysis", "conclusion"]
 PropositionQuality = Literal["high", "low", "unknown"]

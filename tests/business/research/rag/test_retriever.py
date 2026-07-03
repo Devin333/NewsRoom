@@ -23,6 +23,7 @@ from business.research.rag.retrieval.paper_retriever import (
     build_retrieval_policy_from_env,
     retrieval_policy_enables_lightweight_reranker,
 )
+from business.research.rag.retrieval.bm25_index import write_bm25_index
 from business.research.rag.retrieval.paper_claim_index import PaperClaimIndex
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
@@ -127,6 +128,58 @@ class _ScriptedChunkStore:
 
     def list_chunks(self, paper_id: str) -> list[PaperChunk]:
         return [chunk for chunk in self.chunks.values() if chunk.paper_id == paper_id]
+
+
+class _ListOnlyChunkStore:
+    def __init__(self, chunks: list[PaperChunk], search_order: list[str] | None = None) -> None:
+        self._by_id = {chunk.chunk_id: chunk for chunk in chunks}
+        self._search_order = search_order or [chunk.chunk_id for chunk in chunks]
+
+    def ensure_collection(self) -> None:
+        return None
+
+    def search_chunks(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 10,
+        score_threshold: float | None = None,
+    ) -> list[PaperChunk]:
+        return [chunk for chunk, _score in self.search_with_scores(
+            paper_id,
+            query_text,
+            filters=filters,
+            limit=limit,
+        )]
+
+    def search_with_scores(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        limit: int = 30,
+    ) -> list[tuple[PaperChunk, float]]:
+        out: list[tuple[PaperChunk, float]] = []
+        for index, chunk_id in enumerate(self._search_order):
+            chunk = self._by_id[chunk_id]
+            if chunk.paper_id != paper_id or not _matches_filters(chunk, filters or {}):
+                continue
+            out.append((chunk, 1.0 - (index / 100)))
+            if len(out) >= limit:
+                break
+        return out
+
+    def get_chunk(self, chunk_id: str) -> PaperChunk | None:
+        return self._by_id.get(chunk_id)
+
+    def get_parent_chunk(self, chunk: PaperChunk) -> PaperChunk | None:
+        return self.get_chunk(chunk.parent_chunk_id) if chunk.parent_chunk_id else None
+
+    def list_chunks(self, paper_id: str) -> list[PaperChunk]:
+        return [chunk for chunk in self._by_id.values() if chunk.paper_id == paper_id]
 
 
 def _matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
@@ -469,7 +522,8 @@ def test_element_label_query_uses_deeper_candidate_recall():
     assert result.metadata["element_query_labels"] == ["7"]
 
 
-def test_hybrid_policy_uses_sparse_rrf_to_recall_exact_table_terms():
+def test_hybrid_policy_uses_sparse_rrf_to_recall_exact_table_terms(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / "runs"))
     generic = _chunk(
         "tbl-generic",
         chunk_type="table",
@@ -497,11 +551,106 @@ def test_hybrid_policy_uses_sparse_rrf_to_recall_exact_table_terms():
     assert result.metadata["sparse_recalled"] >= 1
     assert result.child_chunks[0].chunk_id == "tbl-rare"
     assert result.child_chunks[0].metadata["sparse_lexical_hit"] is True
+    assert result.child_chunks[0].metadata["sparse_candidate_source"] == "bm25_list_chunks_fallback"
     assert result.child_chunks[0].metadata["hybrid_rrf_fusion"] is True
     assert "sparse" in " ".join(result.child_chunks[0].metadata["text_rrf_channels"])
+    assert result.metadata["retrieval_degradations"][0]["code"] == "sparse_bm25_index_missing"
 
 
-def test_formula_policy_uses_formula_sparse_rrf_to_recall_symbol_operator_match():
+def test_hybrid_sparse_recall_uses_explicit_list_chunks_contract(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / "runs"))
+    generic = _chunk(
+        "tbl-generic",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nGeneric benchmark results.",
+        metadata={"table_id": "tbl-generic"},
+    )
+    rare = _chunk(
+        "tbl-rare",
+        chunk_type="table",
+        content="[Table 2]\nCaption:\nExact raremetric42 ablation results.",
+        metadata={"table_id": "tbl-rare"},
+    )
+    store = _ListOnlyChunkStore(
+        [generic, rare],
+        search_order=["tbl-generic"],
+    )
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_HYBRID_RRF_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Which table reports raremetric42?", limit=2)
+    )
+
+    assert not hasattr(store, "chunks")
+    assert not hasattr(store, "_chunks")
+    assert result.metadata["sparse_recalled"] >= 1
+    assert result.child_chunks[0].chunk_id == "tbl-rare"
+    assert result.child_chunks[0].metadata["sparse_candidate_source"] == "bm25_list_chunks_fallback"
+
+
+def test_hybrid_sparse_recall_prefers_persisted_bm25_index(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / "runs"))
+    generic = _chunk(
+        "tbl-generic",
+        chunk_type="table",
+        content="[Table 1]\nCaption:\nGeneric benchmark results.",
+        metadata={"table_id": "tbl-generic"},
+    )
+    rare = _chunk(
+        "tbl-rare",
+        chunk_type="table",
+        content="[Table 2]\nCaption:\nExact raremetric42 ablation results.",
+        metadata={"table_id": "tbl-rare"},
+    )
+    write_bm25_index("p1", [generic, rare])
+    store = _ListOnlyChunkStore(
+        [generic, rare],
+        search_order=["tbl-generic"],
+    )
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_HYBRID_RRF_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Which table reports raremetric42?", limit=2)
+    )
+
+    assert result.metadata["sparse_recalled"] >= 1
+    assert result.child_chunks[0].chunk_id == "tbl-rare"
+    assert result.child_chunks[0].metadata["sparse_candidate_source"] == "bm25_index"
+    assert result.child_chunks[0].metadata["sparse_bm25_score"] > 0.0
+    assert result.metadata["retrieval_degradations"] == []
+
+
+def test_hybrid_sparse_empty_inventory_is_reported_as_degradation(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / "runs"))
+    store = _ListOnlyChunkStore([])
+
+    retriever = ResearchRetriever(store, policy=build_retrieval_policy(PAPER_HYBRID_RRF_RAG_V1_POLICY))
+    result = retriever.retrieve(
+        RetrievalRequest(paper_id="p1", question="Which table reports raremetric42?", limit=2)
+    )
+
+    assert result.metadata["sparse_recalled"] == 0
+    assert result.metadata["retrieval_degradations"] == [
+        {
+            "code": "sparse_bm25_index_missing",
+            "stage": "sparse_lexical",
+            "paper_id": "p1",
+            "reason": "Persisted BM25 index was not found; rebuilding sparse lexical inventory from ChunkStorePort.list_chunks.",
+        },
+        {
+            "code": "sparse_inventory_empty",
+            "stage": "sparse_lexical",
+            "paper_id": "p1",
+            "reason": "ChunkStorePort.list_chunks returned no chunks for sparse lexical recall.",
+        }
+    ]
+    assert result.metadata["retrieval_trace"]["degradations"] == result.metadata["retrieval_degradations"]
+    assert result.metadata["retrieval_trace"]["policy_name"] == PAPER_HYBRID_RRF_RAG_V1_POLICY
+    assert result.metadata["retrieval_trace"]["policy_hash"] == result.metadata["retrieval_policy_config_hash"]
+
+
+def test_formula_policy_uses_formula_sparse_rrf_to_recall_symbol_operator_match(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / "runs"))
     weak = _chunk(
         "eq-weak",
         chunk_type="formula",

@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from business.research.document.models import PaperChunk
-from business.research.rag.retrieval.paper_retriever import ResearchRetriever, RetrievalRequest
+from business.research.rag.retrieval.contracts import RetrievalRequest
+from business.research.rag.retrieval.paper_retriever import ResearchRetriever
 from business.research.ports.chunk_store import ChunkStorePort
 
 logger = logging.getLogger(__name__)
