@@ -149,7 +149,7 @@ def _retrieval_metrics(
         metrics["memory_namespace"] = memory_namespace
     if tenant_filtered_passage_count:
         metrics["tenant_filtered_passage_count"] = tenant_filtered_passage_count
-    return metrics
+    return _public_metrics(metrics)
 
 
 def _chunk_visible_to_tenant(chunk: Any, *, tenant_id: str | None) -> bool:
@@ -214,14 +214,14 @@ def _gated_payload(
 
 def _gated_metrics(result: Any, pack: Any | None) -> dict[str, Any]:
     session_metrics = result.metrics.to_dict() if getattr(result, "metrics", None) is not None else {}
-    return {
+    return _public_metrics({
         **session_metrics,
         "context_pack_id": pack.pack_id if pack else session_metrics.get("context_pack_id"),
         "accepted_evidence_count": len(pack.accepted_evidence)
         if pack
         else session_metrics.get("accepted_evidence_count", 0),
         "decision_type": result.decision.decision_type.value,
-    }
+    })
 
 
 def _passages_from_pack(pack: Any | None, *, limit: int) -> list[dict[str, Any]]:
@@ -289,6 +289,76 @@ def _context_pack_summary(pack: Any | None) -> dict[str, Any] | None:
         "gap_report": pack.gap_report,
         "assembly_summary": pack.assembly_summary,
     }
+
+
+_SENSITIVE_PUBLIC_METRIC_KEYS = {
+    "allowed_memory_namespace",
+    "allowed_memory_namespaces",
+    "allowed_namespace",
+    "allowed_namespaces",
+    "allowed_tenant_ids",
+    "memory_namespace",
+    "tenant_ids",
+    "user",
+    "user_id",
+    "username",
+}
+
+
+def _public_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    value = _sanitize_public_metric_value(metrics)
+    return value if isinstance(value, dict) else {}
+
+
+def _sanitize_public_metric_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if _sensitive_public_metric_key(key_text):
+                continue
+            sanitized = _sanitize_public_metric_value(item)
+            if sanitized is not None:
+                out[key_text] = sanitized
+        return out
+    if isinstance(value, (list, tuple)):
+        out = []
+        for item in value:
+            sanitized = _sanitize_public_metric_value(item)
+            if sanitized is not None:
+                out.append(sanitized)
+        return out
+    if isinstance(value, set):
+        out = []
+        for item in sorted(value, key=str):
+            sanitized = _sanitize_public_metric_value(item)
+            if sanitized is not None:
+                out.append(sanitized)
+        return out
+    if isinstance(value, str) and _sensitive_public_metric_value(value):
+        return None
+    return value
+
+
+def _sensitive_public_metric_key(key: str) -> bool:
+    normalized = key.casefold()
+    if normalized == "tenant_id":
+        return False
+    if normalized in _SENSITIVE_PUBLIC_METRIC_KEYS:
+        return True
+    if "memory_namespace" in normalized or "namespace" in normalized:
+        return True
+    if "user_id" in normalized or normalized.endswith("_user"):
+        return True
+    return False
+
+
+def _sensitive_public_metric_value(value: str) -> bool:
+    normalized = value.casefold()
+    return (
+        normalized.startswith("research:tenant:")
+        and (":user:" in normalized or normalized.endswith(":public"))
+    )
 
 
 __all__ = ["PaperRagApplicationService"]

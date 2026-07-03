@@ -42,10 +42,11 @@ class _Retriever:
     def __init__(self, chunks: list[_Chunk] | None = None) -> None:
         self.calls = []
         self.chunks = chunks or [_Chunk()]
+        self.metadata = None
 
     def retrieve(self, request):
         self.calls.append(request)
-        return _RetrievalResult(self.chunks)
+        return _RetrievalResult(self.chunks, metadata=self.metadata)
 
 
 class _Session:
@@ -89,6 +90,37 @@ def test_rag_ask_retrieve_only_filters_cross_tenant_passages() -> None:
     assert [item["chunk_id"] for item in payload["passages"]] == ["public"]
     assert payload["metrics"]["tenant_id"] == "tenant-a"
     assert payload["metrics"]["tenant_filtered_passage_count"] == 1
+
+
+def test_rag_ask_retrieve_only_sanitizes_scope_metrics() -> None:
+    retriever = _Retriever()
+    retriever.metadata = {
+        "retrieved": 1,
+        "user_id": "user-1",
+        "memory_namespace": "research:tenant:tenant-a:user:user-1",
+        "nested": {
+            "allowed_memory_namespaces": ["research:tenant:tenant-a:user:user-1"],
+            "owner_user_id": "user-1",
+            "safe_count": 2,
+        },
+    }
+    service = PaperRagApplicationService(
+        retriever=retriever,
+        session_factory=lambda **_: (_ for _ in ()).throw(AssertionError("session should not be built")),
+    )
+
+    payload = service.rag_ask(
+        "p1",
+        "How does it work?",
+        generate=False,
+        tenant_id="tenant-a",
+        user_id="user-1",
+        memory_namespace="research:tenant:tenant-a:user:user-1",
+    )
+
+    assert payload["metrics"]["tenant_id"] == "tenant-a"
+    assert payload["metrics"]["nested"] == {"safe_count": 2}
+    _assert_public_metrics_scope_sanitized(payload["metrics"])
 
 
 def test_rag_ask_gated_generation_returns_answered_payload() -> None:
@@ -176,9 +208,13 @@ def test_rag_ask_gated_generation_carries_tenant_scope() -> None:
     assert goal.allowed_memory_namespaces == [namespace]
     assert goal.metadata["tenant_id"] == "tenant-a"
     assert goal.metadata["user_id"] == "user-1"
+    assert result.metrics is not None
+    assert result.metrics.user_id == "user-1"
+    assert result.metrics.memory_namespace == namespace
     assert payload["metrics"]["tenant_id"] == "tenant-a"
-    assert payload["metrics"]["user_id"] == "user-1"
-    assert payload["metrics"]["memory_namespace"] == namespace
+    assert "user_id" not in payload["metrics"]
+    assert "memory_namespace" not in payload["metrics"]
+    _assert_public_metrics_scope_sanitized(payload["metrics"])
 
 
 def test_rag_ask_gated_generation_respects_expected_abstention_golden_case() -> None:
@@ -272,6 +308,25 @@ def _session_result(
             answer_attempts=1,
         ),
     )
+
+
+def _assert_public_metrics_scope_sanitized(value) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).casefold()
+            assert normalized != "user_id"
+            assert "memory_namespace" not in normalized
+            assert "namespace" not in normalized
+            assert "user_id" not in normalized
+            _assert_public_metrics_scope_sanitized(item)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _assert_public_metrics_scope_sanitized(item)
+        return
+    if isinstance(value, str):
+        assert "research:tenant:" not in value
+        assert "user-1" not in value
 
 
 def _answer(*, abstained: bool) -> GroundedAnswerCandidate:
