@@ -1,0 +1,72 @@
+name: RAG Live E2E
+
+"on":
+  workflow_dispatch:
+  schedule:
+    - cron: "17 19 * * 1"
+
+jobs:
+  live-rag-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: newsroom
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d newsroom"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      qdrant:
+        image: qdrant/qdrant:v1.9.7
+        ports:
+          - 6333:6333
+
+    env:
+      NEWS_DATABASE_DSN: postgresql://postgres:postgres@localhost:5432/newsroom
+      NEWS_QDRANT_URL: http://localhost:6333
+      NEWS_RUN_LIVE_RESEARCH_E2E: "1"
+      NEWS_VECTOR_SIZE: "64"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Wait for live E2E services
+        run: |
+          python - <<'PY'
+          import socket
+          import time
+
+          for host, port in (("127.0.0.1", 5432), ("127.0.0.1", 6333)):
+              deadline = time.time() + 60
+              while True:
+                  try:
+                      with socket.create_connection((host, port), timeout=2):
+                          break
+                  except OSError:
+                      if time.time() >= deadline:
+                          raise
+                      time.sleep(2)
+          PY
+
+      - name: Install package
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run live Paper RAG Qdrant/Postgres E2E
+        run: python -m scripts.dev test-rag-live-e2e

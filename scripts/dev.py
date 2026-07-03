@@ -66,6 +66,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(_pytest_command("tests/interfaces/services", "-q"), env=env)
     if args.command == "test-rag-eval-gate":
         return _run(_rag_eval_gate_command(), env=env)
+    if args.command == "test-rag-live-e2e":
+        return _run(_rag_live_e2e_command(), env=env)
     if args.command == "test-interfaces":
         return _run(
             _pytest_command(
@@ -169,6 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("test-workflow-domain", help="Run workflow domain tests")
     subparsers.add_parser("test-services", help="Run interface service tests")
     subparsers.add_parser("test-rag-eval-gate", help="Run the deterministic Paper RAG eval CI gate")
+    subparsers.add_parser("test-rag-live-e2e", help="Run the opt-in live Paper RAG Qdrant/Postgres e2e")
     subparsers.add_parser("test-interfaces", help="Run interface acceptance tests")
     subparsers.add_parser("test-api", help="Run HTTP API interface tests")
     subparsers.add_parser("test-cli", help="Run CLI interface tests")
@@ -266,6 +269,10 @@ def _mcp_smoke_command() -> list[str]:
 
 def _rag_eval_gate_command() -> list[str]:
     return [sys.executable, "-m", "business.research.rag.cli.run_ci_eval_gate"]
+
+
+def _rag_live_e2e_command() -> list[str]:
+    return _pytest_command("tests/business/research/integration/test_chunk_paper_e2e.py", "-q")
 
 
 def _prd_research_regression_command() -> list[str]:
