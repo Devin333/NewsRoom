@@ -53,6 +53,7 @@ from business.research.rag.retrieval.expanders import (
     ContextExpander,
     CrossRefContextExpander,
     ParentContextExpander,
+    TableContextExpander,
 )
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
 from business.research.rag.retrieval.policy_config import policy_config_hash, stable_policy_config
@@ -96,6 +97,7 @@ __all__ = [
     "RerankCascade",
     "RetrievalDegradation",
     "RetrievalTrace",
+    "TableContextExpander",
     "build_retrieval_policy",
     "build_retrieval_policy_from_env",
     "build_retrieval_route",
