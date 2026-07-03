@@ -180,7 +180,7 @@ export type StudioOverview = {
   avgQualityScore?: number
   artifactsGenerated24h: number
   qualityReviewRequired: number
-  latestRuns: AgentRun[]
+  latestRuns: StudioRunListItem[]
 }
 
 export type AgentRunDetail = {

@@ -15,6 +15,18 @@ describe("useRunList filtering", () => {
     expect(filterRunList(runs, { profile: ["offline"] }).map((item) => item.id)).toEqual(["run-c"])
   })
 
+  it("filters by agent and date range", () => {
+    const realNow = Date.now
+    Date.now = () => new Date("2026-05-24T04:00:00Z").getTime()
+    try {
+      expect(filterRunList(runs, { agentName: ["weekly"] }).map((item) => item.id)).toEqual(["run-b"])
+      expect(filterRunList(runs, { dateRange: "today" }).map((item) => item.id)).toEqual(["run-c", "run-b", "run-a"])
+      expect(filterRunList(runs, { dateRange: "custom" }).map((item) => item.id)).toEqual(["run-c", "run-b", "run-a"])
+    } finally {
+      Date.now = realNow
+    }
+  })
+
   it("sorts latest first by default", () => {
     expect(filterRunList(runs, {}).map((item) => item.id)).toEqual(["run-c", "run-b", "run-a"])
   })

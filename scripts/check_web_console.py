@@ -39,12 +39,24 @@ REQUIRED_FILES = [
     "apps/web/README.md",
 ]
 
+REQUIRED_FILE_ALIASES = {
+    "apps/web/src/app/settings/page.tsx": ["apps/web/src/app/(app)/settings/page.tsx"],
+    "apps/web/src/app/runs/page.tsx": ["apps/web/src/app/(app)/runs/page.tsx"],
+    "apps/web/src/app/runs/[runId]/page.tsx": ["apps/web/src/app/(app)/runs/[runId]/page.tsx"],
+    "apps/web/src/app/reports/page.tsx": ["apps/web/src/app/(app)/reports/page.tsx"],
+    "apps/web/src/app/reports/[reportId]/page.tsx": ["apps/web/src/app/(app)/reports/[reportId]/page.tsx"],
+    "apps/web/src/app/workers/page.tsx": ["apps/web/src/app/(app)/workers/page.tsx"],
+    "apps/web/src/app/sources/page.tsx": ["apps/web/src/app/(app)/sources/page.tsx"],
+    "apps/web/src/app/memory/page.tsx": ["apps/web/src/app/(app)/memory/page.tsx"],
+    "apps/web/src/app/approvals/page.tsx": ["apps/web/src/app/(app)/approvals/page.tsx"],
+}
+
 REQUIRED_PACKAGE_SCRIPTS = ["dev", "build", "start", "lint", "typecheck"]
 
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    missing = [path for path in REQUIRED_FILES if not (root / path).exists()]
+    missing = [path for path in REQUIRED_FILES if not _required_file_exists(root, path)]
     if missing:
         for path in missing:
             print(f"missing={path}")
@@ -72,6 +84,12 @@ def main() -> int:
     print(f"required_files={len(REQUIRED_FILES)}")
     print(f"package_scripts={len(REQUIRED_PACKAGE_SCRIPTS)}")
     return 0
+
+
+def _required_file_exists(root: Path, path: str) -> bool:
+    if (root / path).exists():
+        return True
+    return any((root / alias).exists() for alias in REQUIRED_FILE_ALIASES.get(path, ()))
 
 
 if __name__ == "__main__":

@@ -324,7 +324,7 @@ function matchingSummary(paper: Paper, locale: Locale) {
 function AISummaryBlock({
   status,
   summary,
-  error: _error,
+  error,
   locale,
   onRetry
 }: {
@@ -369,6 +369,7 @@ function AISummaryBlock({
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
       <p>{translate(locale, "papers.reader.summaryUnavailable")}</p>
+      {error ? <p className="mt-1 font-mono text-xs">{error}</p> : null}
       <button type="button" className="mt-3 inline-flex items-center gap-2 rounded-full border border-amber-300 bg-white/70 px-3 py-1 text-xs font-semibold" onClick={onRetry}>
         <RefreshCw className="size-4" />
         {translate(locale, "common.retry")}

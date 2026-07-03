@@ -1,7 +1,6 @@
 import Link from "next/link"
 import { ArrowRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { papersCopy, t } from "@/lib/papers/copy"
 import { taskName } from "@/lib/papers/format"
 import { papersRoutes } from "@/lib/papers/routes"
 import type { Locale, PaperTask } from "@/lib/papers/types"

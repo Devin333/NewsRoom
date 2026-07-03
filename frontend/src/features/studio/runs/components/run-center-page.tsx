@@ -17,6 +17,7 @@ export function RunCenterPage({ runs, notices = [] }: { runs: StudioRunListItem[
   const { t, status } = useI18n()
   const [filters, setFilters] = useState<AgentRunFilters>({ sort: "startedAt" })
   const { data, isError, error } = useRunList(filters, runs)
+  const agents = unique(runs.map((run) => run.agentName))
   const workflows = unique(runs.map((run) => run.workflowId ?? run.workflowName ?? run.agentName))
   const profiles = unique(runs.map((run) => run.profile))
 
@@ -38,7 +39,7 @@ export function RunCenterPage({ runs, notices = [] }: { runs: StudioRunListItem[
       ) : null}
       <RunStatusSummary runs={runs} />
       <StudioToolbar>
-        <div className="grid gap-3 lg:grid-cols-[minmax(240px,1fr)_180px_180px_160px_150px]">
+        <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_150px_170px_150px_140px_140px_140px]">
           <label className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -48,9 +49,18 @@ export function RunCenterPage({ runs, notices = [] }: { runs: StudioRunListItem[
               onChange={(event) => setFilters({ ...filters, keyword: event.target.value || undefined })}
             />
           </label>
+          <Select label={t("studio.runs.agent")} value={filters.agentName?.[0] ?? ""} options={agents} allLabel={t("studio.runs.all")} onChange={(value) => setFilters({ ...filters, agentName: value ? [value] : undefined })} />
           <Select label={t("studio.runs.workflow")} value={filters.workflowId?.[0] ?? ""} options={workflows} allLabel={t("studio.runs.all")} onChange={(value) => setFilters({ ...filters, workflowId: value ? [value] : undefined })} />
           <Select label={t("common.status")} value={filters.status?.[0] ?? ""} options={statuses} allLabel={t("studio.runs.all")} optionLabel={(value) => status(value)} onChange={(value) => setFilters({ ...filters, status: value ? [value as AgentRunStatus] : undefined })} />
           <Select label={t("studio.runs.profile")} value={filters.profile?.[0] ?? ""} options={profiles} allLabel={t("studio.runs.all")} onChange={(value) => setFilters({ ...filters, profile: value ? [value] : undefined })} />
+          <Select
+            label={t("studio.runs.range")}
+            value={filters.dateRange ?? ""}
+            options={["today", "week", "month"]}
+            allLabel={t("studio.runs.all")}
+            optionLabel={(value) => t(`studio.runs.range.${value}`)}
+            onChange={(value) => setFilters({ ...filters, dateRange: value ? (value as AgentRunFilters["dateRange"]) : undefined })}
+          />
           <Select
             label={t("studio.runs.sort")}
             value={filters.sort ?? "startedAt"}

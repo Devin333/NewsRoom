@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { adaptRunDetail, adaptRunList, normalizeRunStatus } from "@/features/studio/runs/lib/run-center-adapter"
+import { adaptRunDetail, adaptRunList, buildStudioOverview, normalizeRunStatus } from "@/features/studio/runs/lib/run-center-adapter"
 import type { RunCenterDetailResponses } from "@/features/studio/runs/api/run-center-api"
 
 describe("Run Center adapter", () => {
@@ -53,6 +53,22 @@ describe("Run Center adapter", () => {
     expect(normalizeRunStatus("blocked")).toBe("blocked")
     expect(normalizeRunStatus("waiting_for_human")).toBe("waiting_for_human")
     expect(normalizeRunStatus("review_required")).toBe("waiting_for_human")
+  })
+
+  it("builds overview metrics from adapted runs", () => {
+    const { runs } = adaptRunList({
+      ok: false,
+      errorCode: "request_failed",
+      errorMessage: "API unavailable"
+    })
+    const overview = buildStudioOverview(runs)
+
+    expect(overview.latestRuns).toHaveLength(5)
+    expect(overview.activeRuns).toBeGreaterThanOrEqual(1)
+    expect(overview.failedRuns24h).toBeGreaterThanOrEqual(1)
+    expect(overview.completedRuns24h).toBeGreaterThanOrEqual(1)
+    expect(overview.artifactsGenerated24h).toBeGreaterThan(0)
+    expect(overview.qualityReviewRequired).toBeGreaterThanOrEqual(overview.failedRuns24h)
   })
 
   it("marks missing API steps as partial and uses fallback steps", () => {
