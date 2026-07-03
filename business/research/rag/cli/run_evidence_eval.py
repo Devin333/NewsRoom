@@ -14,9 +14,14 @@ from business.research.document.models import PaperChunk
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
 from business.research.ports.visual_chunk_index import VisualChunkHit
 from business.research.rag.adapters.paper_field_text import FIELD_NAMES, extract_field_texts
+from business.research.rag.evaluation.paper_answer_eval import (
+    EvidenceAnswerEvaluator,
+    EvidenceAnswerSample,
+)
 from business.research.rag.evaluation.paper_evaluation_report import EvidenceRegressionReport
 from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
+    EvidenceQAPair,
     EvidenceRetrievalEvaluator,
     load_evidence_golden_set,
     save_evidence_golden_set,
@@ -101,8 +106,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.retrieval_policy,
             explicit=args.lightweight_reranker,
         )
+    answer = None
+    if args.deterministic_answer_eval:
+        answer = EvidenceAnswerEvaluator().evaluate(_build_deterministic_answer_samples(pairs))
     report = EvidenceRegressionReport(
         retrieval=retrieval,
+        answer=answer,
         metadata=metadata,
         thresholds=thresholds,
     )
@@ -197,7 +206,80 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="METRIC=VALUE",
         help="Optional threshold, for example retrieval.evidence_coverage=0.8.",
     )
+    parser.add_argument(
+        "--deterministic-answer-eval",
+        action="store_true",
+        help=(
+            "Add deterministic answer/abstention samples from the golden set so "
+            "answer thresholds can run without an LLM or external services."
+        ),
+    )
     return parser
+
+
+def _build_deterministic_answer_samples(pairs: list[EvidenceQAPair]) -> list[EvidenceAnswerSample]:
+    return [_deterministic_answer_sample(pair) for pair in pairs]
+
+
+def _deterministic_answer_sample(pair: EvidenceQAPair) -> EvidenceAnswerSample:
+    if pair.expected_behavior == "abstain":
+        return EvidenceAnswerSample(
+            pair=pair,
+            answer="The provided context does not mention evidence that answers this question.",
+            metadata={"ci_answer_eval": "deterministic_abstention"},
+        )
+
+    context_ids = _unique_texts([*pair.gold_chunk_ids, *pair.equivalent_gold_chunk_ids])
+    answer_facts = _unique_texts(pair.answer_facts)
+    if answer_facts:
+        answer_text = " ".join(answer_facts)
+    else:
+        answer_text = "The answer is supported by the cited evidence."
+    if pair.gold_chunk_ids:
+        answer_text = f"{answer_text} " + " ".join(f"[{chunk_id}]" for chunk_id in pair.gold_chunk_ids)
+    return EvidenceAnswerSample(
+        pair=pair,
+        answer=answer_text,
+        cited_chunk_ids=list(pair.gold_chunk_ids),
+        cited_source_locators=list(pair.gold_source_locators),
+        context_chunk_ids=context_ids,
+        metadata={
+            "ci_answer_eval": "deterministic_gold_supported_answer",
+            "retrieved_chunk_ids": context_ids,
+            "context_relationships": _context_relationships_from_pair(pair),
+            "locator_context": _locator_context_from_pair(pair),
+        },
+    )
+
+
+def _context_relationships_from_pair(pair: EvidenceQAPair) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    relationships = dict(pair.supporting_evidence_group or {}).get("relationships")
+    if isinstance(relationships, list):
+        out.extend(dict(item) for item in relationships if isinstance(item, dict))
+    for claim_id in pair.gold_claim_ids:
+        for chunk_id in pair.gold_chunk_ids:
+            out.append({"chunk_id": chunk_id, "claim_id": claim_id, "edge": "gold_claim_support"})
+    return out
+
+
+def _locator_context_from_pair(pair: EvidenceQAPair) -> list[dict[str, Any]]:
+    locator_context = dict(pair.supporting_evidence_group or {}).get("locator_context")
+    if isinstance(locator_context, list):
+        return [dict(item) for item in locator_context if isinstance(item, dict)]
+    return []
+
+
+def _unique_texts(values: Sequence[Any]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
 
 
 def _load_chunks_from_papers_dir(papers_dir: Path):

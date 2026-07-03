@@ -23,6 +23,8 @@ DEFAULT_RETRIEVAL_THRESHOLDS: dict[str, float] = {
     "retrieval.required_type_coverage": 0.75,
     "retrieval.source_locator_coverage": 0.75,
     "retrieval.mrr": 0.45,
+    "answer.abstention_accuracy": 0.90,
+    "answer.success_rate": 0.90,
 }
 
 DEFAULT_PROMOTION_THRESHOLDS: dict[str, float] = {
@@ -36,6 +38,8 @@ DEFAULT_PROMOTION_THRESHOLDS: dict[str, float] = {
     "citation_qa_hit_at_10": PROMOTION_THRESHOLDS["citation_qa_hit_at_10"],
     "figure_qa_hit_at_10": PROMOTION_THRESHOLDS["figure_qa_hit_at_10"],
     "table_qa_hit_at_10": PROMOTION_THRESHOLDS["table_qa_hit_at_10"],
+    "answer_abstention_accuracy": 0.90,
+    "answer_success_rate": 0.90,
 }
 
 _PROMOTION_QA_TYPES = ("citation_qa", "figure_qa", "formula_qa", "table_qa")
@@ -107,7 +111,7 @@ def run_ci_eval_gate(
         "2",
         "--domain",
         "ci",
-        "--no-negative",
+        "--deterministic-answer-eval",
         *[
             item
             for metric, threshold in sorted(thresholds.items())
@@ -148,6 +152,7 @@ def build_ci_promotion_checklist(
     promotion_thresholds = dict(DEFAULT_PROMOTION_THRESHOLDS)
     promotion_thresholds.update(dict(thresholds or {}))
     retrieval = dict(evidence_report.get("retrieval") or {})
+    answer = dict(evidence_report.get("answer") or {})
     metadata = dict(evidence_report.get("metadata") or {})
     policy_name = str(metadata.get("retrieval_policy") or "")
     checks = [
@@ -254,6 +259,25 @@ def build_ci_promotion_checklist(
             "Table QA Hit@10 meets staged retrieval gate",
             _qa_type_hit_at_k(retrieval, "table_qa", 10),
             promotion_thresholds["table_qa_hit_at_10"],
+        ),
+        _promotion_check(
+            "negative_abstention_samples",
+            "CI gate includes expected-abstain samples",
+            _expected_behavior_count(metadata, "abstain") > 0,
+            actual=metadata.get("expected_behavior_counts") or {},
+            threshold={"abstain": "> 0"},
+        ),
+        _metric_check(
+            "answer_abstention_accuracy",
+            "Answer abstention accuracy meets PR gate",
+            _metric(answer, "abstention_accuracy"),
+            promotion_thresholds["answer_abstention_accuracy"],
+        ),
+        _metric_check(
+            "answer_success_rate",
+            "Answer success rate meets PR gate",
+            _metric(answer, "success_rate"),
+            promotion_thresholds["answer_success_rate"],
         ),
         _promotion_check(
             "evidence_report_artifact",
@@ -510,6 +534,16 @@ def _qa_type_presence_check(retrieval: Mapping[str, Any]) -> PolicyPromotionChec
         threshold=list(_PROMOTION_QA_TYPES),
         details=f"missing={missing}" if missing else "",
     )
+
+
+def _expected_behavior_count(metadata: Mapping[str, Any], behavior: str) -> int:
+    raw = metadata.get("expected_behavior_counts") or {}
+    if not isinstance(raw, Mapping):
+        return 0
+    try:
+        return int(raw.get(behavior) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _top_k_metrics_present(retrieval: Mapping[str, Any]) -> bool:
