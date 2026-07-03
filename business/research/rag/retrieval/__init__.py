@@ -49,6 +49,7 @@ from business.research.rag.retrieval.paper_visual_retrieval import (
     with_retrieval_scores,
 )
 from business.research.rag.retrieval.channels import RankedHit, RankedList, RecallChannel
+from business.research.rag.retrieval.expanders import ContextExpander, ParentContextExpander
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
 from business.research.rag.retrieval.policy_config import policy_config_hash, stable_policy_config
 from business.research.rag.retrieval.rerank import RerankCascade, field_rerank_passage
@@ -61,6 +62,7 @@ __all__ = [
     "ChannelSpec",
     "ClaimRecord",
     "ClaimSearchHit",
+    "ContextExpander",
     "DEFAULT_RETRIEVAL_POLICY",
     "GeneratedAnswer",
     "ExpanderSpec",
@@ -71,6 +73,7 @@ __all__ = [
     "PAPER_HYBRID_RRF_RAG_V1_POLICY",
     "PAPER_VISUAL_RAG_TUNED_POLICY",
     "PaperVisualFusionWeights",
+    "ParentContextExpander",
     "PaperClaimIndex",
     "PaperClaimSearchPort",
     "QueryIntent",
