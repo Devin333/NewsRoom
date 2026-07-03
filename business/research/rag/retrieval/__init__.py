@@ -59,6 +59,7 @@ from business.research.rag.retrieval.expanders import (
     SupplementalTableHitExpander,
     TableContextExpander,
 )
+from business.research.rag.retrieval.factory import build_retrieval_pipeline
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings, fuse_ranked_hits
 from business.research.rag.retrieval.policy_config import policy_config_hash, stable_policy_config
 from business.research.rag.retrieval.ranking_stage import ChildRankingResult, ChildRankingStage
@@ -118,6 +119,7 @@ __all__ = [
     "build_retrieval_policy",
     "build_retrieval_policy_from_env",
     "build_retrieval_route",
+    "build_retrieval_pipeline",
     "classify_query_intent",
     "extract_claim_records",
     "field_rerank_passage",
