@@ -22,6 +22,7 @@ from business.research.ports.chunk_store import ChunkStorePort
 from business.research.ports.field_embedding_index import FieldEmbeddingHit, FieldEmbeddingSearchPort
 from business.research.ports.visual_chunk_index import VisualChunkHit, VisualChunkSearchPort
 from business.research.rag.adapters.paper_field_text import CORE_FIELD_NAMES, FIELD_NAMES, extract_field_texts
+from business.research.rag.retrieval.channels.dense_text import DenseTextChannel
 from business.research.rag.retrieval.channels.sparse_lexical import (
     FormulaSparseScores,
     SparseLexicalChannel,
@@ -532,6 +533,7 @@ class ResearchRetriever:
         claim_index: PaperClaimSearchPort | None = None,
     ) -> None:
         self._store = chunk_store
+        self._dense_channel = DenseTextChannel(chunk_store)
         self._sparse_channel = SparseLexicalChannel(chunk_store)
         self._policy = policy or RetrievalPolicy()
         self._reranker = reranker
@@ -838,9 +840,9 @@ class ResearchRetriever:
         query_texts = _recall_queries_for_policy(request.question, route.intent, self._policy)
         for filters in candidate_filters:
             for query_text in query_texts:
-                for chunk, score in self._store.search_with_scores(
-                    request.paper_id,
-                    query_text,
+                for chunk, score in self._dense_channel.recall_chunks(
+                    paper_id=request.paper_id,
+                    query_text=query_text,
                     filters=filters,
                     limit=limit,
                 ):
@@ -864,16 +866,13 @@ class ResearchRetriever:
         query_texts = _recall_queries_for_policy(request.question, route.intent, self._policy)
         for filter_index, filters in enumerate(candidate_filters):
             for query_index, query_text in enumerate(query_texts):
-                try:
-                    semantic_hits = self._store.search_with_scores(
-                        request.paper_id,
-                        query_text,
-                        filters=filters,
-                        limit=limit,
-                    )
-                except Exception:
-                    logging.getLogger(__name__).warning("semantic retrieval failed", exc_info=True)
-                    semantic_hits = []
+                semantic_hits = self._dense_channel.recall_chunks(
+                    paper_id=request.paper_id,
+                    query_text=query_text,
+                    filters=filters,
+                    limit=limit,
+                    suppress_errors=True,
+                )
                 if semantic_hits:
                     rankings.append((f"semantic:{filter_index}:{query_index}", semantic_hits))
                 if self._policy.sparse_lexical_enabled:
