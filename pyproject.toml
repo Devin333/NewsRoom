@@ -34,6 +34,9 @@ qdrant = [
 rerank = [
   "sentence-transformers>=3.0",
 ]
+observability = [
+  "opentelemetry-api>=1.25",
+]
 vision = [
   "Pillow>=10.0",
   "sentence-transformers>=3.0",
@@ -51,6 +54,7 @@ dev = [
   "qdrant-client>=1.8",
   "redis>=5.0",
   "sentence-transformers>=3.0",
+  "opentelemetry-api>=1.25",
   "uvicorn[standard]>=0.27",
 ]
 all = [
@@ -62,6 +66,7 @@ all = [
   "qdrant-client>=1.8",
   "redis>=5.0",
   "sentence-transformers>=3.0",
+  "opentelemetry-api>=1.25",
   "uvicorn[standard]>=0.27",
 ]
 

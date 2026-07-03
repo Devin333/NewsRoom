@@ -31,6 +31,7 @@ from framework.harness.rag.metrics import RAGSessionMetrics, build_rag_session_m
 from framework.harness.rag.planner import DeterministicRAGPlanner, RAGPlanner
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType, RAGExecutionPolicy, normalize_query
 from framework.harness.rag.source_verifier import SourceVerifier
+from framework.harness.rag.telemetry import RAGTelemetry, RAGTelemetrySpan
 from framework.harness.retrieval.ports import RetrievalPort
 from framework.harness.retrieval.request import RetrievalRequest
 from framework.shared.json import to_jsonable
@@ -74,6 +75,7 @@ class RAGSessionState:
     artifact_refs: list[str] = field(default_factory=list)
     gap_report: dict[str, Any] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
+    telemetry: RAGTelemetrySpan | None = None
 
 
 class BoundedRAGSessionController(RAGSessionController):
@@ -89,6 +91,7 @@ class BoundedRAGSessionController(RAGSessionController):
         answer_worker: AnswerWorkerPort | None = None,
         answer_gate: RAGAnswerGate | None = None,
         gates: RAGGateSuite | None = None,
+        telemetry: RAGTelemetry | None = None,
     ) -> None:
         self.retrieval = retrieval
         self.memory = memory
@@ -99,6 +102,7 @@ class BoundedRAGSessionController(RAGSessionController):
         self.answer_worker = answer_worker
         self.answer_gate = answer_gate or RAGAnswerGate()
         self.gates = gates or RAGGateSuite()
+        self.telemetry = telemetry or RAGTelemetry()
 
     def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
         spec = _spec_from_legacy_request(request)
@@ -106,7 +110,23 @@ class BoundedRAGSessionController(RAGSessionController):
 
     def run(self, spec: RAGSessionSpec) -> RAGSessionResult:
         policy = RAGExecutionPolicy.from_session_spec(spec)
-        state = RAGSessionState(spec=spec, gap_report={"missing_evidence_types": list(spec.goal.required_evidence_types)})
+        with self.telemetry.start_session(spec, policy) as telemetry:
+            result = self._run_with_policy(spec, policy, telemetry)
+            if result.metrics is not None:
+                telemetry.finish_session(status=result.status, decision=result.decision, metrics=result.metrics)
+            return result
+
+    def _run_with_policy(
+        self,
+        spec: RAGSessionSpec,
+        policy: RAGExecutionPolicy,
+        telemetry: RAGTelemetrySpan,
+    ) -> RAGSessionResult:
+        state = RAGSessionState(
+            spec=spec,
+            gap_report={"missing_evidence_types": list(spec.goal.required_evidence_types)},
+            telemetry=telemetry,
+        )
         self._event(
             state,
             "rag_session_started",
@@ -263,6 +283,7 @@ class BoundedRAGSessionController(RAGSessionController):
             context_pack=pack,
             answer=answer,
             scope_metadata=_session_scope_metadata(spec),
+            trace_metadata=telemetry.trace_metadata(),
         )
         return RAGSessionResult(
             status=status,
@@ -551,28 +572,30 @@ class BoundedRAGSessionController(RAGSessionController):
     ) -> tuple[RetrievalStepResult, ...]:
         results: list[RetrievalStepResult] = []
         for step in plan.steps:
-            if step.operation == RetrievalOperation.SEARCH_CORPUS:
-                result = self._execute_search(step, state)
-                state.budget_snapshot = state.budget_snapshot.with_usage(queries=1, worker_calls=1)
-            elif step.operation == RetrievalOperation.READ_SOURCE:
-                result = self._execute_source_read(step, state)
-                state.budget_snapshot = state.budget_snapshot.with_usage(
-                    source_reads=max(len(step.source_refs), step.max_source_reads, 1),
-                    worker_calls=1,
-                )
-            elif step.operation == RetrievalOperation.RECALL_MEMORY:
-                result = self._execute_memory_recall(step, state)
-                state.budget_snapshot = state.budget_snapshot.with_usage(
-                    memory_hits=len(result.memory_refs),
-                    worker_calls=1,
-                )
-            else:
-                result = RetrievalStepResult(
-                    step_id=step.step_id,
-                    operation=step.operation,
-                    errors=(f"operation {step.operation.value} is verified but not directly executed",),
-                )
-            budget_result = self.gates.budget.evaluate(state.budget_snapshot, policy)
+            with self.telemetry.start_step(step, state.spec) as step_span:
+                if step.operation == RetrievalOperation.SEARCH_CORPUS:
+                    result = self._execute_search(step, state)
+                    state.budget_snapshot = state.budget_snapshot.with_usage(queries=1, worker_calls=1)
+                elif step.operation == RetrievalOperation.READ_SOURCE:
+                    result = self._execute_source_read(step, state)
+                    state.budget_snapshot = state.budget_snapshot.with_usage(
+                        source_reads=max(len(step.source_refs), step.max_source_reads, 1),
+                        worker_calls=1,
+                    )
+                elif step.operation == RetrievalOperation.RECALL_MEMORY:
+                    result = self._execute_memory_recall(step, state)
+                    state.budget_snapshot = state.budget_snapshot.with_usage(
+                        memory_hits=len(result.memory_refs),
+                        worker_calls=1,
+                    )
+                else:
+                    result = RetrievalStepResult(
+                        step_id=step.step_id,
+                        operation=step.operation,
+                        errors=(f"operation {step.operation.value} is verified but not directly executed",),
+                    )
+                budget_result = self.gates.budget.evaluate(state.budget_snapshot, policy)
+                step_span.finish_step(result)
             results.append(result)
             if not budget_result.passed:
                 self._event(state, "rag_gate_failed", budget_result.to_dict())
@@ -708,7 +731,10 @@ class BoundedRAGSessionController(RAGSessionController):
                 self._event(state, "rag_gate_failed", result.to_dict())
 
     def _event(self, state: RAGSessionState, event_type: str, payload: dict[str, Any]) -> None:
-        state.events.append({"event_type": event_type, "payload": to_jsonable(payload)})
+        json_payload = to_jsonable(payload)
+        state.events.append({"event_type": event_type, "payload": json_payload})
+        if state.telemetry is not None:
+            state.telemetry.add_event(event_type, json_payload)
 
 
 def _spec_from_legacy_request(request: RAGSessionRequest) -> RAGSessionSpec:

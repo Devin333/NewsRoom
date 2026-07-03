@@ -120,6 +120,8 @@ def test_rag_ask_gated_generation_returns_answered_payload() -> None:
     assert payload["metrics"]["accepted_evidence_count"] == 1
     assert payload["metrics"]["transcript_event_count"] == 3
     assert payload["metrics"]["answer_attempts"] == 1
+    assert payload["metrics"]["trace_id"] == "trace-1"
+    assert payload["metrics"]["root_span_id"] == "span-1"
     assert payload["metrics"]["budget_snapshot"]["rounds_used"] == 1
     assert session.calls[0][0].required_evidence_types == ["method"]
     assert session.calls[0][1]["current_section_index"] == 0
@@ -261,6 +263,8 @@ def _session_result(
             tenant_id=tenant_id,
             user_id=user_id,
             memory_namespace=memory_namespace,
+            trace_id="trace-1",
+            root_span_id="span-1",
             accepted_evidence_count=1,
             context_pack_id="pack-1",
             answer_present=True,

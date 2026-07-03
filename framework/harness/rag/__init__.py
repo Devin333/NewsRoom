@@ -57,6 +57,7 @@ from framework.harness.rag.relevance import RAGRelevanceGate, RelevanceScorerPor
 from framework.harness.rag.replay import RAGReplayCheck, RAGSessionReplayResult, RAGSessionReplayRunner, replay_rag_session
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionController, RAGSessionResult, RAGSessionState
 from framework.harness.rag.source_verifier import FakeSourceVerifier, SourceVerificationResult, SourceVerifier
+from framework.harness.rag.telemetry import RAGTelemetry, RAGTelemetrySpan
 
 __all__ = [
     "FORBIDDEN_RAG_PLAN_KEYS",
@@ -108,6 +109,8 @@ __all__ = [
     "RAGSessionStatus",
     "RAGSourceQualityGate",
     "RAGToolAllowlistGate",
+    "RAGTelemetry",
+    "RAGTelemetrySpan",
     "RAGTranscript",
     "RetrievalGoal",
     "RetrievalOperation",
