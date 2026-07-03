@@ -20,6 +20,7 @@ from business.research.domain.document import (
     ResearchTable,
 )
 from business.research.document.arxiv_parser import ArxivDocumentParser
+from business.research.document.marker_pdf_parser import MarkerPdfDocumentParser
 from business.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
 from business.research.document.pdf_compiler import (
     FigureImageRef,
@@ -85,6 +86,14 @@ def _write_mineru_named_content(output_dir: Path, name: str, payload: list[dict[
     nested = output_dir / "input" / "auto"
     nested.mkdir(parents=True, exist_ok=True)
     (nested / name).write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_marker_content(output_dir: Path, payload: dict[str, object]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "input.json").write_text(
         json.dumps(payload, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -1399,9 +1408,125 @@ def test_mineru_pdf_parser_reads_named_content_list(monkeypatch, tmp_path):
     assert doc.sections[0].text == "Named output works."
 
 
+def test_marker_pdf_parser_converts_json_output(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(tmp_path / ".newsroom" / "runs"))
+    monkeypatch.setenv("NEWSROOM_MARKER_CACHE_DIR", str(tmp_path / "marker-cache"))
+
+    def fake_run(command, *, timeout_seconds):
+        assert command[:3] == ["docker", "run", "--rm"]
+        assert "marker_single" in command
+        assert "--output_format" in command
+        assert "json" in command
+        assert any(part.endswith("marker-cache:/root/.cache") for part in command)
+        output_dir = _docker_mount_host_path(command, "/output")
+        image_dir = output_dir / "images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        (image_dir / "figure.png").write_bytes(b"png")
+        (image_dir / "table.png").write_bytes(b"png")
+        _write_marker_content(
+            output_dir,
+            {
+                "pages": [
+                    {
+                        "page": 1,
+                        "blocks": [
+                            {"block_type": "SectionHeader", "text": "Introduction", "page": 1},
+                            {
+                                "block_type": "Text",
+                                "text": "This paper studies parser backends.",
+                                "page": 1,
+                            },
+                            {
+                                "block_type": "Equation",
+                                "latex": "E=mc^2",
+                                "page": 1,
+                                "bbox": [100, 100, 300, 140],
+                            },
+                            {
+                                "block_type": "Figure",
+                                "image_path": "images/figure.png",
+                                "caption": "Figure 1: Overview.",
+                                "page": 1,
+                                "bbox": [100, 200, 500, 600],
+                            },
+                            {
+                                "block_type": "Table",
+                                "image_path": "images/table.png",
+                                "caption": "Table 1: Scores.",
+                                "page": 1,
+                                "bbox": [100, 650, 500, 900],
+                                "html": (
+                                    "<table><tr><td>Model</td><td>Score</td></tr>"
+                                    "<tr><td>baseline</td><td>0.8</td></tr></table>"
+                                ),
+                            },
+                        ],
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(
+        "business.research.document.marker_pdf_parser.run_docker_command",
+        fake_run,
+    )
+
+    doc = MarkerPdfDocumentParser().parse(
+        "2501_marker",
+        _make_pdf(["Introduction\nThis paper studies parser backends."]),
+    )
+
+    assert doc.metadata["parse_source"] == "marker"
+    assert doc.metadata["parser_backend"] == "marker"
+    assert doc.sections[0].title == "Introduction"
+    assert doc.sections[0].text == "This paper studies parser backends."
+    assert doc.sections[0].metadata["source_locator"] == "arxiv://2501_marker/pdf#page=1"
+    assert doc.equations[0].latex == "E=mc^2"
+    assert doc.equations[0].metadata["source_locator"].startswith("arxiv://2501_marker/pdf#page=1")
+    assert len(doc.figures) == 1
+    assert Path(doc.figures[0].image_ref).exists()
+    assert doc.figures[0].metadata["parse_source"] == "marker"
+    assert doc.metadata["parse_quality"]["figures"]["with_image"] == 1
+    assert len(doc.tables) == 1
+    assert Path(doc.tables[0].metadata["image_ref"]).exists()
+    assert doc.tables[0].columns == ["Model", "Score"]
+    assert doc.tables[0].rows == [{"Model": "baseline", "Score": "0.8"}]
+    assert doc.metadata["parse_quality"]["tables"]["with_rows"] == 1
+
+
+def test_dispatcher_can_select_marker_backend(monkeypatch, tmp_path):
+    monkeypatch.setenv("NEWSROOM_PARSER_RUN_ROOT", str(tmp_path / "parser-runs"))
+
+    def fake_run(command, *, timeout_seconds):
+        output_dir = _docker_mount_host_path(command, "/output")
+        _write_marker_content(
+            output_dir,
+            {
+                "blocks": [
+                    {"block_type": "SectionHeader", "text": "Abstract", "page": 1},
+                    {"block_type": "Text", "text": "Parsed by Marker.", "page": 1},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(
+        "business.research.document.marker_pdf_parser.run_docker_command",
+        fake_run,
+    )
+
+    doc = ArxivDocumentParser(pdf_parser_backend="marker").parse(
+        "2501_dispatch_marker",
+        _make_pdf(["Parsed by Marker."]),
+    )
+
+    assert doc.metadata["parse_source"] == "marker"
+    assert doc.sections[0].text == "Parsed by Marker."
+
+
 def test_pdf_parser_backend_name_rejects_unknown_backend():
     with pytest.raises(ValueError, match="NEWSROOM_PDF_PARSER_BACKEND"):
-        pdf_parser_backend_name("marker")
+        pdf_parser_backend_name("docling")
 
 
 def test_dispatcher_routes_latex():

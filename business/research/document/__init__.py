@@ -2,6 +2,7 @@ from business.research.document.models import PaperChunk, ParseSource, ChunkType
 from business.research.document.chunker import PaperDocumentChunker
 from business.research.document.async_preprocessor import AsyncChunkPreprocessor
 from business.research.document.arxiv_parser import ArxivDocumentParser
+from business.research.document.marker_pdf_parser import MarkerPdfDocumentParser
 from business.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
 from business.research.document.pdf_compiler import PdfDocumentParser
 from business.research.document.pdf_parser_backend import build_pdf_document_parser, pdf_parser_backend_name
@@ -14,6 +15,7 @@ __all__ = [
     "PaperChunk",
     "PaperDocumentChunker",
     "ParseSource",
+    "MarkerPdfDocumentParser",
     "MinerUPdfDocumentParser",
     "PdfDocumentParser",
     "SectionRole",

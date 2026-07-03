@@ -6,7 +6,10 @@ from pathlib import Path
 
 from business.research.domain.common import SourceLineage
 from business.research.domain.document import ResearchDocument, ResearchSection
-from business.research.rag.evaluation.paper_parser_bakeoff_ingest import ingest_parser_bakeoff_pdfs
+from business.research.rag.evaluation.paper_parser_bakeoff_ingest import (
+    _build_parser,
+    ingest_parser_bakeoff_pdfs,
+)
 
 
 @dataclass(frozen=True)
@@ -101,3 +104,17 @@ def test_parser_bakeoff_ingest_records_failures(tmp_path: Path) -> None:
     assert report.items[0].status == "failed"
     assert "RuntimeError: parse failed" in report.items[0].reason
 
+
+def test_parser_bakeoff_cli_accepts_marker_backend() -> None:
+    parser = _build_parser()
+
+    args = parser.parse_args([
+        "--papers-dir",
+        "papers",
+        "--manifest",
+        "manifest.json",
+        "--pdf-parser-backend",
+        "marker",
+    ])
+
+    assert args.pdf_parser_backend == "marker"

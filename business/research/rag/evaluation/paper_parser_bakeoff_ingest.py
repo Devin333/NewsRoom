@@ -204,7 +204,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force", action="store_true", help="Re-parse papers even when research_document.json exists.")
     parser.add_argument(
         "--pdf-parser-backend",
-        choices=("nougat", "mineru"),
+        choices=("nougat", "mineru", "marker"),
         required=True,
         help="PDF parser backend to run for every fetched PDF.",
     )
@@ -259,4 +259,3 @@ def _elapsed(start: float) -> float:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
