@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import pytest
 
+from framework.harness.rag.models import AnswerClaim, GroundedAnswerCandidate
 from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.storage.postgres.migrations import load_migration_sql
 from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
@@ -25,6 +26,8 @@ from business.research.document.chunk_storage import (
 )
 from business.research.document.arxiv_parser import ArxivDocumentParser
 from business.research.application.chunk_paper_pipeline import ChunkPaperPipeline
+from business.research.application.paper_rag_session import PaperRAGSession
+from interfaces.services.paper_rag_service import PaperRagApplicationService
 
 ARXIV_ID = "1706.03762"
 PAPER_ID  = "1706.03762"
@@ -124,6 +127,40 @@ def test_parent_child_relation_preserved(chunk_repo, pipeline_result):
             f"parent {child['parent_chunk_id']} not found in postgres"
 
 
+def test_gated_ask_runs_over_live_retrieved_chunks(chunk_store, pipeline_result):
+    service = PaperRagApplicationService(
+        retriever=object(),
+        with_reranker=False,
+        session_factory=lambda **_: PaperRAGSession(
+            chunk_store,
+            answer_worker=_GroundedAnswerWorker(),
+            generation_policy={"enabled": True, "max_attempts": 1},
+        ),
+    )
+
+    payload = service.rag_ask(
+        pipeline_result.paper_id,
+        "What evidence describes the attention mechanism?",
+        generate=True,
+        limit=5,
+    )
+
+    assert payload["status"] == "answered"
+    assert payload["generation_mode"] == "gated_harness"
+    assert payload["answer_candidate"]["abstained"] is False
+    assert payload["answer"]
+    assert payload["passages"]
+    assert payload["context_pack"]["accepted_evidence_ids"]
+    assert payload["transcript_id"]
+    assert payload["gate_results"]
+    assert all(item.get("passed") is True for item in payload["gate_results"])
+    assert payload["citations"]
+    assert payload["citations"][0]["chunk_id"]
+    assert payload["citations"][0]["span_refs"]
+    assert payload["metrics"]["decision_type"] == "return_answer"
+    assert payload["metrics"]["transcript_event_count"] > 0
+
+
 def test_chunk_summary(pipeline_result):
     print(f"\n=== Chunk summary for {ARXIV_ID} ===")
     print(f"  total     : {pipeline_result.total_chunks}")
@@ -133,3 +170,25 @@ def test_chunk_summary(pipeline_result):
 
 def _vector_size_from_env() -> int:
     return int(os.getenv("NEWS_VECTOR_SIZE") or os.getenv("NEWS_EMBEDDING_DIMENSIONS") or "64")
+
+
+class _GroundedAnswerWorker:
+    def generate_answer(self, *, question: str, pack) -> GroundedAnswerCandidate:
+        evidence = pack.accepted_evidence[0]
+        span_ref = evidence.span_refs[0]
+        answer_text = f"The retrieved paper evidence supports the question: {question}"
+        return GroundedAnswerCandidate(
+            answer_id="live-e2e-answer",
+            question=question,
+            answer_text=answer_text,
+            cited_evidence_ids=(evidence.evidence_id,),
+            claims=(
+                AnswerClaim(
+                    claim_id="live-e2e-claim",
+                    text=answer_text,
+                    evidence_ids=(evidence.evidence_id,),
+                    span_refs=(span_ref,),
+                ),
+            ),
+            metadata={"worker": "live_e2e_grounded_stub"},
+        )
