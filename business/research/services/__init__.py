@@ -8,6 +8,11 @@ from business.research.services.quality_gate import ResearchQualityGate
 from business.research.services.rag_policy import ResearchRAGPolicyBuilder
 from business.research.services.reader_issue_detector import ReaderIssueDetector
 from business.research.services.reader_repair_gate import ReaderRepairGate
+from business.research.services.tenant_visibility import (
+    chunk_visible_to_tenant,
+    metadata_tenant_ids,
+    public_metrics,
+)
 
 __all__ = [
     "CitationVerifier",
@@ -18,4 +23,7 @@ __all__ = [
     "ResearchProfileBuilder",
     "ResearchQualityGate",
     "ResearchRAGPolicyBuilder",
+    "chunk_visible_to_tenant",
+    "metadata_tenant_ids",
+    "public_metrics",
 ]

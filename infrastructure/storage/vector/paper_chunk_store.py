@@ -16,9 +16,12 @@ _PAYLOAD_INDEXES: dict[str, str] = {
     "has_figure": "bool",
     "has_table": "bool",
     "figure_id": "keyword",
+    "tenant": "keyword",
+    "tenant_id": "keyword",
     "propositions_generated": "bool",
     "structure_detected": "bool",
     "section_index": "integer",
+    "workspace_id": "keyword",
 }
 
 

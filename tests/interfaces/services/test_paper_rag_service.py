@@ -88,6 +88,7 @@ def test_rag_ask_retrieve_only_filters_cross_tenant_passages() -> None:
     payload = service.rag_ask("p1", "How does it work?", tenant_id="tenant-a")
 
     assert [item["chunk_id"] for item in payload["passages"]] == ["public"]
+    assert retriever.calls[0].filters == {"tenant_id": "tenant-a"}
     assert payload["metrics"]["tenant_id"] == "tenant-a"
     assert payload["metrics"]["tenant_filtered_passage_count"] == 1
 

@@ -12,6 +12,7 @@ from business.research.rag.retrieval.plan import (
     RerankSpec,
     RetrievalPlan,
 )
+from business.research.rag.retrieval.filtering import merge_request_filters
 from business.research.rag.retrieval.paper_policy import RetrievalRoute, build_retrieval_route
 _HYBRID_RRF_INTENTS = (
     "figure_query",
@@ -29,7 +30,7 @@ class QueryPlanner:
 
     def build(self, request: Any) -> RetrievalPlan:
         route = build_retrieval_route(str(request.question or ""))
-        filters = self._build_filters(route)
+        filters = self._build_filters(route, request)
         candidate_filters = tuple(self._candidate_filters(route, filters))
         element_labels = tuple(sorted(element_query_labels(request.question, route.intent)))
         candidate_limit = self._candidate_limit(
@@ -72,11 +73,8 @@ class QueryPlanner:
             ),
         )
 
-    def _build_filters(self, route: RetrievalRoute) -> dict[str, Any]:
-        filters: dict[str, Any] = {}
-        if route.extra_filters:
-            filters.update(route.extra_filters)
-        return filters
+    def _build_filters(self, route: RetrievalRoute, request: Any) -> dict[str, Any]:
+        return merge_request_filters(request, route.extra_filters)
 
     def _candidate_filters(
         self,
@@ -84,7 +82,10 @@ class QueryPlanner:
         base_filters: dict[str, Any],
     ) -> list[dict[str, Any]]:
         if route.intent == "formula_query" and self._policy.formula_sparse_enabled:
-            return [{"chunk_type": "formula"}]
+            formula_filters = dict(base_filters)
+            formula_filters.pop("has_formula", None)
+            formula_filters["chunk_type"] = "formula"
+            return [formula_filters]
         if route.candidate_filter_groups:
             return dedupe_filters([
                 {**base_filters, **dict(filters)}

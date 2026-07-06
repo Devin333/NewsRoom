@@ -7,6 +7,7 @@ from framework.rag.retrieval import RerankScoreSet, expansion_metadata, rerank_s
 
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
+from business.research.rag.retrieval.filtering import merge_request_filters
 
 if TYPE_CHECKING:
     from business.research.ports.reranker import RerankerPort
@@ -153,7 +154,7 @@ class TableContextExpander:
             scored = self._store.search_with_scores(
                 request.paper_id,
                 query_text,
-                filters={"chunk_type": "paragraph"},
+                filters=merge_request_filters(request, {"chunk_type": "paragraph"}),
                 limit=self._policy.table_result_context_search_limit,
             )
         except Exception:

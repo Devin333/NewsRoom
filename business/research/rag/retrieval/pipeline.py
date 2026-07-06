@@ -10,6 +10,7 @@ from business.research.document.models import PaperChunk
 from business.research.rag.retrieval.metrics import RetrievalMetricsBuilder
 from business.research.rag.retrieval.policy_config import policy_config_hash
 from business.research.rag.retrieval.trace import RetrievalTrace
+from business.research.services.tenant_visibility import chunk_visible_to_tenant, tenant_id_from_filters
 
 
 class RetrievalPipeline:
@@ -85,17 +86,25 @@ class RetrievalPipeline:
             visual_hits,
             limit=request.limit,
         )
-        scored = ranking_result.scored
+        tenant_id = tenant_id_from_filters(getattr(request, "filters", {}) or {})
+        scored = _filter_scored_for_tenant(ranking_result.scored, tenant_id=tenant_id)
         child_chunks = ranking_result.child_chunks
+        child_chunks = _filter_chunks_for_tenant(child_chunks, tenant_id=tenant_id)
         child_chunks = self._structural_expander.expand(child_chunks, request, route)
+        child_chunks = _filter_chunks_for_tenant(child_chunks, tenant_id=tenant_id)
         supplemental_table_chunks = self._supplemental_table_expander.expand(child_chunks, request, route)
+        supplemental_table_chunks = _filter_chunks_for_tenant(supplemental_table_chunks, tenant_id=tenant_id)
         child_chunks.extend(supplemental_table_chunks)
         top_score = scored[0][1] if scored else 0.0
 
         parent_chunks, parent_metrics = self._parent_expander.expand(child_chunks, request, route)
+        parent_chunks = _filter_chunks_for_tenant(parent_chunks, tenant_id=tenant_id)
         cross_ref_chunks = self._cross_ref_expander.expand(child_chunks, request.paper_id)
         table_context_chunks = self._table_context_expander.expand(child_chunks, request, route)
-        ref_chunks = _dedupe_chunks([*cross_ref_chunks, *table_context_chunks])
+        ref_chunks = _filter_chunks_for_tenant(
+            _dedupe_chunks([*cross_ref_chunks, *table_context_chunks]),
+            tenant_id=tenant_id,
+        )
 
         elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
         metrics = self._metrics_builder.build(
@@ -136,6 +145,26 @@ class RetrievalPipeline:
 
 def _dedupe_chunks(chunks: list[PaperChunk]) -> list[PaperChunk]:
     return dedupe_by_key(chunks, key=lambda chunk: chunk.chunk_id)
+
+
+def _filter_chunks_for_tenant(chunks: list[PaperChunk], *, tenant_id: str | None) -> list[PaperChunk]:
+    if not tenant_id:
+        return chunks
+    return [chunk for chunk in chunks if chunk_visible_to_tenant(chunk, tenant_id=tenant_id)]
+
+
+def _filter_scored_for_tenant(
+    scored: list[tuple[PaperChunk, float]],
+    *,
+    tenant_id: str | None,
+) -> list[tuple[PaperChunk, float]]:
+    if not tenant_id:
+        return scored
+    return [
+        (chunk, score)
+        for chunk, score in scored
+        if chunk_visible_to_tenant(chunk, tenant_id=tenant_id)
+    ]
 
 
 __all__ = ["RetrievalPipeline"]

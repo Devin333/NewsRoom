@@ -6,6 +6,7 @@ from typing import Any
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
 from business.research.rag.retrieval.expanders.table_context import should_expand_result_context
+from business.research.rag.retrieval.filtering import merge_request_filters
 from business.research.rag.retrieval.paper_visual_retrieval import with_retrieval_scores
 from business.research.rag.retrieval.scoring import ChildCandidateScorer
 
@@ -28,7 +29,7 @@ class SupplementalTableHitExpander:
             candidates = self._store.search_with_scores(
                 request.paper_id,
                 request.question,
-                filters={"chunk_type": "table"},
+                filters=merge_request_filters(request, {"chunk_type": "table"}),
                 limit=self._policy.supplemental_table_result_limit,
             )
         except Exception:

@@ -23,6 +23,7 @@ from business.research.rag.retrieval.paper_retriever import (
     build_retrieval_policy_from_env,
     retrieval_policy_enables_lightweight_reranker,
 )
+from business.research.services.tenant_visibility import metadata_visible_to_tenant, tenant_id_from_filters
 from business.research.rag.retrieval.bm25_index import write_bm25_index
 from business.research.rag.retrieval.paper_claim_index import PaperClaimIndex
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
@@ -183,9 +184,14 @@ class _ListOnlyChunkStore:
 
 
 def _matches_filters(chunk: PaperChunk, filters: dict[str, Any]) -> bool:
+    tenant_id = tenant_id_from_filters(filters)
     for key, value in filters.items():
+        if key in {"tenant_id", "tenant", "workspace_id", "tenant_ids", "allowed_tenant_ids"}:
+            continue
         if getattr(chunk, key, chunk.metadata.get(key)) != value:
             return False
+    if not metadata_visible_to_tenant(chunk.metadata, tenant_id=tenant_id):
+        return False
     return True
 
 
@@ -295,6 +301,52 @@ def test_numerical_result_records_multi_route_plan_and_filter_groups():
         for chunk in result.child_chunks
         for route in chunk.metadata.get("matched_recall_routes", [])
     } >= {"table_chunks", "result_paragraphs"}
+
+
+def test_tenant_filter_merges_with_route_filters_and_excludes_other_tenants():
+    tenant_table = _chunk(
+        "tbl-tenant-a",
+        chunk_type="table",
+        section_title="Experiments",
+        section_role=["experiment"],
+        content="Tenant A table reports accuracy.",
+        metadata={"tenant_id": "tenant-a", "table_id": "tbl-tenant-a"},
+    )
+    foreign_table = _chunk(
+        "tbl-tenant-b",
+        chunk_type="table",
+        section_title="Experiments",
+        section_role=["experiment"],
+        content="Tenant B table reports accuracy.",
+        metadata={"tenant_id": "tenant-b", "table_id": "tbl-tenant-b"},
+    )
+    public_paragraph = _chunk(
+        "para-public",
+        chunk_type="paragraph",
+        section_title="Results",
+        section_role=["experiment"],
+        content="Public paragraph summarizes the result.",
+    )
+    store = _ScriptedChunkStore(
+        [tenant_table, foreign_table, public_paragraph],
+        search_order=["tbl-tenant-b", "tbl-tenant-a", "para-public"],
+    )
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+
+    result = retriever.retrieve(
+        RetrievalRequest(
+            paper_id="p1",
+            question="What quantitative evidence do the experiment results provide?",
+            limit=3,
+            filters={"tenant_id": "tenant-a"},
+        )
+    )
+
+    assert {chunk.chunk_id for chunk in result.child_chunks} == {"tbl-tenant-a", "para-public"}
+    assert {tuple(sorted(call["filters"].items())) for call in store.calls} >= {
+        (("chunk_type", "table"), ("tenant_id", "tenant-a")),
+        (("chunk_type", "paragraph"), ("tenant_id", "tenant-a")),
+    }
 
 
 def test_parent_expansion():

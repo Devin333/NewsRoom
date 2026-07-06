@@ -97,6 +97,7 @@ class PaperKernelRAGRetriever:
             question=query.query,
             current_section_index=section_index,
             limit=query.limit,
+            filters=_research_filters_from_rag_query(query),
         ))
         chunks = _dedupe_chunks((*result.child_chunks, *result.ref_chunks, *result.parent_chunks))
         self.last_metadata = {
@@ -164,6 +165,12 @@ def _section_index_from_rag_query(query: RAGQuery, *, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return index if index >= 0 else default
+
+
+def _research_filters_from_rag_query(query: RAGQuery) -> dict[str, object]:
+    filters = dict(query.filters)
+    filters.pop("context_refs", None)
+    return filters
 
 
 # Verify structural compliance at import time

@@ -15,10 +15,12 @@ from business.research.rag.retrieval.paper_retriever import RetrievalResult
 class _SpyRetriever:
     """Records the section_index it was asked to retrieve with."""
     seen_section_index: int | None = None
+    seen_filters: dict | None = None
     result: RetrievalResult | None = None
 
     def retrieve(self, request) -> RetrievalResult:
         self.seen_section_index = request.current_section_index
+        self.seen_filters = dict(request.filters)
         if self.result is not None:
             return self.result
         chunk = PaperChunk(
@@ -128,6 +130,23 @@ def test_paper_kernel_rag_retriever_projects_chunks_to_rag_evidence():
     assert evidence[0].source_locator is not None
     assert retriever.last_metadata["intent"] == "concept_method"
     assert retriever.last_metadata["section_index"] == 5
+
+
+def test_paper_kernel_rag_retriever_preserves_tenant_filter_without_context_refs():
+    spy = _SpyRetriever()
+    retriever = PaperKernelRAGRetriever(spy, default_section_index=5)  # type: ignore[arg-type]
+
+    retriever.retrieve(RAGQuery(
+        query="how does attention work",
+        intent="paper_query",
+        filters={
+            "context_refs": ["arxiv://1706.03762/latex"],
+            "tenant_id": "tenant-a",
+        },
+        limit=2,
+    ))
+
+    assert spy.seen_filters == {"tenant_id": "tenant-a"}
 
 
 def test_parent_context_metadata_exposed_in_evidence_pack():
