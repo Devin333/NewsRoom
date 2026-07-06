@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
+from uuid import uuid4
 
 from business.research.document.models import PaperChunk
 from business.research.ports.field_embedding_index import FieldEmbeddingHit
@@ -29,7 +30,11 @@ from business.research.rag.evaluation.paper_evidence_eval import (
 )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    live_answer_ask: Callable[[EvidenceQAPair], dict[str, Any]] | None = None,
+) -> int:
     args = _build_parser().parse_args(argv)
     if args.deterministic_answer_eval and args.live_answer_eval:
         raise ValueError("--deterministic-answer-eval and --live-answer-eval are mutually exclusive")
@@ -121,17 +126,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.deterministic_answer_eval:
         answer = EvidenceAnswerEvaluator().evaluate(_build_deterministic_answer_samples(pairs))
     elif args.live_answer_eval:
+        ask = live_answer_ask or _build_live_answer_ask(
+            chunks,
+            retrieval_policy=args.retrieval_policy,
+            visual_enabled=args.visual,
+            image_root=Path(args.image_root) if args.image_root else None,
+            lightweight_reranker=args.lightweight_reranker,
+            limit=args.answer_eval_limit,
+        )
         answer = EvidenceAnswerEvaluator().evaluate(
             _build_live_answer_samples(
                 pairs,
-                ask=_build_live_answer_ask(
-                    chunks,
-                    retrieval_policy=args.retrieval_policy,
-                    visual_enabled=args.visual,
-                    image_root=Path(args.image_root) if args.image_root else None,
-                    lightweight_reranker=args.lightweight_reranker,
-                    limit=args.answer_eval_limit,
-                ),
+                ask=ask,
             )
         )
     report = EvidenceRegressionReport(
@@ -353,45 +359,36 @@ def _build_live_answer_ask(
     lightweight_reranker: bool,
     limit: int,
 ) -> Callable[[EvidenceQAPair], dict[str, Any]]:
-    if chunks:
-        service = _build_in_memory_live_answer_service(
-            chunks,
-            retrieval_policy=retrieval_policy,
-            visual_enabled=visual_enabled,
-            image_root=image_root,
-            lightweight_reranker=lightweight_reranker,
+    if not chunks:
+        raise ValueError(
+            "--live-answer-eval requires --papers-dir with parsed research_document.json files "
+            "or an injected live_answer_ask callable from an outer interface/script layer"
         )
-    else:
-        from interfaces.services.paper_rag_service import PaperRagApplicationService
-
-        service = PaperRagApplicationService()
-
-    def ask(pair: EvidenceQAPair) -> dict[str, Any]:
-        return service.rag_ask(
-            pair.paper_id,
-            pair.question,
-            limit=limit,
-            generate=True,
-            gated=True,
-        )
-
-    return ask
+    return _build_in_memory_live_answer_ask(
+        chunks,
+        retrieval_policy=retrieval_policy,
+        visual_enabled=visual_enabled,
+        image_root=image_root,
+        lightweight_reranker=lightweight_reranker,
+        limit=limit,
+    )
 
 
-def _build_in_memory_live_answer_service(
+def _build_in_memory_live_answer_ask(
     chunks: list[PaperChunk],
     *,
     retrieval_policy: str | None,
     visual_enabled: bool,
     image_root: Path | None,
     lightweight_reranker: bool,
-):
+    limit: int,
+) -> Callable[[EvidenceQAPair], dict[str, Any]]:
+    from business.research.application.ask_paper import AskPaperUseCase
     from business.research.application.llm_client import build_unity_llm_call
     from business.research.application.paper_rag_session import PaperRAGSession
     from business.research.rag.adapters import PaperAnswerWorker
     from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
     from business.research.rag.retrieval.policies import build_retrieval_policy
-    from interfaces.services.paper_rag_service import PaperRagApplicationService
 
     chunk_store = _InMemoryChunkStore()
     chunk_store.ensure_collection()
@@ -417,28 +414,143 @@ def _build_in_memory_live_answer_service(
         field_reranker = LightweightLexicalReranker()
 
     policy = build_retrieval_policy(retrieval_policy)
-
-    def session_factory(**kwargs: Any) -> PaperRAGSession:
-        answer_worker = None
-        generation_policy: dict[str, object] = {}
-        if kwargs.get("with_answer_worker"):
-            answer_worker = PaperAnswerWorker(AnswerGenerator(build_unity_llm_call(max_tokens=600)))
-            generation_policy = {"enabled": True, "max_attempts": 2}
-        return PaperRAGSession(
-            chunk_store,
-            field_index=field_index,
-            field_reranker=field_reranker,
-            visual_store=visual_store,
-            retrieval_policy=policy,
-            answer_worker=answer_worker,
-            generation_policy=generation_policy,
-        )
-
-    return PaperRagApplicationService(
-        retriever=object(),
-        session_factory=session_factory,
-        with_reranker=False,
+    answer_worker = PaperAnswerWorker(AnswerGenerator(build_unity_llm_call(max_tokens=600)))
+    session = PaperRAGSession(
+        chunk_store,
+        field_index=field_index,
+        field_reranker=field_reranker,
+        visual_store=visual_store,
+        retrieval_policy=policy,
+        answer_worker=answer_worker,
+        generation_policy={"enabled": True, "max_attempts": 2},
     )
+    ask_use_case = AskPaperUseCase()
+
+    def ask(pair: EvidenceQAPair) -> dict[str, Any]:
+        run_suffix = uuid4().hex[:12]
+        goal = ask_use_case.build_paper_ask_goal(
+            paper_id=pair.paper_id,
+            question=pair.question,
+            goal_id=f"paper-rag-answer-eval-{run_suffix}",
+        )
+        result = session.run(
+            goal,
+            run_id=f"paper-rag-answer-eval-run-{run_suffix}",
+            workflow_id="research.paper_rag_answer_eval",
+            step_id="live_answer_eval",
+            session_id=f"paper-rag-answer-eval-session-{run_suffix}",
+            current_section_index=0,
+        )
+        return _live_answer_payload_from_result(pair, goal=goal, result=result, limit=limit)
+
+    return ask
+
+
+def _live_answer_payload_from_result(
+    pair: EvidenceQAPair,
+    *,
+    goal: Any,
+    result: Any,
+    limit: int,
+) -> dict[str, Any]:
+    answer = result.answer
+    pack = result.context_pack
+    return {
+        "paper_id": pair.paper_id,
+        "question": pair.question,
+        "intent": goal.metadata.get("intent", ""),
+        "status": result.status.value,
+        "generation_mode": "gated_harness",
+        "answer": answer.answer_text if answer and not answer.abstained else None,
+        "answer_candidate": answer.to_dict() if answer else None,
+        "claims": [claim.to_dict() for claim in answer.claims] if answer else [],
+        "citations": _citations_from_live_answer(answer, pack),
+        "passages": _passages_from_live_pack(pack, limit=limit),
+        "metrics": _live_answer_metrics(result, pack),
+        "decision": result.decision.to_dict(),
+        "gate_results": list(result.decision.gate_results),
+        "transcript_id": result.transcript.transcript_id,
+        "context_pack": _live_context_pack_summary(pack),
+    }
+
+
+def _live_answer_metrics(result: Any, pack: Any | None) -> dict[str, Any]:
+    session_metrics = result.metrics.to_dict() if getattr(result, "metrics", None) is not None else {}
+    return {
+        **session_metrics,
+        "context_pack_id": pack.pack_id if pack else session_metrics.get("context_pack_id"),
+        "accepted_evidence_count": len(pack.accepted_evidence)
+        if pack
+        else session_metrics.get("accepted_evidence_count", 0),
+        "decision_type": result.decision.decision_type.value,
+    }
+
+
+def _passages_from_live_pack(pack: Any | None, *, limit: int) -> list[dict[str, Any]]:
+    if pack is None:
+        return []
+    passages = []
+    for evidence in pack.accepted_evidence[:limit]:
+        passages.append({
+            "evidence_id": evidence.evidence_id,
+            "chunk_id": evidence.metadata.get("rag_chunk_id", evidence.evidence_id),
+            "section_title": evidence.metadata.get("section_title", evidence.title),
+            "chunk_type": evidence.metadata.get("chunk_type", evidence.evidence_type),
+            "content": evidence.summary,
+            "source_locator": evidence.metadata.get("source_locator") or evidence.source_ref,
+        })
+    return passages
+
+
+def _citations_from_live_answer(answer: Any | None, pack: Any | None) -> list[dict[str, Any]]:
+    if answer is None or pack is None:
+        return []
+    by_id = {item.evidence_id: item for item in pack.accepted_evidence}
+    citations = []
+    for evidence_id in answer.cited_evidence_ids:
+        evidence = by_id.get(evidence_id)
+        citations.append({
+            "evidence_id": evidence_id,
+            "chunk_id": evidence.metadata.get("rag_chunk_id", evidence_id) if evidence else evidence_id,
+            "span_refs": _live_citation_span_refs(answer, evidence_id, evidence),
+            "source_locator": (
+                evidence.metadata.get("source_locator")
+                or evidence.source_ref
+                if evidence
+                else ""
+            ),
+            "title": evidence.title if evidence else "",
+        })
+    return citations
+
+
+def _live_citation_span_refs(answer: Any, evidence_id: str, evidence: Any | None) -> list[str]:
+    available = set(evidence.span_refs) if evidence else None
+    span_refs: list[str] = []
+    seen: set[str] = set()
+    for claim in answer.claims:
+        if evidence_id not in claim.evidence_ids:
+            continue
+        for span_ref in claim.span_refs:
+            if available is not None and span_ref not in available:
+                continue
+            if span_ref in seen:
+                continue
+            seen.add(span_ref)
+            span_refs.append(span_ref)
+    return span_refs
+
+
+def _live_context_pack_summary(pack: Any | None) -> dict[str, Any] | None:
+    if pack is None:
+        return None
+    return {
+        "pack_id": pack.pack_id,
+        "accepted_evidence_ids": [item.evidence_id for item in pack.accepted_evidence],
+        "rejected_evidence_ids": [item.evidence_id for item in pack.rejected_evidence],
+        "gap_report": pack.gap_report,
+        "assembly_summary": pack.assembly_summary,
+    }
 
 
 def _context_relationships_from_pair(pair: EvidenceQAPair) -> list[dict[str, Any]]:
