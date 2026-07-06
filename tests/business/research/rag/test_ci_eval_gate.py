@@ -24,6 +24,7 @@ def test_ci_eval_gate_writes_evidence_and_promotion_reports(tmp_path: Path) -> N
     promotion = json.loads(result.promotion_report_path.read_text(encoding="utf-8"))
 
     assert evidence["metadata"]["mode"] == "live_retrieval"
+    assert evidence["metadata"]["answer_eval_mode"] == "deterministic"
     assert evidence["metadata"]["total_pairs"] > 0
     assert evidence["metadata"]["expected_behavior_counts"]["abstain"] > 0
     assert evidence["metadata"]["expected_behavior_counts"]["answer"] > 0
@@ -46,6 +47,9 @@ def test_ci_eval_gate_writes_evidence_and_promotion_reports(tmp_path: Path) -> N
         "answer_abstention_accuracy",
         "answer_success_rate",
     }
+    labels = {check["check_id"]: check["label"] for check in promotion["checks"]}
+    assert labels["answer_abstention_accuracy"].startswith("Deterministic answer-eval pipeline")
+    assert labels["answer_success_rate"].startswith("Deterministic answer-eval pipeline")
 
 
 def test_ci_eval_gate_returns_failed_result_for_threshold_regression(tmp_path: Path) -> None:

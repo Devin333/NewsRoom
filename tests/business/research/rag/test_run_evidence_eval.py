@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from data.eval.build_golden_set import build_pairs
 from business.research.document.models import PaperChunk
+from business.research.rag.cli import run_evidence_eval as run_evidence_eval_module
+from business.research.rag.cli.run_evidence_eval import _build_live_answer_samples, main
+from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvaluator
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair, save_evidence_golden_set
-from business.research.rag.cli.run_evidence_eval import main
 
 
 class _FakeChunkStore:
@@ -69,6 +73,7 @@ def test_run_evidence_eval_writes_summary_report(tmp_path) -> None:
     payload = json.loads((output / "evidence_regression_report.json").read_text(encoding="utf-8"))
     assert payload["metadata"]["total_pairs"] == 2
     assert payload["metadata"]["qa_type_counts"] == {"citation_qa": 1, "negative_qa": 1}
+    assert payload["metadata"]["answer_eval_mode"] == "none"
     assert (output / "evidence_regression_report.md").exists()
 
 
@@ -93,6 +98,124 @@ def test_build_golden_set_entrypoint_uses_evidence_pairs_with_negatives() -> Non
     assert any(pair.expected_behavior == "answer" for pair in pairs)
     assert any(pair.expected_behavior == "abstain" for pair in pairs)
     assert all(pair.domain == "nlp" for pair in pairs)
+
+
+def test_live_answer_eval_samples_preserve_gated_payload_semantics() -> None:
+    answer_pair = EvidenceQAPair(
+        question="What improves retrieval?",
+        paper_id="p1",
+        qa_type="citation_qa",
+        gold_chunk_ids=["para-1"],
+        gold_source_locators=["paper://p1/results"],
+        answer_facts=["The visual architecture improves retrieval accuracy."],
+    )
+    abstain_pair = EvidenceQAPair.negative(
+        question="Does the paper discuss unrelated weather data?",
+        paper_id="p1",
+    )
+
+    def ask(pair: EvidenceQAPair) -> dict:
+        if pair.expected_behavior == "abstain":
+            return {
+                "status": "insufficient_evidence",
+                "generation_mode": "gated_harness",
+                "answer": None,
+                "answer_candidate": {"abstained": True, "answer_text": ""},
+                "citations": [],
+                "passages": [],
+                "gate_results": [],
+                "decision": {"decision_type": "abstain"},
+                "transcript_id": "rag-transcript://p1/abstain",
+            }
+        return {
+            "status": "succeeded",
+            "generation_mode": "gated_harness",
+            "answer": "The visual architecture improves retrieval accuracy.",
+            "answer_candidate": {"abstained": False},
+            "citations": [
+                {
+                    "chunk_id": "para-1",
+                    "source_locator": "paper://p1/results",
+                }
+            ],
+            "passages": [{"chunk_id": "para-1"}],
+            "gate_results": [{"check_id": "answer.grounded", "passed": True}],
+            "decision": {"decision_type": "answer"},
+            "transcript_id": "rag-transcript://p1/answer",
+        }
+
+    samples = _build_live_answer_samples([answer_pair, abstain_pair], ask=ask)
+    result = EvidenceAnswerEvaluator().evaluate(samples)
+
+    assert [sample.metadata["answer_eval"] for sample in samples] == [
+        "live_gated_harness",
+        "live_gated_harness",
+    ]
+    assert samples[0].cited_chunk_ids == ["para-1"]
+    assert samples[0].context_chunk_ids == ["para-1"]
+    assert "provided context does not mention" in samples[1].answer
+    assert result.abstention_accuracy() == 1.0
+    assert result.success_rate() == 1.0
+
+
+def test_run_evidence_eval_records_live_answer_eval_mode(tmp_path, monkeypatch) -> None:
+    golden = tmp_path / "golden.json"
+    output = tmp_path / "report"
+    save_evidence_golden_set([
+        EvidenceQAPair.negative(
+            question="Does the paper discuss unrelated weather data?",
+            paper_id="p1",
+        )
+    ], golden)
+
+    def fake_live_ask(*args, **kwargs):
+        def ask(pair: EvidenceQAPair) -> dict:
+            return {
+                "status": "insufficient_evidence",
+                "generation_mode": "gated_harness",
+                "answer": None,
+                "answer_candidate": {"abstained": True, "answer_text": ""},
+                "citations": [],
+                "passages": [],
+                "gate_results": [],
+                "decision": {"decision_type": "abstain"},
+                "transcript_id": "rag-transcript://p1/live",
+            }
+
+        return ask
+
+    monkeypatch.setattr(run_evidence_eval_module, "_build_live_answer_ask", fake_live_ask)
+
+    exit_code = main([
+        "--golden-set",
+        str(golden),
+        "--output-dir",
+        str(output),
+        "--live-answer-eval",
+    ])
+
+    assert exit_code == 0
+    payload = json.loads((output / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    assert payload["metadata"]["answer_eval_mode"] == "live"
+    assert payload["answer"]["abstention_accuracy"] == 1.0
+
+
+def test_run_evidence_eval_rejects_conflicting_answer_eval_modes(tmp_path) -> None:
+    golden = tmp_path / "golden.json"
+    save_evidence_golden_set([
+        EvidenceQAPair.negative(
+            question="Does the paper discuss unrelated weather data?",
+            paper_id="p1",
+        )
+    ], golden)
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        main([
+            "--golden-set",
+            str(golden),
+            "--deterministic-answer-eval",
+            "--live-answer-eval",
+        ])
 
 
 def test_run_evidence_eval_returns_failure_for_unavailable_threshold(tmp_path) -> None:

@@ -269,13 +269,13 @@ def build_ci_promotion_checklist(
         ),
         _metric_check(
             "answer_abstention_accuracy",
-            "Answer abstention accuracy meets PR gate",
+            "Deterministic answer-eval pipeline abstention accuracy meets PR gate",
             _metric(answer, "abstention_accuracy"),
             promotion_thresholds["answer_abstention_accuracy"],
         ),
         _metric_check(
             "answer_success_rate",
-            "Answer success rate meets PR gate",
+            "Deterministic answer-eval pipeline success rate meets PR gate",
             _metric(answer, "success_rate"),
             promotion_thresholds["answer_success_rate"],
         ),

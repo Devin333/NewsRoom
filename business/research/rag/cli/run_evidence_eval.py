@@ -6,6 +6,7 @@ import math
 import hashlib
 import os
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Sequence
@@ -30,6 +31,8 @@ from business.research.rag.evaluation.paper_evidence_eval import (
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.deterministic_answer_eval and args.live_answer_eval:
+        raise ValueError("--deterministic-answer-eval and --live-answer-eval are mutually exclusive")
     pairs = []
     chunks = []
     visual_store = None
@@ -62,10 +65,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not pairs:
         raise ValueError("--golden-set is required unless --papers-dir --build-golden-set produces pairs")
 
+    answer_eval_mode = (
+        "live"
+        if args.live_answer_eval
+        else "deterministic"
+        if args.deterministic_answer_eval
+        else "none"
+    )
     metadata = {
         "golden_set": str(Path(args.golden_set)) if args.golden_set else "",
         "total_pairs": len(pairs),
         "mode": "live_retrieval" if args.live_retrieval else "summary",
+        "answer_eval_mode": answer_eval_mode,
     }
     if args.papers_dir:
         metadata["papers_dir"] = str(Path(args.papers_dir))
@@ -109,6 +120,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     answer = None
     if args.deterministic_answer_eval:
         answer = EvidenceAnswerEvaluator().evaluate(_build_deterministic_answer_samples(pairs))
+    elif args.live_answer_eval:
+        answer = EvidenceAnswerEvaluator().evaluate(
+            _build_live_answer_samples(
+                pairs,
+                ask=_build_live_answer_ask(
+                    chunks,
+                    retrieval_policy=args.retrieval_policy,
+                    visual_enabled=args.visual,
+                    image_root=Path(args.image_root) if args.image_root else None,
+                    lightweight_reranker=args.lightweight_reranker,
+                    limit=args.answer_eval_limit,
+                ),
+            )
+        )
     report = EvidenceRegressionReport(
         retrieval=retrieval,
         answer=answer,
@@ -214,6 +239,20 @@ def _build_parser() -> argparse.ArgumentParser:
             "answer thresholds can run without an LLM or external services."
         ),
     )
+    parser.add_argument(
+        "--live-answer-eval",
+        action="store_true",
+        help=(
+            "Evaluate answer metrics by running the gated Harness answer path. "
+            "This may call the configured LLM and is intended for nightly/non-PR runs."
+        ),
+    )
+    parser.add_argument(
+        "--answer-eval-limit",
+        type=int,
+        default=5,
+        help="Context passage limit passed to gated answer evaluation.",
+    )
     return parser
 
 
@@ -249,6 +288,156 @@ def _deterministic_answer_sample(pair: EvidenceQAPair) -> EvidenceAnswerSample:
             "context_relationships": _context_relationships_from_pair(pair),
             "locator_context": _locator_context_from_pair(pair),
         },
+    )
+
+
+def _build_live_answer_samples(
+    pairs: list[EvidenceQAPair],
+    *,
+    ask: Callable[[EvidenceQAPair], dict[str, Any]],
+) -> list[EvidenceAnswerSample]:
+    return [_live_answer_sample(pair, ask(pair)) for pair in pairs]
+
+
+def _live_answer_sample(pair: EvidenceQAPair, payload: dict[str, Any]) -> EvidenceAnswerSample:
+    citations = [dict(item) for item in payload.get("citations") or [] if isinstance(item, dict)]
+    passages = [dict(item) for item in payload.get("passages") or [] if isinstance(item, dict)]
+    context_chunk_ids = _unique_texts([item.get("chunk_id") for item in passages])
+    cited_chunk_ids = _unique_texts([
+        item.get("chunk_id") or item.get("evidence_id")
+        for item in citations
+    ])
+    cited_source_locators = _unique_texts([item.get("source_locator") for item in citations])
+    return EvidenceAnswerSample(
+        pair=pair,
+        answer=_answer_text_from_live_payload(payload),
+        cited_chunk_ids=cited_chunk_ids,
+        cited_source_locators=cited_source_locators,
+        context_chunk_ids=context_chunk_ids,
+        metadata={
+            "answer_eval": "live_gated_harness",
+            "status": str(payload.get("status") or ""),
+            "generation_mode": str(payload.get("generation_mode") or ""),
+            "transcript_id": str(payload.get("transcript_id") or ""),
+            "retrieved_chunk_ids": context_chunk_ids,
+            "gate_results": list(payload.get("gate_results") or []),
+            "decision": dict(payload.get("decision") or {}),
+            "answer_candidate": dict(payload.get("answer_candidate") or {}),
+        },
+    )
+
+
+def _answer_text_from_live_payload(payload: dict[str, Any]) -> str:
+    answer = str(payload.get("answer") or "").strip()
+    if answer:
+        return answer
+    candidate = payload.get("answer_candidate")
+    if isinstance(candidate, dict):
+        candidate_answer = str(candidate.get("answer_text") or "").strip()
+        if candidate_answer:
+            return candidate_answer
+        if candidate.get("abstained"):
+            return "The provided context does not mention evidence that answers this question."
+    status = str(payload.get("status") or "").casefold()
+    if status and status != "succeeded":
+        return "The provided context does not mention evidence that answers this question."
+    return ""
+
+
+def _build_live_answer_ask(
+    chunks: list[PaperChunk],
+    *,
+    retrieval_policy: str | None,
+    visual_enabled: bool,
+    image_root: Path | None,
+    lightweight_reranker: bool,
+    limit: int,
+) -> Callable[[EvidenceQAPair], dict[str, Any]]:
+    if chunks:
+        service = _build_in_memory_live_answer_service(
+            chunks,
+            retrieval_policy=retrieval_policy,
+            visual_enabled=visual_enabled,
+            image_root=image_root,
+            lightweight_reranker=lightweight_reranker,
+        )
+    else:
+        from interfaces.services.paper_rag_service import PaperRagApplicationService
+
+        service = PaperRagApplicationService()
+
+    def ask(pair: EvidenceQAPair) -> dict[str, Any]:
+        return service.rag_ask(
+            pair.paper_id,
+            pair.question,
+            limit=limit,
+            generate=True,
+            gated=True,
+        )
+
+    return ask
+
+
+def _build_in_memory_live_answer_service(
+    chunks: list[PaperChunk],
+    *,
+    retrieval_policy: str | None,
+    visual_enabled: bool,
+    image_root: Path | None,
+    lightweight_reranker: bool,
+):
+    from business.research.application.llm_client import build_unity_llm_call
+    from business.research.application.paper_rag_session import PaperRAGSession
+    from business.research.rag.adapters import PaperAnswerWorker
+    from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator
+    from business.research.rag.retrieval.policies import build_retrieval_policy
+    from interfaces.services.paper_rag_service import PaperRagApplicationService
+
+    chunk_store = _InMemoryChunkStore()
+    chunk_store.ensure_collection()
+    chunk_store.index_chunks(chunks)
+
+    field_index = _InMemoryFieldEmbeddingIndex()
+    field_index.ensure_collection()
+    field_index.index_chunks(chunks)
+
+    visual_store = None
+    if visual_enabled:
+        visual_store = _InMemoryVisualStore(
+            _DeterministicVisualEmbedding(),
+            image_root=image_root,
+        )
+        visual_store.ensure_collection()
+        visual_store.index_chunks(chunks)
+
+    field_reranker = None
+    if _lightweight_reranker_enabled(retrieval_policy, explicit=lightweight_reranker):
+        from business.research.rag.retrieval.paper_lightweight_reranker import LightweightLexicalReranker
+
+        field_reranker = LightweightLexicalReranker()
+
+    policy = build_retrieval_policy(retrieval_policy)
+
+    def session_factory(**kwargs: Any) -> PaperRAGSession:
+        answer_worker = None
+        generation_policy: dict[str, object] = {}
+        if kwargs.get("with_answer_worker"):
+            answer_worker = PaperAnswerWorker(AnswerGenerator(build_unity_llm_call(max_tokens=600)))
+            generation_policy = {"enabled": True, "max_attempts": 2}
+        return PaperRAGSession(
+            chunk_store,
+            field_index=field_index,
+            field_reranker=field_reranker,
+            visual_store=visual_store,
+            retrieval_policy=policy,
+            answer_worker=answer_worker,
+            generation_policy=generation_policy,
+        )
+
+    return PaperRagApplicationService(
+        retriever=object(),
+        session_factory=session_factory,
+        with_reranker=False,
     )
 
 
