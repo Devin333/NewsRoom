@@ -2,8 +2,49 @@ from __future__ import annotations
 
 import json
 
+from data.eval.build_golden_set import build_pairs
+from business.research.document.models import PaperChunk
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair, save_evidence_golden_set
 from business.research.rag.cli.run_evidence_eval import main
+
+
+class _FakeChunkStore:
+    def __init__(self, chunks_by_paper: dict[str, list[PaperChunk]]) -> None:
+        self._chunks_by_paper = chunks_by_paper
+        self.list_calls: list[str] = []
+        self.search_calls: list[tuple[str, str, int]] = []
+
+    def ensure_collection(self) -> None:
+        return None
+
+    def list_chunks(self, paper_id: str) -> list[PaperChunk]:
+        self.list_calls.append(paper_id)
+        return list(self._chunks_by_paper.get(paper_id, []))
+
+    def search_chunks(
+        self,
+        paper_id: str,
+        query_text: str,
+        *,
+        filters=None,
+        limit: int = 10,
+        score_threshold=None,
+    ) -> list[PaperChunk]:
+        self.search_calls.append((paper_id, query_text, limit))
+        return list(self._chunks_by_paper.get(paper_id, []))
+
+    def search_with_scores(self, paper_id: str, query_text: str, *, filters=None, limit: int = 30):
+        return [(chunk, 1.0) for chunk in self._chunks_by_paper.get(paper_id, [])]
+
+    def get_chunk(self, chunk_id: str):
+        for chunks in self._chunks_by_paper.values():
+            for chunk in chunks:
+                if chunk.chunk_id == chunk_id:
+                    return chunk
+        return None
+
+    def get_parent_chunk(self, chunk: PaperChunk):
+        return self.get_chunk(chunk.parent_chunk_id) if chunk.parent_chunk_id else None
 
 
 def test_run_evidence_eval_writes_summary_report(tmp_path) -> None:
@@ -29,6 +70,29 @@ def test_run_evidence_eval_writes_summary_report(tmp_path) -> None:
     assert payload["metadata"]["total_pairs"] == 2
     assert payload["metadata"]["qa_type_counts"] == {"citation_qa": 1, "negative_qa": 1}
     assert (output / "evidence_regression_report.md").exists()
+
+
+def test_build_golden_set_entrypoint_uses_evidence_pairs_with_negatives() -> None:
+    chunk = PaperChunk(
+        chunk_id="para-1",
+        paper_id="p1",
+        parse_source="nougat",
+        chunk_type="paragraph",
+        section_title="Results",
+        section_role=["experiment"],
+        section_index=1,
+        content="The paper reports a visual architecture that improves retrieval accuracy.",
+        metadata={"source_locator": "paper://p1/results"},
+    )
+    store = _FakeChunkStore({"p1": [chunk]})
+
+    pairs = build_pairs(store, {"p1": "nlp"}, max_pairs_per_type=2)
+
+    assert store.list_calls == ["p1"]
+    assert store.search_calls == []
+    assert any(pair.expected_behavior == "answer" for pair in pairs)
+    assert any(pair.expected_behavior == "abstain" for pair in pairs)
+    assert all(pair.domain == "nlp" for pair in pairs)
 
 
 def test_run_evidence_eval_returns_failure_for_unavailable_threshold(tmp_path) -> None:

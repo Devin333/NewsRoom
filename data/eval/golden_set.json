@@ -3,402 +3,613 @@
     "question": "What dataset was used to measure the change in performance when varying components of the base Transformer model for English-to-German translation?",
     "source_chunk_id": "chunk_62ba2c64906c",
     "paper_id": "1706.03762",
-    "domain": "nlp_transformer"
+    "domain": "nlp_transformer",
+    "expected_behavior": "answer"
   },
   {
     "question": "During evaluation of Transformer component variations, which decoding method was used and what model-aggregation technique was explicitly not used?",
     "source_chunk_id": "chunk_62ba2c64906c",
     "paper_id": "1706.03762",
-    "domain": "nlp_transformer"
+    "domain": "nlp_transformer",
+    "expected_behavior": "answer"
   },
   {
     "question": "What do the results provide high-level perspective on regarding the promise of different avenues of research?",
     "source_chunk_id": "chunk_aef079e4c85b",
     "paper_id": "1910.10683",
-    "domain": "nlp_transformer"
+    "domain": "nlp_transformer",
+    "expected_behavior": "answer"
   },
   {
     "question": "What do the authors think might provide effective approaches for further progressing the field?",
     "source_chunk_id": "chunk_aef079e4c85b",
     "paper_id": "1910.10683",
-    "domain": "nlp_transformer"
+    "domain": "nlp_transformer",
+    "expected_behavior": "answer"
   },
   {
     "question": "What did the section on measuring and preventing memorization of benchmarks provide a high-level overview of?",
     "source_chunk_id": "chunk_68d569f76671",
     "paper_id": "2005.14165",
-    "domain": "nlp_transformer"
+    "domain": "nlp_transformer",
+    "expected_behavior": "answer"
   },
   {
     "question": "What does the appendix section on test set contamination say it provides details on?",
     "source_chunk_id": "chunk_68d569f76671",
     "paper_id": "2005.14165",
-    "domain": "nlp_transformer"
+    "domain": "nlp_transformer",
+    "expected_behavior": "answer"
   },
   {
     "question": "What intuition does the result reinforce about the usefulness of convolutional inductive bias for smaller versus larger datasets?",
     "source_chunk_id": "chunk_1d66a944e3b4",
     "paper_id": "2010.11929",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "According to the text, what do the few-shot results on ImageNet and the low-data results on VTAB suggest about very low-data transfer?",
     "source_chunk_id": "chunk_1d66a944e3b4",
     "paper_id": "2010.11929",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "At what label probability threshold value did the experiment set the threshold to study how biases in returned labels depend on threshold settings?",
     "source_chunk_id": "chunk_0266e548fcd7",
     "paper_id": "2103.00020",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "What happened at the higher threshold value of 4 according to the text?",
     "source_chunk_id": "chunk_0266e548fcd7",
     "paper_id": "2103.00020",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "What does the appendix report details of performance for, according to the text?",
     "source_chunk_id": "chunk_239485469ae4",
     "paper_id": "2103.00020",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "Why does the main body of the work focus on summarizing and analyzing overall results?",
     "source_chunk_id": "chunk_239485469ae4",
     "paper_id": "2103.00020",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "What threshold values were set for label probability in the experiment studying how biases in returned labels depend on the threshold?",
     "source_chunk_id": "chunk_6f866fef4a85",
     "paper_id": "2103.00020",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "What model performance value was reported in the text?",
     "source_chunk_id": "chunk_6f866fef4a85",
     "paper_id": "2103.00020",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "Which data augmentation strategy does the MAE pre-training work well with, and what random transformation is included in both fixed-size and random-size versions of that strategy?",
     "source_chunk_id": "chunk_e7b9cc1d9a5b",
     "paper_id": "2111.06377",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "What effect does adding color jittering have on MAE pre-training results, and how does that influence its use in the other experiments?",
     "source_chunk_id": "chunk_e7b9cc1d9a5b",
     "paper_id": "2111.06377",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "Which organizations supported the study?",
     "source_chunk_id": "chunk_aa9e7307664a",
     "paper_id": "1505.04597",
-    "domain": "cv"
+    "domain": "cv",
+    "expected_behavior": "answer"
   },
   {
     "question": "In the ablation study, which two prediction targets are compared to verify the effectiveness of the parameterization of \\(p_\\theta(\\mathbf{x}_{t-1}\\mid \\mathbf{x}_t)\\)?",
     "source_chunk_id": "chunk_be81917967fb",
     "paper_id": "2006.11239",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "What is \\(\\tilde{\\boldsymbol\\mu}_t\\) described as being another parameterization of?",
     "source_chunk_id": "chunk_be81917967fb",
     "paper_id": "2006.11239",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "What kind of estimator does the strategy in the method section derive for directed graphical models with continuous latent variables?",
     "source_chunk_id": "chunk_2c1718aa26be",
     "paper_id": "1312.6114",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "In the common case considered, what inference methods are used for the global parameters and for the latent variables when working with an i.i.d. dataset that has latent variables per datapoint?",
     "source_chunk_id": "chunk_2c1718aa26be",
     "paper_id": "1312.6114",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "Which method’s results did human subjects favor over in the user study?",
     "source_chunk_id": "chunk_5d42f8378652",
     "paper_id": "2112.10752",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "According to the text, what did the user study find about human subjects’ preference for the reported results?",
     "source_chunk_id": "chunk_5d42f8378652",
     "paper_id": "2112.10752",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "What 2-alternative forced-choice protocol was used to assess human preference scores in the user study, and which prior work did it follow?",
     "source_chunk_id": "chunk_d1d5933ef2f0",
     "paper_id": "2112.10752",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "In the user study’s SuperResolution task, what exact question were subjects asked when comparing the ground truth and synthesized images conditioned on the middle low-resolution image?",
     "source_chunk_id": "chunk_d1d5933ef2f0",
     "paper_id": "2112.10752",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "What 2-alternative forced-choice setup was used in the user study to assess human preference scores for SuperResolution and Inpainting?",
     "source_chunk_id": "chunk_f6a8eee4a2c6",
     "paper_id": "2112.10752",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "In the SuperResolution user study task, what exact question were subjects asked when comparing the two candidate high-quality images?",
     "source_chunk_id": "chunk_f6a8eee4a2c6",
     "paper_id": "2112.10752",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "What tool is used to measure the theoretical FLOPs of the model when benchmarking theoretical throughput?",
     "source_chunk_id": "chunk_5bfcc7da3b62",
     "paper_id": "2105.05233",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "What assumption is made about performance when estimating the theoretical throughput of the models?",
     "source_chunk_id": "chunk_5bfcc7da3b62",
     "paper_id": "2105.05233",
-    "domain": "generative"
+    "domain": "generative",
+    "expected_behavior": "answer"
   },
   {
     "question": "What does the text say is shown in Table `tab:num_instances` regarding the datasets?",
     "source_chunk_id": "chunk_eb320183e948",
     "paper_id": "2005.11401",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "Which dataset splits are explicitly mentioned as having their numbers of datapoints shown in Table `tab:num_instances`?",
     "source_chunk_id": "chunk_eb320183e948",
     "paper_id": "2005.11401",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "What does the text state is shown in Table `tab:num_instances`?",
     "source_chunk_id": "chunk_80edd06882c4",
     "paper_id": "2005.11401",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "Which dataset split counts are reported in the text as being included for each dataset?",
     "source_chunk_id": "chunk_80edd06882c4",
     "paper_id": "2005.11401",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "Why were some gold sentences included in the human evaluation, and what action was taken based on annotator performance on those examples?",
     "source_chunk_id": "chunk_880f55a0dead",
     "paper_id": "2005.11401",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "How did the evaluation setup reduce screen-position bias when presenting sentence A and sentence B to annotators?",
     "source_chunk_id": "chunk_880f55a0dead",
     "paper_id": "2005.11401",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "What task is the approach evaluated on in the experiments text?",
     "source_chunk_id": "chunk_34a0b45c1acd",
     "paper_id": "2002.08909",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "What does the experiments text say will be described in detail in the section, besides the benchmarks used?",
     "source_chunk_id": "chunk_34a0b45c1acd",
     "paper_id": "2002.08909",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "What task is the approach evaluated on in the experiments section?",
     "source_chunk_id": "chunk_2b509ff3c83d",
     "paper_id": "2002.08909",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "What does the experiments section describe in detail besides the benchmarks used?",
     "source_chunk_id": "chunk_2b509ff3c83d",
     "paper_id": "2002.08909",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "How many times was the 5-shot experiment run to assess the effect of noise and variance?",
     "source_chunk_id": "chunk_53a347483adf",
     "paper_id": "2208.03299",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "What standard deviation on the aggregated metrics was observed across the repeated MMLU runs when using the same hyperparameters?",
     "source_chunk_id": "chunk_53a347483adf",
     "paper_id": "2208.03299",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "What problem in few-shot learning is described as being well-known in the text?",
     "source_chunk_id": "chunk_ec090122b110",
     "paper_id": "2208.03299",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "Which result does the text say was quoted in the main paper?",
     "source_chunk_id": "chunk_ec090122b110",
     "paper_id": "2208.03299",
-    "domain": "retrieval"
+    "domain": "retrieval",
+    "expected_behavior": "answer"
   },
   {
     "question": "What conversation does `-I`, the `-65B` model fine-tuned with the protocol and instruction dataset from Chung2022ScalingIL, generate when prompted to write a conversation between the sun and Pluto?",
     "source_chunk_id": "chunk_3e1eafad17a1",
     "paper_id": "2302.13971",
-    "domain": "llm_alignment"
+    "domain": "llm_alignment",
+    "expected_behavior": "answer"
   },
   {
     "question": "According to the generated dialogue, what reason does the Sun give Pluto for saying Pluto is not a planet anymore?",
     "source_chunk_id": "chunk_3e1eafad17a1",
     "paper_id": "2302.13971",
-    "domain": "llm_alignment"
+    "domain": "llm_alignment",
+    "expected_behavior": "answer"
   },
   {
     "question": "Which GPT-4 model version is used for all experiments that generate win rate judgments in the summarization and dialogue evaluations?",
     "source_chunk_id": "chunk_bca7c0706d26",
     "paper_id": "2305.18290",
-    "domain": "llm_alignment"
+    "domain": "llm_alignment",
+    "expected_behavior": "answer"
   },
   {
     "question": "In the summarization win rate prompt, what must be provided first before stating only \"A\" or \"B\" on a new line?",
     "source_chunk_id": "chunk_bca7c0706d26",
     "paper_id": "2305.18290",
-    "domain": "llm_alignment"
+    "domain": "llm_alignment",
+    "expected_behavior": "answer"
   },
   {
     "question": "What full set of assumptions should be stated when including theoretical results?",
     "source_chunk_id": "chunk_6d2b99c164bf",
     "paper_id": "2201.11903",
-    "domain": "llm_alignment"
+    "domain": "llm_alignment",
+    "expected_behavior": "answer"
   },
   {
     "question": "When theoretical results are included, what must be provided to make the proofs complete?",
     "source_chunk_id": "chunk_6d2b99c164bf",
     "paper_id": "2201.11903",
-    "domain": "llm_alignment"
+    "domain": "llm_alignment",
+    "expected_behavior": "answer"
   },
   {
     "question": "What experimental comparisons are included in the section’s tables regarding prompting methods?",
     "source_chunk_id": "chunk_7f1501f1c3d3",
     "paper_id": "2201.11903",
-    "domain": "llm_alignment"
+    "domain": "llm_alignment",
+    "expected_behavior": "answer"
   },
   {
     "question": "On what types of benchmarks and model variations are the experimental results reported?",
     "source_chunk_id": "chunk_7f1501f1c3d3",
     "paper_id": "2201.11903",
-    "domain": "llm_alignment"
+    "domain": "llm_alignment",
+    "expected_behavior": "answer"
   },
   {
     "question": "What are the false positive test execution rates reported for MBPP Python and HumanEval Python?",
     "source_chunk_id": "chunk_6b083d67da2b",
     "paper_id": "2303.11366",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "How do the baseline pass@1 accuracies compare between HumanEval Python and MBPP Python?",
     "source_chunk_id": "chunk_6b083d67da2b",
     "paper_id": "2303.11366",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What memory size of experiences is used in the self-reflection loop for the decision-making setup in AlfWorld?",
     "source_chunk_id": "chunk_8653977437ce",
     "paper_id": "2303.11366",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "How is the self-reflection loop described as affecting the binary signal after each trial?",
     "source_chunk_id": "chunk_8653977437ce",
     "paper_id": "2303.11366",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What stopping condition was used in the Reflexion runs when allowing the agent to gather experience and retry failed tasks?",
     "source_chunk_id": "chunk_0ba27e6ebafb",
     "paper_id": "2303.11366",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What was observed about the ability of ReAct-only, CoT-only, and CoT (GT)-only implementations to solve tasks that had failed on the first trial when using a temperature of 0.7?",
     "source_chunk_id": "chunk_0ba27e6ebafb",
     "paper_id": "2303.11366",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "How many participants took part in the within-subjects study that compared interview responses generated by four agent architectures and a human-authored condition for the same agent?",
     "source_chunk_id": "chunk_13b6277eb040",
     "paper_id": "2304.03442",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What were evaluators asked to rank from most to least believable in the experiment where one randomly chosen question from each of five question categories was shown with responses from all conditions?",
     "source_chunk_id": "chunk_13b6277eb040",
     "paper_id": "2304.03442",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What rating outputs does TrueSkill provide for each condition when given a set of ranked outcomes?",
     "source_chunk_id": "chunk_348a2df26104",
     "paper_id": "2304.03442",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "How did the experiment convert participants’ rankings of five conditions into interval data for interpretable comparison?",
     "source_chunk_id": "chunk_348a2df26104",
     "paper_id": "2304.03442",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "Why did the researchers avoid re-simulating the experiment separately for each architecture when comparing architectures?",
     "source_chunk_id": "chunk_1e81450a626e",
     "paper_id": "2304.03442",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What was the purpose of adding a human crowdworker-authored behavior condition, and what level of human performance was it intended to represent?",
     "source_chunk_id": "chunk_1e81450a626e",
     "paper_id": "2304.03442",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What integer value does the poignancy-rating prompt return for the memory “cleaning up the room,” and what value does it return for “asking your crush out on a date”?",
     "source_chunk_id": "chunk_71b2d2c01b25",
     "paper_id": "2304.03442",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "When is the importance score for a memory object generated?",
     "source_chunk_id": "chunk_71b2d2c01b25",
     "paper_id": "2304.03442",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What was the stated reason that the final answer was incorrect in the other two trials?",
     "source_chunk_id": "chunk_84200e63e3f1",
     "paper_id": "2308.08155",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
   },
   {
     "question": "What is the title of Scenario 3 mentioned in the text?",
     "source_chunk_id": "chunk_84200e63e3f1",
     "paper_id": "2308.08155",
-    "domain": "agent"
+    "domain": "agent",
+    "expected_behavior": "answer"
+  },
+  {
+    "question": "Does this paper report GPT-5 training data collection details?",
+    "paper_id": "1706.03762",
+    "domain": "nlp_transformer",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "easy",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for content outside the paper evidence"
+    }
+  },
+  {
+    "question": "Does this paper provide clinical trial outcomes for a cancer therapy?",
+    "paper_id": "1910.10683",
+    "domain": "nlp_transformer",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "easy",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for unrelated biomedical evidence"
+    }
+  },
+  {
+    "question": "Does this paper specify the launch date of a commercial smartphone product?",
+    "paper_id": "2010.11929",
+    "domain": "cv",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "easy",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for unrelated product-release evidence"
+    }
+  },
+  {
+    "question": "Does this paper report carbon emissions from a national power grid?",
+    "paper_id": "2103.00020",
+    "domain": "cv",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "medium",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for evidence outside the image-language benchmark paper"
+    }
+  },
+  {
+    "question": "Does this paper include a proof of the Riemann hypothesis?",
+    "paper_id": "2006.11239",
+    "domain": "generative",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "easy",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for unrelated mathematical proof evidence"
+    }
+  },
+  {
+    "question": "Does this paper identify the winner of the 2026 FIFA World Cup?",
+    "paper_id": "2112.10752",
+    "domain": "generative",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "easy",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for future sports evidence outside the paper"
+    }
+  },
+  {
+    "question": "Does this paper provide operating instructions for a microwave oven?",
+    "paper_id": "2005.11401",
+    "domain": "retrieval",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "easy",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for unrelated appliance documentation"
+    }
+  },
+  {
+    "question": "Does this paper report weather measurements from Shanghai on July 6, 2026?",
+    "paper_id": "2208.03299",
+    "domain": "retrieval",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "medium",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for current weather evidence not in the research paper"
+    }
+  },
+  {
+    "question": "Does this paper disclose a private API key used by the authors?",
+    "paper_id": "2302.13971",
+    "domain": "llm_alignment",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "easy",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for secret material absent from the paper evidence"
+    }
+  },
+  {
+    "question": "Does this paper provide audited financial statements for OpenAI in 2030?",
+    "paper_id": "2305.18290",
+    "domain": "llm_alignment",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "medium",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for unrelated future financial evidence"
+    }
+  },
+  {
+    "question": "Does this paper describe the nutritional content of a restaurant menu?",
+    "paper_id": "2303.11366",
+    "domain": "agent",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "easy",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for unrelated restaurant evidence"
+    }
+  },
+  {
+    "question": "Does this paper prove that all household robots are legally liable for contracts?",
+    "paper_id": "2304.03442",
+    "domain": "agent",
+    "qa_type": "negative_qa",
+    "expected_behavior": "abstain",
+    "difficulty": "medium",
+    "metadata": {
+      "curation": "real_corpus_negative",
+      "reason": "question asks for legal conclusion absent from the agent paper evidence"
+    }
   }
 ]

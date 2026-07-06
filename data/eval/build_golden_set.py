@@ -1,25 +1,23 @@
-"""阶段A：对 30 篇语料 LLM 合成问答对，固化黄金集到 data/eval/golden_set.json。
-跑一次，之后人工抽检修正，评估阶段反复加载复用。
+"""Build the repository evidence golden set from indexed paper chunks.
+
+Run manually after refreshing the real paper corpus, then review the generated
+questions before committing `data/eval/golden_set.json`.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from framework.shared.env import load_root_env
-
-load_root_env()
-os.environ["NEWS_DATABASE_DSN"] = "postgresql://root:root@localhost:5432/NewsRoom"
-
-from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
-from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
-from business.research.document.chunk_storage import PaperChunkStoreAdapter
-from business.research.application.chunk_paper_pipeline import _build_llm_call
-from business.research.rag.eval import GoldenSetBuilder, save_golden_set
+from business.research.document.models import PaperChunk
+from business.research.ports.chunk_store import ChunkStorePort
+from business.research.rag.evaluation.paper_evidence_eval import (
+    EvidenceGoldenSetBuilder,
+    EvidenceQAPair,
+    save_evidence_golden_set,
+)
 
 # paper_id -> domain（与入库语料一致）
 CORPUS: dict[str, str] = {
@@ -39,18 +37,48 @@ CORPUS: dict[str, str] = {
 OUT = Path("data/eval/golden_set.json")
 
 
-async def main() -> None:
-    store = PaperChunkStoreAdapter(PaperChunkStore(qdrant_store_from_env()))
-    builder = GoldenSetBuilder(
-        store, _build_llm_call(),
-        questions_per_chunk=2,
-        max_chunks_per_paper=4,   # ~4 chunk × 2 q × 30 paper ≈ 240 QA
-        max_concurrency=3,
+def build_pairs(
+    store: ChunkStorePort,
+    corpus: dict[str, str] = CORPUS,
+    *,
+    max_pairs_per_type: int = 20,
+    include_negative: bool = True,
+) -> list[EvidenceQAPair]:
+    pairs: list[EvidenceQAPair] = []
+    for paper_id, domain in corpus.items():
+        chunks = _load_paper_chunks(store, paper_id)
+        built = EvidenceGoldenSetBuilder(
+            max_pairs_per_type=max_pairs_per_type,
+            include_negative=include_negative,
+        ).build(chunks, domain=domain)
+        pairs.extend(built)
+    return pairs
+
+
+def _load_paper_chunks(store: ChunkStorePort, paper_id: str) -> list[PaperChunk]:
+    chunks = store.list_chunks(paper_id)
+    if chunks:
+        return chunks
+    return store.search_chunks(
+        paper_id,
+        "method experiment result conclusion background",
+        limit=200,
     )
-    pairs = await builder.build(CORPUS)
-    save_golden_set(pairs, OUT)
-    print(f"\n黄金集生成完成: {len(pairs)} 个问答对 → {OUT}")
-    # 按领域统计
+
+
+def main() -> None:
+    from business.research.document.chunk_storage import PaperChunkStoreAdapter
+    from framework.shared.env import load_root_env
+    from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
+    from infrastructure.storage.vector.qdrant_store import qdrant_store_from_env
+
+    load_root_env()
+    os.environ["NEWS_DATABASE_DSN"] = "postgresql://root:root@localhost:5432/NewsRoom"
+
+    store = PaperChunkStoreAdapter(PaperChunkStore(qdrant_store_from_env()))
+    pairs = build_pairs(store)
+    save_evidence_golden_set(pairs, OUT)
+    print(f"\nEvidence golden set generated: {len(pairs)} pairs -> {OUT}")
     by_dom: dict[str, int] = {}
     for qa in pairs:
         by_dom[qa.domain] = by_dom.get(qa.domain, 0) + 1
@@ -59,4 +87,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
