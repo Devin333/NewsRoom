@@ -307,6 +307,10 @@ def _write_fixture_papers(papers_dir: Path) -> None:
         )
 
 
+def write_ci_eval_fixture_papers(papers_dir: str | Path) -> None:
+    _write_fixture_papers(Path(papers_dir))
+
+
 def _fixture_research_documents() -> list[dict[str, Any]]:
     return [
         _research_document_payload(
@@ -623,4 +627,5 @@ __all__ = [
     "build_ci_promotion_checklist",
     "parse_thresholds",
     "run_ci_eval_gate",
+    "write_ci_eval_fixture_papers",
 ]

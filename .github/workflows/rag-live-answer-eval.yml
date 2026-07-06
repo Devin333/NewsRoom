@@ -1,0 +1,48 @@
+name: RAG Live Answer Eval
+
+"on":
+  workflow_dispatch:
+  schedule:
+    - cron: "43 20 * * 1"
+
+jobs:
+  live-answer-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e ".[dev]"
+
+      - name: Skip live Paper RAG answer eval when LLM secrets are missing
+        if: ${{ env.OPENAI_BASE_URL == '' || env.OPENAI_API_KEY == '' }}
+        run: |
+          echo "Skipping live answer eval because OPENAI_BASE_URL or OPENAI_API_KEY is not configured."
+
+      - name: Run live Paper RAG answer eval
+        if: ${{ env.OPENAI_BASE_URL != '' && env.OPENAI_API_KEY != '' }}
+        run: python -m scripts.dev run-live-answer-eval
+
+      - name: Upload live answer eval artifacts
+        if: ${{ always() && env.OPENAI_BASE_URL != '' && env.OPENAI_API_KEY != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-live-answer-eval
+          path: .newsroom/eval/live-answer
+          if-no-files-found: warn
