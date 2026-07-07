@@ -101,3 +101,66 @@ def test_numerical_result_uses_table_and_paragraph_candidate_routes() -> None:
         {"chunk_type": "table"},
         {"chunk_type": "paragraph"},
     )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        (
+            "During evaluation of Transformer component variations, which decoding method was used "
+            "and what model-aggregation technique was explicitly not used?"
+        ),
+        "What do the results provide high-level perspective on regarding the promise of different avenues of research?",
+        "What did the section on measuring and preventing memorization of benchmarks provide a high-level overview of?",
+        "What does the appendix section on test set contamination say it provides details on?",
+        "According to the text, what did the user study find about human subjects' preference for the reported results?",
+        "What task is the approach evaluated on in the experiments text?",
+        "Which GPT-4 model version is used for all experiments that generate win rate judgments in the summarization and dialogue evaluations?",
+        "On what types of benchmarks and model variations are the experimental results reported?",
+        "Why does the main body of the work focus on summarizing and analyzing overall results?",
+        "What full set of assumptions should be stated when including theoretical results?",
+        "When theoretical results are included, what must be provided to make the proofs complete?",
+        "What are the false positive test execution rates reported for MBPP Python and HumanEval Python?",
+    ],
+)
+def test_live_answer_result_failure_questions_route_to_result_context(question: str) -> None:
+    route = build_retrieval_route(question)
+
+    assert classify_query_intent(question) == "numerical_result"
+    assert route.intent == "numerical_result"
+    assert route.section_role_filter == ["experiment"]
+    assert route.recall_routes == ("table_chunks", "result_paragraphs", "conclusion_context")
+    assert route.candidate_filter_groups == (
+        {"chunk_type": "table"},
+        {"chunk_type": "paragraph"},
+    )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "In the ablation study, which two prediction targets are compared to verify the effectiveness of the parameterization?",
+        "How do the baseline pass@1 accuracies compare between HumanEval Python and MBPP Python?",
+    ],
+)
+def test_live_answer_comparison_failure_questions_route_to_comparison_context(question: str) -> None:
+    route = build_retrieval_route(question)
+
+    assert classify_query_intent(question) == "comparison"
+    assert route.intent == "comparison"
+    assert route.recall_routes == ("comparison_paragraphs", "table_chunks", "result_context")
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Which dataset splits are explicitly mentioned as having their numbers of datapoints shown in Table `tab:num_instances`?",
+        "What experimental comparisons are included in the section's tables regarding prompting methods?",
+    ],
+)
+def test_live_answer_table_result_questions_keep_table_route_precedence(question: str) -> None:
+    route = build_retrieval_route(question)
+
+    assert classify_query_intent(question) == "table_query"
+    assert route.intent == "table_query"
+    assert route.recall_routes == ("table_chunks", "caption_fields", "table_context", "result_context")
