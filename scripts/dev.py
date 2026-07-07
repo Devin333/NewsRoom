@@ -66,6 +66,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(_pytest_command("tests/interfaces/services", "-q"), env=env)
     if args.command == "test-rag-eval-gate":
         return _run(_rag_eval_gate_command(), env=env)
+    if args.command == "check-live-answer-readiness":
+        return _run(_rag_live_answer_readiness_command(args), env=env)
     if args.command == "run-live-answer-eval":
         return _run(_rag_live_answer_eval_command(args), env=env)
     if args.command == "replay-rag":
@@ -185,6 +187,13 @@ def build_parser() -> argparse.ArgumentParser:
     live_answer_eval_parser.add_argument("--retrieval-policy", default=None)
     live_answer_eval_parser.add_argument("--max-pairs-per-type", type=int, default=None)
     live_answer_eval_parser.add_argument("--threshold", action="append", default=[])
+    readiness_parser = subparsers.add_parser(
+        "check-live-answer-readiness",
+        help="Write Paper RAG live answer eval readiness artifacts",
+    )
+    readiness_parser.add_argument("--output-dir", default=None)
+    readiness_parser.add_argument("--golden-set", default=None)
+    readiness_parser.add_argument("--papers-dir", default=None)
     replay_rag_parser = subparsers.add_parser("replay-rag", help="Replay a persisted Paper RAG transcript")
     replay_rag_parser.add_argument("transcript", help="Transcript id or transcript artifact path")
     replay_rag_parser.add_argument("--transcript-root", default=".newsroom/rag/transcripts")
@@ -304,6 +313,19 @@ def _rag_live_answer_eval_command(args: argparse.Namespace | None = None) -> lis
         command.extend(["--max-pairs-per-type", str(args.max_pairs_per_type)])
     for threshold in args.threshold or []:
         command.extend(["--threshold", str(threshold)])
+    return command
+
+
+def _rag_live_answer_readiness_command(args: argparse.Namespace | None = None) -> list[str]:
+    command = [sys.executable, "-m", "business.research.rag.cli.check_live_answer_readiness"]
+    if args is None:
+        return command
+    if args.output_dir:
+        command.extend(["--output-dir", str(args.output_dir)])
+    if args.golden_set:
+        command.extend(["--golden-set", str(args.golden_set)])
+    if args.papers_dir:
+        command.extend(["--papers-dir", str(args.papers_dir)])
     return command
 
 

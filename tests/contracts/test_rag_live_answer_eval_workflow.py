@@ -46,12 +46,38 @@ def test_run_live_answer_eval_dev_command_passes_real_corpus_options() -> None:
     ]
 
 
+def test_check_live_answer_readiness_dev_command_is_registered() -> None:
+    args = dev.build_parser().parse_args([
+        "check-live-answer-readiness",
+        "--golden-set",
+        "data/eval/golden_set.json",
+        "--papers-dir",
+        ".newsroom/papers",
+        "--output-dir",
+        ".newsroom/eval/live-answer-readiness",
+    ])
+
+    assert args.command == "check-live-answer-readiness"
+    assert dev._rag_live_answer_readiness_command(args) == [
+        dev.sys.executable,
+        "-m",
+        "business.research.rag.cli.check_live_answer_readiness",
+        "--output-dir",
+        ".newsroom/eval/live-answer-readiness",
+        "--golden-set",
+        "data/eval/golden_set.json",
+        "--papers-dir",
+        ".newsroom/papers",
+    ]
+
+
 def test_rag_live_answer_eval_workflow_runs_secret_guarded_command() -> None:
     workflow = yaml.safe_load(
         Path(".github/workflows/rag-live-answer-eval.yml").read_text(encoding="utf-8")
     )
     job = workflow["jobs"]["live-answer-eval"]
     steps = job["steps"]
+    step_names = [step.get("name") for step in steps]
 
     assert workflow["on"]["workflow_dispatch"] is None
     assert workflow["on"]["schedule"][0]["cron"]
@@ -63,6 +89,15 @@ def test_rag_live_answer_eval_workflow_runs_secret_guarded_command() -> None:
         and "OPENAI_API_KEY" in step.get("if", "")
         for step in steps
     )
+    readiness_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Check live Paper RAG answer readiness"
+    )
+    skip_index = step_names.index("Skip live Paper RAG answer eval when LLM secrets are missing")
+    readiness_index = step_names.index("Check live Paper RAG answer readiness")
+    assert readiness_index < skip_index
+    assert readiness_step.get("run") == "python -m scripts.dev check-live-answer-readiness"
     assert any(
         step.get("name") == "Run live Paper RAG answer eval"
         and step.get("run") == "python -m scripts.dev run-live-answer-eval"
@@ -80,6 +115,14 @@ def test_rag_live_answer_eval_workflow_runs_secret_guarded_command() -> None:
     assert "data/eval/golden_set.json" in real_step["run"]
     assert "--papers-dir .newsroom/papers" in real_step["run"]
     assert "Skipping real-corpus live answer eval" in real_step["run"]
+    readiness_upload = next(
+        step
+        for step in steps
+        if step.get("name") == "Upload live answer readiness artifacts"
+    )
+    assert readiness_upload.get("if") == "${{ always() }}"
+    assert readiness_upload.get("uses") == "actions/upload-artifact@v4"
+    assert readiness_upload.get("with", {}).get("path") == ".newsroom/eval/live-answer-readiness"
     assert any(
         step.get("name") == "Upload live answer eval artifacts"
         and step.get("uses") == "actions/upload-artifact@v4"
