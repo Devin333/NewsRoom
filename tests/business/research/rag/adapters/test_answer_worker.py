@@ -280,6 +280,86 @@ def test_paper_answer_worker_normalizes_contains_nothing_about_answer_to_abstent
     assert candidate.metadata["abstention_reason"] == "answer generator reported insufficient context"
 
 
+def test_paper_answer_worker_abstains_when_negative_presence_answer_recites_unrelated_context() -> None:
+    async def fake_llm(prompt: str) -> str:
+        assert "Axial attention evidence" in prompt
+        return (
+            "The general idea of axial attention is to perform multiple attention operations, "
+            "each along a single axis of the input tensor [1]."
+        )
+
+    worker = PaperAnswerWorker(AnswerGenerator(fake_llm, max_context_chunks=1))
+    pack = RAGContextPack(
+        pack_id="pack-1",
+        query="Does this paper specify the launch date of a commercial smartphone product?",
+        accepted_evidence=(
+            _evidence(
+                "ev-attention",
+                _chunk(
+                    "chunk-attention",
+                    "Axial attention evidence: the paper studies efficient attention layers for images.",
+                    chunk_type="paragraph",
+                ),
+            ),
+        ),
+    )
+
+    candidate = worker.generate_answer(
+        question="Does this paper specify the launch date of a commercial smartphone product?",
+        pack=pack,
+    )
+
+    assert candidate.abstained is True
+    assert candidate.answer_text == ""
+    assert candidate.cited_evidence_ids == ()
+    assert candidate.claims == ()
+    assert candidate.metadata["abstention_reason"] == "negative presence answer lacked target relevance"
+    relevance = candidate.metadata["negative_presence_relevance"]
+    assert relevance["target_terms"] == ["commercial", "date", "launch", "product", "smartphone"]
+    assert relevance["overlap_terms"] == []
+    assert relevance["overlap_ratio"] == 0.0
+    assert relevance["context_overlap_terms"] == []
+    assert relevance["context_overlap_ratio"] == 0.0
+    assert "axial attention" in candidate.metadata["generated_answer"]["answer"]
+
+
+def test_paper_answer_worker_keeps_supported_negative_presence_answer_with_target_overlap() -> None:
+    async def fake_llm(prompt: str) -> str:
+        assert "Launch evidence" in prompt
+        return (
+            "Yes. The paper specifies the commercial smartphone product launch date "
+            "as July 16, 2024 [1]."
+        )
+
+    worker = PaperAnswerWorker(AnswerGenerator(fake_llm, max_context_chunks=1))
+    pack = RAGContextPack(
+        pack_id="pack-1",
+        query="Does this paper specify the launch date of a commercial smartphone product?",
+        accepted_evidence=(
+            _evidence(
+                "ev-launch",
+                _chunk(
+                    "chunk-launch",
+                    "Launch evidence: the commercial smartphone product launched on July 16, 2024.",
+                    chunk_type="paragraph",
+                ),
+            ),
+        ),
+    )
+
+    candidate = worker.generate_answer(
+        question="Does this paper specify the launch date of a commercial smartphone product?",
+        pack=pack,
+    )
+
+    assert candidate.abstained is False
+    assert candidate.answer_text == (
+        "Yes. The paper specifies the commercial smartphone product launch date as July 16, 2024 [1]."
+    )
+    assert candidate.cited_evidence_ids == ("ev-launch",)
+    assert "negative_presence_relevance" not in candidate.metadata
+
+
 def _chunk(chunk_id: str, content: str, *, chunk_type: str = "paragraph") -> PaperChunk:
     return PaperChunk(
         chunk_id=chunk_id,

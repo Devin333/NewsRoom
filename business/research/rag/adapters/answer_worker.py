@@ -52,6 +52,20 @@ class PaperAnswerWorker:
                 context_pack_id=pack.pack_id,
                 metadata={"generated_answer": generated.to_dict()},
             )
+        if negative_presence := _negative_presence_relevance_gap(
+            question,
+            generated.answer,
+            generated.contexts,
+        ):
+            return _abstention(
+                question,
+                reason="negative presence answer lacked target relevance",
+                context_pack_id=pack.pack_id,
+                metadata={
+                    "generated_answer": generated.to_dict(),
+                    "negative_presence_relevance": negative_presence,
+                },
+            )
 
         return GroundedAnswerCandidate(
             answer_id=f"paper-answer-{uuid4().hex[:12]}",
@@ -277,6 +291,130 @@ def _looks_like_context_abstention(answer: str) -> bool:
     if any(anchor in text for anchor in context_anchors) and any(marker in text for marker in absence_markers):
         return True
     return bool(re.search(r"\b(no|not enough|insufficient)\s+(evidence|information)\b", text))
+
+
+_NEGATIVE_PRESENCE_VERBS = (
+    "include",
+    "includes",
+    "included",
+    "specify",
+    "specifies",
+    "specified",
+    "report",
+    "reports",
+    "reported",
+    "discuss",
+    "discusses",
+    "discussed",
+    "provide",
+    "provides",
+    "provided",
+    "state",
+    "states",
+    "stated",
+    "mention",
+    "mentions",
+    "mentioned",
+    "describe",
+    "describes",
+    "described",
+    "contain",
+    "contains",
+    "contained",
+    "disclose",
+    "discloses",
+    "disclosed",
+)
+
+_NEGATIVE_PRESENCE_STOP_TERMS = {
+    "about",
+    "also",
+    "answer",
+    "authors",
+    "based",
+    "detail",
+    "details",
+    "does",
+    "from",
+    "given",
+    "include",
+    "includes",
+    "included",
+    "paper",
+    "papers",
+    "provided",
+    "question",
+    "report",
+    "reports",
+    "reported",
+    "research",
+    "specify",
+    "specifies",
+    "specified",
+    "state",
+    "states",
+    "stated",
+    "study",
+    "tell",
+    "that",
+    "their",
+    "there",
+    "these",
+    "this",
+    "using",
+    "whether",
+    "with",
+}
+
+
+def _negative_presence_relevance_gap(
+    question: str,
+    answer: str,
+    contexts: list[str] | tuple[str, ...],
+) -> dict[str, Any] | None:
+    if _looks_like_context_abstention(answer):
+        return None
+    target_terms = _negative_presence_target_terms(question)
+    if len(target_terms) < 2:
+        return None
+    answer_terms = _lexical_terms(answer)
+    overlap_terms = sorted(set(target_terms) & answer_terms)
+    overlap_ratio = len(overlap_terms) / len(target_terms)
+    context_terms = _lexical_terms(" ".join(str(context or "") for context in contexts))
+    context_overlap_terms = sorted(set(target_terms) & context_terms)
+    context_overlap_ratio = len(context_overlap_terms) / len(target_terms)
+    if overlap_ratio >= 0.25 or context_overlap_ratio >= 0.25:
+        return None
+    return {
+        "target_terms": target_terms,
+        "overlap_terms": overlap_terms,
+        "overlap_ratio": overlap_ratio,
+        "context_overlap_terms": context_overlap_terms,
+        "context_overlap_ratio": context_overlap_ratio,
+    }
+
+
+def _negative_presence_target_terms(question: str) -> list[str]:
+    text = " ".join(str(question or "").strip().split())
+    if not text:
+        return []
+    lowered = text.casefold()
+    if not re.match(r"^(does|do|did)\s+(this\s+)?paper\b", lowered):
+        return []
+    verb_pattern = "|".join(re.escape(verb) for verb in _NEGATIVE_PRESENCE_VERBS)
+    match = re.search(rf"\b({verb_pattern})\b(?P<target>.+?)(?:\?|$)", lowered)
+    if not match:
+        return []
+    target = match.group("target")
+    return sorted(_lexical_terms(target) - _NEGATIVE_PRESENCE_STOP_TERMS)
+
+
+def _lexical_terms(text: str) -> set[str]:
+    return {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", str(text or ""))
+        if len(token) >= 4
+    }
 
 
 def _abstention(

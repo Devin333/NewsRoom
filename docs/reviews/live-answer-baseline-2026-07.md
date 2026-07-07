@@ -424,3 +424,9 @@ Failure taxonomy:
 - `abstention_wrong`: 2
 
 Compared with the previous marker-repair live check, this improves answerable-case retrieval and answer coverage materially (`success_rate` `0.532` -> `0.633`, `hit_at_10` `0.522` -> `0.642`, `true_missing_gold_rate` `0.468` -> `0.278`). The run also exposed two expected-abstain misses. One is a context-absence phrasing gap (`contain nothing about`) and is covered by the follow-up marker repair; the other is an answer relevance issue where the model recites unrelated method context for a negative smartphone launch-date question. That second case should be handled by a future deterministic relevance/negative-query gate rather than by weakening thresholds or adding question-specific exceptions.
+
+## Negative Presence Relevance Repair Target
+
+The remaining `abstention_wrong` from the intent-routing run asks whether paper `2010.11929` specifies the launch date of a commercial smartphone product. The generated answer instead recites axial-attention context and never mentions the target terms `commercial`, `smartphone`, `product`, `launch`, or `date`.
+
+The follow-up repair adds a deterministic answer-worker guard for this class of negative presence question. It extracts the requested subject after verbs such as `include`, `specify`, `report`, `discuss`, `provide`, `state`, `mention`, `describe`, and `contain`; if a non-abstention generated answer has insufficient overlap with those target terms, the worker publishes an abstained candidate with `negative_presence_relevance` metadata. This keeps Harness in control of the refusal decision and avoids paper-id or question-specific exceptions.
