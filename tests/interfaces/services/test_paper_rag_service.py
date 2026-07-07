@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,7 @@ from framework.harness.rag.metrics import RAGSessionMetrics
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 from interfaces.services.paper_rag_service import PaperRagApplicationService
+from interfaces.services.paper_rag_transcript_store import PaperRagTranscriptArtifact, PaperRagTranscriptFileStore
 
 
 @dataclass
@@ -59,11 +61,29 @@ class _Session:
         return self.result
 
 
+class _RecordingTranscriptStore:
+    def __init__(self) -> None:
+        self.transcripts = []
+
+    def persist(self, transcript):
+        self.transcripts.append(transcript)
+        return PaperRagTranscriptArtifact(
+            transcript_id=transcript.transcript_id,
+            path=Path("transcripts/transcript-1.json"),
+        )
+
+
+class _FailingTranscriptStore:
+    def persist(self, transcript):
+        raise AssertionError("retrieve-only requests must not persist transcripts")
+
+
 def test_rag_ask_retrieve_only_keeps_legacy_payload_and_does_not_build_session() -> None:
     retriever = _Retriever()
     service = PaperRagApplicationService(
         retriever=retriever,
         session_factory=lambda **_: (_ for _ in ()).throw(AssertionError("session should not be built")),
+        transcript_store=_FailingTranscriptStore(),
     )
 
     payload = service.rag_ask("p1", "How does it work?", generate=False)
@@ -124,16 +144,18 @@ def test_rag_ask_retrieve_only_sanitizes_scope_metrics() -> None:
     _assert_public_metrics_scope_sanitized(payload["metrics"])
 
 
-def test_rag_ask_gated_generation_returns_answered_payload() -> None:
+def test_rag_ask_gated_generation_returns_answered_payload(tmp_path) -> None:
     result = _session_result(
         status=RAGSessionStatus.ANSWERED,
         decision_type=RAGDecisionType.RETURN_ANSWER,
         answer=_answer(abstained=False),
     )
     session = _Session(result)
+    transcript_store = PaperRagTranscriptFileStore(tmp_path)
     service = PaperRagApplicationService(
         retriever=_Retriever(),
         session_factory=lambda **kwargs: session,
+        transcript_store=transcript_store,
     )
 
     payload = service.rag_ask("p1", "How does it work?", generate=True)
@@ -156,6 +178,9 @@ def test_rag_ask_gated_generation_returns_answered_payload() -> None:
     assert payload["metrics"]["trace_id"] == "trace-1"
     assert payload["metrics"]["root_span_id"] == "span-1"
     assert payload["metrics"]["budget_snapshot"]["rounds_used"] == 1
+    assert payload["transcript_artifact"]["transcript_id"] == "transcript-1"
+    assert transcript_store.resolve("transcript-1").exists()
+    assert transcript_store.transcript_payload("transcript-1")["transcript_id"] == "transcript-1"
     assert session.calls[0][0].required_evidence_types == ["method"]
     assert session.calls[0][1]["current_section_index"] == 0
 
@@ -169,6 +194,7 @@ def test_rag_ask_gated_generation_returns_abstained_payload_without_answer_text(
     service = PaperRagApplicationService(
         retriever=_Retriever(),
         session_factory=lambda **kwargs: _Session(result),
+        transcript_store=_RecordingTranscriptStore(),
     )
 
     payload = service.rag_ask("p1", "How does it work?", generate=True)
@@ -195,6 +221,7 @@ def test_rag_ask_gated_generation_carries_tenant_scope() -> None:
     service = PaperRagApplicationService(
         retriever=_Retriever(),
         session_factory=lambda **kwargs: session,
+        transcript_store=_RecordingTranscriptStore(),
     )
 
     payload = service.rag_ask(
@@ -231,6 +258,7 @@ def test_rag_ask_gated_generation_respects_expected_abstention_golden_case() -> 
     service = PaperRagApplicationService(
         retriever=_Retriever(),
         session_factory=lambda **kwargs: _Session(result),
+        transcript_store=_RecordingTranscriptStore(),
     )
 
     payload = service.rag_ask(pair.paper_id, pair.question, generate=True)

@@ -68,6 +68,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(_rag_eval_gate_command(), env=env)
     if args.command == "run-live-answer-eval":
         return _run(_rag_live_answer_eval_command(), env=env)
+    if args.command == "replay-rag":
+        return _replay_rag(args)
     if args.command == "test-rag-live-e2e":
         return _run(_rag_live_e2e_command(), env=env)
     if args.command == "test-interfaces":
@@ -174,6 +176,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("test-services", help="Run interface service tests")
     subparsers.add_parser("test-rag-eval-gate", help="Run the deterministic Paper RAG eval CI gate")
     subparsers.add_parser("run-live-answer-eval", help="Run the live Paper RAG answer eval")
+    replay_rag_parser = subparsers.add_parser("replay-rag", help="Replay a persisted Paper RAG transcript")
+    replay_rag_parser.add_argument("transcript", help="Transcript id or transcript artifact path")
+    replay_rag_parser.add_argument("--transcript-root", default=".newsroom/rag/transcripts")
     subparsers.add_parser("test-rag-live-e2e", help="Run the opt-in live Paper RAG Qdrant/Postgres e2e")
     subparsers.add_parser("test-interfaces", help="Run interface acceptance tests")
     subparsers.add_parser("test-api", help="Run HTTP API interface tests")
@@ -333,6 +338,17 @@ def _run_operation(args: argparse.Namespace, operation: str) -> int:
         raise ValueError(f"unknown run operation: {operation}")
     print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
     return 0 if result.status.value in {"accepted", "applied"} else 1
+
+
+def _replay_rag(args: argparse.Namespace) -> int:
+    from framework.harness.rag.replay import replay_rag_session
+    from interfaces.services.paper_rag_transcript_store import PaperRagTranscriptFileStore
+
+    store = PaperRagTranscriptFileStore(args.transcript_root)
+    transcript = store.transcript_payload(args.transcript)
+    replay = replay_rag_session(transcript)
+    print(json.dumps(replay.to_dict(), ensure_ascii=False, sort_keys=True))
+    return 0 if replay.replayable else 1
 
 
 def _read_json_argument(value: str) -> dict:

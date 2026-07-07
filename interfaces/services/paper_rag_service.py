@@ -8,6 +8,7 @@ from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.retrieval.paper_retriever import RetrievalRequest
 from business.research.services.tenant_visibility import chunk_visible_to_tenant, public_metrics
 from interfaces.services.paper_rag_factory import build_paper_rag_session, build_research_retriever
+from interfaces.services.paper_rag_transcript_store import PaperRagTranscriptFileStore
 
 
 class PaperRagApplicationService:
@@ -20,11 +21,13 @@ class PaperRagApplicationService:
         retriever: Any | None = None,
         session_factory: Callable[..., Any] | None = None,
         ask_use_case: AskPaperUseCase | None = None,
+        transcript_store: Any | None = None,
     ) -> None:
         self._with_reranker = with_reranker
         self._retriever = retriever or build_research_retriever(with_reranker=with_reranker)
         self._session_factory = session_factory or build_paper_rag_session
         self._ask_use_case = ask_use_case or AskPaperUseCase()
+        self._transcript_store = transcript_store or PaperRagTranscriptFileStore()
 
     def rag_ask(
         self,
@@ -106,12 +109,14 @@ class PaperRagApplicationService:
             session_id=f"paper-rag-ask-session-{run_suffix}",
             current_section_index=section_index,
         )
+        transcript_artifact = self._transcript_store.persist(result.transcript)
         return _gated_payload(
             paper_id=paper_id,
             question=question,
             limit=limit,
             goal=goal,
             result=result,
+            transcript_artifact=transcript_artifact.to_dict(),
         )
 
 
@@ -167,6 +172,7 @@ def _gated_payload(
     limit: int,
     goal: ResearchRetrievalGoal,
     result: Any,
+    transcript_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     answer = result.answer
     pack = result.context_pack
@@ -185,6 +191,7 @@ def _gated_payload(
         "decision": result.decision.to_dict(),
         "gate_results": list(result.decision.gate_results),
         "transcript_id": result.transcript.transcript_id,
+        "transcript_artifact": transcript_artifact,
         "context_pack": _context_pack_summary(pack),
     }
 
