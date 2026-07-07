@@ -2,9 +2,9 @@
 
 ## Status
 
-A real LLM-backed fixture live answer baseline was produced locally on 2026-07-07.
+A real LLM-backed fixture live answer baseline and a first real-corpus live answer baseline were produced locally on 2026-07-07.
 
-This is the first verified live generation run for the Paper RAG answer evaluator in this worktree. It is still a fixture-corpus baseline, not a production real-corpus baseline, because the curated real golden set is not fully covered by local parsed paper artifacts yet.
+The real-corpus path is now runnable against the curated 79-pair golden set and local parsed paper artifacts. The first live answer baseline below predates the curated evidence-id remap in `455bd2fa`; use the post-remap retrieval baseline as the current evidence-alignment signal, then rerun the live answer eval to refresh answer metrics.
 
 ## Verified Fixture Baseline
 
@@ -88,9 +88,9 @@ Repair result:
 
 The generated `.newsroom/papers` artifacts are local runtime artifacts and are not committed.
 
-## Real-Corpus Baseline
+## Pre-Remap Real-Corpus Live Baseline
 
-A real-corpus LLM-backed live answer eval was run locally on 2026-07-07 after the corpus repair.
+A real-corpus LLM-backed live answer eval was run locally on 2026-07-07 after the corpus repair and before the curated evidence-id remap in `455bd2fa`.
 
 Command:
 
@@ -132,10 +132,48 @@ Diagnostic tags:
 - `context_missing_primary_evidence`: 46
 - `true_missing_gold_in_retrieval`: 46
 
+This run remains useful as proof that the live answer path can execute against the real corpus. Its retrieval/golden-alignment conclusion has been superseded by the post-remap baseline below because the golden set still pointed at stale legacy chunk ids when this run was produced.
+
+## Post-Remap Real-Corpus Retrieval Baseline
+
+After `455bd2fa`, the curated real golden set was rerun against the same local `.newsroom/papers` corpus in retrieval-only mode to isolate evidence alignment from LLM answer quality.
+
+Command:
+
+```powershell
+python -m business.research.rag.cli.run_evidence_eval `
+  --golden-set data/eval/golden_set.json `
+  --papers-dir .newsroom/papers `
+  --live-retrieval `
+  --retrieval-policy paper_blind_semantic_rag_v1 `
+  --output-dir .newsroom/eval/evidence-real-remapped-20260707
+```
+
+Artifacts:
+
+- `.newsroom/eval/evidence-real-remapped-20260707/evidence_regression_report.json`
+- `.newsroom/eval/evidence-real-remapped-20260707/evidence_regression_report.md`
+
+Result summary:
+
+- Status: `PASS`
+- Corpus mode: `live_retrieval`
+- Answer eval mode: `none`
+- Total pairs: 79
+- Expected behavior distribution: 67 `answer`, 12 `abstain`
+- Parsed chunks evaluated: 16,513
+- Golden-set hydration: `hydrated_pairs=67`, `locator_available_pairs=67`, `type_available_pairs=67`
+- Missing golden chunks: `missing_gold_chunk_pairs=0`, `missing_gold_chunk_ids=[]`
+- `retrieval.hit_at_5`: `0.403`
+- `retrieval.hit_at_10`: `0.522`
+- `retrieval.equivalent_hit_at_10`: `0.597`
+- `retrieval.mrr`: `0.295`
+- `retrieval.source_locator_coverage_at_10`: `0.970`
+
 ## Current Interpretation
 
 The live answer evaluator is operational and can call the configured LLM path. The fixture baseline is green enough to prove the live generation/evaluation loop is wired and measurable.
 
-The production-readiness blocker has moved. The blocker is no longer missing parsed paper artifacts or lack of a real LLM run. The first real-corpus 79-pair LLM baseline now exists, and it fails because retrieval/golden alignment and answer grounding are below threshold.
+The production-readiness blocker has moved. The blocker is no longer missing parsed paper artifacts, lack of a real LLM run, or stale golden evidence ids. The current deterministic retrieval baseline proves the 67 answer pairs hydrate against the regenerated corpus and now carry current source locators and evidence types.
 
-The strongest next signal is `retrieval.source_locator_coverage_at_10=0.000` together with 46 `true_missing_gold_in_retrieval` diagnostic tags. That points toward stale or mismatched golden evidence locators/chunk ids relative to the regenerated corpus, plus retrieval ranking gaps. Thresholds should not be weakened to make this pass; the failing baseline is the useful evidence for the next repair slice.
+The strongest next signal is a post-remap real-corpus live answer rerun. That run should keep the same `data/eval/golden_set.json` and `.newsroom/papers` inputs, refresh abstention and answer-success metrics, and separate remaining answer-grounding failures from retrieval ranking gaps. Thresholds should not be weakened to make this pass; the useful repair slice is now answer behavior and top-k retrieval quality after evidence alignment has been repaired.
