@@ -11,6 +11,19 @@ The evidence evaluation CLI SHALL provide a live answer evaluation mode that sco
 - **THEN** answer metrics are computed from gated answer payloads rather than deterministic synthetic samples
 - **AND** the evidence report metadata records `answer_eval_mode` as `live`
 
+#### Scenario: Context-absence phrases count as abstentions
+- **WHEN** live answer generation or answer evaluation receives text stating that the provided context does not state an answer
+- **OR** the text states that the provided context contains no mention of the requested information
+- **THEN** the text SHALL be classified as an abstention
+- **AND** expected-abstain samples using those phrases SHALL count as correct abstentions
+
+#### Scenario: Negative presence recitations count as abstentions
+- **WHEN** a live Paper answer asks whether a paper includes, specifies, reports, discusses, provides, states, mentions, describes, or contains a requested subject
+- **AND** the generated answer does not explicitly abstain
+- **AND** the generated answer has insufficient overlap with the requested subject terms
+- **THEN** the runtime SHALL publish an abstained answer candidate instead of the unrelated generated answer
+- **AND** the candidate metadata SHALL record that negative presence relevance normalization was applied
+
 ### Requirement: Answer evaluation modes are mutually exclusive
 The evidence evaluation CLI SHALL reject simultaneous deterministic and live answer evaluation modes.
 
@@ -32,3 +45,4 @@ RAG evidence reports SHALL identify which answer evaluation mode produced answer
 - **WHEN** an evidence report is written
 - **THEN** report metadata includes `answer_eval_mode`
 - **AND** the value is one of `none`, `deterministic`, or `live`
+
