@@ -78,6 +78,11 @@ class _FailingTranscriptStore:
         raise AssertionError("retrieve-only requests must not persist transcripts")
 
 
+class _BrokenTranscriptStore:
+    def persist(self, transcript):
+        raise OSError("transcript volume is read-only")
+
+
 def test_rag_ask_retrieve_only_keeps_legacy_payload_and_does_not_build_session() -> None:
     retriever = _Retriever()
     service = PaperRagApplicationService(
@@ -183,6 +188,31 @@ def test_rag_ask_gated_generation_returns_answered_payload(tmp_path) -> None:
     assert transcript_store.transcript_payload("transcript-1")["transcript_id"] == "transcript-1"
     assert session.calls[0][0].required_evidence_types == ["method"]
     assert session.calls[0][1]["current_section_index"] == 0
+
+
+def test_rag_ask_gated_generation_returns_answer_when_transcript_persist_fails() -> None:
+    result = _session_result(
+        status=RAGSessionStatus.ANSWERED,
+        decision_type=RAGDecisionType.RETURN_ANSWER,
+        answer=_answer(abstained=False),
+    )
+    service = PaperRagApplicationService(
+        retriever=_Retriever(),
+        session_factory=lambda **kwargs: _Session(result),
+        transcript_store=_BrokenTranscriptStore(),
+    )
+
+    payload = service.rag_ask("p1", "How does it work?", generate=True)
+
+    assert payload["status"] == "answered"
+    assert payload["answer"] == "The method retrieves evidence."
+    assert payload["transcript_id"] == "transcript-1"
+    assert payload["transcript_artifact"]["transcript_id"] == "transcript-1"
+    assert payload["transcript_artifact"]["persisted"] is False
+    assert payload["transcript_artifact"]["error"] == {
+        "type": "OSError",
+        "message": "transcript volume is read-only",
+    }
 
 
 def test_rag_ask_gated_generation_returns_abstained_payload_without_answer_text() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -8,7 +9,10 @@ from business.research.rag.models import ResearchRetrievalGoal
 from business.research.rag.retrieval.paper_retriever import RetrievalRequest
 from business.research.services.tenant_visibility import chunk_visible_to_tenant, public_metrics
 from interfaces.services.paper_rag_factory import build_paper_rag_session, build_research_retriever
-from interfaces.services.paper_rag_transcript_store import PaperRagTranscriptFileStore
+from interfaces.services.paper_rag_transcript_store import SCHEMA_VERSION, PaperRagTranscriptFileStore
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PaperRagApplicationService:
@@ -109,14 +113,17 @@ class PaperRagApplicationService:
             session_id=f"paper-rag-ask-session-{run_suffix}",
             current_section_index=section_index,
         )
-        transcript_artifact = self._transcript_store.persist(result.transcript)
+        transcript_artifact = _persist_transcript_best_effort(
+            self._transcript_store,
+            result.transcript,
+        )
         return _gated_payload(
             paper_id=paper_id,
             question=question,
             limit=limit,
             goal=goal,
             result=result,
-            transcript_artifact=transcript_artifact.to_dict(),
+            transcript_artifact=transcript_artifact,
         )
 
 
@@ -194,6 +201,28 @@ def _gated_payload(
         "transcript_artifact": transcript_artifact,
         "context_pack": _context_pack_summary(pack),
     }
+
+
+def _persist_transcript_best_effort(store: Any, transcript: Any) -> dict[str, Any]:
+    try:
+        return store.persist(transcript).to_dict()
+    except Exception as exc:
+        transcript_id = str(getattr(transcript, "transcript_id", "") or "")
+        LOGGER.warning(
+            "failed to persist Paper RAG transcript",
+            extra={"transcript_id": transcript_id},
+            exc_info=True,
+        )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "transcript_id": transcript_id,
+            "path": None,
+            "persisted": False,
+            "error": {
+                "type": exc.__class__.__name__,
+                "message": str(exc),
+            },
+        }
 
 
 def _gated_metrics(result: Any, pack: Any | None) -> dict[str, Any]:
