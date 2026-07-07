@@ -251,6 +251,8 @@ def _looks_like_context_abstention(answer: str) -> bool:
         "do not address",
         "does not report",
         "do not report",
+        "does not indicate",
+        "do not indicate",
         "not contain",
         "not discuss",
         "not mention",
@@ -258,6 +260,7 @@ def _looks_like_context_abstention(answer: str) -> bool:
         "not provide",
         "not address",
         "not report",
+        "not indicate",
     )
     if any(anchor in text for anchor in context_anchors) and any(marker in text for marker in absence_markers):
         return True

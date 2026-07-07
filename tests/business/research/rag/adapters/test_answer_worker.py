@@ -143,6 +143,41 @@ def test_paper_answer_worker_normalizes_context_absence_answer_to_abstention() -
     assert "microwave oven" in candidate.metadata["generated_answer"]["answer"]
 
 
+def test_paper_answer_worker_normalizes_context_does_not_indicate_answer_to_abstention() -> None:
+    async def fake_llm(prompt: str) -> str:
+        assert "Prompt evidence" in prompt
+        return (
+            "The provided context does not indicate that the paper discloses a private API key. "
+            "The passages only show example prompts and no API key disclosure is mentioned [1]."
+        )
+
+    worker = PaperAnswerWorker(AnswerGenerator(fake_llm, max_context_chunks=1))
+    pack = RAGContextPack(
+        pack_id="pack-1",
+        query="Does this paper disclose a private API key used by the authors?",
+        accepted_evidence=(
+            _evidence(
+                "ev-prompt",
+                _chunk(
+                    "chunk-prompt",
+                    "Prompt evidence: the paper shows example prompts without secrets.",
+                    chunk_type="paragraph",
+                ),
+            ),
+        ),
+    )
+
+    candidate = worker.generate_answer(
+        question="Does this paper disclose a private API key used by the authors?",
+        pack=pack,
+    )
+
+    assert candidate.abstained is True
+    assert candidate.answer_text == ""
+    assert candidate.metadata["abstention_reason"] == "answer generator reported insufficient context"
+    assert "private API key" in candidate.metadata["generated_answer"]["answer"]
+
+
 def _chunk(chunk_id: str, content: str, *, chunk_type: str = "paragraph") -> PaperChunk:
     return PaperChunk(
         chunk_id=chunk_id,
