@@ -32,6 +32,8 @@ DEFAULT_ABSTAIN_MARKERS = (
     "provided passages do not mention",
     "context does not mention",
     "contains no mention",
+    "contain nothing about",
+    "contains nothing about",
     "no mention of",
     "no evidence",
 )

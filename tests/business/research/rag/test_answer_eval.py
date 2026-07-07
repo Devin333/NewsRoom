@@ -117,11 +117,18 @@ def test_answer_evaluator_scores_context_absence_variants_as_negative_abstention
             pair=pair,
             answer="The provided context contains no mention of weather measurements in Shanghai.",
         ),
+        EvidenceAnswerSample(
+            pair=pair,
+            answer=(
+                "The provided passages discuss diffusion models and reverse-process objectives; "
+                "they contain nothing about the Riemann hypothesis or a proof of it."
+            ),
+        ),
     ]
 
     result = EvidenceAnswerEvaluator().evaluate(samples)
 
-    assert [score.abstention_correct for score in result.scores] == [1.0, 1.0]
+    assert [score.abstention_correct for score in result.scores] == [1.0, 1.0, 1.0]
     assert result.abstention_accuracy() == 1.0
     assert result.success_rate() == 1.0
 

@@ -30,6 +30,8 @@ _ABSTAIN_MARKERS = (
     "provided context does not mention",
     "context does not mention",
     "contains no mention",
+    "contain nothing about",
+    "contains nothing about",
     "no mention of",
     "no evidence",
     "无法确定",

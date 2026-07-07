@@ -246,6 +246,40 @@ def test_paper_answer_worker_normalizes_contains_no_mention_answer_to_abstention
     assert candidate.metadata["abstention_reason"] == "answer generator reported insufficient context"
 
 
+def test_paper_answer_worker_normalizes_contains_nothing_about_answer_to_abstention() -> None:
+    async def fake_llm(prompt: str) -> str:
+        assert "Math evidence" in prompt
+        return (
+            "No. The provided passages discuss diffusion models and reverse-process objectives; "
+            "they contain nothing about the Riemann hypothesis or a proof of it [1]."
+        )
+
+    worker = PaperAnswerWorker(AnswerGenerator(fake_llm, max_context_chunks=1))
+    pack = RAGContextPack(
+        pack_id="pack-1",
+        query="Does this paper include a proof of the Riemann hypothesis?",
+        accepted_evidence=(
+            _evidence(
+                "ev-math",
+                _chunk(
+                    "chunk-math",
+                    "Math evidence: the paper discusses diffusion objectives and training.",
+                    chunk_type="paragraph",
+                ),
+            ),
+        ),
+    )
+
+    candidate = worker.generate_answer(
+        question="Does this paper include a proof of the Riemann hypothesis?",
+        pack=pack,
+    )
+
+    assert candidate.abstained is True
+    assert candidate.answer_text == ""
+    assert candidate.metadata["abstention_reason"] == "answer generator reported insufficient context"
+
+
 def _chunk(chunk_id: str, content: str, *, chunk_type: str = "paragraph") -> PaperChunk:
     return PaperChunk(
         chunk_id=chunk_id,

@@ -226,6 +226,8 @@ def _looks_like_context_abstention(answer: str) -> bool:
         "provided passages do not mention",
         "does not state",
         "contains no mention",
+        "contain nothing about",
+        "contains nothing about",
         "context does not mention",
         "no evidence",
     )
@@ -259,6 +261,8 @@ def _looks_like_context_abstention(answer: str) -> bool:
         "do not state",
         "contains no mention",
         "contain no mention",
+        "contain nothing about",
+        "contains nothing about",
         "no mention of",
         "not contain",
         "not discuss",

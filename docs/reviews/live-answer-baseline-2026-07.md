@@ -381,3 +381,46 @@ The strongest next repair slice is now top-k retrieval quality and answerable-ca
 ## Intent Routing Repair Target
 
 The latest failure-details artifact shows that many answerable failures are evaluation/result questions classified as `concept_method` and routed only through `method_body`. Representative missed cases ask about evaluation setup, experiment sections, appendix details, user studies, benchmarks, dataset splits, prompt comparisons, and win-rate judgments. The next routing repair should move those questions into `numerical_result` or `comparison` routes so retrieval uses result paragraphs, tables, and conclusion/analysis context instead of a method-only route.
+
+## Intent Routing Repair Live Check
+
+After `e19d669c`, the real-corpus LLM-backed live answer eval was rerun locally against the same curated golden set and parsed paper corpus.
+
+Command:
+
+```powershell
+python -m scripts.dev run-live-answer-eval `
+  --golden-set data/eval/golden_set.json `
+  --papers-dir .newsroom/papers `
+  --output-dir .newsroom/eval/live-answer-real-intent-routing-repair-20260707
+```
+
+Artifacts:
+
+- `.newsroom/eval/live-answer-real-intent-routing-repair-20260707/evidence/evidence_regression_report.json`
+- `.newsroom/eval/live-answer-real-intent-routing-repair-20260707/evidence/evidence_regression_report.md`
+- `.newsroom/eval/live-answer-real-intent-routing-repair-20260707/evidence/answer_failure_details.jsonl`
+
+Result summary:
+
+- Status: `PASS`
+- Corpus mode: `external`
+- Answer eval mode: `live`
+- Total pairs: 79
+- Expected behavior distribution: 67 `answer`, 12 `abstain`
+- `retrieval.hit_at_5`: `0.567`
+- `retrieval.hit_at_10`: `0.642`
+- `retrieval.equivalent_hit_at_10`: `0.701`
+- `answer.retrieval_context_coverage`: `0.672`
+- `answer.citation_grounding`: `0.597`
+- `answer.success_rate`: `0.633`
+- `answer.abstention_accuracy`: `0.833`
+- `answer.true_missing_gold_rate`: `0.278`
+
+Failure taxonomy:
+
+- `abstained_over_conservative`: 19
+- `missing_gold_in_retrieval`: 8
+- `abstention_wrong`: 2
+
+Compared with the previous marker-repair live check, this improves answerable-case retrieval and answer coverage materially (`success_rate` `0.532` -> `0.633`, `hit_at_10` `0.522` -> `0.642`, `true_missing_gold_rate` `0.468` -> `0.278`). The run also exposed two expected-abstain misses. One is a context-absence phrasing gap (`contain nothing about`) and is covered by the follow-up marker repair; the other is an answer relevance issue where the model recites unrelated method context for a negative smartphone launch-date question. That second case should be handled by a future deterministic relevance/negative-query gate rather than by weakening thresholds or adding question-specific exceptions.
