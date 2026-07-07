@@ -580,6 +580,81 @@ def build_evidence_pairs_from_chunks(
     return _attach_evidence_groups(pairs, chunks_by_id=chunks_by_id)
 
 
+def hydrate_evidence_pairs_from_chunks(
+    pairs: list[EvidenceQAPair],
+    chunks: list[PaperChunk],
+) -> tuple[list[EvidenceQAPair], dict[str, Any]]:
+    """Attach current-corpus evidence metadata to externally loaded golden pairs."""
+    chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
+    hydrated: list[EvidenceQAPair] = []
+    hydrated_pairs = 0
+    locator_attached_pairs = 0
+    type_attached_pairs = 0
+    image_attached_pairs = 0
+    missing_gold_chunk_pairs = 0
+    missing_gold_chunk_ids: set[str] = set()
+
+    for pair in pairs:
+        if pair.expected_behavior != _ANSWER_BEHAVIOR or not pair.gold_chunk_ids:
+            hydrated.append(pair)
+            continue
+        gold_chunks = [
+            chunk
+            for chunk_id in pair.gold_chunk_ids
+            if (chunk := chunks_by_id.get(chunk_id)) is not None and chunk.paper_id == pair.paper_id
+        ]
+        found_ids = {chunk.chunk_id for chunk in gold_chunks}
+        missing_ids = [chunk_id for chunk_id in pair.gold_chunk_ids if chunk_id not in found_ids]
+        if missing_ids:
+            missing_gold_chunk_pairs += 1
+            missing_gold_chunk_ids.update(missing_ids)
+        source_locators = _unique_texts([
+            *pair.gold_source_locators,
+            *(_source_locator_for_chunk(chunk) for chunk in gold_chunks),
+        ])
+        evidence_types = _unique_texts([
+            *pair.required_evidence_types,
+            *(_evidence_type_for_chunk(chunk) for chunk in gold_chunks),
+        ])
+        image_refs = _unique_texts([
+            *pair.gold_image_refs,
+            *(_image_ref_for_chunk(chunk) for chunk in gold_chunks),
+        ])
+        metadata = dict(pair.metadata)
+        if missing_ids:
+            metadata["missing_gold_chunk_ids"] = missing_ids
+        if gold_chunks:
+            metadata["hydrated_from_current_corpus"] = True
+        updated = replace(
+            pair,
+            gold_source_locators=source_locators,
+            required_evidence_types=evidence_types,
+            gold_image_refs=image_refs,
+            metadata=metadata,
+        )
+        grouped = _with_evidence_group(updated, chunks_by_id=chunks_by_id)
+        hydrated.append(grouped)
+        if gold_chunks:
+            hydrated_pairs += 1
+        if len(source_locators) > len(pair.gold_source_locators):
+            locator_attached_pairs += 1
+        if len(evidence_types) > len(pair.required_evidence_types):
+            type_attached_pairs += 1
+        if len(image_refs) > len(pair.gold_image_refs):
+            image_attached_pairs += 1
+
+    return hydrated, {
+        "total_pairs": len(pairs),
+        "answer_pairs": sum(1 for pair in pairs if pair.expected_behavior == _ANSWER_BEHAVIOR),
+        "hydrated_pairs": hydrated_pairs,
+        "locator_attached_pairs": locator_attached_pairs,
+        "type_attached_pairs": type_attached_pairs,
+        "image_attached_pairs": image_attached_pairs,
+        "missing_gold_chunk_pairs": missing_gold_chunk_pairs,
+        "missing_gold_chunk_ids": sorted(missing_gold_chunk_ids),
+    }
+
+
 def _normalize_question_profile(profile: str) -> QuestionProfile:
     normalized = str(profile or "template").strip().casefold()
     if normalized in {"", "template"}:
@@ -2413,6 +2488,7 @@ __all__ = [
     "EvidenceSampleResult",
     "build_evidence_pairs_from_chunks",
     "formula_failure_diagnostics",
+    "hydrate_evidence_pairs_from_chunks",
     "iter_ranked_score_breakdowns",
     "load_evidence_golden_set",
     "save_evidence_golden_set",

@@ -13,6 +13,7 @@ from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceRetrievalEvaluator,
     build_evidence_pairs_from_chunks,
     formula_failure_diagnostics,
+    hydrate_evidence_pairs_from_chunks,
     load_evidence_golden_set,
     save_evidence_golden_set,
 )
@@ -108,6 +109,46 @@ def test_repository_golden_set_has_answer_and_abstain_behavior_samples() -> None
     assert all(pair.qa_type == "negative_qa" for pair in abstain_pairs)
     assert all(not pair.gold_chunk_ids for pair in abstain_pairs)
     assert pairs[0].metadata["source_chunk_id"] == pairs[0].gold_chunk_ids[0]
+
+
+def test_hydrate_evidence_pairs_from_chunks_attaches_current_corpus_metadata() -> None:
+    chunk = _chunk(
+        "legacy-para",
+        metadata={"source_locator": "paper://p1/pdf#page=3"},
+    )
+    pair = EvidenceQAPair(
+        question="What result is reported?",
+        paper_id="p1",
+        qa_type="legacy_qa",
+        gold_chunk_ids=["legacy-para"],
+    )
+
+    hydrated, summary = hydrate_evidence_pairs_from_chunks([pair], [chunk])
+
+    assert summary["hydrated_pairs"] == 1
+    assert summary["locator_attached_pairs"] == 1
+    assert summary["type_attached_pairs"] == 1
+    assert summary["missing_gold_chunk_pairs"] == 0
+    assert hydrated[0].gold_source_locators == ["paper://p1/pdf#page=3"]
+    assert hydrated[0].required_evidence_types == ["paragraph"]
+    assert hydrated[0].supporting_evidence_group["primary_evidence_ids"] == ["legacy-para"]
+    assert hydrated[0].metadata["hydrated_from_current_corpus"] is True
+
+
+def test_hydrate_evidence_pairs_from_chunks_reports_missing_gold_ids() -> None:
+    pair = EvidenceQAPair(
+        question="What result is reported?",
+        paper_id="p1",
+        qa_type="legacy_qa",
+        gold_chunk_ids=["missing-para"],
+    )
+
+    hydrated, summary = hydrate_evidence_pairs_from_chunks([pair], [])
+
+    assert summary["hydrated_pairs"] == 0
+    assert summary["missing_gold_chunk_pairs"] == 1
+    assert summary["missing_gold_chunk_ids"] == ["missing-para"]
+    assert hydrated[0].metadata["missing_gold_chunk_ids"] == ["missing-para"]
 
 
 def test_answerable_evidence_qa_requires_gold_chunk() -> None:

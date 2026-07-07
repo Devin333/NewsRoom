@@ -24,6 +24,7 @@ from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
     EvidenceRetrievalEvaluator,
+    hydrate_evidence_pairs_from_chunks,
     load_evidence_golden_set,
     save_evidence_golden_set,
 )
@@ -91,6 +92,9 @@ def run_evidence_eval_core(
         pairs = load_evidence_golden_set(options.golden_set)
     if not pairs:
         raise ValueError("--golden-set is required unless --papers-dir --build-golden-set produces pairs")
+    golden_set_hydration: dict[str, Any] = {}
+    if pairs and chunks and options.golden_set and not options.build_golden_set:
+        pairs, golden_set_hydration = hydrate_evidence_pairs_from_chunks(pairs, chunks)
 
     answer_eval_mode = (
         "live"
@@ -116,6 +120,8 @@ def run_evidence_eval_core(
     behavior_counts = Counter(pair.expected_behavior for pair in pairs)
     metadata["qa_type_counts"] = dict(sorted(qa_type_counts.items()))
     metadata["expected_behavior_counts"] = dict(sorted(behavior_counts.items()))
+    if golden_set_hydration:
+        metadata["golden_set_hydration"] = golden_set_hydration
 
     thresholds = dict(options.thresholds)
     retrieval = None

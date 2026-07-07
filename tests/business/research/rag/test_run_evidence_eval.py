@@ -10,6 +10,7 @@ from business.research.rag.cli.run_evidence_eval import main
 from business.research.rag.evaluation.evidence_eval_runner import (
     EvidenceEvalOptions,
     _build_live_answer_samples,
+    _load_chunks_from_papers_dir,
     run_evidence_eval_core,
 )
 from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvaluator
@@ -468,6 +469,50 @@ def test_run_evidence_eval_live_retrieval_can_enable_lightweight_reranker(tmp_pa
     assert distribution["reranked_evidence_count"] > 0
     assert distribution["max_score"] > 0.0
     assert "## Rerank Distribution" in markdown
+
+
+def test_run_evidence_eval_hydrates_external_golden_set_from_parsed_papers(tmp_path) -> None:
+    papers_dir = tmp_path / "papers"
+    paper_dir = papers_dir / "p1"
+    paper_dir.mkdir(parents=True)
+    (paper_dir / "research_document.json").write_text(
+        json.dumps(_research_document_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    chunks = _load_chunks_from_papers_dir(papers_dir)
+    target = next(chunk for chunk in chunks if chunk.section_title == "Results")
+    golden = tmp_path / "legacy-golden.json"
+    golden.write_text(
+        json.dumps([
+            {
+                "question": "What reports stronger accuracy?",
+                "paper_id": "p1",
+                "source_chunk_id": target.chunk_id,
+                "expected_behavior": "answer",
+            }
+        ], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output = tmp_path / "report"
+
+    exit_code = main([
+        "--papers-dir",
+        str(papers_dir),
+        "--golden-set",
+        str(golden),
+        "--live-retrieval",
+        "--output-dir",
+        str(output),
+    ])
+
+    assert exit_code == 0
+    report = json.loads((output / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    hydration = report["metadata"]["golden_set_hydration"]
+    assert hydration["hydrated_pairs"] == 1
+    assert hydration["locator_attached_pairs"] == 1
+    assert hydration["type_attached_pairs"] == 1
+    assert hydration["missing_gold_chunk_pairs"] == 0
+    assert report["retrieval"]["by_k"]["10"]["source_locator_coverage"] == 1.0
 
 
 def test_run_evidence_eval_blind_semantic_policy_auto_enables_lightweight_reranker(tmp_path) -> None:
