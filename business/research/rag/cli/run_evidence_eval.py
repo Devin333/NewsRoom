@@ -6,8 +6,8 @@ import math
 import hashlib
 import os
 from collections import Counter
-from collections.abc import Callable
-from dataclasses import replace
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Sequence
 from uuid import uuid4
@@ -30,82 +30,141 @@ from business.research.rag.evaluation.paper_evidence_eval import (
 )
 
 
+@dataclass(frozen=True)
+class EvidenceEvalOptions:
+    golden_set: str | Path | None = None
+    output_dir: str | Path = ".newsroom/eval/evidence"
+    papers_dir: str | Path | None = None
+    build_golden_set: bool = False
+    max_pairs_per_type: int = 20
+    no_negative: bool = False
+    domain: str = ""
+    live_retrieval: bool = False
+    visual: bool = False
+    page_visual: bool = False
+    no_render_page_visual: bool = False
+    vision_descriptions: bool = False
+    image_root: str | Path | None = None
+    retrieval_policy: str = ""
+    lightweight_reranker: bool = False
+    thresholds: Mapping[str, float] = field(default_factory=dict)
+    deterministic_answer_eval: bool = False
+    live_answer_eval: bool = False
+    answer_eval_limit: int = 5
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
     live_answer_ask: Callable[[EvidenceQAPair], dict[str, Any]] | None = None,
 ) -> int:
     args = _build_parser().parse_args(argv)
-    if args.deterministic_answer_eval and args.live_answer_eval:
+    return run_evidence_eval_core(
+        evidence_eval_options_from_args(args),
+        live_answer_ask=live_answer_ask,
+    )
+
+
+def evidence_eval_options_from_args(args: argparse.Namespace) -> EvidenceEvalOptions:
+    return EvidenceEvalOptions(
+        golden_set=args.golden_set,
+        output_dir=args.output_dir,
+        papers_dir=args.papers_dir,
+        build_golden_set=args.build_golden_set,
+        max_pairs_per_type=args.max_pairs_per_type,
+        no_negative=args.no_negative,
+        domain=args.domain,
+        live_retrieval=args.live_retrieval,
+        visual=args.visual,
+        page_visual=args.page_visual,
+        no_render_page_visual=args.no_render_page_visual,
+        vision_descriptions=args.vision_descriptions,
+        image_root=args.image_root,
+        retrieval_policy=args.retrieval_policy,
+        lightweight_reranker=args.lightweight_reranker,
+        thresholds=_parse_thresholds(args.threshold),
+        deterministic_answer_eval=args.deterministic_answer_eval,
+        live_answer_eval=args.live_answer_eval,
+        answer_eval_limit=args.answer_eval_limit,
+    )
+
+
+def run_evidence_eval_core(
+    options: EvidenceEvalOptions,
+    *,
+    live_answer_ask: Callable[[EvidenceQAPair], dict[str, Any]] | None = None,
+) -> int:
+    if options.deterministic_answer_eval and options.live_answer_eval:
         raise ValueError("--deterministic-answer-eval and --live-answer-eval are mutually exclusive")
     pairs = []
     chunks = []
     visual_store = None
-    if args.papers_dir:
-        chunks = _load_chunks_from_papers_dir(Path(args.papers_dir))
-        if args.page_visual:
+    if options.papers_dir:
+        papers_dir = Path(options.papers_dir)
+        chunks = _load_chunks_from_papers_dir(papers_dir)
+        if options.page_visual:
             from business.research.rag.visual.page_visual_chunks import build_page_visual_chunks
 
             chunks.extend(build_page_visual_chunks(
                 chunks,
-                papers_dir=Path(args.papers_dir),
-                render_pages=not args.no_render_page_visual,
+                papers_dir=papers_dir,
+                render_pages=not options.no_render_page_visual,
             ))
-        if args.vision_descriptions:
+        if options.vision_descriptions:
             chunks = _describe_visual_chunks(
                 chunks,
-                image_root=Path(args.image_root) if args.image_root else Path(args.papers_dir),
+                image_root=Path(options.image_root) if options.image_root else papers_dir,
             )
-    if args.build_golden_set:
+    if options.build_golden_set:
         if not chunks:
             raise ValueError("--build-golden-set requires --papers-dir")
         pairs = EvidenceGoldenSetBuilder(
-            max_pairs_per_type=args.max_pairs_per_type,
-            include_negative=not args.no_negative,
-        ).build(chunks, domain=args.domain)
-        if args.golden_set:
-            save_evidence_golden_set(pairs, args.golden_set)
-    elif args.golden_set:
-        pairs = load_evidence_golden_set(args.golden_set)
+            max_pairs_per_type=options.max_pairs_per_type,
+            include_negative=not options.no_negative,
+        ).build(chunks, domain=options.domain)
+        if options.golden_set:
+            save_evidence_golden_set(pairs, options.golden_set)
+    elif options.golden_set:
+        pairs = load_evidence_golden_set(options.golden_set)
     if not pairs:
         raise ValueError("--golden-set is required unless --papers-dir --build-golden-set produces pairs")
 
     answer_eval_mode = (
         "live"
-        if args.live_answer_eval
+        if options.live_answer_eval
         else "deterministic"
-        if args.deterministic_answer_eval
+        if options.deterministic_answer_eval
         else "none"
     )
     metadata = {
-        "golden_set": str(Path(args.golden_set)) if args.golden_set else "",
+        "golden_set": str(Path(options.golden_set)) if options.golden_set else "",
         "total_pairs": len(pairs),
-        "mode": "live_retrieval" if args.live_retrieval else "summary",
+        "mode": "live_retrieval" if options.live_retrieval else "summary",
         "answer_eval_mode": answer_eval_mode,
     }
-    if args.papers_dir:
-        metadata["papers_dir"] = str(Path(args.papers_dir))
+    if options.papers_dir:
+        metadata["papers_dir"] = str(Path(options.papers_dir))
         metadata["chunks_total"] = len(chunks)
-        metadata["visual_descriptions_enabled"] = bool(args.vision_descriptions)
+        metadata["visual_descriptions_enabled"] = bool(options.vision_descriptions)
         metadata["visual_described_chunks"] = _visual_described_count(chunks)
-        metadata["page_visual_enabled"] = bool(args.page_visual)
+        metadata["page_visual_enabled"] = bool(options.page_visual)
         metadata["page_visual_chunks"] = _page_visual_count(chunks)
     qa_type_counts = Counter(pair.qa_type for pair in pairs)
     behavior_counts = Counter(pair.expected_behavior for pair in pairs)
     metadata["qa_type_counts"] = dict(sorted(qa_type_counts.items()))
     metadata["expected_behavior_counts"] = dict(sorted(behavior_counts.items()))
 
-    thresholds = _parse_thresholds(args.threshold)
+    thresholds = dict(options.thresholds)
     retrieval = None
-    if args.live_retrieval:
+    if options.live_retrieval:
         if not chunks:
             raise ValueError("--live-retrieval requires --papers-dir with parsed research_document.json files")
         retriever, visual_store = _build_live_retriever(
             chunks,
-            visual_enabled=args.visual,
-            image_root=Path(args.image_root) if args.image_root else None,
-            retrieval_policy=args.retrieval_policy,
-            lightweight_reranker=args.lightweight_reranker,
+            visual_enabled=options.visual,
+            image_root=Path(options.image_root) if options.image_root else None,
+            retrieval_policy=options.retrieval_policy,
+            lightweight_reranker=options.lightweight_reranker,
         )
         retrieval = EvidenceRetrievalEvaluator(retriever).evaluate(pairs)
         policy = retriever.policy
@@ -119,20 +178,20 @@ def main(
         metadata["visual_fusion_enabled"] = visual_store is not None
         metadata["visual_indexed_chunks"] = _visual_indexed_count(visual_store)
         metadata["lightweight_reranker_enabled"] = _lightweight_reranker_enabled(
-            args.retrieval_policy,
-            explicit=args.lightweight_reranker,
+            options.retrieval_policy,
+            explicit=options.lightweight_reranker,
         )
     answer = None
-    if args.deterministic_answer_eval:
+    if options.deterministic_answer_eval:
         answer = EvidenceAnswerEvaluator().evaluate(_build_deterministic_answer_samples(pairs))
-    elif args.live_answer_eval:
+    elif options.live_answer_eval:
         ask = live_answer_ask or _build_live_answer_ask(
             chunks,
-            retrieval_policy=args.retrieval_policy,
-            visual_enabled=args.visual,
-            image_root=Path(args.image_root) if args.image_root else None,
-            lightweight_reranker=args.lightweight_reranker,
-            limit=args.answer_eval_limit,
+            retrieval_policy=options.retrieval_policy,
+            visual_enabled=options.visual,
+            image_root=Path(options.image_root) if options.image_root else None,
+            lightweight_reranker=options.lightweight_reranker,
+            limit=options.answer_eval_limit,
         )
         answer = EvidenceAnswerEvaluator().evaluate(
             _build_live_answer_samples(
@@ -146,7 +205,7 @@ def main(
         metadata=metadata,
         thresholds=thresholds,
     )
-    report.write(args.output_dir)
+    report.write(options.output_dir)
     print(report.to_markdown(), end="")
     return 0 if report.passed() else 1
 

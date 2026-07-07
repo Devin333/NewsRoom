@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from business.research.rag.cli.run_ci_eval_gate import main
+from business.research.rag.evaluation import ci_eval_gate
 from business.research.rag.evaluation.ci_eval_gate import run_ci_eval_gate
 
 
@@ -88,6 +89,70 @@ def test_ci_eval_gate_returns_failed_result_for_abstention_threshold_regression(
         check["check_id"] == "evidence_report_passed" and check["status"] == "fail"
         for check in promotion["checks"]
     )
+
+
+def test_ci_eval_gate_uses_structured_evidence_eval_options(tmp_path: Path, monkeypatch) -> None:
+    captured = {}
+
+    def fake_run_evidence_eval_core(options, *, live_answer_ask=None) -> int:
+        captured["options"] = options
+        captured["live_answer_ask"] = live_answer_ask
+        output_dir = Path(options.output_dir)
+        output_dir.mkdir(parents=True)
+        (output_dir / "evidence_regression_report.json").write_text(
+            json.dumps({
+                "passed": True,
+                "issues": [],
+                "metadata": {
+                    "retrieval_policy": ci_eval_gate.DEFAULT_RETRIEVAL_POLICY,
+                    "expected_behavior_counts": {"abstain": 1, "answer": 1},
+                },
+                "retrieval": {
+                    "mrr": 1.0,
+                    "by_k": {
+                        str(k): {
+                            "hit_rate": 1.0,
+                            "evidence_coverage": 1.0,
+                            "required_type_coverage": 1.0,
+                            "source_locator_coverage": 1.0,
+                        }
+                        for k in (3, 5, 10)
+                    },
+                    "by_qa_type": {
+                        qa_type: {"by_k": {"10": {"hit_rate": 1.0}}}
+                        for qa_type in ("citation_qa", "figure_qa", "formula_qa", "table_qa")
+                    },
+                    "route_distribution": {"default": 1},
+                    "field_embedding_distribution": {"matched_evidence_count": 1},
+                    "rerank_distribution": {"reranked_evidence_count": 1},
+                },
+                "answer": {
+                    "abstention_accuracy": 1.0,
+                    "success_rate": 1.0,
+                },
+            }),
+            encoding="utf-8",
+        )
+        (output_dir / "evidence_regression_report.md").write_text("passed\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(ci_eval_gate, "run_evidence_eval_core", fake_run_evidence_eval_core)
+
+    result = ci_eval_gate.run_ci_eval_gate(output_dir=tmp_path / "ci-gate")
+
+    options = captured["options"]
+    assert result.passed is True
+    assert result.evidence_exit_code == 0
+    assert captured["live_answer_ask"] is None
+    assert options.build_golden_set is True
+    assert options.live_retrieval is True
+    assert options.deterministic_answer_eval is True
+    assert options.live_answer_eval is False
+    assert options.max_pairs_per_type == 2
+    assert options.domain == "ci"
+    assert options.thresholds["answer.abstention_accuracy"] >= 0.9
+    assert options.papers_dir == result.fixture_papers_dir
+    assert options.golden_set == result.golden_set_path
 
 
 def test_ci_eval_gate_cli_returns_nonzero_on_failed_threshold(tmp_path: Path) -> None:

@@ -6,7 +6,12 @@ import pytest
 
 from data.eval.build_golden_set import build_pairs
 from business.research.document.models import PaperChunk
-from business.research.rag.cli.run_evidence_eval import _build_live_answer_samples, main
+from business.research.rag.cli.run_evidence_eval import (
+    EvidenceEvalOptions,
+    _build_live_answer_samples,
+    main,
+    run_evidence_eval_core,
+)
 from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvaluator
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair, save_evidence_golden_set
 
@@ -74,6 +79,30 @@ def test_run_evidence_eval_writes_summary_report(tmp_path) -> None:
     assert payload["metadata"]["qa_type_counts"] == {"citation_qa": 1, "negative_qa": 1}
     assert payload["metadata"]["answer_eval_mode"] == "none"
     assert (output / "evidence_regression_report.md").exists()
+
+
+def test_run_evidence_eval_core_accepts_structured_options(tmp_path) -> None:
+    golden = tmp_path / "golden.json"
+    output = tmp_path / "report"
+    save_evidence_golden_set([
+        EvidenceQAPair(
+            question="What is supported?",
+            paper_id="p1",
+            qa_type="citation_qa",
+            gold_chunk_ids=["para-1"],
+        )
+    ], golden)
+
+    exit_code = run_evidence_eval_core(EvidenceEvalOptions(
+        golden_set=golden,
+        output_dir=output,
+        thresholds={"retrieval.evidence_coverage": 0.8},
+    ))
+
+    assert exit_code == 1
+    payload = json.loads((output / "evidence_regression_report.json").read_text(encoding="utf-8"))
+    assert payload["metadata"]["golden_set"] == str(golden)
+    assert payload["thresholds"] == {"retrieval.evidence_coverage": 0.8}
 
 
 def test_build_golden_set_entrypoint_uses_evidence_pairs_with_negatives() -> None:

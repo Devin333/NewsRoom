@@ -64,8 +64,8 @@ def test_run_live_answer_eval_external_golden_set_bypasses_fixture_generation(tm
     def fail_fixture_generation(path) -> None:
         raise AssertionError("external golden set mode must not generate fixture papers")
 
-    def fake_run_evidence_eval(argv, *, live_answer_ask=None) -> int:
-        captured["argv"] = list(argv)
+    def fake_run_evidence_eval_core(options, *, live_answer_ask=None) -> int:
+        captured["options"] = options
         captured["live_answer_ask"] = live_answer_ask
         evidence_dir = output_dir / "evidence"
         evidence_dir.mkdir(parents=True)
@@ -77,7 +77,7 @@ def test_run_live_answer_eval_external_golden_set_bypasses_fixture_generation(tm
         return 0
 
     monkeypatch.setattr(live_answer_eval, "write_ci_eval_fixture_papers", fail_fixture_generation)
-    monkeypatch.setattr(live_answer_eval, "run_evidence_eval", fake_run_evidence_eval)
+    monkeypatch.setattr(live_answer_eval, "run_evidence_eval_core", fake_run_evidence_eval_core)
 
     result = run_live_answer_eval(
         output_dir=output_dir,
@@ -86,18 +86,17 @@ def test_run_live_answer_eval_external_golden_set_bypasses_fixture_generation(tm
         live_answer_ask=lambda pair: {},
     )
 
-    argv = captured["argv"]
+    options = captured["options"]
     assert result.passed is True
     assert result.corpus_mode == "external"
     assert result.golden_set_path == golden_set
     assert result.papers_dir == papers_dir
     assert result.fixture_papers_dir is None
-    assert "--build-golden-set" not in argv
-    assert "--max-pairs-per-type" not in argv
-    assert argv[argv.index("--golden-set") + 1] == str(golden_set)
-    assert argv[argv.index("--papers-dir") + 1] == str(papers_dir)
-    assert "--live-answer-eval" in argv
-    assert "--live-retrieval" in argv
+    assert options.build_golden_set is False
+    assert options.golden_set == golden_set
+    assert options.papers_dir == papers_dir
+    assert options.live_answer_eval is True
+    assert options.live_retrieval is True
 
 
 def test_run_live_answer_eval_requires_external_golden_set_and_papers_dir_together(tmp_path) -> None:

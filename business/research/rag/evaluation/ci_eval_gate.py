@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from business.research.rag.cli.run_evidence_eval import main as run_evidence_eval
+from business.research.rag.cli.run_evidence_eval import (
+    EvidenceEvalOptions,
+    run_evidence_eval_core,
+)
 from business.research.rag.evaluation.paper_benchmark_suite import (
     PROMOTION_THRESHOLDS,
     PolicyPromotionCheck,
@@ -96,28 +99,13 @@ def run_ci_eval_gate(
     promotion_gate_thresholds.update(dict(promotion_thresholds or {}))
 
     _write_fixture_papers(fixture_papers_dir)
-    evidence_exit_code = run_evidence_eval([
-        "--papers-dir",
-        str(fixture_papers_dir),
-        "--build-golden-set",
-        "--golden-set",
-        str(golden_set_path),
-        "--live-retrieval",
-        "--retrieval-policy",
-        retrieval_policy,
-        "--output-dir",
-        str(evidence_output_dir),
-        "--max-pairs-per-type",
-        "2",
-        "--domain",
-        "ci",
-        "--deterministic-answer-eval",
-        *[
-            item
-            for metric, threshold in sorted(thresholds.items())
-            for item in ("--threshold", f"{metric}={threshold}")
-        ],
-    ])
+    evidence_exit_code = run_evidence_eval_core(_evidence_eval_options(
+        fixture_papers_dir=fixture_papers_dir,
+        golden_set_path=golden_set_path,
+        retrieval_policy=retrieval_policy,
+        evidence_output_dir=evidence_output_dir,
+        thresholds=thresholds,
+    ))
     evidence_report = _read_json(evidence_report_path)
     checklist = build_ci_promotion_checklist(
         evidence_report,
@@ -140,6 +128,28 @@ def run_ci_eval_gate(
         fixture_papers_dir=fixture_papers_dir,
         evidence_exit_code=evidence_exit_code,
         promotion_checklist=checklist,
+    )
+
+
+def _evidence_eval_options(
+    *,
+    fixture_papers_dir: Path,
+    golden_set_path: Path,
+    retrieval_policy: str,
+    evidence_output_dir: Path,
+    thresholds: Mapping[str, float],
+) -> EvidenceEvalOptions:
+    return EvidenceEvalOptions(
+        papers_dir=fixture_papers_dir,
+        build_golden_set=True,
+        golden_set=golden_set_path,
+        live_retrieval=True,
+        retrieval_policy=retrieval_policy,
+        output_dir=evidence_output_dir,
+        max_pairs_per_type=2,
+        domain="ci",
+        deterministic_answer_eval=True,
+        thresholds=dict(thresholds),
     )
 
 

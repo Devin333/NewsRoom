@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from business.research.rag.cli.run_evidence_eval import main as run_evidence_eval
+from business.research.rag.cli.run_evidence_eval import (
+    EvidenceEvalOptions,
+    run_evidence_eval_core,
+)
 from business.research.rag.evaluation.ci_eval_gate import (
     DEFAULT_RETRIEVAL_POLICY,
     write_ci_eval_fixture_papers,
@@ -78,8 +81,8 @@ def run_live_answer_eval(
 
     if external_golden_set is None:
         write_ci_eval_fixture_papers(fixture_papers_dir)
-    evidence_exit_code = run_evidence_eval(
-        _evidence_eval_args(
+    evidence_exit_code = run_evidence_eval_core(
+        _evidence_eval_options(
             papers_dir=effective_papers_dir,
             golden_set_path=effective_golden_set_path,
             retrieval_policy=retrieval_policy,
@@ -102,7 +105,7 @@ def run_live_answer_eval(
     )
 
 
-def _evidence_eval_args(
+def _evidence_eval_options(
     *,
     papers_dir: Path,
     golden_set_path: Path,
@@ -111,33 +114,19 @@ def _evidence_eval_args(
     thresholds: Mapping[str, float],
     max_pairs_per_type: int,
     build_golden_set: bool,
-) -> list[str]:
-    args = [
-        "--papers-dir",
-        str(papers_dir),
-        "--golden-set",
-        str(golden_set_path),
-        "--live-retrieval",
-        "--retrieval-policy",
-        retrieval_policy,
-        "--output-dir",
-        str(output_dir),
-        "--domain",
-        "live-answer",
-        "--live-answer-eval",
-    ]
-    if build_golden_set:
-        args.extend([
-            "--build-golden-set",
-            "--max-pairs-per-type",
-            str(max_pairs_per_type),
-        ])
-    args.extend([
-        item
-        for metric, threshold in sorted(thresholds.items())
-        for item in ("--threshold", f"{metric}={threshold}")
-    ])
-    return args
+) -> EvidenceEvalOptions:
+    return EvidenceEvalOptions(
+        papers_dir=papers_dir,
+        golden_set=golden_set_path,
+        live_retrieval=True,
+        retrieval_policy=retrieval_policy,
+        output_dir=output_dir,
+        domain="live-answer",
+        live_answer_eval=True,
+        build_golden_set=build_golden_set,
+        max_pairs_per_type=max_pairs_per_type,
+        thresholds=dict(thresholds),
+    )
 
 
 __all__ = [
