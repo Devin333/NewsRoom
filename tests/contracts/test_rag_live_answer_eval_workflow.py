@@ -73,6 +73,47 @@ def test_check_live_answer_readiness_dev_command_is_registered() -> None:
     ]
 
 
+def test_ingest_golden_set_papers_dev_command_is_registered() -> None:
+    args = dev.build_parser().parse_args([
+        "ingest-golden-set-papers",
+        "--golden-set",
+        "data/eval/golden_set.json",
+        "--papers-dir",
+        ".newsroom/papers",
+        "--manifest",
+        ".newsroom/eval/golden-set-paper-ingest-manifest.json",
+        "--max-papers",
+        "3",
+        "--pdf-parser-backend",
+        "cascade",
+        "--with-pdf-sidecar",
+        "--pdf-sidecar-mode",
+        "always",
+        "--no-merge-pdf-visuals",
+    ])
+
+    assert args.command == "ingest-golden-set-papers"
+    assert dev._rag_ingest_golden_set_papers_command(args) == [
+        dev.sys.executable,
+        "-m",
+        "business.research.rag.cli.ingest_golden_set_papers",
+        "--golden-set",
+        "data/eval/golden_set.json",
+        "--papers-dir",
+        ".newsroom/papers",
+        "--manifest",
+        ".newsroom/eval/golden-set-paper-ingest-manifest.json",
+        "--max-papers",
+        "3",
+        "--pdf-parser-backend",
+        "cascade",
+        "--with-pdf-sidecar",
+        "--pdf-sidecar-mode",
+        "always",
+        "--no-merge-pdf-visuals",
+    ]
+
+
 def test_rag_live_answer_eval_workflow_runs_secret_guarded_command() -> None:
     workflow = yaml.safe_load(
         Path(".github/workflows/rag-live-answer-eval.yml").read_text(encoding="utf-8")

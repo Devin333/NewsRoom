@@ -68,6 +68,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run(_rag_eval_gate_command(), env=env)
     if args.command == "check-live-answer-readiness":
         return _run(_rag_live_answer_readiness_command(args), env=env)
+    if args.command == "ingest-golden-set-papers":
+        return _run(_rag_ingest_golden_set_papers_command(args), env=env)
     if args.command == "run-live-answer-eval":
         return _run(_rag_live_answer_eval_command(args), env=env)
     if args.command == "replay-rag":
@@ -196,6 +198,19 @@ def build_parser() -> argparse.ArgumentParser:
     readiness_parser.add_argument("--papers-dir", default=None)
     readiness_parser.add_argument("--require-fixture", action="store_true")
     readiness_parser.add_argument("--require-real-corpus", action="store_true")
+    golden_ingest_parser = subparsers.add_parser(
+        "ingest-golden-set-papers",
+        help="Fetch and parse missing Paper RAG golden-set corpus artifacts",
+    )
+    golden_ingest_parser.add_argument("--golden-set", default=None)
+    golden_ingest_parser.add_argument("--papers-dir", default=None)
+    golden_ingest_parser.add_argument("--manifest", default=None)
+    golden_ingest_parser.add_argument("--max-papers", type=int, default=None)
+    golden_ingest_parser.add_argument("--force", action="store_true")
+    golden_ingest_parser.add_argument("--pdf-parser-backend", default=None)
+    golden_ingest_parser.add_argument("--with-pdf-sidecar", action="store_true")
+    golden_ingest_parser.add_argument("--pdf-sidecar-mode", default=None)
+    golden_ingest_parser.add_argument("--no-merge-pdf-visuals", action="store_true")
     replay_rag_parser = subparsers.add_parser("replay-rag", help="Replay a persisted Paper RAG transcript")
     replay_rag_parser.add_argument("transcript", help="Transcript id or transcript artifact path")
     replay_rag_parser.add_argument("--transcript-root", default=".newsroom/rag/transcripts")
@@ -332,6 +347,31 @@ def _rag_live_answer_readiness_command(args: argparse.Namespace | None = None) -
         command.append("--require-fixture")
     if getattr(args, "require_real_corpus", False):
         command.append("--require-real-corpus")
+    return command
+
+
+def _rag_ingest_golden_set_papers_command(args: argparse.Namespace | None = None) -> list[str]:
+    command = [sys.executable, "-m", "business.research.rag.cli.ingest_golden_set_papers"]
+    if args is None:
+        return command
+    if args.golden_set:
+        command.extend(["--golden-set", str(args.golden_set)])
+    if args.papers_dir:
+        command.extend(["--papers-dir", str(args.papers_dir)])
+    if args.manifest:
+        command.extend(["--manifest", str(args.manifest)])
+    if args.max_papers is not None:
+        command.extend(["--max-papers", str(args.max_papers)])
+    if args.force:
+        command.append("--force")
+    if args.pdf_parser_backend:
+        command.extend(["--pdf-parser-backend", str(args.pdf_parser_backend)])
+    if args.with_pdf_sidecar:
+        command.append("--with-pdf-sidecar")
+    if args.pdf_sidecar_mode:
+        command.extend(["--pdf-sidecar-mode", str(args.pdf_sidecar_mode)])
+    if args.no_merge_pdf_visuals:
+        command.append("--no-merge-pdf-visuals")
     return command
 
 
