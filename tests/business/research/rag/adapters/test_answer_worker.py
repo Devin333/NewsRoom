@@ -106,6 +106,43 @@ def test_paper_answer_worker_abstains_when_context_lacks_paper_chunk_metadata() 
     assert candidate.metadata["abstention_reason"] == "context pack lacks paper_chunk metadata"
 
 
+def test_paper_answer_worker_normalizes_context_absence_answer_to_abstention() -> None:
+    async def fake_llm(prompt: str) -> str:
+        assert "Method evidence" in prompt
+        return (
+            "No. The provided context describes retrieval and verification, "
+            "but it does not provide operating instructions for a microwave oven [1]."
+        )
+
+    worker = PaperAnswerWorker(AnswerGenerator(fake_llm, max_context_chunks=1))
+    pack = RAGContextPack(
+        pack_id="pack-1",
+        query="Does this paper provide operating instructions for a microwave oven?",
+        accepted_evidence=(
+            _evidence(
+                "ev-method",
+                _chunk(
+                    "chunk-method",
+                    "Method evidence: the system retrieves and verifies paper evidence.",
+                    chunk_type="paragraph",
+                ),
+            ),
+        ),
+    )
+
+    candidate = worker.generate_answer(
+        question="Does this paper provide operating instructions for a microwave oven?",
+        pack=pack,
+    )
+
+    assert candidate.abstained is True
+    assert candidate.answer_text == ""
+    assert candidate.cited_evidence_ids == ()
+    assert candidate.claims == ()
+    assert candidate.metadata["abstention_reason"] == "answer generator reported insufficient context"
+    assert "microwave oven" in candidate.metadata["generated_answer"]["answer"]
+
+
 def _chunk(chunk_id: str, content: str, *, chunk_type: str = "paragraph") -> PaperChunk:
     return PaperChunk(
         chunk_id=chunk_id,

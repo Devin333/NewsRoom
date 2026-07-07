@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import re
 from threading import Thread
 from typing import Any
 from uuid import uuid4
@@ -41,6 +42,13 @@ class PaperAnswerWorker:
             return _abstention(
                 question,
                 reason="answer generator returned empty answer",
+                context_pack_id=pack.pack_id,
+                metadata={"generated_answer": generated.to_dict()},
+            )
+        if _looks_like_context_abstention(generated.answer):
+            return _abstention(
+                question,
+                reason="answer generator reported insufficient context",
                 context_pack_id=pack.pack_id,
                 metadata={"generated_answer": generated.to_dict()},
             )
@@ -201,6 +209,59 @@ def _claim_span_refs(
             seen.add(span_ref)
             out.append(span_ref)
     return tuple(out)
+
+
+def _looks_like_context_abstention(answer: str) -> bool:
+    text = " ".join(str(answer or "").casefold().split())
+    if not text:
+        return True
+    direct_markers = (
+        "cannot determine",
+        "cannot answer",
+        "insufficient evidence",
+        "not enough evidence",
+        "not in the provided context",
+        "not available from the passages",
+        "provided context does not mention",
+        "provided passages do not mention",
+        "context does not mention",
+        "no evidence",
+    )
+    if any(marker in text for marker in direct_markers):
+        return True
+    context_anchors = (
+        "provided context",
+        "provided passages",
+        "the context",
+        "the passages",
+        "context passages",
+    )
+    absence_markers = (
+        "does not contain",
+        "do not contain",
+        "does not discuss",
+        "do not discuss",
+        "does not mention",
+        "do not mention",
+        "does not include",
+        "do not include",
+        "does not provide",
+        "do not provide",
+        "does not address",
+        "do not address",
+        "does not report",
+        "do not report",
+        "not contain",
+        "not discuss",
+        "not mention",
+        "not include",
+        "not provide",
+        "not address",
+        "not report",
+    )
+    if any(anchor in text for anchor in context_anchors) and any(marker in text for marker in absence_markers):
+        return True
+    return bool(re.search(r"\b(no|not enough|insufficient)\s+(evidence|information)\b", text))
 
 
 def _abstention(
