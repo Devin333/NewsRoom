@@ -140,3 +140,86 @@ def test_evidence_regression_report_maps_answer_failures_to_rag_scorecard() -> N
     assert scorecard["failure_reasons"] == ["context_missing_gold"]
     assert scorecard["metadata"]["raw_failure_reason_counts"] == {"missing_gold_in_llm_context": 1}
     assert scorecard["metadata"]["split"] == "test"
+
+
+def test_evidence_regression_report_writes_answer_failure_details(tmp_path) -> None:
+    failing_pair = EvidenceQAPair(
+        question="What does the table report?",
+        paper_id="p1",
+        qa_type="table_qa",
+        gold_chunk_ids=["tbl-1"],
+        equivalent_gold_chunk_ids=["tbl-1", "para-1"],
+        required_primary_evidence_ids=["tbl-1"],
+        acceptable_support_evidence_ids=["para-1"],
+        gold_source_locators=["paper://p1/pdf#page=6"],
+    )
+    passing_pair = EvidenceQAPair(
+        question="What is supported?",
+        paper_id="p1",
+        qa_type="citation_qa",
+        gold_chunk_ids=["para-2"],
+    )
+    answer = EvidenceAnswerEvalResult(scores=[
+        EvidenceAnswerScores(
+            sample=EvidenceAnswerSample(
+                pair=failing_pair,
+                answer="The provided context does not mention the table.",
+                cited_chunk_ids=[],
+                cited_source_locators=[],
+                context_chunk_ids=["other"],
+                metadata={
+                    "status": "answered",
+                    "generation_mode": "abstained",
+                    "transcript_id": "transcript-1",
+                    "gate_results": [{"gate": "citation", "passed": False}],
+                    "decision": {"status": "abstain"},
+                },
+            ),
+            fact_coverage=0.0,
+            citation_grounding=0.0,
+            source_locator_grounding=0.0,
+            abstention_correct=0.0,
+            answer_success=False,
+            retrieval_context_coverage=0.0,
+            citation_gold_coverage=0.0,
+            strict_retrieval_context_coverage=0.0,
+            equivalent_retrieval_context_coverage=0.0,
+            strict_citation_gold_coverage=0.0,
+            equivalent_citation_gold_coverage=0.0,
+            diagnostic_tags=("true_missing_gold_in_retrieval", "context_missing_primary_evidence"),
+            failure_reason="abstained_over_conservative",
+            missing_facts=("Table 1 reports accuracy.",),
+        ),
+        EvidenceAnswerScores(
+            sample=EvidenceAnswerSample(
+                pair=passing_pair,
+                answer="The claim is supported. [para-2]",
+                cited_chunk_ids=["para-2"],
+                context_chunk_ids=["para-2"],
+            ),
+            fact_coverage=None,
+            citation_grounding=1.0,
+            source_locator_grounding=None,
+            abstention_correct=None,
+            answer_success=True,
+        ),
+    ])
+    report = EvidenceRegressionReport(answer=answer)
+
+    report.write(tmp_path)
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "answer_failure_details.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(rows) == 1
+    assert rows[0]["paper_id"] == "p1"
+    assert rows[0]["question"] == "What does the table report?"
+    assert rows[0]["failure_reason"] == "abstained_over_conservative"
+    assert rows[0]["diagnostic_tags"] == [
+        "true_missing_gold_in_retrieval",
+        "context_missing_primary_evidence",
+    ]
+    assert rows[0]["gold_chunk_ids"] == ["tbl-1"]
+    assert rows[0]["context_chunk_ids"] == ["other"]
+    assert rows[0]["decision"] == {"status": "abstain"}

@@ -8,7 +8,7 @@ from typing import Any
 from framework.rag.evaluation import RAGEvaluationReport, summarize_score_breakdowns
 
 from business.research.rag.adapters.evaluation_scorecard_adapter import evidence_results_to_rag_report
-from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvalResult
+from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvalResult, EvidenceAnswerScores
 from business.research.rag.evaluation.paper_evaluation_compare import EvidenceABResult
 from business.research.rag.adapters.paper_field_text import FIELD_NAMES
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceEvalResult, iter_ranked_score_breakdowns
@@ -92,6 +92,8 @@ class EvidenceRegressionReport:
             self.to_markdown(),
             encoding="utf-8",
         )
+        if self.answer is not None:
+            _write_answer_failure_details(self.answer, target / "answer_failure_details.jsonl")
 
     def to_rag_evaluation_report(self) -> RAGEvaluationReport:
         return evidence_results_to_rag_report(
@@ -347,6 +349,61 @@ def _answer_result_to_dict(result: EvidenceAnswerEvalResult) -> dict[str, Any]:
             for qa_type, sub in result.by_qa_type.items()
         },
     }
+
+
+def _write_answer_failure_details(result: EvidenceAnswerEvalResult, path: Path) -> None:
+    rows = [
+        _answer_failure_detail(score)
+        for score in result.scores
+        if not score.answer_success or score.failure_reason or score.diagnostic_tags
+    ]
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _answer_failure_detail(score: EvidenceAnswerScores) -> dict[str, Any]:
+    sample = score.sample
+    pair = sample.pair
+    return {
+        "paper_id": pair.paper_id,
+        "qa_type": pair.qa_type,
+        "expected_behavior": pair.expected_behavior,
+        "question": pair.question,
+        "failure_reason": score.failure_reason,
+        "diagnostic_tags": list(score.diagnostic_tags),
+        "answer_success": score.answer_success,
+        "abstention_correct": score.abstention_correct,
+        "fact_coverage": score.fact_coverage,
+        "retrieval_context_coverage": score.retrieval_context_coverage,
+        "citation_grounding": score.citation_grounding,
+        "citation_gold_coverage": score.citation_gold_coverage,
+        "source_locator_grounding": score.source_locator_grounding,
+        "gold_chunk_ids": list(pair.gold_chunk_ids),
+        "equivalent_gold_chunk_ids": list(pair.equivalent_gold_chunk_ids),
+        "required_primary_evidence_ids": list(pair.required_primary_evidence_ids),
+        "acceptable_support_evidence_ids": list(pair.acceptable_support_evidence_ids),
+        "gold_source_locators": list(pair.gold_source_locators),
+        "context_chunk_ids": list(sample.context_chunk_ids),
+        "cited_chunk_ids": list(sample.cited_chunk_ids),
+        "cited_source_locators": list(sample.cited_source_locators),
+        "matched_facts": list(score.matched_facts),
+        "missing_facts": list(score.missing_facts),
+        "answer": _truncate_text(sample.answer, limit=1200),
+        "status": str(sample.metadata.get("status") or ""),
+        "generation_mode": str(sample.metadata.get("generation_mode") or ""),
+        "transcript_id": str(sample.metadata.get("transcript_id") or ""),
+        "gate_results": list(sample.metadata.get("gate_results") or []),
+        "decision": dict(sample.metadata.get("decision") or {}),
+    }
+
+
+def _truncate_text(text: str, *, limit: int) -> str:
+    normalized = str(text or "").strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3].rstrip() + "..."
 
 
 def _generation_result_to_dict(result: GenerationEvalResult) -> dict[str, Any]:
