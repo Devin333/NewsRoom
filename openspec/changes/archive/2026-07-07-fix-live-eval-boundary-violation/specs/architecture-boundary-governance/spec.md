@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Business research does not depend on interface layers
 The system SHALL keep `business/research` free of direct imports from `interfaces`, including business-owned RAG evaluation CLIs.
