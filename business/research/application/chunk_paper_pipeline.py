@@ -37,6 +37,7 @@ class ChunkPipelineResult:
     parse_source: str
     chunk_manifest_path: str = ""
     bm25_index_path: str = ""
+    research_document_path: str = ""
     visual_described_chunks: int = 0
 
 
@@ -144,10 +145,6 @@ class ChunkPaperPipeline:
                 if str(chunk.metadata.get("visual_description") or "")
                 and str(chunk.metadata.get("visual_description") or "") != before.get(chunk.chunk_id, "")
             )
-            _write_research_document_artifact(
-                doc,
-                self._chunk_manifest.path_for(paper_id).with_name("research_document.json"),
-            )
         self._store.ensure_collection()
         self._indexer.index_chunks(chunks)
         if self._field_indexer is not None:
@@ -167,6 +164,8 @@ class ChunkPaperPipeline:
             chunks,
             document_metadata=doc.metadata,
         )
+        research_document_path = self._chunk_manifest.path_for(paper_id).with_name("research_document.json")
+        _write_research_document_artifact(doc, research_document_path)
 
         by_type: dict[str, int] = {}
         for c in chunks:
@@ -181,6 +180,7 @@ class ChunkPaperPipeline:
             parse_source=parse_source,
             chunk_manifest_path=str(manifest_path),
             bm25_index_path=str(bm25_index_path),
+            research_document_path=str(research_document_path),
             visual_described_chunks=visual_described_chunks,
         )
 

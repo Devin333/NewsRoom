@@ -129,11 +129,16 @@ def test_chunk_pipeline_writes_chunk_manifest(tmp_path):
 
     assert result.chunk_manifest_path == str(manifest_path)
     assert result.bm25_index_path == str(bm25_index_path)
+    assert result.research_document_path == str(tmp_path / "research_document.json")
     assert manifest_path.exists()
     assert bm25_index_path.exists()
+    assert (tmp_path / "research_document.json").exists()
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    document_payload = json.loads((tmp_path / "research_document.json").read_text(encoding="utf-8"))
     bm25_payload = json.loads(bm25_index_path.read_text(encoding="utf-8"))
     assert payload["paper_id"] == "2501.00001"
+    assert document_payload["paper_id"] == "2501.00001"
+    assert document_payload["sections"]
     assert bm25_payload["paper_id"] == "2501.00001"
     assert bm25_payload["chunks"]
     assert bm25_payload["postings"]
