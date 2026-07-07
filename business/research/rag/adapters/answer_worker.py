@@ -224,6 +224,8 @@ def _looks_like_context_abstention(answer: str) -> bool:
         "not available from the passages",
         "provided context does not mention",
         "provided passages do not mention",
+        "does not state",
+        "contains no mention",
         "context does not mention",
         "no evidence",
     )
@@ -253,6 +255,11 @@ def _looks_like_context_abstention(answer: str) -> bool:
         "do not report",
         "does not indicate",
         "do not indicate",
+        "does not state",
+        "do not state",
+        "contains no mention",
+        "contain no mention",
+        "no mention of",
         "not contain",
         "not discuss",
         "not mention",
@@ -261,6 +268,7 @@ def _looks_like_context_abstention(answer: str) -> bool:
         "not address",
         "not report",
         "not indicate",
+        "not state",
     )
     if any(anchor in text for anchor in context_anchors) and any(marker in text for marker in absence_markers):
         return True

@@ -100,6 +100,32 @@ def test_answer_evaluator_scores_negative_abstention() -> None:
     assert result.success_rate() == 2 / 3
 
 
+def test_answer_evaluator_scores_context_absence_variants_as_negative_abstention() -> None:
+    pair = EvidenceQAPair.negative(
+        question="Does this paper report carbon emissions from a national power grid?",
+        paper_id="p1",
+    )
+    samples = [
+        EvidenceAnswerSample(
+            pair=pair,
+            answer=(
+                "The provided context does not state that the paper reports carbon emissions "
+                "from a national power grid."
+            ),
+        ),
+        EvidenceAnswerSample(
+            pair=pair,
+            answer="The provided context contains no mention of weather measurements in Shanghai.",
+        ),
+    ]
+
+    result = EvidenceAnswerEvaluator().evaluate(samples)
+
+    assert [score.abstention_correct for score in result.scores] == [1.0, 1.0]
+    assert result.abstention_accuracy() == 1.0
+    assert result.success_rate() == 1.0
+
+
 def test_answer_evaluator_allows_no_fact_gold_but_requires_citation_when_present() -> None:
     pair = EvidenceQAPair(
         question="Where is the claim supported?",

@@ -335,6 +335,41 @@ Diagnostic tags:
 
 Compared with the post-abstention-normalization baseline, the context-8 run kept negative QA green and moved answerable-case coverage modestly forward: `answer.success_rate` improved from `0.532` to `0.544`, `answer.retrieval_context_coverage` improved from `0.448` to `0.478`, `missing_gold_in_retrieval` dropped from 15 to 13, and `true_missing_gold_in_retrieval` dropped from 37 to 35. The remaining regression target is still retrieval and answerable-case coverage, not threshold tuning.
 
+## Context-Absence Marker Repair Live Check
+
+After adding `does not state` and `contains no mention` to the runtime and evaluation abstention markers, the real-corpus LLM-backed live answer eval was rerun locally against the same curated golden set and parsed paper corpus. This run verifies that newly observed context-absence phrasings are treated as abstentions without weakening thresholds.
+
+Command:
+
+```powershell
+python -m scripts.dev run-live-answer-eval `
+  --golden-set data/eval/golden_set.json `
+  --papers-dir .newsroom/papers `
+  --output-dir .newsroom/eval/live-answer-real-supported-abstention-repair-v2-20260707
+```
+
+Artifacts:
+
+- `.newsroom/eval/live-answer-real-supported-abstention-repair-v2-20260707/evidence/evidence_regression_report.json`
+- `.newsroom/eval/live-answer-real-supported-abstention-repair-v2-20260707/evidence/evidence_regression_report.md`
+
+Result summary:
+
+- Status: `PASS`
+- Corpus mode: `external`
+- Answer eval mode: `live`
+- Total pairs: 79
+- Expected behavior distribution: 67 `answer`, 12 `abstain`
+- `answer.abstention_accuracy`: `1.000` above threshold `0.800`
+- `answer.success_rate`: `0.532` above threshold `0.500`
+- `negative_qa` success: `100.0%`
+- `abstention_wrong`: `0`
+
+Failure taxonomy:
+
+- `abstained_over_conservative`: 25
+- `missing_gold_in_retrieval`: 12
+
 ## Current Interpretation
 
 The live answer evaluator is operational and can call the configured LLM path. The fixture baseline is green enough to prove the live generation/evaluation loop is wired and measurable.

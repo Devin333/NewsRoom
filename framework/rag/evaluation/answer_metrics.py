@@ -21,14 +21,18 @@ DEFAULT_ABSTAIN_MARKERS = (
     "not mentioned",
     "does not mention",
     "does not include",
+    "does not state",
     "do not mention",
     "do not discuss",
     "do not include",
+    "do not state",
     "not in the provided context",
     "not available from the passages",
     "provided context does not mention",
     "provided passages do not mention",
     "context does not mention",
+    "contains no mention",
+    "no mention of",
     "no evidence",
 )
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")

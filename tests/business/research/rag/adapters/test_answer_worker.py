@@ -178,6 +178,74 @@ def test_paper_answer_worker_normalizes_context_does_not_indicate_answer_to_abst
     assert "private API key" in candidate.metadata["generated_answer"]["answer"]
 
 
+def test_paper_answer_worker_normalizes_context_does_not_state_answer_to_abstention() -> None:
+    async def fake_llm(prompt: str) -> str:
+        assert "Grid evidence" in prompt
+        return (
+            "The provided context does not state that the paper reports carbon emissions "
+            "from a national power grid, so I cannot conclude that it does from these passages alone."
+        )
+
+    worker = PaperAnswerWorker(AnswerGenerator(fake_llm, max_context_chunks=1))
+    pack = RAGContextPack(
+        pack_id="pack-1",
+        query="Does this paper report carbon emissions from a national power grid?",
+        accepted_evidence=(
+            _evidence(
+                "ev-grid",
+                _chunk(
+                    "chunk-grid",
+                    "Grid evidence: the paper reports model evaluation details, not grid emissions.",
+                    chunk_type="paragraph",
+                ),
+            ),
+        ),
+    )
+
+    candidate = worker.generate_answer(
+        question="Does this paper report carbon emissions from a national power grid?",
+        pack=pack,
+    )
+
+    assert candidate.abstained is True
+    assert candidate.answer_text == ""
+    assert candidate.metadata["abstention_reason"] == "answer generator reported insufficient context"
+
+
+def test_paper_answer_worker_normalizes_contains_no_mention_answer_to_abstention() -> None:
+    async def fake_llm(prompt: str) -> str:
+        assert "Weather evidence" in prompt
+        return (
+            "No. The provided context contains no mention of weather measurements, "
+            "Shanghai, or July 6, 2026. It discusses retrieval results [1]."
+        )
+
+    worker = PaperAnswerWorker(AnswerGenerator(fake_llm, max_context_chunks=1))
+    pack = RAGContextPack(
+        pack_id="pack-1",
+        query="Does this paper report weather measurements from Shanghai on July 6, 2026?",
+        accepted_evidence=(
+            _evidence(
+                "ev-weather",
+                _chunk(
+                    "chunk-weather",
+                    "Weather evidence: the paper discusses retrieval-augmented language models.",
+                    chunk_type="paragraph",
+                ),
+            ),
+        ),
+    )
+
+    candidate = worker.generate_answer(
+        question="Does this paper report weather measurements from Shanghai on July 6, 2026?",
+        pack=pack,
+    )
+
+    assert candidate.abstained is True
+    assert candidate.answer_text == ""
+    assert candidate.metadata["abstention_reason"] == "answer generator reported insufficient context"
+
+
 def _chunk(chunk_id: str, content: str, *, chunk_type: str = "paragraph") -> PaperChunk:
     return PaperChunk(
         chunk_id=chunk_id,
