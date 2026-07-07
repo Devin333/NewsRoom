@@ -12,6 +12,11 @@ The system SHALL provide a Research-owned adapter that maps `PaperChunk` instanc
 - **AND** the chunk content becomes `text`
 - **AND** section, formula, figure, table, and reference metadata remain available through fields or metadata
 
+#### Scenario: Structural evidence type metadata is preserved
+- **WHEN** a `PaperChunk` is projected into `RAGEvidence`
+- **THEN** the evidence metadata SHALL preserve `chunk_type`
+- **AND** the evidence metadata SHALL preserve `section_role` as a list of role strings
+
 ### Requirement: Paper source locators are preserved
 The Paper adapter SHALL preserve the original paper source locator string and SHALL parse common page and PDF rectangle metadata into a generic `SourceLocator` when those values are available.
 
