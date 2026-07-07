@@ -9,6 +9,7 @@ from business.research.rag.evaluation.live_answer_readiness import (
     DEFAULT_GOLDEN_SET_PATH,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_PAPERS_DIR,
+    readiness_gate_exit_code,
     write_live_answer_readiness,
 )
 
@@ -21,7 +22,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         papers_dir=Path(args.papers_dir),
     )
     print(json.dumps(result.payload, ensure_ascii=False, indent=2, sort_keys=True), end="\n")
-    return 0
+    return readiness_gate_exit_code(
+        result.payload,
+        require_fixture=args.require_fixture,
+        require_real_corpus=args.require_real_corpus,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -43,6 +48,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--papers-dir",
         default=str(DEFAULT_PAPERS_DIR),
         help="Directory containing per-paper research_document.json artifacts.",
+    )
+    parser.add_argument(
+        "--require-fixture",
+        action="store_true",
+        help="Return non-zero when fixture live answer eval prerequisites are not ready.",
+    )
+    parser.add_argument(
+        "--require-real-corpus",
+        action="store_true",
+        help="Return non-zero when real-corpus live answer eval prerequisites are not ready.",
     )
     return parser
 

@@ -55,6 +55,7 @@ def test_check_live_answer_readiness_dev_command_is_registered() -> None:
         ".newsroom/papers",
         "--output-dir",
         ".newsroom/eval/live-answer-readiness",
+        "--require-real-corpus",
     ])
 
     assert args.command == "check-live-answer-readiness"
@@ -68,6 +69,7 @@ def test_check_live_answer_readiness_dev_command_is_registered() -> None:
         "data/eval/golden_set.json",
         "--papers-dir",
         ".newsroom/papers",
+        "--require-real-corpus",
     ]
 
 
@@ -108,13 +110,14 @@ def test_rag_live_answer_eval_workflow_runs_secret_guarded_command() -> None:
     real_step = next(
         step
         for step in steps
-        if step.get("name") == "Run real-corpus Paper RAG answer eval when artifacts exist"
+        if step.get("name") == "Run real-corpus Paper RAG answer eval when ready"
     )
     assert "OPENAI_BASE_URL" in real_step.get("if", "")
     assert "OPENAI_API_KEY" in real_step.get("if", "")
+    assert "check-live-answer-readiness --require-real-corpus" in real_step["run"]
     assert "data/eval/golden_set.json" in real_step["run"]
     assert "--papers-dir .newsroom/papers" in real_step["run"]
-    assert "Skipping real-corpus live answer eval" in real_step["run"]
+    assert "readiness prerequisites are incomplete" in real_step["run"]
     readiness_upload = next(
         step
         for step in steps

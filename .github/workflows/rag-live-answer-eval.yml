@@ -42,16 +42,16 @@ jobs:
         if: ${{ env.OPENAI_BASE_URL != '' && env.OPENAI_API_KEY != '' }}
         run: python -m scripts.dev run-live-answer-eval
 
-      - name: Run real-corpus Paper RAG answer eval when artifacts exist
+      - name: Run real-corpus Paper RAG answer eval when ready
         if: ${{ env.OPENAI_BASE_URL != '' && env.OPENAI_API_KEY != '' }}
         run: |
-          if [ -d ".newsroom/papers" ]; then
+          if python -m scripts.dev check-live-answer-readiness --require-real-corpus; then
             python -m scripts.dev run-live-answer-eval \
               --golden-set data/eval/golden_set.json \
               --papers-dir .newsroom/papers \
               --output-dir .newsroom/eval/live-answer-real
           else
-            echo "Skipping real-corpus live answer eval because .newsroom/papers is not available."
+            echo "Skipping real-corpus live answer eval because readiness prerequisites are incomplete."
           fi
 
       - name: Upload live answer readiness artifacts

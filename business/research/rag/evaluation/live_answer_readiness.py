@@ -103,6 +103,24 @@ def write_live_answer_readiness(
     )
 
 
+def readiness_gate_exit_code(
+    payload: Mapping[str, Any],
+    *,
+    require_fixture: bool = False,
+    require_real_corpus: bool = False,
+) -> int:
+    eligibility = dict(payload.get("eligibility") or {})
+    if require_fixture and not _is_eligible(eligibility, "fixture_live_answer_eval"):
+        return 1
+    if require_real_corpus and not _is_eligible(eligibility, "real_corpus_live_answer_eval"):
+        return 1
+    return 0
+
+
+def _is_eligible(eligibility: Mapping[str, Any], key: str) -> bool:
+    return bool(dict(eligibility.get(key) or {}).get("eligible"))
+
+
 def _llm_summary(env: Mapping[str, str]) -> dict[str, Any]:
     required = {name: _env_presence(env, name) for name in _REQUIRED_LLM_ENV}
     optional = {name: _env_presence(env, name, include_value=name == "OPENAI_MODEL") for name in _OPTIONAL_LLM_ENV}
@@ -310,5 +328,6 @@ __all__ = [
     "DEFAULT_PAPERS_DIR",
     "LiveAnswerReadinessResult",
     "build_live_answer_readiness",
+    "readiness_gate_exit_code",
     "write_live_answer_readiness",
 ]

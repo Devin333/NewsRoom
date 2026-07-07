@@ -5,6 +5,7 @@ import json
 from business.research.rag.cli import check_live_answer_readiness as readiness_cli
 from business.research.rag.evaluation.live_answer_readiness import (
     build_live_answer_readiness,
+    readiness_gate_exit_code,
     write_live_answer_readiness,
 )
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair, save_evidence_golden_set
@@ -119,6 +120,57 @@ def test_check_live_answer_readiness_cli_writes_artifacts(tmp_path, monkeypatch,
     assert (output_dir / "readiness.md").exists()
     payload = json.loads(capsys.readouterr().out)
     assert payload["baseline_status"] == "ready"
+
+
+def test_check_live_answer_readiness_cli_returns_nonzero_when_required_real_corpus_is_not_ready(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    golden_set = tmp_path / "golden.json"
+    papers_dir = tmp_path / "papers"
+    output_dir = tmp_path / "readiness"
+    papers_dir.mkdir()
+    save_evidence_golden_set([
+        EvidenceQAPair(
+            question="What does the missing paper report?",
+            paper_id="missing-paper",
+            qa_type="citation_qa",
+            gold_chunk_ids=["missing-results"],
+        )
+    ], golden_set)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://secret.example/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+
+    exit_code = readiness_cli.main([
+        "--output-dir",
+        str(output_dir),
+        "--golden-set",
+        str(golden_set),
+        "--papers-dir",
+        str(papers_dir),
+        "--require-real-corpus",
+    ])
+
+    assert exit_code == 1
+    assert (output_dir / "readiness.json").exists()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["eligibility"]["fixture_live_answer_eval"]["eligible"] is True
+    assert payload["eligibility"]["real_corpus_live_answer_eval"]["eligible"] is False
+    assert "golden_set_papers_missing_from_corpus" in payload["eligibility"]["real_corpus_live_answer_eval"]["reasons"]
+
+
+def test_readiness_gate_exit_code_keeps_diagnostic_mode_zero(tmp_path) -> None:
+    payload = {
+        "eligibility": {
+            "fixture_live_answer_eval": {"eligible": False},
+            "real_corpus_live_answer_eval": {"eligible": False},
+        }
+    }
+
+    assert readiness_gate_exit_code(payload) == 0
+    assert readiness_gate_exit_code(payload, require_fixture=True) == 1
+    assert readiness_gate_exit_code(payload, require_real_corpus=True) == 1
 
 
 def _write_research_document(papers_dir, paper_id: str) -> None:

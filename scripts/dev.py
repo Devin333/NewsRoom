@@ -194,6 +194,8 @@ def build_parser() -> argparse.ArgumentParser:
     readiness_parser.add_argument("--output-dir", default=None)
     readiness_parser.add_argument("--golden-set", default=None)
     readiness_parser.add_argument("--papers-dir", default=None)
+    readiness_parser.add_argument("--require-fixture", action="store_true")
+    readiness_parser.add_argument("--require-real-corpus", action="store_true")
     replay_rag_parser = subparsers.add_parser("replay-rag", help="Replay a persisted Paper RAG transcript")
     replay_rag_parser.add_argument("transcript", help="Transcript id or transcript artifact path")
     replay_rag_parser.add_argument("--transcript-root", default=".newsroom/rag/transcripts")
@@ -326,6 +328,10 @@ def _rag_live_answer_readiness_command(args: argparse.Namespace | None = None) -
         command.extend(["--golden-set", str(args.golden_set)])
     if args.papers_dir:
         command.extend(["--papers-dir", str(args.papers_dir)])
+    if getattr(args, "require_fixture", False):
+        command.append("--require-fixture")
+    if getattr(args, "require_real_corpus", False):
+        command.append("--require-real-corpus")
     return command
 
 
