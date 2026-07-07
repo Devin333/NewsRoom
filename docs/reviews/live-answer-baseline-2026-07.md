@@ -4,7 +4,7 @@
 
 A real LLM-backed fixture live answer baseline and a first real-corpus live answer baseline were produced locally on 2026-07-07.
 
-The real-corpus path is now runnable against the curated 79-pair golden set and local parsed paper artifacts. The first live answer baseline below predates the curated evidence-id remap in `455bd2fa`; use the post-remap retrieval baseline as the current evidence-alignment signal, then rerun the live answer eval to refresh answer metrics.
+The real-corpus path is now runnable against the curated 79-pair golden set and local parsed paper artifacts. The first live answer baseline below predates the curated evidence-id remap in `455bd2fa`; the post-remap baselines are the current signals for evidence alignment and live answer quality.
 
 ## Verified Fixture Baseline
 
@@ -170,10 +170,64 @@ Result summary:
 - `retrieval.mrr`: `0.295`
 - `retrieval.source_locator_coverage_at_10`: `0.970`
 
+## Post-Remap Real-Corpus Live Answer Baseline
+
+After the evidence-id remap, the real-corpus LLM-backed live answer eval was rerun locally against the same curated golden set and parsed paper corpus.
+
+Command:
+
+```powershell
+python -m scripts.dev run-live-answer-eval `
+  --golden-set data/eval/golden_set.json `
+  --papers-dir .newsroom/papers `
+  --output-dir .newsroom/eval/live-answer-real-remapped-20260707
+```
+
+Artifacts:
+
+- `.newsroom/eval/live-answer-real-remapped-20260707/evidence/evidence_regression_report.json`
+- `.newsroom/eval/live-answer-real-remapped-20260707/evidence/evidence_regression_report.md`
+
+Result summary:
+
+- Status: `FAIL`
+- Corpus mode: `live_retrieval`
+- Answer eval mode: `live`
+- Total pairs: 79
+- Expected behavior distribution: 67 `answer`, 12 `abstain`
+- Parsed chunks evaluated: 16,513
+- Golden-set hydration: `hydrated_pairs=67`, `locator_available_pairs=67`, `type_available_pairs=67`
+- Missing golden chunks: `missing_gold_chunk_pairs=0`, `missing_gold_chunk_ids=[]`
+- `answer.abstention_accuracy`: `0.750` below threshold `0.800`
+- `answer.success_rate`: `0.494` below threshold `0.500`
+- `answer.retrieval_context_coverage`: `0.448`
+- `answer.citation_grounding`: `0.463`
+- `answer.citation_gold_coverage`: `0.463`
+- `answer.source_locator_grounding`: `0.791`
+- `answer.true_missing_gold_rate`: `0.468`
+- `retrieval.hit_at_5`: `0.403`
+- `retrieval.hit_at_10`: `0.522`
+- `retrieval.equivalent_hit_at_10`: `0.597`
+- `retrieval.source_locator_coverage_at_10`: `0.970`
+
+Failure taxonomy:
+
+- `abstained_over_conservative`: 21
+- `abstention_wrong`: 3
+- `missing_gold_in_retrieval`: 16
+
+Diagnostic tags:
+
+- `context_missing_interpretation_evidence`: 36
+- `context_missing_primary_evidence`: 42
+- `gold_id_missed_but_equivalent_supported`: 6
+- `strict_context_missed_but_equivalent_supported`: 5
+- `true_missing_gold_in_retrieval`: 37
+
 ## Current Interpretation
 
 The live answer evaluator is operational and can call the configured LLM path. The fixture baseline is green enough to prove the live generation/evaluation loop is wired and measurable.
 
-The production-readiness blocker has moved. The blocker is no longer missing parsed paper artifacts, lack of a real LLM run, or stale golden evidence ids. The current deterministic retrieval baseline proves the 67 answer pairs hydrate against the regenerated corpus and now carry current source locators and evidence types.
+The production-readiness blocker has moved. The blocker is no longer missing parsed paper artifacts, lack of a real LLM run, or stale golden evidence ids. The current deterministic retrieval baseline proves the 67 answer pairs hydrate against the regenerated corpus and now carry current source locators and evidence types. The post-remap live answer baseline improved materially over the pre-remap baseline (`success_rate` `0.329` -> `0.494`, `abstention_accuracy` `0.417` -> `0.750`), but it still narrowly fails both configured answer thresholds.
 
-The strongest next signal is a post-remap real-corpus live answer rerun. That run should keep the same `data/eval/golden_set.json` and `.newsroom/papers` inputs, refresh abstention and answer-success metrics, and separate remaining answer-grounding failures from retrieval ranking gaps. Thresholds should not be weakened to make this pass; the useful repair slice is now answer behavior and top-k retrieval quality after evidence alignment has been repaired.
+The strongest next repair slice is now answer behavior and top-k retrieval quality after evidence alignment has been repaired. The run shows three concrete targets: reduce over-conservative abstention on answerable legacy QA, fix the 3 real negative-QA `abstention_wrong` cases, and improve retrieval so the 37 `true_missing_gold_in_retrieval` diagnostics drop. Thresholds should not be weakened to make this pass.
