@@ -61,6 +61,7 @@ def run_live_answer_eval(
     retrieval_policy: str = DEFAULT_RETRIEVAL_POLICY,
     thresholds: Mapping[str, float] | None = None,
     max_pairs_per_type: int = 2,
+    answer_eval_limit: int = 8,
     live_answer_ask: Callable[[EvidenceQAPair], dict[str, Any]] | None = None,
 ) -> LiveAnswerEvalResult:
     output = Path(output_dir)
@@ -89,6 +90,7 @@ def run_live_answer_eval(
             output_dir=evidence_output_dir,
             thresholds=effective_thresholds,
             max_pairs_per_type=max_pairs_per_type,
+            answer_eval_limit=answer_eval_limit,
             build_golden_set=external_golden_set is None,
         ),
         live_answer_ask=live_answer_ask,
@@ -113,6 +115,7 @@ def _evidence_eval_options(
     output_dir: Path,
     thresholds: Mapping[str, float],
     max_pairs_per_type: int,
+    answer_eval_limit: int,
     build_golden_set: bool,
 ) -> EvidenceEvalOptions:
     return EvidenceEvalOptions(
@@ -125,6 +128,7 @@ def _evidence_eval_options(
         live_answer_eval=True,
         build_golden_set=build_golden_set,
         max_pairs_per_type=max_pairs_per_type,
+        answer_eval_limit=answer_eval_limit,
         thresholds=dict(thresholds),
     )
 

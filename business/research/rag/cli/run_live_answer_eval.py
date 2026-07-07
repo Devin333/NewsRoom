@@ -24,6 +24,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         retrieval_policy=args.retrieval_policy,
         thresholds=parse_thresholds(args.threshold),
         max_pairs_per_type=args.max_pairs_per_type,
+        answer_eval_limit=args.answer_eval_limit,
     )
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), end="\n")
     return 0 if result.passed else 1
@@ -57,6 +58,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Maximum golden pairs per QA type for the live answer eval fixture corpus.",
+    )
+    parser.add_argument(
+        "--answer-eval-limit",
+        type=int,
+        default=8,
+        help="Context passage limit passed to gated answer evaluation.",
     )
     parser.add_argument(
         "--threshold",

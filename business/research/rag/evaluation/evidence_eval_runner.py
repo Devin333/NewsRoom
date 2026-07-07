@@ -50,7 +50,7 @@ class EvidenceEvalOptions:
     thresholds: Mapping[str, float] = field(default_factory=dict)
     deterministic_answer_eval: bool = False
     live_answer_eval: bool = False
-    answer_eval_limit: int = 5
+    answer_eval_limit: int = 8
 
 
 def run_evidence_eval_core(

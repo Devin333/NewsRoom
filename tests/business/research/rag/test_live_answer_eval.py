@@ -97,6 +97,37 @@ def test_run_live_answer_eval_external_golden_set_bypasses_fixture_generation(tm
     assert options.papers_dir == papers_dir
     assert options.live_answer_eval is True
     assert options.live_retrieval is True
+    assert options.answer_eval_limit == 8
+
+
+def test_run_live_answer_eval_passes_answer_eval_limit(tmp_path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_write_ci_eval_fixture_papers(path) -> None:
+        path.mkdir(parents=True)
+
+    def fake_run_evidence_eval_core(options, *, live_answer_ask=None) -> int:
+        captured["options"] = options
+        evidence_dir = tmp_path / "live" / "evidence"
+        evidence_dir.mkdir(parents=True)
+        (evidence_dir / "evidence_regression_report.json").write_text(
+            json.dumps({"passed": True}),
+            encoding="utf-8",
+        )
+        (evidence_dir / "evidence_regression_report.md").write_text("passed\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(live_answer_eval, "write_ci_eval_fixture_papers", fake_write_ci_eval_fixture_papers)
+    monkeypatch.setattr(live_answer_eval, "run_evidence_eval_core", fake_run_evidence_eval_core)
+
+    result = run_live_answer_eval(
+        output_dir=tmp_path / "live",
+        answer_eval_limit=10,
+        live_answer_ask=lambda pair: {},
+    )
+
+    assert result.passed is True
+    assert captured["options"].answer_eval_limit == 10
 
 
 def test_run_live_answer_eval_requires_external_golden_set_and_papers_dir_together(tmp_path) -> None:
@@ -128,10 +159,13 @@ def test_run_live_answer_eval_cli_passes_external_golden_set_options(tmp_path, m
         str(papers_dir),
         "--output-dir",
         str(tmp_path / "out"),
+        "--answer-eval-limit",
+        "10",
     ])
 
     assert exit_code == 0
     assert captured["golden_set_path"] == golden_set
     assert captured["papers_dir"] == papers_dir
+    assert captured["answer_eval_limit"] == 10
     payload = json.loads(capsys.readouterr().out)
     assert payload["corpus_mode"] == "external"

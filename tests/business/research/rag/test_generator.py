@@ -156,6 +156,32 @@ def test_answer_context_assembler_records_missing_required_context_ids() -> None
     assert selection.metadata["required_context_coverage"] == 0.5
 
 
+def test_answer_context_assembler_default_retains_eight_candidates() -> None:
+    chunks = [
+        _chunk(f"chunk-{index}", "paragraph", f"Candidate {index}.")
+        for index in range(1, 10)
+    ]
+    retrieval = RetrievalResult(
+        parent_chunks=[],
+        child_chunks=chunks,
+        ref_chunks=[],
+        intent="concept_method",  # type: ignore[arg-type]
+    )
+
+    selection = AnswerContextAssembler().select(retrieval)
+
+    assert [chunk.chunk_id for chunk in selection.chunks] == [
+        "chunk-1",
+        "chunk-2",
+        "chunk-3",
+        "chunk-4",
+        "chunk-5",
+        "chunk-6",
+        "chunk-7",
+        "chunk-8",
+    ]
+
+
 def test_answer_generator_prompt_adds_table_result_instructions() -> None:
     async def fake_llm(prompt: str) -> str:
         return prompt

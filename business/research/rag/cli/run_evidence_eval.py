@@ -154,7 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--answer-eval-limit",
         type=int,
-        default=5,
+        default=8,
         help="Context passage limit passed to gated answer evaluation.",
     )
     return parser

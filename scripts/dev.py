@@ -188,6 +188,7 @@ def build_parser() -> argparse.ArgumentParser:
     live_answer_eval_parser.add_argument("--papers-dir", default=None)
     live_answer_eval_parser.add_argument("--retrieval-policy", default=None)
     live_answer_eval_parser.add_argument("--max-pairs-per-type", type=int, default=None)
+    live_answer_eval_parser.add_argument("--answer-eval-limit", type=int, default=None)
     live_answer_eval_parser.add_argument("--threshold", action="append", default=[])
     readiness_parser = subparsers.add_parser(
         "check-live-answer-readiness",
@@ -328,6 +329,8 @@ def _rag_live_answer_eval_command(args: argparse.Namespace | None = None) -> lis
         command.extend(["--retrieval-policy", str(args.retrieval_policy)])
     if args.max_pairs_per_type is not None:
         command.extend(["--max-pairs-per-type", str(args.max_pairs_per_type)])
+    if getattr(args, "answer_eval_limit", None) is not None:
+        command.extend(["--answer-eval-limit", str(args.answer_eval_limit)])
     for threshold in args.threshold or []:
         command.extend(["--threshold", str(threshold)])
     return command

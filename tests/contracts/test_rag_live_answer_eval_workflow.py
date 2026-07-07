@@ -27,6 +27,8 @@ def test_run_live_answer_eval_dev_command_passes_real_corpus_options() -> None:
         ".newsroom/papers",
         "--output-dir",
         ".newsroom/eval/live-answer-real",
+        "--answer-eval-limit",
+        "10",
         "--threshold",
         "answer.success_rate=0.6",
     ])
@@ -41,6 +43,8 @@ def test_run_live_answer_eval_dev_command_passes_real_corpus_options() -> None:
         "data/eval/golden_set.json",
         "--papers-dir",
         ".newsroom/papers",
+        "--answer-eval-limit",
+        "10",
         "--threshold",
         "answer.success_rate=0.6",
     ]

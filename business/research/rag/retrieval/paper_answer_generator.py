@@ -87,7 +87,7 @@ class AnswerContextAssembler:
 
     strategy_name = "answer_context_assembler_v1"
 
-    def __init__(self, *, max_context_chunks: int = 5) -> None:
+    def __init__(self, *, max_context_chunks: int = 8) -> None:
         self._max_chunks = max_context_chunks
 
     def select(
@@ -193,7 +193,7 @@ class AnswerGenerator:
         self,
         llm_call: Callable[[str], Awaitable[str]],
         *,
-        max_context_chunks: int = 5,
+        max_context_chunks: int = 8,
         max_chars_per_chunk: int = 1000,
     ) -> None:
         self._llm = llm_call
