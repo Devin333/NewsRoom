@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from business.research.rag.cli import run_live_answer_eval as live_answer_cli
+from business.research.rag.evaluation import live_answer_eval
 from business.research.rag.evaluation.live_answer_eval import run_live_answer_eval
 from business.research.rag.evaluation.paper_evidence_eval import EvidenceQAPair
 
@@ -47,3 +51,88 @@ def test_run_live_answer_eval_uses_injected_ask_callable(tmp_path) -> None:
     payload = json.loads(result.evidence_report_path.read_text(encoding="utf-8"))
     assert payload["metadata"]["answer_eval_mode"] == "live"
     assert payload["answer"]["failure_reason_counts"] == {}
+
+
+def test_run_live_answer_eval_external_golden_set_bypasses_fixture_generation(tmp_path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    golden_set = tmp_path / "real_golden_set.json"
+    papers_dir = tmp_path / "papers"
+    output_dir = tmp_path / "live-real"
+    papers_dir.mkdir()
+    golden_set.write_text("[]", encoding="utf-8")
+
+    def fail_fixture_generation(path) -> None:
+        raise AssertionError("external golden set mode must not generate fixture papers")
+
+    def fake_run_evidence_eval(argv, *, live_answer_ask=None) -> int:
+        captured["argv"] = list(argv)
+        captured["live_answer_ask"] = live_answer_ask
+        evidence_dir = output_dir / "evidence"
+        evidence_dir.mkdir(parents=True)
+        (evidence_dir / "evidence_regression_report.json").write_text(
+            json.dumps({"passed": True}),
+            encoding="utf-8",
+        )
+        (evidence_dir / "evidence_regression_report.md").write_text("passed\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(live_answer_eval, "write_ci_eval_fixture_papers", fail_fixture_generation)
+    monkeypatch.setattr(live_answer_eval, "run_evidence_eval", fake_run_evidence_eval)
+
+    result = run_live_answer_eval(
+        output_dir=output_dir,
+        golden_set_path=golden_set,
+        papers_dir=papers_dir,
+        live_answer_ask=lambda pair: {},
+    )
+
+    argv = captured["argv"]
+    assert result.passed is True
+    assert result.corpus_mode == "external"
+    assert result.golden_set_path == golden_set
+    assert result.papers_dir == papers_dir
+    assert result.fixture_papers_dir is None
+    assert "--build-golden-set" not in argv
+    assert "--max-pairs-per-type" not in argv
+    assert argv[argv.index("--golden-set") + 1] == str(golden_set)
+    assert argv[argv.index("--papers-dir") + 1] == str(papers_dir)
+    assert "--live-answer-eval" in argv
+    assert "--live-retrieval" in argv
+
+
+def test_run_live_answer_eval_requires_external_golden_set_and_papers_dir_together(tmp_path) -> None:
+    with pytest.raises(ValueError, match="must be provided together"):
+        run_live_answer_eval(output_dir=tmp_path / "live", golden_set_path=tmp_path / "golden.json")
+
+
+def test_run_live_answer_eval_cli_passes_external_golden_set_options(tmp_path, monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+    golden_set = tmp_path / "golden.json"
+    papers_dir = tmp_path / "papers"
+
+    class _FakeResult:
+        passed = True
+
+        def to_dict(self) -> dict:
+            return {"passed": True, "corpus_mode": "external"}
+
+    def fake_run_live_answer_eval(**kwargs):
+        captured.update(kwargs)
+        return _FakeResult()
+
+    monkeypatch.setattr(live_answer_cli, "run_live_answer_eval", fake_run_live_answer_eval)
+
+    exit_code = live_answer_cli.main([
+        "--golden-set",
+        str(golden_set),
+        "--papers-dir",
+        str(papers_dir),
+        "--output-dir",
+        str(tmp_path / "out"),
+    ])
+
+    assert exit_code == 0
+    assert captured["golden_set_path"] == golden_set
+    assert captured["papers_dir"] == papers_dir
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["corpus_mode"] == "external"

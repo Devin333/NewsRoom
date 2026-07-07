@@ -39,10 +39,24 @@ jobs:
         if: ${{ env.OPENAI_BASE_URL != '' && env.OPENAI_API_KEY != '' }}
         run: python -m scripts.dev run-live-answer-eval
 
+      - name: Run real-corpus Paper RAG answer eval when artifacts exist
+        if: ${{ env.OPENAI_BASE_URL != '' && env.OPENAI_API_KEY != '' }}
+        run: |
+          if [ -d ".newsroom/papers" ]; then
+            python -m scripts.dev run-live-answer-eval \
+              --golden-set data/eval/golden_set.json \
+              --papers-dir .newsroom/papers \
+              --output-dir .newsroom/eval/live-answer-real
+          else
+            echo "Skipping real-corpus live answer eval because .newsroom/papers is not available."
+          fi
+
       - name: Upload live answer eval artifacts
         if: ${{ always() && env.OPENAI_BASE_URL != '' && env.OPENAI_API_KEY != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: rag-live-answer-eval
-          path: .newsroom/eval/live-answer
+          path: |
+            .newsroom/eval/live-answer
+            .newsroom/eval/live-answer-real
           if-no-files-found: warn

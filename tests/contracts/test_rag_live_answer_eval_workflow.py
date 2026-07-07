@@ -18,6 +18,34 @@ def test_run_live_answer_eval_dev_command_is_registered() -> None:
     ]
 
 
+def test_run_live_answer_eval_dev_command_passes_real_corpus_options() -> None:
+    args = dev.build_parser().parse_args([
+        "run-live-answer-eval",
+        "--golden-set",
+        "data/eval/golden_set.json",
+        "--papers-dir",
+        ".newsroom/papers",
+        "--output-dir",
+        ".newsroom/eval/live-answer-real",
+        "--threshold",
+        "answer.success_rate=0.6",
+    ])
+
+    assert dev._rag_live_answer_eval_command(args) == [
+        dev.sys.executable,
+        "-m",
+        "business.research.rag.cli.run_live_answer_eval",
+        "--output-dir",
+        ".newsroom/eval/live-answer-real",
+        "--golden-set",
+        "data/eval/golden_set.json",
+        "--papers-dir",
+        ".newsroom/papers",
+        "--threshold",
+        "answer.success_rate=0.6",
+    ]
+
+
 def test_rag_live_answer_eval_workflow_runs_secret_guarded_command() -> None:
     workflow = yaml.safe_load(
         Path(".github/workflows/rag-live-answer-eval.yml").read_text(encoding="utf-8")
@@ -42,9 +70,20 @@ def test_rag_live_answer_eval_workflow_runs_secret_guarded_command() -> None:
         and "OPENAI_API_KEY" in step.get("if", "")
         for step in steps
     )
+    real_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Run real-corpus Paper RAG answer eval when artifacts exist"
+    )
+    assert "OPENAI_BASE_URL" in real_step.get("if", "")
+    assert "OPENAI_API_KEY" in real_step.get("if", "")
+    assert "data/eval/golden_set.json" in real_step["run"]
+    assert "--papers-dir .newsroom/papers" in real_step["run"]
+    assert "Skipping real-corpus live answer eval" in real_step["run"]
     assert any(
         step.get("name") == "Upload live answer eval artifacts"
         and step.get("uses") == "actions/upload-artifact@v4"
-        and step.get("with", {}).get("path") == ".newsroom/eval/live-answer"
+        and ".newsroom/eval/live-answer" in step.get("with", {}).get("path")
+        and ".newsroom/eval/live-answer-real" in step.get("with", {}).get("path")
         for step in steps
     )

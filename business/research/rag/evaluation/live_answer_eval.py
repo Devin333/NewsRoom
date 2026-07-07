@@ -27,8 +27,10 @@ class LiveAnswerEvalResult:
     evidence_report_path: Path
     evidence_markdown_path: Path
     golden_set_path: Path
-    fixture_papers_dir: Path
+    papers_dir: Path
     evidence_exit_code: int
+    corpus_mode: str = "fixture"
+    fixture_papers_dir: Path | None = None
 
     @property
     def passed(self) -> bool:
@@ -42,13 +44,17 @@ class LiveAnswerEvalResult:
             "evidence_report_path": str(self.evidence_report_path),
             "evidence_markdown_path": str(self.evidence_markdown_path),
             "golden_set_path": str(self.golden_set_path),
-            "fixture_papers_dir": str(self.fixture_papers_dir),
+            "papers_dir": str(self.papers_dir),
+            "corpus_mode": self.corpus_mode,
+            "fixture_papers_dir": str(self.fixture_papers_dir) if self.fixture_papers_dir else None,
         }
 
 
 def run_live_answer_eval(
     *,
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    golden_set_path: str | Path | None = None,
+    papers_dir: str | Path | None = None,
     retrieval_policy: str = DEFAULT_RETRIEVAL_POLICY,
     thresholds: Mapping[str, float] | None = None,
     max_pairs_per_type: int = 2,
@@ -56,48 +62,82 @@ def run_live_answer_eval(
 ) -> LiveAnswerEvalResult:
     output = Path(output_dir)
     fixture_papers_dir = output / "fixtures" / "papers"
-    golden_set_path = output / "golden_set.json"
+    external_golden_set = Path(golden_set_path) if golden_set_path is not None else None
+    external_papers_dir = Path(papers_dir) if papers_dir is not None else None
+    if (external_golden_set is None) != (external_papers_dir is None):
+        raise ValueError("golden_set_path and papers_dir must be provided together")
+    effective_golden_set_path = external_golden_set or output / "golden_set.json"
+    effective_papers_dir = external_papers_dir or fixture_papers_dir
     evidence_output_dir = output / "evidence"
     evidence_report_path = evidence_output_dir / "evidence_regression_report.json"
     evidence_markdown_path = evidence_output_dir / "evidence_regression_report.md"
+    corpus_mode = "external" if external_golden_set is not None else "fixture"
 
     effective_thresholds = dict(DEFAULT_LIVE_ANSWER_THRESHOLDS)
     effective_thresholds.update(dict(thresholds or {}))
 
-    write_ci_eval_fixture_papers(fixture_papers_dir)
+    if external_golden_set is None:
+        write_ci_eval_fixture_papers(fixture_papers_dir)
     evidence_exit_code = run_evidence_eval(
-        [
-            "--papers-dir",
-            str(fixture_papers_dir),
-            "--build-golden-set",
-            "--golden-set",
-            str(golden_set_path),
-            "--live-retrieval",
-            "--retrieval-policy",
-            retrieval_policy,
-            "--output-dir",
-            str(evidence_output_dir),
-            "--max-pairs-per-type",
-            str(max_pairs_per_type),
-            "--domain",
-            "live-answer",
-            "--live-answer-eval",
-            *[
-                item
-                for metric, threshold in sorted(effective_thresholds.items())
-                for item in ("--threshold", f"{metric}={threshold}")
-            ],
-        ],
+        _evidence_eval_args(
+            papers_dir=effective_papers_dir,
+            golden_set_path=effective_golden_set_path,
+            retrieval_policy=retrieval_policy,
+            output_dir=evidence_output_dir,
+            thresholds=effective_thresholds,
+            max_pairs_per_type=max_pairs_per_type,
+            build_golden_set=external_golden_set is None,
+        ),
         live_answer_ask=live_answer_ask,
     )
     return LiveAnswerEvalResult(
         output_dir=output,
         evidence_report_path=evidence_report_path,
         evidence_markdown_path=evidence_markdown_path,
-        golden_set_path=golden_set_path,
-        fixture_papers_dir=fixture_papers_dir,
+        golden_set_path=effective_golden_set_path,
+        papers_dir=effective_papers_dir,
+        corpus_mode=corpus_mode,
+        fixture_papers_dir=fixture_papers_dir if external_golden_set is None else None,
         evidence_exit_code=evidence_exit_code,
     )
+
+
+def _evidence_eval_args(
+    *,
+    papers_dir: Path,
+    golden_set_path: Path,
+    retrieval_policy: str,
+    output_dir: Path,
+    thresholds: Mapping[str, float],
+    max_pairs_per_type: int,
+    build_golden_set: bool,
+) -> list[str]:
+    args = [
+        "--papers-dir",
+        str(papers_dir),
+        "--golden-set",
+        str(golden_set_path),
+        "--live-retrieval",
+        "--retrieval-policy",
+        retrieval_policy,
+        "--output-dir",
+        str(output_dir),
+        "--domain",
+        "live-answer",
+        "--live-answer-eval",
+    ]
+    if build_golden_set:
+        args.extend([
+            "--build-golden-set",
+            "--max-pairs-per-type",
+            str(max_pairs_per_type),
+        ])
+    args.extend([
+        item
+        for metric, threshold in sorted(thresholds.items())
+        for item in ("--threshold", f"{metric}={threshold}")
+    ])
+    return args
 
 
 __all__ = [

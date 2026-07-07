@@ -67,7 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "test-rag-eval-gate":
         return _run(_rag_eval_gate_command(), env=env)
     if args.command == "run-live-answer-eval":
-        return _run(_rag_live_answer_eval_command(), env=env)
+        return _run(_rag_live_answer_eval_command(args), env=env)
     if args.command == "replay-rag":
         return _replay_rag(args)
     if args.command == "test-rag-live-e2e":
@@ -175,7 +175,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("test-workflow-domain", help="Run workflow domain tests")
     subparsers.add_parser("test-services", help="Run interface service tests")
     subparsers.add_parser("test-rag-eval-gate", help="Run the deterministic Paper RAG eval CI gate")
-    subparsers.add_parser("run-live-answer-eval", help="Run the live Paper RAG answer eval")
+    live_answer_eval_parser = subparsers.add_parser(
+        "run-live-answer-eval",
+        help="Run the live Paper RAG answer eval",
+    )
+    live_answer_eval_parser.add_argument("--output-dir", default=None)
+    live_answer_eval_parser.add_argument("--golden-set", default=None)
+    live_answer_eval_parser.add_argument("--papers-dir", default=None)
+    live_answer_eval_parser.add_argument("--retrieval-policy", default=None)
+    live_answer_eval_parser.add_argument("--max-pairs-per-type", type=int, default=None)
+    live_answer_eval_parser.add_argument("--threshold", action="append", default=[])
     replay_rag_parser = subparsers.add_parser("replay-rag", help="Replay a persisted Paper RAG transcript")
     replay_rag_parser.add_argument("transcript", help="Transcript id or transcript artifact path")
     replay_rag_parser.add_argument("--transcript-root", default=".newsroom/rag/transcripts")
@@ -279,8 +288,23 @@ def _rag_eval_gate_command() -> list[str]:
     return [sys.executable, "-m", "business.research.rag.cli.run_ci_eval_gate"]
 
 
-def _rag_live_answer_eval_command() -> list[str]:
-    return [sys.executable, "-m", "business.research.rag.cli.run_live_answer_eval"]
+def _rag_live_answer_eval_command(args: argparse.Namespace | None = None) -> list[str]:
+    command = [sys.executable, "-m", "business.research.rag.cli.run_live_answer_eval"]
+    if args is None:
+        return command
+    if args.output_dir:
+        command.extend(["--output-dir", str(args.output_dir)])
+    if args.golden_set:
+        command.extend(["--golden-set", str(args.golden_set)])
+    if args.papers_dir:
+        command.extend(["--papers-dir", str(args.papers_dir)])
+    if args.retrieval_policy:
+        command.extend(["--retrieval-policy", str(args.retrieval_policy)])
+    if args.max_pairs_per_type is not None:
+        command.extend(["--max-pairs-per-type", str(args.max_pairs_per_type)])
+    for threshold in args.threshold or []:
+        command.extend(["--threshold", str(threshold)])
+    return command
 
 
 def _rag_live_e2e_command() -> list[str]:
