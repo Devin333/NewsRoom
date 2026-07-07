@@ -17,3 +17,12 @@ def test_research_does_not_depend_on_legacy_or_interface_layers() -> None:
     )
 
     assert violations == []
+
+
+def test_research_rag_evaluation_does_not_import_cli_entrypoints() -> None:
+    violations = forbidden_imports(
+        PROJECT_ROOT / "business" / "research" / "rag" / "evaluation",
+        ("business.research.rag.cli",),
+    )
+
+    assert violations == []

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from business.research.rag.cli.run_evidence_eval import (
+from business.research.rag.evaluation.evidence_eval_runner import (
     EvidenceEvalOptions,
     run_evidence_eval_core,
 )

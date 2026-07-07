@@ -6,10 +6,10 @@ import pytest
 
 from data.eval.build_golden_set import build_pairs
 from business.research.document.models import PaperChunk
-from business.research.rag.cli.run_evidence_eval import (
+from business.research.rag.cli.run_evidence_eval import main
+from business.research.rag.evaluation.evidence_eval_runner import (
     EvidenceEvalOptions,
     _build_live_answer_samples,
-    main,
     run_evidence_eval_core,
 )
 from business.research.rag.evaluation.paper_answer_eval import EvidenceAnswerEvaluator

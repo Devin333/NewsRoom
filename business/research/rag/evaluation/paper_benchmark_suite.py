@@ -33,7 +33,7 @@ from business.research.rag.evaluation.paper_fixed_window_baseline import FixedWi
 from business.research.rag.evaluation.paper_generation_eval import GenerationEvaluator, GenerationEvalResult
 from business.research.rag.retrieval.paper_answer_generator import AnswerGenerator, GeneratedAnswer
 from business.research.rag.visual.page_visual_chunks import build_page_visual_chunks
-from business.research.rag.cli.run_evidence_eval import (
+from business.research.rag.evaluation.evidence_eval_runner import (
     _build_live_retriever,
     _lightweight_reranker_enabled,
     _load_chunks_from_papers_dir,
