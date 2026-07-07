@@ -7,6 +7,7 @@ import pytest
 
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
+from business.research.rag.evaluation.evidence_eval_runner import _load_chunks_from_papers_dir
 from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
@@ -108,7 +109,31 @@ def test_repository_golden_set_has_answer_and_abstain_behavior_samples() -> None
     assert all(pair.gold_chunk_ids for pair in answer_pairs)
     assert all(pair.qa_type == "negative_qa" for pair in abstain_pairs)
     assert all(not pair.gold_chunk_ids for pair in abstain_pairs)
-    assert pairs[0].metadata["source_chunk_id"] == pairs[0].gold_chunk_ids[0]
+    remapped_pairs = [
+        pair for pair in answer_pairs
+        if pair.metadata.get("legacy_source_chunk_id")
+    ]
+    assert len(remapped_pairs) >= 15
+    assert all(pair.metadata.get("curated_remap_reason") for pair in remapped_pairs)
+    assert all(pair.metadata.get("curated_remap_confidence") in {"high", "medium"} for pair in remapped_pairs)
+
+
+def test_repository_golden_set_hydrates_against_current_real_corpus() -> None:
+    pairs = load_evidence_golden_set(Path("data/eval/golden_set.json"))
+    chunks = _load_chunks_from_papers_dir(Path(".newsroom/papers"))
+
+    hydrated, summary = hydrate_evidence_pairs_from_chunks(pairs, chunks)
+
+    assert summary["total_pairs"] == 79
+    assert summary["answer_pairs"] == 67
+    assert summary["missing_gold_chunk_pairs"] == 0
+    assert summary["missing_gold_chunk_ids"] == []
+    assert summary["hydrated_pairs"] == 67
+    assert summary["locator_available_pairs"] == 67
+    assert summary["type_available_pairs"] == 67
+    answer_pairs = [pair for pair in hydrated if pair.expected_behavior == "answer"]
+    assert all(pair.gold_source_locators for pair in answer_pairs)
+    assert all(pair.required_evidence_types for pair in answer_pairs)
 
 
 def test_hydrate_evidence_pairs_from_chunks_attaches_current_corpus_metadata() -> None:
@@ -133,6 +158,8 @@ def test_hydrate_evidence_pairs_from_chunks_attaches_current_corpus_metadata() -
     assert hydrated[0].required_evidence_types == ["paragraph"]
     assert hydrated[0].supporting_evidence_group["primary_evidence_ids"] == ["legacy-para"]
     assert hydrated[0].metadata["hydrated_from_current_corpus"] is True
+    assert summary["locator_available_pairs"] == 1
+    assert summary["type_available_pairs"] == 1
 
 
 def test_hydrate_evidence_pairs_from_chunks_reports_missing_gold_ids() -> None:
@@ -148,6 +175,8 @@ def test_hydrate_evidence_pairs_from_chunks_reports_missing_gold_ids() -> None:
     assert summary["hydrated_pairs"] == 0
     assert summary["missing_gold_chunk_pairs"] == 1
     assert summary["missing_gold_chunk_ids"] == ["missing-para"]
+    assert summary["locator_available_pairs"] == 0
+    assert summary["type_available_pairs"] == 0
     assert hydrated[0].metadata["missing_gold_chunk_ids"] == ["missing-para"]
 
 

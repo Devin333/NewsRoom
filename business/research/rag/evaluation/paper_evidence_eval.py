@@ -593,6 +593,9 @@ def hydrate_evidence_pairs_from_chunks(
     image_attached_pairs = 0
     missing_gold_chunk_pairs = 0
     missing_gold_chunk_ids: set[str] = set()
+    locator_available_pairs = 0
+    type_available_pairs = 0
+    image_available_pairs = 0
 
     for pair in pairs:
         if pair.expected_behavior != _ANSWER_BEHAVIOR or not pair.gold_chunk_ids:
@@ -642,6 +645,12 @@ def hydrate_evidence_pairs_from_chunks(
             type_attached_pairs += 1
         if len(image_refs) > len(pair.gold_image_refs):
             image_attached_pairs += 1
+        if source_locators:
+            locator_available_pairs += 1
+        if evidence_types:
+            type_available_pairs += 1
+        if image_refs:
+            image_available_pairs += 1
 
     return hydrated, {
         "total_pairs": len(pairs),
@@ -650,6 +659,9 @@ def hydrate_evidence_pairs_from_chunks(
         "locator_attached_pairs": locator_attached_pairs,
         "type_attached_pairs": type_attached_pairs,
         "image_attached_pairs": image_attached_pairs,
+        "locator_available_pairs": locator_available_pairs,
+        "type_available_pairs": type_available_pairs,
+        "image_available_pairs": image_available_pairs,
         "missing_gold_chunk_pairs": missing_gold_chunk_pairs,
         "missing_gold_chunk_ids": sorted(missing_gold_chunk_ids),
     }

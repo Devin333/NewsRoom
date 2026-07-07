@@ -1,17 +1,43 @@
 [
   {
     "question": "What dataset was used to measure the change in performance when varying components of the base Transformer model for English-to-German translation?",
-    "source_chunk_id": "chunk_62ba2c64906c",
+    "gold_chunk_ids": [
+      "chunk_52b2285cebe5"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://1706.03762/pdf#page=9"
+    ],
     "paper_id": "1706.03762",
     "domain": "nlp_transformer",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_62ba2c64906c",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus page 9 chunk contains Table 3 and states the metrics are on the English-to-German development set newstest2013."
+    }
   },
   {
     "question": "During evaluation of Transformer component variations, which decoding method was used and what model-aggregation technique was explicitly not used?",
-    "source_chunk_id": "chunk_62ba2c64906c",
+    "gold_chunk_ids": [
+      "chunk_52b2285cebe5"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://1706.03762/pdf#page=9"
+    ],
     "paper_id": "1706.03762",
     "domain": "nlp_transformer",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_62ba2c64906c",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus page 9 chunk states beam search was used and checkpoint averaging was not used for the component-variation results."
+    }
   },
   {
     "question": "What do the results provide high-level perspective on regarding the promise of different avenues of research?",
@@ -57,45 +83,123 @@
   },
   {
     "question": "At what label probability threshold value did the experiment set the threshold to study how biases in returned labels depend on threshold settings?",
-    "source_chunk_id": "chunk_0266e548fcd7",
+    "gold_chunk_ids": [
+      "chunk_afbb6884c406"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2103.00020/pdf#page=21"
+    ],
     "paper_id": "2103.00020",
     "domain": "cv",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_0266e548fcd7",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus page 21 chunk states the label-probability threshold experiment used 0.5% and 4.0%."
+    }
   },
   {
     "question": "What happened at the higher threshold value of 4 according to the text?",
-    "source_chunk_id": "chunk_0266e548fcd7",
+    "gold_chunk_ids": [
+      "chunk_8a5fca87dfa4"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2103.00020/pdf#page=21"
+    ],
     "paper_id": "2103.00020",
     "domain": "cv",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_0266e548fcd7",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus page 21 chunk describes the labels with highest probability at the higher 4% threshold."
+    }
   },
   {
     "question": "What does the appendix report details of performance for, according to the text?",
-    "source_chunk_id": "chunk_239485469ae4",
+    "gold_chunk_ids": [
+      "chunk_4e980a552c08"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2103.00020/pdf"
+    ],
     "paper_id": "2103.00020",
     "domain": "cv",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_239485469ae4",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus Appendix E chunk states it reports performance details for specific groups of tasks, datasets, and evaluation settings."
+    }
   },
   {
     "question": "Why does the main body of the work focus on summarizing and analyzing overall results?",
-    "source_chunk_id": "chunk_239485469ae4",
+    "gold_chunk_ids": [
+      "chunk_4e980a552c08"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2103.00020/pdf"
+    ],
     "paper_id": "2103.00020",
     "domain": "cv",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_239485469ae4",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus Appendix E chunk states the main body summarizes overall results due to the large variety of datasets and experiments."
+    }
   },
   {
     "question": "What threshold values were set for label probability in the experiment studying how biases in returned labels depend on the threshold?",
-    "source_chunk_id": "chunk_6f866fef4a85",
+    "gold_chunk_ids": [
+      "chunk_afbb6884c406"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2103.00020/pdf#page=21"
+    ],
     "paper_id": "2103.00020",
     "domain": "cv",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_6f866fef4a85",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus page 21 chunk states the label-probability threshold experiment used 0.5% and 4.0%."
+    }
   },
   {
     "question": "What model performance value was reported in the text?",
-    "source_chunk_id": "chunk_6f866fef4a85",
+    "gold_chunk_ids": [
+      "chunk_de422246c6ea"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2103.00020/pdf#page=21"
+    ],
     "paper_id": "2103.00020",
     "domain": "cv",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_6f866fef4a85",
+      "curated_remap_confidence": "medium",
+      "curated_remap_reason": "Current corpus page 21 chunk directly reports model performance on gender classification as above 95% for all race categories; the legacy question is broad."
+    }
   },
   {
     "question": "Which data augmentation strategy does the MAE pre-training work well with, and what random transformation is included in both fixed-size and random-size versions of that strategy?",
@@ -113,24 +217,63 @@
   },
   {
     "question": "Which organizations supported the study?",
-    "source_chunk_id": "chunk_aa9e7307664a",
+    "gold_chunk_ids": [
+      "chunk_306a7efba57e"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://1505.04597/pdf#page=8"
+    ],
     "paper_id": "1505.04597",
     "domain": "cv",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_aa9e7307664a",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus acknowledgements chunk names the Excellence Initiative and BMBF as supporting organizations."
+    }
   },
   {
     "question": "In the ablation study, which two prediction targets are compared to verify the effectiveness of the parameterization of \\(p_\\theta(\\mathbf{x}_{t-1}\\mid \\mathbf{x}_t)\\)?",
-    "source_chunk_id": "chunk_be81917967fb",
+    "gold_chunk_ids": [
+      "chunk_966d58d27ed6"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2006.11239/pdf"
+    ],
     "paper_id": "2006.11239",
     "domain": "generative",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_be81917967fb",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus reverse-process chunk states the ablation compares predicting epsilon against predicting tilde-mu_t."
+    }
   },
   {
     "question": "What is \\(\\tilde{\\boldsymbol\\mu}_t\\) described as being another parameterization of?",
-    "source_chunk_id": "chunk_be81917967fb",
+    "gold_chunk_ids": [
+      "chunk_966d58d27ed6"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2006.11239/pdf"
+    ],
     "paper_id": "2006.11239",
     "domain": "generative",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_be81917967fb",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus reverse-process chunk states the epsilon-prediction parameterization is another parameterization of p_theta(x_{t-1}|x_t) and contrasts it with predicting tilde-mu_t."
+    }
   },
   {
     "question": "What kind of estimator does the strategy in the method section derive for directed graphical models with continuous latent variables?",
@@ -330,31 +473,83 @@
   },
   {
     "question": "What full set of assumptions should be stated when including theoretical results?",
-    "source_chunk_id": "chunk_6d2b99c164bf",
+    "gold_chunk_ids": [
+      "chunk_e0a3ac36cfb4"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2201.11903/pdf#page=15"
+    ],
     "paper_id": "2201.11903",
     "domain": "llm_alignment",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_6d2b99c164bf",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus checklist chunk contains the theoretical-results assumption checklist item."
+    }
   },
   {
     "question": "When theoretical results are included, what must be provided to make the proofs complete?",
-    "source_chunk_id": "chunk_6d2b99c164bf",
+    "gold_chunk_ids": [
+      "chunk_e0a3ac36cfb4"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2201.11903/pdf#page=15"
+    ],
     "paper_id": "2201.11903",
     "domain": "llm_alignment",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_6d2b99c164bf",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus checklist chunk contains the complete-proofs checklist item for theoretical results."
+    }
   },
   {
     "question": "What experimental comparisons are included in the section’s tables regarding prompting methods?",
-    "source_chunk_id": "chunk_7f1501f1c3d3",
+    "gold_chunk_ids": [
+      "chunk_7dfdf23e5b92"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2201.11903/pdf#page=19"
+    ],
     "paper_id": "2201.11903",
     "domain": "llm_alignment",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_7f1501f1c3d3",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus all-results chunk says the tables compare standard prompting versus chain-of-thought prompting."
+    }
   },
   {
     "question": "On what types of benchmarks and model variations are the experimental results reported?",
-    "source_chunk_id": "chunk_7f1501f1c3d3",
+    "gold_chunk_ids": [
+      "chunk_7dfdf23e5b92"
+    ],
+    "required_evidence_types": [
+      "paragraph"
+    ],
+    "gold_source_locators": [
+      "arxiv://2201.11903/pdf#page=19"
+    ],
     "paper_id": "2201.11903",
     "domain": "llm_alignment",
-    "expected_behavior": "answer"
+    "expected_behavior": "answer",
+    "metadata": {
+      "legacy_source_chunk_id": "chunk_7f1501f1c3d3",
+      "curated_remap_confidence": "high",
+      "curated_remap_reason": "Current corpus all-results chunk says results cover varying models and model sizes on all benchmarks."
+    }
   },
   {
     "question": "What are the false positive test execution rates reported for MBPP Python and HumanEval Python?",
