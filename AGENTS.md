@@ -54,3 +54,5 @@ python -m scripts.dev test
 python -m scripts.dev smoke
 openspec list --json
 ```
+
+`python -m scripts.dev smoke` is a required pre-commit gate for code changes. It runs compile, Harness/Research/API/service smoke coverage, `tests/architecture`, and source validation; if it fails, fix the root cause before committing.
