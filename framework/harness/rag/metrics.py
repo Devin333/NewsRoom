@@ -32,6 +32,7 @@ class RAGSessionMetrics:
     supplemental_rounds_completed: int = 0
     supplemental_rounds_failed: int = 0
     supplemental_rounds_skipped: int = 0
+    supplemental_round_skip_reasons: dict[str, int] = field(default_factory=dict)
     gate_failures_count: int = 0
     gate_failures_by_gate: dict[str, int] = field(default_factory=dict)
     rejection_reasons: dict[str, int] = field(default_factory=dict)
@@ -40,6 +41,11 @@ class RAGSessionMetrics:
         object.__setattr__(self, "status", RAGSessionStatus(self.status))
         object.__setattr__(self, "decision_type", str(self.decision_type))
         object.__setattr__(self, "budget_snapshot", dict(self.budget_snapshot))
+        object.__setattr__(
+            self,
+            "supplemental_round_skip_reasons",
+            dict(self.supplemental_round_skip_reasons),
+        )
         object.__setattr__(self, "gate_failures_by_gate", dict(self.gate_failures_by_gate))
         object.__setattr__(self, "rejection_reasons", dict(self.rejection_reasons))
         for field_name in (
@@ -84,6 +90,7 @@ class RAGSessionMetrics:
             "supplemental_rounds_completed": self.supplemental_rounds_completed,
             "supplemental_rounds_failed": self.supplemental_rounds_failed,
             "supplemental_rounds_skipped": self.supplemental_rounds_skipped,
+            "supplemental_round_skip_reasons": dict(self.supplemental_round_skip_reasons),
             "gate_failures_count": self.gate_failures_count,
             "gate_failures_by_gate": dict(self.gate_failures_by_gate),
             "rejection_reasons": dict(self.rejection_reasons),
@@ -133,6 +140,7 @@ def build_rag_session_metrics(
         supplemental_rounds_completed=event_types.count("rag_answer_supplemental_round_completed"),
         supplemental_rounds_failed=event_types.count("rag_answer_supplemental_round_failed"),
         supplemental_rounds_skipped=event_types.count("rag_answer_supplemental_round_skipped"),
+        supplemental_round_skip_reasons=_supplemental_round_skip_reasons(events),
         gate_failures_count=sum(gate_failures_by_gate.values()),
         gate_failures_by_gate=gate_failures_by_gate,
         rejection_reasons=_rejection_reasons(rejected_evidence),
@@ -162,6 +170,17 @@ def _rejection_reasons(rejected_evidence: tuple[Any, ...]) -> dict[str, int]:
             metadata = {}
         reason = str(metadata.get("rejection_reason") or "source_verification_failed")
         _increment(reasons, reason)
+    return reasons
+
+
+def _supplemental_round_skip_reasons(events: tuple[dict[str, Any], ...]) -> dict[str, int]:
+    reasons: dict[str, int] = {}
+    for event in events:
+        if str(event.get("event_type") or "") != "rag_answer_supplemental_round_skipped":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        reason_code = str(payload.get("reason_code") or "unknown")
+        _increment(reasons, reason_code)
     return reasons
 
 

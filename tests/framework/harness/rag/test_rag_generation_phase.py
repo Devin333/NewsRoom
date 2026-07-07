@@ -138,6 +138,50 @@ def test_generation_phase_abstains_when_supplemental_retry_still_fails() -> None
     assert any(event["event_type"] == "rag_answer_supplemental_round_completed" for event in result.transcript.events)
 
 
+def test_generation_phase_supplemental_round_uses_independent_budget() -> None:
+    packs = fake_research_evidence_packs()
+    retrieval = _SequentialRetrievalPort(((packs[0],), (packs[1],)))
+    worker = _AnswerWorker(
+        _unsupported_answer("ans-1"),
+        _grounded_answer(
+            answer_id="ans-2",
+            answer_text="The repair accuracy is reported in the experiment table. [ev-2]",
+            evidence_id="evidence:sparse-mixture-reader:experiment",
+            claim_text="The repair accuracy is reported in the experiment table.",
+        ),
+    )
+    budget = RAGBudget(
+        max_rounds=1,
+        max_replans=0,
+        max_queries=2,
+        max_source_reads=2,
+        max_memory_hits=8,
+        max_context_items=8,
+        max_context_tokens=2048,
+        max_worker_calls=8,
+    )
+
+    result = _controller(worker, retrieval=retrieval).run(
+        _generation_spec(
+            budget=budget,
+            generation_policy={
+                "enabled": True,
+                "max_attempts": 2,
+                "max_supplemental_rounds": 1,
+            },
+        )
+    )
+
+    assert result.status == RAGSessionStatus.ANSWERED
+    assert len(worker.calls) == 2
+    assert len(retrieval.requests) == 2
+    assert result.metrics is not None
+    assert result.metrics.supplemental_rounds_started == 1
+    assert result.metrics.supplemental_rounds_completed == 1
+    assert result.metrics.budget_snapshot["rounds_used"] == 1
+    assert result.metrics.budget_snapshot["replans_used"] == 0
+
+
 def test_generation_phase_does_not_retry_when_supplemental_budget_is_exhausted() -> None:
     retrieval = _SequentialRetrievalPort(((fake_research_evidence_packs()[0],),))
     worker = _AnswerWorker(_unsupported_answer("ans-1"))
@@ -155,7 +199,11 @@ def test_generation_phase_does_not_retry_when_supplemental_budget_is_exhausted()
     result = _controller(worker, retrieval=retrieval).run(
         _generation_spec(
             budget=budget,
-            generation_policy={"enabled": True, "max_attempts": 2},
+            generation_policy={
+                "enabled": True,
+                "max_attempts": 2,
+                "max_supplemental_rounds": 0,
+            },
         )
     )
 
@@ -163,9 +211,19 @@ def test_generation_phase_does_not_retry_when_supplemental_budget_is_exhausted()
     assert len(worker.calls) == 1
     assert len(retrieval.requests) == 1
     assert any(event["event_type"] == "rag_answer_supplemental_gap_created" for event in result.transcript.events)
-    assert any(event["event_type"] == "rag_answer_supplemental_round_skipped" for event in result.transcript.events)
+    skipped = [
+        event
+        for event in result.transcript.events
+        if event["event_type"] == "rag_answer_supplemental_round_skipped"
+    ]
+    assert skipped
+    assert skipped[0]["payload"]["reason_code"] == "supplemental_round_budget_exhausted"
     assert result.metrics is not None
     assert result.metrics.supplemental_rounds_skipped == 1
+    assert result.metrics.supplemental_round_skip_reasons == {"supplemental_round_budget_exhausted": 1}
+    assert result.to_dict()["metrics"]["supplemental_round_skip_reasons"] == {
+        "supplemental_round_budget_exhausted": 1
+    }
     assert result.metrics.gate_failures_by_gate == {"rag_answer_claim_coverage": 1}
 
 

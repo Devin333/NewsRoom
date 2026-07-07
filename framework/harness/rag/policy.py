@@ -105,6 +105,11 @@ class RAGExecutionPolicy:
     def max_generation_attempts(self) -> int:
         return max(1, int(self.generation_policy.get("max_attempts", 1)))
 
+    @property
+    def max_supplemental_rounds(self) -> int:
+        default = 1 if self.generation_enabled and self.max_generation_attempts > 1 else 0
+        return max(0, int(self.generation_policy.get("max_supplemental_rounds", default)))
+
     def allows_step(self, step: RetrievalStepSpec) -> bool:
         if step.operation == RetrievalOperation.SEARCH_CORPUS:
             return step.corpus in self.allowed_corpora

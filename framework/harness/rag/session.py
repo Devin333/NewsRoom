@@ -406,34 +406,29 @@ class BoundedRAGSessionController(RAGSessionController):
                 "gate_results": failed_gate_dicts(failed_answer_results),
             },
         )
-        if not self._can_replan(state, spec):
+        skip_reason_code = _supplemental_skip_reason_code(state, policy)
+        if skip_reason_code:
             self._event(
                 state,
                 "rag_answer_supplemental_round_skipped",
                 {
                     "generation_attempt": generation_attempt,
-                    "reason": "no controlled replan budget remains",
+                    "reason": _supplemental_skip_reason(skip_reason_code),
+                    "reason_code": skip_reason_code,
                     "budget_snapshot": state.budget_snapshot.to_dict(),
+                    "max_supplemental_rounds": policy.max_supplemental_rounds,
+                    "supplemental_rounds_started": _event_count(
+                        state,
+                        "rag_answer_supplemental_round_started",
+                    ),
                 },
             )
             return None
 
-        state.budget_snapshot = state.budget_snapshot.with_usage(rounds=1, replans=1)
-        budget_gate = self.gates.budget.evaluate(state.budget_snapshot, policy)
-        if not budget_gate.passed:
-            self._event(state, "rag_gate_failed", budget_gate.to_dict())
-            self._event(
-                state,
-                "rag_answer_supplemental_round_skipped",
-                {
-                    "generation_attempt": generation_attempt,
-                    "reason": "supplemental budget gate failed",
-                    "gate_results": (budget_gate.to_dict(),),
-                },
-            )
-            return None
-
-        round_index = max(state.budget_snapshot.rounds_used - 1, 0)
+        round_index = state.budget_snapshot.rounds_used + _event_count(
+            state,
+            "rag_answer_supplemental_round_started",
+        )
         self._event(
             state,
             "rag_answer_supplemental_round_started",
@@ -848,6 +843,22 @@ def _with_unsupported_claims(
 
 def _results(results: tuple[RAGGateResult, ...]) -> tuple[dict[str, Any], ...]:
     return tuple(result.to_dict() for result in results)
+
+
+def _supplemental_skip_reason_code(state: RAGSessionState, policy: RAGExecutionPolicy) -> str:
+    if _event_count(state, "rag_answer_supplemental_round_started") >= policy.max_supplemental_rounds:
+        return "supplemental_round_budget_exhausted"
+    return ""
+
+
+def _supplemental_skip_reason(reason_code: str) -> str:
+    if reason_code == "supplemental_round_budget_exhausted":
+        return "supplemental round budget exhausted"
+    return reason_code.replace("_", " ")
+
+
+def _event_count(state: RAGSessionState, event_type: str) -> int:
+    return sum(1 for event in state.events if event.get("event_type") == event_type)
 
 
 def _rejection_summary(rejected: tuple[EvidenceCandidate, ...]) -> dict[str, dict[str, Any]]:
