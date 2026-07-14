@@ -86,6 +86,7 @@ max_worker_calls
 | 阶段 | 文件 | 文档状态 | 实现状态 | 依赖 | 目标 |
 | --- | --- | --- | --- | --- | --- |
 | 18 | [18-artifact-boundary-integrity-hardening.md](18-artifact-boundary-integrity-hardening.md) | `FINAL` | `IMPLEMENTED` | 2026-07-10 artifact audit；不依赖阶段 10-17 | 修复 artifact 路径边界、可信 metadata、完整性检查、checksum 和引用反序列化缺陷。 |
+| 19 | [19-durable-event-runtime-hardening.md](19-durable-event-runtime-hardening.md) | `READY_FOR_IMPLEMENTATION` | `NOT_STARTED` | 阶段 4 的 trace/checkpoint/replay 语义；2026-07-14 `framework/events` live audit | 收敛 canonical event、durable append、per-stream ordering、outbox/inbox、retry/DLQ、deterministic replay、schema evolution 和 OTel/W3C propagation。 |
 
 依赖解释：
 
@@ -93,6 +94,7 @@ max_worker_calls
 - 3D 先定义上下文装配协议；3B 再把 `RAGContextPack` 接入 Context Engineering。
 - 3A 最后做 skill evolution，因为它会消费 RAG、SubAgent、Context 和端口能力。
 - 4 是 durable trace/replay 的完整实现；3A/3B/3C/3D 只需先写事件契约和 refs，完整 replay 在阶段 4 收口。
+- 19 不替换阶段 4 的 Harness 控制语义，而是把阶段 4 的 event/transcript/replay 约束生产化：统一 `framework/events`、Workflow/Harness live durable write、storage delivery ledger、schema 演进和标准 trace propagation；第一版不引入外部 broker。
 - 5A 是需求澄清文档，5 是实现文档；如果只复制一个阶段给 Codex，必须先复制 5A 再复制 5。
 
 ## 推荐执行方式
