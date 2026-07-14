@@ -15,7 +15,7 @@ The system SHALL provide a serializable storage-owned artifact reference model t
 - **THEN** deserialization raises `ValueError` without constructing an invalid reference
 
 ### Requirement: Filesystem artifact store persists artifact bytes
-The system SHALL persist artifact bytes only to canonical filesystem descendants of the configured run root and return canonical artifact references.
+The system SHALL persist artifact bytes only to canonical filesystem descendants, SHALL return canonical artifact references, and SHALL verify a supplied checksum before returning persisted bytes.
 
 #### Scenario: Artifact is written and read
 - **WHEN** the filesystem artifact store writes an artifact with valid identifiers and a valid relative path
@@ -25,6 +25,10 @@ The system SHALL persist artifact bytes only to canonical filesystem descendants
 #### Scenario: Unsafe store path is rejected
 - **WHEN** a store operation receives an unsafe run identifier or relative artifact path
 - **THEN** the operation raises `ArtifactPathError` before reading, writing, deleting, or listing content outside the configured root
+
+#### Scenario: Filesystem artifact is tampered
+- **WHEN** persisted bytes do not match the checksum in `ArtifactRef`
+- **THEN** the store raises the shared `ArtifactChecksumMismatchError`
 
 ### Requirement: Local artifact index lists artifacts by run and step
 The system SHALL persist valid artifact references to a local JSON index and reject unsafe identifiers before resolving index paths.
@@ -37,3 +41,14 @@ The system SHALL persist valid artifact references to a local JSON index and rej
 #### Scenario: Unsafe index identifier is rejected
 - **WHEN** an index operation receives an unsafe run, step, or artifact identifier
 - **THEN** it fails before creating or reading an index record outside the configured index root
+
+### Requirement: Default local artifact store verifies persisted state
+The system SHALL validate local object/metadata pair state, metadata identity, metadata structure, and SHA-256 before returning an artifact.
+
+#### Scenario: Verified local artifact is read
+- **WHEN** object bytes and valid metadata checksum agree
+- **THEN** the store returns the original artifact
+
+#### Scenario: Local object or metadata is corrupt
+- **WHEN** the pair is partial, metadata is invalid, or checksum comparison fails
+- **THEN** the store raises the corresponding shared typed exception and returns no artifact
