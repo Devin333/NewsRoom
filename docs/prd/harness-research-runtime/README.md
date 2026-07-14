@@ -85,7 +85,7 @@ max_worker_calls
 
 | 阶段 | 文件 | 文档状态 | 实现状态 | 依赖 | 目标 |
 | --- | --- | --- | --- | --- | --- |
-| 18 | [18-artifact-boundary-integrity-hardening.md](18-artifact-boundary-integrity-hardening.md) | `FINAL` | `IMPLEMENTED` | 2026-07-10 artifact audit；不依赖阶段 10-17 | 修复 artifact 路径边界、可信 metadata、完整性检查、checksum 和引用反序列化缺陷。 |
+| 18 | [18-artifact-boundary-integrity-hardening.md](18-artifact-boundary-integrity-hardening.md) | `READY_FOR_IMPLEMENTATION` | `IN_PROGRESS` | 2026-07-10 artifact audit；2026-07-14 completion audit；不依赖阶段 10-17 | 补齐 strict verified snapshot、transitive index/manifest integrity、store/reference/path closure、结构化 observability 与真实 adapter fail-closed 回归。 |
 | 19 | [19-durable-event-runtime-hardening.md](19-durable-event-runtime-hardening.md) | `READY_FOR_IMPLEMENTATION` | `NOT_STARTED` | 阶段 4 的 trace/checkpoint/replay 语义；2026-07-14 `framework/events` live audit | 收敛 canonical event、durable append、per-stream ordering、outbox/inbox、retry/DLQ、deterministic replay、schema evolution 和 OTel/W3C propagation。 |
 
 依赖解释：

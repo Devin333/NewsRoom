@@ -1,10 +1,10 @@
 # 阶段 18：Artifact 安全边界与完整性硬化 PRD
 
-> Document status: FINAL
+> Document status: READY_FOR_IMPLEMENTATION
 >
-> Implementation status: IMPLEMENTED
+> Implementation status: IN_PROGRESS
 >
-> Version: v1.1
+> Version: v1.2
 >
 > Priority: P1
 >
@@ -12,17 +12,19 @@
 >
 > Source audit: `framework/artifacts` code review（2026-07-10，2026-07-14 复核）
 >
-> OpenSpec changes: `archive/2026-07-14-artifact-runtime-boundary-hardening`、`archive/2026-07-14-artifact-integrity-verification-hardening`
+> OpenSpec changes: `archive/2026-07-14-artifact-runtime-boundary-hardening`、`archive/2026-07-14-artifact-integrity-verification-hardening`；active completion change: `artifact-integrity-completion-hardening`
 >
 > Last updated: 2026-07-14
 
-> 状态说明：`FINAL` 表示需求、实现和验收记录均已收敛；`IMPLEMENTED` 表示两个 OpenSpec change 已实现、验证、归档并同步到主规格。文档被替代时标记 `SUPERSEDED`。
+> 状态说明：前两个 change 的主体实现与归档记录仍然有效，但 2026-07-14 completion audit 已用对抗性复现证明 strict replay、index transitive integrity、manifest fail-closed、部分引用/路径边界和 observability 尚未闭合，因此撤回原 `FINAL / IMPLEMENTED` 声明。只有 active completion change 实现、验证、提交并归档后，本文才可恢复 `FINAL / IMPLEMENTED`。文档被替代时标记 `SUPERSEDED`。
+
+> 阅读说明：第 1-21 节保留原始 A1-A5 的需求与历史实施记录；第 22 节是 v1.2 对当前剩余缺口、修复设计、任务映射和完成门禁的权威增量。两处冲突时以第 22 节和 active OpenSpec change 为准。
 
 ## 0. 一句话结论
 
-`framework/artifacts` 当前存在一条可写出 artifact root 的 P1 路径逃逸，以及四条会破坏引用可信度、完整性结论或篡改检测的 P2 缺陷。本阶段必须把 artifact 的路径、身份、metadata 和 checksum 全部收回到确定性基础设施控制下：**非法输入写入前失败，调用方不能覆盖可信字段，未经检查不能宣称有效，被篡改内容不能被正常解析，缺失引用字段不能被伪装成合法字符串。**
+阶段 18 的第一轮实现已经关闭原始 P1 路径逃逸主链以及 A2/A3 的核心行为，但完成度复核又证明：strict replay 会在 checksum preflight 后重新读盘并返回不同 bytes，artifact index 展开会绕过 entry checksum，canonical manifest schema 失败仍可能返回内容，部分 persisted/legacy 边界仍会 coercion 或泄漏平台异常，且 18.4 的六类结构化事件完全未实现。修复必须建立新的总不变量：**strict 产品读取返回的每个 byte 都必须来自同一次已验证快照；任何 transitive artifact 或 metadata 失败都在构造响应前整体 fail-closed。**
 
-本 PRD 不以“现有测试通过”为完成依据。2026-07-14 复核时，`tests/framework/artifacts` 的 14 个测试全部通过，但五个问题仍可全部复现，因此必须新增对抗性测试和真实 workflow 集成回归。
+本 PRD 不以“现有测试通过”为完成依据。原始审计时 `tests/framework/artifacts` 的 14 个测试全部通过但 A1-A5 仍可复现；completion audit 时相关矩阵同样保持绿色，却仍复现 TOCTOU、index checksum 绕过和 manifest fail-open。因此必须新增校验后替换、transitive index、真实 filesystem/service/HTTP/CLI/MCP/stdio 和敏感日志对抗回归。
 
 ---
 
@@ -1066,6 +1068,8 @@ I8. 运行 strict OpenSpec、targeted tests、compile、smoke
 
 ## 16. 验收标准
 
+> 2026-07-14 completion audit 说明：本节是原始 A1-A5 的 acceptance checklist。所有项目恢复为未完成状态，必须由 22.9 的 fresh evidence 逐项重新确认；不得用 21.3 的历史绿色计数批量代替。
+
 ### 16.1 安全边界
 
 - [ ] `ArtifactManager`、`LocalArtifactPublisher`、local stores 及列出的直接旁路均使用同一 path boundary helper。
@@ -1104,10 +1108,10 @@ I8. 运行 strict OpenSpec、targeted tests、compile、smoke
 
 ## 17. 验证命令
 
-Change 1：
+已归档边界主规格：
 
 ```powershell
-openspec validate artifact-runtime-boundary-hardening --strict
+openspec validate artifact-runtime-boundary --strict
 .\.venv\Scripts\python.exe -m pytest tests\framework\artifacts -q
 .\.venv\Scripts\python.exe -m pytest tests\infrastructure\storage\test_artifact_store.py -q
 .\.venv\Scripts\python.exe -m pytest tests\framework\workflow tests\framework\tool\test_builtin_artifact_tools.py -q
@@ -1115,15 +1119,27 @@ openspec validate artifact-runtime-boundary-hardening --strict
 .\.venv\Scripts\python.exe -m pytest tests\interfaces\api\test_api_run_inspection.py tests\interfaces\api\test_api_run_operations.py tests\interfaces\api\test_http_api_foundation.py tests\interfaces\cli\test_artifacts_commands.py tests\interfaces\cli\test_runs_commands.py tests\interfaces\services\test_mcp_application_service.py tests\interfaces\api\test_api_mcp.py tests\interfaces\mcp\test_stdio_server.py tests\interfaces\mcp\test_mcp_contracts.py -q
 ```
 
-Change 2：
+已归档完整性主规格：
 
 ```powershell
-openspec validate artifact-integrity-verification-hardening --strict
+openspec validate artifact-integrity-verification --strict
 .\.venv\Scripts\python.exe -m pytest tests\framework\artifacts -q
 .\.venv\Scripts\python.exe -m pytest tests\infrastructure\storage\test_artifact_store.py -q
 .\.venv\Scripts\python.exe -m pytest tests\framework\contracts\test_artifact_manifest_contract.py tests\framework\workflow\runtime\test_manifest_integration.py -q
+.\.venv\Scripts\python.exe -m pytest tests\framework\workflow\test_artifact_integrity.py tests\framework\workflow\test_artifact_path_boundary.py -q
 .\.venv\Scripts\python.exe -m pytest tests\interfaces\services\test_artifact_inspection_service.py tests\interfaces\services\test_run_inspection_service.py tests\interfaces\services\test_storage_service.py -q
 .\.venv\Scripts\python.exe -m pytest tests\interfaces\api\test_api_run_inspection.py tests\interfaces\api\test_http_api_foundation.py tests\interfaces\cli\test_artifacts_commands.py tests\interfaces\cli\test_runs_commands.py tests\interfaces\services\test_mcp_application_service.py tests\interfaces\api\test_api_mcp.py tests\interfaces\mcp\test_stdio_server.py tests\interfaces\mcp\test_mcp_contracts.py -q
+```
+
+Active completion change：
+
+```powershell
+openspec validate artifact-integrity-completion-hardening --strict
+.\.venv\Scripts\python.exe -m pytest tests\framework\artifacts\test_models.py tests\framework\artifacts\test_paths.py tests\framework\artifacts\test_runtime_publish_resolve.py tests\framework\artifacts\test_store_manager.py tests\framework\artifacts\test_inspection.py -q
+.\.venv\Scripts\python.exe -m pytest tests\framework\workflow\test_artifact_integrity.py tests\framework\workflow\test_artifact_path_boundary.py tests\framework\workflow\test_artifact_step_runner.py -q
+.\.venv\Scripts\python.exe -m pytest tests\business\layers\signal\test_source_artifacts.py tests\business\layers\signal\test_source_indexing.py -q
+.\.venv\Scripts\python.exe -m pytest tests\interfaces\services\test_artifact_inspection_service.py tests\interfaces\services\test_run_inspection_service.py tests\interfaces\services\test_mcp_application_service.py -q
+.\.venv\Scripts\python.exe -m pytest tests\interfaces\api\test_api_run_inspection.py tests\interfaces\api\test_http_api_foundation.py tests\interfaces\api\test_api_mcp.py tests\interfaces\cli\test_artifacts_commands.py tests\interfaces\cli\test_runs_commands.py tests\interfaces\mcp\test_stdio_server.py -q
 ```
 
 每个代码 change 的最终门禁：
@@ -1211,17 +1227,18 @@ artifact_integrity_inspection_total{result}
 
 本阶段只有在以下条件全部满足时才完成：
 
-- [x] 两个必做 OpenSpec change 均创建并通过 strict validation；
-- [x] 所有 A1-A5 需求具有规范性 SHALL requirement 与可执行 scenario；
-- [x] 旧相关 capability 已按需要归档到主规格，未直接篡改 completed change 历史；
-- [x] 公共 path helper 成为 artifact root 路径的唯一判断来源，已确认旁路全部处理；
-- [x] reserved metadata、reference、checksum、no-store 语义均按本文固定，不留“二选一”实现决定；
-- [x] 对抗性单元测试与真实 workflow/interface 集成测试全部通过；
-- [x] `.\.venv\Scripts\python.exe -m scripts.dev smoke` 通过；
-- [x] `openspec validate --all --strict` 通过；
-- [x] `git diff --check` 通过；
-- [x] 每个代码变更已按范围提交，未混入无关工作树内容；
-- [x] PRD metadata 的 `Implementation status` 更新为 `IMPLEMENTED`，并补充 commits、归档 change 路径和最终验证结果。
+- [ ] `artifact-integrity-completion-hardening` 的 proposal、design、delta specs 和 tasks 均与 live implementation scope 一致并通过 strict validation；
+- [ ] strict direct read 与 replay 先通过 canonical terminal manifest validation，schema 失败映射为 `ArtifactStoreMetadataError`；
+- [ ] strict replay 的 manifest、events、step results、普通 artifacts 和 index-expanded targets 全部只消费同一次 verified snapshot，preflight 后没有路径重读；
+- [ ] artifact-index checksum/path/size/serialized-content-type 全部 transitive preflight，任一 entry 失败时整个 replay 不返回部分内容；
+- [ ] `LocalArtifactStore.get()/list()`、legacy publisher ref 和 artifact-service fallback 的残余 coercion/非 regular/direct join 缺口全部关闭；
+- [ ] 六类 artifact observability event 已实现，固定维度、单次 ownership 和 no-secret 契约均有测试；
+- [ ] 对抗性单元测试与真实 filesystem/workflow/service/HTTP/CLI/MCP/stdio 集成测试全部通过；
+- [ ] `.\.venv\Scripts\python.exe -m scripts.dev smoke` 通过；
+- [ ] `openspec validate --all --strict` 通过；
+- [ ] `git diff --check` 通过；
+- [ ] 代码、测试、OpenSpec、PRD 以 path-scoped 边界提交，未混入阶段 19 或其他用户变更；
+- [ ] active change 已归档并同步到主规格，PRD 的 commits、测试计数与验收勾选均由 fresh evidence 支撑后，metadata 才恢复为 `FINAL / IMPLEMENTED`。
 
 未满足任一项时，状态只能是 `IN_PROGRESS` 或 `BLOCKED`，不能以“主要路径已修”“14 个原测试仍通过”或“后续 convergence 会处理”为由标记完成。
 
@@ -1241,6 +1258,9 @@ artifact_integrity_inspection_total{result}
 | Change 2 实现 | `65bdf330` | 关闭 A3、A4：共享 typed errors、atomic local-store write、checksum verification、strict replay 与 adapter 错误契约 |
 | Change 1 归档 | `b291e9f1` | 归档到 `openspec/changes/archive/2026-07-14-artifact-runtime-boundary-hardening/` 并同步 6 份 capability |
 | Change 2 归档 | `84abfd20` | 归档到 `openspec/changes/archive/2026-07-14-artifact-integrity-verification-hardening/` 并同步 7 份 capability |
+| 实施记录收口 | `f8d300d0` | 补充阶段 18 的历史实施记录、定向矩阵和 legacy 盘点 |
+| 索引状态声明 | `9fddf4ec` | 曾将阶段 18 索引标为 `FINAL / IMPLEMENTED`；该声明已被本次 completion audit 撤回 |
+| Completion remediation | 待提交 | active change `artifact-integrity-completion-hardening`；只有完成 22.9 后才可填写 commit 与归档路径 |
 
 ### 21.2 A1-A5 关闭证据
 
@@ -1256,17 +1276,325 @@ artifact_integrity_inspection_total{result}
 
 | 门禁 | 结果 |
 | --- | --- |
-| Change 1 定向矩阵 | `483 passed, 12 skipped` |
+| Change 1 定向矩阵 | 历史记录 `483 passed, 12 skipped`；仓库无原始日志，当前按旧命令不能精确重建，标记为 `UNVERIFIED_HISTORICAL_SNAPSHOT` |
 | Change 2 定向矩阵 | `394 passed, 6 skipped` |
 | `.\.venv\Scripts\python.exe -m scripts.dev compile` | 通过 |
 | `.\.venv\Scripts\python.exe -m scripts.dev smoke` | `903 passed, 23 skipped`，source validation 通过 |
 | `openspec validate --all --strict` | `507 passed, 0 failed` |
 | `git diff --check` | 通过 |
 
-定向矩阵中的 skip 均为当前 Windows 账户缺少 symlink 创建权限时的条件性跳过；没有跳过 checksum、metadata、half-state、strict replay 或 adapter error contract 用例。API 测试产生的 FastAPI `on_event` deprecation warning 为既存技术债，不影响本阶段验收。
+Change 2 的 `394 passed, 6 skipped` 可在补回第 17 节曾遗漏的 `test_artifact_integrity.py` 与 `test_artifact_path_boundary.py` 后从 live tree 重建。Change 1 的历史数字不能从仓库日志独立证明：当前按旧命令得到不同计数，故不得作为 completion change 的验收依据。当前 Windows symlink/junction 用例仍可能因 WinError 1314 条件性跳过；这些 skip 只能说明本地权限限制，不能宣称 Windows link containment 已有完整实证。API 测试产生的 FastAPI `on_event` deprecation warning 为既存技术债，不改变本次完整性结论。
 
 ### 21.4 Legacy checksum 只读盘点
 
 2026-07-14 对仓库本地 `.newsroom` 做了只读递归盘点：未发现任何 `.metadata` 目录；默认 `F:\github\NewsRoom\.newsroom\artifacts\.metadata` 不存在，因此本机统计为 `metadata_roots=0`、`json_count=0`、`checksum_missing=0`、`invalid_json=0`。盘点没有创建、修改、回填、重命名或删除历史数据。
 
 该结果只证明当前开发工作区没有待迁移的 `LocalArtifactStore` legacy metadata，不能外推到生产或共享部署。部署前仍必须对实际 artifact root 运行同等只读盘点；若发现缺 checksum 记录，按 10.4 的一版兼容读取策略上线，记录计数并另行制定显式迁移，不得在 read path 自动回填。
+
+---
+
+## 22. Completion remediation：完成度复核与补充修复
+
+### 22.1 为什么必须重开阶段 18
+
+2026-07-14 对已归档实现做了 live-tree completion audit。审计不是根据提交说明推测，而是同时检查生产调用链、主规格、测试 fixture 和真实 adapter，并对校验后替换文件、生产形态 index、非法 manifest 和 Windows 非 regular-file 状态做了临时目录复现。结论是：原始 A1-A5 的大量基础工作仍然有效，但“所有内容在返回前均经过同一严格完整性边界”的系统级结论不成立。
+
+因此本节不推倒已归档的两个 change，也不修改其历史内容；它用 active `artifact-integrity-completion-hardening` 收敛剩余缺口。历史提交继续作为“已完成的基础能力”证据，不能再作为“阶段 18 全部完成”证据。
+
+### 22.2 Completion audit 结论
+
+| ID | 严重度 | 状态 | Live 证据 | 必须修复的结果 |
+| --- | --- | --- | --- | --- |
+| C1 | P1 | `CONTRADICTED` | `build_replay_content_bundle()` 在 `_read_strict_workflow_artifact_bytes()` preflight 后丢弃 bytes，再由 `read_events()`、`read_workflow_artifact_content()`、`read_json_artifact()` 重读路径；替换 `output/events/step_results` 后 strict replay 返回替换内容 | strict replay 使用 immutable verified snapshot，preflight 后不得重新访问文件路径 |
+| C2 | P1 | `CONTRADICTED` | `read_artifact_index_content_records()` 只验证 index 文件，随后忽略 entry 已持有的 `checksum/size_bytes/content_type/artifact_ref`，通过 non-strict reader 返回 target；HTTP、CLI、MCP service、MCP HTTP 均复现 fail-open | selected index entries 形成 transitive checksum boundary，所有 targets 先完整 preflight，再从 snapshot decode |
+| C3 | P1 | `CONTRADICTED` | `validate_run_dir()` 记录 `validate_run_manifest()` 错误，但 strict replay/direct detail 不以 schema error 阻断内容；缺 `workflow_id/workflow_version/profile/started_at/path/steps` 的 manifest 仍被接受 | direct detail/replay 在任何内容处理前调用 canonical terminal manifest validation，错误包装为 `ArtifactStoreMetadataError` |
+| C4 | P2 | `CONTRADICTED` | `LocalArtifactStore.get()` 遇到 object 或 metadata 目录时在 Windows 泄漏 `PermissionError`；`list()` 对 persisted `artifact_id/uri=null` 执行 `str()` 并返回 `"None"` | 非 regular pair/list state 与坏 metadata 均稳定分类为 `ArtifactStoreMetadataError`，不得返回 partial list |
+| C5 | P2 | `CONTRADICTED` | `LocalArtifactPublisher._artifact_path()` 对 legacy `metadata["run_id"]` 先 `str()` 再校验，整数 `7` 被接受；`ArtifactInspectionService.get_artifact()` 仍有 `self.artifact_root / run_id` fallback | 原始 run id 类型必须已经是 `str`；interface fallback 只使用 shared segment + canonical descendant helper |
+| C6 | P2 | `MISSING` | 18.4 的六个 event name 除 PRD 外全仓 0 命中，既无生产日志/metrics，也无 spec/test | 使用标准 logging 实现稳定结构化事件、固定维度、唯一 owner 和 no-secret 契约 |
+| C7 | P2 | `CONTRADICTED` | 第 16 节 22 项未勾而第 20 节全勾；第 17 节验证已归档 change 导致 `Unknown item`；Change 2 命令漏两个核心测试；Change 1 历史计数不可重建；提交表漏 `f8d300d0`、`9fddf4ec` | 文档状态、命令、矩阵、commit 和 fresh evidence 必须一致 |
+
+以下行为经审计确认应保留，不纳入重写：
+
+- A2 publisher/artifact-step reserved metadata 在任何 file/ref/buffer/manifest/index 副作用前拒绝，custom metadata 与递归脱敏正常；
+- A3 empty/no-store、non-empty/no-store、mixed issue、`checked_count` 与未知异常传播语义正确；
+- `LocalArtifactStore.put()` 的 unique temp、object-first、metadata-last、owned-temp cleanup 主体正确；
+- manifest checksum sentinel 必须继续精确为 `"pending"`；
+- API/CLI/MCP 的 typed exception 映射主体正确，问题在于上游未产生异常；
+- non-strict diagnostics 必须继续支持 tolerant forensic inspection。
+
+### 22.3 修复目标、非目标与系统不变量
+
+目标：
+
+1. strict direct artifact 和 replay 在 canonical manifest、路径、metadata、file kind、size、content type 与 checksum 全部通过前不构造内容响应；
+2. strict replay 返回的每个 byte 都来自实际通过验证的同一 immutable snapshot；
+3. selected artifact index target 被视为 index 的 transitive integrity closure，任一 entry 失败时整体失败；
+4. persisted corrupt state 与 caller-invalid path 保持共享 typed error；
+5. 六类边界/完整性结果可从安全结构化日志聚合；
+6. 非 strict 诊断、合法 legacy string ref、redaction、binary preview、truncation 和 adapter envelope 不回归。
+
+非目标：
+
+- 不增加跨进程锁、跨文件事务、签名、外部 manifest digest、ACL、加密或远程 object storage；
+- 不证明 manifest 的外部真实性；`"pending"` 只提供同一次 replay 的内部一致性；
+- 不验证既不在 manifest 中、也不被 selected index 引用的任意 run 文件；
+- 不结束 `LocalArtifactStore` legacy missing-checksum 的一版兼容窗口；
+- 不合并 artifact reference/store/inspector 模型；
+- 不把普通 non-strict diagnostics 改成 fail-fast 产品 API；
+- 不在本 change 重构 `LocalJsonPersistenceAdapter` 的业务 `_records` 命名与 identity 策略。该 adapter 复用 `.newsroom/runs`，但持久化的是业务 records 而非 artifact object/index/content；其 sanitize 语义需要独立的 `persistence-record-identity-boundary` change、兼容性扫描和 migration 设计。
+
+必须始终成立的系统不变量：
+
+```text
+strict response bytes == bytes captured by successful strict preflight
+strict post-preflight filesystem reads == 0
+any required verification failure => no partial replay projection
+manifest schema error => ArtifactStoreMetadataError before artifact read
+non-strict diagnostics behavior == unchanged
+```
+
+### 22.4 Strict replay 状态机与 verified snapshot
+
+严格状态机固定为：
+
+```text
+RESOLVE RUN
+    -> CAPTURE manifest.json bytes
+    -> PARSE + validate_run_manifest(require_terminal_artifact=True)
+    -> CAPTURE every manifest-listed artifact
+    -> VERIFY path / metadata / regular-file / size / content-type / checksum
+    -> PARSE selected index from verified index bytes
+    -> CAPTURE + VERIFY every selected index target
+    -> FREEZE complete snapshot set
+    -> DECODE / REDACT / TRUNCATE / PROJECT from bytes only
+    -> RETURN
+```
+
+任一箭头失败都直接进入 typed failure，且不得产生 artifact record、event、step result、timeline、routing diagnostics、index-expanded record 或部分 response。
+
+新增内部 frozen snapshot（名称可按实现风格使用 `_VerifiedArtifactSnapshot`，不作为 public API）：
+
+| 字段 | 约束 |
+| --- | --- |
+| `artifact_key` | 已验证、响应中稳定使用的 key；index projection 必须唯一 |
+| `relative_path` | shared helper 归一化后的 POSIX relative path |
+| `absolute_path` | canonical root descendant；只用于 response metadata/诊断，不再用于二次读取 |
+| `metadata` | 已完成 shape、identity、checksum、size/content-type 校验后的复制值 |
+| `content_type` | 描述 persisted bytes 的 serialized MIME；不得与业务投影字段混淆 |
+| `size_bytes` | `len(content_bytes)`；若 persisted expected size 存在则必须一致 |
+| `content_bytes` | 同一次读取并成功 checksum verification 的 immutable bytes |
+
+strict 模式在 snapshot set 完成后，禁止调用：
+
+```text
+Path.read_bytes / Path.read_text
+_read_json_file
+WorkflowRunInspector.read_events
+WorkflowRunInspector.read_json_artifact
+read_workflow_artifact_content
+```
+
+必须新增 bytes-based JSON、JSONL/event、text、binary preview 和 truncation helper。events、step results、timeline 和 routing diagnostics 都从 snapshot bytes 的 decoded value 派生。直接 artifact detail 也通过同一 snapshot capture + snapshot-to-record 路径，不能维护第二套 checksum 实现。
+
+`RunInspectionService.replay_run()` 不再先 `load_manifest()` 后让 inspector 再读一次；service 只验证 run directory/存在性并委托 strict inspector，使 manifest capture、schema validation 和完整 preflight 由一个 owner 完成。
+
+### 22.5 Canonical manifest fail-closed 与错误语义
+
+strict direct detail 和 strict replay 必须在目标 artifact decode 前执行：
+
+```python
+validate_run_manifest(manifest, require_terminal_artifact=True)
+```
+
+错误映射固定如下：
+
+| 原因 | Shared exception | HTTP | CLI | MCP |
+| --- | --- | --- | --- | --- |
+| canonical manifest schema/shape/terminal contract invalid | `ArtifactStoreMetadataError`（由 `RunManifestError` 包装） | 409 `artifact_metadata_corrupt` | stderr + exit `1`，stdout 无内容 | `success=False`、`error_type=ArtifactStoreMetadataError`、无 data |
+| expected checksum valid but bytes mismatch | `ArtifactChecksumMismatchError` | 409 `artifact_checksum_mismatch` | stderr + exit `1` | typed failure、无 data |
+| persisted artifact missing | `ArtifactNotFoundError` / 既有 missing mapping | 404 | 既有 nonzero missing 契约 | typed missing failure |
+| unsafe caller path/run id | `ArtifactPathError` | 400 | stderr + exit `1` | typed path failure |
+| verification configuration unavailable | `ArtifactStoreRequiredError` | 500 `artifact_store_unavailable` | stderr + exit `1` | typed configuration failure |
+
+`validate_run_dir()` 的 report API 继续汇总 schema error，不因 strict 产品入口收紧而失去诊断用途。
+
+### 22.6 Artifact index transitive integrity contract
+
+只有 manifest-listed 且自身通过 manifest checksum 的 index snapshot 才能被解析。`artifact_index_keys` 只选择 index，不降低 entry integrity。selected entry 的严格解析顺序为：
+
+1. entry 必须为 object，path/identity/checksum 字段必须满足预期类型；
+2. checksum 优先使用 top-level `checksum`；只有 top-level 缺失时才兼容 `artifact_ref.checksum`；
+3. 两处 checksum 同时存在必须完全一致，否则 `ArtifactStoreMetadataError`；两处均缺失或格式非法同样失败；
+4. 嵌套 `artifact_ref` 存在时，其 `artifact_id/run_id/artifact_type/path/content_type/size_bytes` 是 serialized artifact 的 canonical declaration；重复的 top-level integrity 字段必须一致；
+5. top-level 业务投影不得误当成文件完整性字段。生产 `source_response_headers` entry 会把 top-level `content_type` 用作源 HTTP response MIME，而 `artifact_ref.content_type` 为落盘 `application/json`；strict replay 必须使用后者验证文件并保留前者；
+6. relative path 经过 shared relative-path 与 canonical descendant 校验，target 必须是 regular file；
+7. optional serialized size/content-type 与实际 bytes/path 不一致时 typed metadata failure；
+8. target bytes 通过 checksum 后加入 snapshot set；
+9. 所有 selected targets 都成功后才开始 decode；projected artifact key 冲突必须在 decode 前失败。
+
+非 strict `read_artifact_index_content_records()` 保持既有 tolerant 行为，用于 forensic diagnostics；strict 不能调用它。
+
+### 22.7 Store、reference 与 path closure
+
+`LocalArtifactStore.get()` 在读取 JSON/bytes 前对 object 与 metadata 两个 canonical target 分别判定：
+
+| Pair/file kind | 结果 |
+| --- | --- |
+| 两者均不存在 | `None` |
+| metadata regular file、object 不存在 | `ArtifactNotFoundError` |
+| object regular file、metadata 不存在 | `ArtifactStoreMetadataError` |
+| 任一存在但为目录或稳定非 regular node | `ArtifactStoreMetadataError` |
+| 两者 regular、metadata/checksum valid | verified `Artifact` |
+
+普通 regular file 的 ACL/permission failure 不应伪装成 corrupt metadata；只有可稳定观察的非 regular persisted node 才归类为 metadata corruption。
+
+`LocalArtifactStore.list()` 必须复用 `_load_metadata()`、required-string、identity/URI/checksum declaration/metadata-shape 和对应 object file-kind 校验。missing/null/blank/whitespace-padded/non-string `artifact_id` 或 `uri`、malformed JSON、non-object payload、non-regular metadata/object 都抛 `ArtifactStoreMetadataError`；不得 `str()` coercion，也不得在发现 corruption 后返回 partial list。listing 不为每个 object 重新计算内容 checksum；需要内容完整性结论时使用 `get()`/inspector。
+
+`LocalArtifactPublisher._artifact_path()` 对存在的 legacy `metadata["run_id"]` 先检查原始类型：必须已经是 `str`，然后才进入 `validate_artifact_path_segment()`；数字、布尔、集合、mapping 和对象都失败。metadata 不含 `run_id` 的既有 legacy root-relative URI 行为继续保留，但仍须通过 relative-path + canonical descendant 校验。
+
+`ArtifactInspectionService.get_artifact()` 删除 `self.artifact_root / run_id` fallback。若 `run.artifact_dir` 缺失/空，必须使用：
+
+```text
+validate_artifact_path_segment(run_id)
+resolve_artifact_descendant(artifact_root, validated_run_id)
+```
+
+### 22.8 Artifact integrity observability contract
+
+新增 dependency-free 标准 logging helper。event payload 只能由固定 event name、severity 和 allow-listed flat dimensions 构成；未知 dimension value 映射到固定安全 fallback（如 `unknown`），不得把 raw value 放入 message。
+
+| Event | 唯一 ownership | Level | Dimensions |
+| --- | --- | --- | --- |
+| `artifact_path_rejected_total` | shared public path boundary；内部 helper 调用不得重复发射 | warning | `field`, `operation` |
+| `artifact_reserved_metadata_rejected_total` | publisher 与 artifact-step 各自的 reserved-key rejection owner | warning | `key`, `publisher` |
+| `artifact_checksum_mismatch_total` | shared checksum verifier，调用方传 normalized context | warning | `store`, `operation` |
+| `artifact_metadata_corrupt_total` | store/strict workflow 捕捉并拥有 typed corruption 的边界；传播层不重复发射 | warning | `store` |
+| `artifact_checksum_missing_total` | legacy-compatible local read 或 strict index/artifact 缺 checksum 分类 owner | warning | `store` |
+| `artifact_integrity_inspection_total` | `framework.artifacts.inspection.ArtifactIntegrityInspector.inspect()` | valid 为 info；invalid/configuration_error 为 warning | `result` |
+
+任何 event 均不得记录：raw/canonical path 值、artifact id、metadata 值、artifact bytes/content、credentials、token、secret、raw exception text 或 traceback；`record.exc_info` 必须为空。正常成功读取不得产生失败事件，同一 outcome 只能计一次。
+
+### 22.9 文件级影响矩阵
+
+必须修改的生产文件：
+
+| 文件 | 责任 |
+| --- | --- |
+| `framework/workflow/inspection/inspector.py` | snapshot model/capture、canonical manifest fail-closed、bytes-based projection、strict index preflight；保留 non-strict reader |
+| `interfaces/services/run_inspection_service.py` | strict replay 单一 owner，移除 manifest 双读/重复路径预检 |
+| `interfaces/services/artifact_service.py` | canonical manifest validation 接入与 shared fallback run-dir resolution |
+| `framework/artifacts/stores/local.py` | non-regular pair state、strict list deserialization/file-kind、object-replace fault contract |
+| `framework/artifacts/runtime/publisher.py` | legacy metadata run-id raw type validation；reserved event 接线 |
+| `framework/artifacts/paths.py` | path rejection 的单次结构化 event owner |
+| `framework/artifacts/stores/integrity.py` | checksum mismatch event 与 normalized store/operation context |
+| `framework/artifacts/inspection/integrity.py` | inspection result/missing checksum event；不得误改 workflow 同名 inspector |
+| `framework/workflow/runners/artifact.py` | artifact-step reserved metadata event 接线 |
+| `framework/artifacts/observability.py`（新增） | 固定 event/dimension allow-list、安全 logging helper |
+| `framework/artifacts/__init__.py` | 仅在 helper 被定义为 public 时稳定 export；默认可保持内部实现 |
+
+重点测试文件：
+
+| 测试文件 | 必须覆盖 |
+| --- | --- |
+| `tests/framework/workflow/test_artifact_integrity.py` | manifest/artifact/events/step_results/index target TOCTOU、全 preflight 后 decode、strict/non-strict 分流 |
+| `tests/framework/artifacts/test_store_manager.py` | object/metadata/list 非 regular、null/坏 metadata、object replace fault、旧 pair 保留 |
+| `tests/framework/artifacts/test_runtime_publish_resolve.py` | non-string legacy run id、missing-run-id legacy compatibility、unsafe/symlink ref |
+| `tests/framework/artifacts/test_inspection.py` | inspection observability valid/invalid/configuration error |
+| `tests/framework/artifacts/test_paths.py` | path event 单次 ownership 与 no-secret |
+| `tests/framework/artifacts/test_observability.py`（新增） | 六类 event name/level/dimensions/fallback/no-secret/no-traceback |
+| `tests/framework/workflow/test_artifact_step_runner.py` | reserved metadata event 与无副作用 |
+| `tests/business/layers/signal/test_source_artifacts.py` | production index schema 与 `source_response_headers` content-type 双重语义 |
+| `tests/interfaces/services/test_run_inspection_service.py` | canonical fixture、strict index、manifest failure、snapshot replay |
+| `tests/interfaces/services/test_artifact_inspection_service.py` | canonical manifest、typed errors、fallback path |
+| `tests/interfaces/api/test_api_run_inspection.py` | 真实 service/filesystem 的 detail/replay 400/404/409/500，无 content |
+| `tests/interfaces/cli/test_runs_commands.py`、`test_artifacts_commands.py` | 真实 filesystem path，exit `1`、stderr、stdout 无 content |
+| `tests/interfaces/services/test_mcp_application_service.py` | 真实 service factory 的 tool/resource typed failure |
+| `tests/interfaces/api/test_api_mcp.py` | 真实 MCP application + filesystem，outer HTTP mapping |
+| `tests/interfaces/mcp/test_stdio_server.py` | 真实 application 的 `tools/call` 与 `resources/read` JSON-RPC failure，无泄漏 |
+
+### 22.10 对抗性测试与故障注入矩阵
+
+| 场景 | 注入点 | 必须断言 |
+| --- | --- | --- |
+| artifact/events/step_results 在 preflight 后替换 | 首次 `read_bytes()` 后改写路径 | strict 返回原 verified bytes；目标每次 replay 只读一次 |
+| manifest 在 capture 后替换 | manifest 首次读取后改写 | manifest projection 与 artifacts selection 均来自原 snapshot |
+| 第二个 index entry tampered | 多 entry preflight | 整体 typed failure；第一个 entry 也未 decode/返回 |
+| index checksum top-level / nested fallback | production-shape entry | 两种合法声明成功；冲突/双缺失/非法格式失败 |
+| index path/size/type invalid | traversal、missing、directory、size/type mismatch | 对应 path/metadata/not-found typed failure；无 partial response |
+| `source_response_headers` dual content type | 顶层 `application/rss+xml`、nested ref `application/json` | 用 nested ref 验证落盘 JSON，保留顶层业务值 |
+| invalid canonical manifest | 逐一破坏 schema/required/terminal/artifact_metadata | direct detail/replay 在目标 artifact read 前 `ArtifactStoreMetadataError` |
+| object/metadata/list candidate 为目录 | Windows/POSIX temp tree | `ArtifactStoreMetadataError`，不是 `PermissionError` |
+| persisted required field 为 null/non-string | metadata JSON | list fail-closed，不生成 `"None"` |
+| object replace 第一步失败 | monkeypatch `os.replace` | 不提交新 metadata；旧 verified pair 仍可读；owned temp 清理 |
+| event payload 含 secret/path/content | caplog | 只含固定 event/dimension；无 raw input/exception/traceback |
+| non-strict bad index | default diagnostics/replay helper | 保持 tolerant `read_error`/skip 兼容，不被 strict change 意外收紧 |
+
+现有 strict fixture 必须先升级成真正通过 `validate_run_manifest(..., require_terminal_artifact=True)` 的 terminal manifest，再施加单一故障；不得继续用本身非法的 manifest 证明 checksum 行为。fake service 主动抛异常只能证明 adapter mapping，不能作为 upstream fail-closed 证据。
+
+### 22.11 Requirements -> Tasks -> Tests 追踪
+
+| Requirement | OpenSpec task | 主要测试 |
+| --- | --- | --- |
+| C1 immutable snapshot | 1.1-1.3、2.1-2.7 | workflow artifact integrity、run inspection service |
+| C2 transitive index integrity | 1.4-1.5、3.1-3.6 | workflow integrity、source artifacts、真实 adapters |
+| C3 canonical manifest fail-closed | 1.1、1.3、2.3 | run/artifact service、HTTP/CLI/MCP |
+| C4 store non-regular/list corruption | 1.6、1.8、4.1-4.2 | store manager fault/pair/list tests |
+| C5 legacy/path closure | 1.7、4.3-4.5 | publisher resolve、artifact service |
+| C6 observability | 5.1-5.7 | observability + owner-level caplog tests |
+| C7 adapter/docs/evidence | 6.1-6.6、7.1-7.6 | real filesystem adapter matrix + final gates |
+
+详细 checkbox 以 `openspec/changes/artifact-integrity-completion-hardening/tasks.md` 为实施真源；本表保证 PRD requirement、OpenSpec tasks 与测试文件可追踪。
+
+### 22.12 发布、兼容、回滚与完成门禁
+
+发布顺序：
+
+```text
+failing adversarial tests
+-> snapshot + canonical manifest boundary
+-> transitive index verification
+-> store/reference/path closure
+-> observability
+-> real adapter regressions
+-> targeted suites
+-> compile + mandatory smoke + all strict
+-> path-scoped commit
+-> archive active change
+-> post-archive strict validation
+-> restore FINAL / IMPLEMENTED
+```
+
+兼容策略：
+
+- invalid historical manifests 和 checksum-less selected index entries 将不再能通过 service-facing strict replay；这是明确的 fail-closed breaking correction；
+- forensic/migration 使用 non-strict diagnostics，不允许在 strict 产品接口增加 bypass flag；
+- 不自动修改、补 checksum、重命名、sanitize 或删除历史 artifact；需要 migration 时离线显式执行；
+- snapshot 会在 response 构造期间保留 bytes，当前 replay 本就 materialize 相同内容且可减少重复 I/O；大型 streaming verified replay 另立 proposal。
+
+回滚只允许整体回滚 completion change，触发条件包括：合法 canonical run 系统性误拒、正常 source index 被业务 `content_type` 误判、adapter 正常 404/成功路径破坏、temp replacement 可见性恶化或日志泄漏敏感值。禁止通过重新启用 post-preflight path read、跳过 schema validation、catch-all 返回 success、删除断言或关闭 observability 测试完成回滚。
+
+最终门禁：
+
+```powershell
+openspec validate artifact-integrity-completion-hardening --strict
+.\.venv\Scripts\python.exe -m scripts.dev compile
+.\.venv\Scripts\python.exe -m scripts.dev smoke
+openspec validate --all --strict
+git diff --check
+```
+
+此外必须满足：
+
+- 第 16 节与第 20 节每个 checkbox 都有 fresh test/log/commit 证据；
+- 真实 HTTP、CLI、MCP application、MCP HTTP 与 stdio 至少各有一条 upstream corruption 回归；
+- 所有 skipped tests 逐项列出原因；Windows symlink/junction 因权限 skip 时不得宣称该平台链路已实证；
+- 测试计数只记录本次命令实际输出，不复制历史数字；
+- OpenSpec/代码/测试/PRD path-scoped staging 不得混入阶段 19 或其他用户已暂存/未暂存变更；
+- active change 归档后使用 main-spec 或 `openspec validate --all --strict`，不得保留会 `Unknown item` 的 active-change 命令作为 post-archive 指令。
+
+只有以上全部完成，阶段 18 才可再次标记：
+
+```text
+Document status: FINAL
+Implementation status: IMPLEMENTED
+```
