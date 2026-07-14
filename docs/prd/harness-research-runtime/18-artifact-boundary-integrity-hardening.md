@@ -1,10 +1,10 @@
 # 阶段 18：Artifact 安全边界与完整性硬化 PRD
 
-> Document status: READY_FOR_IMPLEMENTATION
+> Document status: FINAL
 >
-> Implementation status: IN_PROGRESS
+> Implementation status: IMPLEMENTED
 >
-> Version: v1.2
+> Version: v1.3
 >
 > Priority: P1
 >
@@ -12,13 +12,13 @@
 >
 > Source audit: `framework/artifacts` code review（2026-07-10，2026-07-14 复核）
 >
-> OpenSpec changes: `archive/2026-07-14-artifact-runtime-boundary-hardening`、`archive/2026-07-14-artifact-integrity-verification-hardening`；active completion change: `artifact-integrity-completion-hardening`
+> OpenSpec changes: `archive/2026-07-14-artifact-runtime-boundary-hardening`、`archive/2026-07-14-artifact-integrity-verification-hardening`、`archive/2026-07-14-artifact-integrity-completion-hardening`
 >
 > Last updated: 2026-07-14
 
-> 状态说明：前两个 change 的主体实现与归档记录仍然有效，但 2026-07-14 completion audit 已用对抗性复现证明 strict replay、index transitive integrity、manifest fail-closed、部分引用/路径边界和 observability 尚未闭合，因此撤回原 `FINAL / IMPLEMENTED` 声明。只有 active completion change 实现、验证、提交并归档后，本文才可恢复 `FINAL / IMPLEMENTED`。文档被替代时标记 `SUPERSEDED`。
+> 状态说明：2026-07-14 completion audit 发现的 strict replay、index transitive integrity、manifest fail-closed、引用/路径边界和 observability 缺口已由实现提交 `59e633e8` 关闭；completion change 已在 `7cf5e82e` 同步 6 份主规格并归档。fresh 定向矩阵、兼容矩阵、强制 smoke 与归档后 strict validation 均通过，因此恢复 `FINAL / IMPLEMENTED`。文档被替代时标记 `SUPERSEDED`。
 
-> 阅读说明：第 1-21 节保留原始 A1-A5 的需求与历史实施记录；第 22 节是 v1.2 对当前剩余缺口、修复设计、任务映射和完成门禁的权威增量。两处冲突时以第 22 节和 active OpenSpec change 为准。
+> 阅读说明：第 1-21 节保留原始 A1-A5 的需求与历史实施记录；第 22 节是 v1.3 对 completion remediation、任务映射和最终证据的权威增量。两处冲突时以第 22 节和已归档 completion change 为准。
 
 ## 0. 一句话结论
 
@@ -1131,10 +1131,10 @@ openspec validate artifact-integrity-verification --strict
 .\.venv\Scripts\python.exe -m pytest tests\interfaces\api\test_api_run_inspection.py tests\interfaces\api\test_http_api_foundation.py tests\interfaces\cli\test_artifacts_commands.py tests\interfaces\cli\test_runs_commands.py tests\interfaces\services\test_mcp_application_service.py tests\interfaces\api\test_api_mcp.py tests\interfaces\mcp\test_stdio_server.py tests\interfaces\mcp\test_mcp_contracts.py -q
 ```
 
-Active completion change：
+已归档 completion change 对应主规格与回归：
 
 ```powershell
-openspec validate artifact-integrity-completion-hardening --strict
+openspec validate --all --strict
 .\.venv\Scripts\python.exe -m pytest tests\framework\artifacts\test_models.py tests\framework\artifacts\test_paths.py tests\framework\artifacts\test_runtime_publish_resolve.py tests\framework\artifacts\test_store_manager.py tests\framework\artifacts\test_inspection.py tests\framework\artifacts\test_observability.py -q -rs
 .\.venv\Scripts\python.exe -m pytest tests\framework\workflow\test_artifact_integrity.py tests\framework\workflow\test_artifact_path_boundary.py tests\framework\workflow\test_artifact_step_runner.py -q -rs
 .\.venv\Scripts\python.exe -m pytest tests\business\layers\signal\test_source_artifacts.py tests\business\layers\signal\test_source_indexing.py -q -rs
@@ -1238,8 +1238,8 @@ artifact_integrity_inspection_total{result}
 - [x] `.\.venv\Scripts\python.exe -m scripts.dev smoke` 通过；
 - [x] `openspec validate --all --strict` 通过；
 - [x] `git diff --check` 通过；
-- [ ] 代码、测试、OpenSpec、PRD 以 path-scoped 边界提交，未混入阶段 19 或其他用户变更；
-- [ ] active change 已归档并同步到主规格，PRD 的 commits、测试计数与验收勾选均由 fresh evidence 支撑后，metadata 才恢复为 `FINAL / IMPLEMENTED`。
+- [x] 代码、测试、OpenSpec、PRD 以 path-scoped 边界提交，未混入阶段 19 或其他用户变更；
+- [x] completion change 已归档并同步到主规格，PRD 的 commits、测试计数与验收勾选均由 fresh evidence 支撑后，metadata 才恢复为 `FINAL / IMPLEMENTED`。
 
 未满足任一项时，状态只能是 `IN_PROGRESS` 或 `BLOCKED`，不能以“主要路径已修”“14 个原测试仍通过”或“后续 convergence 会处理”为由标记完成。
 
@@ -1261,7 +1261,8 @@ artifact_integrity_inspection_total{result}
 | Change 2 归档 | `84abfd20` | 归档到 `openspec/changes/archive/2026-07-14-artifact-integrity-verification-hardening/` 并同步 7 份 capability |
 | 实施记录收口 | `f8d300d0` | 补充阶段 18 的历史实施记录、定向矩阵和 legacy 盘点 |
 | 索引状态声明 | `9fddf4ec` | 曾将阶段 18 索引标为 `FINAL / IMPLEMENTED`；该声明已被本次 completion audit 撤回 |
-| Completion remediation | 待提交 | active change `artifact-integrity-completion-hardening`；只有完成 22.9 后才可填写 commit 与归档路径 |
+| Completion remediation 实现 | `59e633e8` | 关闭 verified snapshot、transitive index、manifest/store/reference/path/observability 与真实 adapter 缺口 |
+| Completion remediation 归档 | `7cf5e82e` | 同步 6 份主规格并归档到 `openspec/changes/archive/2026-07-14-artifact-integrity-completion-hardening/` |
 
 ### 21.2 A1-A5 关闭证据
 
@@ -1578,7 +1579,6 @@ failing adversarial tests
 最终门禁：
 
 ```powershell
-openspec validate artifact-integrity-completion-hardening --strict
 .\.venv\Scripts\python.exe -m scripts.dev compile
 .\.venv\Scripts\python.exe -m scripts.dev smoke
 openspec validate --all --strict
@@ -1613,7 +1613,7 @@ git diff --check
 | HTTP/CLI/MCP adapter compatibility | `166 passed, 206 warnings` |
 | `.\.venv\Scripts\python.exe -m scripts.dev compile` | 通过 |
 | `.\.venv\Scripts\python.exe -m scripts.dev smoke` | `903 passed, 23 skipped, 12 warnings`；source validation `is_valid=true` |
-| `openspec validate artifact-integrity-completion-hardening --strict` | valid |
+| pre-archive active change strict validation | valid |
 | `openspec validate --all --strict` | `508 passed, 0 failed` |
 | `git diff --check` | 通过；仅报告既有 CRLF/LF 工作树提示，无 whitespace error |
 
@@ -1629,7 +1629,7 @@ Completion matrix 的 5 个 skip 均为当前 Windows 进程不能创建 symlink
 
 `smoke` 的 23 个 skip 已用相同 pytest 范围加 `-rs` 复核：`tests/business/research/document/test_arxiv_latex_integration.py` 14 项因 `ArxivLatexDocumentCompiler` 需要 `source_fetcher` 而被该 live/network integration fixture 跳过；`tests/business/research/integration/test_chunk_paper_e2e.py` 9 项因未设置 `NEWS_RUN_LIVE_RESEARCH_E2E=1`、`NEWS_QDRANT_URL`、`NEWS_DATABASE_DSN` 而跳过。两组均为既有 Research smoke 条件，不属于 artifact completion 测试，也未被用作本阶段通过证据。HTTP 和 smoke warnings 均为既有 FastAPI `on_event` deprecation。
 
-逐项追踪结论：OpenSpec `1.1-6.6` 已由 canonical fixture、TOCTOU/manifest/index/store/observability 对抗测试和真实 service/HTTP/CLI/MCP/stdio 路径证明；`7.1-7.5` 已完成。HTTP 真实 service/filesystem 能产生的 400/404/409 均有无内容断言；该 service 不具备 no-store 配置入口，因此 500 `artifact_store_unavailable` 只由 router adapter-isolation test 证明，未冒充上游 filesystem 产错证据。`7.6`、第 20 节的提交/归档两项及 metadata 状态将在真实提交和归档完成后更新。
+逐项追踪结论：OpenSpec `1.1-6.6` 已由 canonical fixture、TOCTOU/manifest/index/store/observability 对抗测试和真实 service/HTTP/CLI/MCP/stdio 路径证明；`7.1-7.6` 已全部完成。HTTP 真实 service/filesystem 能产生的 400/404/409 均有无内容断言；该 service 不具备 no-store 配置入口，因此 500 `artifact_store_unavailable` 只由 router adapter-isolation test 证明，未冒充上游 filesystem 产错证据。实现提交为 `59e633e8`，主规格同步与归档提交为 `7cf5e82e`，归档后 `openspec validate --all --strict` 为 `508 passed, 0 failed`。
 
 只有以上全部完成，阶段 18 才可再次标记：
 
