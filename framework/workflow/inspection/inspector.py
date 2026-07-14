@@ -6,7 +6,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from types import MappingProxyType
+from typing import Any, Iterable, Iterator, Mapping
 
 from framework.artifacts import (
     ArtifactNotFoundError,
@@ -16,6 +17,10 @@ from framework.artifacts import (
     validate_artifact_path_segment,
     validate_sha256_checksum,
     verify_sha256_checksum,
+)
+from framework.artifacts.observability import (
+    emit_artifact_checksum_missing,
+    emit_artifact_metadata_corrupt,
 )
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.specs import StepStatus, WorkflowStatus
@@ -642,6 +647,29 @@ class WorkflowArtifactContentRecord:
             "metadata": to_json_safe(self.metadata),
             "readable": self.readable,
         }
+
+
+@dataclass(frozen=True)
+class _VerifiedArtifactSnapshot:
+    """Immutable bytes and declarations captured by strict replay preflight."""
+
+    artifact_key: str
+    relative_path: str
+    absolute_path: Path
+    metadata: Mapping[str, Any]
+    content_type: str
+    size_bytes: int
+    content_bytes: bytes
+
+
+@dataclass(frozen=True)
+class _VerifiedIndexEntryPlan:
+    artifact_key: str
+    relative_path: str
+    checksum: str
+    content_type: str | None
+    size_bytes: int | None
+    metadata: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -1582,16 +1610,22 @@ class WorkflowRunInspector:
         strict_artifact_integrity: bool = False,
     ) -> WorkflowReplayContentBundle:
         actual_run_dir = self._resolve_run_dir(run_id=run_id, run_dir=run_dir)
+        if strict_artifact_integrity:
+            try:
+                return self._build_strict_replay_content_bundle(
+                    actual_run_dir,
+                    redact=redact,
+                    expand_artifact_indexes=expand_artifact_indexes,
+                    artifact_index_keys=artifact_index_keys,
+                    expand_source_artifacts=expand_source_artifacts,
+                    max_artifact_bytes=max_artifact_bytes,
+                )
+            except ArtifactStoreMetadataError as exc:
+                _emit_strict_workflow_metadata_failure(exc)
+                raise
         manifest = self.load_manifest(actual_run_dir)
         integrity = self.validate_run_dir(actual_run_dir, manifest=manifest)
         artifact_paths = _manifest_artifact_map(manifest)
-        if strict_artifact_integrity:
-            for artifact_key in sorted(artifact_paths):
-                _read_strict_workflow_artifact_bytes(
-                    actual_run_dir,
-                    manifest,
-                    artifact_key,
-                )
         events: list[dict[str, Any]] = []
         events_path = None
         events_error = None
@@ -1646,6 +1680,101 @@ class WorkflowRunInspector:
                 default={},
             ),
             integrity=integrity.to_dict(),
+            step_timeline=[
+                item.to_dict() for item in WorkflowTimelineBuilder().build(events)
+            ],
+            routing_diagnostics=_routing_diagnostics_from_events(events),
+        )
+
+    def _build_strict_replay_content_bundle(
+        self,
+        run_dir: Path,
+        *,
+        redact: bool,
+        expand_artifact_indexes: bool,
+        artifact_index_keys: Iterable[str] | None,
+        expand_source_artifacts: bool,
+        max_artifact_bytes: int | None,
+    ) -> WorkflowReplayContentBundle:
+        manifest_snapshot, manifest = _capture_and_validate_run_manifest(run_dir)
+        artifact_paths = _manifest_artifact_map(manifest)
+        snapshots: dict[str, _VerifiedArtifactSnapshot] = {
+            "manifest": manifest_snapshot,
+        }
+        for artifact_key in sorted(artifact_paths):
+            if artifact_key == "manifest":
+                continue
+            snapshots[artifact_key] = _capture_verified_artifact_snapshot(
+                run_dir,
+                manifest,
+                artifact_key,
+            )
+
+        indexed_snapshots: list[_VerifiedArtifactSnapshot] = []
+        if expand_artifact_indexes and expand_source_artifacts:
+            for index_artifact_key in _selected_artifact_index_keys(
+                artifact_paths,
+                index_keys=artifact_index_keys,
+            ):
+                indexed_snapshots.extend(
+                    _capture_verified_artifact_index_snapshots(
+                        run_dir,
+                        snapshots,
+                        artifact_paths,
+                        run_id=_required_index_run_id(manifest),
+                        index_artifact_key=index_artifact_key,
+                    )
+                )
+
+        # From this point onward strict replay projects only captured bytes. Paths are
+        # retained for response metadata and are never reopened.
+        event_records = _event_records_from_snapshot(snapshots.get("events"))
+        events = [
+            _redact_if_needed(event.to_dict(), redact=redact)
+            for event in event_records
+        ]
+        artifacts = [
+            _content_record_from_snapshot(
+                snapshots[artifact_key],
+                redact=redact,
+                max_bytes=max_artifact_bytes,
+            )
+            for artifact_key in sorted(artifact_paths)
+        ]
+        artifacts.extend(
+            _indexed_content_record_from_snapshot(
+                snapshot,
+                redact=redact,
+                max_bytes=max_artifact_bytes,
+            )
+            for snapshot in indexed_snapshots
+        )
+        step_results_payload = _json_payload_from_snapshot(
+            snapshots.get("step_results"),
+            default={},
+        )
+        step_results = (
+            step_results_payload if isinstance(step_results_payload, dict) else {}
+        )
+        step_results = _redact_if_needed(step_results, redact=redact)
+        return WorkflowReplayContentBundle(
+            run_id=_optional_string(manifest.get("run_id")) or run_dir.name,
+            manifest=_redact_if_needed(manifest, redact=redact),
+            manifest_path=str(manifest_snapshot.absolute_path),
+            events=events,
+            events_path=(
+                str(snapshots["events"].absolute_path)
+                if "events" in snapshots
+                else None
+            ),
+            events_error=None,
+            artifacts=artifacts,
+            step_results=step_results,
+            integrity=_strict_snapshot_integrity_report(
+                artifact_paths,
+                snapshots,
+                indexed_snapshot_count=len(indexed_snapshots),
+            ),
             step_timeline=[
                 item.to_dict() for item in WorkflowTimelineBuilder().build(events)
             ],
@@ -2179,27 +2308,89 @@ def read_strict_workflow_artifact_content(
 ) -> WorkflowArtifactContentRecord:
     """Read one manifest-listed artifact only after expected-checksum verification."""
 
-    relative_path, path, content_bytes, metadata = _read_strict_workflow_artifact_bytes(
-        Path(run_dir),
-        manifest,
-        artifact_key,
-    )
-    content_type = str(metadata.get("content_type") or content_type_for_path(relative_path))
-    content, truncated = _read_artifact_content_bytes(
-        content_bytes,
-        content_type,
+    try:
+        # Preserve the public signature while making the persisted manifest bytes the
+        # single validation owner. This closes a load/validate/use gap in callers that
+        # previously supplied an earlier manifest object.
+        del manifest
+        manifest_snapshot, persisted_manifest = _capture_and_validate_run_manifest(
+            Path(run_dir)
+        )
+        if artifact_key == "manifest":
+            snapshot = manifest_snapshot
+        else:
+            snapshot = _capture_verified_artifact_snapshot(
+                Path(run_dir), persisted_manifest, artifact_key
+            )
+    except ArtifactStoreMetadataError as exc:
+        _emit_strict_workflow_metadata_failure(exc)
+        raise
+    return _content_record_from_snapshot(
+        snapshot,
+        redact=redact,
         max_bytes=max_bytes,
     )
+
+
+def _content_record_from_snapshot(
+    snapshot: _VerifiedArtifactSnapshot,
+    *,
+    redact: bool,
+    max_bytes: int | None,
+) -> WorkflowArtifactContentRecord:
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be non-negative")
+    if redact and snapshot.content_type in {
+        "application/json",
+        "application/x-ndjson",
+    }:
+        content, truncated = _read_redacted_structured_snapshot_content(
+            snapshot,
+            max_bytes=max_bytes,
+        )
+    else:
+        content, truncated = _read_artifact_content_bytes(
+            snapshot.content_bytes,
+            snapshot.content_type,
+            max_bytes=max_bytes,
+        )
+        content = _redact_if_needed(content, redact=redact)
     return WorkflowArtifactContentRecord(
-        artifact_key=artifact_key,
-        relative_path=_posix_artifact_path(relative_path),
-        absolute_path=str(path),
-        content_type=content_type,
-        size_bytes=len(content_bytes),
-        content=_redact_if_needed(content, redact=redact),
+        artifact_key=snapshot.artifact_key,
+        relative_path=snapshot.relative_path,
+        absolute_path=str(snapshot.absolute_path),
+        content_type=snapshot.content_type,
+        size_bytes=snapshot.size_bytes,
+        content=content,
         truncated=truncated,
-        metadata=metadata,
+        metadata=_redact_if_needed(dict(snapshot.metadata), redact=redact),
     )
+
+
+def _read_redacted_structured_snapshot_content(
+    snapshot: _VerifiedArtifactSnapshot,
+    *,
+    max_bytes: int | None,
+) -> tuple[Any, bool]:
+    if snapshot.content_type == "application/json":
+        decoded = json.loads(snapshot.content_bytes.decode("utf-8"))
+    else:
+        decoded = _read_jsonl_bytes_values(snapshot.content_bytes)
+    redacted = redact_sensitive_values(decoded)
+    if max_bytes is None or len(snapshot.content_bytes) <= max_bytes:
+        return redacted, False
+    serialized = json.dumps(
+        redacted,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    preview = serialized[:max_bytes]
+    return {
+        "encoding": "utf-8",
+        "text_preview": preview.decode("utf-8", errors="replace"),
+        "preview_size_bytes": len(preview),
+        "redacted": True,
+    }, True
 
 
 def read_artifact_index_content_records(
@@ -3598,6 +3789,318 @@ def _artifact_index_entry_key(index_artifact_key: str, entry: dict[str, Any]) ->
     return ".".join(_artifact_key_segment(part) for part in parts)
 
 
+def _capture_verified_artifact_index_snapshots(
+    run_dir: Path,
+    snapshots: Mapping[str, _VerifiedArtifactSnapshot],
+    artifact_paths: dict[str, str],
+    *,
+    run_id: str,
+    index_artifact_key: str,
+) -> list[_VerifiedArtifactSnapshot]:
+    if index_artifact_key not in artifact_paths:
+        return []
+    index_snapshot = snapshots.get(index_artifact_key)
+    if index_snapshot is None:
+        raise ArtifactStoreMetadataError(
+            f"verified artifact index snapshot is missing: {index_artifact_key}"
+        )
+    try:
+        payload = json.loads(index_snapshot.content_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ArtifactStoreMetadataError(
+            f"artifact index is not valid JSON: {index_artifact_key}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ArtifactStoreMetadataError(
+            f"artifact index must be an object: {index_artifact_key}"
+        )
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise ArtifactStoreMetadataError(
+            f"artifact index entries must be a list: {index_artifact_key}"
+        )
+
+    plans: list[tuple[_VerifiedIndexEntryPlan, dict[str, Any]]] = []
+    projected_keys: set[str] = set()
+    for position, raw_entry in enumerate(entries):
+        if not isinstance(raw_entry, dict):
+            raise ArtifactStoreMetadataError(
+                f"artifact index entry must be an object: {index_artifact_key}[{position}]"
+            )
+        entry = dict(raw_entry)
+        projected_entry = _canonical_index_entry_projection(entry, position=position)
+        artifact_key = _artifact_index_entry_key(index_artifact_key, projected_entry)
+        if artifact_key in projected_keys:
+            raise ArtifactStoreMetadataError(
+                f"artifact index projected key is duplicated: {artifact_key}"
+            )
+        projected_keys.add(artifact_key)
+        plans.append(
+            (
+                _verified_index_entry_plan(
+                    artifact_key,
+                        entry,
+                        projected_entry,
+                        run_id=run_id,
+                        index_artifact_key=index_artifact_key,
+                ),
+                entry,
+            )
+        )
+
+    verified: list[_VerifiedArtifactSnapshot] = []
+    for plan, entry in plans:
+        path = resolve_artifact_descendant(
+            run_dir,
+            plan.relative_path,
+            field=f"artifact_index_path[{plan.artifact_key}]",
+        )
+        if path.exists() and not path.is_file():
+            raise ArtifactStoreMetadataError(
+                f"artifact index target is not a regular file: {plan.artifact_key}"
+            )
+        if not path.is_file():
+            raise ArtifactNotFoundError(
+                f"artifact file not found: {plan.relative_path}"
+            )
+        try:
+            content_bytes = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise ArtifactNotFoundError(
+                f"artifact file not found: {plan.relative_path}"
+            ) from exc
+        verify_sha256_checksum(
+            content_bytes,
+            plan.checksum,
+            artifact_id=plan.artifact_key,
+            field="artifact_index.checksum",
+            store="strict_workflow",
+            operation="strict_read",
+        )
+        if plan.size_bytes is not None and len(content_bytes) != plan.size_bytes:
+            raise ArtifactStoreMetadataError(
+                f"artifact index size_bytes does not match content: {plan.artifact_key}"
+            )
+        actual_content_type = content_type_for_path(plan.relative_path)
+        if (
+            plan.content_type is not None
+            and plan.content_type != actual_content_type
+        ):
+            raise ArtifactStoreMetadataError(
+                f"artifact index content_type does not match path: {plan.artifact_key}"
+            )
+        verified.append(
+            _VerifiedArtifactSnapshot(
+                artifact_key=plan.artifact_key,
+                relative_path=_posix_artifact_path(plan.relative_path),
+                absolute_path=path,
+                metadata=MappingProxyType(dict(plan.metadata)),
+                content_type=actual_content_type,
+                size_bytes=len(content_bytes),
+                content_bytes=content_bytes,
+            )
+        )
+    return verified
+
+
+def _selected_artifact_index_keys(
+    artifact_paths: dict[str, str],
+    *,
+    index_keys: Iterable[str] | None,
+) -> list[str]:
+    selected: list[str] = []
+    seen: set[str] = set()
+    for raw_key in index_keys or DEFAULT_ARTIFACT_INDEX_KEYS:
+        key = str(raw_key)
+        if key in seen or key not in artifact_paths:
+            continue
+        seen.add(key)
+        selected.append(key)
+    return selected
+
+
+def _canonical_index_entry_projection(
+    entry: dict[str, Any],
+    *,
+    position: int,
+) -> dict[str, Any]:
+    raw_ref = entry.get("artifact_ref")
+    if raw_ref is not None and not isinstance(raw_ref, dict):
+        raise ArtifactStoreMetadataError(
+            f"artifact index artifact_ref must be an object: entry {position}"
+        )
+    artifact_ref = dict(raw_ref or {})
+    if raw_ref is not None:
+        for field_name in ("artifact_id", "run_id", "artifact_type", "path"):
+            value = artifact_ref.get(field_name)
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+            ):
+                raise ArtifactStoreMetadataError(
+                    "artifact index artifact_ref field must be a non-empty string: "
+                    f"{field_name} at entry {position}"
+                )
+    projected = dict(entry)
+    for field_name in ("artifact_id", "run_id", "artifact_type", "path"):
+        top_value = entry.get(field_name)
+        nested_value = artifact_ref.get(field_name)
+        if nested_value is not None:
+            if top_value is not None and top_value != nested_value:
+                raise ArtifactStoreMetadataError(
+                    f"artifact index {field_name} declarations conflict: entry {position}"
+                )
+            projected[field_name] = nested_value
+    for field_name in ("artifact_id", "run_id", "artifact_type", "path"):
+        value = projected.get(field_name)
+        if value is not None and (
+            not isinstance(value, str) or not value.strip() or value != value.strip()
+        ):
+            raise ArtifactStoreMetadataError(
+                f"artifact index {field_name} must be a non-empty string: entry {position}"
+            )
+    return projected
+
+
+def _verified_index_entry_plan(
+    artifact_key: str,
+    entry: dict[str, Any],
+    projected_entry: dict[str, Any],
+    *,
+    run_id: str,
+    index_artifact_key: str,
+) -> _VerifiedIndexEntryPlan:
+    raw_ref = entry.get("artifact_ref")
+    artifact_ref = dict(raw_ref) if isinstance(raw_ref, dict) else {}
+    relative_path = projected_entry.get("path")
+    if not isinstance(relative_path, str) or not relative_path.strip():
+        raise ArtifactStoreMetadataError(
+            f"artifact index path is required: {artifact_key}"
+        )
+    entry_run_id = projected_entry.get("run_id")
+    if entry_run_id is not None and entry_run_id != run_id:
+        raise ArtifactStoreMetadataError(
+            f"artifact index run_id does not match replay run: {artifact_key}"
+        )
+
+    top_checksum = entry.get("checksum")
+    nested_checksum = artifact_ref.get("checksum")
+    top_checksum_declared = "checksum" in entry
+    nested_checksum_declared = "checksum" in artifact_ref
+    validated_top = (
+        validate_sha256_checksum(
+            top_checksum,
+            artifact_id=artifact_key,
+            field="artifact_index.checksum",
+        )
+        if top_checksum_declared
+        else None
+    )
+    validated_nested = (
+        validate_sha256_checksum(
+            nested_checksum,
+            artifact_id=artifact_key,
+            field="artifact_index.artifact_ref.checksum",
+        )
+        if nested_checksum_declared
+        else None
+    )
+    if top_checksum_declared and nested_checksum_declared:
+        if validated_top != validated_nested:
+            raise ArtifactStoreMetadataError(
+                f"artifact index checksum declarations conflict: {artifact_key}"
+            )
+    checksum = validated_top or validated_nested
+    if checksum is None:
+        raise ArtifactStoreMetadataError(
+            f"artifact index checksum is missing: {artifact_key}"
+        )
+
+    size_bytes = _canonical_optional_index_field(
+        entry,
+        artifact_ref,
+        "size_bytes",
+        artifact_key=artifact_key,
+    )
+    if size_bytes is not None and (
+        isinstance(size_bytes, bool)
+        or not isinstance(size_bytes, int)
+        or size_bytes < 0
+    ):
+        raise ArtifactStoreMetadataError(
+            f"invalid artifact index size_bytes: {artifact_key}"
+        )
+
+    # `source_response_headers.content_type` is a business projection of the
+    # upstream HTTP response. Its nested artifact_ref owns persisted MIME.
+    if artifact_ref:
+        content_type = artifact_ref.get("content_type")
+        if projected_entry.get("artifact_type") != "source_response_headers":
+            top_content_type = entry.get("content_type")
+            if (
+                top_content_type is not None
+                and content_type is not None
+                and top_content_type != content_type
+            ):
+                raise ArtifactStoreMetadataError(
+                    f"artifact index content_type declarations conflict: {artifact_key}"
+                )
+    else:
+        content_type = entry.get("content_type")
+    if content_type is not None and (
+        not isinstance(content_type, str) or not content_type.strip()
+    ):
+        raise ArtifactStoreMetadataError(
+            f"invalid artifact index content_type: {artifact_key}"
+        )
+
+    metadata = {
+        **entry,
+        "artifact_index": True,
+        "index_artifact_key": index_artifact_key,
+    }
+    return _VerifiedIndexEntryPlan(
+        artifact_key=artifact_key,
+        relative_path=relative_path,
+        checksum=checksum,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        metadata=metadata,
+    )
+
+
+def _canonical_optional_index_field(
+    entry: dict[str, Any],
+    artifact_ref: dict[str, Any],
+    field_name: str,
+    *,
+    artifact_key: str,
+) -> Any:
+    top_value = entry.get(field_name)
+    nested_value = artifact_ref.get(field_name)
+    if nested_value is not None:
+        if top_value is not None and top_value != nested_value:
+            raise ArtifactStoreMetadataError(
+                f"artifact index {field_name} declarations conflict: {artifact_key}"
+            )
+        return nested_value
+    return top_value
+
+
+def _indexed_content_record_from_snapshot(
+    snapshot: _VerifiedArtifactSnapshot,
+    *,
+    redact: bool,
+    max_bytes: int | None,
+) -> WorkflowArtifactContentRecord:
+    return _content_record_from_snapshot(
+        snapshot,
+        redact=redact,
+        max_bytes=max_bytes,
+    )
+
+
 def _artifact_key_segment(value: str) -> str:
     return "".join(
         character if character.isalnum() or character in {"_", "-"} else "_"
@@ -4246,6 +4749,30 @@ def _read_jsonl_bytes_values(content_bytes: bytes) -> list[Any]:
     return values
 
 
+def _read_event_jsonl_bytes(content_bytes: bytes) -> list[WorkflowEventRecord]:
+    records: list[WorkflowEventRecord] = []
+    try:
+        lines = content_bytes.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise WorkflowRunInspectionError("invalid UTF-8 events artifact") from exc
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise WorkflowRunInspectionError(
+                f"invalid event JSON at line {line_number}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise WorkflowRunInspectionError(
+                f"event record must be an object at line {line_number}"
+            )
+        records.append(_event_from_payload(payload, line_number=line_number))
+    return records
+
+
 def _event_from_payload(payload: dict[str, Any], *, line_number: int) -> WorkflowEventRecord:
     event_payload = payload.get("payload")
     if not isinstance(event_payload, dict):
@@ -4324,6 +4851,81 @@ def _read_strict_workflow_artifact_bytes(
     manifest: dict[str, Any],
     artifact_key: str,
 ) -> tuple[str, Path, bytes, dict[str, Any]]:
+    snapshot = _capture_verified_artifact_snapshot(run_dir, manifest, artifact_key)
+    return (
+        snapshot.relative_path,
+        snapshot.absolute_path,
+        snapshot.content_bytes,
+        dict(snapshot.metadata),
+    )
+
+
+def _capture_and_validate_run_manifest(
+    run_dir: Path,
+) -> tuple[_VerifiedArtifactSnapshot, dict[str, Any]]:
+    path = resolve_artifact_descendant(
+        run_dir,
+        "manifest.json",
+        field="artifact_path[manifest]",
+    )
+    if path.exists() and not path.is_file():
+        raise ArtifactStoreMetadataError(
+            "artifact file is not a regular file: manifest.json"
+        )
+    if not path.is_file():
+        raise ArtifactNotFoundError("artifact file not found: manifest.json")
+    try:
+        content_bytes = path.read_bytes()
+    except FileNotFoundError as exc:
+        raise ArtifactNotFoundError("artifact file not found: manifest.json") from exc
+    try:
+        manifest = json.loads(content_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ArtifactStoreMetadataError("run manifest is not valid JSON") from exc
+    if not isinstance(manifest, dict):
+        raise ArtifactStoreMetadataError("run manifest must be an object")
+    _validate_canonical_run_manifest(manifest)
+    artifacts = _manifest_artifact_map(manifest)
+    if artifacts.get("manifest") != "manifest.json":
+        raise ArtifactStoreMetadataError(
+            "run manifest artifact must reference manifest.json"
+        )
+    metadata = _strict_artifact_metadata(manifest, "manifest")
+    if metadata.get("checksum") != "pending":
+        raise ArtifactStoreMetadataError(
+            "artifact metadata checksum must be 'pending': manifest"
+        )
+    expected_content_type = metadata.get("content_type")
+    if expected_content_type != "application/json":
+        raise ArtifactStoreMetadataError(
+            "artifact metadata content_type does not match path: manifest"
+        )
+    return (
+        _VerifiedArtifactSnapshot(
+            artifact_key="manifest",
+            relative_path="manifest.json",
+            absolute_path=path,
+            metadata=MappingProxyType(dict(metadata)),
+            content_type="application/json",
+            size_bytes=len(content_bytes),
+            content_bytes=content_bytes,
+        ),
+        manifest,
+    )
+
+
+def _validate_canonical_run_manifest(manifest: dict[str, Any]) -> None:
+    try:
+        validate_run_manifest(manifest, require_terminal_artifact=True)
+    except RunManifestError as exc:
+        raise ArtifactStoreMetadataError("invalid canonical run manifest") from exc
+
+
+def _capture_verified_artifact_snapshot(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    artifact_key: str,
+) -> _VerifiedArtifactSnapshot:
     artifacts = _manifest_artifact_map(manifest)
     relative_path = artifacts.get(artifact_key)
     if relative_path is None:
@@ -4334,6 +4936,10 @@ def _read_strict_workflow_artifact_bytes(
         relative_path,
         field=f"artifact_path[{artifact_key}]",
     )
+    if path.exists() and not path.is_file():
+        raise ArtifactStoreMetadataError(
+            f"artifact file is not a regular file: {relative_path}"
+        )
     metadata = _strict_artifact_metadata(manifest, artifact_key)
     expected_content_type = metadata.get("content_type")
     actual_content_type = content_type_for_path(relative_path)
@@ -4367,13 +4973,94 @@ def _read_strict_workflow_artifact_bytes(
             expected_checksum,
             artifact_id=artifact_key,
             field="artifact_metadata.checksum",
+            store="strict_workflow",
+            operation="strict_read",
         )
         expected_size = metadata.get("size_bytes")
         if expected_size is not None and len(content_bytes) != expected_size:
             raise ArtifactStoreMetadataError(
                 f"artifact metadata size_bytes does not match content: {artifact_key}"
             )
-    return relative_path, path, content_bytes, metadata
+    return _VerifiedArtifactSnapshot(
+        artifact_key=artifact_key,
+        relative_path=_posix_artifact_path(relative_path),
+        absolute_path=path,
+        metadata=MappingProxyType(dict(metadata)),
+        content_type=actual_content_type,
+        size_bytes=len(content_bytes),
+        content_bytes=content_bytes,
+    )
+
+
+def _json_payload_from_snapshot(
+    snapshot: _VerifiedArtifactSnapshot | None,
+    *,
+    default: Any,
+) -> Any:
+    if snapshot is None:
+        return default
+    try:
+        return json.loads(snapshot.content_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise WorkflowRunInspectionError(
+            f"invalid JSON artifact: {snapshot.artifact_key}"
+        ) from exc
+
+
+def _event_records_from_snapshot(
+    snapshot: _VerifiedArtifactSnapshot | None,
+) -> list[WorkflowEventRecord]:
+    if snapshot is None:
+        return []
+    return _read_event_jsonl_bytes(snapshot.content_bytes)
+
+
+def _strict_snapshot_integrity_report(
+    artifact_paths: dict[str, str],
+    snapshots: dict[str, _VerifiedArtifactSnapshot],
+    *,
+    indexed_snapshot_count: int,
+) -> dict[str, Any]:
+    # Strict snapshot construction is the proof of validity. This projection is
+    # intentionally byte-derived and does not invoke tolerant path-based inspection.
+    return WorkflowManifestIntegrityReport(
+        valid=True,
+        artifact_count=len(artifact_paths),
+        file_count=len(snapshots) + indexed_snapshot_count,
+        total_size_bytes=sum(snapshot.size_bytes for snapshot in snapshots.values()),
+    ).to_dict()
+
+
+def _required_index_run_id(manifest: dict[str, Any]) -> str:
+    run_id = manifest.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise ArtifactStoreMetadataError("run manifest run_id is required")
+    return run_id
+
+
+def _is_missing_checksum_error(exc: ArtifactStoreMetadataError) -> bool:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current)
+        if (
+            "checksum is missing" in message
+            or "artifact metadata is missing" in message
+            or "checksum is required" in message
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _emit_strict_workflow_metadata_failure(
+    exc: ArtifactStoreMetadataError,
+) -> None:
+    if _is_missing_checksum_error(exc):
+        emit_artifact_checksum_missing(store="strict_workflow")
+    else:
+        emit_artifact_metadata_corrupt(store="strict_workflow")
 
 
 def _strict_artifact_metadata(

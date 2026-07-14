@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from framework.artifacts.models import compute_checksum
+from framework.artifacts.observability import emit_artifact_checksum_mismatch
 from framework.artifacts.stores.errors import (
     ArtifactChecksumMismatchError,
     ArtifactStoreMetadataError,
@@ -35,6 +36,8 @@ def verify_sha256_checksum(
     *,
     artifact_id: str,
     field: str = "checksum",
+    store: str = "artifact_store",
+    operation: str = "verify",
 ) -> str:
     """Validate and compare a persisted SHA-256 digest, returning the actual digest."""
 
@@ -45,6 +48,7 @@ def verify_sha256_checksum(
     )
     actual = compute_checksum(content)
     if actual != expected:
+        emit_artifact_checksum_mismatch(store=store, operation=operation)
         raise ArtifactChecksumMismatchError(
             f"artifact checksum mismatch: {artifact_id}"
         )

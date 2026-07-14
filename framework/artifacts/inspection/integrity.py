@@ -4,12 +4,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from framework.artifacts.models import ArtifactManifest
+from framework.artifacts.observability import (
+    emit_artifact_checksum_missing,
+    emit_artifact_integrity_inspection,
+    emit_artifact_metadata_corrupt,
+)
 from framework.artifacts.stores import (
     ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
     ArtifactStore,
     ArtifactStoreMetadataError,
     verify_sha256_checksum,
+)
+from framework.artifacts.stores.errors import (
+    artifact_observability_was_emitted,
 )
 from framework.artifacts.stores.integrity import (
     ARTIFACT_INTEGRITY_METADATA_KEY,
@@ -48,7 +56,30 @@ class ArtifactIntegrityInspector:
     def __init__(self, store: ArtifactStore | None = None) -> None:
         self.store = store
 
-    def inspect(self, manifest: ArtifactManifest, store: ArtifactStore | None = None) -> ArtifactIntegrityReport:
+    def inspect(
+        self,
+        manifest: ArtifactManifest,
+        store: ArtifactStore | None = None,
+    ) -> ArtifactIntegrityReport:
+        try:
+            report = self._inspect(manifest, store=store)
+        except ArtifactStoreRequiredError:
+            emit_artifact_integrity_inspection(result="store_unavailable")
+            raise
+        except Exception:
+            emit_artifact_integrity_inspection(result="error")
+            raise
+        emit_artifact_integrity_inspection(
+            result="valid" if report.valid else "invalid"
+        )
+        return report
+
+    def _inspect(
+        self,
+        manifest: ArtifactManifest,
+        *,
+        store: ArtifactStore | None,
+    ) -> ArtifactIntegrityReport:
         if not manifest.artifacts:
             return ArtifactIntegrityReport(valid=True, checked_count=0)
         actual_store = store if store is not None else self.store
@@ -70,7 +101,10 @@ class ArtifactIntegrityInspector:
                     ArtifactIntegrityIssue(ref.artifact_id, "checksum_mismatch")
                 )
                 continue
-            except ArtifactStoreMetadataError:
+            except ArtifactStoreMetadataError as exc:
+                if not exc.observability_emitted:
+                    emit_artifact_metadata_corrupt(store="artifact_store")
+                    exc.mark_observability_emitted()
                 issues.append(
                     ArtifactIntegrityIssue(ref.artifact_id, "metadata_corrupt")
                 )
@@ -83,6 +117,11 @@ class ArtifactIntegrityInspector:
                 == CHECKSUM_MISSING_INTEGRITY
                 or ref.checksum is None
             ):
+                if not artifact_observability_was_emitted(
+                    artifact,
+                    "checksum_missing",
+                ):
+                    emit_artifact_checksum_missing(store="artifact_store")
                 issues.append(
                     ArtifactIntegrityIssue(ref.artifact_id, "checksum_missing")
                 )
@@ -98,7 +137,10 @@ class ArtifactIntegrityInspector:
                 issues.append(
                     ArtifactIntegrityIssue(ref.artifact_id, "checksum_mismatch")
                 )
-            except ArtifactStoreMetadataError:
+            except ArtifactStoreMetadataError as exc:
+                if not exc.observability_emitted:
+                    emit_artifact_metadata_corrupt(store="artifact_store")
+                    exc.mark_observability_emitted()
                 issues.append(
                     ArtifactIntegrityIssue(ref.artifact_id, "metadata_corrupt")
                 )

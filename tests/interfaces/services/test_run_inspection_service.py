@@ -10,6 +10,7 @@ from framework.artifacts import (
 )
 from framework.artifacts.paths import ArtifactPathError
 from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
 
 
 def test_run_inspection_lists_runs_sorted_by_started_at(tmp_path) -> None:
@@ -268,10 +269,10 @@ def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> Non
 
     payload = result.to_dict()
     artifacts = {artifact["artifact_key"]: artifact for artifact in payload["artifacts"]}
-    assert payload["event_count"] == 1
+    assert payload["event_count"] == 2
     assert payload["step_result_count"] == 1
     assert payload["step_results"]["write"]["status"] == "succeeded"
-    assert payload["integrity"]["valid"] is False
+    assert payload["integrity"]["valid"] is True
     assert payload["events"][0]["payload"]["token"] == "[redacted]"
     assert artifacts["report_json"]["content"]["api_key"] == "[redacted]"
     assert artifacts["report_markdown"]["content"] == "# Report\n"
@@ -316,55 +317,65 @@ def test_run_inspection_replay_rejects_manifest_listed_missing_file(tmp_path) ->
         RunInspectionService(tmp_path).replay_run("run-1")
 
 
-def test_run_inspection_replay_preflights_unsafe_manifest_artifact_path(
+def test_run_inspection_replay_rejects_invalid_canonical_manifest(tmp_path) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    manifest = json.loads(json.dumps(fixture.manifest))
+    manifest.pop("workflow_id")
+    rewrite_manifest(fixture, manifest)
+
+    with pytest.raises(ArtifactStoreMetadataError, match="canonical run manifest"):
+        RunInspectionService(tmp_path).replay_run("run-1")
+
+
+def test_run_inspection_replay_uses_verified_snapshot_after_target_replacement(
     tmp_path,
     monkeypatch,
 ) -> None:
-    run_dir = tmp_path / "run-unsafe"
-    run_dir.mkdir()
+    fixture = write_canonical_terminal_run(tmp_path)
+    output_path = fixture.artifact_path("output")
+    original_read_bytes = type(output_path).read_bytes
+    replaced = False
+
+    def replace_after_capture(path):
+        nonlocal replaced
+        content = original_read_bytes(path)
+        if path == output_path and not replaced:
+            replaced = True
+            output_path.write_bytes(b'{"result":"tampered"}')
+        return content
+
+    monkeypatch.setattr(type(output_path), "read_bytes", replace_after_capture)
+
+    result = RunInspectionService(tmp_path).replay_run("run-1")
+    artifacts = {artifact.artifact_key: artifact for artifact in result.artifacts}
+
+    assert replaced is True
+    assert artifacts["output"].content["result"] == "verified-original"
+
+
+def test_run_inspection_replay_preflights_unsafe_manifest_artifact_path(
+    tmp_path,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path, run_id="run-unsafe")
     outside = tmp_path / "outside.txt"
     outside.write_text("artifact-secret", encoding="utf-8")
-    (run_dir / "manifest.json").write_text(
-        json.dumps(
-            {
-                "run_id": "run-unsafe",
-                "status": "succeeded",
-                "artifacts": {"output": "../outside.txt"},
-            }
-        ),
-        encoding="utf-8",
-    )
-    service = RunInspectionService(tmp_path)
+    manifest = json.loads(json.dumps(fixture.manifest))
+    manifest["artifacts"]["output"] = "../outside.txt"
+    rewrite_manifest(fixture, manifest)
 
-    def fail_if_bundle_is_built(*args, **kwargs):
-        raise AssertionError("replay bundle must not be built for an unsafe artifact path")
-
-    monkeypatch.setattr(
-        service._inspector,
-        "build_replay_content_bundle",
-        fail_if_bundle_is_built,
-    )
-
-    with pytest.raises(ArtifactPathError, match="invalid artifact path"):
-        service.replay_run("run-unsafe")
+    with pytest.raises(ArtifactStoreMetadataError, match="canonical run manifest"):
+        RunInspectionService(tmp_path).replay_run("run-unsafe")
 
     assert outside.read_text(encoding="utf-8") == "artifact-secret"
 
 
 def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
-    run_dir = tmp_path / "run-1"
-    item_dir = run_dir / "sources" / "items" / "feed"
-    error_dir = run_dir / "sources" / "errors" / "feed"
-    item_dir.mkdir(parents=True)
-    error_dir.mkdir(parents=True)
-    (run_dir / "source_artifacts").mkdir()
-    manifest = {
-        "run_id": "run-1",
-        "status": "succeeded",
-        "artifacts": {
-            "source_artifacts": "source_artifacts/index.json",
-        },
-    }
+    item_bytes = json.dumps(
+        {"item": {"title": "Item", "metadata": {"api_key": "hidden-key"}}}
+    ).encode("utf-8")
+    error_bytes = json.dumps(
+        {"error": {"error_type": "fetch_timeout", "url": "https://example.com"}}
+    ).encode("utf-8")
     source_index = {
         "entries": [
             {
@@ -372,38 +383,36 @@ def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
                 "source_id": "feed/source",
                 "object_id": "item-1",
                 "path": "sources/items/feed/item-1.json",
+                "checksum": sha256(item_bytes).hexdigest(),
+                "content_type": "application/json",
+                "size_bytes": len(item_bytes),
             },
             {
                 "artifact_type": "source_error",
                 "source_id": "feed/source",
                 "object_id": "error-1",
                 "path": "sources/errors/feed/error-1.json",
+                "checksum": sha256(error_bytes).hexdigest(),
+                "content_type": "application/json",
+                "size_bytes": len(error_bytes),
             },
         ],
         "item_count": 1,
         "error_count": 1,
     }
     source_index_bytes = json.dumps(source_index).encode("utf-8")
-    manifest["artifact_metadata"] = {
-        "source_artifacts": {
-            "checksum": sha256(source_index_bytes).hexdigest(),
-            "content_type": "application/json",
-            "size_bytes": len(source_index_bytes),
-        }
-    }
-    (run_dir / "source_artifacts" / "index.json").write_text(
-        source_index_bytes.decode("utf-8"),
-        encoding="utf-8",
+    fixture = write_canonical_terminal_run(
+        tmp_path,
+        extra_artifacts={
+            "source_artifacts": ("source_artifacts/index.json", source_index_bytes),
+        },
     )
-    (item_dir / "item-1.json").write_text(
-        json.dumps({"item": {"title": "Item", "metadata": {"api_key": "hidden-key"}}}),
-        encoding="utf-8",
-    )
-    (error_dir / "error-1.json").write_text(
-        json.dumps({"error": {"error_type": "fetch_timeout", "url": "https://example.com"}}),
-        encoding="utf-8",
-    )
-    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    item_path = fixture.run_dir / "sources/items/feed/item-1.json"
+    item_path.parent.mkdir(parents=True)
+    item_path.write_bytes(item_bytes)
+    error_path = fixture.run_dir / "sources/errors/feed/error-1.json"
+    error_path.parent.mkdir(parents=True)
+    error_path.write_bytes(error_bytes)
 
     result = RunInspectionService(tmp_path).replay_run("run-1")
 
@@ -417,6 +426,71 @@ def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
     assert artifacts[item_key]["content"]["item"]["metadata"]["api_key"] == "[redacted]"
     assert artifacts[error_key]["content"]["error"]["error_type"] == "fetch_timeout"
     assert "hidden-key" not in json.dumps(payload)
+
+
+def test_run_inspection_replay_preserves_source_response_business_content_type(
+    tmp_path,
+) -> None:
+    content = b'{"headers":{"Content-Type":"application/rss+xml"}}'
+    checksum = sha256(content).hexdigest()
+    entry = {
+        "artifact_id": "source-response-headers-1",
+        "artifact_type": "source_response_headers",
+        "source_id": "feed",
+        "object_id": "request-1",
+        "path": "sources/response_headers/feed/request-1.json",
+        "content_type": "application/rss+xml",
+        "size_bytes": len(content),
+        "checksum": checksum,
+        "artifact_ref": {
+            "artifact_id": "source-response-headers-1",
+            "run_id": "run-1",
+            "artifact_type": "source_response_headers",
+            "path": "sources/response_headers/feed/request-1.json",
+            "content_type": "application/json",
+            "size_bytes": len(content),
+            "checksum": checksum,
+        },
+    }
+    index_bytes = json.dumps({"entries": [entry]}).encode("utf-8")
+    fixture = write_canonical_terminal_run(
+        tmp_path,
+        extra_artifacts={
+            "source_artifacts": ("source_artifacts/index.json", index_bytes),
+        },
+    )
+    target = fixture.run_dir / entry["path"]
+    target.parent.mkdir(parents=True)
+    target.write_bytes(content)
+
+    payload = RunInspectionService(tmp_path).replay_run("run-1").to_dict()
+    records = {record["artifact_key"]: record for record in payload["artifacts"]}
+    record = records[
+        "source_artifacts.source_response_headers.feed.request-1"
+    ]
+
+    assert record["content_type"] == "application/json"
+    assert record["metadata"]["content_type"] == "application/rss+xml"
+    assert record["metadata"]["artifact_ref"]["content_type"] == "application/json"
+
+
+def test_run_inspection_replay_rejects_tampered_selected_index_target(tmp_path) -> None:
+    content = b'{"item":{"title":"verified"}}'
+    fixture = _write_service_index_run(tmp_path, content, include_checksum=True)
+    (fixture.run_dir / "sources/items/feed/item-1.json").write_bytes(
+        b'{"item":{"title":"tampered"}}'
+    )
+
+    with pytest.raises(ArtifactChecksumMismatchError):
+        RunInspectionService(tmp_path).replay_run("run-1")
+
+
+def test_run_inspection_replay_rejects_selected_index_without_checksum(tmp_path) -> None:
+    content = b'{"item":{"title":"verified"}}'
+    _write_service_index_run(tmp_path, content, include_checksum=False)
+
+    with pytest.raises(ArtifactStoreMetadataError, match="checksum is missing"):
+        RunInspectionService(tmp_path).replay_run("run-1")
 
 
 def test_run_inspection_diagnostics_and_health_read_real_run(tmp_path) -> None:
@@ -484,64 +558,54 @@ def test_run_inspection_rejects_invalid_event_limit(tmp_path) -> None:
 
 
 def _write_replay_run(root):
-    run_dir = root / "run-1"
-    run_dir.mkdir()
-    files = {
-        "events": (
-            "events.jsonl",
-            (
-                json.dumps(
-                    {
-                        "event_type": "workflow_started",
-                        "payload": {"token": "hidden"},
-                    }
-                )
-                + "\n"
-            ).encode("utf-8"),
-        ),
-        "step_results": (
-            "step_results.json",
-            json.dumps(
-                {"write": {"status": "succeeded", "outputs": {"report": "ok"}}}
-            ).encode("utf-8"),
-        ),
-        "report_json": (
-            "report.json",
-            json.dumps({"title": "Report", "api_key": "hidden-key"}).encode("utf-8"),
-        ),
-        "report_markdown": ("report.md", b"# Report\n"),
-    }
-    artifacts = {key: relative_path for key, (relative_path, _) in files.items()}
-    artifacts["manifest"] = "manifest.json"
-    artifact_metadata = {
-        key: {
-            "checksum": sha256(content).hexdigest(),
-            "content_type": (
-                "application/x-ndjson"
-                if relative_path.endswith(".jsonl")
-                else "application/json"
-                if relative_path.endswith(".json")
-                else "text/markdown"
+    fixture = write_canonical_terminal_run(
+        root,
+        events=[
+            {
+                "event_type": "workflow_started",
+                "run_id": "run-1",
+                "payload": {"token": "hidden"},
+            },
+            {
+                "event_type": "workflow_succeeded",
+                "run_id": "run-1",
+                "payload": {},
+            },
+        ],
+        extra_artifacts={
+            "report_json": (
+                "report.json",
+                json.dumps({"title": "Report", "api_key": "hidden-key"}).encode("utf-8"),
             ),
-            "size_bytes": len(content),
-        }
-        for key, (relative_path, content) in files.items()
-    }
-    artifact_metadata["manifest"] = {
-        "checksum": "pending",
+            "report_markdown": ("report.md", b"# Report\n"),
+        },
+    )
+    return fixture.run_dir
+
+
+def _write_service_index_run(root, content, *, include_checksum):
+    entry = {
+        "artifact_id": "source-item-1",
+        "artifact_type": "source_item",
+        "source_id": "feed",
+        "object_id": "item-1",
+        "path": "sources/items/feed/item-1.json",
         "content_type": "application/json",
-        "size_bytes": 0,
+        "size_bytes": len(content),
     }
-    manifest = {
-        "run_id": "run-1",
-        "status": "succeeded",
-        "artifacts": artifacts,
-        "artifact_metadata": artifact_metadata,
-    }
-    for relative_path, content in files.values():
-        (run_dir / relative_path).write_bytes(content)
-    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return run_dir
+    if include_checksum:
+        entry["checksum"] = sha256(content).hexdigest()
+    index_bytes = json.dumps({"entries": [entry]}).encode("utf-8")
+    fixture = write_canonical_terminal_run(
+        root,
+        extra_artifacts={
+            "source_artifacts": ("source_artifacts/index.json", index_bytes),
+        },
+    )
+    target = fixture.run_dir / entry["path"]
+    target.parent.mkdir(parents=True)
+    target.write_bytes(content)
+    return fixture
 
 
 def _write_manifest(root, run_id, payload) -> None:

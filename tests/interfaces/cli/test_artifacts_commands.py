@@ -10,6 +10,7 @@ from framework.artifacts import (
     ArtifactStoreRequiredError,
 )
 from interfaces.cli.commands import artifacts as artifact_commands
+from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
 
 
 def test_news_cli_artifacts_list_json(monkeypatch, capsys) -> None:
@@ -107,6 +108,39 @@ def test_news_cli_artifacts_show_integrity_error_uses_stderr_and_exit_one(
     assert exit_code == 1
     assert captured.out == ""
     assert captured.err == "artifact integrity verification failed\n"
+
+
+def test_news_cli_artifacts_show_real_missing_checksum_does_not_print_content(
+    tmp_path,
+    capsys,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    manifest = dict(fixture.manifest)
+    manifest["artifact_metadata"] = {
+        key: dict(value) for key, value in fixture.manifest["artifact_metadata"].items()
+    }
+    manifest["artifact_metadata"]["output"].pop("checksum")
+    rewrite_manifest(fixture, manifest)
+
+    exit_code = news_cli.main(
+        [
+            "artifacts",
+            "show",
+            "--run-id",
+            "run-1",
+            "--artifact-key",
+            "output",
+            "--artifact-root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "invalid canonical run manifest" in captured.err
+    assert "fixture-secret-token" not in captured.err
 
 
 class _FakeArtifactService:

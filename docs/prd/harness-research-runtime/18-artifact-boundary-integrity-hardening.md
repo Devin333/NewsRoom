@@ -1072,37 +1072,37 @@ I8. 运行 strict OpenSpec、targeted tests、compile、smoke
 
 ### 16.1 安全边界
 
-- [ ] `ArtifactManager`、`LocalArtifactPublisher`、local stores 及列出的直接旁路均使用同一 path boundary helper。
-- [ ] `../`、`..\`、absolute、drive-relative、UNC/device、multi-segment run id 在任何文件副作用前失败。
-- [ ] canonical target 必须是 canonical root 的 descendant。
-- [ ] 对抗测试明确证明 artifact root 外没有新文件或目录。
-- [ ] 合法现有 run id 与 nested artifact path 保持成功。
+- [x] `ArtifactManager`、`LocalArtifactPublisher`、local stores 及列出的直接旁路均使用同一 path boundary helper。
+- [x] `../`、`..\`、absolute、drive-relative、UNC/device、multi-segment run id 在任何文件副作用前失败。
+- [x] canonical target 必须是 canonical root 的 descendant。
+- [x] 对抗测试明确证明 artifact root 外没有新文件或目录。
+- [x] 合法现有 run id 与 nested artifact path 保持成功。
 
 ### 16.2 Metadata 与引用
 
-- [ ] caller metadata 不能覆盖 `publisher_id`、`run_id` 或 artifact step 系统字段。
-- [ ] 冲突返回明确失败，且不创建文件、不返回 ref。
-- [ ] 正常 custom metadata 和敏感字段脱敏不回退。
-- [ ] `ArtifactReference` 与 `ArtifactRef` 不再生成字符串 `"None"`。
-- [ ] `uri/path` legacy alias 兼容，同值接受、冲突拒绝。
+- [x] caller metadata 不能覆盖 `publisher_id`、`run_id` 或 artifact step 系统字段。
+- [x] 冲突返回明确失败，且不创建文件、不返回 ref。
+- [x] 正常 custom metadata 和敏感字段脱敏不回退。
+- [x] `ArtifactReference` 与 `ArtifactRef` 不再生成字符串 `"None"`。
+- [x] `uri/path` legacy alias 兼容，同值接受、冲突拒绝。
 
 ### 16.3 完整性
 
-- [ ] 无 store 的 non-empty integrity inspection 不再返回 report success，而是抛 `ArtifactStoreRequiredError`。
-- [ ] `checked_count` 只统计实际检查项。
-- [ ] `LocalArtifactStore.get()` 在返回前重新计算 checksum。
-- [ ] object 或 expected checksum 被篡改时，manager/resolver/store 均产生 `ArtifactChecksumMismatchError`。
-- [ ] interface direct artifact read 与 run replay 在输出内容前执行 manifest checksum strict validation，篡改时产生同一 typed exception。
-- [ ] metadata corruption、missing object 和 checksum missing 有固定、测试化语义。
-- [ ] `FilesystemArtifactStore` 既有 mismatch 行为保持。
+- [x] 无 store 的 non-empty integrity inspection 不再返回 report success，而是抛 `ArtifactStoreRequiredError`。
+- [x] `checked_count` 只统计实际检查项。
+- [x] `LocalArtifactStore.get()` 在返回前重新计算 checksum。
+- [x] object 或 expected checksum 被篡改时，manager/resolver/store 均产生 `ArtifactChecksumMismatchError`。
+- [x] interface direct artifact read 与 run replay 在输出内容前执行 manifest checksum strict validation，篡改时产生同一 typed exception。
+- [x] metadata corruption、missing object 和 checksum missing 有固定、测试化语义。
+- [x] `FilesystemArtifactStore` 既有 mismatch 行为保持。
 
 ### 16.4 集成和回归
 
-- [ ] 恶意显式 workflow `run_id` 在 run dir/event/manifest 创建前失败。
-- [ ] artifact step reserved metadata 冲突产生 failed outcome 且无 artifact 副作用。
-- [ ] 正常 workflow manifest、artifact index、checkpoint、replay 通过。
-- [ ] interface/CLI/MCP 不可通过 run id 或 artifact path 读取 root 外文件。
-- [ ] 所有 targeted tests、compile、smoke 和 strict OpenSpec 验证通过。
+- [x] 恶意显式 workflow `run_id` 在 run dir/event/manifest 创建前失败。
+- [x] artifact step reserved metadata 冲突产生 failed outcome 且无 artifact 副作用。
+- [x] 正常 workflow manifest、artifact index、checkpoint、replay 通过。
+- [x] interface/CLI/MCP 不可通过 run id 或 artifact path 读取 root 外文件。
+- [x] 所有 targeted tests、compile、smoke 和 strict OpenSpec 验证通过。
 
 ---
 
@@ -1135,11 +1135,12 @@ Active completion change：
 
 ```powershell
 openspec validate artifact-integrity-completion-hardening --strict
-.\.venv\Scripts\python.exe -m pytest tests\framework\artifacts\test_models.py tests\framework\artifacts\test_paths.py tests\framework\artifacts\test_runtime_publish_resolve.py tests\framework\artifacts\test_store_manager.py tests\framework\artifacts\test_inspection.py -q
-.\.venv\Scripts\python.exe -m pytest tests\framework\workflow\test_artifact_integrity.py tests\framework\workflow\test_artifact_path_boundary.py tests\framework\workflow\test_artifact_step_runner.py -q
-.\.venv\Scripts\python.exe -m pytest tests\business\layers\signal\test_source_artifacts.py tests\business\layers\signal\test_source_indexing.py -q
-.\.venv\Scripts\python.exe -m pytest tests\interfaces\services\test_artifact_inspection_service.py tests\interfaces\services\test_run_inspection_service.py tests\interfaces\services\test_mcp_application_service.py -q
-.\.venv\Scripts\python.exe -m pytest tests\interfaces\api\test_api_run_inspection.py tests\interfaces\api\test_http_api_foundation.py tests\interfaces\api\test_api_mcp.py tests\interfaces\cli\test_artifacts_commands.py tests\interfaces\cli\test_runs_commands.py tests\interfaces\mcp\test_stdio_server.py -q
+.\.venv\Scripts\python.exe -m pytest tests\framework\artifacts\test_models.py tests\framework\artifacts\test_paths.py tests\framework\artifacts\test_runtime_publish_resolve.py tests\framework\artifacts\test_store_manager.py tests\framework\artifacts\test_inspection.py tests\framework\artifacts\test_observability.py -q -rs
+.\.venv\Scripts\python.exe -m pytest tests\framework\workflow\test_artifact_integrity.py tests\framework\workflow\test_artifact_path_boundary.py tests\framework\workflow\test_artifact_step_runner.py -q -rs
+.\.venv\Scripts\python.exe -m pytest tests\business\layers\signal\test_source_artifacts.py tests\business\layers\signal\test_source_indexing.py -q -rs
+.\.venv\Scripts\python.exe -m pytest tests\interfaces\services\test_artifact_inspection_service.py tests\interfaces\services\test_run_inspection_service.py tests\interfaces\services\test_mcp_application_service.py -q -rs
+.\.venv\Scripts\python.exe -m pytest tests\interfaces\api\test_api_run_inspection.py tests\interfaces\api\test_http_api_foundation.py tests\interfaces\api\test_api_mcp.py -q -rs
+.\.venv\Scripts\python.exe -m pytest tests\interfaces\cli\test_artifacts_commands.py tests\interfaces\cli\test_runs_commands.py tests\interfaces\mcp\test_stdio_server.py -q -rs
 ```
 
 每个代码 change 的最终门禁：
@@ -1227,16 +1228,16 @@ artifact_integrity_inspection_total{result}
 
 本阶段只有在以下条件全部满足时才完成：
 
-- [ ] `artifact-integrity-completion-hardening` 的 proposal、design、delta specs 和 tasks 均与 live implementation scope 一致并通过 strict validation；
-- [ ] strict direct read 与 replay 先通过 canonical terminal manifest validation，schema 失败映射为 `ArtifactStoreMetadataError`；
-- [ ] strict replay 的 manifest、events、step results、普通 artifacts 和 index-expanded targets 全部只消费同一次 verified snapshot，preflight 后没有路径重读；
-- [ ] artifact-index checksum/path/size/serialized-content-type 全部 transitive preflight，任一 entry 失败时整个 replay 不返回部分内容；
-- [ ] `LocalArtifactStore.get()/list()`、legacy publisher ref 和 artifact-service fallback 的残余 coercion/非 regular/direct join 缺口全部关闭；
-- [ ] 六类 artifact observability event 已实现，固定维度、单次 ownership 和 no-secret 契约均有测试；
-- [ ] 对抗性单元测试与真实 filesystem/workflow/service/HTTP/CLI/MCP/stdio 集成测试全部通过；
-- [ ] `.\.venv\Scripts\python.exe -m scripts.dev smoke` 通过；
-- [ ] `openspec validate --all --strict` 通过；
-- [ ] `git diff --check` 通过；
+- [x] `artifact-integrity-completion-hardening` 的 proposal、design、delta specs 和 tasks 均与 live implementation scope 一致并通过 strict validation；
+- [x] strict direct read 与 replay 先通过 canonical terminal manifest validation，schema 失败映射为 `ArtifactStoreMetadataError`；
+- [x] strict replay 的 manifest、events、step results、普通 artifacts 和 index-expanded targets 全部只消费同一次 verified snapshot，preflight 后没有路径重读；
+- [x] artifact-index checksum/path/size/serialized-content-type 全部 transitive preflight，任一 entry 失败时整个 replay 不返回部分内容；
+- [x] `LocalArtifactStore.get()/list()`、legacy publisher ref 和 artifact-service fallback 的残余 coercion/非 regular/direct join 缺口全部关闭；
+- [x] 六类 artifact observability event 已实现，固定维度、单次 ownership 和 no-secret 契约均有测试；
+- [x] 对抗性单元测试与真实 filesystem/workflow/service/HTTP/CLI/MCP/stdio 集成测试全部通过；
+- [x] `.\.venv\Scripts\python.exe -m scripts.dev smoke` 通过；
+- [x] `openspec validate --all --strict` 通过；
+- [x] `git diff --check` 通过；
 - [ ] 代码、测试、OpenSpec、PRD 以 path-scoped 边界提交，未混入阶段 19 或其他用户变更；
 - [ ] active change 已归档并同步到主规格，PRD 的 commits、测试计数与验收勾选均由 fresh evidence 支撑后，metadata 才恢复为 `FINAL / IMPLEMENTED`。
 
@@ -1506,7 +1507,8 @@ resolve_artifact_descendant(artifact_root, validated_run_id)
 | `tests/business/layers/signal/test_source_artifacts.py` | production index schema 与 `source_response_headers` content-type 双重语义 |
 | `tests/interfaces/services/test_run_inspection_service.py` | canonical fixture、strict index、manifest failure、snapshot replay |
 | `tests/interfaces/services/test_artifact_inspection_service.py` | canonical manifest、typed errors、fallback path |
-| `tests/interfaces/api/test_api_run_inspection.py` | 真实 service/filesystem 的 detail/replay 400/404/409/500，无 content |
+| `tests/interfaces/api/test_api_run_inspection.py` | 真实 service/filesystem 的 detail/replay 400/404/409，无 content；该 service 不具备 no-store 配置入口 |
+| `tests/interfaces/api/test_http_api_foundation.py` | router mapping isolation：注入 typed failure 验证 500 `artifact_store_unavailable`；不得算作上游 filesystem 产错证据 |
 | `tests/interfaces/cli/test_runs_commands.py`、`test_artifacts_commands.py` | 真实 filesystem path，exit `1`、stderr、stdout 无 content |
 | `tests/interfaces/services/test_mcp_application_service.py` | 真实 service factory 的 tool/resource typed failure |
 | `tests/interfaces/api/test_api_mcp.py` | 真实 MCP application + filesystem，outer HTTP mapping |
@@ -1591,6 +1593,43 @@ git diff --check
 - 测试计数只记录本次命令实际输出，不复制历史数字；
 - OpenSpec/代码/测试/PRD path-scoped staging 不得混入阶段 19 或其他用户已暂存/未暂存变更；
 - active change 归档后使用 main-spec 或 `openspec validate --all --strict`，不得保留会 `Unknown item` 的 active-change 命令作为 post-archive 指令。
+
+### 22.13 Completion remediation fresh evidence（2026-07-14）
+
+实现提交与归档前的最终 live-tree 证据如下；所有命令均在 `F:\github\NewsRoom` 使用 `.venv` 执行，未复制 21.3 的历史计数：
+
+| 门禁/矩阵 | Fresh result |
+| --- | --- |
+| artifact completion matrix | `146 passed, 1 skipped` |
+| workflow completion matrix | `119 passed, 1 skipped` |
+| business signal index matrix | `7 passed, 2 skipped` |
+| service completion matrix | `69 passed, 1 skipped` |
+| HTTP completion matrix | `92 passed, 198 warnings` |
+| CLI + stdio completion matrix | `51 passed` |
+| completion matrix 合计 | `484 passed, 5 skipped, 198 warnings` |
+| artifact + infrastructure storage compatibility | `169 passed, 3 skipped` |
+| workflow + builtin artifact tools compatibility | `195 passed, 3 skipped` |
+| artifact/run/storage service compatibility | `75 passed, 2 skipped` |
+| HTTP/CLI/MCP adapter compatibility | `166 passed, 206 warnings` |
+| `.\.venv\Scripts\python.exe -m scripts.dev compile` | 通过 |
+| `.\.venv\Scripts\python.exe -m scripts.dev smoke` | `903 passed, 23 skipped, 12 warnings`；source validation `is_valid=true` |
+| `openspec validate artifact-integrity-completion-hardening --strict` | valid |
+| `openspec validate --all --strict` | `508 passed, 0 failed` |
+| `git diff --check` | 通过；仅报告既有 CRLF/LF 工作树提示，无 whitespace error |
+
+Completion matrix 的 5 个 skip 均为当前 Windows 进程不能创建 symlink，不能作为 Windows link-containment 已实证的证据：
+
+1. `tests/framework/artifacts/test_paths.py:103`：`WinError 1314`，shared descendant link escape；
+2. `tests/framework/workflow/test_artifact_path_boundary.py:311`：`WinError 1314`，workflow catalog directory link；
+3. `tests/business/layers/signal/test_source_indexing.py:107`：`WinError 1314`，linked source index；
+4. 同一 helper 的第二个参数化场景：`WinError 1314`，linked source artifact ref；
+5. `tests/interfaces/services/test_artifact_inspection_service.py:226`：symlink creation unavailable，direct artifact detail link escape。
+
+兼容矩阵另外 5 个唯一 symlink 场景被跳过：`tests/infrastructure/storage/test_artifact_store.py:112`、`:272`，`tests/framework/tool/test_builtin_artifact_tools.py:85`、`:104`，以及 `tests/interfaces/services/test_storage_service.py:274`；与上面重复的 shared path、workflow catalog、artifact service 3 个场景一起形成兼容矩阵的 8 个 skip。它们同样只表示权限限制。
+
+`smoke` 的 23 个 skip 已用相同 pytest 范围加 `-rs` 复核：`tests/business/research/document/test_arxiv_latex_integration.py` 14 项因 `ArxivLatexDocumentCompiler` 需要 `source_fetcher` 而被该 live/network integration fixture 跳过；`tests/business/research/integration/test_chunk_paper_e2e.py` 9 项因未设置 `NEWS_RUN_LIVE_RESEARCH_E2E=1`、`NEWS_QDRANT_URL`、`NEWS_DATABASE_DSN` 而跳过。两组均为既有 Research smoke 条件，不属于 artifact completion 测试，也未被用作本阶段通过证据。HTTP 和 smoke warnings 均为既有 FastAPI `on_event` deprecation。
+
+逐项追踪结论：OpenSpec `1.1-6.6` 已由 canonical fixture、TOCTOU/manifest/index/store/observability 对抗测试和真实 service/HTTP/CLI/MCP/stdio 路径证明；`7.1-7.5` 已完成。HTTP 真实 service/filesystem 能产生的 400/404/409 均有无内容断言；该 service 不具备 no-store 配置入口，因此 500 `artifact_store_unavailable` 只由 router adapter-isolation test 证明，未冒充上游 filesystem 产错证据。`7.6`、第 20 节的提交/归档两项及 metadata 状态将在真实提交和归档完成后更新。
 
 只有以上全部完成，阶段 18 才可再次标记：
 

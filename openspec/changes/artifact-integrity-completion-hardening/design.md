@@ -59,6 +59,8 @@ This intentionally rejects invalid historical manifests in service-facing replay
 
 `RunInspectionService.replay_run()` must not load and normalize the manifest before invoking strict replay, because that creates a second manifest read and a split validation owner. After validating the run directory and missing-run condition, it delegates manifest byte capture, parsing, canonical validation, artifact path validation, and integrity preflight to `WorkflowRunInspector.build_replay_content_bundle(strict_artifact_integrity=True)`.
 
+The concrete run-replay and artifact-detail services do not accept or construct an artifact store, so their real filesystem paths cannot produce `ArtifactStoreRequiredError`. End-to-end HTTP regressions therefore prove the upstream 400, 404, and 409 outcomes those services can actually originate. The existing 500 `artifact_store_unavailable` contract remains covered at the router mapping boundary with an injected failing service; that test is adapter-isolation evidence only and is never counted as proof that these filesystem services produced the failure.
+
 ### Local-store pair classification includes file kind
 
 After resolving both canonical paths, `LocalArtifactStore.get()` distinguishes absence from non-regular persisted nodes. A stable directory or other non-file node at either object or metadata location raises `ArtifactStoreMetadataError` before JSON or byte reads. Ordinary ACL/permission failures for regular files remain underlying operational errors rather than being mislabeled as corrupt data.

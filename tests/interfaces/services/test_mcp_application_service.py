@@ -13,6 +13,7 @@ from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
 
 
 def test_mcp_catalog_lists_research_tools_without_calling_factories() -> None:
@@ -229,19 +230,12 @@ def test_mcp_unknown_tool_and_resource_fail_safely() -> None:
 
 
 def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -> None:
-    run_dir = tmp_path / "run-unsafe"
-    run_dir.mkdir()
+    fixture = write_canonical_terminal_run(tmp_path, "run-unsafe")
     (tmp_path / "outside.txt").write_text("artifact-secret", encoding="utf-8")
-    (run_dir / "manifest.json").write_text(
-        json.dumps(
-            {
-                "run_id": "run-unsafe",
-                "status": "succeeded",
-                "artifacts": {"output": "../outside.txt"},
-            }
-        ),
-        encoding="utf-8",
-    )
+    manifest = dict(fixture.manifest)
+    manifest["artifacts"] = dict(fixture.manifest["artifacts"])
+    manifest["artifacts"]["output"] = "../outside.txt"
+    rewrite_manifest(fixture, manifest)
     service = MCPApplicationService(
         run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
         artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
@@ -255,9 +249,14 @@ def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -
         service.call_tool("news.run.replay", {"run_id": "run-unsafe"}),
     ]
 
-    for result in results:
+    for result in results[:2]:
         assert result.success is False
         assert result.error_type == "ArtifactPathError"
+        assert result.data is None
+        assert "artifact-secret" not in json.dumps(result.to_dict())
+    for result in results[2:]:
+        assert result.success is False
+        assert result.error_type == "ArtifactStoreMetadataError"
         assert result.data is None
         assert "artifact-secret" not in json.dumps(result.to_dict())
 
@@ -289,6 +288,42 @@ def test_mcp_integrity_failures_preserve_typed_failure_envelopes(error_type) -> 
         assert result.error_type == error_type.__name__
         assert result.error_message == "artifact integrity verification failed"
         assert result.data is None
+
+
+def test_mcp_real_filesystem_integrity_failures_preserve_typed_envelopes(tmp_path) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
+        artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
+    )
+    fixture.artifact_path("output").write_text(
+        json.dumps({"result": "tampered-mcp-secret"}),
+        encoding="utf-8",
+    )
+
+    replay_results = [
+        service.call_tool("news.run.replay", {"run_id": "run-1"}),
+        service.read_resource("news://runs/run-1/replay"),
+        service.read_resource("news://runs/run-1/artifacts/output"),
+    ]
+    for result in replay_results:
+        assert result.success is False
+        assert result.error_type == "ArtifactChecksumMismatchError"
+        assert result.data is None
+        assert "tampered-mcp-secret" not in json.dumps(result.to_dict())
+
+    manifest = dict(fixture.manifest)
+    manifest["artifact_metadata"] = {
+        key: dict(value) for key, value in fixture.manifest["artifact_metadata"].items()
+    }
+    manifest["artifact_metadata"]["output"].pop("checksum")
+    rewrite_manifest(fixture, manifest)
+    missing_checksum = service.read_resource("news://runs/run-1/artifacts/output")
+
+    assert missing_checksum.success is False
+    assert missing_checksum.error_type == "ArtifactStoreMetadataError"
+    assert missing_checksum.data is None
+    assert "fixture-secret-token" not in json.dumps(missing_checksum.to_dict())
 
 
 class _ArtifactIntegrityFailureService:

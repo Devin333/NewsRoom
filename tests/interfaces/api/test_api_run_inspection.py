@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from interfaces.api import create_app
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
 
 
 def test_run_inspection_api_lists_filters_and_reads_run_details(tmp_path) -> None:
@@ -160,7 +161,10 @@ def test_run_inspection_api_includes_llm_trace_preview(tmp_path) -> None:
 
 
 def test_run_inspection_api_lists_artifacts(tmp_path) -> None:
-    _write_run(tmp_path, "run-1")
+    write_canonical_terminal_run(
+        tmp_path,
+        extra_artifacts={"report_markdown": ("report.md", b"# Report\n")},
+    )
     client = TestClient(_app(tmp_path))
 
     response = client.get("/api/v1/runs/run-1/artifacts")
@@ -173,20 +177,28 @@ def test_run_inspection_api_lists_artifacts(tmp_path) -> None:
 
 
 def test_run_inspection_api_distinguishes_invalid_artifact_path_from_missing(tmp_path) -> None:
-    _write_run(tmp_path, "run-unsafe")
-    manifest_path = tmp_path / "run-unsafe" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["artifacts"]["report_markdown"] = "../outside.md"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    write_canonical_terminal_run(
+        tmp_path,
+        "run-1",
+        extra_artifacts={"report_markdown": ("report.md", b"# Report\n")},
+    )
     client = TestClient(_app(tmp_path))
 
-    invalid = client.get("/api/v1/runs/run-unsafe/artifacts/report_markdown")
-    missing = client.get("/api/v1/runs/run-unsafe/artifacts/missing")
+    invalid = client.get("/api/v1/runs/run:stream/artifacts/report_markdown")
+    missing = client.get("/api/v1/runs/run-1/artifacts/missing")
 
+    invalid_payload = invalid.json()
+    missing_payload = missing.json()
     assert invalid.status_code == 400
-    assert invalid.json()["error"]["code"] == "invalid_artifact_path"
+    assert invalid_payload["success"] is False
+    assert invalid_payload["data"] is None
+    assert invalid_payload["error"]["code"] == "invalid_artifact_path"
+    assert "# Report" not in json.dumps(invalid_payload)
     assert missing.status_code == 404
-    assert missing.json()["error"]["code"] == "artifact_not_found"
+    assert missing_payload["success"] is False
+    assert missing_payload["data"] is None
+    assert missing_payload["error"]["code"] == "artifact_not_found"
+    assert "# Report" not in json.dumps(missing_payload)
 
 
 def test_run_inspection_api_rejects_unsafe_run_id_with_400(tmp_path) -> None:
@@ -194,8 +206,109 @@ def test_run_inspection_api_rejects_unsafe_run_id_with_400(tmp_path) -> None:
 
     response = client.get("/api/v1/runs/run:stream/artifacts")
 
+    payload = response.json()
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "invalid_artifact_path"
+    assert payload["success"] is False
+    assert payload["data"] is None
+    assert payload["error"]["code"] == "invalid_artifact_path"
+
+
+def test_run_inspection_api_real_replay_rejects_tampered_artifact_without_data(
+    tmp_path,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    fixture.artifact_path("output").write_text(
+        json.dumps({"result": "tampered-api-secret"}),
+        encoding="utf-8",
+    )
+    client = TestClient(_app(tmp_path))
+
+    response = client.get("/api/v1/runs/run-1/replay")
+    payload = response.json()
+
+    assert response.status_code == 409
+    assert payload["success"] is False
+    assert payload["data"] is None
+    assert payload["error"]["code"] == "artifact_checksum_mismatch"
+    assert "tampered-api-secret" not in json.dumps(payload)
+
+
+def test_run_inspection_api_real_artifact_detail_rejects_missing_checksum_without_content(
+    tmp_path,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    manifest = dict(fixture.manifest)
+    manifest["artifact_metadata"] = {
+        key: dict(value) for key, value in fixture.manifest["artifact_metadata"].items()
+    }
+    manifest["artifact_metadata"]["output"].pop("checksum")
+    rewrite_manifest(fixture, manifest)
+    client = TestClient(_app(tmp_path))
+
+    response = client.get("/api/v1/runs/run-1/artifacts/output")
+    payload = response.json()
+
+    assert response.status_code == 409
+    assert payload["success"] is False
+    assert payload["data"] is None
+    assert payload["error"]["code"] == "artifact_metadata_corrupt"
+    assert "fixture-secret-token" not in json.dumps(payload)
+
+
+def test_run_inspection_api_real_replay_rejects_invalid_canonical_manifest_without_data(
+    tmp_path,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    manifest = dict(fixture.manifest)
+    manifest["schema_version"] = "newsroom.workflow_run_manifest.v999"
+    rewrite_manifest(fixture, manifest)
+    client = TestClient(_app(tmp_path))
+
+    response = client.get("/api/v1/runs/run-1/replay")
+    payload = response.json()
+
+    assert response.status_code == 409
+    assert payload["success"] is False
+    assert payload["data"] is None
+    assert payload["error"]["code"] == "artifact_metadata_corrupt"
+    assert "fixture-secret-token" not in json.dumps(payload)
+
+
+def test_run_inspection_api_real_artifact_detail_wraps_unsafe_manifest_path_as_metadata(
+    tmp_path,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    manifest = dict(fixture.manifest)
+    manifest["artifacts"] = dict(fixture.manifest["artifacts"])
+    manifest["artifacts"]["output"] = "../outside.json"
+    rewrite_manifest(fixture, manifest)
+    client = TestClient(_app(tmp_path))
+
+    response = client.get("/api/v1/runs/run-1/artifacts/output")
+    payload = response.json()
+
+    assert response.status_code == 409
+    assert payload["success"] is False
+    assert payload["data"] is None
+    assert payload["error"]["code"] == "artifact_metadata_corrupt"
+    assert "fixture-secret-token" not in json.dumps(payload)
+
+
+def test_run_inspection_api_real_artifact_detail_maps_missing_file_without_content(
+    tmp_path,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    fixture.artifact_path("output").unlink()
+    client = TestClient(_app(tmp_path))
+
+    response = client.get("/api/v1/runs/run-1/artifacts/output")
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["success"] is False
+    assert payload["data"] is None
+    assert payload["error"]["code"] == "artifact_not_found"
+    assert "fixture-secret-token" not in json.dumps(payload)
 
 
 def _app(root):

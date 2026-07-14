@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from framework.artifacts.observability import emit_artifact_path_rejected
+
 
 _WINDOWS_RESERVED_CHARACTERS = frozenset('<>:"|?*')
 _DOS_DEVICE_NAME = re.compile(
@@ -17,6 +19,16 @@ class ArtifactPathError(ValueError):
 
 def validate_artifact_path_segment(value: str, *, field: str) -> str:
     """Return an unchanged, validated single filesystem path segment."""
+
+    try:
+        return _validate_artifact_path_segment(value, field=field)
+    except ArtifactPathError:
+        emit_artifact_path_rejected(field=field, operation="validate_segment")
+        raise
+
+
+def _validate_artifact_path_segment(value: str, *, field: str) -> str:
+    """Validate a segment without emitting a nested boundary event."""
 
     if not isinstance(value, str):
         raise ArtifactPathError(f"{field} must be a string")
@@ -51,6 +63,16 @@ def validate_artifact_path_segment(value: str, *, field: str) -> str:
 def validate_relative_artifact_path(value: str, *, field: str) -> str:
     """Return a normalized POSIX path that is relative to an artifact root."""
 
+    try:
+        return _validate_relative_artifact_path(value, field=field)
+    except ArtifactPathError:
+        emit_artifact_path_rejected(field=field, operation="validate_relative")
+        raise
+
+
+def _validate_relative_artifact_path(value: str, *, field: str) -> str:
+    """Validate a relative path without emitting nested boundary events."""
+
     if not isinstance(value, str):
         raise ArtifactPathError(f"{field} must be a string")
     if not value or not value.strip():
@@ -71,7 +93,7 @@ def validate_relative_artifact_path(value: str, *, field: str) -> str:
     if not posix.parts:
         raise ArtifactPathError(f"invalid {field}: {value}")
     for part in posix.parts:
-        validate_artifact_path_segment(part, field=field)
+        _validate_artifact_path_segment(part, field=field)
     result = posix.as_posix()
     if result in {"", "."}:
         raise ArtifactPathError(f"invalid {field}: {value}")
@@ -85,11 +107,29 @@ def resolve_artifact_descendant(
 ) -> Path:
     """Resolve a canonical descendant and reject targets outside ``root``."""
 
+    try:
+        return _resolve_artifact_descendant(
+            root,
+            *relative_parts,
+            field=field,
+        )
+    except ArtifactPathError:
+        emit_artifact_path_rejected(field=field, operation="resolve_descendant")
+        raise
+
+
+def _resolve_artifact_descendant(
+    root: str | Path,
+    *relative_parts: str | Path,
+    field: str,
+) -> Path:
+    """Resolve a descendant without emitting nested boundary events."""
+
     canonical_root = Path(root).resolve(strict=False)
     normalized_parts: list[str] = []
     for index, part in enumerate(relative_parts):
         raw = str(part)
-        normalized = validate_relative_artifact_path(
+        normalized = _validate_relative_artifact_path(
             raw,
             field=field if len(relative_parts) == 1 else f"{field}[{index}]",
         )

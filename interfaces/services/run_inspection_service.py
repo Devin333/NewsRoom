@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +8,6 @@ from framework.artifacts.paths import (
     ArtifactPathError,
     resolve_artifact_descendant,
     validate_artifact_path_segment,
-    validate_relative_artifact_path,
 )
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.workflow.inspection import (
@@ -130,6 +129,7 @@ class RunReplayArtifact:
     size_bytes: int | None
     content: Any = None
     read_error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -139,6 +139,7 @@ class RunReplayArtifact:
             "size_bytes": self.size_bytes,
             "content": self.content,
             "read_error": self.read_error,
+            "metadata": to_json_safe(self.metadata),
         }
 
 
@@ -331,8 +332,6 @@ class RunInspectionService:
         run_dir = _resolve_run_dir_for_service(self.artifact_root, run_id)
         if not _run_manifest_path(run_dir).exists():
             raise FileNotFoundError(f"run not found: {run_id}")
-        manifest = normalize_legacy_run_manifest(self._inspector.load_manifest(run_dir))
-        _validate_manifest_artifact_paths(run_dir, manifest)
         bundle = self._inspector.build_replay_content_bundle(
             run_dir=run_dir,
             redact=True,
@@ -427,6 +426,7 @@ def _replay_artifact_from_content_record(
         size_bytes=artifact.size_bytes,
         content=artifact.content,
         read_error=artifact.read_error,
+        metadata=dict(artifact.metadata),
     )
 
 
@@ -452,24 +452,6 @@ def _run_manifest_path(run_dir: Path) -> Path:
         "manifest.json",
         field="run manifest path",
     )
-
-
-def _validate_manifest_artifact_paths(run_dir: Path, manifest: dict[str, Any]) -> None:
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        return
-    for relative_path in artifacts.values():
-        if not isinstance(relative_path, str):
-            continue
-        safe_relative_path = validate_relative_artifact_path(
-            relative_path,
-            field="artifact path",
-        )
-        resolve_artifact_descendant(
-            run_dir,
-            safe_relative_path,
-            field="artifact path",
-        )
 
 
 def _manifest_report_id(manifest: dict[str, Any]) -> str | None:

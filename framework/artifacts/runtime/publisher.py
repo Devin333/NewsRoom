@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from framework.artifacts.models import Artifact, ArtifactReference
 from framework.artifacts.models.checksum import compute_checksum
+from framework.artifacts.observability import emit_artifact_reserved_metadata_rejected
 from framework.artifacts.paths import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
@@ -269,7 +270,7 @@ class LocalArtifactPublisher:
         uri = validate_relative_artifact_path(artifact_ref.uri, field="artifact uri")
         run_id = artifact_ref.metadata.get("run_id")
         if run_id is not None:
-            validated_run_id = validate_artifact_path_segment(str(run_id), field="run_id")
+            validated_run_id = validate_artifact_path_segment(run_id, field="run_id")
             run_dir = resolve_artifact_descendant(
                 self.root,
                 validated_run_id,
@@ -344,6 +345,10 @@ def _artifact_uri(
 def _reject_reserved_metadata(metadata: dict[str, Any], reserved: frozenset[str]) -> None:
     conflicts = sorted(set(metadata) & reserved)
     if conflicts:
+        emit_artifact_reserved_metadata_rejected(
+            key=conflicts[0],
+            publisher="local",
+        )
         raise ValueError("reserved artifact metadata key(s): " + ", ".join(conflicts))
 
 

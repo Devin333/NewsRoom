@@ -9,6 +9,9 @@ from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import StepScopedDataBufferView
 from framework.artifacts import ArtifactManager
 from framework.artifacts import ArtifactRef as StorageArtifactRef
+from framework.artifacts.observability import (
+    emit_artifact_reserved_metadata_rejected,
+)
 from framework.workflow.runtime.result import StepOutcome
 from framework.artifacts.runtime.publisher import LocalArtifactPublisher
 from framework.workflow.runners._utils import (
@@ -136,6 +139,10 @@ class ArtifactStepRunner:
                 set(artifact_metadata) & ARTIFACT_STEP_RESERVED_METADATA_KEYS
             )
             if reserved_conflicts:
+                emit_artifact_reserved_metadata_rejected(
+                    key=reserved_conflicts[0],
+                    publisher="artifact_step",
+                )
                 raise StepExecutionError(
                     "reserved artifact metadata key(s): "
                     + ", ".join(reserved_conflicts)
@@ -207,4 +214,3 @@ class ArtifactStepRunner:
             )
 
 __all__ = ["ARTIFACT_STEP_RESERVED_METADATA_KEYS", "ArtifactStepRunner"]
-

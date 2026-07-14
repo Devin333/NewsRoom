@@ -1,5 +1,4 @@
 import json
-from hashlib import sha256
 
 from fastapi.testclient import TestClient
 
@@ -13,6 +12,7 @@ from interfaces.api.app import _api_token_from_env
 from interfaces.events import AuditEmitter, InMemoryAuditSink
 from interfaces.services.run_inspection_service import RunInspectionService
 from infrastructure.storage.persistence import ReportRecord
+from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
 
 RESEARCH_WORKFLOW_ID = "research.paper_analysis"
@@ -1016,33 +1016,23 @@ def test_run_health_returns_health() -> None:
 
 
 def test_run_replay_api_reads_real_files_and_redacts(tmp_path) -> None:
-    run_dir = tmp_path / "run-1"
-    run_dir.mkdir()
-    events_content = (
-        json.dumps({"event_type": "workflow_started", "payload": {"token": "hidden"}})
-        + "\n"
-    )
-    report_content = json.dumps({"title": "Report", "api_key": "hidden"})
-    (run_dir / "manifest.json").write_text(
-        json.dumps(
+    write_canonical_terminal_run(
+        tmp_path,
+        events=[
             {
+                "event_type": "workflow_started",
                 "run_id": "run-1",
-                "status": "succeeded",
-                "artifacts": {"events": "events.jsonl", "report_json": "report.json"},
-                "artifact_metadata": {
-                    "events": {
-                        "checksum": sha256(events_content.encode("utf-8")).hexdigest(),
-                    },
-                    "report_json": {
-                        "checksum": sha256(report_content.encode("utf-8")).hexdigest(),
-                    },
-                },
+                "occurred_at": "2026-05-14T01:00:00Z",
+                "payload": {"token": "hidden"},
             }
-        ),
-        encoding="utf-8",
+        ],
+        extra_artifacts={
+            "report_json": (
+                "report.json",
+                json.dumps({"title": "Report", "api_key": "hidden"}).encode("utf-8"),
+            )
+        },
     )
-    (run_dir / "events.jsonl").write_bytes(events_content.encode("utf-8"))
-    (run_dir / "report.json").write_bytes(report_content.encode("utf-8"))
     client = TestClient(
         create_app(run_inspection_service_factory=lambda: RunInspectionService(tmp_path))
     )

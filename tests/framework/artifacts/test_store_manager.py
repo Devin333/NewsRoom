@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +21,17 @@ from framework.artifacts import (
     LocalArtifactStore,
     compute_checksum,
 )
+from framework.artifacts.observability import (
+    ARTIFACT_CHECKSUM_MISMATCH_EVENT,
+    ARTIFACT_CHECKSUM_MISSING_EVENT,
+    ARTIFACT_METADATA_CORRUPT_EVENT,
+    ARTIFACT_OBSERVABILITY_LOGGER,
+)
 from framework.artifacts.stores import local as local_store_module
+from framework.artifacts.stores.errors import artifact_observability_was_emitted
+
+
+_MISSING = object()
 
 
 def test_artifact_manager_publishes_resolves_and_deletes(tmp_path) -> None:
@@ -163,6 +174,203 @@ def test_local_store_rejects_object_only_pair(tmp_path) -> None:
         store.get("a1")
 
 
+@pytest.mark.parametrize("target", ["object", "metadata"])
+def test_local_store_get_rejects_non_regular_pair_target(tmp_path, target: str) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a1", "a1.txt", "text/plain", b"hello"))
+    path = (
+        store.path_for("a1")
+        if target == "object"
+        else tmp_path / ".metadata" / "a1.json"
+    )
+    path.unlink()
+    path.mkdir()
+
+    with pytest.raises(
+        ArtifactStoreMetadataError,
+        match=rf"artifact {target} is not a regular file",
+    ):
+        store.get("a1")
+
+
+@pytest.mark.parametrize("target", ["object", "metadata"])
+def test_local_store_list_rejects_non_regular_pair_target(tmp_path, target: str) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a1", "a1.txt", "text/plain", b"hello"))
+    path = (
+        store.path_for("a1")
+        if target == "object"
+        else tmp_path / ".metadata" / "a1.json"
+    )
+    path.unlink()
+    path.mkdir()
+
+    with pytest.raises(
+        ArtifactStoreMetadataError,
+        match=rf"artifact {target} is not a regular file",
+    ):
+        store.list()
+
+
+@pytest.mark.parametrize("field", ["artifact_id", "uri"])
+@pytest.mark.parametrize(
+    "value",
+    [_MISSING, None, "", "   ", " padded ", 7],
+    ids=["missing", "null", "blank", "whitespace", "padded", "non-string"],
+)
+def test_local_store_list_rejects_invalid_required_persisted_field(
+    tmp_path,
+    field: str,
+    value,
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a1", "a1.txt", "text/plain", b"hello"))
+    metadata_path = tmp_path / ".metadata" / "a1.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if value is _MISSING:
+        payload.pop(field)
+    else:
+        payload[field] = value
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ArtifactStoreMetadataError, match=field):
+        store.list()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param(lambda payload: payload.__setitem__("metadata", []), id="metadata"),
+        pytest.param(lambda payload: payload.__setitem__("checksum", "invalid"), id="checksum"),
+        pytest.param(lambda payload: payload.__setitem__("created_at", None), id="created-at"),
+    ],
+)
+def test_local_store_list_rejects_corrupt_record_without_partial_result(
+    tmp_path,
+    mutation,
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a0", "a0.txt", "text/plain", b"valid"))
+    store.put(Artifact("z1", "z1.txt", "text/plain", b"corrupt"))
+    metadata_path = tmp_path / ".metadata" / "z1.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    mutation(payload)
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ArtifactStoreMetadataError):
+        store.list()
+
+
+@pytest.mark.parametrize("content", ["{", "[]"])
+def test_local_store_list_rejects_invalid_metadata_json_shape(
+    tmp_path,
+    content: str,
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a1", "a1.txt", "text/plain", b"hello"))
+    (tmp_path / ".metadata" / "a1.json").write_text(content, encoding="utf-8")
+
+    with pytest.raises(ArtifactStoreMetadataError):
+        store.list()
+
+
+def test_local_store_list_preserves_valid_reference_without_reading_object(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    published = store.put(
+        Artifact(
+            "a1",
+            "a1.txt",
+            "text/plain",
+            b"hello",
+            metadata={"source": "test"},
+        )
+    )
+
+    def reject_object_read(path: Path) -> bytes:
+        raise AssertionError(f"list must not read object bytes: {path.name}")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_object_read)
+
+    refs = store.list()
+
+    assert len(refs) == 1
+    assert refs[0].artifact_id == "a1"
+    assert refs[0].uri == "objects/a1"
+    assert refs[0].content_type == "text/plain"
+    assert refs[0].checksum == published.checksum
+    assert refs[0].metadata == {"source": "test"}
+
+
+def test_local_store_metadata_classification_emits_once_at_store_boundary(
+    tmp_path,
+    caplog,
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a1", "a1.txt", "text/plain", b"hello"))
+    metadata_path = tmp_path / ".metadata" / "a1.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["uri"] = None
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    caplog.set_level("INFO", logger=ARTIFACT_OBSERVABILITY_LOGGER)
+
+    with pytest.raises(ArtifactStoreMetadataError):
+        store.list()
+
+    records = _artifact_event_records(caplog)
+    assert [record.artifact_event_name for record in records] == [
+        ARTIFACT_METADATA_CORRUPT_EVENT
+    ]
+    assert records[0].artifact_event_dimensions == {"store": "local"}
+
+
+def test_local_store_checksum_missing_emits_once_at_store_boundary(
+    tmp_path,
+    caplog,
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a1", "a1.txt", "text/plain", b"legacy"))
+    metadata_path = tmp_path / ".metadata" / "a1.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload.pop("checksum")
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    caplog.set_level("INFO", logger=ARTIFACT_OBSERVABILITY_LOGGER)
+
+    artifact = store.get("a1")
+
+    assert artifact is not None
+    records = _artifact_event_records(caplog)
+    assert [record.artifact_event_name for record in records] == [
+        ARTIFACT_CHECKSUM_MISSING_EVENT
+    ]
+    assert records[0].artifact_event_dimensions == {"store": "local"}
+
+
+def test_local_store_checksum_mismatch_emits_once_at_shared_verifier(
+    tmp_path,
+    caplog,
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a1", "a1.txt", "text/plain", b"trusted"))
+    store.path_for("a1").write_bytes(b"tampered-secret-content")
+    caplog.set_level("INFO", logger=ARTIFACT_OBSERVABILITY_LOGGER)
+
+    with pytest.raises(ArtifactChecksumMismatchError):
+        store.get("a1")
+
+    records = _artifact_event_records(caplog)
+    assert [record.artifact_event_name for record in records] == [
+        ARTIFACT_CHECKSUM_MISMATCH_EVENT
+    ]
+    assert records[0].artifact_event_dimensions == {
+        "store": "local",
+        "operation": "read",
+    }
+    assert "tampered-secret-content" not in caplog.text
+
+
 @pytest.mark.parametrize(
     ("mutate", "error"),
     [
@@ -215,7 +423,7 @@ def test_local_store_rejects_tampered_object_through_all_resolvers(tmp_path) -> 
 
 def test_local_store_marks_legacy_missing_checksum_without_rewriting(tmp_path) -> None:
     store = LocalArtifactStore(tmp_path)
-    store.put(
+    ref = store.put(
         Artifact(
             "a1",
             "a1.txt",
@@ -226,6 +434,8 @@ def test_local_store_marks_legacy_missing_checksum_without_rewriting(tmp_path) -
     )
     metadata_path = tmp_path / ".metadata" / "a1.json"
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert payload["metadata"] == {"source": "legacy"}
+    assert ref.metadata == {"source": "legacy"}
     payload.pop("checksum")
     metadata_path.write_text(json.dumps(payload), encoding="utf-8")
     persisted_before = metadata_path.read_bytes()
@@ -238,6 +448,8 @@ def test_local_store_marks_legacy_missing_checksum_without_rewriting(tmp_path) -
         "_artifact_integrity": "checksum_missing",
         "source": "legacy",
     }
+    assert artifact_observability_was_emitted(artifact, "checksum_missing")
+    assert all("observability" not in key for key in artifact.metadata)
     assert metadata_path.read_bytes() == persisted_before
 
 
@@ -287,6 +499,39 @@ def test_local_store_metadata_replace_failure_preserves_commit_marker_and_cleans
         store.get("a1")
 
 
+def test_local_store_object_replace_failure_preserves_prior_pair_and_cleans_temps(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = LocalArtifactStore(tmp_path)
+    store.put(Artifact("a1", "a1.txt", "text/plain", b"old"))
+    object_path = store.path_for("a1")
+    metadata_path = tmp_path / ".metadata" / "a1.json"
+    committed_object = object_path.read_bytes()
+    committed_metadata = metadata_path.read_bytes()
+    real_replace = os.replace
+    replace_targets = []
+
+    def fail_object_replace(source, destination) -> None:
+        replace_targets.append(destination)
+        if destination == object_path:
+            raise OSError("object commit failed")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(local_store_module.os, "replace", fail_object_replace)
+
+    with pytest.raises(OSError, match="object commit failed"):
+        store.put(Artifact("a1", "a1.txt", "text/plain", b"new"))
+
+    assert replace_targets == [object_path]
+    assert object_path.read_bytes() == committed_object
+    assert metadata_path.read_bytes() == committed_metadata
+    assert list(tmp_path.rglob("*.tmp")) == []
+    restored = store.get("a1")
+    assert restored is not None
+    assert restored.content_bytes() == b"old"
+
+
 def test_local_store_temp_write_failure_creates_no_committed_pair(
     tmp_path,
     monkeypatch,
@@ -334,3 +579,11 @@ def test_local_store_new_metadata_commit_failure_leaves_classified_orphan(
     assert list(tmp_path.rglob("*.tmp")) == []
     with pytest.raises(ArtifactStoreMetadataError):
         store.get("a1")
+
+
+def _artifact_event_records(caplog):
+    return [
+        record
+        for record in caplog.records
+        if record.name == ARTIFACT_OBSERVABILITY_LOGGER
+    ]

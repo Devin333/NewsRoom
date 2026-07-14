@@ -2,6 +2,10 @@ import io
 import json
 
 from interfaces.mcp.stdio_server import handle_jsonrpc_request, run_stdio
+from interfaces.services.artifact_service import ArtifactInspectionService
+from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
 
 def test_stdio_handles_tools_list() -> None:
@@ -121,6 +125,40 @@ def test_stdio_preserves_typed_artifact_integrity_failure_envelopes() -> None:
             assert result["data"] is None
             assert result["error_type"] == error_type
             assert result["error_message"] == "artifact integrity verification failed"
+
+
+def test_stdio_real_filesystem_integrity_failure_has_no_tampered_data(tmp_path) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    fixture.artifact_path("output").write_text(
+        '{"result":"tampered-stdio-secret"}',
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
+        artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
+    )
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": "real-tool-tamper",
+            "method": "tools/call",
+            "params": {"name": "news.run.replay", "arguments": {"run_id": "run-1"}},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": "real-resource-tamper",
+            "method": "resources/read",
+            "params": {"uri": "news://runs/run-1/artifacts/output"},
+        },
+    ]
+
+    for request in requests:
+        response = handle_jsonrpc_request(request, service=service)
+        result = response["result"]
+        assert result["success"] is False
+        assert result["data"] is None
+        assert result["error_type"] == "ArtifactChecksumMismatchError"
+        assert "tampered-stdio-secret" not in json.dumps(response)
 
 
 def test_stdio_handles_run_lineage_resource_read() -> None:

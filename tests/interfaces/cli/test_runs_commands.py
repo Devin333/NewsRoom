@@ -11,6 +11,7 @@ from framework.artifacts import (
     ArtifactStoreRequiredError,
 )
 from interfaces.cli.commands import runs as runs_commands
+from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
 
 def test_news_cli_runs_list_json(monkeypatch, capsys) -> None:
@@ -79,7 +80,7 @@ def test_news_cli_runs_events_invalid_limit_returns_error(monkeypatch, capsys) -
 
 
 def test_news_cli_runs_replay_json_reads_real_files(tmp_path, capsys) -> None:
-    _write_replay_run(tmp_path)
+    write_canonical_terminal_run(tmp_path)
 
     exit_code = news_cli.main(
         [
@@ -97,15 +98,15 @@ def test_news_cli_runs_replay_json_reads_real_files(tmp_path, capsys) -> None:
 
     assert exit_code == 0
     assert payload["run_id"] == "run-1"
-    assert payload["event_count"] == 1
+    assert payload["event_count"] == 2
     assert payload["step_result_count"] == 1
     assert payload["step_results"]["write"]["status"] == "succeeded"
-    assert payload["integrity"]["valid"] is False
-    assert artifacts["report_json"]["content"]["password"] == "[redacted]"
+    assert payload["integrity"]["valid"] is True
+    assert artifacts["output"]["content"]["token"] == "[redacted]"
 
 
 def test_news_cli_runs_replay_text_reads_real_files(tmp_path, capsys) -> None:
-    _write_replay_run(tmp_path)
+    write_canonical_terminal_run(tmp_path)
 
     exit_code = news_cli.main(["runs", "replay", "run-1", "--artifact-root", str(tmp_path)])
 
@@ -113,8 +114,8 @@ def test_news_cli_runs_replay_text_reads_real_files(tmp_path, capsys) -> None:
 
     assert exit_code == 0
     assert "run_id=run-1" in captured.out
-    assert "artifact_count=4" in captured.out
-    assert "- report_json path=report.json" in captured.out
+    assert "artifact_count=13" in captured.out
+    assert "- output path=output.json" in captured.out
 
 
 def test_news_cli_runs_diagnostics_json(monkeypatch, capsys) -> None:
@@ -260,19 +261,13 @@ def test_news_cli_runs_replay_rejects_unsafe_manifest_artifact_path(
     tmp_path,
     capsys,
 ) -> None:
-    run_dir = tmp_path / "run-unsafe"
-    run_dir.mkdir()
+    fixture = write_canonical_terminal_run(tmp_path, "run-unsafe")
+    run_dir = fixture.run_dir
     (tmp_path / "outside.txt").write_text("artifact-secret", encoding="utf-8")
-    (run_dir / "manifest.json").write_text(
-        json.dumps(
-            {
-                "run_id": "run-unsafe",
-                "status": "succeeded",
-                "artifacts": {"output": "../outside.txt"},
-            }
-        ),
-        encoding="utf-8",
-    )
+    manifest = dict(fixture.manifest)
+    manifest["artifacts"] = dict(fixture.manifest["artifacts"])
+    manifest["artifacts"]["output"] = "../outside.txt"
+    fixture.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     exit_code = news_cli.main(
         [
@@ -288,7 +283,7 @@ def test_news_cli_runs_replay_rejects_unsafe_manifest_artifact_path(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert captured.out == ""
-    assert "invalid artifact path" in captured.err
+    assert "invalid canonical run manifest" in captured.err
     assert "artifact-secret" not in captured.err
 
 
@@ -318,6 +313,34 @@ def test_news_cli_runs_replay_integrity_error_uses_stderr_and_exit_one(
     assert exit_code == 1
     assert captured.out == ""
     assert captured.err == "run replay integrity verification failed\n"
+
+
+def test_news_cli_runs_replay_real_tamper_uses_stderr_and_exit_one(
+    tmp_path,
+    capsys,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    fixture.artifact_path("output").write_text(
+        json.dumps({"result": "tampered-cli-secret"}),
+        encoding="utf-8",
+    )
+
+    exit_code = news_cli.main(
+        [
+            "runs",
+            "replay",
+            "run-1",
+            "--artifact-root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "artifact checksum mismatch" in captured.err
+    assert "tampered-cli-secret" not in captured.err
 
 
 def test_news_cli_runs_cancel_json(monkeypatch, capsys) -> None:

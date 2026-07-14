@@ -78,7 +78,11 @@ class ArtifactInspectionService:
 
     def get_artifact(self, run_id: str, artifact_key: str) -> ArtifactDetail:
         run = self.run_inspection.get_run(run_id)
-        run_dir = Path(run.artifact_dir or self.artifact_root / run_id)
+        run_dir = (
+            Path(run.artifact_dir)
+            if run.artifact_dir
+            else self._run_dir(run_id)
+        )
         record = read_strict_workflow_artifact_content(
             run_dir,
             run.manifest,
@@ -107,12 +111,7 @@ class ArtifactInspectionService:
         )
 
     def _artifact_path(self, run_id: str, relative_path: str) -> Path:
-        safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
-        run_dir = resolve_artifact_descendant(
-            self.artifact_root,
-            safe_run_id,
-            field="run_id",
-        )
+        run_dir = self._run_dir(run_id)
         safe_relative_path = validate_relative_artifact_path(
             relative_path,
             field="artifact path",
@@ -125,6 +124,14 @@ class ArtifactInspectionService:
         if not path.exists():
             raise FileNotFoundError(f"artifact file not found: {relative_path}")
         return path
+
+    def _run_dir(self, run_id: str) -> Path:
+        safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        return resolve_artifact_descendant(
+            self.artifact_root,
+            safe_run_id,
+            field="run_id",
+        )
 
 
 def _content_type(path: Path) -> str:

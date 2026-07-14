@@ -4,7 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
+from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.services.run_inspection_service import RunInspectionService
+from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
 
 def test_api_mcp_catalog_and_manifest_match_service() -> None:
@@ -124,6 +127,41 @@ def test_api_mcp_reserves_typed_artifact_failure_http_mapping(
         assert payload["data"] is None
         assert payload["error"]["code"] == expected_code
         assert payload["error"]["details"]["error_type"] == error_type
+
+
+def test_api_mcp_default_service_maps_real_filesystem_tamper_without_data(tmp_path) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    fixture.artifact_path("output").write_text(
+        '{"result":"tampered-mcp-http-secret"}',
+        encoding="utf-8",
+    )
+    client = TestClient(
+        create_app(
+            run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
+            artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
+            audit_emitter_factory=None,
+        )
+    )
+
+    responses = [
+        client.post(
+            "/api/v1/mcp/tools/news.run.replay/call",
+            json={"arguments": {"run_id": "run-1"}},
+        ),
+        client.post(
+            "/api/v1/mcp/resources/read",
+            json={"uri": "news://runs/run-1/artifacts/output"},
+        ),
+    ]
+
+    for response in responses:
+        payload = response.json()
+        assert response.status_code == 409
+        assert payload["success"] is False
+        assert payload["data"] is None
+        assert payload["error"]["code"] == "artifact_checksum_mismatch"
+        assert payload["error"]["details"]["error_type"] == "ArtifactChecksumMismatchError"
+        assert "tampered-mcp-http-secret" not in str(payload)
 
 
 def test_api_mcp_tool_call_requires_tool_specific_permission() -> None:

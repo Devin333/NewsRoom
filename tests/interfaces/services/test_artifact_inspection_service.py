@@ -1,18 +1,23 @@
 import json
-from hashlib import sha256
+from dataclasses import replace
 
 import pytest
 
 from framework.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
+    ArtifactPathError,
     ArtifactStoreMetadataError,
 )
 from interfaces.services.artifact_service import ArtifactInspectionService
+from tests.fixtures.workflow_runs import (
+    rewrite_manifest,
+    write_canonical_terminal_run,
+)
 
 
 def test_artifact_service_lists_manifest_artifacts(tmp_path) -> None:
-    _write_run(
+    fixture = _write_run(
         tmp_path,
         "run-1",
         artifacts={"output": "output.json", "report_markdown": "report.md"},
@@ -22,11 +27,12 @@ def test_artifact_service_lists_manifest_artifacts(tmp_path) -> None:
     result = ArtifactInspectionService(tmp_path).list_artifacts("run-1")
 
     payload = result.to_dict()
-    assert payload["artifact_count"] == 2
-    assert payload["artifacts"][0]["artifact_key"] == "output"
-    assert payload["artifacts"][0]["content_type"] == "application/json"
-    assert payload["artifacts"][1]["artifact_key"] == "report_markdown"
-    assert payload["artifacts"][1]["content_type"] == "text/markdown"
+    artifacts_by_key = {
+        artifact["artifact_key"]: artifact for artifact in payload["artifacts"]
+    }
+    assert payload["artifact_count"] == len(fixture.manifest["artifacts"])
+    assert artifacts_by_key["output"]["content_type"] == "application/json"
+    assert artifacts_by_key["report_markdown"]["content_type"] == "text/markdown"
 
 
 def test_artifact_service_reads_json_artifact(tmp_path) -> None:
@@ -131,6 +137,57 @@ def test_artifact_service_rejects_unknown_artifact_key(tmp_path) -> None:
         ArtifactInspectionService(tmp_path).get_artifact("run-1", "missing")
 
 
+def test_artifact_service_rejects_invalid_canonical_manifest_before_artifact_read(
+    tmp_path,
+) -> None:
+    fixture = write_canonical_terminal_run(tmp_path)
+    manifest = dict(fixture.manifest)
+    manifest.pop("workflow_id")
+    rewrite_manifest(fixture, manifest)
+    fixture.artifact_path("output").unlink()
+
+    with pytest.raises(ArtifactStoreMetadataError, match="invalid canonical run manifest"):
+        ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
+
+
+def test_artifact_service_resolves_missing_artifact_dir_through_shared_boundary(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    write_canonical_terminal_run(
+        tmp_path,
+        terminal_content={"status": "ok", "result": "fallback"},
+    )
+    service = ArtifactInspectionService(tmp_path)
+    detail = service.run_inspection.get_run("run-1")
+    monkeypatch.setattr(
+        service.run_inspection,
+        "get_run",
+        lambda run_id: replace(detail, artifact_dir=None),
+    )
+
+    result = service.get_artifact("run-1", "output")
+
+    assert result.content == {"status": "ok", "result": "fallback"}
+
+
+def test_artifact_service_fallback_rejects_unsafe_run_id_before_filesystem_read(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    write_canonical_terminal_run(tmp_path)
+    service = ArtifactInspectionService(tmp_path)
+    detail = service.run_inspection.get_run("run-1")
+    monkeypatch.setattr(
+        service.run_inspection,
+        "get_run",
+        lambda run_id: replace(detail, artifact_dir=None),
+    )
+
+    with pytest.raises(ArtifactPathError):
+        service.get_artifact("../run-1", "output")
+
+
 @pytest.mark.parametrize(
     "run_id",
     ["../secret", "C:secret", "run:stream", "CON", "run. "],
@@ -157,27 +214,22 @@ def test_artifact_service_rejects_unsafe_manifest_path(tmp_path, relative_path) 
 
 
 def test_artifact_service_rejects_symlink_escape(tmp_path) -> None:
-    run_dir = tmp_path / "run-1"
-    run_dir.mkdir()
+    fixture = write_canonical_terminal_run(tmp_path)
+    run_dir = fixture.run_dir
     outside = tmp_path / "outside.json"
     outside.write_text('{"leaked": true}', encoding="utf-8")
     link = run_dir / "output.json"
+    link.unlink()
     try:
         link.symlink_to(outside)
     except (OSError, NotImplementedError):
         pytest.skip("symlink creation is not available")
-    (run_dir / "manifest.json").write_text(
-        json.dumps({"run_id": "run-1", "artifacts": {"output": "output.json"}}),
-        encoding="utf-8",
-    )
 
     with pytest.raises(ValueError):
         ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
 
 
-def _write_run(root, run_id, *, artifacts, files) -> None:
-    run_dir = root / run_id
-    run_dir.mkdir()
+def _write_run(root, run_id, *, artifacts, files):
     encoded_files = {
         relative_path: (
             content.encode("utf-8")
@@ -186,30 +238,30 @@ def _write_run(root, run_id, *, artifacts, files) -> None:
         )
         for relative_path, content in files.items()
     }
-    artifact_metadata = {
-        artifact_key: {
-            "checksum": sha256(encoded_files[relative_path]).hexdigest(),
-            "content_type": (
-                "application/x-ndjson"
-                if relative_path.endswith(".jsonl")
-                else "application/json"
-                if relative_path.endswith(".json")
-                else "text/markdown"
-                if relative_path.endswith(".md")
-                else "text/plain"
-            ),
-            "size_bytes": len(encoded_files[relative_path]),
-        }
+    extra_artifacts = {
+        artifact_key: (relative_path, encoded_files[relative_path])
         for artifact_key, relative_path in artifacts.items()
         if relative_path in encoded_files
     }
-    manifest = {
-        "run_id": run_id,
-        "status": "succeeded",
-        "artifacts": artifacts,
-        "artifact_metadata": artifact_metadata,
+    fixture = write_canonical_terminal_run(
+        root,
+        run_id,
+        extra_artifacts=extra_artifacts,
+    )
+    missing_artifacts = {
+        artifact_key: relative_path
+        for artifact_key, relative_path in artifacts.items()
+        if relative_path not in encoded_files
     }
-    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for relative_path, content in encoded_files.items():
-        path = run_dir / relative_path
-        path.write_bytes(content)
+    if missing_artifacts:
+        manifest = dict(fixture.manifest)
+        manifest["artifacts"] = {
+            **fixture.manifest["artifacts"],
+            **missing_artifacts,
+        }
+        artifact_metadata = dict(fixture.manifest["artifact_metadata"])
+        for artifact_key in missing_artifacts:
+            artifact_metadata.pop(artifact_key, None)
+        manifest["artifact_metadata"] = artifact_metadata
+        rewrite_manifest(fixture, manifest)
+    return fixture
