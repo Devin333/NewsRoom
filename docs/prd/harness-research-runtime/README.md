@@ -79,6 +79,14 @@ max_worker_calls
 | 14 | 8 | [08-framework-cleanup.md](08-framework-cleanup.md) | 0-7 | 清理旧框架层，保留有用资产，删除无用旧控制流和业务污染。 |
 | 15 | 9 | [09-legacy-business-test-deletion.md](09-legacy-business-test-deletion.md) | 0-8 | 删除不服务新架构的旧业务、旧接口、旧测试和兼容逻辑。 |
 
+## 专项增量 PRD
+
+下列专项 PRD 基于前述 Harness + Research 基线追加，不修改阶段 0-9 的原始重建顺序，并按自身依赖和 OpenSpec change 独立交付。本索引只登记已纳入版本控制且已完成范围审查的专项文档。
+
+| 阶段 | 文件 | 文档状态 | 实现状态 | 依赖 | 目标 |
+| --- | --- | --- | --- | --- | --- |
+| 18 | [18-artifact-boundary-integrity-hardening.md](18-artifact-boundary-integrity-hardening.md) | `READY_FOR_IMPLEMENTATION` | `NOT_STARTED` | 2026-07-10 artifact audit；不依赖阶段 10-17 | 修复 artifact 路径边界、可信 metadata、完整性检查、checksum 和引用反序列化缺陷。 |
+
 依赖解释：
 
 - 3C 先定义子 Agent 隔离和 handoff；3D 再把通用 `ContextEnvelope` 映射到子 Agent context。
@@ -103,7 +111,7 @@ max_worker_calls
 ## 全局验收命令
 
 ```powershell
-openspec validate harness-research-runtime --strict
+openspec validate --all --strict
 python -m scripts.dev compile
 python -m scripts.dev test
 python -m scripts.dev smoke
