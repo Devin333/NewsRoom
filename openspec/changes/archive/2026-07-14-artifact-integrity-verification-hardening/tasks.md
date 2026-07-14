@@ -28,4 +28,4 @@
 
 - [x] 5.1 Run `openspec validate artifact-integrity-verification-hardening --strict` and all Change 2 targeted tests.
 - [x] 5.2 Run `python -m scripts.dev compile`, `python -m scripts.dev smoke`, `openspec validate --all --strict`, and `git diff --check`.
-- [ ] 5.3 Archive completed integrity and boundary changes, update the stage 18 PRD implementation record, and commit each completed change boundary.
+- [x] 5.3 Archive completed integrity and boundary changes, update the stage 18 PRD implementation record, and commit each completed change boundary.

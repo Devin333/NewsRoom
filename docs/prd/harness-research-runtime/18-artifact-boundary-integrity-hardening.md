@@ -1,10 +1,10 @@
 # 阶段 18：Artifact 安全边界与完整性硬化 PRD
 
-> Document status: READY_FOR_IMPLEMENTATION
+> Document status: FINAL
 >
-> Implementation status: NOT_STARTED
+> Implementation status: IMPLEMENTED
 >
-> Version: v1.0
+> Version: v1.1
 >
 > Priority: P1
 >
@@ -12,11 +12,11 @@
 >
 > Source audit: `framework/artifacts` code review（2026-07-10，2026-07-14 复核）
 >
-> OpenSpec changes: `artifact-runtime-boundary-hardening`、`artifact-integrity-verification-hardening`（planned）
+> OpenSpec changes: `archive/2026-07-14-artifact-runtime-boundary-hardening`、`archive/2026-07-14-artifact-integrity-verification-hardening`
 >
 > Last updated: 2026-07-14
 
-> 状态说明：`READY_FOR_IMPLEMENTATION` 表示需求和验收已收敛；`NOT_STARTED` 表示尚未创建本阶段 change、修改生产代码或完成实现验证。实施状态只允许按 `NOT_STARTED -> IN_PROGRESS -> IMPLEMENTED` 推进；文档被替代时标记 `SUPERSEDED`。
+> 状态说明：`FINAL` 表示需求、实现和验收记录均已收敛；`IMPLEMENTED` 表示两个 OpenSpec change 已实现、验证、归档并同步到主规格。文档被替代时标记 `SUPERSEDED`。
 
 ## 0. 一句话结论
 
@@ -1211,16 +1211,62 @@ artifact_integrity_inspection_total{result}
 
 本阶段只有在以下条件全部满足时才完成：
 
-- [ ] 两个必做 OpenSpec change 均创建并通过 strict validation；
-- [ ] 所有 A1-A5 需求具有规范性 SHALL requirement 与可执行 scenario；
-- [ ] 旧相关 capability 已按需要归档到主规格，未直接篡改 completed change 历史；
-- [ ] 公共 path helper 成为 artifact root 路径的唯一判断来源，已确认旁路全部处理；
-- [ ] reserved metadata、reference、checksum、no-store 语义均按本文固定，不留“二选一”实现决定；
-- [ ] 对抗性单元测试与真实 workflow/interface 集成测试全部通过；
-- [ ] `.\.venv\Scripts\python.exe -m scripts.dev smoke` 通过；
-- [ ] `openspec validate --all --strict` 通过；
-- [ ] `git diff --check` 通过；
-- [ ] 每个代码变更已按范围提交，未混入无关工作树内容；
-- [ ] PRD metadata 的 `Implementation status` 更新为 `IMPLEMENTED`，并补充 commits、归档 change 路径和最终验证结果。
+- [x] 两个必做 OpenSpec change 均创建并通过 strict validation；
+- [x] 所有 A1-A5 需求具有规范性 SHALL requirement 与可执行 scenario；
+- [x] 旧相关 capability 已按需要归档到主规格，未直接篡改 completed change 历史；
+- [x] 公共 path helper 成为 artifact root 路径的唯一判断来源，已确认旁路全部处理；
+- [x] reserved metadata、reference、checksum、no-store 语义均按本文固定，不留“二选一”实现决定；
+- [x] 对抗性单元测试与真实 workflow/interface 集成测试全部通过；
+- [x] `.\.venv\Scripts\python.exe -m scripts.dev smoke` 通过；
+- [x] `openspec validate --all --strict` 通过；
+- [x] `git diff --check` 通过；
+- [x] 每个代码变更已按范围提交，未混入无关工作树内容；
+- [x] PRD metadata 的 `Implementation status` 更新为 `IMPLEMENTED`，并补充 commits、归档 change 路径和最终验证结果。
 
 未满足任一项时，状态只能是 `IN_PROGRESS` 或 `BLOCKED`，不能以“主要路径已修”“14 个原测试仍通过”或“后续 convergence 会处理”为由标记完成。
+
+---
+
+## 21. 实施记录
+
+### 21.1 交付边界与提交
+
+| 边界 | 提交 | 结果 |
+| --- | --- | --- |
+| PRD | `fd84a147` | 建立阶段 18 的缺陷证据、修复契约、测试矩阵和 DoD |
+| artifact storage 基线规格归档 | `4d45001f` | 把后续 delta 所需的 storage capability 同步到主规格 |
+| artifact tool 基线规格归档 | `45e7b4bf` | 把 builtin artifact tool/search capability 同步到主规格 |
+| replay interface 基线规格归档 | `d5452466` | 把 artifact inspection、run replay API/CLI/MCP capability 同步到主规格 |
+| Change 1 实现 | `03ec11f0` | 关闭 A1、A2、A5：统一 path boundary、保留字段保护和 reference 反序列化收紧 |
+| Change 2 实现 | `65bdf330` | 关闭 A3、A4：共享 typed errors、atomic local-store write、checksum verification、strict replay 与 adapter 错误契约 |
+| Change 1 归档 | `b291e9f1` | 归档到 `openspec/changes/archive/2026-07-14-artifact-runtime-boundary-hardening/` 并同步 6 份 capability |
+| Change 2 归档 | `84abfd20` | 归档到 `openspec/changes/archive/2026-07-14-artifact-integrity-verification-hardening/` 并同步 7 份 capability |
+
+### 21.2 A1-A5 关闭证据
+
+| 缺陷 | 最终行为 | 主要实现证据 |
+| --- | --- | --- |
+| A1 `run_id` / path 逃逸 | segment、relative path、canonical descendant 三层校验在文件副作用前执行；workflow、tool、service 旁路统一接入 | `framework/artifacts/paths.py`、`ArtifactManager`、publisher/store/workflow inspection 与 adversarial path tests |
+| A2 trusted metadata 被覆盖 | publisher 与 artifact step 对保留字段冲突 fail-closed，不产生 file/ref/manifest/index/buffer 副作用 | reserved metadata contract 与 artifact-step/publisher 回归 |
+| A3 no-store integrity 假成功 | 空 manifest 返回 `valid=True, checked_count=0`；非空且无 store 抛 `ArtifactStoreRequiredError`；计数只包含实际 store 尝试 | `framework/artifacts/inspection/integrity.py` 与 mixed-failure classification tests |
+| A4 checksum 篡改静默通过 | `LocalArtifactStore.get()` 校验 pair state、metadata 和 SHA-256；direct artifact/replay 在 decode/redact/content return 前 strict verify | shared store errors/helpers、local store fault injection、workflow strict preflight、API/CLI/MCP regressions |
+| A5 缺失 path 被转成 `"None"` | constructor/from_dict 对 required id/path、alias 同值/冲突和本地路径边界执行显式校验，同时保留 remote URI 表达能力 | `ArtifactReference` / `ArtifactRef.from_dict()` contract tests |
+
+### 21.3 最终验证
+
+| 门禁 | 结果 |
+| --- | --- |
+| Change 1 定向矩阵 | `483 passed, 12 skipped` |
+| Change 2 定向矩阵 | `394 passed, 6 skipped` |
+| `.\.venv\Scripts\python.exe -m scripts.dev compile` | 通过 |
+| `.\.venv\Scripts\python.exe -m scripts.dev smoke` | `903 passed, 23 skipped`，source validation 通过 |
+| `openspec validate --all --strict` | `507 passed, 0 failed` |
+| `git diff --check` | 通过 |
+
+定向矩阵中的 skip 均为当前 Windows 账户缺少 symlink 创建权限时的条件性跳过；没有跳过 checksum、metadata、half-state、strict replay 或 adapter error contract 用例。API 测试产生的 FastAPI `on_event` deprecation warning 为既存技术债，不影响本阶段验收。
+
+### 21.4 Legacy checksum 只读盘点
+
+2026-07-14 对仓库本地 `.newsroom` 做了只读递归盘点：未发现任何 `.metadata` 目录；默认 `F:\github\NewsRoom\.newsroom\artifacts\.metadata` 不存在，因此本机统计为 `metadata_roots=0`、`json_count=0`、`checksum_missing=0`、`invalid_json=0`。盘点没有创建、修改、回填、重命名或删除历史数据。
+
+该结果只证明当前开发工作区没有待迁移的 `LocalArtifactStore` legacy metadata，不能外推到生产或共享部署。部署前仍必须对实际 artifact root 运行同等只读盘点；若发现缺 checksum 记录，按 10.4 的一版兼容读取策略上线，记录计数并另行制定显式迁移，不得在 read path 自动回填。
