@@ -25,4 +25,4 @@
 
 - [x] 5.1 Add core artifact, workflow artifact-step, builtin tool, checkpoint/index, service, API, CLI, and MCP adversarial regressions with no-side-effect assertions.
 - [x] 5.2 Run `openspec validate artifact-runtime-boundary-hardening --strict` and all Change 1 targeted tests.
-- [ ] 5.3 Run `python -m scripts.dev compile`, `python -m scripts.dev smoke`, `openspec validate --all --strict`, and `git diff --check`.
+- [x] 5.3 Run `python -m scripts.dev compile`, `python -m scripts.dev smoke`, `openspec validate --all --strict`, and `git diff --check`.
