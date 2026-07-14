@@ -4,7 +4,7 @@
 TBD - created by archiving change artifact-runtime-boundary-hardening. Update Purpose after archive.
 ## Requirements
 ### Requirement: Artifact filesystem access uses one path boundary
-The system SHALL validate every artifact-root identity and relative path through the shared artifact path boundary before filesystem access or durable side effects.
+The system SHALL validate every artifact-root identity and relative path, including inspection fallbacks and legacy workflow-reference metadata, through the shared artifact path boundary before filesystem access or durable side effects.
 
 #### Scenario: Unsafe run identifier is rejected
 - **WHEN** a caller supplies a traversal, absolute, drive-relative, UNC, device, reserved-character, trailing-dot/space, ADS, or DOS-device run identifier
@@ -17,6 +17,16 @@ The system SHALL validate every artifact-root identity and relative path through
 #### Scenario: Linked target escapes the root
 - **WHEN** a path below the artifact root traverses a symlink or junction to an external target
 - **THEN** canonical descendant resolution rejects the target before external content is read or written
+
+#### Scenario: Artifact detail needs a fallback run directory
+- **WHEN** an inspected run has no populated `artifact_dir` and artifact detail must derive the run directory from `artifact_root` and `run_id`
+- **THEN** the service validates the run identifier and uses canonical descendant resolution
+- **AND** it does not resolve the fallback by directly joining `artifact_root / run_id`
+
+#### Scenario: Legacy reference metadata run id is not a string
+- **WHEN** a legacy `WorkflowArtifactRef` contains a non-null `metadata.run_id` whose raw type is not `str`
+- **THEN** local reference resolution raises `ArtifactPathError` before string coercion or filesystem access
+- **AND** numeric, boolean, collection, and object values are never accepted as run identifiers
 
 ### Requirement: Infrastructure owns trusted artifact metadata
 The system SHALL reject caller metadata that conflicts with publisher- or artifact-step-owned identity, location, integrity, lifecycle, content-description, or redaction fields.

@@ -4,7 +4,7 @@
 TBD - created by archiving change artifact-inspection-interface. Update Purpose after archive.
 ## Requirements
 ### Requirement: Artifact inspection reads manifest-listed artifacts
-The system SHALL list only canonical manifest-listed artifact paths and SHALL return artifact content only after strict expected-checksum verification.
+The system SHALL list only canonical manifest-listed artifact paths and SHALL return direct artifact content only after the canonical terminal run manifest and strict expected-checksum contract validate successfully.
 
 #### Scenario: Artifact list is requested
 - **WHEN** a valid run manifest contains valid artifact entries
@@ -17,6 +17,11 @@ The system SHALL list only canonical manifest-listed artifact paths and SHALL re
 #### Scenario: Artifact content is tampered
 - **WHEN** direct artifact detail is requested and persisted bytes do not match valid expected metadata
 - **THEN** inspection raises `ArtifactChecksumMismatchError` and returns no content
+
+#### Scenario: Artifact detail manifest is structurally invalid
+- **WHEN** direct artifact detail receives a manifest that fails `validate_run_manifest(..., require_terminal_artifact=True)`
+- **THEN** inspection wraps the canonical `RunManifestError` as `ArtifactStoreMetadataError`
+- **AND** it does not resolve, decode, redact, or return the requested artifact content
 
 ### Requirement: CLI can inspect artifacts
 The system SHALL expose `news artifacts list` and `news artifacts show` with JSON output support and SHALL fail with exit code `1` on typed path, checksum, metadata, or store-configuration failures.
