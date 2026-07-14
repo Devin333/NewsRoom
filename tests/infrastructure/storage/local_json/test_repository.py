@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from framework.artifacts import ArtifactPathError
 from infrastructure.storage.local_json import LocalJsonRepository, ReportNotFoundError
 
 
@@ -87,9 +88,37 @@ def test_local_json_repository_gets_blocked_report_by_id(tmp_path) -> None:
     assert record.report_json == {"title": "Blocked AI Report"}
 
 
-def test_local_json_repository_rejects_invalid_report_id(tmp_path) -> None:
-    with pytest.raises(ValueError, match="invalid report id"):
-        LocalJsonRepository(tmp_path).get_report("../secret:final")
+@pytest.mark.parametrize(
+    "report_id",
+    ["../secret:final", "folder\\secret:final", "NUL:final", "run.:final"],
+)
+def test_local_json_repository_rejects_invalid_report_id(tmp_path, report_id: str) -> None:
+    with pytest.raises(ArtifactPathError, match="invalid report id"):
+        LocalJsonRepository(tmp_path).get_report(report_id)
+
+
+def test_local_json_repository_rejects_linked_report_outside_run(tmp_path) -> None:
+    _write_report_run(tmp_path, "run-1", "2026-05-11T00:00:00Z", "Safe Report")
+    run_dir = tmp_path / "run-1"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "report.json").write_text(
+        json.dumps({"title": "External Report"}),
+        encoding="utf-8",
+    )
+    link = run_dir / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlinks are unavailable: {exc}")
+
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["report_json"] = "linked/report.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ArtifactPathError):
+        LocalJsonRepository(tmp_path).get_report("run-1:final")
 
 
 def test_local_json_repository_raises_when_report_id_missing(tmp_path) -> None:

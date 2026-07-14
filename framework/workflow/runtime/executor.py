@@ -5,7 +5,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from framework.artifacts import ArtifactManager
+from framework.artifacts import (
+    ArtifactManager,
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+)
 from framework.events import EventBus
 from framework.specs import (
     WorkflowSpec,
@@ -308,7 +312,13 @@ def _step_outcomes_from_checkpoint(payload: dict[str, Any]) -> dict[str, StepOut
 
 
 def _load_checkpoint_manifest(artifact_root: Path, run_id: str) -> dict[str, Any] | None:
-    path = artifact_root / run_id / "manifest.json"
+    validated_run_id = validate_artifact_path_segment(run_id, field="run_id")
+    path = resolve_artifact_descendant(
+        artifact_root,
+        validated_run_id,
+        "manifest.json",
+        field="checkpoint_manifest_path",
+    )
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -362,6 +372,5 @@ def _configure_step_runners(
         configure_budget = getattr(runner, "configure_global_budget_tracker", None)
         if callable(configure_budget) and global_budget_tracker is not None:
             configure_budget(global_budget_tracker)
-
 
 

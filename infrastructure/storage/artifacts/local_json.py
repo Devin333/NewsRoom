@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 
 from framework.artifacts.models import ArtifactRef
-from framework.artifacts.stores.filesystem import _validate_id, _validate_relative_path
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.shared.hashing import hash_text
 
 
@@ -17,11 +21,11 @@ class LocalJsonArtifactIndexStore:
         self.root = Path(root)
 
     def index_artifact(self, ref: ArtifactRef) -> Path:
-        _validate_id(ref.run_id, "run_id")
-        _validate_id(ref.artifact_id, "artifact_id")
+        validate_artifact_path_segment(ref.run_id, field="run_id")
+        _require_artifact_id(ref.artifact_id)
         if ref.step_id is not None:
-            _validate_id(ref.step_id, "step_id")
-        _validate_relative_path(ref.path)
+            validate_artifact_path_segment(ref.step_id, field="step_id")
+        validate_relative_artifact_path(ref.path, field="artifact path")
 
         path = self._record_path(ref.run_id, ref.artifact_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,13 +41,25 @@ class LocalJsonArtifactIndexStore:
         return ArtifactRef.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
     def list_by_run(self, run_id: str) -> list[ArtifactRef]:
-        _validate_id(run_id, "run_id")
-        run_dir = self.root / _run_dir_name(run_id)
+        validate_artifact_path_segment(run_id, field="run_id")
+        run_dir = resolve_artifact_descendant(
+            self.root,
+            _run_dir_name(run_id),
+            field="run_id",
+        )
         if not run_dir.exists():
             return []
         refs = [
-            ArtifactRef.from_dict(json.loads(path.read_text(encoding="utf-8")))
-            for path in run_dir.glob("*.json")
+            ArtifactRef.from_dict(
+                json.loads(
+                    resolve_artifact_descendant(
+                        run_dir,
+                        candidate.name,
+                        field="artifact index record",
+                    ).read_text(encoding="utf-8")
+                )
+            )
+            for candidate in run_dir.glob("*.json")
         ]
         return sorted(refs, key=lambda ref: (ref.created_at, ref.artifact_id))
 
@@ -51,13 +67,25 @@ class LocalJsonArtifactIndexStore:
         if not self.root.exists():
             return []
         refs = []
-        for run_dir in sorted(path for path in self.root.iterdir() if path.is_dir()):
-            for path in sorted(run_dir.glob("*.json")):
+        for candidate_run_dir in sorted(self.root.iterdir()):
+            run_dir = resolve_artifact_descendant(
+                self.root,
+                candidate_run_dir.name,
+                field="artifact index run directory",
+            )
+            if not run_dir.is_dir():
+                continue
+            for candidate in sorted(run_dir.glob("*.json")):
+                path = resolve_artifact_descendant(
+                    run_dir,
+                    candidate.name,
+                    field="artifact index record",
+                )
                 refs.append(ArtifactRef.from_dict(json.loads(path.read_text(encoding="utf-8"))))
         return sorted(refs, key=lambda ref: (ref.run_id, ref.created_at, ref.artifact_id))
 
     def list_by_step(self, run_id: str, step_id: str) -> list[ArtifactRef]:
-        _validate_id(step_id, "step_id")
+        validate_artifact_path_segment(step_id, field="step_id")
         return [ref for ref in self.list_by_run(run_id) if ref.step_id == step_id]
 
     def list_by_type(self, artifact_type: str, *, run_id: str | None = None) -> list[ArtifactRef]:
@@ -73,9 +101,14 @@ class LocalJsonArtifactIndexStore:
             path.unlink()
 
     def _record_path(self, run_id: str, artifact_id: str) -> Path:
-        _validate_id(run_id, "run_id")
-        _validate_id(artifact_id, "artifact_id")
-        return self.root / _run_dir_name(run_id) / _record_file_name(artifact_id)
+        validate_artifact_path_segment(run_id, field="run_id")
+        artifact_id = _require_artifact_id(artifact_id)
+        return resolve_artifact_descendant(
+            self.root,
+            _run_dir_name(run_id),
+            _record_file_name(artifact_id),
+            field="artifact index record",
+        )
 
 
 def _run_dir_name(run_id: str) -> str:
@@ -85,3 +118,9 @@ def _run_dir_name(run_id: str) -> str:
 def _record_file_name(artifact_id: str) -> str:
     digest = hash_text(artifact_id)[:16]
     return f"a-{digest}.json"
+
+
+def _require_artifact_id(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("artifact_id is required")
+    return value

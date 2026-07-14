@@ -2,8 +2,10 @@ import json
 from dataclasses import dataclass
 
 from interfaces.services.approval_service import ApprovalApplicationService
+from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.report_service import ReportApplicationService
+from interfaces.services.run_inspection_service import RunInspectionService
 
 
 def test_mcp_catalog_lists_research_tools_without_calling_factories() -> None:
@@ -217,6 +219,40 @@ def test_mcp_unknown_tool_and_resource_fail_safely() -> None:
     assert tool.error_type == "MCPToolNotFound"
     assert resource.success is False
     assert resource.error_type == "MCPResourceNotFound"
+
+
+def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -> None:
+    run_dir = tmp_path / "run-unsafe"
+    run_dir.mkdir()
+    (tmp_path / "outside.txt").write_text("artifact-secret", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-unsafe",
+                "status": "succeeded",
+                "artifacts": {"output": "../outside.txt"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: RunInspectionService(tmp_path),
+        artifact_service_factory=lambda: ArtifactInspectionService(tmp_path),
+    )
+
+    results = [
+        service.read_resource("news://runs/run:stream/artifacts/output"),
+        service.call_tool("news.run.replay", {"run_id": "run:stream"}),
+        service.read_resource("news://runs/run-unsafe/artifacts/output"),
+        service.read_resource("news://runs/run-unsafe/replay"),
+        service.call_tool("news.run.replay", {"run_id": "run-unsafe"}),
+    ]
+
+    for result in results:
+        assert result.success is False
+        assert result.error_type == "ArtifactPathError"
+        assert result.data is None
+        assert "artifact-secret" not in json.dumps(result.to_dict())
 
 
 def _raising_factory():

@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from interfaces.services.run_inspection_service import RunInspectionService
 
 
@@ -103,10 +108,21 @@ class ArtifactInspectionService:
         )
 
     def _artifact_path(self, run_id: str, relative_path: str) -> Path:
-        relative = Path(relative_path)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError(f"invalid artifact path: {relative_path}")
-        path = self.artifact_root / run_id / relative
+        safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        run_dir = resolve_artifact_descendant(
+            self.artifact_root,
+            safe_run_id,
+            field="run_id",
+        )
+        safe_relative_path = validate_relative_artifact_path(
+            relative_path,
+            field="artifact path",
+        )
+        path = resolve_artifact_descendant(
+            run_dir,
+            safe_relative_path,
+            field="artifact path",
+        )
         if not path.exists():
             raise FileNotFoundError(f"artifact file not found: {relative_path}")
         return path

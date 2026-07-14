@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from framework.artifacts.paths import validate_artifact_path_segment
 from framework.shared.json import to_jsonable
 from framework.shared.time import format_datetime, parse_datetime, utc_now
 
@@ -21,10 +22,10 @@ class ArtifactReference:
     created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
-        if not self.artifact_id:
-            raise ValueError("artifact_id is required")
-        if not self.uri:
-            raise ValueError("uri is required")
+        _required_string(self.artifact_id, "artifact_id")
+        _required_string(self.uri, "uri")
+        if self.run_id is not None:
+            validate_artifact_path_segment(self.run_id, field="run_id")
         object.__setattr__(self, "metadata", dict(self.metadata))
         object.__setattr__(self, "created_at", parse_datetime(self.created_at) or utc_now())
 
@@ -45,12 +46,12 @@ class ArtifactReference:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ArtifactReference":
         return cls(
-            artifact_id=str(payload["artifact_id"]),
-            uri=str(payload.get("uri") or payload.get("path")),
+            artifact_id=_required_payload_string(payload, "artifact_id"),
+            uri=_required_alias_string(payload, "uri", "path"),
             content_type=_optional_str(payload.get("content_type") or payload.get("media_type")),
             checksum=_optional_str(payload.get("checksum") or payload.get("content_hash")),
             metadata=dict(payload.get("metadata") or {}),
-            run_id=_optional_str(payload.get("run_id")),
+            run_id=_optional_validated_run_id(payload.get("run_id")),
             kind=_optional_str(payload.get("kind") or payload.get("artifact_type")),
             size_bytes=_optional_int(payload.get("size_bytes")),
             created_at=parse_datetime(payload.get("created_at")) or utc_now(),
@@ -97,12 +98,12 @@ class ArtifactRef:
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ArtifactRef":
         return cls(
-            artifact_id=str(payload["artifact_id"]),
-            run_id=str(payload["run_id"]),
+            artifact_id=_required_payload_string(payload, "artifact_id"),
+            run_id=_required_payload_string(payload, "run_id"),
             step_id=_optional_str(payload.get("step_id")),
-            artifact_type=str(payload["artifact_type"]),
-            path=str(payload.get("path") or payload.get("uri")),
-            content_type=str(payload.get("content_type") or payload.get("media_type") or "application/octet-stream"),
+            artifact_type=_required_payload_string(payload, "artifact_type"),
+            path=_required_alias_string(payload, "path", "uri"),
+            content_type=_required_alias_string(payload, "content_type", "media_type"),
             size_bytes=_optional_int(payload.get("size_bytes")),
             checksum=_optional_str(payload.get("checksum") or payload.get("content_hash")),
             redacted=bool(payload.get("redacted", True)),
@@ -138,6 +139,39 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _required_string(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} is required")
+    return value
+
+
+def _required_payload_string(payload: dict[str, Any], field: str) -> str:
+    return _required_string(payload.get(field), field)
+
+
+def _optional_validated_run_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    return validate_artifact_path_segment(value, field="run_id")
+
+
+def _required_alias_string(
+    payload: dict[str, Any],
+    primary: str,
+    legacy: str,
+) -> str:
+    primary_value = payload.get(primary)
+    legacy_value = payload.get(legacy)
+    if primary_value is not None and legacy_value is not None:
+        primary_string = _required_string(primary_value, primary)
+        legacy_string = _required_string(legacy_value, legacy)
+        if primary_string != legacy_string:
+            raise ValueError(f"conflicting {primary}/{legacy} values")
+        return primary_string
+    value = primary_value if primary_value is not None else legacy_value
+    return _required_string(value, primary)
 
 
 def _optional_int(value: Any) -> int | None:

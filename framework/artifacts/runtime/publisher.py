@@ -7,6 +7,11 @@ from typing import Any, Protocol
 
 from framework.artifacts.models import Artifact, ArtifactReference
 from framework.artifacts.models.checksum import compute_checksum
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.artifacts.stores import ArtifactStore
 from framework.shared.time import utc_now
 
@@ -21,6 +26,7 @@ SENSITIVE_METADATA_PATTERNS = (
     "credential",
     "private_key",
 )
+PUBLISHER_RESERVED_METADATA_KEYS = frozenset({"publisher_id", "run_id"})
 
 
 class ArtifactStatus(StrEnum):
@@ -168,6 +174,9 @@ class LocalArtifactPublisher:
     ) -> ArtifactPublishResult:
         try:
             metadata_payload = dict(metadata or {})
+            validate_artifact_path_segment(run_id, field="run_id")
+            validate_artifact_path_segment(step_id, field="step_id")
+            _reject_reserved_metadata(metadata_payload, PUBLISHER_RESERVED_METADATA_KEYS)
             artifact_id = _artifact_id(
                 run_id=run_id,
                 step_id=step_id,
@@ -181,7 +190,12 @@ class LocalArtifactPublisher:
                 artifact_type=artifact_type,
                 metadata=metadata_payload,
             )
-            path = self.root / run_id / relative_uri
+            run_dir = resolve_artifact_descendant(self.root, run_id, field="run_id")
+            path = resolve_artifact_descendant(
+                run_dir,
+                relative_uri,
+                field="artifact path",
+            )
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
             artifact_ref = WorkflowArtifactRef(
@@ -252,16 +266,17 @@ class LocalArtifactPublisher:
         return artifact_ref.status
 
     def _artifact_path(self, artifact_ref: WorkflowArtifactRef) -> Path:
-        uri = Path(artifact_ref.uri)
-        if uri.is_absolute() or ".." in uri.parts:
-            raise ValueError(f"artifact uri must be relative: {artifact_ref.uri}")
+        uri = validate_relative_artifact_path(artifact_ref.uri, field="artifact uri")
         run_id = artifact_ref.metadata.get("run_id")
         if run_id is not None:
-            run_path = Path(str(run_id))
-            if run_path.is_absolute() or ".." in run_path.parts:
-                raise ValueError(f"artifact run_id must be relative: {run_id}")
-            return self.root / run_path / uri
-        return self.root / uri
+            validated_run_id = validate_artifact_path_segment(str(run_id), field="run_id")
+            run_dir = resolve_artifact_descendant(
+                self.root,
+                validated_run_id,
+                field="run_id",
+            )
+            return resolve_artifact_descendant(run_dir, uri, field="artifact uri")
+        return resolve_artifact_descendant(self.root, uri, field="artifact uri")
 
 
 def stable_hash_bytes(content: bytes) -> str:
@@ -303,7 +318,9 @@ def _artifact_id(
 ) -> str:
     explicit_artifact_id = metadata.get("artifact_id")
     if explicit_artifact_id is not None:
-        return str(explicit_artifact_id)
+        if not isinstance(explicit_artifact_id, str) or not explicit_artifact_id.strip():
+            raise ValueError("artifact_id is required")
+        return explicit_artifact_id
     _ = (run_id, key)
     return ":".join([step_id, artifact_type])
 
@@ -317,13 +334,17 @@ def _artifact_uri(
 ) -> str:
     relative_path = metadata.get("relative_path")
     if relative_path is not None:
-        path = Path(str(relative_path).replace("\\", "/"))
+        path = str(relative_path)
     else:
         suffix = _suffix_for_artifact_type(artifact_type, _media_type_from_metadata(metadata))
-        path = Path("artifacts") / step_id / f"{key}.{suffix}"
-    if path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"artifact path must be relative to the run directory: {path}")
-    return path.as_posix()
+        path = f"artifacts/{step_id}/{key}.{suffix}"
+    return validate_relative_artifact_path(path, field="artifact path")
+
+
+def _reject_reserved_metadata(metadata: dict[str, Any], reserved: frozenset[str]) -> None:
+    conflicts = sorted(set(metadata) & reserved)
+    if conflicts:
+        raise ValueError("reserved artifact metadata key(s): " + ", ".join(conflicts))
 
 
 def _suffix_for_artifact_type(artifact_type: str, media_type: str | None) -> str:
@@ -349,3 +370,19 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+__all__ = [
+    "ArtifactPublishResult",
+    "ArtifactPublisher",
+    "ArtifactStatus",
+    "DefaultArtifactPublisher",
+    "LocalArtifactPublisher",
+    "PUBLISHER_RESERVED_METADATA_KEYS",
+    "REDACTED_METADATA_VALUE",
+    "WorkflowArtifactRef",
+    "WorkflowArtifactPublisher",
+    "redact_metadata",
+    "stable_hash_bytes",
+    "utc_now_iso",
+]

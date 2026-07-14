@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.tool.models.definition import ToolDefinition
 from framework.tool.registry.registry import ToolRegistry
 
@@ -69,7 +74,11 @@ def register_artifact_tools(
 
 
 def _write_artifact(artifact_manager: Any, run_id: str, args: dict[str, Any]) -> dict[str, Any]:
-    relative_path = str(args["path"])
+    validate_artifact_path_segment(run_id, field="run_id")
+    relative_path = validate_relative_artifact_path(
+        str(args["path"]),
+        field="artifact path",
+    )
     content = args["content"]
     content_type = str(args.get("content_type") or _content_type_for(content))
     if content_type == "text/plain":
@@ -80,7 +89,10 @@ def _write_artifact(artifact_manager: Any, run_id: str, args: dict[str, Any]) ->
 
 
 def _load_artifact(artifact_manager: Any, run_id: str, args: dict[str, Any]) -> dict[str, Any]:
-    relative_path = str(args["path"])
+    relative_path = validate_relative_artifact_path(
+        str(args["path"]),
+        field="artifact path",
+    )
     target = _artifact_path(artifact_manager, run_id, relative_path)
     content_type = str(args.get("content_type") or _content_type_for_path(target))
     text = target.read_text(encoding="utf-8")
@@ -91,17 +103,32 @@ def _load_artifact(artifact_manager: Any, run_id: str, args: dict[str, Any]) -> 
 
 
 def _search_artifacts(artifact_manager: Any, run_id: str, args: dict[str, Any]) -> dict[str, Any]:
-    run_dir = Path(artifact_manager.run_dir(run_id))
-    prefix = _safe_relative_prefix(str(args.get("path_prefix") or ""))
-    root = run_dir / prefix
+    validate_artifact_path_segment(run_id, field="run_id")
+    run_dir = Path(artifact_manager.run_dir(run_id)).resolve(strict=False)
+    raw_prefix = str(args.get("path_prefix") or "")
+    prefix = (
+        validate_relative_artifact_path(raw_prefix, field="artifact path prefix")
+        if raw_prefix
+        else None
+    )
+    root = (
+        resolve_artifact_descendant(run_dir, prefix, field="artifact path prefix")
+        if prefix is not None
+        else run_dir
+    )
     query = str(args.get("query") or "").casefold()
     max_results = max(1, min(int(args.get("max_results") or 20), 100))
     matches = []
     if not root.exists():
         return {"match_count": 0, "artifacts": []}
     paths = [root] if root.is_file() else sorted(path for path in root.rglob("*") if path.is_file())
-    for path in paths:
-        relative_path = path.relative_to(run_dir).as_posix()
+    for candidate in paths:
+        relative_path = candidate.relative_to(run_dir).as_posix()
+        path = resolve_artifact_descendant(
+            run_dir,
+            relative_path,
+            field="artifact search result path",
+        )
         matched_on = _artifact_match_reason(path, relative_path, query)
         if matched_on is None:
             continue
@@ -117,17 +144,13 @@ def _search_artifacts(artifact_manager: Any, run_id: str, args: dict[str, Any]) 
 
 
 def _artifact_path(artifact_manager: Any, run_id: str, relative_path: str) -> Path:
-    relative = Path(relative_path)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"artifact path must be relative to the run directory: {relative_path}")
-    return Path(artifact_manager.run_dir(run_id)) / relative
-
-
-def _safe_relative_prefix(path_prefix: str) -> Path:
-    relative = Path(path_prefix)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"artifact path must be relative to the run directory: {path_prefix}")
-    return relative
+    validate_artifact_path_segment(run_id, field="run_id")
+    relative = validate_relative_artifact_path(relative_path, field="artifact path")
+    return resolve_artifact_descendant(
+        artifact_manager.run_dir(run_id),
+        relative,
+        field="artifact path",
+    )
 
 
 def _artifact_match_reason(path: Path, relative_path: str, query: str) -> str | None:

@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
-from pathlib import Path
 from typing import Any, Callable
 
 import psycopg
 
+from framework.artifacts.paths import (
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from infrastructure.storage.postgres.dsn import normalize_dsn
 
 from infrastructure.storage.artifacts.local_json import ArtifactIndexNotFoundError
@@ -61,7 +64,7 @@ class PostgresArtifactIndexStore:
 
     def get_artifact(self, run_id: str, artifact_id: str) -> ArtifactRef:
         _validate_id(run_id, "run_id")
-        _validate_id(artifact_id, "artifact_id")
+        _require_artifact_id(artifact_id)
         row = self._fetch_one(
             _select_sql("WHERE run_id = %s AND artifact_id = %s"),
             (run_id, artifact_id),
@@ -105,7 +108,7 @@ class PostgresArtifactIndexStore:
 
     def delete_artifact(self, run_id: str, artifact_id: str) -> None:
         _validate_id(run_id, "run_id")
-        _validate_id(artifact_id, "artifact_id")
+        _require_artifact_id(artifact_id)
         self._execute(
             "DELETE FROM artifact_index WHERE run_id = %s AND artifact_id = %s",
             (run_id, artifact_id),
@@ -200,18 +203,14 @@ def _optional_str(value: Any) -> str | None:
 
 def _validate_ref(ref: ArtifactRef) -> None:
     _validate_id(ref.run_id, "run_id")
-    _validate_id(ref.artifact_id, "artifact_id")
+    _require_artifact_id(ref.artifact_id)
     if ref.step_id is not None:
         _validate_id(ref.step_id, "step_id")
     _validate_relative_path(ref.path)
 
 
 def _validate_id(value: str, label: str) -> None:
-    if not value:
-        raise ValueError(f"{label} is required")
-    relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
-        raise ValueError(f"invalid {label}: {value}")
+    validate_artifact_path_segment(value, field=label)
 
 
 def _validate_required(value: str, label: str) -> None:
@@ -219,7 +218,11 @@ def _validate_required(value: str, label: str) -> None:
         raise ValueError(f"{label} is required")
 
 
+def _require_artifact_id(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("artifact_id is required")
+    return value
+
+
 def _validate_relative_path(value: str) -> None:
-    relative = Path(value)
-    if not value or relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"invalid artifact path: {value}")
+    validate_relative_artifact_path(value, field="artifact path")

@@ -17,6 +17,11 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from framework.artifacts import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.specs import StepStatus, WorkflowSpec
 from framework.workflow.buffer import DataBuffer, step_scope_from_spec
@@ -1139,10 +1144,10 @@ class LocalWorkflowRunOperationService:
         append_operation_record(manifest, record)
 
     def _run_dir(self, run_id: str) -> Path:
-        return self.artifact_root / run_id
+        return _resolve_run_dir(self.artifact_root, run_id)
 
     def _write_json(self, run_id: str, relative_path: str, payload: dict[str, Any]) -> None:
-        path = self._run_dir(run_id) / relative_path
+        path = _resolve_run_artifact_path(self.artifact_root, run_id, relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(stable_json_dumps(to_json_safe(payload), indent=2) + "\n", encoding="utf-8")
 
@@ -1185,8 +1190,34 @@ class LocalWorkflowRunOperationService:
 # =============================================================================
 
 
+def _resolve_run_dir(artifact_root: str | Path, run_id: str) -> Path:
+    validated_run_id = validate_artifact_path_segment(run_id, field="run_id")
+    return resolve_artifact_descendant(
+        artifact_root,
+        validated_run_id,
+        field="run_id",
+    )
+
+
+def _resolve_run_artifact_path(
+    artifact_root: str | Path,
+    run_id: str,
+    relative_path: str,
+) -> Path:
+    run_dir = _resolve_run_dir(artifact_root, run_id)
+    normalized_relative_path = validate_relative_artifact_path(
+        relative_path,
+        field="artifact_path",
+    )
+    return resolve_artifact_descendant(
+        run_dir,
+        normalized_relative_path,
+        field="artifact_path",
+    )
+
+
 def load_run_manifest(artifact_root: str | Path, run_id: str) -> dict[str, Any]:
-    path = Path(artifact_root) / run_id / "manifest.json"
+    path = _resolve_run_artifact_path(artifact_root, run_id, "manifest.json")
     if not path.exists():
         raise FileNotFoundError(f"manifest not found for run_id: {run_id}")
     return normalize_legacy_run_manifest(json.loads(path.read_text(encoding="utf-8")))
@@ -1197,7 +1228,7 @@ def save_run_manifest(
     run_id: str,
     manifest: dict[str, Any],
 ) -> None:
-    path = Path(artifact_root) / run_id / "manifest.json"
+    path = _resolve_run_artifact_path(artifact_root, run_id, "manifest.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     manifest["manifest_hash"] = manifest_hash(manifest)
     path.write_text(stable_json_dumps(to_json_safe(manifest), indent=2) + "\n", encoding="utf-8")
@@ -1207,7 +1238,7 @@ def load_workflow_spec_from_run(
     artifact_root: str | Path,
     run_id: str,
 ) -> WorkflowSpec | None:
-    path = Path(artifact_root) / run_id / "workflow_spec.json"
+    path = _resolve_run_artifact_path(artifact_root, run_id, "workflow_spec.json")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -1223,12 +1254,24 @@ def checkpoint_from_run_artifacts(
     run_id: str,
     manifest: dict[str, Any] | None = None,
 ) -> WorkflowCheckpoint | None:
-    root = Path(artifact_root)
-    manifest = dict(manifest or load_run_manifest(root, run_id))
-    snapshot = _read_json(root / run_id / "data_buffer_snapshot.json")
+    run_dir = _resolve_run_dir(artifact_root, run_id)
+    manifest = dict(manifest or load_run_manifest(artifact_root, run_id))
+    snapshot = _read_json(
+        resolve_artifact_descendant(
+            run_dir,
+            "data_buffer_snapshot.json",
+            field="data_buffer_snapshot_path",
+        )
+    )
     if not isinstance(snapshot, dict):
         snapshot = {}
-    step_results = _read_json(root / run_id / "step_results.json")
+    step_results = _read_json(
+        resolve_artifact_descendant(
+            run_dir,
+            "step_results.json",
+            field="step_results_path",
+        )
+    )
     if not isinstance(step_results, dict):
         step_results = {}
     return WorkflowCheckpoint(
@@ -1251,7 +1294,12 @@ def checkpoint_from_run_artifacts(
 
 def append_operation_event(run_dir: Path, event: dict[str, Any]) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
-    with (run_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
+    events_path = resolve_artifact_descendant(
+        run_dir,
+        "events.jsonl",
+        field="events_path",
+    )
+    with events_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(to_json_safe(event), ensure_ascii=False, sort_keys=True))
         handle.write("\n")
 
@@ -1334,7 +1382,11 @@ def _patch_diff(
     patch: dict[str, Any],
     artifact_root: Path,
 ) -> dict[str, dict[str, Any]]:
-    snapshot_path = artifact_root / run_id / "data_buffer_snapshot.json"
+    snapshot_path = _resolve_run_artifact_path(
+        artifact_root,
+        run_id,
+        "data_buffer_snapshot.json",
+    )
     try:
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

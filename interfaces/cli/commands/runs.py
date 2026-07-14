@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from typing import Any
 
+from framework.artifacts.paths import ArtifactPathError
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.run_inspection_service import RunInspectionService
@@ -112,6 +114,8 @@ def list_runs(args: argparse.Namespace) -> int:
 def show_run(args: argparse.Namespace) -> int:
     try:
         result = _run_inspection_service(args.artifact_root).get_run(args.run_id)
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -134,6 +138,8 @@ def run_events(args: argparse.Namespace) -> int:
             args.run_id,
             limit=args.limit,
         )
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -184,6 +190,8 @@ def sse_frame(event_name: str, data: dict[str, Any]) -> str:
 def replay_run(args: argparse.Namespace) -> int:
     try:
         result = _run_inspection_service(args.artifact_root).replay_run(args.run_id)
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -213,6 +221,8 @@ def replay_run(args: argparse.Namespace) -> int:
 def run_diagnostics(args: argparse.Namespace) -> int:
     try:
         result = _run_inspection_service(args.artifact_root).get_run_diagnostics(args.run_id)
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -236,6 +246,8 @@ def run_diagnostics(args: argparse.Namespace) -> int:
 def run_health(args: argparse.Namespace) -> int:
     try:
         result = _run_inspection_service(args.artifact_root).get_run_health(args.run_id)
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -278,6 +290,8 @@ def compare_runs(args: argparse.Namespace) -> int:
             args.base_run_id,
             args.target_run_id,
         )
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -298,6 +312,8 @@ def compare_runs(args: argparse.Namespace) -> int:
 def run_artifacts(args: argparse.Namespace) -> int:
     try:
         result = _artifact_service(args.artifact_root).list_artifacts(args.run_id)
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except FileNotFoundError as exc:
         print(str(exc))
         return 3
@@ -325,6 +341,8 @@ def cancel_run(args: argparse.Namespace) -> int:
             reason=args.reason,
             actor_id=args.actor_id,
         )
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except FileNotFoundError as exc:
         print(str(exc))
         return 3
@@ -341,6 +359,8 @@ def rerun_from_step(args: argparse.Namespace) -> int:
             step_id=args.step_id,
             actor_id=args.actor_id,
         )
+    except ArtifactPathError as exc:
+        return _print_typed_artifact_error(exc)
     except FileNotFoundError as exc:
         print(str(exc))
         return 3
@@ -382,6 +402,11 @@ def _add_artifact_root_argument(parser: argparse.ArgumentParser) -> None:
         default=".newsroom/runs",
         help="Directory where run artifacts are stored",
     )
+
+
+def _print_typed_artifact_error(exc: Exception) -> int:
+    print(str(exc), file=sys.stderr)
+    return 1
 
 
 add_runs_commands = register

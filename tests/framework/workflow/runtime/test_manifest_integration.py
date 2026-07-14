@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
-from framework.artifacts import ArtifactManager
+import pytest
+
+from framework.artifacts import ArtifactManager, ArtifactPathError
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.manifest import validate_run_manifest
 from framework.workflow.runtime.result import StepOutcome
@@ -66,3 +69,28 @@ def test_workflow_manifest_contains_q05_run_evidence(tmp_path) -> None:
     assert any(item["path"] == "run_history.jsonl" for item in manifest["artifact_index"])
     validate_run_manifest(manifest, require_terminal_artifact=True)
     assert result.manifest["run_history_ref"] == "run_history.jsonl"
+
+
+@pytest.mark.parametrize("run_id", ["../escape", "C:\\escape", "run:stream", "NUL"])
+def test_workflow_rejects_unsafe_explicit_run_id_before_side_effect(
+    tmp_path: Path,
+    run_id: str,
+) -> None:
+    registry = StepRunnerRegistry()
+    registry.register(StepType.FUNCTION, _Runner())
+    workflow = WorkflowSpec(
+        workflow_id="wf-manifest",
+        name="Workflow",
+        version="1.0",
+        steps=[StepSpec(step_id="s1", write_keys=["ok"])],
+        terminal_step_ids=["s1"],
+    )
+
+    with pytest.raises(ArtifactPathError):
+        WorkflowExecutor(
+            function_step_runner=None,
+            artifact_manager=ArtifactManager(tmp_path),
+            step_runner_registry=registry,
+        ).execute(workflow, {}, profile="test", run_id=run_id)
+
+    assert not tmp_path.exists() or not any(tmp_path.rglob("*"))

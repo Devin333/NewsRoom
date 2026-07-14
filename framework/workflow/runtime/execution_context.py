@@ -10,7 +10,7 @@ from uuid import uuid4
 from framework.specs import StepStatus, WorkflowSpec, WorkflowStatus
 from framework.workflow.buffer import DataBuffer, DataBufferSnapshot, step_scope_from_spec
 from framework.events.trace import TraceContext
-from framework.artifacts import ArtifactManager
+from framework.artifacts import ArtifactManager, validate_artifact_path_segment
 from framework.events import EventBus, EventRecorder
 from framework.workflow.runtime.manifest import (
     build_runner_manifest,
@@ -64,7 +64,11 @@ def build_execution_context(
     initial_path: list[str] | None = None,
     initial_step_results: dict[str, StepOutcome] | None = None,
 ) -> WorkflowExecutionContext:
-    actual_run_id = run_id or uuid4().hex
+    actual_run_id = (
+        uuid4().hex
+        if run_id is None
+        else validate_artifact_path_segment(run_id, field="run_id")
+    )
     run_dir = artifact_manager.start_run(actual_run_id)
     recorder = EventRecorder(actual_run_id, event_bus=event_bus)
     buffer = DataBuffer(initial_buffer_values or {"request": request})

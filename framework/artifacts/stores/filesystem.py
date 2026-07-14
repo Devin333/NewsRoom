@@ -5,6 +5,11 @@ from pathlib import Path
 from uuid import uuid4
 
 from framework.artifacts.models import ArtifactRef, ArtifactWriteRequest, compute_checksum
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -69,15 +74,21 @@ class FilesystemArtifactStore:
         return self._artifact_path(artifact_ref.run_id, artifact_ref.path).exists()
 
     def list(self, run_id: str) -> list[str]:
-        _validate_id(run_id, "run_id")
-        run_dir = self.root / run_id
+        validate_artifact_path_segment(run_id, field="run_id")
+        run_dir = resolve_artifact_descendant(self.root, run_id, field="run_id")
         if not run_dir.exists():
             return []
-        return sorted(
-            path.relative_to(run_dir).as_posix()
-            for path in run_dir.rglob("*")
-            if path.is_file()
-        )
+        paths: list[str] = []
+        for candidate in run_dir.rglob("*"):
+            relative_path = candidate.relative_to(run_dir).as_posix()
+            path = resolve_artifact_descendant(
+                run_dir,
+                relative_path,
+                field="artifact list path",
+            )
+            if path.is_file():
+                paths.append(relative_path)
+        return sorted(paths)
 
     def checksum(self, artifact_ref: ArtifactRef) -> str:
         path = self._artifact_path(artifact_ref.run_id, artifact_ref.path)
@@ -91,9 +102,10 @@ class FilesystemArtifactStore:
             path.unlink()
 
     def _artifact_path(self, run_id: str, relative_path: str) -> Path:
-        _validate_id(run_id, "run_id")
-        relative = _validate_relative_path(relative_path)
-        return self.root / run_id / relative
+        validate_artifact_path_segment(run_id, field="run_id")
+        relative = validate_relative_artifact_path(relative_path, field="artifact path")
+        run_dir = resolve_artifact_descendant(self.root, run_id, field="run_id")
+        return resolve_artifact_descendant(run_dir, relative, field="artifact path")
 
 
 def _default_relative_path(
@@ -125,21 +137,8 @@ def _path_segment(value: str) -> str:
 
 
 def _normalize_relative_path(value: str) -> str:
-    return _validate_relative_path(value).as_posix()
-
-
-def _validate_relative_path(value: str) -> Path:
-    if not value:
-        raise ValueError("artifact path is required")
-    relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"invalid artifact path: {value}")
-    return relative
+    return validate_relative_artifact_path(value, field="artifact path")
 
 
 def _validate_id(value: str, label: str) -> None:
-    if not value:
-        raise ValueError(f"{label} is required")
-    relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
-        raise ValueError(f"invalid {label}: {value}")
+    validate_artifact_path_segment(value, field=label)

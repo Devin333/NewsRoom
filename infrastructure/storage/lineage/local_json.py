@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+)
 from infrastructure.storage.lineage.models import LineageRef
 
 
@@ -57,16 +61,16 @@ class LocalJsonLineageStore:
         ]
 
     def _lineage_path(self, run_id: str) -> Path:
-        _validate_run_id(run_id)
-        return self.root / f"{run_id}.jsonl"
+        validated_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        return resolve_artifact_descendant(
+            self.root,
+            f"{validated_run_id}.jsonl",
+            field="lineage_store_path",
+        )
 
 
 def _validate_run_id(run_id: str) -> None:
-    if not run_id:
-        raise ValueError("run_id is required")
-    relative = Path(run_id)
-    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
-        raise ValueError(f"invalid run_id: {run_id}")
+    validate_artifact_path_segment(run_id, field="run_id")
 
 
 def _validate_required(value: str, label: str) -> None:

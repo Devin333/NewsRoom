@@ -12,6 +12,12 @@ from framework.artifacts.runtime.publisher import (
     redact_metadata,
     utc_now_iso,
 )
+from framework.artifacts.paths import (
+    ArtifactPathError,
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 
 
 RUN_MANIFEST_SCHEMA_VERSION = "newsroom.workflow_run_manifest.v1"
@@ -210,8 +216,9 @@ class JsonManifestStore:
         self.root = Path(root)
 
     def write(self, manifest: WorkflowRunManifest) -> None:
-        self._manifest_path(manifest.run_id).parent.mkdir(parents=True, exist_ok=True)
-        self._manifest_path(manifest.run_id).write_text(
+        path = self._manifest_path(manifest.run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
             stable_json_dumps(manifest.to_dict(), indent=2) + "\n",
             encoding="utf-8",
         )
@@ -231,7 +238,13 @@ class JsonManifestStore:
         return self._manifest_path(run_id).exists()
 
     def _manifest_path(self, run_id: str) -> Path:
-        return self.root / run_id / "manifest.json"
+        validated_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        return resolve_artifact_descendant(
+            self.root,
+            validated_run_id,
+            "manifest.json",
+            field="manifest_path",
+        )
 
 
 @dataclass(frozen=True)
@@ -580,15 +593,15 @@ def validate_run_manifest(
 
 
 def _normalize_manifest_artifact_path(relative_path: str) -> str:
-    path = Path(str(relative_path).replace("\\", "/"))
-    if path.is_absolute() or ".." in path.parts:
+    try:
+        return validate_relative_artifact_path(
+            relative_path,
+            field="manifest_artifact_path",
+        )
+    except ArtifactPathError as exc:
         raise RunManifestError(
             f"manifest artifact path must be relative to the run directory: {relative_path}"
-        )
-    normalized = path.as_posix()
-    if not normalized or normalized == ".":
-        raise RunManifestError("manifest artifact path is required")
-    return normalized
+        ) from exc
 
 
 def _artifact_ref_value(artifact_ref: Any, name: str) -> Any:
@@ -803,6 +816,5 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
-
 
 

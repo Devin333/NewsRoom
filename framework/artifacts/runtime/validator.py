@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from framework.artifacts.models import Artifact, ArtifactReference
+from framework.artifacts.paths import ArtifactPathError, validate_artifact_path_segment
 
 
 class ArtifactValidator:
@@ -24,19 +23,14 @@ class ArtifactValidator:
             errors.append("artifact_id is required")
         if not ref.uri:
             errors.append("uri is required")
-        errors.extend(_relative_path_errors(ref.uri, "uri"))
+        if ref.run_id is not None:
+            errors.extend(_id_errors(ref.run_id, "run_id"))
         return errors
 
 
 def _id_errors(value: str, label: str) -> list[str]:
-    path = Path(value)
-    if path.is_absolute() or ".." in path.parts or len(path.parts) != 1:
-        return [f"invalid {label}: {value}"]
-    return []
-
-
-def _relative_path_errors(value: str, label: str) -> list[str]:
-    path = Path(value)
-    if not value or path.is_absolute() or ".." in path.parts:
-        return [f"invalid {label}: {value}"]
+    try:
+        validate_artifact_path_segment(value, field=label)
+    except ArtifactPathError as exc:
+        return [str(exc)]
     return []

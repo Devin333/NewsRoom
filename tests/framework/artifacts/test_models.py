@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from framework.artifacts import (
     Artifact,
     ArtifactContent,
@@ -45,3 +47,35 @@ def test_manifest_tracks_references() -> None:
     assert restored.get("a1") == ref
     assert [item.artifact_id for item in restored.list()] == ["a1"]
     assert ArtifactReference.from_dict({"artifact_id": "a2", "path": "x", "content_hash": "h"}).uri == "x"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"artifact_id": "a1"},
+        {"artifact_id": "a1", "uri": None},
+        {"artifact_id": "a1", "uri": ""},
+        {"artifact_id": "a1", "uri": "   "},
+        {"artifact_id": "a1", "uri": 7},
+        {"artifact_id": "a1", "uri": "x", "path": "y"},
+    ],
+)
+def test_artifact_reference_rejects_invalid_uri_alias(payload) -> None:
+    with pytest.raises(ValueError):
+        ArtifactReference.from_dict(payload)
+
+
+def test_artifact_reference_allows_remote_uri() -> None:
+    ref = ArtifactReference.from_dict(
+        {"artifact_id": "remote-1", "uri": "s3://bucket/key"}
+    )
+
+    assert ref.uri == "s3://bucket/key"
+
+
+@pytest.mark.parametrize("run_id", [7, "../other", "run:stream", "NUL"])
+def test_artifact_reference_rejects_invalid_optional_run_id(run_id) -> None:
+    with pytest.raises(ValueError):
+        ArtifactReference.from_dict(
+            {"artifact_id": "a1", "uri": "s3://bucket/key", "run_id": run_id}
+        )

@@ -17,6 +17,30 @@ from framework.workflow.runners._utils import (
     json_artifact_bytes,
     validated_outputs,
 )
+
+
+ARTIFACT_STEP_RESERVED_METADATA_KEYS = frozenset(
+    {
+        "artifact_id",
+        "artifact_type",
+        "artifact_key",
+        "key",
+        "relative_path",
+        "uri",
+        "path",
+        "content_type",
+        "media_type",
+        "publisher_id",
+        "run_id",
+        "redacted",
+        "checksum",
+        "content_hash",
+        "size_bytes",
+        "status",
+        "created_at",
+        "created_by_step_id",
+    }
+)
 from framework.workflow.runners.base import (
     StepExecutionError,
     StepRunnerCapability,
@@ -107,6 +131,15 @@ class ArtifactStepRunner:
                 step.metadata.get("artifact_id") or f"{step.step_id}:{artifact_type}"
             )
             output_key = str(step.metadata.get("output_key") or "artifact_ref")
+            artifact_metadata = dict(step.metadata.get("artifact_metadata") or {})
+            reserved_conflicts = sorted(
+                set(artifact_metadata) & ARTIFACT_STEP_RESERVED_METADATA_KEYS
+            )
+            if reserved_conflicts:
+                raise StepExecutionError(
+                    "reserved artifact metadata key(s): "
+                    + ", ".join(reserved_conflicts)
+                )
 
             if content_type == "text/plain" or relative_path.endswith((".md", ".txt")):
                 data = str(content).encode("utf-8")
@@ -123,7 +156,7 @@ class ArtifactStepRunner:
                     "artifact_id": artifact_id,
                     "relative_path": relative_path,
                     "content_type": content_type,
-                    **dict(step.metadata.get("artifact_metadata") or {}),
+                    **artifact_metadata,
                 },
             )
             if not publish_result.succeeded or publish_result.artifact_ref is None:
@@ -173,6 +206,5 @@ class ArtifactStepRunner:
                 runner_name="ArtifactStepRunner",
             )
 
-__all__ = ["ArtifactStepRunner"]
-
+__all__ = ["ARTIFACT_STEP_RESERVED_METADATA_KEYS", "ArtifactStepRunner"]
 

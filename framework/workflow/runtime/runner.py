@@ -10,7 +10,13 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol
 
-from framework.artifacts import ArtifactManager
+from framework.artifacts import (
+    ArtifactManager,
+    ArtifactPathError,
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.artifacts.models import ArtifactRef
 from framework.events import EventBus
 from framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
@@ -491,6 +497,10 @@ class WorkflowRunIndexer:
         for artifact_key, relative_path in sorted((result.manifest.get("artifacts") or {}).items()):
             if not isinstance(relative_path, str):
                 continue
+            normalized_relative_path = validate_relative_artifact_path(
+                relative_path,
+                field=f"manifest_artifact_path[{artifact_key}]",
+            )
             path = _artifact_path(run_dir, relative_path)
             data = path.read_bytes()
             self._artifact_index_store.index_artifact(
@@ -498,7 +508,7 @@ class WorkflowRunIndexer:
                     artifact_id=_artifact_id_from_key(artifact_key),
                     run_id=result.run_id,
                     artifact_type=str(artifact_key),
-                    path=Path(relative_path).as_posix(),
+                    path=normalized_relative_path,
                     content_type=_content_type(path),
                     size_bytes=len(data),
                     checksum=sha256(data).hexdigest(),
@@ -521,10 +531,15 @@ class WorkflowRunIndexer:
                 self._artifact_index_store.index_artifact(artifact_ref)
 
     def _index_events(self, result: WorkflowResult) -> None:
-        if result.events_path is None:
+        if result.events_path is None or result.artifact_dir is None:
             return
-        events_path = Path(result.events_path)
-        if not events_path.exists():
+        artifacts = result.manifest.get("artifacts") or {}
+        relative_path = artifacts.get("events") if isinstance(artifacts, dict) else None
+        if not isinstance(relative_path, str):
+            return
+        try:
+            events_path = _artifact_path(Path(result.artifact_dir), relative_path)
+        except FileNotFoundError:
             return
         with events_path.open("r", encoding="utf-8") as handle:
             for line in handle:
@@ -570,12 +585,17 @@ class LocalJsonWorkflowArtifactIndexStore:
         self.root = Path(root)
 
     def index_artifact(self, ref: ArtifactRef) -> Path:
-        _validate_id(ref.run_id, "run_id")
-        _validate_id(ref.artifact_id, "artifact_id")
+        validated_run_id = _validate_id(ref.run_id, "run_id")
+        validated_artifact_id = _require_artifact_id(ref.artifact_id)
         if ref.step_id is not None:
             _validate_id(ref.step_id, "step_id")
         _validate_relative_path(ref.path)
-        path = self.root / hash_text(ref.run_id)[:12] / _artifact_record_file_name(ref.artifact_id)
+        path = resolve_artifact_descendant(
+            self.root,
+            hash_text(validated_run_id)[:12],
+            _artifact_record_file_name(validated_artifact_id),
+            field="artifact_index_path",
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(ref.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -659,8 +679,12 @@ class LocalJsonWorkflowEventStore:
         self.root = Path(root)
 
     def append_event(self, event: WorkflowEventRecord) -> int:
-        _validate_id(event.run_id, "run_id")
-        path = self.root / f"{event.run_id}.jsonl"
+        validated_run_id = _validate_id(event.run_id, "run_id")
+        path = resolve_artifact_descendant(
+            self.root,
+            f"{validated_run_id}.jsonl",
+            field="event_store_path",
+        )
         offset = _line_count(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
@@ -678,8 +702,12 @@ class LocalJsonWorkflowLineageStore:
 
     def _record(self, ref: Any) -> Path:
         run_id = str(getattr(ref, "run_id"))
-        _validate_id(run_id, "run_id")
-        path = self.root / f"{run_id}.jsonl"
+        validated_run_id = _validate_id(run_id, "run_id")
+        path = resolve_artifact_descendant(
+            self.root,
+            f"{validated_run_id}.jsonl",
+            field="lineage_store_path",
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         to_dict = getattr(ref, "to_dict", None)
         payload = to_dict() if callable(to_dict) else dict(ref)
@@ -690,15 +718,33 @@ class LocalJsonWorkflowLineageStore:
 
 
 def artifact_index_store_from_env(*, artifact_root: str | Path) -> ArtifactIndexStore:
-    return LocalJsonWorkflowArtifactIndexStore(Path(artifact_root) / "_records" / "artifact_index")
+    return LocalJsonWorkflowArtifactIndexStore(
+        resolve_artifact_descendant(
+            artifact_root,
+            "_records/artifact_index",
+            field="artifact_index_root",
+        )
+    )
 
 
 def event_store_from_env(*, artifact_root: str | Path) -> EventStore:
-    return LocalJsonWorkflowEventStore(Path(artifact_root) / "_records" / "events")
+    return LocalJsonWorkflowEventStore(
+        resolve_artifact_descendant(
+            artifact_root,
+            "_records/events",
+            field="event_store_root",
+        )
+    )
 
 
 def lineage_store_from_env(*, artifact_root: str | Path) -> LineageStore:
-    return LocalJsonWorkflowLineageStore(Path(artifact_root) / "_records" / "lineage")
+    return LocalJsonWorkflowLineageStore(
+        resolve_artifact_descendant(
+            artifact_root,
+            "_records/lineage",
+            field="lineage_store_root",
+        )
+    )
 
 
 class WorkflowEventRedactor:
@@ -774,10 +820,12 @@ class RedactionResult:
 
 
 def _artifact_path(run_dir: Path, relative_path: str) -> Path:
-    relative = Path(relative_path)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"invalid artifact path: {relative_path}")
-    path = run_dir / relative
+    normalized_relative_path = _validate_relative_path(relative_path)
+    path = resolve_artifact_descendant(
+        run_dir,
+        normalized_relative_path,
+        field="artifact_path",
+    )
     if not path.exists():
         raise FileNotFoundError(f"artifact file not found: {relative_path}")
     return path
@@ -867,22 +915,28 @@ def _optional_str(value: Any) -> str | None:
     return str(value)
 
 
-def _validate_id(value: str, label: str) -> None:
-    if not value:
-        raise ValueError(f"{label} is required")
-    relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
-        raise ValueError(f"invalid {label}: {value}")
+def _validate_id(value: str, label: str) -> str:
+    try:
+        return validate_artifact_path_segment(value, field=label)
+    except ArtifactPathError as exc:
+        raise ArtifactPathError(f"invalid {label}: {value}") from exc
 
 
-def _validate_relative_path(value: str) -> None:
-    relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"invalid artifact path: {value}")
+def _validate_relative_path(value: str) -> str:
+    try:
+        return validate_relative_artifact_path(value, field="artifact_path")
+    except ArtifactPathError as exc:
+        raise ArtifactPathError(f"invalid artifact path: {value}") from exc
 
 
 def _artifact_record_file_name(artifact_id: str) -> str:
     return f"a-{hash_text(artifact_id)[:16]}.json"
+
+
+def _require_artifact_id(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("artifact_id is required")
+    return value
 
 
 def _line_count(path: Path) -> int:

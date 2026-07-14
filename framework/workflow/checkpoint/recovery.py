@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from framework.artifacts import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.workflow.checkpoint.envelope import WorkflowCheckpointEnvelope
 
 __all__ = [
@@ -44,7 +49,12 @@ def inspect_checkpoint_artifacts(
     recovered: list[str] = []
     warnings: list[str] = []
 
-    run_dir = Path(artifact_root) / checkpoint.run_id
+    validated_run_id = validate_artifact_path_segment(checkpoint.run_id, field="run_id")
+    run_dir = resolve_artifact_descendant(
+        artifact_root,
+        validated_run_id,
+        field="run_id",
+    )
     if manifest is None:
         if strict:
             missing_required.append("manifest.json")
@@ -58,7 +68,12 @@ def inspect_checkpoint_artifacts(
                 relative_path = _artifact_manifest_path(artifact_value)
                 if relative_path is None:
                     continue
-                if (run_dir / relative_path).exists():
+                path = resolve_artifact_descendant(
+                    run_dir,
+                    relative_path,
+                    field=f"manifest_artifact_path[{artifact_key}]",
+                )
+                if path.exists():
                     recovered.append(str(artifact_key))
                     continue
                 if _required_artifact_key(str(artifact_key)):
@@ -66,7 +81,11 @@ def inspect_checkpoint_artifacts(
                 else:
                     missing_optional.append(str(artifact_key))
                     warnings.append(f"optional artifact is missing: {artifact_key}")
-        events_path = run_dir / "events.jsonl"
+        events_path = resolve_artifact_descendant(
+            run_dir,
+            "events.jsonl",
+            field="events_path",
+        )
         if not events_path.exists():
             missing_optional.append("events")
             warnings.append("events.jsonl is missing")
@@ -85,17 +104,14 @@ def inspect_checkpoint_artifacts(
     )
 
 
-def _artifact_manifest_path(value: Any) -> Path | None:
+def _artifact_manifest_path(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, dict):
         value = value.get("path")
     if value is None:
         return None
-    path = Path(str(value))
-    if path.is_absolute() or ".." in path.parts:
-        return None
-    return path
+    return validate_relative_artifact_path(str(value), field="manifest_artifact_path")
 
 
 def _required_artifact_key(artifact_key: str) -> bool:

@@ -4,6 +4,10 @@ import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+)
 from infrastructure.storage.events.models import EventRecord
 from infrastructure.storage.security import StorageRedactor
 
@@ -70,8 +74,12 @@ class LocalJsonEventStore:
                 yield event
 
     def _events_path(self, run_id: str) -> Path:
-        _validate_id(run_id, "run_id")
-        return self.root / f"{run_id}.jsonl"
+        validated_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        return resolve_artifact_descendant(
+            self.root,
+            f"{validated_run_id}.jsonl",
+            field="event_store_path",
+        )
 
     def _redacted_event(self, event: EventRecord) -> EventRecord:
         payload_redaction = self.redactor.redact(
@@ -140,8 +148,4 @@ def _validate_event(event: EventRecord) -> None:
 
 
 def _validate_id(value: str, label: str) -> None:
-    if not value:
-        raise ValueError(f"{label} is required")
-    relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
-        raise ValueError(f"invalid {label}: {value}")
+    validate_artifact_path_segment(value, field=label)

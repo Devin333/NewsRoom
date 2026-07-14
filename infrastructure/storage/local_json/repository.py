@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from framework.artifacts.paths import (
+    ArtifactPathError,
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+)
 from infrastructure.storage.records import ReportDetailRecord, ReportSummaryRecord
 
 
@@ -22,7 +27,7 @@ class LocalJsonRepository:
 
     def latest_report(self) -> ReportDetailRecord:
         candidates = []
-        for manifest_path in self.artifact_root.glob("*/manifest.json"):
+        for manifest_path in _iter_manifest_paths(self.artifact_root):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             artifacts = manifest.get("artifacts", {})
             if manifest.get("status") != "succeeded":
@@ -41,7 +46,7 @@ class LocalJsonRepository:
         run_id, report_status = _parse_report_id(report_id)
         if report_status not in {FINAL_REPORT_STATUS, BLOCKED_REPORT_STATUS}:
             raise ReportNotFoundError(f"report not found: {report_id}")
-        manifest_path = self.artifact_root / run_id / "manifest.json"
+        manifest_path = _manifest_path(self.artifact_root, run_id)
         if not manifest_path.exists():
             raise ReportNotFoundError(f"report not found: {report_id}")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -102,7 +107,7 @@ class LocalJsonRepository:
         workflow_ids: tuple[str, ...] | None = None,
     ) -> list[tuple[Path, dict[str, Any]]]:
         manifests: list[tuple[Path, dict[str, Any]]] = []
-        for manifest_path in self.artifact_root.glob("*/manifest.json"):
+        for manifest_path in _iter_manifest_paths(self.artifact_root):
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -123,8 +128,23 @@ class LocalJsonRepository:
 def _artifact_path(run_dir: Path, relative: str | None) -> Path | None:
     if not relative:
         return None
-    path = run_dir / relative
+    path = resolve_artifact_descendant(run_dir, relative, field="report artifact path")
     return path if path.exists() else None
+
+
+def _iter_manifest_paths(artifact_root: Path):
+    for discovered_path in artifact_root.glob("*/manifest.json"):
+        yield _manifest_path(artifact_root, discovered_path.parent.name)
+
+
+def _manifest_path(artifact_root: Path, run_id: str) -> Path:
+    validate_artifact_path_segment(run_id, field="run_id")
+    return resolve_artifact_descendant(
+        artifact_root,
+        run_id,
+        "manifest.json",
+        field="report manifest path",
+    )
 
 
 def _has_report_artifact(artifacts: dict[str, Any]) -> bool:
@@ -188,9 +208,10 @@ def _parse_report_id(report_id: str) -> tuple[str, str]:
     if ":" not in report_id:
         raise ValueError(f"invalid report id: {report_id}")
     run_id, report_status = report_id.split(":", 1)
-    relative = Path(run_id)
-    if not run_id or relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
-        raise ValueError(f"invalid report id: {report_id}")
+    try:
+        validate_artifact_path_segment(run_id, field="report run id")
+    except ArtifactPathError as exc:
+        raise ArtifactPathError(f"invalid report id: {report_id}") from exc
     if not report_status:
         raise ValueError(f"invalid report id: {report_id}")
     return run_id, report_status

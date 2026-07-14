@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
+from framework.artifacts.paths import ArtifactPathError
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.artifact_service import ArtifactInspectionService
 
@@ -28,6 +30,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def list_artifacts(args: argparse.Namespace) -> int:
     try:
         result = _artifact_service(artifact_root=args.artifact_root).list_artifacts(args.run_id)
+    except ArtifactPathError as exc:
+        _print_typed_artifact_error(exc)
+        return 1
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -51,6 +56,9 @@ def show_artifact(args: argparse.Namespace) -> int:
             args.run_id,
             args.artifact_key,
         )
+    except ArtifactPathError as exc:
+        _print_typed_artifact_error(exc)
+        return 1
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -78,6 +86,10 @@ def _add_artifact_root(parser: argparse.ArgumentParser) -> None:
 
 def _print_json(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _print_typed_artifact_error(exc: Exception) -> None:
+    print(str(exc), file=sys.stderr)
 
 
 add_artifacts_commands = register

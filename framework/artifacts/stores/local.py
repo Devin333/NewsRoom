@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 
 from framework.artifacts.models import Artifact, ArtifactReference, compute_checksum
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+)
 
 
 class LocalArtifactStore:
@@ -12,6 +16,7 @@ class LocalArtifactStore:
 
     def put(self, artifact: Artifact) -> ArtifactReference:
         path = self.path_for(artifact.artifact_id)
+        relative_uri = path.relative_to(self.root.resolve(strict=False)).as_posix()
         path.parent.mkdir(parents=True, exist_ok=True)
         data = artifact.content_bytes()
         path.write_bytes(data)
@@ -21,7 +26,7 @@ class LocalArtifactStore:
             json.dumps(
                 {
                     **artifact.to_dict(include_content=False),
-                    "uri": path.relative_to(self.root).as_posix(),
+                    "uri": relative_uri,
                     "checksum": compute_checksum(data),
                 },
                 ensure_ascii=False,
@@ -33,7 +38,7 @@ class LocalArtifactStore:
         )
         return ArtifactReference(
             artifact_id=artifact.artifact_id,
-            uri=path.relative_to(self.root).as_posix(),
+            uri=relative_uri,
             content_type=artifact.content_type,
             checksum=compute_checksum(data),
             metadata=dict(artifact.metadata),
@@ -60,11 +65,20 @@ class LocalArtifactStore:
                 path.unlink()
 
     def list(self, prefix: str | None = None) -> list[ArtifactReference]:
-        metadata_root = self.root / ".metadata"
+        metadata_root = resolve_artifact_descendant(
+            self.root,
+            ".metadata",
+            field="artifact metadata root",
+        )
         if not metadata_root.exists():
             return []
         refs = []
-        for path in sorted(metadata_root.glob("*.json")):
+        for candidate in sorted(metadata_root.glob("*.json")):
+            path = resolve_artifact_descendant(
+                metadata_root,
+                candidate.name,
+                field="artifact metadata path",
+            )
             payload = json.loads(path.read_text(encoding="utf-8"))
             ref = ArtifactReference(
                 artifact_id=str(payload["artifact_id"]),
@@ -79,17 +93,22 @@ class LocalArtifactStore:
 
     def path_for(self, artifact_id: str) -> Path:
         safe_id = _safe_artifact_id(artifact_id)
-        return self.root / "objects" / safe_id
+        return resolve_artifact_descendant(
+            self.root,
+            "objects",
+            safe_id,
+            field="artifact_id",
+        )
 
     def _metadata_path(self, artifact_id: str) -> Path:
         safe_id = _safe_artifact_id(artifact_id)
-        return self.root / ".metadata" / f"{safe_id}.json"
+        return resolve_artifact_descendant(
+            self.root,
+            ".metadata",
+            f"{safe_id}.json",
+            field="artifact_id",
+        )
 
 
 def _safe_artifact_id(value: str) -> str:
-    if not value:
-        raise ValueError("artifact_id is required")
-    path = Path(value)
-    if path.is_absolute() or ".." in path.parts or len(path.parts) != 1:
-        raise ValueError(f"invalid artifact_id: {value}")
-    return str(value)
+    return validate_artifact_path_segment(value, field="artifact_id")

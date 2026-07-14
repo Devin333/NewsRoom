@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from framework.artifacts import ArtifactManager, ArtifactReference
+import pytest
+
+from framework.artifacts import ArtifactManager, ArtifactPathError, ArtifactReference
 from framework.workflow.checkpoint import CheckpointReference
 
 
@@ -72,3 +74,29 @@ def test_artifact_manager_run_manifest_helpers(tmp_path) -> None:
     assert manifest["artifact_index"][0]["path"] == "metrics.json"
     assert finalized["status"] == "succeeded"
     assert restored["run_type"] == "workflow"
+
+
+@pytest.mark.parametrize("method_name", ["update_run_manifest", "finalize_run_manifest"])
+def test_manifest_updates_reject_unsafe_artifact_paths_without_rewrite(
+    tmp_path,
+    method_name: str,
+) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manager.create_run_manifest(
+        run_id="run-1",
+        workflow_id="wf",
+        workflow_version="1.0",
+        started_at="2026-05-21T00:00:00Z",
+    )
+    manifest_path = tmp_path / "run-1" / "manifest.json"
+    original = manifest_path.read_bytes()
+
+    with pytest.raises(ArtifactPathError):
+        getattr(manager, method_name)(
+            "run-1",
+            {"artifacts": {"manifest": "manifest.json", "outside": "../outside.txt"}},
+        )
+
+    assert manifest_path.read_bytes() == original
+    assert not (tmp_path / "outside.txt").exists()

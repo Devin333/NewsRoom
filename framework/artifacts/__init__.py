@@ -17,6 +17,12 @@ from framework.artifacts.models import (
     compute_checksum,
     verify_checksum,
 )
+from framework.artifacts.paths import (
+    ArtifactPathError,
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.artifacts.runtime import (
     ArtifactManager,
     ArtifactPublishResult,
@@ -27,6 +33,7 @@ from framework.artifacts.runtime import (
     ArtifactValidator,
     DefaultArtifactPublisher,
     LocalArtifactPublisher,
+    PUBLISHER_RESERVED_METADATA_KEYS,
     REDACTED_METADATA_VALUE,
     WorkflowArtifactRef,
     WorkflowArtifactPublisher,
@@ -54,6 +61,7 @@ __all__ = [
     "ArtifactManager",
     "ArtifactManifest",
     "ArtifactNotFoundError",
+    "ArtifactPathError",
     "ArtifactPublishResult",
     "ArtifactPublisher",
     "ArtifactRef",
@@ -69,13 +77,17 @@ __all__ = [
     "DefaultArtifactPublisher",
     "FilesystemArtifactStore",
     "LocalArtifactPublisher",
+    "PUBLISHER_RESERVED_METADATA_KEYS",
     "LocalArtifactStore",
     "REDACTED_METADATA_VALUE",
     "WorkflowArtifactRef",
     "WorkflowArtifactPublisher",
     "compute_checksum",
     "redact_metadata",
+    "resolve_artifact_descendant",
     "stable_hash_bytes",
     "utc_now_iso",
+    "validate_artifact_path_segment",
+    "validate_relative_artifact_path",
     "verify_checksum",
 ]

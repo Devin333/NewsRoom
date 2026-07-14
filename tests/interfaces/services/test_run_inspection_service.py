@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from framework.artifacts.paths import ArtifactPathError
 from interfaces.services.run_inspection_service import RunInspectionService
 
 
@@ -299,6 +300,41 @@ def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> Non
     assert "hidden-key" not in json.dumps(payload)
 
 
+def test_run_inspection_replay_preflights_unsafe_manifest_artifact_path(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run-unsafe"
+    run_dir.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("artifact-secret", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-unsafe",
+                "status": "succeeded",
+                "artifacts": {"output": "../outside.txt"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = RunInspectionService(tmp_path)
+
+    def fail_if_bundle_is_built(*args, **kwargs):
+        raise AssertionError("replay bundle must not be built for an unsafe artifact path")
+
+    monkeypatch.setattr(
+        service._inspector,
+        "build_replay_content_bundle",
+        fail_if_bundle_is_built,
+    )
+
+    with pytest.raises(ArtifactPathError, match="invalid artifact path"):
+        service.replay_run("run-unsafe")
+
+    assert outside.read_text(encoding="utf-8") == "artifact-secret"
+
+
 def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
     run_dir = tmp_path / "run-1"
     item_dir = run_dir / "sources" / "items" / "feed"
@@ -405,8 +441,17 @@ def test_run_inspection_diagnostics_rejects_missing_run(tmp_path) -> None:
 
 
 def test_run_inspection_rejects_path_traversal(tmp_path) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ArtifactPathError):
         RunInspectionService(tmp_path).get_run("../secret")
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    ["C:secret", "\\\\server\\share", "run:stream", "NUL", "run. "],
+)
+def test_run_inspection_rejects_unsafe_run_identifiers(tmp_path, run_id) -> None:
+    with pytest.raises(ArtifactPathError):
+        RunInspectionService(tmp_path).get_run(run_id)
 
 
 def test_run_inspection_rejects_invalid_event_limit(tmp_path) -> None:

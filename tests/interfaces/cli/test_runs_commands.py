@@ -1,6 +1,9 @@
 import json
 
+import pytest
+
 import interfaces.cli.news as news_cli
+from framework.artifacts.paths import ArtifactPathError
 from interfaces.cli.commands import runs as runs_commands
 
 
@@ -179,6 +182,108 @@ def test_news_cli_runs_artifacts_missing_returns_not_found(monkeypatch, capsys) 
 
     assert exit_code == 3
     assert "run not found: missing" in captured.out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["runs", "show", "run:stream", "--json"],
+        ["runs", "events", "run:stream", "--json"],
+        ["runs", "replay", "run:stream", "--json"],
+        ["runs", "diagnostics", "run:stream", "--json"],
+        ["runs", "health", "run:stream", "--json"],
+        ["runs", "compare", "run:stream", "run-2", "--json"],
+    ],
+)
+def test_news_cli_runs_inspection_path_error_uses_stderr_and_exit_one(
+    monkeypatch,
+    capsys,
+    argv,
+) -> None:
+    monkeypatch.setattr(
+        runs_commands,
+        "RunInspectionService",
+        _ArtifactPathRunInspectionService,
+    )
+
+    exit_code = news_cli.main(argv)
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "invalid artifact path" in captured.err
+
+
+def test_news_cli_runs_artifacts_path_error_precedes_plain_value_error(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        runs_commands,
+        "ArtifactInspectionService",
+        _ArtifactPathArtifactService,
+    )
+
+    exit_code = news_cli.main(["runs", "artifacts", "run:stream", "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "invalid artifact path" in captured.err
+
+
+def test_news_cli_runs_artifacts_plain_value_error_keeps_exit_two(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        runs_commands,
+        "ArtifactInspectionService",
+        _InvalidArtifactService,
+    )
+
+    exit_code = news_cli.main(["runs", "artifacts", "run-1", "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "invalid artifact request" in captured.out
+    assert captured.err == ""
+
+
+def test_news_cli_runs_replay_rejects_unsafe_manifest_artifact_path(
+    tmp_path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "run-unsafe"
+    run_dir.mkdir()
+    (tmp_path / "outside.txt").write_text("artifact-secret", encoding="utf-8")
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-unsafe",
+                "status": "succeeded",
+                "artifacts": {"output": "../outside.txt"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = news_cli.main(
+        [
+            "runs",
+            "replay",
+            "run-unsafe",
+            "--artifact-root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "invalid artifact path" in captured.err
+    assert "artifact-secret" not in captured.err
 
 
 def test_news_cli_runs_cancel_json(monkeypatch, capsys) -> None:
@@ -391,6 +496,45 @@ class _MissingArtifactService:
 
     def list_artifacts(self, run_id):
         raise FileNotFoundError(f"run not found: {run_id}")
+
+
+class _ArtifactPathArtifactService:
+    def __init__(self, artifact_root=".newsroom/runs") -> None:
+        self.artifact_root = artifact_root
+
+    def list_artifacts(self, run_id):
+        raise ArtifactPathError("invalid artifact path")
+
+
+class _InvalidArtifactService:
+    def __init__(self, artifact_root=".newsroom/runs") -> None:
+        self.artifact_root = artifact_root
+
+    def list_artifacts(self, run_id):
+        raise ValueError("invalid artifact request")
+
+
+class _ArtifactPathRunInspectionService:
+    def __init__(self, artifact_root=".newsroom/runs") -> None:
+        self.artifact_root = artifact_root
+
+    def get_run(self, run_id):
+        raise ArtifactPathError("invalid artifact path")
+
+    def get_run_events(self, run_id, *, limit=None):
+        raise ArtifactPathError("invalid artifact path")
+
+    def replay_run(self, run_id):
+        raise ArtifactPathError("invalid artifact path")
+
+    def get_run_diagnostics(self, run_id):
+        raise ArtifactPathError("invalid artifact path")
+
+    def get_run_health(self, run_id):
+        raise ArtifactPathError("invalid artifact path")
+
+    def compare_runs(self, base_run_id, target_run_id):
+        raise ArtifactPathError("invalid artifact path")
 
 
 class _FakeRunOperationService:

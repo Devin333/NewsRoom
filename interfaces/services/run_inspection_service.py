@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from framework.artifacts.paths import (
+    ArtifactPathError,
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.workflow.inspection import (
     WorkflowArtifactContentRecord,
@@ -12,7 +18,6 @@ from framework.workflow.inspection import (
     WorkflowRunInspector,
     WorkflowRunListItem,
     redact_sensitive_values,
-    resolve_run_dir,
 )
 from framework.workflow.runtime.manifest import normalize_legacy_run_manifest
 from interfaces.services.run_inspection_projection import project_manifest_output_preview
@@ -248,7 +253,7 @@ class RunInspectionService:
 
     def get_run(self, run_id: str) -> RunDetail:
         run_dir = _resolve_run_dir_for_service(self.artifact_root, run_id)
-        manifest_path = run_dir / "manifest.json"
+        manifest_path = _run_manifest_path(run_dir)
         if not manifest_path.exists():
             raise FileNotFoundError(f"run not found: {run_id}")
         manifest = normalize_legacy_run_manifest(self._inspector.load_manifest(run_dir))
@@ -291,6 +296,8 @@ class RunInspectionService:
         except WorkflowRunInspectionError as exc:
             if "not found" in str(exc):
                 raise FileNotFoundError(str(exc)) from exc
+            if isinstance(exc.__cause__, ArtifactPathError):
+                raise ArtifactPathError(str(exc)) from exc
             raise ValueError(str(exc)) from exc
         events = [
             event
@@ -322,8 +329,10 @@ class RunInspectionService:
 
     def replay_run(self, run_id: str) -> RunReplayResult:
         run_dir = _resolve_run_dir_for_service(self.artifact_root, run_id)
-        if not (run_dir / "manifest.json").exists():
+        if not _run_manifest_path(run_dir).exists():
             raise FileNotFoundError(f"run not found: {run_id}")
+        manifest = normalize_legacy_run_manifest(self._inspector.load_manifest(run_dir))
+        _validate_manifest_artifact_paths(run_dir, manifest)
         bundle = self._inspector.build_replay_content_bundle(run_dir=run_dir, redact=True)
         return _replay_result_from_content_bundle(bundle)
 
@@ -418,17 +427,45 @@ def _replay_artifact_from_content_record(
 
 
 def _resolve_run_dir_for_service(artifact_root: Path, run_id: str) -> Path:
-    try:
-        return resolve_run_dir(artifact_root, run_id)
-    except WorkflowRunInspectionError as exc:
-        raise ValueError(f"invalid run id: {run_id}") from exc
+    safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
+    return resolve_artifact_descendant(
+        artifact_root,
+        safe_run_id,
+        field="run_id",
+    )
 
 
 def _existing_run_dir(artifact_root: Path, run_id: str) -> Path:
     run_dir = _resolve_run_dir_for_service(artifact_root, run_id)
-    if not (run_dir / "manifest.json").exists():
+    if not _run_manifest_path(run_dir).exists():
         raise FileNotFoundError(f"run not found: {run_id}")
     return run_dir
+
+
+def _run_manifest_path(run_dir: Path) -> Path:
+    return resolve_artifact_descendant(
+        run_dir,
+        "manifest.json",
+        field="run manifest path",
+    )
+
+
+def _validate_manifest_artifact_paths(run_dir: Path, manifest: dict[str, Any]) -> None:
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return
+    for relative_path in artifacts.values():
+        if not isinstance(relative_path, str):
+            continue
+        safe_relative_path = validate_relative_artifact_path(
+            relative_path,
+            field="artifact path",
+        )
+        resolve_artifact_descendant(
+            run_dir,
+            safe_relative_path,
+            field="artifact path",
+        )
 
 
 def _manifest_report_id(manifest: dict[str, Any]) -> str | None:

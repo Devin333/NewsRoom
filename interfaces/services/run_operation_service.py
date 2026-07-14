@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+)
 from framework.workflow.operations import (
     LocalWorkflowRunOperationService,
     OperationActor,
@@ -129,7 +133,18 @@ class RunOperationApplicationService:
         )
 
     def _ensure_run_exists(self, run_id: str) -> None:
-        if not (self.artifact_root / run_id / "manifest.json").exists():
+        safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        run_dir = resolve_artifact_descendant(
+            self.artifact_root,
+            safe_run_id,
+            field="run_id",
+        )
+        manifest_path = resolve_artifact_descendant(
+            run_dir,
+            "manifest.json",
+            field="run manifest path",
+        )
+        if not manifest_path.exists():
             raise FileNotFoundError(f"run not found: {run_id}")
 
 

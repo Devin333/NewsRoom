@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from business.layers.signal.artifact_refs import SignalArtifactRef
+from framework.artifacts.paths import resolve_artifact_descendant
 
 
 def source_artifact_ref_extractor(
@@ -45,10 +46,11 @@ def source_artifact_ref_extractor(
 
 
 def _artifact_path(run_dir: Path, relative_path: str) -> Path:
-    relative = Path(relative_path)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"invalid artifact path: {relative_path}")
-    path = run_dir / relative
+    path = resolve_artifact_descendant(
+        run_dir,
+        relative_path,
+        field="signal artifact path",
+    )
     if not path.exists():
         raise FileNotFoundError(f"artifact file not found: {relative_path}")
     return path

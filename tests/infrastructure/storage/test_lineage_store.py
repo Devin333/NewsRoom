@@ -1,8 +1,10 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
 from business.layers.relation.evidence import EvidenceBundle, EvidenceItem
+from framework.artifacts import ArtifactPathError
 from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore, lineage_refs_from_evidence_bundle
 
 
@@ -41,6 +43,33 @@ def test_local_json_lineage_store_records_and_queries(tmp_path) -> None:
     assert store.list_by_run("run-1") == [source_item, source_url]
     assert store.upstream("run-1", "evidence", "ev-1") == [source_item, source_url]
     assert store.downstream("run-1", "source_item", "raw-1") == [source_item]
+
+
+def test_local_json_lineage_store_preserves_logical_source_and_target_ids(tmp_path) -> None:
+    store = LocalJsonLineageStore(tmp_path)
+    ref = replace(
+        _ref(),
+        source_id="source:logical-id",
+        target_id="target:logical-id",
+        lineage_id=None,
+    )
+
+    store.record(ref)
+
+    assert store.list_by_run("run-1") == [ref]
+
+
+@pytest.mark.parametrize("run_id", ["../secret", "run:stream", "CON", " run-1"])
+def test_local_json_lineage_store_rejects_unsafe_run_id_without_side_effect(
+    tmp_path,
+    run_id: str,
+) -> None:
+    store = LocalJsonLineageStore(tmp_path)
+
+    with pytest.raises(ArtifactPathError):
+        store.record(replace(_ref(), run_id=run_id, lineage_id=None))
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_lineage_refs_from_evidence_bundle_extracts_source_lineage() -> None:

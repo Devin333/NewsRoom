@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
@@ -53,6 +54,68 @@ def test_api_mcp_tool_resource_and_prompt_results_are_enveloped() -> None:
     assert tool_response.json()["data"]["tool_name"] == "news.report.latest"
     assert resource_response.json()["data"]["uri"] == "news://reports/latest"
     assert prompt_response.json()["data"]["name"] == "news.run.diagnose"
+
+
+def test_api_mcp_artifact_path_failures_use_outer_http_error_envelope() -> None:
+    client = TestClient(
+        create_app(
+            mcp_service_factory=lambda: _FailedMCPService("ArtifactPathError"),
+            audit_emitter_factory=None,
+        )
+    )
+
+    responses = [
+        client.post(
+            "/api/v1/mcp/tools/news.run.replay/call",
+            json={"arguments": {"run_id": "run:stream"}},
+        ),
+        client.post(
+            "/api/v1/mcp/resources/read",
+            json={"uri": "news://runs/run:stream/artifacts/output"},
+        ),
+    ]
+
+    for response in responses:
+        payload = response.json()
+        assert response.status_code == 400
+        assert payload["success"] is False
+        assert payload["ok"] is False
+        assert payload["data"] is None
+        assert payload["error"]["code"] == "invalid_artifact_path"
+        assert payload["error"]["details"]["error_type"] == "ArtifactPathError"
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_status", "expected_code"),
+    [
+        ("ArtifactChecksumMismatchError", 409, "artifact_checksum_mismatch"),
+        ("ArtifactStoreMetadataError", 409, "artifact_metadata_corrupt"),
+        ("ArtifactStoreRequiredError", 500, "artifact_store_unavailable"),
+    ],
+)
+def test_api_mcp_reserves_typed_artifact_failure_http_mapping(
+    error_type,
+    expected_status,
+    expected_code,
+) -> None:
+    client = TestClient(
+        create_app(
+            mcp_service_factory=lambda: _FailedMCPService(error_type),
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/mcp/tools/news.run.replay/call",
+        json={"arguments": {"run_id": "run-1"}},
+    )
+    payload = response.json()
+
+    assert response.status_code == expected_status
+    assert payload["success"] is False
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == expected_code
+    assert payload["error"]["details"]["error_type"] == error_type
 
 
 def test_api_mcp_tool_call_requires_tool_specific_permission() -> None:
@@ -160,6 +223,34 @@ class _FakeMCPService:
                 "messages": [{"role": "user", "content": str(arguments)}],
                 "error_type": None,
                 "error_message": None,
+            }
+        )
+
+
+class _FailedMCPService:
+    def __init__(self, error_type) -> None:
+        self.error_type = error_type
+
+    def call_tool(self, tool_name, arguments):
+        return _FakeResult(
+            {
+                "tool_name": tool_name,
+                "success": False,
+                "data": None,
+                "error_type": self.error_type,
+                "error_message": "artifact operation failed",
+            }
+        )
+
+    def read_resource(self, uri):
+        return _FakeResult(
+            {
+                "uri": uri,
+                "success": False,
+                "mime_type": "application/json",
+                "data": None,
+                "error_type": self.error_type,
+                "error_message": "artifact operation failed",
             }
         )
 

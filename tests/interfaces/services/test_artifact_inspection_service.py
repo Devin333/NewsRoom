@@ -76,6 +76,50 @@ def test_artifact_service_rejects_unknown_artifact_key(tmp_path) -> None:
         ArtifactInspectionService(tmp_path).get_artifact("run-1", "missing")
 
 
+@pytest.mark.parametrize(
+    "run_id",
+    ["../secret", "C:secret", "run:stream", "CON", "run. "],
+)
+def test_artifact_service_rejects_unsafe_run_id_before_reading(tmp_path, run_id) -> None:
+    with pytest.raises(ValueError):
+        ArtifactInspectionService(tmp_path).get_artifact(run_id, "output")
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["../secret.json", "C:secret.json", "\\\\server\\share\\secret.json", "a:stream"],
+)
+def test_artifact_service_rejects_unsafe_manifest_path(tmp_path, relative_path) -> None:
+    _write_run(
+        tmp_path,
+        "run-1",
+        artifacts={"output": relative_path},
+        files={},
+    )
+
+    with pytest.raises(ValueError):
+        ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
+
+
+def test_artifact_service_rejects_symlink_escape(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"leaked": true}', encoding="utf-8")
+    link = run_dir / "output.json"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is not available")
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"run_id": "run-1", "artifacts": {"output": "output.json"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        ArtifactInspectionService(tmp_path).get_artifact("run-1", "output")
+
+
 def _write_run(root, run_id, *, artifacts, files) -> None:
     run_dir = root / run_id
     run_dir.mkdir()

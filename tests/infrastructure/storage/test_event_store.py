@@ -1,8 +1,10 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
+from framework.artifacts import ArtifactPathError
 from infrastructure.storage.events import EventRecord, LocalJsonEventStore
 from infrastructure.storage.security import REDACTED_VALUE
 
@@ -63,6 +65,41 @@ def test_local_json_event_store_appends_and_lists_by_run(tmp_path) -> None:
 
     assert store.list_by_run("run-1") == [first, second]
     assert store.list_by_run("run-1", limit=1) == [first]
+
+
+def test_local_json_event_store_preserves_logical_event_id(tmp_path) -> None:
+    store = LocalJsonEventStore(tmp_path)
+    event = _event("agent:step:event-1")
+
+    store.append_event(event)
+
+    assert store.list_by_run("run-1") == [event]
+
+
+@pytest.mark.parametrize("run_id", ["../secret", "run:stream", "CON", " run-1"])
+def test_local_json_event_store_rejects_unsafe_run_id_without_side_effect(
+    tmp_path,
+    run_id: str,
+) -> None:
+    store = LocalJsonEventStore(tmp_path)
+
+    with pytest.raises(ArtifactPathError):
+        store.append_event(replace(_event("event:logical"), run_id=run_id))
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("step_id", ["../secret", "step:stream", "CON", " step-1"])
+def test_local_json_event_store_rejects_unsafe_step_id_without_side_effect(
+    tmp_path,
+    step_id: str,
+) -> None:
+    store = LocalJsonEventStore(tmp_path)
+
+    with pytest.raises(ArtifactPathError):
+        store.append_event(_event("event:logical", step_id=step_id))
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_local_json_event_store_lists_by_step_and_streams_from_offset(tmp_path) -> None:

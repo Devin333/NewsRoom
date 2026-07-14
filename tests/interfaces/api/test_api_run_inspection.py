@@ -171,6 +171,32 @@ def test_run_inspection_api_lists_artifacts(tmp_path) -> None:
     assert artifact_response.json()["data"]["content"] == "# Report\n"
 
 
+def test_run_inspection_api_distinguishes_invalid_artifact_path_from_missing(tmp_path) -> None:
+    _write_run(tmp_path, "run-unsafe")
+    manifest_path = tmp_path / "run-unsafe" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["report_markdown"] = "../outside.md"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    client = TestClient(_app(tmp_path))
+
+    invalid = client.get("/api/v1/runs/run-unsafe/artifacts/report_markdown")
+    missing = client.get("/api/v1/runs/run-unsafe/artifacts/missing")
+
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "invalid_artifact_path"
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "artifact_not_found"
+
+
+def test_run_inspection_api_rejects_unsafe_run_id_with_400(tmp_path) -> None:
+    client = TestClient(_app(tmp_path))
+
+    response = client.get("/api/v1/runs/run:stream/artifacts")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_artifact_path"
+
+
 def _app(root):
     return create_app(
         run_inspection_service_factory=lambda: RunInspectionService(root),

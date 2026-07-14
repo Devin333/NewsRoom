@@ -46,6 +46,19 @@ def test_operation_missing_run_returns_run_not_found(tmp_path) -> None:
     assert payload["error"]["code"] == "run_not_found"
 
 
+def test_operation_unsafe_run_id_returns_400_before_service_side_effect(tmp_path) -> None:
+    client = TestClient(_app(tmp_path))
+
+    response = client.post(
+        "/api/v1/runs/run:stream/operations/cancel",
+        json={"reason": "stop"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_run_operation_request"
+    assert not list(tmp_path.rglob("events.jsonl"))
+
+
 def test_operation_endpoints_delegate_to_application_service() -> None:
     fake_service = _FakeRunOperationService()
     client = TestClient(create_app(run_operation_service_factory=lambda: fake_service))

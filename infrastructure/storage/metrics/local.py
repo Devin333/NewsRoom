@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from framework.artifacts.paths import resolve_artifact_descendant
 from infrastructure.storage.artifacts import ArtifactRef
 from infrastructure.storage.lifecycle.retention import RetentionPolicy
 from infrastructure.storage.metrics.models import StorageMetrics
@@ -19,6 +20,16 @@ class LocalStorageMetricsCollector:
     def collect(self) -> StorageMetrics:
         manifests = self._manifest_payloads()
         artifact_refs = self._artifact_refs()
+        events_root = resolve_artifact_descendant(
+            self.artifact_root,
+            "_records/events",
+            field="storage events root",
+        )
+        lineage_root = resolve_artifact_descendant(
+            self.artifact_root,
+            "_records/lineage",
+            field="storage lineage root",
+        )
         return StorageMetrics(
             runs_count=len(manifests),
             reports_count=sum(1 for manifest in manifests if _has_report_artifact(manifest)),
@@ -28,8 +39,8 @@ class LocalStorageMetricsCollector:
             claims_count=self._json_record_count("claims"),
             quality_results_count=self._json_record_count("quality_results"),
             artifact_bytes_total=sum(ref.size_bytes or 0 for ref in artifact_refs),
-            events_count=self._jsonl_line_count(self.artifact_root / "_records" / "events"),
-            lineage_refs_count=self._jsonl_line_count(self.artifact_root / "_records" / "lineage"),
+            events_count=self._jsonl_line_count(events_root),
+            lineage_refs_count=self._jsonl_line_count(lineage_root),
             metadata={
                 "artifact_root": str(self.artifact_root),
                 "source": "local_json",
@@ -38,9 +49,15 @@ class LocalStorageMetricsCollector:
 
     def _manifest_payloads(self) -> list[dict]:
         manifests = []
-        for path in self.artifact_root.glob("*/manifest.json"):
-            if path.parts and "_records" in path.parts:
+        artifact_root = self.artifact_root.resolve(strict=False)
+        for candidate in artifact_root.glob("*/manifest.json"):
+            if candidate.parts and "_records" in candidate.parts:
                 continue
+            path = resolve_artifact_descendant(
+                artifact_root,
+                candidate.relative_to(artifact_root).as_posix(),
+                field="storage manifest path",
+            )
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -51,8 +68,17 @@ class LocalStorageMetricsCollector:
 
     def _artifact_refs(self) -> list[ArtifactRef]:
         refs = []
-        index_root = self.artifact_root / "_records" / "artifact_index"
-        for path in index_root.glob("*/*.json"):
+        index_root = resolve_artifact_descendant(
+            self.artifact_root,
+            "_records/artifact_index",
+            field="artifact index root",
+        )
+        for candidate in index_root.glob("*/*.json"):
+            path = resolve_artifact_descendant(
+                index_root,
+                candidate.relative_to(index_root).as_posix(),
+                field="artifact index record",
+            )
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 refs.append(ArtifactRef.from_dict(payload))
@@ -62,7 +88,12 @@ class LocalStorageMetricsCollector:
 
     def _jsonl_line_count(self, root: Path) -> int:
         count = 0
-        for path in root.glob("*.jsonl"):
+        for candidate in root.glob("*.jsonl"):
+            path = resolve_artifact_descendant(
+                root,
+                candidate.name,
+                field="storage record path",
+            )
             try:
                 with path.open("r", encoding="utf-8") as handle:
                     count += sum(1 for line in handle if line.strip())
@@ -71,10 +102,23 @@ class LocalStorageMetricsCollector:
         return count
 
     def _json_record_count(self, name: str) -> int:
-        root = self.artifact_root / "_records" / name
+        root = resolve_artifact_descendant(
+            self.artifact_root,
+            f"_records/{name}",
+            field="storage record root",
+        )
         if not root.exists():
             return 0
-        return sum(1 for path in root.rglob("*.json") if path.is_file())
+        count = 0
+        for candidate in root.rglob("*.json"):
+            path = resolve_artifact_descendant(
+                root,
+                candidate.relative_to(root).as_posix(),
+                field="storage record path",
+            )
+            if path.is_file():
+                count += 1
+        return count
 
 
 def _has_report_artifact(manifest: dict) -> bool:

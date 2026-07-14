@@ -6,7 +6,11 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
-from framework.artifacts import ArtifactManager
+from framework.artifacts import (
+    ArtifactManager,
+    resolve_artifact_descendant,
+    validate_relative_artifact_path,
+)
 from framework.specs import WorkflowSpec, WorkflowStatus
 from framework.workflow.runtime.manifest import (
     manifest_hash,
@@ -282,12 +286,16 @@ def _artifact_ref(
     path: Path,
     content_type: str,
 ) -> ArtifactRef:
+    normalized_relative_path = validate_relative_artifact_path(
+        relative_path,
+        field="artifact_path",
+    )
     data = path.read_bytes()
     return ArtifactRef(
         artifact_id=artifact_id,
         run_id=context.run_id,
         artifact_type=artifact_type,
-        path=Path(relative_path).as_posix(),
+        path=normalized_relative_path,
         content_type=content_type,
         size_bytes=len(data),
         checksum=sha256(data).hexdigest(),
@@ -349,14 +357,22 @@ def _populate_artifact_metadata(manifest: dict[str, Any], run_dir: Path) -> None
         relative = _manifest_artifact_path(relative_path)
         if relative is None:
             continue
+        normalized_relative = validate_relative_artifact_path(
+            relative,
+            field=f"manifest_artifact_path[{artifact_key}]",
+        )
+        path = resolve_artifact_descendant(
+            run_dir,
+            normalized_relative,
+            field=f"manifest_artifact_path[{artifact_key}]",
+        )
         try:
-            path = run_dir / relative
             data = path.read_bytes()
         except OSError:
             continue
         metadata[str(artifact_key)] = {
             "checksum": sha256(data).hexdigest(),
-            "content_type": _content_type_for_artifact_path(relative),
+            "content_type": _content_type_for_artifact_path(normalized_relative),
             "size_bytes": len(data),
         }
     metadata.setdefault(
@@ -396,6 +412,5 @@ def _manifest_artifact_path(value: Any) -> str | None:
         path = value.get("path")
         return str(path) if path is not None else None
     return str(value)
-
 
 

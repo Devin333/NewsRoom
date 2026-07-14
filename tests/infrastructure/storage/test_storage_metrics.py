@@ -2,6 +2,8 @@ import json
 from datetime import UTC, datetime
 from hashlib import sha256
 
+import pytest
+
 from infrastructure.storage.artifacts import ArtifactRef, LocalJsonArtifactIndexStore
 from infrastructure.storage.events import EventRecord, LocalJsonEventStore
 from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore
@@ -117,6 +119,25 @@ def test_local_storage_metrics_collector_counts_blocked_report_artifact(tmp_path
 
     assert metrics.runs_count == 1
     assert metrics.reports_count == 1
+
+
+def test_local_storage_metrics_collector_rejects_linked_external_manifest(tmp_path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write_manifest(
+        outside,
+        run_id="external-run",
+        artifacts={"manifest": "manifest.json"},
+    )
+    linked_run = tmp_path / "runs" / "linked-run"
+    linked_run.parent.mkdir()
+    try:
+        linked_run.symlink_to(outside / "external-run", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is not available: {exc}")
+
+    with pytest.raises(ValueError):
+        LocalStorageMetricsCollector(tmp_path / "runs").collect()
 
 
 def _write_manifest(tmp_path, *, run_id: str, artifacts: dict[str, str]) -> None:

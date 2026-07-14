@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from framework.artifacts.stores.filesystem import _validate_relative_path
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_relative_artifact_path,
+)
 
 
 _MANIFEST_PATH = "_backup/manifest.json"
@@ -174,7 +177,11 @@ class LocalArtifactBackupService:
                 except KeyError as exc:
                     raise BackupValidationError(f"backup file is missing: {relative_path}") from exc
                 _validate_entry_bytes(entry, data)
-                target = self.artifact_root / Path(relative_path)
+                target = resolve_artifact_descendant(
+                    self.artifact_root,
+                    relative_path,
+                    field="backup artifact path",
+                )
                 if target.exists() and not overwrite:
                     raise FileExistsError(f"target file already exists: {target}")
                 restored_files.append((target, data))
@@ -197,7 +204,7 @@ def _iter_files(root: Path) -> list[tuple[Path, str]]:
 
 
 def _normalize_backup_path(value: str) -> str:
-    return _validate_relative_path(value).as_posix()
+    return validate_relative_artifact_path(value, field="backup artifact path")
 
 
 def _ensure_backup_target_allowed(artifact_root: Path, backup_path: Path) -> None:

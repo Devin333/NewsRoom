@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from framework.artifacts.models import Artifact, ArtifactReference
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from framework.artifacts.stores import ArtifactStore, LocalArtifactStore
 from framework.governance import CompositeAndGate, GateCheckResult
 from framework.shared.json import to_jsonable
@@ -53,7 +58,8 @@ class ArtifactManager:
         return run_dir
 
     def run_dir(self, run_id: str) -> Path:
-        return self.root / run_id
+        validate_artifact_path_segment(run_id, field="run_id")
+        return resolve_artifact_descendant(self.root, run_id, field="run_id")
 
     def create_run_manifest(
         self,
@@ -87,13 +93,14 @@ class ArtifactManager:
         return manifest
 
     def read_run_manifest(self, run_id: str) -> dict[str, Any]:
-        path = self.run_dir(run_id) / "manifest.json"
+        path = self._target(run_id, "manifest.json")
         payload = json.loads(path.read_text(encoding="utf-8"))
         return normalize_legacy_run_manifest(payload)
 
     def update_run_manifest(self, run_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         manifest = self.read_run_manifest(run_id)
         manifest.update(dict(updates))
+        _validate_manifest_artifact_paths(manifest)
         manifest["manifest_hash"] = manifest_hash(manifest)
         self.write_json(run_id, "manifest.json", manifest)
         return manifest
@@ -126,6 +133,7 @@ class ArtifactManager:
         manifest = self.read_run_manifest(run_id)
         if updates:
             manifest.update(dict(updates))
+        _validate_manifest_artifact_paths(manifest)
         manifest["completed_at"] = manifest.get("completed_at") or manifest.get("finished_at")
         manifest["manifest_hash"] = manifest_hash(manifest)
         self.write_json(run_id, "manifest.json", manifest)
@@ -155,12 +163,16 @@ class ArtifactManager:
         return target
 
     def _target(self, run_id: str, name: str) -> Path:
-        relative = Path(name)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError(f"artifact name must be relative to the run directory: {name}")
-        return self.run_dir(run_id) / relative
+        relative = validate_relative_artifact_path(name, field="artifact name")
+        return resolve_artifact_descendant(
+            self.run_dir(run_id),
+            relative,
+            field="artifact name",
+        )
 
     def _gate_write(self, run_id: str, name: str, data: bytes) -> None:
+        validate_artifact_path_segment(run_id, field="run_id")
+        validate_relative_artifact_path(name, field="artifact name")
         if not self.gate_enabled:
             return
         relative = Path(name)
@@ -198,3 +210,18 @@ class ArtifactManager:
         gate = CompositeAndGate(f"artifact:{run_id}:{name}:gate").evaluate(checks)
         if gate.decision == "block":
             raise ValueError(f"artifact gate blocked: {gate.reason}; gate_result={gate.to_dict()}")
+
+
+def _validate_manifest_artifact_paths(manifest: dict[str, Any]) -> None:
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ValueError("manifest artifacts must be an object")
+    for artifact_key, relative_path in artifacts.items():
+        if not isinstance(relative_path, str):
+            raise ValueError(
+                f"manifest artifact path must be a string: {artifact_key}"
+            )
+        validate_relative_artifact_path(
+            relative_path,
+            field=f"manifest_artifact_path[{artifact_key}]",
+        )

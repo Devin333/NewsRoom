@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 
@@ -97,6 +98,23 @@ def test_filesystem_artifact_store_detects_checksum_mismatch(tmp_path) -> None:
         store.read(ref)
 
 
+def test_filesystem_artifact_store_list_rejects_link_escape(tmp_path) -> None:
+    store = FilesystemArtifactStore(tmp_path / "runs")
+    run_dir = tmp_path / "runs" / "run-1"
+    outside = tmp_path / "outside"
+    run_dir.mkdir(parents=True)
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret", encoding="utf-8")
+    link = run_dir / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is not available: {exc}")
+
+    with pytest.raises(ValueError):
+        store.list("run-1")
+
+
 def test_filesystem_artifact_store_rejects_unsafe_ids_and_paths(tmp_path) -> None:
     store = FilesystemArtifactStore(tmp_path)
 
@@ -144,6 +162,57 @@ def test_local_json_artifact_index_store_indexes_by_run_and_step(tmp_path) -> No
     assert store.list_by_step("run-1", "missing") == []
 
 
+def test_local_json_artifact_index_store_supports_logical_artifact_ids(tmp_path) -> None:
+    store = LocalJsonArtifactIndexStore(tmp_path)
+    ref = replace(_ref("artifact-1"), artifact_id="tool:result:artifact-1")
+
+    record_path = store.index_artifact(ref)
+
+    assert record_path.name.startswith("a-")
+    assert ":" not in record_path.name
+    assert store.get_artifact("run-1", "tool:result:artifact-1") == ref
+    assert store.list_by_run("run-1") == [ref]
+
+    store.delete_artifact("run-1", "tool:result:artifact-1")
+
+    with pytest.raises(ArtifactIndexNotFoundError):
+        store.get_artifact("run-1", "tool:result:artifact-1")
+
+
+@pytest.mark.parametrize("artifact_id", [None, "", " \t"])
+def test_local_json_artifact_index_store_requires_nonblank_string_artifact_id(
+    tmp_path,
+    artifact_id,
+) -> None:
+    store = LocalJsonArtifactIndexStore(tmp_path)
+    ref = replace(_ref("artifact-1"), artifact_id=artifact_id)
+
+    with pytest.raises(ValueError, match="artifact_id is required"):
+        store.index_artifact(ref)
+    with pytest.raises(ValueError, match="artifact_id is required"):
+        store.get_artifact("run-1", artifact_id)
+    with pytest.raises(ValueError, match="artifact_id is required"):
+        store.delete_artifact("run-1", artifact_id)
+
+    assert not list(tmp_path.iterdir())
+
+
+def test_local_json_artifact_index_store_rejects_unsafe_filesystem_fields(tmp_path) -> None:
+    store = LocalJsonArtifactIndexStore(tmp_path)
+    base = _ref("artifact-1", step_id="draft_report")
+    unsafe_refs = [
+        (replace(base, run_id="../secret"), "invalid run_id"),
+        (replace(base, step_id="../step"), "invalid step_id"),
+        (replace(base, path="../secret.json"), "invalid artifact path"),
+    ]
+
+    for ref, message in unsafe_refs:
+        with pytest.raises(ValueError, match=message):
+            store.index_artifact(ref)
+
+    assert not list(tmp_path.iterdir())
+
+
 def test_local_json_artifact_index_store_lists_by_type(tmp_path) -> None:
     store = LocalJsonArtifactIndexStore(tmp_path)
     first = _ref("artifact-1", artifact_type="report_json")
@@ -188,3 +257,19 @@ def test_local_json_artifact_index_store_handles_missing_and_rejects_unsafe_ids(
 
     with pytest.raises(ValueError, match="artifact_type is required"):
         store.list_by_type("")
+
+
+def test_local_json_artifact_index_store_rejects_linked_external_record(tmp_path) -> None:
+    store = LocalJsonArtifactIndexStore(tmp_path / "index")
+    ref = _ref("artifact-1")
+    record_path = store.index_artifact(ref)
+    external = tmp_path / "external.json"
+    external.write_text(record_path.read_text(encoding="utf-8"), encoding="utf-8")
+    record_path.unlink()
+    try:
+        record_path.symlink_to(external)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is not available: {exc}")
+
+    with pytest.raises(ValueError):
+        store.list_by_run("run-1")

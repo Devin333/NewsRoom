@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 from typing import Protocol
 
+from framework.artifacts import (
+    ArtifactPathError,
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+)
 from framework.workflow.checkpoint.model import WorkflowCheckpoint
 
 
@@ -44,12 +49,21 @@ class LocalJsonCheckpointStore:
         )[0]
 
     def list_checkpoints(self, run_id: str) -> list[WorkflowCheckpoint]:
-        _validate_id(run_id, "run_id")
-        run_dir = self.root / run_id
+        validated_run_id = _validate_id(run_id, "run_id")
+        run_dir = resolve_artifact_descendant(
+            self.root,
+            validated_run_id,
+            field="run_id",
+        )
         if not run_dir.exists():
             return []
         checkpoints = []
-        for path in sorted(run_dir.glob("*.json")):
+        for candidate in sorted(run_dir.glob("*.json")):
+            path = resolve_artifact_descendant(
+                run_dir,
+                candidate.name,
+                field="checkpoint_path",
+            )
             payload = json.loads(path.read_text(encoding="utf-8"))
             checkpoints.append(WorkflowCheckpoint.from_dict(payload))
         return checkpoints
@@ -62,16 +76,20 @@ class LocalJsonCheckpointStore:
         return WorkflowCheckpoint.from_dict(payload)
 
     def _checkpoint_path(self, run_id: str, checkpoint_id: str) -> Path:
-        _validate_id(run_id, "run_id")
-        _validate_id(checkpoint_id, "checkpoint_id")
-        return self.root / run_id / f"{checkpoint_id}.json"
+        validated_run_id = _validate_id(run_id, "run_id")
+        validated_checkpoint_id = _validate_id(checkpoint_id, "checkpoint_id")
+        return resolve_artifact_descendant(
+            self.root,
+            validated_run_id,
+            f"{validated_checkpoint_id}.json",
+            field="checkpoint_path",
+        )
 
 
-def _validate_id(value: str, label: str) -> None:
-    if not value:
-        raise ValueError(f"{label} is required")
-    relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
-        raise ValueError(f"invalid {label}: {value}")
+def _validate_id(value: str, label: str) -> str:
+    try:
+        return validate_artifact_path_segment(value, field=label)
+    except ArtifactPathError as exc:
+        raise ArtifactPathError(f"invalid {label}: {value}") from exc
 
 

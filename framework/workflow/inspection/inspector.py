@@ -8,6 +8,11 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
+from framework.artifacts import (
+    ArtifactPathError,
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+)
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.specs import StepStatus, WorkflowStatus
 from framework.workflow.runtime.manifest import (
@@ -1284,7 +1289,14 @@ class WorkflowRunInspector:
         all_items: list[WorkflowRunListItem] = []
         invalid_run_dirs: list[str] = []
         if artifact_root.exists():
-            for run_dir in sorted(path for path in artifact_root.iterdir() if path.is_dir()):
+            for candidate in sorted(artifact_root.iterdir()):
+                try:
+                    run_dir = resolve_run_dir(artifact_root, candidate.name)
+                except WorkflowRunInspectionError:
+                    invalid_run_dirs.append(str(candidate))
+                    continue
+                if not run_dir.is_dir():
+                    continue
                 item = _run_list_item_from_dir(run_dir)
                 if item is None:
                     continue
@@ -1610,7 +1622,7 @@ class WorkflowRunInspector:
         return WorkflowReplayContentBundle(
             run_id=_optional_string(manifest.get("run_id")) or actual_run_dir.name,
             manifest=_redact_if_needed(manifest, redact=redact),
-            manifest_path=str(actual_run_dir / "manifest.json"),
+            manifest_path=str(resolve_artifact_path(actual_run_dir, "manifest.json")),
             events=events,
             events_path=events_path,
             events_error=events_error,
@@ -1719,7 +1731,7 @@ class WorkflowRunInspector:
         return inspection.health_report
 
     def load_manifest(self, run_dir: str | Path) -> dict[str, Any]:
-        path = Path(run_dir) / "manifest.json"
+        path = resolve_artifact_path(run_dir, "manifest.json")
         if not path.exists():
             raise WorkflowRunInspectionError(f"workflow manifest not found: {path}")
         payload = _read_json_file(path)
@@ -1809,12 +1821,8 @@ class WorkflowRunInspector:
         step_artifact_keys = _step_artifact_keys(manifest_payload)
         records: list[WorkflowArtifactRecord] = []
         for artifact_key, relative_path in sorted(_manifest_artifact_map(manifest_payload).items()):
-            try:
-                path = resolve_artifact_path(actual_run_dir, relative_path)
-                exists = path.exists()
-            except WorkflowRunInspectionError:
-                path = actual_run_dir / str(relative_path)
-                exists = False
+            path = resolve_artifact_path(actual_run_dir, relative_path)
+            exists = path.exists()
             size_bytes = path.stat().st_size if exists else None
             checksum = _sha256_file(path) if exists and verify_checksums else None
             records.append(
@@ -1909,7 +1917,19 @@ class WorkflowRunInspector:
         run_dir: str | Path | None,
     ) -> Path:
         if run_dir is not None:
-            return Path(run_dir)
+            candidate = Path(run_dir)
+            if self._artifact_root is None:
+                return candidate.resolve(strict=False)
+            artifact_root = self._require_artifact_root()
+            if not candidate.is_absolute() and len(candidate.parts) == 1:
+                return resolve_run_dir(artifact_root, str(candidate))
+            expected = resolve_run_dir(artifact_root, candidate.name)
+            actual = candidate.resolve(strict=False)
+            if actual != expected:
+                raise WorkflowRunInspectionError(
+                    f"run directory must stay within the artifact root: {run_dir}"
+                )
+            return expected
         if run_id is None:
             raise WorkflowRunInspectionError("run_id or run_dir is required")
         artifact_root = self._require_artifact_root()
@@ -1918,7 +1938,7 @@ class WorkflowRunInspector:
     def _require_artifact_root(self) -> Path:
         if self._artifact_root is None:
             raise WorkflowRunInspectionError("artifact_root is required")
-        return self._artifact_root
+        return self._artifact_root.resolve(strict=False)
 
 
 def inspect_workflow_run(
@@ -2052,39 +2072,30 @@ def inspect_workflow_run_diagnostics(
 
 
 def resolve_artifact_path(run_dir: str | Path, relative_path: str) -> Path:
-    root = Path(run_dir).resolve()
-    relative = Path(str(relative_path).replace("\\", "/"))
-    if relative.is_absolute() or ".." in relative.parts:
-        raise WorkflowRunInspectionError(
-            f"artifact path must stay within the run directory: {relative_path}"
-        )
-    path = (root / relative).resolve()
     try:
-        path.relative_to(root)
-    except ValueError as exc:
+        return resolve_artifact_descendant(
+            run_dir,
+            relative_path,
+            field="artifact_path",
+        )
+    except ArtifactPathError as exc:
         raise WorkflowRunInspectionError(
             f"artifact path must stay within the run directory: {relative_path}"
         ) from exc
-    return path
 
 
 def resolve_run_dir(artifact_root: str | Path, run_id: str) -> Path:
-    root = Path(artifact_root).resolve()
-    relative = Path(str(run_id).replace("\\", "/"))
-    if not str(run_id).strip():
-        raise WorkflowRunInspectionError("run_id is required")
-    if relative.is_absolute() or ".." in relative.parts:
-        raise WorkflowRunInspectionError(
-            f"run_id must stay within the artifact root: {run_id}"
-        )
-    path = (root / relative).resolve()
     try:
-        path.relative_to(root)
-    except ValueError as exc:
+        validated_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        return resolve_artifact_descendant(
+            artifact_root,
+            validated_run_id,
+            field="run_id",
+        )
+    except ArtifactPathError as exc:
         raise WorkflowRunInspectionError(
             f"run_id must stay within the artifact root: {run_id}"
         ) from exc
-    return path
 
 
 def content_type_for_path(path: str | Path) -> str:
@@ -2703,7 +2714,7 @@ def _diagnostics_summary_payload(
 
 
 def _inspection_events(inspection: WorkflowRunInspection) -> list[WorkflowEventRecord]:
-    events_path = Path(inspection.run_dir) / "events.jsonl"
+    events_path = resolve_artifact_path(inspection.run_dir, "events.jsonl")
     if not events_path.exists():
         return []
     try:
@@ -2715,7 +2726,10 @@ def _inspection_events(inspection: WorkflowRunInspection) -> list[WorkflowEventR
 def _step_results_from_manifest_or_summary(
     inspection: WorkflowRunInspection,
 ) -> dict[str, Any]:
-    step_results_path = Path(inspection.run_dir) / "step_results.json"
+    step_results_path = resolve_artifact_path(
+        inspection.run_dir,
+        "step_results.json",
+    )
     if step_results_path.exists():
         try:
             payload = _read_json_file(step_results_path)
@@ -2995,7 +3009,7 @@ def _inspection_output_keys(inspection: WorkflowRunInspection) -> list[str]:
     keys = _manifest_output_keys(inspection.manifest)
     if keys:
         return keys
-    output_path = Path(inspection.run_dir) / "output.json"
+    output_path = resolve_artifact_path(inspection.run_dir, "output.json")
     if output_path.exists():
         try:
             output = _read_json_file(output_path)
@@ -3384,7 +3398,16 @@ def _timeline_item_from_event(
 
 
 def _run_list_item_from_dir(run_dir: Path) -> WorkflowRunListItem | None:
-    manifest_path = run_dir / "manifest.json"
+    try:
+        manifest_path = resolve_artifact_path(run_dir, "manifest.json")
+    except WorkflowRunInspectionError as exc:
+        return WorkflowRunListItem(
+            run_id=run_dir.name,
+            run_dir=str(run_dir),
+            manifest_path="",
+            valid_manifest=False,
+            invalid_reason=str(exc),
+        )
     if not manifest_path.exists():
         return None
     try:

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 
@@ -116,6 +117,70 @@ def test_postgres_artifact_index_deletes_ref() -> None:
     assert "DELETE FROM artifact_index" in connection.calls[0][0]
     assert connection.calls[0][1] == ("run-1", "artifact-1")
     assert connection.commits == 1
+
+
+def test_postgres_artifact_index_supports_logical_artifact_ids() -> None:
+    artifact_id = "tool:result:artifact-1"
+    indexed_ref = replace(_ref("artifact-1"), artifact_id=artifact_id)
+    connection = FakeConnection(rows=[_row(artifact_id)])
+    store = PostgresArtifactIndexStore(
+        "postgresql://example",
+        connection_factory=lambda: connection,
+    )
+
+    store.index_artifact(indexed_ref)
+    found = store.get_artifact("run-1", artifact_id)
+    store.delete_artifact("run-1", artifact_id)
+
+    assert connection.calls[0][1][0] == artifact_id
+    assert connection.calls[1][1] == ("run-1", artifact_id)
+    assert found.artifact_id == artifact_id
+    assert connection.calls[2][1] == ("run-1", artifact_id)
+
+
+@pytest.mark.parametrize("artifact_id", [None, "", " \t"])
+def test_postgres_artifact_index_requires_nonblank_string_artifact_id(
+    artifact_id,
+) -> None:
+    connection = FakeConnection()
+    store = PostgresArtifactIndexStore(
+        "postgresql://example",
+        connection_factory=lambda: connection,
+    )
+
+    with pytest.raises(ValueError, match="artifact_id is required"):
+        store.index_artifact(replace(_ref("artifact-1"), artifact_id=artifact_id))
+    with pytest.raises(ValueError, match="artifact_id is required"):
+        store.get_artifact("run-1", artifact_id)
+    with pytest.raises(ValueError, match="artifact_id is required"):
+        store.delete_artifact("run-1", artifact_id)
+
+    assert connection.calls == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("run_id", "run:stream"),
+        ("step_id", "NUL"),
+        ("path", "artifacts/report.txt:payload"),
+        ("path", "artifacts/name."),
+    ],
+)
+def test_postgres_artifact_index_rejects_unsafe_filesystem_fields(
+    field,
+    value,
+) -> None:
+    connection = FakeConnection()
+    store = PostgresArtifactIndexStore(
+        "postgresql://example",
+        connection_factory=lambda: connection,
+    )
+
+    with pytest.raises(ValueError):
+        store.index_artifact(replace(_ref("artifact-1"), **{field: value}))
+
+    assert connection.calls == []
 
 
 def _ref(artifact_id: str) -> ArtifactRef:

@@ -157,6 +157,14 @@ def test_storage_service_queries_lineage_from_real_store(tmp_path) -> None:
     ).lineage_refs == [source_item]
 
 
+def test_storage_service_rejects_unsafe_run_id_before_lineage_store_call(tmp_path) -> None:
+    fake_store = _FakeLineageStore([])
+    service = StorageApplicationService(tmp_path, lineage_store=fake_store)
+
+    with pytest.raises(ValueError):
+        service.list_lineage("run:stream")
+
+
 def test_storage_service_uses_artifact_index_factory_by_default(tmp_path, monkeypatch) -> None:
     old_ref = ArtifactRef(
         artifact_id="raw-old",
@@ -221,6 +229,56 @@ def test_storage_service_diagnoses_manifest_artifact_index_consistency(tmp_path)
     assert payload["missing_index_artifacts"] == ["metrics"]
     assert payload["missing_artifact_files"] == []
     assert payload["checksum_mismatches"] == ["output"]
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    ["../secret", "C:secret", "run:stream", "CON", "run. "],
+)
+def test_storage_service_diagnostics_rejects_unsafe_run_id_before_reading(
+    tmp_path,
+    run_id,
+) -> None:
+    with pytest.raises(ValueError):
+        StorageApplicationService(tmp_path).diagnose_artifact_index(run_id)
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["../secret.json", "C:secret.json", "\\\\server\\share\\secret.json", "a:stream"],
+)
+def test_storage_service_diagnostics_rejects_unsafe_manifest_artifact_path(
+    tmp_path,
+    relative_path,
+) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"run_id": "run-1", "artifacts": {"output": relative_path}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        StorageApplicationService(tmp_path).diagnose_artifact_index("run-1")
+
+
+def test_storage_service_diagnostics_rejects_symlink_escape(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"leaked": true}', encoding="utf-8")
+    link = run_dir / "output.json"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is not available")
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"run_id": "run-1", "artifacts": {"output": "output.json"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        StorageApplicationService(tmp_path).diagnose_artifact_index("run-1")
 
 
 def test_storage_service_uses_metrics_collector_factory_by_default(tmp_path, monkeypatch) -> None:

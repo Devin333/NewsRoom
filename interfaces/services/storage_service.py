@@ -8,6 +8,11 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from framework.artifacts.paths import (
+    resolve_artifact_descendant,
+    validate_artifact_path_segment,
+    validate_relative_artifact_path,
+)
 from infrastructure.storage.artifacts import ArtifactRef, artifact_index_store_from_env
 from infrastructure.storage.lifecycle import (
     ArtifactRetentionPlanner,
@@ -202,13 +207,26 @@ class StorageApplicationService:
         )
 
     def diagnose_artifact_index(self, run_id: str) -> ArtifactIndexConsistencyResult:
-        run_dir = self.artifact_root / run_id
-        manifest_path = run_dir / "manifest.json"
+        safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        run_dir = resolve_artifact_descendant(
+            self.artifact_root,
+            safe_run_id,
+            field="run_id",
+        )
+        manifest_path = resolve_artifact_descendant(
+            run_dir,
+            "manifest.json",
+            field="run manifest path",
+        )
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest_artifacts = _manifest_artifact_paths(manifest)
         indexed_refs = self.artifact_index.list_by_run(run_id)
         indexed_by_type_path = {
-            (ref.artifact_type, Path(ref.path).as_posix()): ref for ref in indexed_refs
+            (
+                ref.artifact_type,
+                validate_relative_artifact_path(ref.path, field="indexed artifact path"),
+            ): ref
+            for ref in indexed_refs
         }
         expected_type_paths = set(_expected_index_type_paths(run_dir, manifest_artifacts))
 
@@ -216,8 +234,15 @@ class StorageApplicationService:
         missing_artifact_files: list[str] = []
         checksum_mismatches: list[str] = []
         for artifact_key, relative_path in manifest_artifacts.items():
-            normalized_path = Path(relative_path).as_posix()
-            artifact_path = _safe_artifact_path(run_dir, normalized_path)
+            normalized_path = validate_relative_artifact_path(
+                relative_path,
+                field="manifest artifact path",
+            )
+            artifact_path = resolve_artifact_descendant(
+                run_dir,
+                normalized_path,
+                field="manifest artifact path",
+            )
             ref = indexed_by_type_path.get((artifact_key, normalized_path))
             if ref is None:
                 missing_index_artifacts.append(artifact_key)
@@ -232,7 +257,11 @@ class StorageApplicationService:
         orphan_index_artifacts = [
             ref.artifact_id
             for ref in indexed_refs
-            if (ref.artifact_type, Path(ref.path).as_posix()) not in expected_type_paths
+            if (
+                ref.artifact_type,
+                validate_relative_artifact_path(ref.path, field="indexed artifact path"),
+            )
+            not in expected_type_paths
         ]
         valid = not (
             missing_index_artifacts
@@ -288,6 +317,7 @@ class StorageApplicationService:
         )
 
     def list_lineage(self, run_id: str) -> StorageLineageQueryResult:
+        validate_artifact_path_segment(run_id, field="run_id")
         refs = self.lineage_store.list_by_run(run_id)
         return StorageLineageQueryResult(
             artifact_root=self.artifact_root,
@@ -303,6 +333,7 @@ class StorageApplicationService:
         target_type: str,
         target_id: str,
     ) -> StorageLineageQueryResult:
+        validate_artifact_path_segment(run_id, field="run_id")
         refs = self.lineage_store.upstream(run_id, target_type, target_id)
         return StorageLineageQueryResult(
             artifact_root=self.artifact_root,
@@ -318,6 +349,7 @@ class StorageApplicationService:
         source_type: str,
         source_id: str,
     ) -> StorageLineageQueryResult:
+        validate_artifact_path_segment(run_id, field="run_id")
         refs = self.lineage_store.downstream(run_id, source_type, source_id)
         return StorageLineageQueryResult(
             artifact_root=self.artifact_root,
@@ -333,6 +365,8 @@ class StorageApplicationService:
         run_id: str | None = None,
         now: datetime | None = None,
     ) -> StorageRetentionPlanResult:
+        if run_id is not None:
+            validate_artifact_path_segment(run_id, field="run_id")
         refs = self.artifact_index.list_by_run(run_id) if run_id else self.artifact_index.list_all()
         actual_policy = policy or RetentionPolicy()
         plan = ArtifactRetentionPlanner(actual_policy).plan(refs, now=now)
@@ -394,15 +428,26 @@ def _expected_index_type_paths(
     manifest_artifacts: dict[str, str],
 ) -> list[tuple[str, str]]:
     expected = [
-        (artifact_key, Path(relative_path).as_posix())
+        (
+            artifact_key,
+            validate_relative_artifact_path(relative_path, field="manifest artifact path"),
+        )
         for artifact_key, relative_path in manifest_artifacts.items()
     ]
     source_index_path = manifest_artifacts.get("source_artifacts")
     if source_index_path is None:
         return expected
     try:
-        payload = json.loads(_safe_artifact_path(run_dir, source_index_path).read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
+        source_index = resolve_artifact_descendant(
+            run_dir,
+            validate_relative_artifact_path(
+                source_index_path,
+                field="source artifact index path",
+            ),
+            field="source artifact index path",
+        )
+        payload = json.loads(source_index.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return expected
     entries = payload.get("entries") if isinstance(payload, dict) else None
     if not isinstance(entries, list):
@@ -416,12 +461,10 @@ def _expected_index_type_paths(
         artifact_type = ref_payload.get("artifact_type")
         path = ref_payload.get("path")
         if isinstance(artifact_type, str) and isinstance(path, str):
-            expected.append((artifact_type, Path(path).as_posix()))
+            expected.append(
+                (
+                    artifact_type,
+                    validate_relative_artifact_path(path, field="indexed artifact path"),
+                )
+            )
     return expected
-
-
-def _safe_artifact_path(run_dir: Path, relative_path: str) -> Path:
-    relative = Path(relative_path)
-    if not relative_path or relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"invalid artifact path: {relative_path}")
-    return run_dir / relative
