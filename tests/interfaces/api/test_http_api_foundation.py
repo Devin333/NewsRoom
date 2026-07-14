@@ -1,7 +1,13 @@
 import json
+from hashlib import sha256
 
 from fastapi.testclient import TestClient
 
+from framework.artifacts import (
+    ArtifactChecksumMismatchError,
+    ArtifactStoreMetadataError,
+    ArtifactStoreRequiredError,
+)
 from interfaces.api import create_app
 from interfaces.api.app import _api_token_from_env
 from interfaces.events import AuditEmitter, InMemoryAuditSink
@@ -965,6 +971,28 @@ def test_run_replay_invalid_uses_unified_error() -> None:
     assert payload["error"]["code"] == "invalid_run_replay_request"
 
 
+def test_run_replay_integrity_errors_use_stable_http_contracts() -> None:
+    cases = [
+        (ArtifactChecksumMismatchError, 409, "artifact_checksum_mismatch"),
+        (ArtifactStoreMetadataError, 409, "artifact_metadata_corrupt"),
+        (ArtifactStoreRequiredError, 500, "artifact_store_unavailable"),
+    ]
+
+    for error_type, expected_status, expected_code in cases:
+        service = _FailingRunReplayService(error_type("run replay verification failed"))
+        client = TestClient(
+            create_app(run_inspection_service_factory=lambda service=service: service)
+        )
+
+        response = client.get("/api/v1/runs/run-1/replay")
+        payload = response.json()
+
+        assert response.status_code == expected_status
+        assert payload["success"] is False
+        assert payload["data"] is None
+        assert payload["error"]["code"] == expected_code
+
+
 def test_run_diagnostics_returns_diagnostics() -> None:
     client = TestClient(create_app(run_inspection_service_factory=lambda: _FakeRunInspectionService()))
 
@@ -990,24 +1018,31 @@ def test_run_health_returns_health() -> None:
 def test_run_replay_api_reads_real_files_and_redacts(tmp_path) -> None:
     run_dir = tmp_path / "run-1"
     run_dir.mkdir()
+    events_content = (
+        json.dumps({"event_type": "workflow_started", "payload": {"token": "hidden"}})
+        + "\n"
+    )
+    report_content = json.dumps({"title": "Report", "api_key": "hidden"})
     (run_dir / "manifest.json").write_text(
         json.dumps(
             {
                 "run_id": "run-1",
                 "status": "succeeded",
                 "artifacts": {"events": "events.jsonl", "report_json": "report.json"},
+                "artifact_metadata": {
+                    "events": {
+                        "checksum": sha256(events_content.encode("utf-8")).hexdigest(),
+                    },
+                    "report_json": {
+                        "checksum": sha256(report_content.encode("utf-8")).hexdigest(),
+                    },
+                },
             }
         ),
         encoding="utf-8",
     )
-    (run_dir / "events.jsonl").write_text(
-        json.dumps({"event_type": "workflow_started", "payload": {"token": "hidden"}}) + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "report.json").write_text(
-        json.dumps({"title": "Report", "api_key": "hidden"}),
-        encoding="utf-8",
-    )
+    (run_dir / "events.jsonl").write_bytes(events_content.encode("utf-8"))
+    (run_dir / "report.json").write_bytes(report_content.encode("utf-8"))
     client = TestClient(
         create_app(run_inspection_service_factory=lambda: RunInspectionService(tmp_path))
     )
@@ -1043,6 +1078,30 @@ def test_artifact_missing_uses_unified_error() -> None:
     assert response.status_code == 404
     assert payload["success"] is False
     assert payload["error"]["code"] == "artifact_not_found"
+
+
+def test_artifact_detail_integrity_errors_use_stable_http_contracts() -> None:
+    cases = [
+        (ArtifactChecksumMismatchError, 409, "artifact_checksum_mismatch"),
+        (ArtifactStoreMetadataError, 409, "artifact_metadata_corrupt"),
+        (ArtifactStoreRequiredError, 500, "artifact_store_unavailable"),
+    ]
+
+    for error_type, expected_status, expected_code in cases:
+        service = _FailingArtifactService(error_type("artifact verification failed"))
+        client = TestClient(create_app(artifact_service_factory=lambda service=service: service))
+
+        responses = [
+            client.get("/api/v1/runs/run-1/artifacts/output"),
+            client.get("/api/v1/artifacts/output?run_id=run-1"),
+        ]
+
+        for response in responses:
+            payload = response.json()
+            assert response.status_code == expected_status
+            assert payload["success"] is False
+            assert payload["data"] is None
+            assert payload["error"]["code"] == expected_code
 
 
 class _FakeResearchService:
@@ -1828,6 +1887,14 @@ class _InvalidReplayInspectionService:
         raise ValueError(f"invalid run id: {run_id}")
 
 
+class _FailingRunReplayService:
+    def __init__(self, error) -> None:
+        self.error = error
+
+    def replay_run(self, run_id):
+        raise self.error
+
+
 class _FakeArtifactService:
     def list_artifacts(self, run_id):
         return _FakeResult(
@@ -1864,3 +1931,11 @@ class _MissingArtifactService:
 
     def get_artifact(self, run_id, artifact_key):
         raise FileNotFoundError(f"artifact not found: {artifact_key}")
+
+
+class _FailingArtifactService:
+    def __init__(self, error) -> None:
+        self.error = error
+
+    def get_artifact(self, run_id, artifact_key):
+        raise self.error

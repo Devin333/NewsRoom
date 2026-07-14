@@ -4,7 +4,12 @@ import argparse
 import json
 import sys
 
-from framework.artifacts.paths import ArtifactPathError
+from framework.artifacts import (
+    ArtifactChecksumMismatchError,
+    ArtifactPathError,
+    ArtifactStoreMetadataError,
+    ArtifactStoreRequiredError,
+)
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.artifact_service import ArtifactInspectionService
 
@@ -30,7 +35,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def list_artifacts(args: argparse.Namespace) -> int:
     try:
         result = _artifact_service(artifact_root=args.artifact_root).list_artifacts(args.run_id)
-    except ArtifactPathError as exc:
+    except _TYPED_ARTIFACT_ERRORS as exc:
         _print_typed_artifact_error(exc)
         return 1
     except (FileNotFoundError, ValueError) as exc:
@@ -56,7 +61,7 @@ def show_artifact(args: argparse.Namespace) -> int:
             args.run_id,
             args.artifact_key,
         )
-    except ArtifactPathError as exc:
+    except _TYPED_ARTIFACT_ERRORS as exc:
         _print_typed_artifact_error(exc)
         return 1
     except (FileNotFoundError, ValueError) as exc:
@@ -90,6 +95,14 @@ def _print_json(payload: dict) -> None:
 
 def _print_typed_artifact_error(exc: Exception) -> None:
     print(str(exc), file=sys.stderr)
+
+
+_TYPED_ARTIFACT_ERRORS = (
+    ArtifactPathError,
+    ArtifactChecksumMismatchError,
+    ArtifactStoreMetadataError,
+    ArtifactStoreRequiredError,
+)
 
 
 add_artifacts_commands = register

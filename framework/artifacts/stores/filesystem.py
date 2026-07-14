@@ -10,17 +10,13 @@ from framework.artifacts.paths import (
     validate_artifact_path_segment,
     validate_relative_artifact_path,
 )
+from framework.artifacts.stores.errors import (
+    ArtifactChecksumMismatchError,
+    ArtifactNotFoundError,
+)
 
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
-
-
-class ArtifactNotFoundError(FileNotFoundError):
-    pass
-
-
-class ArtifactChecksumMismatchError(ValueError):
-    pass
 
 
 class FilesystemArtifactStore:

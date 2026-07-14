@@ -3,6 +3,12 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
+from framework.artifacts import (
+    ArtifactChecksumMismatchError,
+    ArtifactPathError,
+    ArtifactStoreMetadataError,
+    ArtifactStoreRequiredError,
+)
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.models import (
     RunMarkBlockedResolvedRequest,
@@ -181,6 +187,14 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     def replay_run(run_id: str):
         try:
             result = services.run_inspection_service_factory().replay_run(run_id)
+        except ArtifactPathError as exc:
+            return helpers.error(
+                status_code=400,
+                code="invalid_run_replay_request",
+                message=str(exc),
+            )
+        except _ARTIFACT_INTEGRITY_ERRORS as exc:
+            return _artifact_integrity_error(exc, helpers=helpers)
         except FileNotFoundError as exc:
             return helpers.error(
                 status_code=404,
@@ -268,6 +282,10 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
     def get_artifact(run_id: str, artifact_key: str):
         try:
             result = services.artifact_service_factory().get_artifact(run_id, artifact_key)
+        except ArtifactPathError as exc:
+            return helpers.error(status_code=400, code="invalid_artifact_path", message=str(exc))
+        except _ARTIFACT_INTEGRITY_ERRORS as exc:
+            return _artifact_integrity_error(exc, helpers=helpers)
         except FileNotFoundError as exc:
             return helpers.error(status_code=404, code="artifact_not_found", message=str(exc))
         except ValueError as exc:
@@ -283,6 +301,10 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         try:
             resolved_run_id, artifact_key = helpers.artifact_lookup_ids(artifact_id, run_id)
             result = services.artifact_service_factory().get_artifact(resolved_run_id, artifact_key)
+        except ArtifactPathError as exc:
+            return helpers.error(status_code=400, code="invalid_artifact_id", message=str(exc))
+        except _ARTIFACT_INTEGRITY_ERRORS as exc:
+            return _artifact_integrity_error(exc, helpers=helpers)
         except FileNotFoundError as exc:
             return helpers.error(status_code=404, code="artifact_not_found", message=str(exc))
         except ValueError as exc:
@@ -369,3 +391,22 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         return helpers.success(result.to_dict())
 
     return router
+
+
+_ARTIFACT_INTEGRITY_HTTP_CONTRACT = {
+    ArtifactChecksumMismatchError: (409, "artifact_checksum_mismatch"),
+    ArtifactStoreMetadataError: (409, "artifact_metadata_corrupt"),
+    ArtifactStoreRequiredError: (500, "artifact_store_unavailable"),
+}
+_ARTIFACT_INTEGRITY_ERRORS = tuple(_ARTIFACT_INTEGRITY_HTTP_CONTRACT)
+
+
+def _artifact_integrity_error(
+    exc: Exception,
+    *,
+    helpers: ApiRouteHelpers,
+):
+    for error_type, (status_code, code) in _ARTIFACT_INTEGRITY_HTTP_CONTRACT.items():
+        if isinstance(exc, error_type):
+            return helpers.error(status_code=status_code, code=code, message=str(exc))
+    raise TypeError(f"unsupported artifact integrity error: {type(exc).__name__}")

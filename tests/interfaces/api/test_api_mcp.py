@@ -105,17 +105,25 @@ def test_api_mcp_reserves_typed_artifact_failure_http_mapping(
         )
     )
 
-    response = client.post(
-        "/api/v1/mcp/tools/news.run.replay/call",
-        json={"arguments": {"run_id": "run-1"}},
-    )
-    payload = response.json()
+    responses = [
+        client.post(
+            "/api/v1/mcp/tools/news.run.replay/call",
+            json={"arguments": {"run_id": "run-1"}},
+        ),
+        client.post(
+            "/api/v1/mcp/resources/read",
+            json={"uri": "news://runs/run-1/artifacts/output"},
+        ),
+    ]
 
-    assert response.status_code == expected_status
-    assert payload["success"] is False
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == expected_code
-    assert payload["error"]["details"]["error_type"] == error_type
+    for response in responses:
+        payload = response.json()
+        assert response.status_code == expected_status
+        assert payload["success"] is False
+        assert payload["ok"] is False
+        assert payload["data"] is None
+        assert payload["error"]["code"] == expected_code
+        assert payload["error"]["details"]["error_type"] == error_type
 
 
 def test_api_mcp_tool_call_requires_tool_specific_permission() -> None:

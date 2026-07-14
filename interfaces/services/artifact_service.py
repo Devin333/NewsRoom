@@ -10,6 +10,7 @@ from framework.artifacts.paths import (
     validate_artifact_path_segment,
     validate_relative_artifact_path,
 )
+from framework.workflow.inspection import read_strict_workflow_artifact_content
 from interfaces.services.run_inspection_service import RunInspectionService
 
 
@@ -76,25 +77,23 @@ class ArtifactInspectionService:
         return ArtifactListResult(run_id=run_id, artifacts=artifacts)
 
     def get_artifact(self, run_id: str, artifact_key: str) -> ArtifactDetail:
-        manifest = self.run_inspection.get_run(run_id).manifest
-        artifacts = manifest.get("artifacts") or {}
-        if artifact_key not in artifacts:
-            raise FileNotFoundError(f"artifact not found: {artifact_key}")
-        relative_path = str(artifacts[artifact_key])
-        path = self._artifact_path(run_id, relative_path)
-        content_type = _content_type(path)
-        if content_type == "application/json":
-            content = _redact_sensitive_keys(_read_json(path))
-        elif content_type == "application/x-ndjson":
-            content = _read_redacted_jsonl_text(path)
-        else:
-            content = path.read_text(encoding="utf-8")
+        run = self.run_inspection.get_run(run_id)
+        run_dir = Path(run.artifact_dir or self.artifact_root / run_id)
+        record = read_strict_workflow_artifact_content(
+            run_dir,
+            run.manifest,
+            artifact_key,
+            redact=True,
+        )
+        content = record.content
+        if record.content_type == "application/x-ndjson" and isinstance(content, list):
+            content = _jsonl_values_to_text(content)
         return ArtifactDetail(
             run_id=run_id,
             artifact_key=artifact_key,
-            relative_path=relative_path,
-            content_type=content_type,
-            size_bytes=path.stat().st_size if path.exists() else None,
+            relative_path=record.relative_path,
+            content_type=record.content_type,
+            size_bytes=record.size_bytes,
             content=content,
         )
 
@@ -139,45 +138,6 @@ def _content_type(path: Path) -> str:
     return "text/plain"
 
 
-def _read_json(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def _read_redacted_jsonl_text(path: Path) -> str:
-    redacted_lines = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            payload = json.loads(stripped)
-            redacted_lines.append(
-                json.dumps(_redact_sensitive_keys(payload), ensure_ascii=False, sort_keys=True)
-            )
-    return "\n".join(redacted_lines) + ("\n" if redacted_lines else "")
-
-
-def _redact_sensitive_keys(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: "[redacted]" if _is_sensitive_key(key) else _redact_sensitive_keys(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_sensitive_keys(item) for item in value]
-    return value
-
-
-def _is_sensitive_key(key: Any) -> bool:
-    normalized = str(key).lower().replace("-", "_")
-    sensitive_fragments = (
-        "api_key",
-        "apikey",
-        "authorization",
-        "cookie",
-        "password",
-        "secret",
-        "token",
-    )
-    return any(fragment in normalized for fragment in sensitive_fragments)
+def _jsonl_values_to_text(values: list[Any]) -> str:
+    lines = [json.dumps(value, ensure_ascii=False, sort_keys=True) for value in values]
+    return "\n".join(lines) + ("\n" if lines else "")

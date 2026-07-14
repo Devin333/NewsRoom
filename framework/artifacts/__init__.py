@@ -2,6 +2,7 @@ from framework.artifacts.inspection import (
     ArtifactIntegrityInspector,
     ArtifactIntegrityIssue,
     ArtifactIntegrityReport,
+    ArtifactStoreRequiredError,
     ArtifactInventory,
     ArtifactInventoryBuilder,
     ArtifactReplayBundle,
@@ -45,8 +46,11 @@ from framework.artifacts.stores import (
     ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
     ArtifactStore,
+    ArtifactStoreMetadataError,
     FilesystemArtifactStore,
     LocalArtifactStore,
+    validate_sha256_checksum,
+    verify_sha256_checksum,
 )
 
 __all__ = [
@@ -56,6 +60,7 @@ __all__ = [
     "ArtifactIntegrityInspector",
     "ArtifactIntegrityIssue",
     "ArtifactIntegrityReport",
+    "ArtifactStoreRequiredError",
     "ArtifactInventory",
     "ArtifactInventoryBuilder",
     "ArtifactManager",
@@ -72,6 +77,7 @@ __all__ = [
     "ArtifactSerializer",
     "ArtifactStatus",
     "ArtifactStore",
+    "ArtifactStoreMetadataError",
     "ArtifactValidator",
     "ArtifactWriteRequest",
     "DefaultArtifactPublisher",
@@ -89,5 +95,7 @@ __all__ = [
     "utc_now_iso",
     "validate_artifact_path_segment",
     "validate_relative_artifact_path",
+    "validate_sha256_checksum",
     "verify_checksum",
+    "verify_sha256_checksum",
 ]

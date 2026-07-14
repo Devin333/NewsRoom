@@ -1,7 +1,14 @@
 import json
 
+import pytest
+
 import interfaces.cli.news as news_cli
-from framework.artifacts.paths import ArtifactPathError
+from framework.artifacts import (
+    ArtifactChecksumMismatchError,
+    ArtifactPathError,
+    ArtifactStoreMetadataError,
+    ArtifactStoreRequiredError,
+)
 from interfaces.cli.commands import artifacts as artifact_commands
 
 
@@ -72,6 +79,36 @@ def test_news_cli_artifacts_show_path_error_does_not_print_content(
     assert "artifact-secret" not in captured.err
 
 
+@pytest.mark.parametrize(
+    "error_type",
+    [
+        ArtifactChecksumMismatchError,
+        ArtifactStoreMetadataError,
+        ArtifactStoreRequiredError,
+    ],
+)
+def test_news_cli_artifacts_show_integrity_error_uses_stderr_and_exit_one(
+    monkeypatch,
+    capsys,
+    error_type,
+) -> None:
+    error = error_type("artifact integrity verification failed")
+    monkeypatch.setattr(
+        artifact_commands,
+        "ArtifactInspectionService",
+        lambda *args, **kwargs: _ArtifactIntegrityErrorService(error),
+    )
+
+    exit_code = news_cli.main(
+        ["artifacts", "show", "--run-id", "run-1", "--artifact-key", "output", "--json"]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err == "artifact integrity verification failed\n"
+
+
 class _FakeArtifactService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
@@ -114,6 +151,14 @@ class _ArtifactPathErrorService:
 
     def get_artifact(self, run_id, artifact_key):
         raise ArtifactPathError("invalid artifact path")
+
+
+class _ArtifactIntegrityErrorService:
+    def __init__(self, error) -> None:
+        self.error = error
+
+    def get_artifact(self, run_id, artifact_key):
+        raise self.error
 
 
 class _FakeResult:

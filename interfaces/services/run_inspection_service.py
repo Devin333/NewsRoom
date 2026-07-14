@@ -333,7 +333,11 @@ class RunInspectionService:
             raise FileNotFoundError(f"run not found: {run_id}")
         manifest = normalize_legacy_run_manifest(self._inspector.load_manifest(run_dir))
         _validate_manifest_artifact_paths(run_dir, manifest)
-        bundle = self._inspector.build_replay_content_bundle(run_dir=run_dir, redact=True)
+        bundle = self._inspector.build_replay_content_bundle(
+            run_dir=run_dir,
+            redact=True,
+            strict_artifact_integrity=True,
+        )
         return _replay_result_from_content_bundle(bundle)
 
     def get_run_diagnostics(self, run_id: str) -> RunDiagnosticsResult:

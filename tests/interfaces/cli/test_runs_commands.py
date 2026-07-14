@@ -1,9 +1,15 @@
 import json
+from hashlib import sha256
 
 import pytest
 
 import interfaces.cli.news as news_cli
-from framework.artifacts.paths import ArtifactPathError
+from framework.artifacts import (
+    ArtifactChecksumMismatchError,
+    ArtifactPathError,
+    ArtifactStoreMetadataError,
+    ArtifactStoreRequiredError,
+)
 from interfaces.cli.commands import runs as runs_commands
 
 
@@ -286,6 +292,34 @@ def test_news_cli_runs_replay_rejects_unsafe_manifest_artifact_path(
     assert "artifact-secret" not in captured.err
 
 
+@pytest.mark.parametrize(
+    "error_type",
+    [
+        ArtifactChecksumMismatchError,
+        ArtifactStoreMetadataError,
+        ArtifactStoreRequiredError,
+    ],
+)
+def test_news_cli_runs_replay_integrity_error_uses_stderr_and_exit_one(
+    monkeypatch,
+    capsys,
+    error_type,
+) -> None:
+    error = error_type("run replay integrity verification failed")
+    monkeypatch.setattr(
+        runs_commands,
+        "RunInspectionService",
+        lambda *args, **kwargs: _ArtifactIntegrityRunInspectionService(error),
+    )
+
+    exit_code = news_cli.main(["runs", "replay", "run-1", "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err == "run replay integrity verification failed\n"
+
+
 def test_news_cli_runs_cancel_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(runs_commands, "RunOperationApplicationService", _FakeRunOperationService)
 
@@ -537,6 +571,14 @@ class _ArtifactPathRunInspectionService:
         raise ArtifactPathError("invalid artifact path")
 
 
+class _ArtifactIntegrityRunInspectionService:
+    def __init__(self, error) -> None:
+        self.error = error
+
+    def replay_run(self, run_id):
+        raise self.error
+
+
 class _FakeRunOperationService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
@@ -587,27 +629,34 @@ class _FakeResult:
 def _write_replay_run(root) -> None:
     run_dir = root / "run-1"
     run_dir.mkdir()
+    artifact_contents = {
+        "events": (
+            "events.jsonl",
+            json.dumps({"event_type": "workflow_started", "payload": {"profile": "live"}})
+            + "\n",
+        ),
+        "step_results": (
+            "step_results.json",
+            json.dumps({"write": {"status": "succeeded", "outputs": {"report": "ok"}}}),
+        ),
+        "report_json": (
+            "report.json",
+            json.dumps({"title": "Report", "password": "hidden"}),
+        ),
+        "report_markdown": ("report.md", "# Report\n"),
+    }
     manifest = {
         "run_id": "run-1",
         "status": "succeeded",
         "artifacts": {
-            "events": "events.jsonl",
-            "step_results": "step_results.json",
-            "report_json": "report.json",
-            "report_markdown": "report.md",
+            artifact_key: relative_path
+            for artifact_key, (relative_path, _) in artifact_contents.items()
+        },
+        "artifact_metadata": {
+            artifact_key: {"checksum": sha256(content.encode("utf-8")).hexdigest()}
+            for artifact_key, (_, content) in artifact_contents.items()
         },
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (run_dir / "events.jsonl").write_text(
-        json.dumps({"event_type": "workflow_started", "payload": {"profile": "live"}}) + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "report.json").write_text(
-        json.dumps({"title": "Report", "password": "hidden"}),
-        encoding="utf-8",
-    )
-    (run_dir / "step_results.json").write_text(
-        json.dumps({"write": {"status": "succeeded", "outputs": {"report": "ok"}}}),
-        encoding="utf-8",
-    )
-    (run_dir / "report.md").write_text("# Report\n", encoding="utf-8")
+    for relative_path, content in artifact_contents.values():
+        (run_dir / relative_path).write_bytes(content.encode("utf-8"))

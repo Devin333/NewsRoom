@@ -89,6 +89,40 @@ def test_stdio_handles_run_replay_resource_read() -> None:
     assert response["result"]["data"]["run_id"] == "run-1"
 
 
+def test_stdio_preserves_typed_artifact_integrity_failure_envelopes() -> None:
+    for error_type in [
+        "ArtifactChecksumMismatchError",
+        "ArtifactStoreMetadataError",
+        "ArtifactStoreRequiredError",
+    ]:
+        service = _FailedMCPService(error_type)
+        tool_response = handle_jsonrpc_request(
+            {
+                "jsonrpc": "2.0",
+                "id": "call-replay",
+                "method": "tools/call",
+                "params": {"name": "news.run.replay", "arguments": {"run_id": "run-1"}},
+            },
+            service=service,
+        )
+        resource_response = handle_jsonrpc_request(
+            {
+                "jsonrpc": "2.0",
+                "id": "read-artifact",
+                "method": "resources/read",
+                "params": {"uri": "news://runs/run-1/artifacts/output"},
+            },
+            service=service,
+        )
+
+        for response in [tool_response, resource_response]:
+            result = response["result"]
+            assert result["success"] is False
+            assert result["data"] is None
+            assert result["error_type"] == error_type
+            assert result["error_message"] == "artifact integrity verification failed"
+
+
 def test_stdio_handles_run_lineage_resource_read() -> None:
     service = _FakeMCPService()
 
@@ -240,6 +274,17 @@ class _FakeMCPService:
         return _FakePromptResult(name, arguments)
 
 
+class _FailedMCPService:
+    def __init__(self, error_type) -> None:
+        self.error_type = error_type
+
+    def call_tool(self, tool_name, arguments):
+        return _FailedToolResult(tool_name, self.error_type)
+
+    def read_resource(self, uri):
+        return _FailedResourceResult(uri, self.error_type)
+
+
 class _FakeToolResult:
     def __init__(self, tool_name) -> None:
         self.tool_name = tool_name
@@ -266,6 +311,37 @@ class _FakeResourceResult:
             "data": _resource_payload(self.uri),
             "error_type": None,
             "error_message": None,
+        }
+
+
+class _FailedToolResult:
+    def __init__(self, tool_name, error_type) -> None:
+        self.tool_name = tool_name
+        self.error_type = error_type
+
+    def to_dict(self):
+        return {
+            "tool_name": self.tool_name,
+            "success": False,
+            "data": None,
+            "error_type": self.error_type,
+            "error_message": "artifact integrity verification failed",
+        }
+
+
+class _FailedResourceResult:
+    def __init__(self, uri, error_type) -> None:
+        self.uri = uri
+        self.error_type = error_type
+
+    def to_dict(self):
+        return {
+            "uri": self.uri,
+            "success": False,
+            "mime_type": "application/json",
+            "data": None,
+            "error_type": self.error_type,
+            "error_message": "artifact integrity verification failed",
         }
 
 

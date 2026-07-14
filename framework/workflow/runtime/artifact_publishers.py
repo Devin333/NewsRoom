@@ -370,19 +370,25 @@ def _populate_artifact_metadata(manifest: dict[str, Any], run_dir: Path) -> None
             data = path.read_bytes()
         except OSError:
             continue
-        metadata[str(artifact_key)] = {
-            "checksum": sha256(data).hexdigest(),
+        key = str(artifact_key)
+        metadata[key] = {
+            "checksum": "pending" if key == "manifest" else sha256(data).hexdigest(),
             "content_type": _content_type_for_artifact_path(normalized_relative),
             "size_bytes": len(data),
         }
-    metadata.setdefault(
-        "manifest",
-        {
-            "checksum": "pending",
-            "content_type": "application/json",
-            "size_bytes": 0,
-        },
-    )
+    manifest_metadata = metadata.get("manifest")
+    if not isinstance(manifest_metadata, dict):
+        manifest_metadata = {}
+    metadata["manifest"] = {
+        "checksum": "pending",
+        "content_type": manifest_metadata.get("content_type") or "application/json",
+        "size_bytes": (
+            manifest_metadata.get("size_bytes")
+            if isinstance(manifest_metadata.get("size_bytes"), int)
+            and manifest_metadata["size_bytes"] >= 0
+            else 0
+        ),
+    }
 
 
 def _content_type_for_artifact_path(relative_path: str) -> str:
@@ -412,5 +418,4 @@ def _manifest_artifact_path(value: Any) -> str | None:
         path = value.get("path")
         return str(path) if path is not None else None
     return str(value)
-
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 
 from fastapi.testclient import TestClient
 
@@ -221,6 +222,22 @@ def _write_run(
         {"event_type": "workflow_started", "run_id": run_id, "payload": {}},
         {"event_type": f"workflow_{status}", "run_id": run_id, "payload": {}},
     ]
+    artifact_contents = {
+        "events": (
+            "events.jsonl",
+            ("\n".join(json.dumps(event) for event in actual_events) + "\n").encode("utf-8"),
+        ),
+        "report_markdown": ("report.md", b"# Report\n"),
+        "step_results": (
+            "step_results.json",
+            json.dumps(
+                {
+                    "collect": {"status": "succeeded", "outputs": {"items": []}},
+                    "write": {"status": status, "outputs": {"report": "ok"}},
+                }
+            ).encode("utf-8"),
+        ),
+    }
     manifest = {
         "schema_version": "newsroom.workflow_run_manifest.v1",
         "run_id": run_id,
@@ -236,21 +253,27 @@ def _write_run(
             "write": {"status": status, "outputs": {"report": "ok"}},
         },
         "artifacts": {
-            "events": "events.jsonl",
-            "report_markdown": "report.md",
-            "step_results": "step_results.json",
+            artifact_key: relative_path
+            for artifact_key, (relative_path, _) in artifact_contents.items()
+        },
+        "artifact_metadata": {
+            artifact_key: {
+                "checksum": sha256(content).hexdigest(),
+                "content_type": (
+                    "application/x-ndjson"
+                    if relative_path.endswith(".jsonl")
+                    else "application/json"
+                    if relative_path.endswith(".json")
+                    else "text/markdown"
+                ),
+                "size_bytes": len(content),
+            }
+            for artifact_key, (relative_path, content) in artifact_contents.items()
         },
         "step_count": 2,
         "event_count": len(actual_events),
         "output": output or {},
     }
     (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (run_dir / "events.jsonl").write_text(
-        "\n".join(json.dumps(event) for event in actual_events) + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "report.md").write_text("# Report\n", encoding="utf-8")
-    (run_dir / "step_results.json").write_text(
-        json.dumps(manifest["steps"]),
-        encoding="utf-8",
-    )
+    for relative_path, content in artifact_contents.values():
+        (run_dir / relative_path).write_bytes(content)

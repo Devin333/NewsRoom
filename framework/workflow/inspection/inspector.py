@@ -9,9 +9,13 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from framework.artifacts import (
+    ArtifactNotFoundError,
     ArtifactPathError,
+    ArtifactStoreMetadataError,
     resolve_artifact_descendant,
     validate_artifact_path_segment,
+    validate_sha256_checksum,
+    verify_sha256_checksum,
 )
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.specs import StepStatus, WorkflowStatus
@@ -1575,11 +1579,19 @@ class WorkflowRunInspector:
         artifact_index_keys: Iterable[str] | None = None,
         expand_source_artifacts: bool = True,
         max_artifact_bytes: int | None = None,
+        strict_artifact_integrity: bool = False,
     ) -> WorkflowReplayContentBundle:
         actual_run_dir = self._resolve_run_dir(run_id=run_id, run_dir=run_dir)
         manifest = self.load_manifest(actual_run_dir)
         integrity = self.validate_run_dir(actual_run_dir, manifest=manifest)
         artifact_paths = _manifest_artifact_map(manifest)
+        if strict_artifact_integrity:
+            for artifact_key in sorted(artifact_paths):
+                _read_strict_workflow_artifact_bytes(
+                    actual_run_dir,
+                    manifest,
+                    artifact_key,
+                )
         events: list[dict[str, Any]] = []
         events_path = None
         events_error = None
@@ -2155,6 +2167,39 @@ def read_workflow_artifact_content(
             size_bytes=None,
             read_error=str(exc),
         )
+
+
+def read_strict_workflow_artifact_content(
+    run_dir: str | Path,
+    manifest: dict[str, Any],
+    artifact_key: str,
+    *,
+    redact: bool = True,
+    max_bytes: int | None = None,
+) -> WorkflowArtifactContentRecord:
+    """Read one manifest-listed artifact only after expected-checksum verification."""
+
+    relative_path, path, content_bytes, metadata = _read_strict_workflow_artifact_bytes(
+        Path(run_dir),
+        manifest,
+        artifact_key,
+    )
+    content_type = str(metadata.get("content_type") or content_type_for_path(relative_path))
+    content, truncated = _read_artifact_content_bytes(
+        content_bytes,
+        content_type,
+        max_bytes=max_bytes,
+    )
+    return WorkflowArtifactContentRecord(
+        artifact_key=artifact_key,
+        relative_path=_posix_artifact_path(relative_path),
+        absolute_path=str(path),
+        content_type=content_type,
+        size_bytes=len(content_bytes),
+        content=_redact_if_needed(content, redact=redact),
+        truncated=truncated,
+        metadata=metadata,
+    )
 
 
 def read_artifact_index_content_records(
@@ -3473,21 +3518,40 @@ def _read_artifact_content(
     *,
     max_bytes: int | None,
 ) -> tuple[Any, bool]:
+    return _read_artifact_content_bytes(
+        path.read_bytes(),
+        content_type,
+        max_bytes=max_bytes,
+    )
+
+
+def _read_artifact_content_bytes(
+    content_bytes: bytes,
+    content_type: str,
+    *,
+    max_bytes: int | None,
+) -> tuple[Any, bool]:
     if max_bytes is not None and max_bytes < 0:
         raise ValueError("max_bytes must be non-negative")
-    size_bytes = path.stat().st_size
+    size_bytes = len(content_bytes)
     truncated = max_bytes is not None and size_bytes > max_bytes
+    preview = content_bytes[:max_bytes] if max_bytes is not None else content_bytes
     if content_type == "application/json":
         if truncated:
-            return _read_text_preview(path, max_bytes=max_bytes), True
-        return _read_json_file(path), False
+            return preview.decode("utf-8", errors="replace"), True
+        return json.loads(content_bytes.decode("utf-8")), False
     if content_type == "application/x-ndjson":
         if truncated:
-            return _read_text_preview(path, max_bytes=max_bytes), True
-        return _read_jsonl_file_values(path), False
+            return preview.decode("utf-8", errors="replace"), True
+        return _read_jsonl_bytes_values(content_bytes), False
     if content_type.startswith("text/"):
-        return _read_text_preview(path, max_bytes=max_bytes), truncated
-    return _read_binary_preview(path, max_bytes=max_bytes), truncated
+        return preview.decode("utf-8"), truncated
+    binary_preview = content_bytes[: max_bytes if max_bytes is not None else 256]
+    return {
+        "encoding": "hex",
+        "bytes_preview": binary_preview.hex(),
+        "preview_size_bytes": len(binary_preview),
+    }, truncated
 
 
 def _read_text_preview(path: Path, *, max_bytes: int | None) -> str:
@@ -4167,6 +4231,21 @@ def _read_jsonl_file_values(path: Path) -> list[Any]:
     return values
 
 
+def _read_jsonl_bytes_values(content_bytes: bytes) -> list[Any]:
+    values: list[Any] = []
+    for line_number, line in enumerate(content_bytes.decode("utf-8").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            values.append(json.loads(stripped))
+        except json.JSONDecodeError as exc:
+            raise WorkflowRunInspectionError(
+                f"invalid JSONL artifact at line {line_number}"
+            ) from exc
+    return values
+
+
 def _event_from_payload(payload: dict[str, Any], *, line_number: int) -> WorkflowEventRecord:
     event_payload = payload.get("payload")
     if not isinstance(event_payload, dict):
@@ -4236,6 +4315,114 @@ def _artifact_record_metadata(manifest: dict[str, Any], artifact_key: str) -> di
                 for key, value in step_artifact.items()
                 if key in {"checksum", "size_bytes", "content_type"}
             }
+        )
+    return metadata
+
+
+def _read_strict_workflow_artifact_bytes(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    artifact_key: str,
+) -> tuple[str, Path, bytes, dict[str, Any]]:
+    artifacts = _manifest_artifact_map(manifest)
+    relative_path = artifacts.get(artifact_key)
+    if relative_path is None:
+        raise ArtifactNotFoundError(f"artifact not found: {artifact_key}")
+
+    path = resolve_artifact_descendant(
+        run_dir,
+        relative_path,
+        field=f"artifact_path[{artifact_key}]",
+    )
+    metadata = _strict_artifact_metadata(manifest, artifact_key)
+    expected_content_type = metadata.get("content_type")
+    actual_content_type = content_type_for_path(relative_path)
+    if expected_content_type is not None and expected_content_type != actual_content_type:
+        raise ArtifactStoreMetadataError(
+            f"artifact metadata content_type does not match path: {artifact_key}"
+        )
+    expected_checksum = metadata.get("checksum")
+    if artifact_key == "manifest":
+        if expected_checksum != "pending":
+            raise ArtifactStoreMetadataError(
+                "artifact metadata checksum must be 'pending': manifest"
+            )
+    else:
+        expected_checksum = validate_sha256_checksum(
+            expected_checksum,
+            artifact_id=artifact_key,
+            field="artifact_metadata.checksum",
+        )
+
+    if not path.is_file():
+        raise ArtifactNotFoundError(f"artifact file not found: {relative_path}")
+    try:
+        content_bytes = path.read_bytes()
+    except FileNotFoundError as exc:
+        raise ArtifactNotFoundError(f"artifact file not found: {relative_path}") from exc
+
+    if artifact_key != "manifest":
+        verify_sha256_checksum(
+            content_bytes,
+            expected_checksum,
+            artifact_id=artifact_key,
+            field="artifact_metadata.checksum",
+        )
+        expected_size = metadata.get("size_bytes")
+        if expected_size is not None and len(content_bytes) != expected_size:
+            raise ArtifactStoreMetadataError(
+                f"artifact metadata size_bytes does not match content: {artifact_key}"
+            )
+    return relative_path, path, content_bytes, metadata
+
+
+def _strict_artifact_metadata(
+    manifest: dict[str, Any],
+    artifact_key: str,
+) -> dict[str, Any]:
+    raw_metadata = manifest.get("artifact_metadata")
+    if raw_metadata is not None and not isinstance(raw_metadata, dict):
+        raise ArtifactStoreMetadataError("run manifest artifact_metadata must be an object")
+    if isinstance(raw_metadata, dict) and artifact_key in raw_metadata:
+        metadata = raw_metadata[artifact_key]
+        if not isinstance(metadata, dict):
+            raise ArtifactStoreMetadataError(
+                f"run manifest artifact metadata must be an object: {artifact_key}"
+            )
+        return _validate_optional_workflow_artifact_metadata_fields(
+            dict(metadata),
+            artifact_key,
+        )
+
+    step_artifact = _step_artifact_payload_for_key(manifest, artifact_key)
+    if isinstance(step_artifact, dict):
+        return _validate_optional_workflow_artifact_metadata_fields(
+            dict(step_artifact),
+            artifact_key,
+        )
+    raise ArtifactStoreMetadataError(
+        f"run manifest artifact metadata is missing: {artifact_key}"
+    )
+
+
+def _validate_optional_workflow_artifact_metadata_fields(
+    metadata: dict[str, Any],
+    artifact_key: str,
+) -> dict[str, Any]:
+    if "content_type" in metadata and (
+        not isinstance(metadata["content_type"], str)
+        or not metadata["content_type"].strip()
+    ):
+        raise ArtifactStoreMetadataError(
+            f"invalid artifact metadata content_type: {artifact_key}"
+        )
+    if "size_bytes" in metadata and (
+        isinstance(metadata["size_bytes"], bool)
+        or not isinstance(metadata["size_bytes"], int)
+        or metadata["size_bytes"] < 0
+    ):
+        raise ArtifactStoreMetadataError(
+            f"invalid artifact metadata size_bytes: {artifact_key}"
         )
     return metadata
 

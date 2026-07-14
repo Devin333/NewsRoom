@@ -1,7 +1,13 @@
 import json
+from hashlib import sha256
 
 import pytest
 
+from framework.artifacts import (
+    ArtifactChecksumMismatchError,
+    ArtifactNotFoundError,
+    ArtifactStoreMetadataError,
+)
 from framework.artifacts.paths import ArtifactPathError
 from interfaces.services.run_inspection_service import RunInspectionService
 
@@ -256,33 +262,7 @@ def test_run_inspection_redacts_sensitive_event_keys(tmp_path) -> None:
 
 
 def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> None:
-    run_dir = tmp_path / "run-1"
-    run_dir.mkdir()
-    manifest = {
-        "run_id": "run-1",
-        "status": "succeeded",
-        "artifacts": {
-            "events": "events.jsonl",
-            "step_results": "step_results.json",
-            "report_json": "report.json",
-            "report_markdown": "report.md",
-            "missing": "missing.json",
-        },
-    }
-    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (run_dir / "events.jsonl").write_text(
-        json.dumps({"event_type": "workflow_started", "payload": {"token": "hidden"}}) + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "report.json").write_text(
-        json.dumps({"title": "Report", "api_key": "hidden-key"}),
-        encoding="utf-8",
-    )
-    (run_dir / "report.md").write_text("# Report\n", encoding="utf-8")
-    (run_dir / "step_results.json").write_text(
-        json.dumps({"write": {"status": "succeeded", "outputs": {"report": "ok"}}}),
-        encoding="utf-8",
-    )
+    _write_replay_run(tmp_path)
 
     result = RunInspectionService(tmp_path).replay_run("run-1")
 
@@ -292,12 +272,48 @@ def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> Non
     assert payload["step_result_count"] == 1
     assert payload["step_results"]["write"]["status"] == "succeeded"
     assert payload["integrity"]["valid"] is False
-    assert "missing" in payload["integrity"]["missing_artifact_files"]
     assert payload["events"][0]["payload"]["token"] == "[redacted]"
     assert artifacts["report_json"]["content"]["api_key"] == "[redacted]"
     assert artifacts["report_markdown"]["content"] == "# Report\n"
-    assert artifacts["missing"]["read_error"] == "artifact file not found: missing.json"
+    assert artifacts["manifest"]["content"]["artifact_metadata"]["manifest"]["checksum"] == "pending"
     assert "hidden-key" not in json.dumps(payload)
+
+
+def test_run_inspection_replay_rejects_tampered_artifact(tmp_path) -> None:
+    run_dir = _write_replay_run(tmp_path)
+    (run_dir / "report.json").write_text(
+        json.dumps({"title": "Tampered", "api_key": "hidden-key"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ArtifactChecksumMismatchError, match="report_json"):
+        RunInspectionService(tmp_path).replay_run("run-1")
+
+
+@pytest.mark.parametrize("checksum", [None, "invalid", "A" * 64])
+def test_run_inspection_replay_rejects_missing_or_invalid_checksum(
+    tmp_path,
+    checksum,
+) -> None:
+    run_dir = _write_replay_run(tmp_path)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if checksum is None:
+        manifest["artifact_metadata"]["report_json"].pop("checksum")
+    else:
+        manifest["artifact_metadata"]["report_json"]["checksum"] = checksum
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ArtifactStoreMetadataError):
+        RunInspectionService(tmp_path).replay_run("run-1")
+
+
+def test_run_inspection_replay_rejects_manifest_listed_missing_file(tmp_path) -> None:
+    run_dir = _write_replay_run(tmp_path)
+    (run_dir / "report.json").unlink()
+
+    with pytest.raises(ArtifactNotFoundError, match="report.json"):
+        RunInspectionService(tmp_path).replay_run("run-1")
 
 
 def test_run_inspection_replay_preflights_unsafe_manifest_artifact_path(
@@ -367,9 +383,16 @@ def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
         "item_count": 1,
         "error_count": 1,
     }
-    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    source_index_bytes = json.dumps(source_index).encode("utf-8")
+    manifest["artifact_metadata"] = {
+        "source_artifacts": {
+            "checksum": sha256(source_index_bytes).hexdigest(),
+            "content_type": "application/json",
+            "size_bytes": len(source_index_bytes),
+        }
+    }
     (run_dir / "source_artifacts" / "index.json").write_text(
-        json.dumps(source_index),
+        source_index_bytes.decode("utf-8"),
         encoding="utf-8",
     )
     (item_dir / "item-1.json").write_text(
@@ -380,6 +403,7 @@ def test_run_inspection_replay_expands_source_artifacts(tmp_path) -> None:
         json.dumps({"error": {"error_type": "fetch_timeout", "url": "https://example.com"}}),
         encoding="utf-8",
     )
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     result = RunInspectionService(tmp_path).replay_run("run-1")
 
@@ -457,6 +481,67 @@ def test_run_inspection_rejects_unsafe_run_identifiers(tmp_path, run_id) -> None
 def test_run_inspection_rejects_invalid_event_limit(tmp_path) -> None:
     with pytest.raises(ValueError):
         RunInspectionService(tmp_path).get_run_events("run-1", limit=0)
+
+
+def _write_replay_run(root):
+    run_dir = root / "run-1"
+    run_dir.mkdir()
+    files = {
+        "events": (
+            "events.jsonl",
+            (
+                json.dumps(
+                    {
+                        "event_type": "workflow_started",
+                        "payload": {"token": "hidden"},
+                    }
+                )
+                + "\n"
+            ).encode("utf-8"),
+        ),
+        "step_results": (
+            "step_results.json",
+            json.dumps(
+                {"write": {"status": "succeeded", "outputs": {"report": "ok"}}}
+            ).encode("utf-8"),
+        ),
+        "report_json": (
+            "report.json",
+            json.dumps({"title": "Report", "api_key": "hidden-key"}).encode("utf-8"),
+        ),
+        "report_markdown": ("report.md", b"# Report\n"),
+    }
+    artifacts = {key: relative_path for key, (relative_path, _) in files.items()}
+    artifacts["manifest"] = "manifest.json"
+    artifact_metadata = {
+        key: {
+            "checksum": sha256(content).hexdigest(),
+            "content_type": (
+                "application/x-ndjson"
+                if relative_path.endswith(".jsonl")
+                else "application/json"
+                if relative_path.endswith(".json")
+                else "text/markdown"
+            ),
+            "size_bytes": len(content),
+        }
+        for key, (relative_path, content) in files.items()
+    }
+    artifact_metadata["manifest"] = {
+        "checksum": "pending",
+        "content_type": "application/json",
+        "size_bytes": 0,
+    }
+    manifest = {
+        "run_id": "run-1",
+        "status": "succeeded",
+        "artifacts": artifacts,
+        "artifact_metadata": artifact_metadata,
+    }
+    for relative_path, content in files.values():
+        (run_dir / relative_path).write_bytes(content)
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return run_dir
 
 
 def _write_manifest(root, run_id, payload) -> None:

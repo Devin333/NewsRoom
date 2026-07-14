@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -113,6 +114,31 @@ def test_manifest_metadata_population_rejects_unsafe_path_before_read(
 
     with pytest.raises(ArtifactPathError):
         _populate_artifact_metadata(manifest, run_dir)
+
+
+def test_manifest_metadata_population_keeps_self_checksum_pending(tmp_path: Path) -> None:
+    run_dir = tmp_path / "artifacts" / "run-1"
+    run_dir.mkdir(parents=True)
+    manifest_bytes = b'{"run_id":"run-1"}'
+    output_bytes = b'{"status":"ok"}'
+    (run_dir / "manifest.json").write_bytes(manifest_bytes)
+    (run_dir / "output.json").write_bytes(output_bytes)
+    manifest = {
+        "artifacts": {
+            "manifest": "manifest.json",
+            "output": "output.json",
+        }
+    }
+
+    _populate_artifact_metadata(manifest, run_dir)
+
+    metadata = manifest["artifact_metadata"]
+    assert metadata["manifest"] == {
+        "checksum": "pending",
+        "content_type": "application/json",
+        "size_bytes": len(manifest_bytes),
+    }
+    assert metadata["output"]["checksum"] == sha256(output_bytes).hexdigest()
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,13 @@
 import json
 from dataclasses import dataclass
 
+import pytest
+
+from framework.artifacts import (
+    ArtifactChecksumMismatchError,
+    ArtifactStoreMetadataError,
+    ArtifactStoreRequiredError,
+)
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
@@ -253,6 +260,46 @@ def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -
         assert result.error_type == "ArtifactPathError"
         assert result.data is None
         assert "artifact-secret" not in json.dumps(result.to_dict())
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [
+        ArtifactChecksumMismatchError,
+        ArtifactStoreMetadataError,
+        ArtifactStoreRequiredError,
+    ],
+)
+def test_mcp_integrity_failures_preserve_typed_failure_envelopes(error_type) -> None:
+    error = error_type("artifact integrity verification failed")
+    failing_service = _ArtifactIntegrityFailureService(error)
+    service = MCPApplicationService(
+        run_inspection_service_factory=lambda: failing_service,
+        artifact_service_factory=lambda: failing_service,
+    )
+
+    results = [
+        service.call_tool("news.run.replay", {"run_id": "run-1"}),
+        service.read_resource("news://runs/run-1/replay"),
+        service.read_resource("news://runs/run-1/artifacts/output"),
+    ]
+
+    for result in results:
+        assert result.success is False
+        assert result.error_type == error_type.__name__
+        assert result.error_message == "artifact integrity verification failed"
+        assert result.data is None
+
+
+class _ArtifactIntegrityFailureService:
+    def __init__(self, error) -> None:
+        self.error = error
+
+    def replay_run(self, run_id):
+        raise self.error
+
+    def get_artifact(self, run_id, artifact_key):
+        raise self.error
 
 
 def _raising_factory():
