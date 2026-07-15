@@ -2,14 +2,29 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
+from framework.events.errors import EventStoreUnavailableError
 from framework.events.ports import EventStorePort
+from framework.events.runtime.replay_engine import ReplayCheckpointStorePort
+from infrastructure.storage.events.replay_checkpoints import (
+    PostgresReplayCheckpointStore,
+    SQLiteReplayCheckpointStore,
+)
 from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
 DEFAULT_ARTIFACT_ROOT = Path(".newsroom/runs")
 LOCAL_EVENT_DATABASE = Path("_records/events.sqlite3")
+
+
+@dataclass(frozen=True, slots=True)
+class DurableEventStorage:
+    """Production event/replay storage composed over one durable backend."""
+
+    event_store: EventStorePort
+    replay_checkpoint_store: ReplayCheckpointStorePort
 
 
 def event_store_from_env(
@@ -26,12 +41,35 @@ def event_store_from_env(
     import, and export adapters only.
     """
 
+    return durable_event_storage_from_env(
+        artifact_root=artifact_root,
+        env=env,
+    ).event_store
+
+
+def durable_event_storage_from_env(
+    *,
+    artifact_root: str | Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> DurableEventStorage:
+    """Compose canonical events and replay checkpoints without memory fallback."""
+
     values = env if env is not None else os.environ
     dsn = str(values.get("NEWS_DATABASE_DSN") or "").strip()
     if dsn:
-        from infrastructure.storage.events.postgres import PostgresDurableEventStore
+        try:
+            from infrastructure.storage.events.postgres import PostgresDurableEventStore
+        except ModuleNotFoundError as exc:
+            if not _is_missing_psycopg(exc):
+                raise
+            raise EventStoreUnavailableError(
+                "PostgreSQL durable event storage requires psycopg"
+            ) from exc
 
-        return PostgresDurableEventStore(dsn)
+        return DurableEventStorage(
+            event_store=PostgresDurableEventStore(dsn),
+            replay_checkpoint_store=PostgresReplayCheckpointStore(dsn),
+        )
 
     configured_root_value = str(values.get("NEWS_ARTIFACT_ROOT") or "").strip()
     configured_root = (
@@ -39,11 +77,23 @@ def event_store_from_env(
         if artifact_root is not None
         else Path(configured_root_value or DEFAULT_ARTIFACT_ROOT)
     )
-    return SQLiteEventStore(configured_root / LOCAL_EVENT_DATABASE)
+    database = configured_root / LOCAL_EVENT_DATABASE
+    event_store = SQLiteEventStore(database)
+    return DurableEventStorage(
+        event_store=event_store,
+        replay_checkpoint_store=SQLiteReplayCheckpointStore(database),
+    )
+
+
+def _is_missing_psycopg(exc: ModuleNotFoundError) -> bool:
+    missing = str(exc.name or "")
+    return missing == "psycopg" or missing.startswith("psycopg.")
 
 
 __all__ = [
     "DEFAULT_ARTIFACT_ROOT",
+    "DurableEventStorage",
     "LOCAL_EVENT_DATABASE",
+    "durable_event_storage_from_env",
     "event_store_from_env",
 ]

@@ -122,6 +122,21 @@ class EventStoreCorruptionError(EventStoreError):
     """Raised when the durable store fails an integrity check."""
 
 
+class ReplayCheckpointCollisionError(EventStoreError):
+    """Raised when a replay-owned checkpoint slot is reused incompatibly."""
+
+    def __init__(self, checkpoint_id: str, *, reason: str) -> None:
+        self.checkpoint_id = str(checkpoint_id)
+        self.reason = str(reason)
+        super().__init__(
+            f"replay checkpoint collision: {self.checkpoint_id}; {self.reason}"
+        )
+
+
+class ReplayCheckpointCorruptionError(EventStoreCorruptionError):
+    """Raised when a durable replay checkpoint cannot pass integrity checks."""
+
+
 class EventSubscriptionPositionError(EventStoreError, ValueError):
     """Raised when a subscription start cannot be represented for a stream."""
 

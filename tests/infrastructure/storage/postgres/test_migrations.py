@@ -11,6 +11,7 @@ from infrastructure.storage.postgres import migrations as migrations_module
 ROOT = Path(__file__).resolve().parents[4]
 MIGRATIONS_DIR = ROOT / "infrastructure" / "storage" / "postgres" / "migrations"
 DURABLE_EVENT_MIGRATION = MIGRATIONS_DIR / "006_durable_event_runtime.sql"
+REPLAY_CHECKPOINT_MIGRATION = MIGRATIONS_DIR / "007_replay_checkpoints.sql"
 INITIAL_MIGRATION_SHA256 = "f224356de92f5b087b3353b38dab4d9ced0b7c0b70f3bf9228adc0b9e2f8fbd3"
 
 
@@ -202,6 +203,26 @@ def test_durable_event_runtime_migration_is_loaded_after_existing_schema() -> No
         "CREATE TABLE IF NOT EXISTS event_stream_sequences"
     )
     assert sql.count("CREATE TABLE IF NOT EXISTS event_stream_sequences") == 1
+
+
+def test_replay_checkpoint_migration_is_additive_and_loaded_after_event_runtime() -> None:
+    sql = REPLAY_CHECKPOINT_MIGRATION.read_text(encoding="utf-8")
+    loaded = load_migration_sql()
+
+    assert "CREATE TABLE IF NOT EXISTS event_replay_checkpoints" in sql
+    assert "checkpoint_id           TEXT PRIMARY KEY" in sql
+    assert "UNIQUE (checkpoint_id, tenant_scope)" in sql
+    assert "FOREIGN KEY (tenant_scope, source_stream_id)" in sql
+    assert "source_high_watermark >= last_sequence" in sql
+    assert "event_replay_checkpoints_update" in sql
+    assert "replay checkpoint immutable identity changed" in sql
+    assert "equal replay checkpoint sequence is not exactly idempotent" in sql
+    assert "ALTER TABLE" not in sql
+    assert "DROP TABLE" not in sql
+    assert "DROP COLUMN" not in sql
+    assert loaded.index("CREATE TABLE IF NOT EXISTS event_replay_reports") < loaded.index(
+        "CREATE TABLE IF NOT EXISTS event_replay_checkpoints"
+    )
 
 
 def test_initial_postgres_migration_remains_byte_for_byte_unchanged() -> None:

@@ -15,6 +15,8 @@ def test_public_imports_are_available() -> None:
         FunctionEventSubscriber,
         InMemoryEventBus,
         InMemoryEventRecorder,
+        ReplayCheckpointCollisionError,
+        ReplayCheckpointCorruptionError,
     )
 
     assert Event is not None
@@ -28,3 +30,5 @@ def test_public_imports_are_available() -> None:
     assert EventType is not None
     assert FunctionEventSubscriber is not None
     assert InMemoryEventRecorder is not None
+    assert ReplayCheckpointCollisionError is not None
+    assert ReplayCheckpointCorruptionError is not None
