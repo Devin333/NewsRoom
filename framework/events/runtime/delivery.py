@@ -444,7 +444,9 @@ class DurableConsumerRegistry:
             and not subscription.supports_out_of_order_repair
         ):
             raise EventConsumerIdempotencyError(
-                "subscription does not support idempotent out-of-order repair"
+                "subscription does not support idempotent out-of-order repair; "
+                "use a new subscription version with deterministic rebuild or "
+                "an authorized compensation workflow"
             )
         if not subscription.effect.performs_external_effects:
             return
@@ -1163,7 +1165,13 @@ class DurableDeliveryRuntime:
             if not isinstance(failure, ConsumerFailure):
                 raise TypeError("classifier returned an invalid failure")
         except Exception as classifier_error:
-            failure = DefaultConsumerErrorClassifier().classify(classifier_error)
+            self._diagnostic_fallback.record(
+                category=RuntimeDiagnosticCategory.DELIVERY_CLASSIFIER_FAILURE,
+                component=RuntimeDiagnosticComponent.DELIVERY_RUNTIME,
+                operation=RuntimeDiagnosticOperation.CONSUMER_ERROR_CLASSIFICATION,
+                error=classifier_error,
+            )
+            failure = DefaultConsumerErrorClassifier().classify(error)
         return self._project_failure(failure)
 
     def _failure_from_outcome(
@@ -1233,7 +1241,8 @@ class DurableDeliveryRuntime:
             )
         if (
             claimed.lease.lease_owner != expected_lease_owner
-            or claimed.lease.lease_expires_at <= requested_at
+            or claimed.lease.lease_expires_at
+            <= (claimed.lease.lease_started_at or requested_at)
         ):
             raise EventDeliveryContractError(
                 "claimed delivery has an invalid lease boundary"

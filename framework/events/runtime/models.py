@@ -60,6 +60,15 @@ def _positive_float(value: float, field_name: str) -> float:
     return normalized
 
 
+def _nonnegative_float(value: float, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a number")
+    normalized = float(value)
+    if not isfinite(normalized) or normalized < 0:
+        raise ValueError(f"{field_name} must be finite and non-negative")
+    return normalized
+
+
 def _utc(value: datetime | None, field_name: str) -> datetime | None:
     if value is None:
         return None
@@ -635,6 +644,10 @@ class SubscriptionStreamState:
         )
         if retirement is not None and retirement < registration:
             raise ValueError("retirement_watermark cannot precede registration_watermark")
+        if self.start_sequence > registration + 1:
+            raise ValueError(
+                "start_sequence cannot exceed registration_watermark plus one"
+            )
         object.__setattr__(self, "registration_watermark", registration)
         object.__setattr__(self, "retirement_watermark", retirement)
         object.__setattr__(self, "tenant_id", _optional_text(self.tenant_id, "tenant_id"))
@@ -954,6 +967,7 @@ class DeliveryLeaseToken:
     lease_owner: str
     lease_generation: int
     lease_expires_at: datetime
+    lease_started_at: datetime | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "delivery_id", _required_text(self.delivery_id, "delivery_id"))
@@ -973,6 +987,13 @@ class DeliveryLeaseToken:
             "lease_expires_at",
             _required_utc(self.lease_expires_at, "lease_expires_at"),
         )
+        lease_started_at = _utc(self.lease_started_at, "lease_started_at")
+        if (
+            lease_started_at is not None
+            and lease_started_at >= self.lease_expires_at
+        ):
+            raise ValueError("lease_started_at must precede lease_expires_at")
+        object.__setattr__(self, "lease_started_at", lease_started_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1006,6 +1027,11 @@ class ClaimedDelivery:
             raise ValueError("delivery and lease fencing generation must match")
         if self.delivery.lease_expires_at != self.lease.lease_expires_at:
             raise ValueError("delivery and lease expiry must match")
+        if (
+            self.lease.lease_started_at is not None
+            and self.lease.lease_expires_at <= self.lease.lease_started_at
+        ):
+            raise ValueError("claimed delivery has an invalid lease time range")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1300,6 +1326,10 @@ class PendingDeliveryStats:
     pending_count: int
     lag: int
     oldest_pending_at: datetime | None = None
+    oldest_pending_age_seconds: float | None = None
+    late_repair_pending_count: int = 0
+    warning_threshold_reached: bool = False
+    capacity_remaining: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -1308,13 +1338,69 @@ class PendingDeliveryStats:
             _nonnegative_int(self.pending_count, "pending_count"),
         )
         object.__setattr__(self, "lag", _nonnegative_int(self.lag, "lag"))
+        late_repair_pending_count = _nonnegative_int(
+            self.late_repair_pending_count,
+            "late_repair_pending_count",
+        )
+        if late_repair_pending_count > self.pending_count:
+            raise ValueError(
+                "late_repair_pending_count cannot exceed pending_count"
+            )
+        if self.lag + late_repair_pending_count != self.pending_count:
+            raise ValueError(
+                "lag plus late_repair_pending_count must equal pending_count"
+            )
+        object.__setattr__(
+            self,
+            "late_repair_pending_count",
+            late_repair_pending_count,
+        )
         object.__setattr__(
             self,
             "oldest_pending_at",
             _utc(self.oldest_pending_at, "oldest_pending_at"),
         )
-        if self.pending_count == 0 and self.oldest_pending_at is not None:
-            raise ValueError("empty pending set cannot have oldest_pending_at")
+        oldest_pending_age_seconds = (
+            None
+            if self.oldest_pending_age_seconds is None
+            else _nonnegative_float(
+                self.oldest_pending_age_seconds,
+                "oldest_pending_age_seconds",
+            )
+        )
+        object.__setattr__(
+            self,
+            "oldest_pending_age_seconds",
+            oldest_pending_age_seconds,
+        )
+        object.__setattr__(
+            self,
+            "warning_threshold_reached",
+            _boolean(
+                self.warning_threshold_reached,
+                "warning_threshold_reached",
+            ),
+        )
+        capacity_remaining = (
+            None
+            if self.capacity_remaining is None
+            else _nonnegative_int(self.capacity_remaining, "capacity_remaining")
+        )
+        object.__setattr__(self, "capacity_remaining", capacity_remaining)
+        if self.pending_count == 0 and (
+            self.oldest_pending_at is not None
+            or oldest_pending_age_seconds is not None
+        ):
+            raise ValueError(
+                "empty pending set cannot have oldest pending time or age"
+            )
+        if (
+            oldest_pending_age_seconds is not None
+            and self.oldest_pending_at is None
+        ):
+            raise ValueError(
+                "oldest_pending_age_seconds requires oldest_pending_at"
+            )
 
 
 @dataclass(frozen=True, slots=True)

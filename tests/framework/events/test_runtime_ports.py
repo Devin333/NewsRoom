@@ -23,6 +23,7 @@ from framework.events.runtime.models import (
     EffectIdempotencyStrategy,
     LeasePolicy,
     LegacyEventOffset,
+    PendingDeliveryStats,
     ReplayMode,
     ReplayStartRequest,
     RetryPolicy,
@@ -226,6 +227,14 @@ def test_subscription_watermarks_are_scoped_per_tenant_stream() -> None:
             registration_watermark=8,
             retirement_watermark=7,
         )
+    with pytest.raises(ValueError, match="registration_watermark plus one"):
+        SubscriptionStreamState(
+            subscription_id="projection",
+            subscription_version=1,
+            stream_id="run:future",
+            start_sequence=10,
+            registration_watermark=4,
+        )
 
 
 def test_checkpoint_frontier_accepts_none_or_a_1_based_terminal_sequence() -> None:
@@ -312,6 +321,37 @@ def test_lease_and_backpressure_limits_have_hard_bounds() -> None:
         DeliveryLimits(pending_warning_threshold=100, pending_hard_limit=100)
 
 
+def test_pending_delivery_stats_separate_frontier_lag_and_late_repair() -> None:
+    oldest = datetime(2026, 7, 15, tzinfo=UTC)
+    stats = PendingDeliveryStats(
+        pending_count=3,
+        lag=2,
+        oldest_pending_at=oldest,
+        oldest_pending_age_seconds=12.5,
+        late_repair_pending_count=1,
+        warning_threshold_reached=True,
+        capacity_remaining=7,
+    )
+
+    assert stats.lag == 2
+    assert stats.late_repair_pending_count == 1
+    assert stats.oldest_pending_age_seconds == 12.5
+    assert stats.warning_threshold_reached
+
+    with pytest.raises(ValueError, match="cannot exceed pending_count"):
+        PendingDeliveryStats(
+            pending_count=1,
+            lag=0,
+            late_repair_pending_count=2,
+        )
+    with pytest.raises(ValueError, match="requires oldest_pending_at"):
+        PendingDeliveryStats(
+            pending_count=1,
+            lag=1,
+            oldest_pending_age_seconds=1,
+        )
+
+
 def test_at_sequence_start_is_inclusive_and_requires_a_1_based_sequence() -> None:
     start = SubscriptionStart(SubscriptionStartPolicy.AT_SEQUENCE, start_sequence=1)
 
@@ -357,6 +397,16 @@ def test_delivery_lease_and_retry_settlement_keep_fencing_and_time_invariants() 
         lease_generation=1,
         lease_expires_at=expires_at,
     )
+    assert token.lease_started_at is None
+    with pytest.raises(ValueError, match="lease_started_at"):
+        DeliveryLeaseToken(
+            delivery_id="delivery-invalid-time",
+            delivery_generation=1,
+            lease_owner="dispatcher-1",
+            lease_generation=1,
+            lease_expires_at=expires_at,
+            lease_started_at=expires_at,
+        )
     claimed = DeliveryRecord(
         delivery_id="delivery-1",
         event_id="evt-1",

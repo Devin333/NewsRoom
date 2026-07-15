@@ -28,6 +28,11 @@ from framework.events.runtime.idempotency import (
     effect_idempotency_key,
     subscription_definition_fingerprint,
 )
+from framework.events.runtime.fallback import (
+    LocalRuntimeDiagnosticFallback,
+    RuntimeDiagnosticCategory,
+    RuntimeDiagnosticOperation,
+)
 from framework.events.runtime.inbox import (
     InboxTransactionCapability,
     InboxTransactionResult,
@@ -61,10 +66,12 @@ from framework.events.subscriber import (
     ConsumerDisposition,
     ConsumerFailure,
     ConsumerFailureKind,
+    ConsumerErrorClassifier,
     ConsumerOutcome,
     DropAuthorizationRule,
     PermanentEventProcessingError,
     StaticDropAuthorizationPolicy,
+    TransientEventProcessingError,
 )
 
 
@@ -190,6 +197,18 @@ class _SecretClassifier:
             reason_class=f"database_{self.secret}",
             redacted_diagnostic=f"Authorization: Bearer {self.secret}",
         )
+
+
+class _ThrowingClassifier:
+    def classify(self, error: BaseException) -> ConsumerFailure:
+        del error
+        raise PermanentEventProcessingError("classifier_failed")
+
+
+class _InvalidClassifier:
+    def classify(self, error: BaseException) -> ConsumerFailure:
+        del error
+        return {"kind": "permanent"}  # type: ignore[return-value]
 
 
 class _Store:
@@ -505,6 +524,7 @@ def _claim(
         lease_owner="worker-1",
         lease_generation=attempt_count,
         lease_expires_at=NOW + timedelta(minutes=5),
+        lease_started_at=NOW,
     )
     delivery = DeliveryRecord(
         delivery_id=delivery_id,
@@ -576,7 +596,8 @@ def _runtime(
     inbox_runner: _InboxTransactionRunner | None = None,
     drop_policy: StaticDropAuthorizationPolicy | None = None,
     clock: _Clock | _SequenceClock | None = None,
-    error_classifier: _SecretClassifier | None = None,
+    error_classifier: ConsumerErrorClassifier | None = None,
+    diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
 ) -> DurableDeliveryRuntime:
     runtime = DurableDeliveryRuntime(
         store,  # type: ignore[arg-type]
@@ -584,6 +605,7 @@ def _runtime(
         inbox_transaction_runner=inbox_runner,
         drop_policy=drop_policy,
         error_classifier=error_classifier,
+        diagnostic_fallback=diagnostic_fallback,
         clock=clock or _Clock(),
     )
     runtime.register(subscription, consumer)
@@ -1037,6 +1059,79 @@ def test_explicit_outcome_and_custom_classifier_secrets_are_projected() -> None:
     assert secret not in repr(store.settlements)
 
 
+@pytest.mark.parametrize(
+    "classifier",
+    (_ThrowingClassifier(), _InvalidClassifier()),
+    ids=("throws", "invalid-result"),
+)
+def test_classifier_failure_falls_back_to_the_original_consumer_error(
+    classifier: ConsumerErrorClassifier,
+) -> None:
+    store = _Store()
+    subscription = _subscription()
+    event = _event(1)
+    consumer = _Consumer(
+        subscription.consumer_id,
+        {
+            event.event_id: TransientEventProcessingError(
+                "backend_unavailable",
+                redacted_diagnostic="transient_backend",
+            )
+        },
+    )
+    fallback = LocalRuntimeDiagnosticFallback()
+    runtime = _runtime(
+        store,
+        subscription,
+        consumer,
+        error_classifier=classifier,
+        diagnostic_fallback=fallback,
+    )
+    store.claims.append(_claim(event, subscription))
+
+    result = runtime.dispatch_batch(subscription.key, lease_owner="worker-1")
+
+    assert result.retry_scheduled_count == 1
+    assert result.dead_lettered_count == 0
+    assert store.settlements[0].target_state is DeliveryState.RETRY_WAIT
+    assert store.settlements[0].reason_class == "transient_processing_failure"
+    diagnostic = fallback.snapshot()[0]
+    assert diagnostic.category is RuntimeDiagnosticCategory.DELIVERY_CLASSIFIER_FAILURE
+    assert (
+        diagnostic.operation
+        == RuntimeDiagnosticOperation.CONSUMER_ERROR_CLASSIFICATION.value
+    )
+
+
+def test_invalid_classifier_preserves_original_permanent_failure_kind() -> None:
+    store = _Store()
+    subscription = _subscription()
+    event = _event(1)
+    consumer = _Consumer(
+        subscription.consumer_id,
+        {
+            event.event_id: PermanentEventProcessingError(
+                "invalid_payload",
+                redacted_diagnostic="schema_mismatch",
+            )
+        },
+    )
+    runtime = _runtime(
+        store,
+        subscription,
+        consumer,
+        error_classifier=_InvalidClassifier(),
+    )
+    store.claims.append(_claim(event, subscription))
+
+    result = runtime.dispatch_batch(subscription.key, lease_owner="worker-1")
+
+    assert result.dead_lettered_count == 1
+    assert result.retry_scheduled_count == 0
+    assert store.settlements[0].target_state is DeliveryState.DEAD_LETTER
+    assert store.settlements[0].reason_class == "permanent_processing_failure"
+
+
 def test_dead_letter_write_failure_is_isolated_and_never_retains_raw_message() -> None:
     secret = "secret-token-value"
     store = _Store()
@@ -1200,6 +1295,35 @@ def test_invalid_consumer_outcome_is_a_permanent_contract_failure() -> None:
     assert "dict" not in store.settlements[0].redacted_diagnostic
 
 
+def test_expired_legacy_lease_is_rejected_before_consumer_invocation() -> None:
+    store = _Store()
+    subscription = _subscription()
+    consumer = _Consumer(subscription.consumer_id)
+    runtime = _runtime(store, subscription, consumer)
+    valid = _claim(_event(1), subscription)
+    expired_at = NOW - timedelta(seconds=1)
+    legacy_lease = replace(
+        valid.lease,
+        lease_expires_at=expired_at,
+        lease_started_at=None,
+    )
+    store.claims.append(
+        ClaimedDelivery(
+            delivery=replace(valid.delivery, lease_expires_at=expired_at),
+            event=valid.event,
+            lease=legacy_lease,
+        )
+    )
+
+    result = runtime.dispatch_batch(subscription.key, lease_owner="worker-1")
+
+    assert result.processing_failure_count == 1
+    assert result.attempts[0].failure is not None
+    assert result.attempts[0].failure.phase is DeliveryFailurePhase.CLAIM_VALIDATION
+    assert consumer.calls == []
+    assert store.settlements == []
+
+
 def test_claim_consumer_mismatch_fails_closed_but_other_claim_is_processed() -> None:
     store = _Store()
     subscription = _subscription()
@@ -1291,7 +1415,10 @@ def test_requeue_requires_out_of_order_contract_and_matching_dead_letter() -> No
     unsafe = _subscription(version=2, external=True, supports_repair=False)
     unsafe_consumer = _Consumer(unsafe.consumer_id)
     runtime.register(unsafe, unsafe_consumer)
-    with pytest.raises(EventConsumerIdempotencyError, match="out-of-order"):
+    with pytest.raises(
+        EventConsumerIdempotencyError,
+        match="new subscription version.*compensation workflow",
+    ):
         runtime.requeue_dead_letter(unsafe.key, action)
 
 

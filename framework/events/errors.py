@@ -118,6 +118,10 @@ class EventStoreCapacityError(EventStoreError):
     """Raised when durable admission capacity is exhausted."""
 
 
+class EventStoreContentionError(EventStoreError):
+    """Raised when a wider transaction must retry to preserve lock ordering."""
+
+
 class EventStoreCorruptionError(EventStoreError):
     """Raised when the durable store fails an integrity check."""
 

@@ -20,6 +20,7 @@ from framework.events.errors import (
     EventIdentityCollisionError,
     EventStaleLeaseError,
     EventStoreCapacityError,
+    EventStoreContentionError,
     EventStoreCorruptionError,
     EventStoreError,
     EventStoreUnavailableError,
@@ -257,6 +258,8 @@ class PostgresDurableEventStore:
     ) -> DurableSubscription:
         if not isinstance(subscription, DurableSubscription):
             raise ValueError("subscription must be DurableSubscription")
+        if subscription.status is SubscriptionStatus.RETIRED:
+            raise ValueError("initial RETIRED subscription registration is not allowed")
         with self._connection() as connection:
             try:
                 result = self._register_subscription_in_transaction(
@@ -590,6 +593,13 @@ class PostgresDurableEventStore:
                     if subscription_row is None:
                         raise EventStoreError("subscription does not exist")
                     subscription = _subscription_from_row(subscription_row)
+                    # Claims and append admission share one transaction-scoped
+                    # subscription fence.  Capacity-controlled claim paths read
+                    # the subscription definition before that fence; append
+                    # acquires every needed fence before mutating stream or
+                    # delivery rows.
+                    _lock_subscription_delivery_capacity(cursor, subscription)
+                    database_now = _database_now(cursor)
                     if subscription.status is SubscriptionStatus.PAUSED:
                         connection.commit()
                         return ()
@@ -605,11 +615,18 @@ class PostgresDurableEventStore:
                             lease_owner = NULL,
                             lease_generation = NULL,
                             lease_expires_at = NULL,
-                            first_failure_at = COALESCE(first_failure_at, %s),
-                            last_failure_at = %s,
+                            first_failure_at = COALESCE(
+                                first_failure_at,
+                                GREATEST(updated_at, %s)
+                            ),
+                            last_failure_at = GREATEST(
+                                COALESCE(last_failure_at, updated_at),
+                                updated_at,
+                                %s
+                            ),
                             reason_class = 'lease_expired',
                             redacted_diagnostic = 'delivery lease expired before settlement',
-                            updated_at = %s
+                            updated_at = GREATEST(updated_at, %s)
                         WHERE subscription_id = %s
                           AND subscription_version = %s
                           AND state = 'claimed'
@@ -617,13 +634,13 @@ class PostgresDurableEventStore:
                           AND attempt_count < %s
                         """,
                         (
-                            request.requested_at,
-                            request.requested_at,
-                            request.requested_at,
-                            request.requested_at,
+                            database_now,
+                            database_now,
+                            database_now,
+                            database_now,
                             request.subscription_id,
                             request.subscription_version,
-                            request.requested_at,
+                            database_now,
                             subscription.retry_policy.max_attempts,
                         ),
                     )
@@ -635,12 +652,19 @@ class PostgresDurableEventStore:
                             lease_owner = NULL,
                             lease_generation = NULL,
                             lease_expires_at = NULL,
-                            first_failure_at = COALESCE(first_failure_at, %s),
-                            last_failure_at = %s,
+                            first_failure_at = COALESCE(
+                                first_failure_at,
+                                GREATEST(updated_at, %s)
+                            ),
+                            last_failure_at = GREATEST(
+                                COALESCE(last_failure_at, updated_at),
+                                updated_at,
+                                %s
+                            ),
                             reason_class = 'lease_expired',
                             redacted_diagnostic =
                                 'delivery lease expired after retry budget exhaustion',
-                            updated_at = %s
+                            updated_at = GREATEST(updated_at, %s)
                         WHERE subscription_id = %s
                           AND subscription_version = %s
                           AND state = 'claimed'
@@ -649,12 +673,12 @@ class PostgresDurableEventStore:
                         RETURNING {_delivery_columns()}
                         """,
                         (
-                            request.requested_at,
-                            request.requested_at,
-                            request.requested_at,
+                            database_now,
+                            database_now,
+                            database_now,
                             request.subscription_id,
                             request.subscription_version,
-                            request.requested_at,
+                            database_now,
                             subscription.retry_policy.max_attempts,
                         ),
                     )
@@ -705,19 +729,20 @@ class PostgresDurableEventStore:
                             self._advance_checkpoint(
                                 cursor,
                                 delivery,
-                                updated_at=request.requested_at,
+                                updated_at=database_now,
                             )
-                    cursor.execute(
-                        """
-                        SELECT count(*)
-                        FROM event_deliveries
-                        WHERE subscription_id = %s
-                          AND subscription_version = %s
-                          AND state = 'claimed'
-                        """,
-                        (request.subscription_id, request.subscription_version),
+                    if not _subscription_lease_owner_slot_available(
+                        cursor,
+                        subscription,
+                        lease_owner=request.lease_owner,
+                        database_now=database_now,
+                    ):
+                        connection.commit()
+                        return ()
+                    in_flight = _bounded_subscription_in_flight(
+                        cursor,
+                        subscription,
                     )
-                    in_flight = int(cursor.fetchone()[0])
                     available_capacity = max(
                         0,
                         subscription.limits.max_in_flight - in_flight,
@@ -740,7 +765,7 @@ class PostgresDurableEventStore:
                     params: list[Any] = [
                         request.subscription_id,
                         request.subscription_version,
-                        request.requested_at,
+                        database_now,
                     ]
                     if request.stream_id is not None:
                         where.append("d.stream_id = %s")
@@ -781,7 +806,7 @@ class PostgresDurableEventStore:
                         tuple(params),
                     )
                     delivery_ids = tuple(str(row[0]) for row in cursor.fetchall())
-                    lease_expires_at = request.requested_at + timedelta(
+                    lease_expires_at = database_now + timedelta(
                         seconds=request.lease_duration_seconds
                     )
                     claimed: list[ClaimedDelivery] = []
@@ -795,14 +820,14 @@ class PostgresDurableEventStore:
                                 lease_generation = attempt_count + 1,
                                 lease_expires_at = %s,
                                 available_at = NULL,
-                                updated_at = %s
+                                updated_at = GREATEST(updated_at, %s)
                             WHERE delivery_id = %s
                             RETURNING {_delivery_columns()}
                             """,
                             (
                                 request.lease_owner,
                                 lease_expires_at,
-                                request.requested_at,
+                                database_now,
                                 delivery_id,
                             ),
                         )
@@ -832,6 +857,7 @@ class PostgresDurableEventStore:
                             lease_owner=request.lease_owner,
                             lease_generation=delivery.lease_generation,
                             lease_expires_at=delivery.lease_expires_at,
+                            lease_started_at=database_now,
                         )
                         claimed.append(
                             ClaimedDelivery(
@@ -855,40 +881,57 @@ class PostgresDurableEventStore:
     ) -> DeliveryLeaseToken:
         if not isinstance(lease, DeliveryLeaseToken):
             raise ValueError("lease must be DeliveryLeaseToken")
-        renewed_at = _required_utc(renewed_at, "renewed_at")
+        _required_utc(renewed_at, "renewed_at")
         duration = LeasePolicy(lease_duration_seconds).duration_seconds
-        new_expiry = renewed_at + timedelta(seconds=duration)
         with self._connection() as connection:
             try:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         """
-                        UPDATE event_deliveries
-                        SET lease_expires_at = %s, updated_at = %s
+                        WITH lease_clock AS (
+                            SELECT clock_timestamp() AS database_now
+                        )
+                        UPDATE event_deliveries AS delivery
+                        SET lease_expires_at =
+                                lease_clock.database_now
+                                + make_interval(secs => %s),
+                            updated_at = GREATEST(
+                                delivery.updated_at,
+                                lease_clock.database_now
+                            )
+                        FROM lease_clock
                         WHERE delivery_id = %s
                           AND delivery_generation = %s
                           AND state = 'claimed'
                           AND lease_owner = %s
                           AND lease_generation = %s
                           AND lease_expires_at = %s
-                          AND lease_expires_at > %s
-                        RETURNING delivery_id
+                          AND lease_expires_at > lease_clock.database_now
+                        RETURNING delivery.lease_expires_at,
+                                  lease_clock.database_now
                         """,
                         (
-                            new_expiry,
-                            renewed_at,
+                            duration,
                             lease.delivery_id,
                             lease.delivery_generation,
                             lease.lease_owner,
                             lease.lease_generation,
                             lease.lease_expires_at,
-                            renewed_at,
                         ),
                     )
-                    if cursor.fetchone() is None:
+                    renewed_row = cursor.fetchone()
+                    if renewed_row is None:
                         raise EventStaleLeaseError(
                             "delivery lease is stale or already expired"
                         )
+                    new_expiry = _required_utc(
+                        renewed_row[0],
+                        "renewed lease_expires_at",
+                    )
+                    lease_started_at = _required_utc(
+                        renewed_row[1],
+                        "renewed lease_started_at",
+                    )
                 connection.commit()
             except BaseException as exc:
                 connection.rollback()
@@ -899,6 +942,7 @@ class PostgresDurableEventStore:
             lease_owner=lease.lease_owner,
             lease_generation=lease.lease_generation,
             lease_expires_at=new_expiry,
+            lease_started_at=lease_started_at,
         )
 
     def settle_delivery(
@@ -918,36 +962,72 @@ class PostgresDurableEventStore:
     ) -> PendingDeliveryStats:
         subscription_id = _required_text(key.subscription_id, "subscription_id")
         version = _positive_int(key.subscription_version, "subscription_version")
-        where = [
-            "subscription_id = %s",
-            "subscription_version = %s",
-            "state IN ('pending', 'claimed', 'retry_wait')",
-        ]
+        stream_filter = ""
         params: list[Any] = [subscription_id, version]
         if stream_id is not None:
-            where.append("stream_id = %s")
+            stream_filter = "AND delivery.stream_id = %s"
             params.append(_required_text(stream_id, "stream_id"))
         row = self._fetch_one(
             f"""
-            SELECT count(*), min(created_at)
-            FROM event_deliveries
-            WHERE {' AND '.join(where)}
+            WITH delivery_clock AS (
+                SELECT clock_timestamp() AS database_now
+            ), subscription AS (
+                SELECT tenant_scope, subscription_id, subscription_version,
+                       pending_warning_threshold, pending_hard_limit
+                FROM event_subscriptions
+                WHERE subscription_id = %s AND subscription_version = %s
+            ), pending AS (
+                SELECT count(*) AS pending_count,
+                       count(*) FILTER (
+                           WHERE delivery.delivery_generation = 1
+                       ) AS lag,
+                       count(*) FILTER (
+                           WHERE delivery.delivery_generation > 1
+                       ) AS late_repair_pending_count,
+                       min(delivery.created_at) AS oldest_pending_at
+                FROM event_deliveries AS delivery
+                JOIN subscription
+                  ON subscription.tenant_scope = delivery.tenant_scope
+                 AND subscription.subscription_id = delivery.subscription_id
+                 AND subscription.subscription_version =
+                     delivery.subscription_version
+                WHERE delivery.state IN ('pending', 'claimed', 'retry_wait')
+                  {stream_filter}
+            )
+            SELECT pending.pending_count,
+                   pending.lag,
+                   pending.late_repair_pending_count,
+                   pending.oldest_pending_at,
+                   delivery_clock.database_now,
+                   subscription.pending_warning_threshold,
+                   subscription.pending_hard_limit
+            FROM subscription
+            CROSS JOIN pending
+            CROSS JOIN delivery_clock
             """,
             tuple(params),
         )
         if row is None:
-            raise EventStoreCorruptionError(
-                "pending delivery aggregate returned no row"
-            )
+            raise EventStoreError("subscription does not exist")
         pending_count = int(row[0])
+        oldest_pending_at = (
+            _required_utc(row[3], "oldest_pending_at")
+            if row[3] is not None
+            else None
+        )
+        database_now = _required_utc(row[4], "database_now")
         return PendingDeliveryStats(
             pending_count=pending_count,
-            lag=pending_count,
-            oldest_pending_at=(
-                _required_utc(row[1], "oldest_pending_at")
-                if row[1] is not None
+            lag=int(row[1]),
+            oldest_pending_at=oldest_pending_at,
+            oldest_pending_age_seconds=(
+                max(0.0, (database_now - oldest_pending_at).total_seconds())
+                if oldest_pending_at is not None
                 else None
             ),
+            late_repair_pending_count=int(row[2]),
+            warning_threshold_reached=pending_count >= int(row[5]),
+            capacity_remaining=max(0, int(row[6]) - pending_count),
         )
 
     def get_inbox_entry(
@@ -1108,6 +1188,42 @@ class PostgresDurableEventStore:
         with self._connection() as connection:
             try:
                 with connection.cursor() as cursor:
+                    # Resolve immutable ownership without taking the dead-letter
+                    # row lock first.  Every path that can add or remove bounded
+                    # delivery work must acquire capacity before a delivery/DLQ
+                    # row lock, otherwise requeue and settlement can deadlock
+                    # with append/claim transactions that use the opposite order.
+                    cursor.execute(
+                        f"""
+                        SELECT {_dead_letter_columns()}
+                        FROM event_dead_letters
+                        WHERE dead_letter_id = %s
+                        """,
+                        (action.dead_letter_id,),
+                    )
+                    preliminary_row = cursor.fetchone()
+                    if preliminary_row is None:
+                        raise EventStoreError("dead letter does not exist")
+                    preliminary = _dead_letter_from_row(preliminary_row)
+                    cursor.execute(
+                        f"""
+                        SELECT {_subscription_columns()}
+                        FROM event_subscriptions
+                        WHERE subscription_id = %s AND subscription_version = %s
+                        FOR SHARE
+                        """,
+                        (
+                            preliminary.subscription_id,
+                            preliminary.subscription_version,
+                        ),
+                    )
+                    subscription_row = cursor.fetchone()
+                    if subscription_row is None:
+                        raise EventStoreCorruptionError(
+                            "dead letter references a missing subscription"
+                        )
+                    subscription = _subscription_from_row(subscription_row)
+                    _lock_subscription_delivery_capacity(cursor, subscription)
                     cursor.execute(
                         f"""
                         SELECT {_dead_letter_columns()}
@@ -1117,30 +1233,34 @@ class PostgresDurableEventStore:
                         """,
                         (action.dead_letter_id,),
                     )
-                    row = cursor.fetchone()
-                    if row is None:
-                        raise EventStoreError("dead letter does not exist")
-                    record = _dead_letter_from_row(row)
-                    if record.disposition is not DeadLetterDisposition.OPEN:
-                        raise EventStoreError("dead letter is already terminally operated")
-                    cursor.execute(
-                        f"""
-                        SELECT {_subscription_columns()}
-                        FROM event_subscriptions
-                        WHERE subscription_id = %s AND subscription_version = %s
-                        FOR SHARE
-                        """,
-                        (record.subscription_id, record.subscription_version),
-                    )
-                    subscription_row = cursor.fetchone()
-                    if subscription_row is None:
+                    locked_row = cursor.fetchone()
+                    if locked_row is None:
                         raise EventStoreCorruptionError(
-                            "dead letter references a missing subscription"
+                            "dead letter disappeared during requeue"
                         )
-                    subscription = _subscription_from_row(subscription_row)
+                    record = _dead_letter_from_row(locked_row)
+                    if (
+                        record.subscription_id != subscription.subscription_id
+                        or record.subscription_version
+                        != subscription.subscription_version
+                    ):
+                        raise EventStoreCorruptionError(
+                            "dead letter subscription identity changed during requeue"
+                        )
+                    if record.disposition is not DeadLetterDisposition.OPEN:
+                        raise EventStoreError(
+                            "dead letter is already terminally operated"
+                        )
                     if not subscription.supports_out_of_order_repair:
                         raise EventConsumerIdempotencyError(
                             "subscription does not permit out-of-order late repair"
+                        )
+                    if _subscription_pending_capacity_exhausted(
+                        cursor,
+                        subscription,
+                    ):
+                        raise EventStoreCapacityError(
+                            "subscription durable pending hard limit is exhausted"
                         )
                     cursor.execute(
                         """
@@ -1157,13 +1277,14 @@ class PostgresDurableEventStore:
                         ),
                     )
                     generation = int(cursor.fetchone()[0])
+                    database_now = _database_now(cursor)
                     inserted = self._insert_delivery(
                         cursor,
                         subscription,
                         event_id=record.event_id,
                         stream_id=record.stream_id,
                         stream_sequence=record.stream_sequence,
-                        created_at=action.requested_at,
+                        created_at=database_now,
                         delivery_generation=generation,
                     )
                     if not inserted:
@@ -1174,12 +1295,14 @@ class PostgresDurableEventStore:
                         """
                         UPDATE event_dead_letters
                         SET disposition = 'requeued', operator_id = %s,
-                            operator_reason = %s, updated_at = %s
+                            operator_reason = %s,
+                            updated_at = GREATEST(updated_at, %s, %s)
                         WHERE dead_letter_id = %s
                         """,
                         (
                             action.operator_id,
                             action.reason,
+                            database_now,
                             action.requested_at,
                             action.dead_letter_id,
                         ),
@@ -1657,11 +1780,55 @@ class PostgresDurableEventStore:
         self,
         connection: Any,
         settlement: DeliverySettlement,
+        *,
+        lock_scope: _PostgresTransactionLockScope | None = None,
     ) -> DeliverySettlementResult:
         if not isinstance(settlement, DeliverySettlement):
             raise ValueError("settlement must be DeliverySettlement")
         lease = settlement.lease
         with connection.cursor() as cursor:
+            # Read immutable ownership first, then take the capacity fence and
+            # finally the delivery row lock.  Claim, append, registration, and
+            # requeue use the same capacity-before-delivery order.
+            cursor.execute(
+                """
+                SELECT subscription_id, subscription_version
+                FROM event_deliveries
+                WHERE delivery_id = %s
+                """,
+                (lease.delivery_id,),
+            )
+            identity_row = cursor.fetchone()
+            if identity_row is None:
+                raise EventStaleLeaseError(
+                    "delivery lease no longer identifies a row"
+                )
+            subscription_id = str(identity_row[0])
+            subscription_version = int(identity_row[1])
+            cursor.execute(
+                f"""
+                SELECT {_subscription_columns()}
+                FROM event_subscriptions
+                WHERE subscription_id = %s AND subscription_version = %s
+                """,
+                (subscription_id, subscription_version),
+            )
+            subscription_row = cursor.fetchone()
+            if subscription_row is None:
+                raise EventStoreCorruptionError(
+                    "delivery references a missing durable subscription"
+                )
+            subscription = _subscription_from_row(subscription_row)
+            _lock_subscription_delivery_capacity(
+                cursor,
+                subscription,
+                lock_scope=lock_scope,
+            )
+            _lock_delivery_row(
+                cursor,
+                lease.delivery_id,
+                lock_scope=lock_scope,
+            )
             cursor.execute(
                 f"""
                 SELECT {_delivery_columns()}
@@ -1676,32 +1843,25 @@ class PostgresDurableEventStore:
                 raise EventStaleLeaseError("delivery lease no longer identifies a row")
             current = _delivery_from_row(row)
             if (
+                current.subscription_id != subscription.subscription_id
+                or current.subscription_version != subscription.subscription_version
+            ):
+                raise EventStoreCorruptionError(
+                    "delivery subscription identity changed during settlement"
+                )
+            database_now = _database_now(cursor)
+            if (
                 current.state is not DeliveryState.CLAIMED
                 or current.delivery_generation != lease.delivery_generation
                 or current.lease_owner != lease.lease_owner
                 or current.lease_generation != lease.lease_generation
                 or current.lease_expires_at != lease.lease_expires_at
-                or lease.lease_expires_at <= settlement.settled_at
+                or lease.lease_expires_at <= database_now
             ):
                 raise EventStaleLeaseError(
                     "delivery settlement was rejected by the lease fence"
                 )
 
-            cursor.execute(
-                f"""
-                SELECT {_subscription_columns()}
-                FROM event_subscriptions
-                WHERE subscription_id = %s AND subscription_version = %s
-                FOR SHARE
-                """,
-                (current.subscription_id, current.subscription_version),
-            )
-            subscription_row = cursor.fetchone()
-            if subscription_row is None:
-                raise EventStoreCorruptionError(
-                    "delivery references a missing durable subscription"
-                )
-            subscription = _subscription_from_row(subscription_row)
             from framework.events.runtime.models import EffectIdempotencyStrategy
 
             if (
@@ -1732,6 +1892,12 @@ class PostgresDurableEventStore:
                     raise EventConsumerIdempotencyError(
                         "inbox entry does not match the claimed consumer effect"
                     )
+                _lock_inbox_row(
+                    cursor,
+                    inbox.event_id,
+                    inbox.consumer_effect_id,
+                    lock_scope=lock_scope,
+                )
                 cursor.execute(
                     """
                     INSERT INTO event_inbox (
@@ -1804,8 +1970,17 @@ class PostgresDurableEventStore:
             first_failure_at = current.first_failure_at
             last_failure_at = current.last_failure_at
             if failure_target:
-                first_failure_at = first_failure_at or settlement.settled_at
-                last_failure_at = settlement.settled_at
+                failure_occurrence = max(
+                    current.updated_at,
+                    min(settlement.settled_at, database_now),
+                )
+                first_failure_at = first_failure_at or failure_occurrence
+                last_failure_at = (
+                    failure_occurrence
+                    if last_failure_at is None
+                    else max(last_failure_at, failure_occurrence)
+                )
+            delivery_updated_at = max(current.updated_at, database_now)
             reason_class = settlement.reason_class or current.reason_class
             redacted_diagnostic = (
                 settlement.redacted_diagnostic
@@ -1839,7 +2014,7 @@ class PostgresDurableEventStore:
                     last_failure_at,
                     reason_class,
                     redacted_diagnostic,
-                    settlement.settled_at,
+                    delivery_updated_at,
                     current.delivery_id,
                 ),
             )
@@ -1898,7 +2073,7 @@ class PostgresDurableEventStore:
                 checkpoint = self._advance_checkpoint(
                     cursor,
                     settled,
-                    updated_at=settlement.settled_at,
+                    updated_at=delivery_updated_at,
                 )
             return DeliverySettlementResult(
                 delivery=settled,
@@ -2043,10 +2218,7 @@ class PostgresDurableEventStore:
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                (
-                    "subscription:"
-                    f"{subscription.subscription_id}:{subscription.subscription_version}",
-                ),
+                (_subscription_identity_lock_name(subscription),),
             )
             _lock_subscription_registry(
                 cursor,
@@ -2073,8 +2245,7 @@ class PostgresDurableEventStore:
                     )
                 return existing
 
-            cursor.execute("SELECT clock_timestamp()")
-            database_now = _required_utc(cursor.fetchone()[0], "database_now")
+            database_now = _database_now(cursor)
             created_at = subscription.created_at or database_now
             updated_at = subscription.updated_at or created_at
             effect = subscription.effect
@@ -2146,6 +2317,12 @@ class PostgresDurableEventStore:
                     "subscription insert returned no durable row"
                 )
 
+            # Registration can backfill many streams.  Fence the subscription
+            # once and apply one aggregate hard limit across the whole
+            # registration transaction rather than granting every stream its
+            # own copy of the limit.
+            _lock_subscription_delivery_capacity(cursor, subscription)
+
             cursor.execute(
                 """
                 SELECT stream_id, last_sequence
@@ -2157,6 +2334,7 @@ class PostgresDurableEventStore:
                 (tenant_scope,),
             )
             streams = tuple((str(row[0]), int(row[1])) for row in cursor.fetchall())
+            backfilled_count = 0
             for stream_id, registration_watermark in streams:
                 start_sequence = _subscription_start_sequence(
                     subscription,
@@ -2179,13 +2357,17 @@ class PostgresDurableEventStore:
                     created_at=created_at,
                 )
                 if subscription.status is not SubscriptionStatus.RETIRED:
-                    self._backfill_deliveries(
+                    backfilled_count += self._backfill_deliveries(
                         cursor,
                         subscription,
                         stream_id=stream_id,
                         start_sequence=start_sequence,
                         through_sequence=registration_watermark,
-                        created_at=created_at,
+                        created_at=database_now,
+                        remaining_capacity=(
+                            subscription.limits.pending_hard_limit
+                            - backfilled_count
+                        ),
                     )
             return _subscription_from_row(inserted_row)
 
@@ -2232,9 +2414,14 @@ class PostgresDurableEventStore:
         start_sequence: int,
         through_sequence: int,
         created_at: datetime,
-    ) -> None:
+        remaining_capacity: int,
+    ) -> int:
         if through_sequence < start_sequence:
-            return
+            return 0
+        if remaining_capacity < 0:
+            raise EventStoreCapacityError(
+                "subscription backfill exceeds its durable pending hard limit"
+            )
         where = [
             "tenant_scope = %s",
             "stream_id = %s",
@@ -2252,29 +2439,35 @@ class PostgresDurableEventStore:
         if subscription.event_filter.data_schemas:
             where.append("data_schema = ANY(%s)")
             params.append(sorted(subscription.event_filter.data_schemas))
+        params.append(remaining_capacity + 1)
         cursor.execute(
             f"""
             SELECT event_id, stream_sequence
             FROM durable_events
             WHERE {' AND '.join(where)}
-            ORDER BY stream_sequence
+            ORDER BY stream_sequence, event_id
+            LIMIT %s
             """,
             tuple(params),
         )
         matches = tuple((str(row[0]), int(row[1])) for row in cursor.fetchall())
-        if len(matches) > subscription.limits.pending_hard_limit:
+        if len(matches) > remaining_capacity:
             raise EventStoreCapacityError(
                 "subscription backfill exceeds its durable pending hard limit"
             )
+        inserted_count = 0
         for event_id, stream_sequence in matches:
-            self._insert_delivery(
-                cursor,
-                subscription,
-                event_id=event_id,
-                stream_id=stream_id,
-                stream_sequence=stream_sequence,
-                created_at=created_at,
+            inserted_count += int(
+                self._insert_delivery(
+                    cursor,
+                    subscription,
+                    event_id=event_id,
+                    stream_id=stream_id,
+                    stream_sequence=stream_sequence,
+                    created_at=created_at,
+                )
             )
+        return inserted_count
 
     def _insert_delivery(
         self,
@@ -2333,24 +2526,22 @@ class PostgresDurableEventStore:
         self,
         connection: Any,
         event: EventCandidate,
+        *,
+        lock_scope: _PostgresTransactionLockScope | None = None,
     ) -> AppendResult:
         if not isinstance(event, EventCandidate):
             raise ValueError("event must be an already projected EventCandidate")
         tenant_scope = _tenant_scope(event.tenant_id)
         with connection.cursor() as cursor:
-            # Event identity is global.  Taking this lock before touching the
-            # stream counter makes same-id retries wait, re-read, and return the
-            # committed sequence without allocating and later discarding one.
-            cursor.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                (f"event:{event.event_id}",),
-            )
+            # Fast-path an already committed immutable identity before any
+            # admission fence.  This keeps same-checksum retries idempotent even
+            # when a subscription backlog is already at its hard limit.  A miss
+            # is rechecked after the event identity fence below.
             cursor.execute(
                 f"""
                 SELECT {_EVENT_COLUMNS}
                 FROM durable_events
                 WHERE event_id = %s
-                FOR SHARE
                 """,
                 (event.event_id,),
             )
@@ -2373,28 +2564,90 @@ class PostgresDurableEventStore:
                 cursor,
                 tenant_scope,
                 exclusive=False,
+                lock_scope=lock_scope,
+            )
+            if lock_scope is not None:
+                # A later operation in a wider UoW must reject a reverse
+                # capacity-key request before it can wait on a subscription
+                # row held by another transaction.  The shared registry fence
+                # makes this nonlocking identity snapshot stable with respect
+                # to registration and retirement; pause/resume does not change
+                # materialization membership.
+                preview_subscriptions = _matching_subscriptions_for_append(
+                    cursor,
+                    tenant_scope=tenant_scope,
+                    event_type=event.event_type,
+                    data_schema=event.data_schema,
+                    lock_rows=False,
+                )
+                _preflight_subscription_delivery_capacities(
+                    preview_subscriptions,
+                    lock_scope=lock_scope,
+                )
+            else:
+                preview_subscriptions = None
+
+            matching_subscriptions = _matching_subscriptions_for_append(
+                cursor,
+                tenant_scope=tenant_scope,
+                event_type=event.event_type,
+                data_schema=event.data_schema,
+                lock_rows=True,
+            )
+            if (
+                preview_subscriptions is not None
+                and _subscription_capacity_keys(preview_subscriptions)
+                != _subscription_capacity_keys(matching_subscriptions)
+            ):
+                raise EventStoreContentionError(
+                    "subscription admission snapshot changed while acquiring "
+                    "row locks; retry the entire transaction"
+                )
+            # The tenant registry snapshot is already fixed.  Fence all
+            # matching subscription capacities in canonical order before the
+            # stream counter or any delivery row is changed.  A later capacity
+            # failure therefore rolls back the event, sequence, and every
+            # delivery reservation as one transaction.
+            _lock_subscription_delivery_capacities(
+                cursor,
+                matching_subscriptions,
+                lock_scope=lock_scope,
+            )
+
+            # Direct single-operation transactions use the fixed
+            # registry -> capacity -> event -> stream order.  A wider UoW uses
+            # the same logical locks, but newly encountered resources after its
+            # first mutation are try-locked so cross-family cycles fail fast.
+            _lock_event_identity(
+                cursor,
+                event.event_id,
+                lock_scope=lock_scope,
             )
             cursor.execute(
                 f"""
-                SELECT {_subscription_columns()}
-                FROM event_subscriptions
-                WHERE tenant_scope = %s
-                  AND status <> 'retired'
-                  AND (
-                        jsonb_array_length(event_types) = 0
-                        OR event_types ? %s
-                  )
-                  AND (
-                        jsonb_array_length(data_schemas) = 0
-                        OR data_schemas ? %s
-                  )
-                ORDER BY subscription_id, subscription_version
+                SELECT {_EVENT_COLUMNS}
+                FROM durable_events
+                WHERE event_id = %s
                 FOR SHARE
                 """,
-                (tenant_scope, event.event_type, event.data_schema),
+                (event.event_id,),
             )
-            matching_subscriptions = tuple(
-                _subscription_from_row(row) for row in cursor.fetchall()
+            existing_row = cursor.fetchone()
+            if existing_row is not None:
+                existing = _stored_event_from_row(existing_row)
+                if existing.content_checksum != event.content_checksum:
+                    raise EventIdentityCollisionError(event.event_id)
+                return AppendResult(
+                    event=existing,
+                    created=False,
+                    pending_delivery_count=0,
+                )
+
+            _lock_stream_sequence(
+                cursor,
+                tenant_scope=tenant_scope,
+                stream_id=event.stream_id,
+                lock_scope=lock_scope,
             )
 
             cursor.execute(
@@ -2542,18 +2795,7 @@ class PostgresDurableEventStore:
                 and event.stream_sequence > retirement_watermark
             ):
                 continue
-            cursor.execute(
-                """
-                SELECT count(*)
-                FROM event_deliveries
-                WHERE subscription_id = %s
-                  AND subscription_version = %s
-                  AND state IN ('pending', 'claimed', 'retry_wait')
-                """,
-                (subscription.subscription_id, subscription.subscription_version),
-            )
-            pending = int(cursor.fetchone()[0])
-            if pending >= subscription.limits.pending_hard_limit:
+            if _subscription_pending_capacity_exhausted(cursor, subscription):
                 raise EventStoreCapacityError(
                     "subscription durable pending hard limit is exhausted"
                 )
@@ -2612,6 +2854,8 @@ class PostgresEventUnitOfWork:
         self._store = store
         self._connection: Any | None = None
         self._finished = False
+        self._transaction_locks = _PostgresTransactionLockTracker()
+        self._rollback_only = False
 
     @property
     def connection(self) -> Any:
@@ -2621,9 +2865,16 @@ class PostgresEventUnitOfWork:
 
     def append_event(self, event: EventCandidate) -> AppendResult:
         connection = self._active_connection()
+        self._require_committable()
+        lock_scope = self._transaction_locks.new_operation()
         try:
-            return self._store._append_event_in_transaction(connection, event)
+            return self._store._append_event_in_transaction(
+                connection,
+                event,
+                lock_scope=lock_scope,
+            )
         except BaseException as exc:
+            self._rollback_only = True
             _reraise_store_exception(exc)
 
     def settle_delivery(
@@ -2631,16 +2882,33 @@ class PostgresEventUnitOfWork:
         settlement: DeliverySettlement,
     ) -> DeliverySettlementResult:
         connection = self._active_connection()
+        self._require_committable()
+        lock_scope = self._transaction_locks.new_operation()
         try:
             return self._store._settle_delivery_in_transaction(
                 connection,
                 settlement,
+                lock_scope=lock_scope,
             )
         except BaseException as exc:
+            self._rollback_only = True
             _reraise_store_exception(exc)
 
     def commit(self) -> None:
         connection = self._active_connection()
+        if self._rollback_only:
+            try:
+                connection.rollback()
+            except BaseException as exc:
+                try:
+                    self._close()
+                except BaseException:
+                    pass
+                _reraise_store_exception(exc)
+            self._close()
+            raise EventStoreError(
+                "event unit of work is rollback-only after a failed mutation"
+            )
         try:
             connection.commit()
         except BaseException as exc:
@@ -2702,6 +2970,12 @@ class PostgresEventUnitOfWork:
         if self._connection is None:
             raise EventStoreError("event unit of work has not been entered")
         return self._connection
+
+    def _require_committable(self) -> None:
+        if self._rollback_only:
+            raise EventStoreError(
+                "event unit of work is rollback-only after a failed mutation"
+            )
 
     def _close(self) -> None:
         if not self._finished:
@@ -3258,7 +3532,6 @@ def _subscription_definition(subscription: DurableSubscription) -> tuple[Any, ..
         limits.max_concurrency,
         limits.pending_warning_threshold,
         limits.pending_hard_limit,
-        subscription.status.value,
         subscription.supports_out_of_order_repair,
         subscription.tenant_id,
     )
@@ -3300,16 +3573,485 @@ def _lock_subscription_registry(
     tenant_scope: str,
     *,
     exclusive: bool,
+    lock_scope: _PostgresTransactionLockScope | None = None,
 ) -> None:
-    lock_function = (
-        "pg_advisory_xact_lock"
-        if exclusive
-        else "pg_advisory_xact_lock_shared"
+    _acquire_transaction_advisory_lock(
+        cursor,
+        f"event-subscription-registry:{tenant_scope}",
+        exclusive=exclusive,
+        lock_scope=lock_scope,
+    )
+
+
+CapacityLockKey = tuple[str, str, int]
+
+
+class _PostgresTransactionLockTracker:
+    """Coordinate all logical event-store locks held by one wider UoW.
+
+    The first mutation may block while acquiring its complete, fixed lock plan.
+    Once that mutation has retained any transaction advisory lock, later
+    mutations only try newly encountered logical resources.  This prevents a
+    business UoW from waiting while it already holds event-store locks that a
+    competing UoW may need to finish.  Callers must retry the whole UoW after a
+    typed contention failure.
+
+    Capacity keys additionally retain a transaction-wide ascending watermark.
+    That preserves the deterministic subscription ordering used by direct
+    operations while still allowing re-entrant append/settle combinations.
+    """
+
+    def __init__(self) -> None:
+        self._held_modes: dict[str, Literal["shared", "exclusive"]] = {}
+        self._held_capacity_keys: set[CapacityLockKey] = set()
+        self._capacity_high_watermark: CapacityLockKey | None = None
+
+    def new_operation(self) -> _PostgresTransactionLockScope:
+        return _PostgresTransactionLockScope(
+            self,
+            allow_blocking=not self._held_modes,
+        )
+
+    def _mode_for(self, lock_name: str) -> Literal["shared", "exclusive"] | None:
+        return self._held_modes.get(lock_name)
+
+    def _record_mode(
+        self,
+        lock_name: str,
+        mode: Literal["shared", "exclusive"],
+    ) -> None:
+        self._held_modes[lock_name] = mode
+
+    def _new_capacity_keys(
+        self,
+        keys: Sequence[CapacityLockKey],
+    ) -> tuple[CapacityLockKey, ...]:
+        pending = tuple(key for key in keys if key not in self._held_capacity_keys)
+        if (
+            pending
+            and self._capacity_high_watermark is not None
+            and pending[0] < self._capacity_high_watermark
+        ):
+            raise EventStoreContentionError(
+                "event unit of work requested subscription capacity locks "
+                "out of canonical order; retry the entire transaction"
+            )
+        return pending
+
+    def _record_capacity_key(self, key: CapacityLockKey) -> None:
+        self._held_capacity_keys.add(key)
+        if (
+            self._capacity_high_watermark is None
+            or key > self._capacity_high_watermark
+        ):
+            self._capacity_high_watermark = key
+
+
+class _PostgresTransactionLockScope:
+    """One mutation's view of transaction-wide advisory lock ownership."""
+
+    def __init__(
+        self,
+        tracker: _PostgresTransactionLockTracker,
+        *,
+        allow_blocking: bool,
+    ) -> None:
+        self._tracker = tracker
+        self._allow_blocking = allow_blocking
+
+    def acquire(
+        self,
+        cursor: Any,
+        lock_name: str,
+        *,
+        exclusive: bool,
+    ) -> None:
+        held_mode = self._tracker._mode_for(lock_name)
+        requested_mode: Literal["shared", "exclusive"] = (
+            "exclusive" if exclusive else "shared"
+        )
+        if held_mode == "exclusive" or held_mode == requested_mode:
+            return
+
+        # Shared-to-exclusive upgrades are always non-blocking.  Two sessions
+        # upgrading a shared advisory lock while retaining their shared holds
+        # would otherwise create an avoidable upgrade cycle.
+        try_only = not self._allow_blocking or held_mode == "shared"
+        if try_only:
+            function = (
+                "pg_try_advisory_xact_lock"
+                if exclusive
+                else "pg_try_advisory_xact_lock_shared"
+            )
+            cursor.execute(
+                f"SELECT {function}(hashtextextended(%s, 0))",
+                (lock_name,),
+            )
+            acquired_row = cursor.fetchone()
+            if acquired_row is None:
+                raise EventStoreCorruptionError(
+                    "PostgreSQL advisory lock attempt returned no result"
+                )
+            if not bool(acquired_row[0]):
+                raise EventStoreContentionError(
+                    "event unit of work encountered concurrent event-store "
+                    "lock contention; retry the entire transaction"
+                )
+        else:
+            function = (
+                "pg_advisory_xact_lock"
+                if exclusive
+                else "pg_advisory_xact_lock_shared"
+            )
+            cursor.execute(
+                f"SELECT {function}(hashtextextended(%s, 0))",
+                (lock_name,),
+            )
+        self._tracker._record_mode(lock_name, requested_mode)
+
+    def new_capacity_keys(
+        self,
+        keys: Sequence[CapacityLockKey],
+    ) -> tuple[CapacityLockKey, ...]:
+        return self._tracker._new_capacity_keys(keys)
+
+    def capacity_key_acquired(self, key: CapacityLockKey) -> None:
+        self._tracker._record_capacity_key(key)
+
+
+def _acquire_transaction_advisory_lock(
+    cursor: Any,
+    lock_name: str,
+    *,
+    exclusive: bool,
+    lock_scope: _PostgresTransactionLockScope | None = None,
+) -> None:
+    if lock_scope is not None:
+        lock_scope.acquire(cursor, lock_name, exclusive=exclusive)
+        return
+    function = (
+        "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
     )
     cursor.execute(
-        f"SELECT {lock_function}(hashtextextended(%s, 0))",
-        (f"event-subscription-registry:{tenant_scope}",),
+        f"SELECT {function}(hashtextextended(%s, 0))",
+        (lock_name,),
     )
+
+
+def _matching_subscriptions_for_append(
+    cursor: Any,
+    *,
+    tenant_scope: str,
+    event_type: str,
+    data_schema: str,
+    lock_rows: bool,
+) -> tuple[DurableSubscription, ...]:
+    row_lock = "FOR SHARE" if lock_rows else ""
+    cursor.execute(
+        f"""
+        SELECT {_subscription_columns()}
+        FROM event_subscriptions
+        WHERE tenant_scope = %s
+          AND status <> 'retired'
+          AND (
+                jsonb_array_length(event_types) = 0
+                OR event_types ? %s
+          )
+          AND (
+                jsonb_array_length(data_schemas) = 0
+                OR data_schemas ? %s
+          )
+        ORDER BY subscription_id, subscription_version
+        {row_lock}
+        """,
+        (tenant_scope, event_type, data_schema),
+    )
+    return tuple(_subscription_from_row(row) for row in cursor.fetchall())
+
+
+def _subscription_capacity_keys(
+    subscriptions: Sequence[DurableSubscription],
+) -> tuple[CapacityLockKey, ...]:
+    return tuple(
+        sorted(
+            {
+                _subscription_delivery_capacity_lock_key(subscription)
+                for subscription in subscriptions
+            }
+        )
+    )
+
+
+def _preflight_subscription_delivery_capacities(
+    subscriptions: Sequence[DurableSubscription],
+    *,
+    lock_scope: _PostgresTransactionLockScope,
+) -> None:
+    # ``new_capacity_keys`` performs the transaction-wide monotonicity check
+    # without recording ownership or issuing SQL.  The actual acquisition
+    # repeats the check and records a key only after PostgreSQL confirms it.
+    lock_scope.new_capacity_keys(_subscription_capacity_keys(subscriptions))
+
+
+def _lock_subscription_delivery_capacities(
+    cursor: Any,
+    subscriptions: Sequence[DurableSubscription],
+    *,
+    lock_scope: _PostgresTransactionLockScope | None = None,
+) -> None:
+    """Fence append admission for several subscriptions in one fixed order."""
+
+    by_key = {
+        _subscription_delivery_capacity_lock_key(subscription): subscription
+        for subscription in subscriptions
+    }
+    ordered_keys = _subscription_capacity_keys(subscriptions)
+    acquisition_keys = (
+        ordered_keys
+        if lock_scope is None
+        else lock_scope.new_capacity_keys(ordered_keys)
+    )
+    for key in acquisition_keys:
+        subscription = by_key[key]
+        _acquire_transaction_advisory_lock(
+            cursor,
+            _subscription_delivery_capacity_lock_name(subscription),
+            exclusive=True,
+            lock_scope=lock_scope,
+        )
+        if lock_scope is not None:
+            lock_scope.capacity_key_acquired(key)
+
+
+def _lock_subscription_delivery_capacity(
+    cursor: Any,
+    subscription: DurableSubscription,
+    *,
+    lock_scope: _PostgresTransactionLockScope | None = None,
+) -> None:
+    _lock_subscription_delivery_capacities(
+        cursor,
+        (subscription,),
+        lock_scope=lock_scope,
+    )
+
+
+def _lock_event_identity(
+    cursor: Any,
+    event_id: str,
+    *,
+    lock_scope: _PostgresTransactionLockScope | None = None,
+) -> None:
+    _acquire_transaction_advisory_lock(
+        cursor,
+        f"event:{event_id}",
+        exclusive=True,
+        lock_scope=lock_scope,
+    )
+
+
+def _lock_stream_sequence(
+    cursor: Any,
+    *,
+    tenant_scope: str,
+    stream_id: str,
+    lock_scope: _PostgresTransactionLockScope | None = None,
+) -> None:
+    _acquire_transaction_advisory_lock(
+        cursor,
+        f"event-stream-sequence:{_json([tenant_scope, stream_id])}",
+        exclusive=True,
+        lock_scope=lock_scope,
+    )
+
+
+def _lock_delivery_row(
+    cursor: Any,
+    delivery_id: str,
+    *,
+    lock_scope: _PostgresTransactionLockScope | None = None,
+) -> None:
+    _acquire_transaction_advisory_lock(
+        cursor,
+        f"event-delivery-row:{_json([delivery_id])}",
+        exclusive=True,
+        lock_scope=lock_scope,
+    )
+
+
+def _lock_inbox_row(
+    cursor: Any,
+    event_id: str,
+    consumer_effect_id: str,
+    *,
+    lock_scope: _PostgresTransactionLockScope | None = None,
+) -> None:
+    _acquire_transaction_advisory_lock(
+        cursor,
+        f"event-inbox-row:{_json([event_id, consumer_effect_id])}",
+        exclusive=True,
+        lock_scope=lock_scope,
+    )
+
+
+def _subscription_identity_lock_name(
+    subscription: DurableSubscription,
+) -> str:
+    return (
+        "subscription:"
+        f"{subscription.subscription_id}:{subscription.subscription_version}"
+    )
+
+
+def _subscription_delivery_capacity_lock_key(
+    subscription: DurableSubscription,
+) -> CapacityLockKey:
+    return (
+        _tenant_scope(subscription.tenant_id),
+        subscription.subscription_id,
+        subscription.subscription_version,
+    )
+
+
+def _subscription_delivery_capacity_lock_name(
+    subscription: DurableSubscription,
+) -> str:
+    identity = _json(list(_subscription_delivery_capacity_lock_key(subscription)))
+    return f"event-subscription-delivery-capacity:{identity}"
+
+
+def _subscription_pending_capacity_exhausted(
+    cursor: Any,
+    subscription: DurableSubscription,
+) -> bool:
+    """Check the hard boundary while the subscription capacity fence is held.
+
+    The query stops at the configured boundary instead of performing an
+    unfenced aggregate over a concurrently changing delivery set.
+    """
+
+    cursor.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM event_deliveries
+            WHERE tenant_scope = %s
+              AND subscription_id = %s
+              AND subscription_version = %s
+              AND state IN ('pending', 'claimed', 'retry_wait')
+            ORDER BY delivery_id
+            OFFSET %s
+            LIMIT 1
+        )
+        """,
+        (
+            _tenant_scope(subscription.tenant_id),
+            subscription.subscription_id,
+            subscription.subscription_version,
+            subscription.limits.pending_hard_limit - 1,
+        ),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise EventStoreCorruptionError(
+            "subscription pending capacity query returned no row"
+        )
+    return bool(row[0])
+
+
+def _bounded_subscription_in_flight(
+    cursor: Any,
+    subscription: DurableSubscription,
+) -> int:
+    """Return at most the configured in-flight bound under its capacity fence."""
+
+    cursor.execute(
+        """
+        SELECT delivery_id
+        FROM event_deliveries
+        WHERE tenant_scope = %s
+          AND subscription_id = %s
+          AND subscription_version = %s
+          AND state = 'claimed'
+        ORDER BY delivery_id
+        LIMIT %s
+        """,
+        (
+            _tenant_scope(subscription.tenant_id),
+            subscription.subscription_id,
+            subscription.subscription_version,
+            subscription.limits.max_in_flight,
+        ),
+    )
+    return len(cursor.fetchall())
+
+
+def _subscription_lease_owner_slot_available(
+    cursor: Any,
+    subscription: DurableSubscription,
+    *,
+    lease_owner: str,
+    database_now: datetime,
+) -> bool:
+    """Reserve no row, but decide one owner slot under the capacity fence."""
+
+    cursor.execute(
+        """
+        SELECT
+            EXISTS (
+                SELECT 1
+                FROM event_deliveries
+                WHERE tenant_scope = %s
+                  AND subscription_id = %s
+                  AND subscription_version = %s
+                  AND state = 'claimed'
+                  AND lease_expires_at > %s
+                  AND lease_owner = %s
+            ),
+            (
+                SELECT count(*)
+                FROM (
+                    SELECT lease_owner
+                    FROM event_deliveries
+                    WHERE tenant_scope = %s
+                      AND subscription_id = %s
+                      AND subscription_version = %s
+                      AND state = 'claimed'
+                      AND lease_expires_at > %s
+                      AND lease_owner IS NOT NULL
+                    GROUP BY lease_owner
+                    ORDER BY lease_owner
+                    LIMIT %s
+                ) AS active_owners
+            )
+        """,
+        (
+            _tenant_scope(subscription.tenant_id),
+            subscription.subscription_id,
+            subscription.subscription_version,
+            database_now,
+            lease_owner,
+            _tenant_scope(subscription.tenant_id),
+            subscription.subscription_id,
+            subscription.subscription_version,
+            database_now,
+            subscription.limits.max_concurrency,
+        ),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise EventStoreCorruptionError(
+            "subscription concurrency slot query returned no row"
+        )
+    return bool(row[0]) or int(row[1]) < subscription.limits.max_concurrency
+
+
+def _database_now(cursor: Any) -> datetime:
+    cursor.execute("SELECT clock_timestamp()")
+    row = cursor.fetchone()
+    if row is None:
+        raise EventStoreCorruptionError("PostgreSQL clock query returned no row")
+    return _required_utc(row[0], "database_now")
 
 
 def _json(value: Any) -> str:
@@ -3406,6 +4148,10 @@ def _reraise_store_exception(exc: BaseException) -> NoReturn:
     if not isinstance(exc, psycopg.Error):
         raise exc
     sqlstate = str(getattr(exc, "sqlstate", "") or "")
+    if sqlstate in {"40001", "40P01", "55P03"}:
+        raise EventStoreContentionError(
+            "PostgreSQL durable event operation encountered retryable contention"
+        ) from exc
     if sqlstate in {"53100", "53200", "53400"}:
         raise EventStoreCapacityError(
             "PostgreSQL durable event capacity is exhausted"

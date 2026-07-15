@@ -3,9 +3,12 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
+from time import monotonic, sleep
 from typing import Iterator
 from uuid import uuid4
 
@@ -33,6 +36,8 @@ from framework.events.ports import EventStorePort
 from framework.events.runtime.models import (
     CheckpointKey,
     ConsumerEffectContract,
+    DeadLetterAction,
+    DeadLetterDisposition,
     DeadLetterQuery,
     DeliveryClaimRequest,
     DeliveryLimits,
@@ -49,8 +54,10 @@ from framework.events.runtime.models import (
     RetryPolicy,
     StreamReadRequest,
     SubscriptionFilter,
+    SubscriptionKey,
     SubscriptionStart,
     SubscriptionStartPolicy,
+    SubscriptionStatus,
 )
 from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
 from framework.events.schema import (
@@ -76,6 +83,19 @@ class EventStoreCase:
     store: EventStorePort
     scope: str
     now: Callable[[], datetime]
+    advance_clock: Callable[[datetime], None]
+
+
+@dataclass
+class MutableClock:
+    current: datetime
+
+    def __call__(self) -> datetime:
+        return self.current
+
+    def advance_to(self, value: datetime) -> None:
+        if value > self.current:
+            self.current = value
 
 
 @dataclass(frozen=True)
@@ -83,6 +103,25 @@ class CrossBackendEventStores:
     scope: str
     sqlite: SQLiteEventStore
     postgres: EventStorePort
+
+
+def _wait_for_database_clock(dsn: str, value: datetime) -> None:
+    import psycopg
+
+    deadline = monotonic() + 15
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            while True:
+                cursor.execute("SELECT clock_timestamp()")
+                database_now = cursor.fetchone()[0]
+                if database_now >= value:
+                    return
+                if monotonic() >= deadline:
+                    raise AssertionError(
+                        "PostgreSQL clock did not reach the lease boundary"
+                    )
+                remaining = (value - database_now).total_seconds()
+                sleep(min(0.05, max(0.001, remaining)))
 
 
 @pytest.fixture(scope="session")
@@ -123,14 +162,16 @@ def event_store_case(
 ) -> Iterator[EventStoreCase]:
     scope = f"event-store-conformance:{uuid4().hex}"
     if request.param == "sqlite":
+        clock = MutableClock(SQLITE_OBSERVED_AT)
         yield EventStoreCase(
             backend="sqlite",
             store=SQLiteEventStore(
                 tmp_path / "events.sqlite3",
-                clock=lambda: SQLITE_OBSERVED_AT,
+                clock=clock,
             ),
             scope=scope,
-            now=lambda: SQLITE_OBSERVED_AT,
+            now=clock,
+            advance_clock=clock.advance_to,
         )
         return
 
@@ -144,6 +185,7 @@ def event_store_case(
             store=PostgresDurableEventStore(dsn),
             scope=scope,
             now=lambda: datetime.now(UTC),
+            advance_clock=lambda value: _wait_for_database_clock(dsn, value),
         )
     finally:
         _cleanup_postgres_scope(dsn, scope)
@@ -363,6 +405,388 @@ def test_conformance_append_and_matching_outbox_commit_or_rollback_together(
     ]
 
 
+def test_conformance_subscription_versions_keep_independent_start_boundaries(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    first = case.store.append_event(_candidate(case.scope, index=1)).event
+    second = case.store.append_event(_candidate(case.scope, index=2)).event
+    subscription_id = f"{case.scope}:versioned"
+    starts = (
+        (1, SubscriptionStart(SubscriptionStartPolicy.EARLIEST)),
+        (2, SubscriptionStart(SubscriptionStartPolicy.LATEST)),
+        (
+            3,
+            SubscriptionStart(
+                SubscriptionStartPolicy.AT_SEQUENCE,
+                start_sequence=2,
+            ),
+        ),
+    )
+    subscriptions = tuple(
+        case.store.register_subscription(
+            DurableSubscription(
+                subscription_id=subscription_id,
+                subscription_version=version,
+                consumer_id=f"{case.scope}:consumer:{version}",
+                start=start,
+                tenant_id=_tenant_id(case.scope),
+            )
+        )
+        for version, start in starts
+    )
+    third = case.store.append_event(_candidate(case.scope, index=3)).event
+
+    expected = {
+        1: [first.event_id, second.event_id, third.event_id],
+        2: [third.event_id],
+        3: [second.event_id, third.event_id],
+    }
+    for subscription in subscriptions:
+        deliveries = case.store.list_deliveries(
+            DeliveryQuery(
+                subscription_id=subscription.subscription_id,
+                subscription_version=subscription.subscription_version,
+                tenant_id=subscription.tenant_id,
+            )
+        ).records
+        assert [delivery.event_id for delivery in deliveries] == expected[
+            subscription.subscription_version
+        ]
+
+    claim_at = case.now()
+    claimed = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:version-worker",
+            requested_at=claim_at,
+            limit=1,
+        )
+    )[0]
+    case.store.settle_delivery(
+        DeliverySettlement(
+            lease=claimed.lease,
+            target_state=DeliveryState.ACKED,
+            settled_at=claim_at + timedelta(seconds=1),
+        )
+    )
+    assert case.store.get_checkpoint(
+        CheckpointKey(
+            subscription_id=subscription_id,
+            subscription_version=1,
+            stream_id=first.stream_id,
+            tenant_id=first.tenant_id,
+        )
+    ) is not None
+    assert case.store.get_checkpoint(
+        CheckpointKey(
+            subscription_id=subscription_id,
+            subscription_version=3,
+            stream_id=first.stream_id,
+            tenant_id=first.tenant_id,
+        )
+    ) is None
+
+
+def test_conformance_pause_resume_and_retirement_drain_without_later_work(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    definition = DurableSubscription(
+        subscription_id=f"{case.scope}:lifecycle",
+        subscription_version=1,
+        consumer_id=f"{case.scope}:lifecycle-consumer",
+        tenant_id=_tenant_id(case.scope),
+    )
+    registered = case.store.register_subscription(definition)
+    changed_at = registered.updated_at or case.now()
+    paused = case.store.set_subscription_status(
+        registered.key,
+        SubscriptionStatus.PAUSED,
+        changed_at=changed_at + timedelta(seconds=1),
+        reason="maintenance",
+    )
+    assert case.store.register_subscription(definition) == paused
+    first = case.store.append_event(_candidate(case.scope, index=1)).event
+    second = case.store.append_event(_candidate(case.scope, index=2)).event
+    assert case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=registered.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:paused-worker",
+            requested_at=case.now(),
+            limit=1,
+        )
+    ) == ()
+
+    resumed = case.store.set_subscription_status(
+        registered.key,
+        SubscriptionStatus.ACTIVE,
+        changed_at=changed_at + timedelta(seconds=2),
+        reason="maintenance complete",
+    )
+    assert resumed.status is SubscriptionStatus.ACTIVE
+    first_claim_at = case.now()
+    first_claim = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=registered.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:active-worker",
+            requested_at=first_claim_at,
+            limit=1,
+        )
+    )[0]
+    assert first_claim.event.event_id == first.event_id
+    case.store.settle_delivery(
+        DeliverySettlement(
+            lease=first_claim.lease,
+            target_state=DeliveryState.ACKED,
+            settled_at=first_claim_at + timedelta(seconds=1),
+        )
+    )
+
+    retired = case.store.set_subscription_status(
+        registered.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=changed_at + timedelta(seconds=3),
+        reason="superseded",
+    )
+    assert retired.status is SubscriptionStatus.RETIRED
+    later = case.store.append_event(_candidate(case.scope, index=3)).event
+    second_claim_at = case.now()
+    second_claim = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=registered.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:retirement-drain-worker",
+            requested_at=second_claim_at,
+            limit=1,
+        )
+    )[0]
+    assert second_claim.event.event_id == second.event_id
+    case.store.settle_delivery(
+        DeliverySettlement(
+            lease=second_claim.lease,
+            target_state=DeliveryState.ACKED,
+            settled_at=second_claim_at + timedelta(seconds=1),
+        )
+    )
+    assert case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=registered.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:retirement-drain-worker",
+            requested_at=case.now(),
+            limit=1,
+        )
+    ) == ()
+    deliveries = case.store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=registered.subscription_id,
+            subscription_version=1,
+            tenant_id=registered.tenant_id,
+        )
+    ).records
+    assert [delivery.event_id for delivery in deliveries] == [
+        first.event_id,
+        second.event_id,
+    ]
+    assert later.event_id not in {delivery.event_id for delivery in deliveries}
+    assert case.store.pending_delivery_stats(registered.key).pending_count == 0
+
+    with pytest.raises(ValueError, match="RETIRED"):
+        case.store.register_subscription(
+            replace(
+                definition,
+                subscription_id=f"{case.scope}:initially-retired",
+                status=SubscriptionStatus.RETIRED,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "start",
+    (
+        SubscriptionStart(SubscriptionStartPolicy.EARLIEST),
+        SubscriptionStart(SubscriptionStartPolicy.LATEST),
+        SubscriptionStart(
+            SubscriptionStartPolicy.AT_SEQUENCE,
+            start_sequence=1,
+        ),
+    ),
+    ids=("earliest", "latest", "at-sequence"),
+)
+def test_conformance_registration_and_publication_have_one_linearized_boundary(
+    event_store_case: EventStoreCase,
+    start: SubscriptionStart,
+) -> None:
+    case = event_store_case
+    subscription = DurableSubscription(
+        subscription_id=f"{case.scope}:registration-race:{start.policy.value}",
+        subscription_version=1,
+        consumer_id=f"{case.scope}:registration-race-consumer",
+        start=start,
+        tenant_id=_tenant_id(case.scope),
+    )
+    candidate = _candidate(case.scope, index=1)
+    barrier = Barrier(2)
+
+    def register() -> DurableSubscription:
+        barrier.wait(timeout=15)
+        return case.store.register_subscription(subscription)
+
+    def publish() -> StoredEvent:
+        barrier.wait(timeout=15)
+        return case.store.append_event(candidate).event
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        registered_future = executor.submit(register)
+        published_future = executor.submit(publish)
+        registered = registered_future.result(timeout=15)
+        published = published_future.result(timeout=15)
+
+    state = case.store.get_subscription_stream_state(
+        registered.key,
+        published.stream_id,
+        tenant_id=published.tenant_id,
+    )
+    assert state is not None
+    deliveries = case.store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=registered.subscription_id,
+            subscription_version=1,
+            tenant_id=registered.tenant_id,
+        )
+    ).records
+    if start.policy is SubscriptionStartPolicy.LATEST:
+        expected = [] if state.registration_watermark == 1 else [published.event_id]
+    else:
+        expected = [published.event_id]
+    assert [delivery.event_id for delivery in deliveries] == expected
+
+
+def test_conformance_retirement_and_publication_share_the_watermark_boundary(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    seed = case.store.append_event(_candidate(case.scope, index=1)).event
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:retirement-race",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:retirement-race-consumer",
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    candidate = _candidate(case.scope, index=2)
+    barrier = Barrier(2)
+
+    def retire() -> DurableSubscription:
+        barrier.wait(timeout=15)
+        return case.store.set_subscription_status(
+            subscription.key,
+            SubscriptionStatus.RETIRED,
+            changed_at=(subscription.updated_at or case.now())
+            + timedelta(seconds=1),
+            reason="race cutover",
+        )
+
+    def publish() -> StoredEvent:
+        barrier.wait(timeout=15)
+        return case.store.append_event(candidate).event
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        retired_future = executor.submit(retire)
+        published_future = executor.submit(publish)
+        retired_future.result(timeout=15)
+        published = published_future.result(timeout=15)
+
+    state = case.store.get_subscription_stream_state(
+        subscription.key,
+        seed.stream_id,
+        tenant_id=seed.tenant_id,
+    )
+    assert state is not None
+    assert state.retirement_watermark in {1, 2}
+    deliveries = case.store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            tenant_id=subscription.tenant_id,
+        )
+    ).records
+    published_deliveries = [
+        delivery for delivery in deliveries if delivery.event_id == published.event_id
+    ]
+    assert bool(published_deliveries) is (state.retirement_watermark == 2)
+
+
+def test_conformance_registration_backfill_capacity_failure_is_atomic(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    for index in range(1, 4):
+        case.store.append_event(_candidate(case.scope, index=index))
+    subscription = DurableSubscription(
+        subscription_id=f"{case.scope}:backfill-capacity",
+        subscription_version=1,
+        consumer_id=f"{case.scope}:backfill-capacity-consumer",
+        limits=DeliveryLimits(
+            batch_size=1,
+            max_in_flight=1,
+            max_concurrency=1,
+            pending_warning_threshold=1,
+            pending_hard_limit=2,
+        ),
+        tenant_id=_tenant_id(case.scope),
+    )
+
+    with pytest.raises(EventStoreCapacityError):
+        case.store.register_subscription(subscription)
+
+    assert case.store.get_subscription(subscription.key) is None
+    assert case.store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            tenant_id=subscription.tenant_id,
+        )
+    ).records == ()
+
+
+def test_conformance_backfill_delivery_uses_store_time_not_future_metadata(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    event = case.store.append_event(_candidate(case.scope, index=1)).event
+    future_created_at = case.now() + timedelta(days=1)
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:future-registration-time",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:future-registration-consumer",
+            tenant_id=_tenant_id(case.scope),
+            created_at=future_created_at,
+            updated_at=future_created_at,
+        )
+    )
+
+    claimed = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:future-registration-worker",
+            requested_at=case.now(),
+            limit=1,
+        )
+    )[0]
+
+    assert claimed.event.event_id == event.event_id
+    assert claimed.lease.lease_started_at is not None
+    assert claimed.lease.lease_started_at < claimed.lease.lease_expires_at
+
+
 def test_conformance_at_sequence_allows_one_past_end_and_rejects_later_future(
     event_store_case: EventStoreCase,
 ) -> None:
@@ -534,6 +958,15 @@ def test_conformance_capacity_and_stale_lease_errors_are_typed_and_atomic(
         _stream_id(case.scope),
         tenant_id=_tenant_id(case.scope),
     ) == 2
+    stats = case.store.pending_delivery_stats(subscription.key)
+    assert stats.pending_count == 2
+    assert stats.lag == 2
+    assert stats.late_repair_pending_count == 0
+    assert stats.warning_threshold_reached
+    assert stats.capacity_remaining == 0
+    assert stats.oldest_pending_at is not None
+    assert stats.oldest_pending_age_seconds is not None
+    assert stats.oldest_pending_age_seconds >= 0
 
     claim = case.store.claim_deliveries(
         DeliveryClaimRequest(
@@ -544,6 +977,8 @@ def test_conformance_capacity_and_stale_lease_errors_are_typed_and_atomic(
             limit=1,
         )
     )[0]
+    assert claim.lease.lease_started_at is not None
+    assert claim.lease.lease_started_at < claim.lease.lease_expires_at
     with pytest.raises(EventStaleLeaseError):
         renewed_at = case.now()
         case.store.renew_delivery_lease(
@@ -555,12 +990,214 @@ def test_conformance_capacity_and_stale_lease_errors_are_typed_and_atomic(
         claim.delivery.delivery_id,
         tenant_id=_tenant_id(case.scope),
     ).state is DeliveryState.CLAIMED
-    with pytest.raises(EventStaleLeaseError):
-        case.store.renew_delivery_lease(
-            claim.lease,
-            renewed_at=claim.lease.lease_expires_at,
-            lease_duration_seconds=30,
+    renewed = case.store.renew_delivery_lease(
+        claim.lease,
+        renewed_at=claim.lease.lease_expires_at + timedelta(days=1),
+        lease_duration_seconds=30,
+    )
+    assert renewed.lease_started_at is not None
+    case.store.settle_delivery(
+        DeliverySettlement(
+            lease=renewed,
+            target_state=DeliveryState.ACKED,
+            settled_at=renewed.lease_expires_at + timedelta(days=1),
         )
+    )
+    recovered = case.store.append_event(_candidate(case.scope, index=3))
+    assert recovered.event.stream_sequence == 3
+    assert recovered.pending_delivery_count == 1
+
+
+def test_conformance_max_concurrency_is_a_durable_lease_owner_slot(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:concurrency",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:concurrency-consumer",
+            limits=DeliveryLimits(
+                batch_size=1,
+                max_in_flight=4,
+                max_concurrency=1,
+                pending_warning_threshold=4,
+                pending_hard_limit=8,
+            ),
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    for index in range(1, 4):
+        case.store.append_event(
+            _candidate(
+                case.scope,
+                index=index,
+                stream_id=f"{case.scope}:concurrency-stream:{index}",
+            )
+        )
+    requested_at = case.now()
+    owner_a = f"{case.scope}:worker-a"
+    owner_b = f"{case.scope}:worker-b"
+
+    first = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=owner_a,
+            requested_at=requested_at,
+            limit=1,
+        )
+    )
+    assert len(first) == 1
+    assert case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=owner_b,
+            requested_at=requested_at,
+            limit=1,
+        )
+    ) == ()
+    second = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=owner_a,
+            requested_at=requested_at,
+            limit=1,
+        )
+    )
+    assert len(second) == 1
+
+    for offset, claim in enumerate((*first, *second), start=1):
+        case.store.settle_delivery(
+            DeliverySettlement(
+                lease=claim.lease,
+                target_state=DeliveryState.ACKED,
+                settled_at=requested_at + timedelta(seconds=offset),
+            )
+        )
+    released = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=owner_b,
+            requested_at=case.now(),
+            limit=1,
+        )
+    )
+    assert len(released) == 1
+
+
+def test_conformance_requeue_capacity_and_lag_keep_late_repair_separate(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:late-repair-capacity",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:late-repair-consumer",
+            limits=DeliveryLimits(
+                batch_size=1,
+                max_in_flight=1,
+                max_concurrency=1,
+                pending_warning_threshold=1,
+                pending_hard_limit=2,
+            ),
+            supports_out_of_order_repair=True,
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    first = case.store.append_event(_candidate(case.scope, index=1)).event
+    case.store.append_event(_candidate(case.scope, index=2))
+    first_claim_at = case.now()
+    first_claim = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:repair-worker",
+            requested_at=first_claim_at,
+            limit=1,
+        )
+    )[0]
+    dead = case.store.settle_delivery(
+        DeliverySettlement(
+            lease=first_claim.lease,
+            target_state=DeliveryState.DEAD_LETTER,
+            settled_at=first_claim_at + timedelta(seconds=1),
+            reason_class="poison",
+        )
+    )
+    assert dead.dead_letter_id is not None
+    case.store.append_event(_candidate(case.scope, index=3))
+    rejected_action = DeadLetterAction(
+        dead_letter_id=dead.dead_letter_id,
+        operator_id="operator",
+        reason="repair after capacity frees",
+        requested_at=case.now(),
+        idempotency_ready=True,
+    )
+    with pytest.raises(EventStoreCapacityError):
+        case.store.requeue_dead_letter(rejected_action)
+    assert case.store.get_dead_letter(
+        dead.dead_letter_id,
+        tenant_id=first.tenant_id,
+    ).disposition is DeadLetterDisposition.OPEN
+
+    second_claim_at = case.now()
+    second_claim = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:repair-worker",
+            requested_at=second_claim_at,
+            limit=1,
+        )
+    )[0]
+    case.store.settle_delivery(
+        DeliverySettlement(
+            lease=second_claim.lease,
+            target_state=DeliveryState.ACKED,
+            settled_at=second_claim_at + timedelta(seconds=1),
+        )
+    )
+    repaired = case.store.requeue_dead_letter(
+        replace(
+            rejected_action,
+            requested_at=case.now() + timedelta(days=1),
+        )
+    )
+    assert repaired.delivery_generation == 2
+    repair_claim = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:late-repair-worker",
+            requested_at=case.now(),
+            limit=1,
+        )
+    )[0]
+    assert repair_claim.delivery.delivery_id == repaired.delivery_id
+    assert repair_claim.lease.lease_started_at is not None
+    stats = case.store.pending_delivery_stats(
+        SubscriptionKey(subscription.subscription_id, 1)
+    )
+    assert stats.pending_count == 2
+    assert stats.lag == 1
+    assert stats.late_repair_pending_count == 1
+    assert stats.warning_threshold_reached
+    assert stats.capacity_remaining == 0
+    checkpoint = case.store.get_checkpoint(
+        CheckpointKey(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            stream_id=first.stream_id,
+            tenant_id=first.tenant_id,
+        )
+    )
+    assert checkpoint is not None
+    assert checkpoint.highest_contiguous_terminal_sequence == 2
 
 
 def test_conformance_retry_at_budget_is_normalized_to_dead_letter(
@@ -587,15 +1224,6 @@ def test_conformance_retry_at_budget_is_normalized_to_dead_letter(
             limit=1,
         )
     )[0]
-    with pytest.raises(EventStaleLeaseError):
-        case.store.settle_delivery(
-            DeliverySettlement(
-                lease=claim.lease,
-                target_state=DeliveryState.ACKED,
-                settled_at=claim.lease.lease_expires_at,
-            )
-        )
-
     result = case.store.settle_delivery(
         DeliverySettlement(
             lease=claim.lease,
@@ -611,6 +1239,60 @@ def test_conformance_retry_at_budget_is_normalized_to_dead_letter(
     assert result.checkpoint.highest_contiguous_terminal_sequence == (
         event.stream_sequence
     )
+
+
+def test_conformance_retry_wait_blocks_later_sequence_in_the_same_stream(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:ordered-retry",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:ordered-retry-consumer",
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    first = case.store.append_event(_candidate(case.scope, index=1)).event
+    case.store.append_event(_candidate(case.scope, index=2))
+    requested_at = case.now()
+    claimed = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:ordered-worker",
+            requested_at=requested_at,
+            limit=1,
+        )
+    )[0]
+    assert claimed.event.event_id == first.event_id
+    case.store.settle_delivery(
+        DeliverySettlement(
+            lease=claimed.lease,
+            target_state=DeliveryState.RETRY_WAIT,
+            settled_at=requested_at + timedelta(seconds=1),
+            retry_available_at=requested_at + timedelta(minutes=1),
+            reason_class="transient",
+        )
+    )
+
+    assert case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{case.scope}:ordered-worker",
+            requested_at=case.now(),
+            limit=1,
+        )
+    ) == ()
+    assert case.store.get_checkpoint(
+        CheckpointKey(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            stream_id=first.stream_id,
+            tenant_id=first.tenant_id,
+        )
+    ) is None
 
 
 def test_conformance_inbox_ack_is_required_and_conflicts_are_typed(
@@ -770,24 +1452,30 @@ def test_conformance_expired_leases_exhaust_budget_into_dlq_and_checkpoint(
     )[0]
     assert first.delivery.attempt_count == 1
 
+    case.advance_clock(
+        first.lease.lease_expires_at + timedelta(milliseconds=100)
+    )
     second = case.store.claim_deliveries(
         DeliveryClaimRequest(
             subscription_id=subscription.subscription_id,
             subscription_version=subscription.subscription_version,
             lease_owner=f"{case.scope}:crashed-worker:2",
-            requested_at=first.lease.lease_expires_at + timedelta(seconds=1),
+            requested_at=case.now(),
             lease_duration_seconds=5,
             limit=1,
         )
     )[0]
     assert second.delivery.attempt_count == 2
 
+    case.advance_clock(
+        second.lease.lease_expires_at + timedelta(milliseconds=100)
+    )
     assert case.store.claim_deliveries(
         DeliveryClaimRequest(
             subscription_id=subscription.subscription_id,
             subscription_version=subscription.subscription_version,
             lease_owner=f"{case.scope}:must-not-claim",
-            requested_at=second.lease.lease_expires_at + timedelta(seconds=1),
+            requested_at=case.now(),
             lease_duration_seconds=5,
             limit=1,
         )

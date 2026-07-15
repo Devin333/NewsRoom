@@ -21,6 +21,7 @@ class RuntimeDiagnosticCategory(str, Enum):
 
     EVENT_STORE_FAILURE = "event_store_failure"
     DELIVERY_STORE_FAILURE = "delivery_store_failure"
+    DELIVERY_CLASSIFIER_FAILURE = "delivery_classifier_failure"
     REPLAY_STORE_FAILURE = "replay_store_failure"
     REPLAY_CHECKPOINT_FAILURE = "replay_checkpoint_failure"
     REPLAY_REPORT_FAILURE = "replay_report_failure"
@@ -50,6 +51,7 @@ class RuntimeDiagnosticOperation(str, Enum):
     DEAD_LETTER_LOOKUP = "dead_letter_lookup"
     DEAD_LETTER_REQUEUE = "dead_letter_requeue"
     DELIVERY_SETTLEMENT = "delivery_settlement"
+    CONSUMER_ERROR_CLASSIFICATION = "consumer_error_classification"
     REPLAY_BEGIN_FAILED = "replay_begin_failed"
     REPLAY_RUNNING_REPORT_UPDATE_FAILED = "replay_running_report_update_failed"
     REPLAY_CHECKPOINT_READ_FAILED = "replay_checkpoint_read_failed"

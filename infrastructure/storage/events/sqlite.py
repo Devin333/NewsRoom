@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, TypeVar
@@ -649,6 +649,12 @@ class SQLiteEventStore:
                     check_same_thread=False,
                 )
             connection.row_factory = sqlite3.Row
+            connection.create_function(
+                "newsroom_epoch_us",
+                1,
+                _epoch_microseconds,
+                deterministic=True,
+            )
             connection.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_seconds * 1000)}")
             connection.execute("PRAGMA foreign_keys=ON")
             if self.read_only:
@@ -857,6 +863,8 @@ class SQLiteEventStore:
                         "subscription version already exists with a different definition"
                     )
                 return existing
+            if subscription.status is SubscriptionStatus.RETIRED:
+                raise ValueError("subscription cannot be initially RETIRED")
             now = self._clock()
             created_at = subscription.created_at or now
             updated_at = subscription.updated_at or created_at
@@ -871,6 +879,7 @@ class SQLiteEventStore:
                 "WHERE tenant_scope = ? ORDER BY stream_id",
                 (_tenant_scope(persisted.tenant_id),),
             ).fetchall()
+            backfilled_count = 0
             for stream in streams:
                 watermark = int(stream["last_sequence"])
                 start_sequence = _subscription_start_sequence(persisted.start, watermark)
@@ -904,7 +913,16 @@ class SQLiteEventStore:
                     ).fetchall()
                     for row in rows:
                         if _event_matches_subscription_row(row, persisted):
-                            _insert_delivery(connection, persisted, row, created_at=created_at)
+                            if backfilled_count >= persisted.limits.pending_hard_limit:
+                                raise EventStoreCapacityError(
+                                    "subscription backfill exceeds its durable pending hard limit"
+                                )
+                            backfilled_count += _insert_delivery(
+                                connection,
+                                persisted,
+                                row,
+                                created_at=now,
+                            )
             return persisted
 
     def get_subscription(self, key: SubscriptionKey) -> DurableSubscription | None:
@@ -1118,6 +1136,7 @@ class SQLiteEventStore:
         request: DeliveryClaimRequest,
     ) -> tuple[ClaimedDelivery, ...]:
         with self._write() as connection:
+            authoritative_now = self._clock()
             subscription = _select_subscription(
                 connection,
                 SubscriptionKey(request.subscription_id, request.subscription_version),
@@ -1132,19 +1151,28 @@ class SQLiteEventStore:
             _recover_expired_sqlite_claims(
                 connection,
                 subscription,
-                requested_at=request.requested_at,
+                requested_at=authoritative_now,
             )
-            current_in_flight = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM event_deliveries WHERE subscription_id = ? "
-                    "AND subscription_version = ? AND state = 'claimed' AND lease_expires_at > ?",
-                    (
-                        request.subscription_id,
-                        request.subscription_version,
-                        _time_text(request.requested_at),
-                    ),
-                ).fetchone()[0]
-            )
+            active_claims = connection.execute(
+                "SELECT COUNT(*) AS in_flight, "
+                "COUNT(DISTINCT lease_owner) AS owner_count, "
+                "MAX(CASE WHEN lease_owner = ? THEN 1 ELSE 0 END) AS owner_active "
+                "FROM event_deliveries WHERE tenant_scope = ? AND subscription_id = ? "
+                "AND subscription_version = ? AND state = 'claimed' "
+                "AND newsroom_epoch_us(lease_expires_at) > newsroom_epoch_us(?)",
+                (
+                    request.lease_owner,
+                    tenant_scope,
+                    request.subscription_id,
+                    request.subscription_version,
+                    _time_text(authoritative_now),
+                ),
+            ).fetchone()
+            current_in_flight = int(active_claims["in_flight"])
+            owner_count = int(active_claims["owner_count"])
+            owner_active = bool(active_claims["owner_active"])
+            if not owner_active and owner_count >= subscription.limits.max_concurrency:
+                return ()
             capacity = max(0, subscription.limits.max_in_flight - current_in_flight)
             limit = min(request.limit, subscription.limits.batch_size, capacity)
             if limit == 0:
@@ -1155,16 +1183,19 @@ class SQLiteEventStore:
                 "d.tenant_scope = ?",
                 "("
                 "d.state = 'pending' OR "
-                "(d.state = 'retry_wait' AND d.available_at <= ?) OR "
-                "(d.state = 'claimed' AND d.lease_expires_at <= ?)"
+                "(d.state = 'retry_wait' "
+                "AND newsroom_epoch_us(d.available_at) <= newsroom_epoch_us(?)) OR "
+                "(d.state = 'claimed' "
+                "AND newsroom_epoch_us(d.lease_expires_at) "
+                "<= newsroom_epoch_us(?))"
                 ")",
             ]
             params: list[Any] = [
                 request.subscription_id,
                 request.subscription_version,
                 tenant_scope,
-                _time_text(request.requested_at),
-                _time_text(request.requested_at),
+                _time_text(authoritative_now),
+                _time_text(authoritative_now),
             ]
             if request.stream_id is not None:
                 clauses.append("d.stream_id = ?")
@@ -1193,24 +1224,27 @@ class SQLiteEventStore:
             for row in rows:
                 attempt_count = int(row["attempt_count"]) + 1
                 lease_generation = max(int(row["lease_generation"] or 0) + 1, attempt_count)
-                lease_expires_at = request.requested_at + timedelta(
+                lease_expires_at = authoritative_now + timedelta(
                     seconds=request.lease_duration_seconds
                 )
                 updated = connection.execute(
                     "UPDATE event_deliveries SET state = 'claimed', attempt_count = ?, "
                     "available_at = NULL, lease_owner = ?, lease_generation = ?, "
                     "lease_expires_at = ?, updated_at = ? WHERE delivery_id = ? AND "
-                    "(state = 'pending' OR (state = 'retry_wait' AND available_at <= ?) "
-                    "OR (state = 'claimed' AND lease_expires_at <= ?)) RETURNING *",
+                    "(state = 'pending' OR (state = 'retry_wait' "
+                    "AND newsroom_epoch_us(available_at) <= newsroom_epoch_us(?)) "
+                    "OR (state = 'claimed' "
+                    "AND newsroom_epoch_us(lease_expires_at) "
+                    "<= newsroom_epoch_us(?))) RETURNING *",
                     (
                         attempt_count,
                         request.lease_owner,
                         lease_generation,
                         _time_text(lease_expires_at),
-                        _time_text(request.requested_at),
+                        _time_text(authoritative_now),
                         str(row["delivery_id"]),
-                        _time_text(request.requested_at),
-                        _time_text(request.requested_at),
+                        _time_text(authoritative_now),
+                        _time_text(authoritative_now),
                     ),
                 ).fetchone()
                 if updated is None:
@@ -1228,6 +1262,7 @@ class SQLiteEventStore:
                     lease_owner=request.lease_owner,
                     lease_generation=lease_generation,
                     lease_expires_at=lease_expires_at,
+                    lease_started_at=authoritative_now,
                 )
                 claimed.append(
                     ClaimedDelivery(
@@ -1245,28 +1280,35 @@ class SQLiteEventStore:
         renewed_at: datetime,
         lease_duration_seconds: float,
     ) -> DeliveryLeaseToken:
+        _time_text(renewed_at)
         LeasePolicy(lease_duration_seconds)
-        new_expiry = renewed_at + timedelta(seconds=lease_duration_seconds)
         with self._write() as connection:
+            authoritative_now = self._clock()
+            new_expiry = authoritative_now + timedelta(seconds=lease_duration_seconds)
             row = connection.execute(
                 "UPDATE event_deliveries SET lease_expires_at = ?, updated_at = ? "
                 "WHERE delivery_id = ? AND delivery_generation = ? AND state = 'claimed' "
                 "AND lease_owner = ? AND lease_generation = ? AND lease_expires_at = ? "
-                "AND lease_expires_at > ? RETURNING delivery_id",
+                "AND newsroom_epoch_us(lease_expires_at) > newsroom_epoch_us(?) "
+                "RETURNING delivery_id",
                 (
                     _time_text(new_expiry),
-                    _time_text(renewed_at),
+                    _time_text(authoritative_now),
                     lease.delivery_id,
                     lease.delivery_generation,
                     lease.lease_owner,
                     lease.lease_generation,
                     _time_text(lease.lease_expires_at),
-                    _time_text(renewed_at),
+                    _time_text(authoritative_now),
                 ),
             ).fetchone()
             if row is None:
                 raise EventStaleLeaseError("delivery lease is stale or expired")
-        return replace(lease, lease_expires_at=new_expiry)
+        return replace(
+            lease,
+            lease_expires_at=new_expiry,
+            lease_started_at=authoritative_now,
+        )
 
     def pending_delivery_stats(
         self,
@@ -1274,30 +1316,59 @@ class SQLiteEventStore:
         *,
         stream_id: str | None = None,
     ) -> PendingDeliveryStats:
+        authoritative_now = self._clock()
         with self._read() as connection:
             subscription = _select_subscription(connection, key)
             if subscription is None:
-                raise KeyError(f"unknown subscription: {key.subscription_id}@{key.subscription_version}")
+                raise KeyError(
+                    f"unknown subscription: {key.subscription_id}@{key.subscription_version}"
+                )
             clauses = [
                 "subscription_id = ?",
                 "subscription_version = ?",
                 "tenant_scope = ?",
                 "state IN ('pending', 'claimed', 'retry_wait')",
             ]
-            params: list[Any] = [key.subscription_id, key.subscription_version, _tenant_scope(subscription.tenant_id)]
+            params: list[Any] = [
+                key.subscription_id,
+                key.subscription_version,
+                _tenant_scope(subscription.tenant_id),
+            ]
             if stream_id is not None:
                 clauses.append("stream_id = ?")
                 params.append(stream_id)
             row = connection.execute(
-                "SELECT COUNT(*) AS pending_count, MIN(created_at) AS oldest_pending_at "
-                "FROM event_deliveries WHERE " + " AND ".join(clauses),
+                "WITH pending AS ("
+                "SELECT delivery_generation, created_at FROM event_deliveries WHERE "
+                + " AND ".join(clauses)
+                + ") SELECT COUNT(*) AS pending_count, "
+                "SUM(CASE WHEN delivery_generation = 1 THEN 1 ELSE 0 END) AS lag, "
+                "SUM(CASE WHEN delivery_generation > 1 THEN 1 ELSE 0 END) "
+                "AS late_repair_pending_count, "
+                "(SELECT created_at FROM pending "
+                "ORDER BY newsroom_epoch_us(created_at), created_at LIMIT 1) "
+                "AS oldest_pending_at FROM pending",
                 params,
             ).fetchone()
         count = int(row["pending_count"])
+        oldest_pending_at = _time_value(row["oldest_pending_at"]) if count else None
         return PendingDeliveryStats(
             pending_count=count,
-            lag=count,
-            oldest_pending_at=_time_value(row["oldest_pending_at"]) if count else None,
+            lag=int(row["lag"] or 0),
+            oldest_pending_at=oldest_pending_at,
+            oldest_pending_age_seconds=(
+                max(0.0, (authoritative_now - oldest_pending_at).total_seconds())
+                if oldest_pending_at is not None
+                else None
+            ),
+            late_repair_pending_count=int(row["late_repair_pending_count"] or 0),
+            warning_threshold_reached=(
+                count >= subscription.limits.pending_warning_threshold
+            ),
+            capacity_remaining=max(
+                0,
+                subscription.limits.pending_hard_limit - count,
+            ),
         )
 
     def get_inbox_entry(
@@ -1429,6 +1500,7 @@ class SQLiteEventStore:
                 "dead-letter requeue requires an idempotency-ready consumer"
             )
         with self._write() as connection:
+            authoritative_now = self._clock()
             row = connection.execute(
                 "SELECT * FROM event_dead_letters WHERE dead_letter_id = ?",
                 (action.dead_letter_id,),
@@ -1454,6 +1526,10 @@ class SQLiteEventStore:
             ).fetchone()
             if event_row is None:
                 raise EventStoreCorruptionError("dead letter references a missing event")
+            if _subscription_pending_capacity_exhausted(connection, subscription):
+                raise EventStoreCapacityError(
+                    "subscription durable pending hard limit is exhausted"
+                )
             next_generation = int(
                 connection.execute(
                     "SELECT COALESCE(MAX(delivery_generation), 0) + 1 FROM event_deliveries "
@@ -1489,10 +1565,15 @@ class SQLiteEventStore:
                     _effect_scope(record.consumer_effect_id),
                     record.consumer_effect_id,
                     next_generation,
-                    _time_text(action.requested_at),
-                    _time_text(action.requested_at),
-                    _time_text(action.requested_at),
+                    _time_text(authoritative_now),
+                    _time_text(authoritative_now),
+                    _time_text(authoritative_now),
                 ),
+            )
+            operator_updated_at = max(
+                authoritative_now,
+                action.requested_at,
+                record.updated_at or authoritative_now,
             )
             updated = connection.execute(
                 "UPDATE event_dead_letters SET disposition = 'requeued', operator_id = ?, "
@@ -1500,7 +1581,7 @@ class SQLiteEventStore:
                 (
                     action.operator_id,
                     action.reason,
-                    _time_text(action.requested_at),
+                    _time_text(operator_updated_at),
                     action.dead_letter_id,
                 ),
             )
@@ -1886,14 +1967,7 @@ class SQLiteEventStore:
                 continue
             if not _event_matches_subscription_row(event_row, subscription):
                 continue
-            pending_for_subscription = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM event_deliveries WHERE subscription_id = ? "
-                    "AND subscription_version = ? AND state IN ('pending', 'claimed', 'retry_wait')",
-                    (subscription.subscription_id, subscription.subscription_version),
-                ).fetchone()[0]
-            )
-            if pending_for_subscription >= subscription.limits.pending_hard_limit:
+            if _subscription_pending_capacity_exhausted(connection, subscription):
                 raise EventStoreCapacityError(
                     "subscription pending delivery hard limit is exhausted"
                 )
@@ -1915,11 +1989,15 @@ class SQLiteEventStore:
         settlement: DeliverySettlement,
     ) -> DeliverySettlementResult:
         lease = settlement.lease
+        authoritative_now = self._clock()
         row = connection.execute(
             "SELECT * FROM event_deliveries WHERE delivery_id = ?",
             (lease.delivery_id,),
         ).fetchone()
-        if row is None or not _lease_matches(row, lease, at=settlement.settled_at):
+        if (
+            row is None
+            or not _lease_matches(row, lease, at=authoritative_now)
+        ):
             raise EventStaleLeaseError("delivery lease is stale or expired")
         delivery = _delivery_from_row(row)
         subscription = _select_subscription(
@@ -1947,9 +2025,19 @@ class SQLiteEventStore:
         last_failure_at = delivery.last_failure_at
         reason_class = settlement.reason_class
         diagnostic = settlement.redacted_diagnostic
+        delivery_time_floor = delivery.updated_at or authoritative_now
+        delivery_updated_at = max(delivery_time_floor, authoritative_now)
         if target in {DeliveryState.RETRY_WAIT, DeliveryState.DEAD_LETTER}:
-            first_failure_at = first_failure_at or settlement.settled_at
-            last_failure_at = settlement.settled_at
+            failure_occurrence = max(
+                delivery_time_floor,
+                min(settlement.settled_at, authoritative_now),
+            )
+            first_failure_at = first_failure_at or failure_occurrence
+            last_failure_at = (
+                failure_occurrence
+                if last_failure_at is None
+                else max(last_failure_at, failure_occurrence)
+            )
             if reason_class is None:
                 raise ValueError(f"{target.value} settlement requires reason_class")
 
@@ -1974,7 +2062,7 @@ class SQLiteEventStore:
                 _optional_time_text(last_failure_at),
                 reason_class,
                 diagnostic,
-                _time_text(settlement.settled_at),
+                _time_text(delivery_updated_at),
                 lease.delivery_id,
                 lease.lease_owner,
                 lease.lease_generation,
@@ -2028,7 +2116,7 @@ class SQLiteEventStore:
                 connection,
                 subscription,
                 delivery.stream_id,
-                settled_at=settlement.settled_at,
+                settled_at=delivery_updated_at,
             )
         return DeliverySettlementResult(
             delivery=_delivery_from_row(updated),
@@ -2155,6 +2243,20 @@ def _time_value(value: Any) -> datetime:
     return parsed
 
 
+def _epoch_microseconds(value: Any) -> int | None:
+    if value is None:
+        return None
+    parsed = parse_datetime(str(value))
+    if parsed is None:
+        raise ValueError("stored datetime is missing or invalid")
+    delta = parsed - datetime(1970, 1, 1, tzinfo=UTC)
+    return (
+        delta.days * 86_400_000_000
+        + delta.seconds * 1_000_000
+        + delta.microseconds
+    )
+
+
 def _optional_time_value(value: Any) -> datetime | None:
     return None if value is None else _time_value(value)
 
@@ -2272,8 +2374,35 @@ def _stored_event_from_row(row: sqlite3.Row) -> StoredEvent:
     return event
 
 
-def _subscription_definition(subscription: DurableSubscription) -> str:
-    return _json(replace(subscription, created_at=None, updated_at=None))
+def _subscription_definition(subscription: DurableSubscription) -> tuple[Any, ...]:
+    effect = subscription.effect
+    retry = subscription.retry_policy
+    limits = subscription.limits
+    return (
+        subscription.subscription_id,
+        subscription.subscription_version,
+        subscription.consumer_id,
+        tuple(sorted(subscription.event_filter.event_types)),
+        tuple(sorted(subscription.event_filter.data_schemas)),
+        subscription.start.policy.value,
+        subscription.start.start_sequence,
+        effect.performs_external_effects,
+        effect.consumer_effect_id,
+        effect.idempotency_strategy.value if effect.idempotency_strategy else None,
+        retry.max_attempts,
+        retry.initial_delay_seconds,
+        retry.multiplier,
+        retry.max_delay_seconds,
+        retry.jitter_ratio,
+        subscription.lease_policy.duration_seconds,
+        limits.batch_size,
+        limits.max_in_flight,
+        limits.max_concurrency,
+        limits.pending_warning_threshold,
+        limits.pending_hard_limit,
+        subscription.supports_out_of_order_repair,
+        subscription.tenant_id,
+    )
 
 
 def _subscription_from_row(row: sqlite3.Row) -> DurableSubscription:
@@ -2560,6 +2689,24 @@ def _lease_matches(
     )
 
 
+def _subscription_pending_capacity_exhausted(
+    connection: sqlite3.Connection,
+    subscription: DurableSubscription,
+) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM event_deliveries WHERE tenant_scope = ? "
+        "AND subscription_id = ? AND subscription_version = ? "
+        "AND state IN ('pending', 'claimed', 'retry_wait') LIMIT 1 OFFSET ?",
+        (
+            _tenant_scope(subscription.tenant_id),
+            subscription.subscription_id,
+            subscription.subscription_version,
+            subscription.limits.pending_hard_limit - 1,
+        ),
+    ).fetchone()
+    return row is not None
+
+
 def _recover_expired_sqlite_claims(
     connection: sqlite3.Connection,
     subscription: DurableSubscription,
@@ -2569,7 +2716,8 @@ def _recover_expired_sqlite_claims(
     expired = connection.execute(
         "SELECT * FROM event_deliveries WHERE subscription_id = ? "
         "AND subscription_version = ? AND tenant_scope = ? AND state = 'claimed' "
-        "AND lease_expires_at <= ? ORDER BY stream_id, stream_sequence, delivery_generation",
+        "AND newsroom_epoch_us(lease_expires_at) <= newsroom_epoch_us(?) "
+        "ORDER BY stream_id, stream_sequence, delivery_generation",
         (
             subscription.subscription_id,
             subscription.subscription_version,
