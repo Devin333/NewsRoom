@@ -60,17 +60,27 @@ from framework.events.runtime.models import (
     SubscriptionStreamStatePage,
     SubscriptionStreamStateQuery,
 )
+from framework.events.runtime.idempotency import (
+    AutomaticDeliveryOperation,
+    ConsumerIdempotencyValidator,
+    EffectIdempotencyCapability,
+    IdempotencyCapabilityRegistry,
+    effect_idempotency_key,
+    subscription_definition_fingerprint,
+)
 from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
 from framework.events.runtime.retry import RetryPlan, RetryPlanner
 
 __all__ = [
     "AppendResult",
+    "AutomaticDeliveryOperation",
     "CheckpointKey",
     "CheckpointPage",
     "CheckpointQuery",
     "ClaimedDelivery",
     "ConsumerCheckpoint",
     "ConsumerEffectContract",
+    "ConsumerIdempotencyValidator",
     "DEFAULT_MAX_ATTEMPTS",
     "DEFAULT_PAGE_LIMIT",
     "DeadLetterAction",
@@ -90,11 +100,13 @@ __all__ = [
     "DeliveryState",
     "DurableSubscription",
     "EffectIdempotencyStrategy",
+    "EffectIdempotencyCapability",
     "EventPage",
     "EventPublishRequest",
     "EventRuntime",
     "InboxEntry",
     "InboxKey",
+    "IdempotencyCapabilityRegistry",
     "LeasePolicy",
     "LegacyEventOffset",
     "MAX_LEASE_SECONDS",
@@ -128,4 +140,6 @@ __all__ = [
     "SubscriptionStreamState",
     "SubscriptionStreamStatePage",
     "SubscriptionStreamStateQuery",
+    "effect_idempotency_key",
+    "subscription_definition_fingerprint",
 ]

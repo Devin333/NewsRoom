@@ -74,12 +74,14 @@ from framework.events.recorder import (
 from framework.events.replay import EventReplay
 from framework.events.runtime import (
     AppendResult,
+    AutomaticDeliveryOperation,
     CheckpointKey,
     CheckpointPage,
     CheckpointQuery,
     ClaimedDelivery,
     ConsumerCheckpoint,
     ConsumerEffectContract,
+    ConsumerIdempotencyValidator,
     DeadLetterAction,
     DeadLetterDisposition,
     DeadLetterPage,
@@ -97,11 +99,13 @@ from framework.events.runtime import (
     DeliveryState,
     DurableSubscription,
     EffectIdempotencyStrategy,
+    EffectIdempotencyCapability,
     EventPage,
     EventPublishRequest,
     EventRuntime,
     InboxEntry,
     InboxKey,
+    IdempotencyCapabilityRegistry,
     LeasePolicy,
     LegacyEventOffset,
     PendingDeliveryStats,
@@ -132,6 +136,8 @@ from framework.events.runtime import (
     SubscriptionStreamState,
     SubscriptionStreamStatePage,
     SubscriptionStreamStateQuery,
+    effect_idempotency_key,
+    subscription_definition_fingerprint,
 )
 from framework.events.schema import (
     EventSchemaCatalog,
@@ -168,6 +174,7 @@ from framework.events.trace import TraceContext, TraceEvent, redact_trace_payloa
 
 __all__ = [
     "AppendResult",
+    "AutomaticDeliveryOperation",
     "CheckpointKey",
     "CheckpointPage",
     "CheckpointQuery",
@@ -178,6 +185,7 @@ __all__ = [
     "ConsumerDisposition",
     "ConsumerErrorClassifier",
     "ConsumerEffectContract",
+    "ConsumerIdempotencyValidator",
     "ConsumerFailure",
     "ConsumerFailureKind",
     "ConsumerOutcome",
@@ -204,6 +212,7 @@ __all__ = [
     "DropAuthorizationPolicy",
     "DropAuthorizationRule",
     "EffectIdempotencyStrategy",
+    "EffectIdempotencyCapability",
     "Event",
     "EventBus",
     "EventCandidate",
@@ -265,6 +274,7 @@ __all__ = [
     "InMemoryEventRecorder",
     "InboxEntry",
     "InboxKey",
+    "IdempotencyCapabilityRegistry",
     "LeasePolicy",
     "LegacyEventOffset",
     "PendingDeliveryStats",
@@ -324,4 +334,6 @@ __all__ = [
     "normalize_canonical_json",
     "redact_trace_payload",
     "thaw_canonical_json",
+    "effect_idempotency_key",
+    "subscription_definition_fingerprint",
 ]
