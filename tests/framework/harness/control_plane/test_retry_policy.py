@@ -3,6 +3,7 @@ from __future__ import annotations
 from framework.harness import (
     HarnessBudget,
     HarnessControlPlane,
+    InMemoryHarnessEventPort,
     HarnessRetryPolicy,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -26,6 +27,7 @@ def test_retry_exhaustion_fails_run() -> None:
         entry_step_id="call",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "call": (
                 HarnessWorkerResult(status="failed", error="first failure"),
@@ -60,6 +62,7 @@ def test_global_retry_budget_caps_step_policy_attempts() -> None:
         entry_step_id="call",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "call": (
                 HarnessWorkerResult(status="failed", error="first failure"),
@@ -96,6 +99,7 @@ def test_fail_fast_error_type_skips_retry() -> None:
         entry_step_id="call",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "call": lambda task: HarnessWorkerResult(
                 status="failed",

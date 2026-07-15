@@ -20,6 +20,7 @@ class HarnessDecisionType(StrEnum):
     ROUTE_TO_STEP = "route_to_step"
     ROUTE_TO_REPAIR = "route_to_repair"
     WAIT_FOR_APPROVAL = "wait_for_approval"
+    RESUME_AFTER_APPROVAL = "resume_after_approval"
     FAIL_RUN = "fail_run"
     COMPLETE_RUN = "complete_run"
     CANCEL_RUN = "cancel_run"

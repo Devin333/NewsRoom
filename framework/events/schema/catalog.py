@@ -452,6 +452,72 @@ _NONNEGATIVE_INTEGER = {"type": "integer", "minimum": 0}
 _POSITIVE_INTEGER = {"type": "integer", "minimum": 1}
 _NUMBER = {"type": "number"}
 _BOOLEAN = {"type": "boolean"}
+_CHECKSUM_TEXT = {
+    "type": "string",
+    "pattern": "^sha256:[0-9a-f]{64}$",
+}
+_ARRAY_OF_CHECKSUMS = {
+    "type": "array",
+    "items": _CHECKSUM_TEXT,
+    "maxItems": 4096,
+}
+_HARNESS_GATE_RESULT = {
+    "type": "object",
+    "maxProperties": 6,
+    "properties": {
+        "gate": {"type": "string", "minLength": 1, "maxLength": 128},
+        "passed": _BOOLEAN,
+        "reason": _NULLABLE_TEXT,
+        "details": _OBJECT,
+        "diagnostics": _OBJECT,
+        "result_ref": _CHECKSUM_TEXT,
+    },
+    "required": ["gate", "passed"],
+    "additionalProperties": False,
+}
+_HARNESS_GATE_RESULTS = {
+    "type": "array",
+    "items": _HARNESS_GATE_RESULT,
+    "maxItems": 256,
+}
+_HARNESS_PHASE_METADATA = {
+    "type": "object",
+    "maxProperties": 3,
+    "properties": {
+        "turn_count": _NONNEGATIVE_INTEGER,
+        "worker_call_count": _NONNEGATIVE_INTEGER,
+        "replan_count": _NONNEGATIVE_INTEGER,
+    },
+    "additionalProperties": False,
+}
+_HARNESS_DECISION_PAYLOAD = {
+    "type": "object",
+    "maxProperties": 9,
+    "properties": {
+        "approval_outcome": {"enum": ["approved", "cancelled"]},
+        "backoff_seconds": {"type": "number", "minimum": 0},
+        "max_turns": _NONNEGATIVE_INTEGER,
+        "turn_count": _NONNEGATIVE_INTEGER,
+        "gate_results": _HARNESS_GATE_RESULTS,
+        "quality_verdict_ref": _CHECKSUM_TEXT,
+        "worker_result_ref": _CHECKSUM_TEXT,
+        "value_ref": _CHECKSUM_TEXT,
+        "decision_payload_ref": _CHECKSUM_TEXT,
+    },
+    "required": ["decision_payload_ref"],
+    "additionalProperties": False,
+}
+_HARNESS_STEP_METADATA = {
+    "type": "object",
+    "maxProperties": 4,
+    "properties": {
+        "approval_granted": _BOOLEAN,
+        "rerouted": _BOOLEAN,
+        "worker_result_ref": _CHECKSUM_TEXT,
+        "metadata_ref": _CHECKSUM_TEXT,
+    },
+    "additionalProperties": False,
+}
 
 
 def _payload_schema(
@@ -692,32 +758,81 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
 
 def _harness_payload_schema(event_type: str) -> dict[str, Any]:
     if event_type == "run_created":
-        return _payload_schema()
+        return _payload_schema(
+            properties={"projection_schema": {"const": "harness-safe-summary/v1"}},
+        )
     if event_type == "run_state_changed":
-        return _payload_schema(properties={"status": _TEXT}, required=("status",))
+        return _payload_schema(
+            properties={
+                "projection_schema": {"const": "harness-safe-summary/v1"},
+                "status": {
+                    "enum": [
+                        "created",
+                        "running",
+                        "planning",
+                        "executing",
+                        "verifying",
+                        "replanning",
+                        "waiting_approval",
+                        "succeeded",
+                        "failed",
+                        "halted",
+                        "cancelled",
+                        "blocked",
+                    ]
+                },
+            },
+            required=("status",),
+        )
     if event_type == "step_state_changed":
         return _payload_schema(
             properties={
+                "projection_schema": {"const": "harness-safe-summary/v1"},
                 "step_id": _TEXT,
-                "status": _TEXT,
+                "status": {
+                    "enum": [
+                        "pending",
+                        "planning",
+                        "plan_verified",
+                        "running",
+                        "verifying",
+                        "retrying",
+                        "replanning",
+                        "succeeded",
+                        "failed",
+                        "skipped",
+                        "waiting_approval",
+                        "halted",
+                    ]
+                },
                 "attempts": _NONNEGATIVE_INTEGER,
                 "replans": _NONNEGATIVE_INTEGER,
                 "output_ref": _NULLABLE_TEXT,
+                "output_key_ref": _CHECKSUM_TEXT,
                 "error": _NULLABLE_TEXT,
-                "metadata": _OBJECT,
+                "error_ref": _CHECKSUM_TEXT,
+                "metadata": _HARNESS_STEP_METADATA,
                 "updated_at": _TEXT,
             },
-            required=("step_id", "status", "attempts", "replans", "metadata", "updated_at"),
+            required=("status", "attempts", "replans", "metadata"),
+            any_of=(
+                {"required": ["step_id", "updated_at"]},
+                {"required": ["projection_schema"]},
+            ),
         )
     if event_type == "phase_recorded":
         return _payload_schema(
             properties={
+                "projection_schema": {"const": "harness-safe-summary/v1"},
                 "phase": {"enum": ["plan", "execute", "verify", "replan", "halt"]},
+                "boundary": {"enum": ["entry", "exit"]},
                 "step_id": _TEXT,
                 "input_refs": _ARRAY_OF_TEXT,
                 "output_refs": _ARRAY_OF_TEXT,
-                "gate_results": {"type": "array", "items": _OBJECT, "maxItems": 256},
-                "metadata": _OBJECT,
+                "input_ref_checksums": _ARRAY_OF_CHECKSUMS,
+                "output_ref_checksums": _ARRAY_OF_CHECKSUMS,
+                "gate_results": _HARNESS_GATE_RESULTS,
+                "metadata": _HARNESS_PHASE_METADATA,
                 "occurred_at": _TEXT,
                 # Historical phase-transition payload retained during migration.
                 "from_phase": _TEXT,
@@ -725,61 +840,157 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
             },
             any_of=(
                 {"required": ["phase", "step_id", "gate_results", "occurred_at"]},
+                {
+                    "required": [
+                        "projection_schema",
+                        "phase",
+                        "boundary",
+                        "input_ref_checksums",
+                        "output_ref_checksums",
+                        "gate_results",
+                        "metadata",
+                    ]
+                },
                 {"required": ["from_phase", "to_phase"]},
             ),
         )
     if event_type == "decision_recorded":
         return _payload_schema(
             properties={
-                "decision_type": _TEXT,
+                "projection_schema": {"const": "harness-safe-summary/v1"},
+                "decision_type": {
+                    "enum": [
+                        "start_step",
+                        "plan_step",
+                        "execute_step",
+                        "verify_step",
+                        "complete_step",
+                        "retry_step",
+                        "replan_step",
+                        "route_to_step",
+                        "route_to_repair",
+                        "wait_for_approval",
+                        "resume_after_approval",
+                        "fail_run",
+                        "complete_run",
+                        "cancel_run",
+                        "block_run",
+                        "halt_run",
+                    ]
+                },
                 "run_id": _TEXT,
                 "step_id": _NULLABLE_TEXT,
                 "target_step_id": _NULLABLE_TEXT,
                 "reason": _NULLABLE_TEXT,
+                "reason_ref": _CHECKSUM_TEXT,
                 "payload": _OBJECT,
+                "decision_payload": _HARNESS_DECISION_PAYLOAD,
                 "decided_by": {"const": "harness"},
                 "decided_at": _TEXT,
             },
-            required=("decision_type", "run_id", "payload", "decided_by", "decided_at"),
+            required=("decision_type", "decided_by"),
+            any_of=(
+                {"required": ["run_id", "payload", "decided_at"]},
+                {"required": ["projection_schema", "decision_payload"]},
+            ),
         )
     if event_type == "worker_called":
         return _payload_schema(
             properties={
+                "projection_schema": {"const": "harness-safe-summary/v1"},
                 "run_id": _TEXT,
                 "step_id": _TEXT,
-                "worker_type": _TEXT,
+                "worker_type": {
+                    "enum": [
+                        "llm",
+                        "skill",
+                        "skill_evolution",
+                        "subagent",
+                        "retrieval",
+                        "memory",
+                        "mcp",
+                        "quality_gate",
+                        "artifact",
+                        "script",
+                    ]
+                },
                 "inputs": _OBJECT,
                 "metadata": _OBJECT,
+                "input_ref": _CHECKSUM_TEXT,
+                "input_count": _NONNEGATIVE_INTEGER,
+                "metadata_ref": _CHECKSUM_TEXT,
             },
-            required=("run_id", "step_id", "worker_type", "inputs", "metadata"),
+            required=("worker_type",),
+            any_of=(
+                {"required": ["run_id", "step_id", "inputs", "metadata"]},
+                {
+                    "required": [
+                        "projection_schema",
+                        "input_ref",
+                        "input_count",
+                        "metadata_ref",
+                    ]
+                },
+            ),
         )
     if event_type == "worker_result_recorded":
         return _payload_schema(
             properties={
-                "status": _TEXT,
+                "projection_schema": {"const": "harness-safe-summary/v1"},
+                "status": {
+                    "enum": ["succeeded", "failed", "blocked", "waiting_approval"]
+                },
                 "output": _OBJECT,
                 "artifacts": _ARRAY_OF_TEXT,
                 "diagnostics": _OBJECT,
                 "metrics": _OBJECT,
                 "error": _NULLABLE_TEXT,
+                "output_ref": _CHECKSUM_TEXT,
+                "diagnostics_ref": _CHECKSUM_TEXT,
+                "metric_count": _NONNEGATIVE_INTEGER,
+                "artifact_count": _NONNEGATIVE_INTEGER,
+                "artifact_ref_checksums": _ARRAY_OF_CHECKSUMS,
+                "error_ref": _CHECKSUM_TEXT,
             },
-            required=("status", "output", "artifacts", "diagnostics", "metrics"),
+            required=("status",),
+            any_of=(
+                {"required": ["output", "artifacts", "diagnostics", "metrics"]},
+                {
+                    "required": [
+                        "projection_schema",
+                        "output_ref",
+                        "diagnostics_ref",
+                        "metric_count",
+                        "artifact_count",
+                        "artifact_ref_checksums",
+                    ]
+                },
+            ),
         )
     if event_type == "gate_evaluated":
         return _payload_schema(
             properties={
-                "gate": _TEXT,
+                "projection_schema": {"const": "harness-safe-summary/v1"},
+                "gate": {"type": "string", "minLength": 1, "maxLength": 128},
                 "passed": _BOOLEAN,
                 "reason": _NULLABLE_TEXT,
                 "details": _OBJECT,
+                "reason_ref": _CHECKSUM_TEXT,
+                "details_ref": _CHECKSUM_TEXT,
             },
-            required=("gate", "passed", "details"),
+            required=("gate", "passed"),
+            any_of=(
+                {"required": ["details"]},
+                {"required": ["projection_schema", "details_ref"]},
+            ),
         )
     if event_type == "checkpoint_created":
         return _payload_schema(
-            properties={"checkpoint_id": _TEXT},
+            properties={
+                "projection_schema": {"const": "harness-safe-summary/v1"},
+                "checkpoint_id": _TEXT,
+            },
             required=("checkpoint_id",),
-            additional_properties=True,
         )
     raise EventSchemaError(f"Harness event schema is not defined: {event_type}")
 
@@ -812,22 +1023,61 @@ def _workflow_sensitivity_policy(event_type: str) -> SensitivityPolicy:
 
 
 def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
+    if event_type == "phase_recorded":
+        return SensitivityPolicy(
+            field_rules={
+                "/input_refs/*": FieldDisposition.REFERENCE_ONLY,
+                "/output_refs/*": FieldDisposition.REFERENCE_ONLY,
+                "/gate_results/*/details": FieldDisposition.SENSITIVE,
+                "/gate_results/*/diagnostics": FieldDisposition.REFERENCE_ONLY,
+                "/gate_results/*/reason": FieldDisposition.SENSITIVE,
+            },
+            redact_sensitive=True,
+        )
+    if event_type == "decision_recorded":
+        return SensitivityPolicy(
+            field_rules={
+                "/payload": FieldDisposition.REFERENCE_ONLY,
+                "/reason": FieldDisposition.SENSITIVE,
+            },
+            allow_payload_reference=True,
+            redact_sensitive=True,
+        )
     if event_type == "worker_called":
         return SensitivityPolicy(
-            field_rules={"/inputs": FieldDisposition.REFERENCE_ONLY},
+            field_rules={
+                "/inputs": FieldDisposition.REFERENCE_ONLY,
+                "/metadata": FieldDisposition.REFERENCE_ONLY,
+            },
             allow_payload_reference=True,
         )
     if event_type == "worker_result_recorded":
         return SensitivityPolicy(
             field_rules={
                 "/output": FieldDisposition.REFERENCE_ONLY,
+                "/artifacts/*": FieldDisposition.REFERENCE_ONLY,
                 "/diagnostics": FieldDisposition.REFERENCE_ONLY,
+                "/metrics": FieldDisposition.SENSITIVE,
+                "/error": FieldDisposition.SENSITIVE,
             },
             allow_payload_reference=True,
+            redact_sensitive=True,
         )
     if event_type == "gate_evaluated":
         return SensitivityPolicy(
-            field_rules={"/details": FieldDisposition.SENSITIVE},
+            field_rules={
+                "/details": FieldDisposition.SENSITIVE,
+                "/reason": FieldDisposition.SENSITIVE,
+            },
+            redact_sensitive=True,
+        )
+    if event_type == "step_state_changed":
+        return SensitivityPolicy(
+            field_rules={
+                "/error": FieldDisposition.SENSITIVE,
+                "/output_ref": FieldDisposition.REFERENCE_ONLY,
+                "/metadata/worker_result": FieldDisposition.REFERENCE_ONLY,
+            },
             redact_sensitive=True,
         )
     return SensitivityPolicy()

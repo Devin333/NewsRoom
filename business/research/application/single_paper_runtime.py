@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
+from framework.artifacts.paths import validate_artifact_path_segment
 from framework.harness import (
     ArtifactPort,
     ArtifactRef,
@@ -14,6 +15,7 @@ from framework.harness import (
     HarnessBudget,
     HarnessControlPlane,
     HarnessEvent,
+    HarnessEventPort,
     HarnessGateResult,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -21,7 +23,6 @@ from framework.harness import (
     HarnessTranscript,
     HarnessWorkerResult,
     HarnessWorkerStatus,
-    InMemoryHarnessEventPort,
     RAGBudget,
     RAGContextPack,
     SkillExperience,
@@ -126,6 +127,7 @@ class ResearchSinglePaperRuntime:
         github_repository: Any,
         rag_runtime: Any,
         artifact_port: ArtifactPort,
+        event_port_factory: Callable[[str], HarnessEventPort],
         taxonomy_registry: TaxonomyRegistry | None = None,
         context_assembler: ContextAssembler | None = None,
         quality_gate: ResearchQualityGate | None = None,
@@ -136,6 +138,9 @@ class ResearchSinglePaperRuntime:
         self.github_repository = github_repository
         self.rag_runtime = rag_runtime
         self.artifact_port = artifact_port
+        if not callable(event_port_factory):
+            raise TypeError("event_port_factory must be callable")
+        self.event_port_factory = event_port_factory
         self.taxonomy_registry = taxonomy_registry or TaxonomyRegistry.default()
         self.context_assembler = context_assembler or ContextAssembler()
         self.quality_gate = quality_gate or ResearchQualityGate()
@@ -146,11 +151,14 @@ class ResearchSinglePaperRuntime:
         self.rag_policy_builder = ResearchRAGPolicyBuilder()
 
     def run(self, request: AnalyzePaperRequest) -> ResearchAnalysisResult:
+        run_id = validate_artifact_path_segment(request.run_id, field="run_id")
         workspace = _ResearchRunWorkspace(request=request)
-        event_port = InMemoryHarnessEventPort()
+        event_port = self.event_port_factory(run_id)
+        if not isinstance(event_port, HarnessEventPort):
+            raise TypeError("event_port_factory must return HarnessEventPort")
         workflow = build_paper_analysis_workflow_spec()
         run_spec = HarnessRunSpec(
-            run_id=request.run_id,
+            run_id=run_id,
             workflow=workflow,
             inputs={"paper_id": request.paper_id, "source_ref": request.source_ref},
             budget=_budget_from_options(request.options),
@@ -171,22 +179,26 @@ class ResearchSinglePaperRuntime:
             ),
         )
         harness_result = control_plane.run(run_spec)
-        trace = HarnessTrace(run_id=request.run_id, events=tuple(event_port.events), metadata={"paper_id": request.paper_id})
-        transcript = _transcript_from_events(request.run_id, event_port.events)
+        trace = HarnessTrace(
+            run_id=run_id,
+            events=harness_result.events,
+            metadata={"paper_id": request.paper_id},
+        )
+        transcript = _transcript_from_events(run_id, harness_result.events)
         artifacts = dict(workspace.artifact_refs)
         if trace.events:
             artifacts["harness-trace"] = self._write_artifact(
                 "harness-trace",
                 trace.to_dict(),
-                metadata={"run_id": request.run_id},
+                metadata={"run_id": run_id},
             ).ref
             artifacts["harness-transcript"] = self._write_artifact(
                 "harness-transcript",
                 transcript.to_dict(),
-                metadata={"run_id": request.run_id},
+                metadata={"run_id": run_id},
             ).ref
         quality = workspace.quality or ResearchQualityResult(
-            result_id=stable_research_id("quality", request.run_id, "halted"),
+            result_id=stable_research_id("quality", run_id, "halted"),
             target_id=request.paper_id,
             target_type="summary",
             passed=False,
@@ -197,10 +209,10 @@ class ResearchSinglePaperRuntime:
             "harness_status": harness_result.state.status.value,
             "terminal_reason": harness_result.state.metadata.get("terminal_reason"),
             "worker_results": {key: value.to_dict() for key, value in harness_result.worker_results.items()},
-            "gate_failures": _gate_failures(event_port.events),
+            "gate_failures": _gate_failures(harness_result.events),
         }
         return ResearchAnalysisResult(
-            run_id=request.run_id,
+            run_id=run_id,
             status=harness_result.state.status.value,
             analysis=workspace.analysis,
             quality=quality,

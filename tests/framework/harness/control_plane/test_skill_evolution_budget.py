@@ -16,6 +16,7 @@ from framework.harness import (
     HarnessWorkerStatus,
     HarnessWorkerType,
     HarnessWorkflowSpec,
+    InMemoryHarnessEventPort,
 )
 
 
@@ -60,6 +61,7 @@ def test_fake_skill_optimizer_promote_output_does_not_publish() -> None:
         entry_step_id="optimize",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "optimize": lambda task: LeakySkillOptimizerResult(
                 status=HarnessWorkerStatus.SUCCEEDED,
@@ -109,6 +111,7 @@ def test_skill_evolution_budget_exhaustion_halts_run() -> None:
         entry_step_id="optimize",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "optimize": lambda task: HarnessWorkerResult(
                 status="succeeded",

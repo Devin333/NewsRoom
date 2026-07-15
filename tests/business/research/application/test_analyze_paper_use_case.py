@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from framework.harness import FakeArtifactPort
+from collections.abc import Callable
+
+import pytest
+
+from framework.artifacts.paths import ArtifactPathError
+from framework.harness import (
+    FakeArtifactPort,
+    HarnessEvent,
+    HarnessEventPort,
+    InMemoryHarnessEventPort,
+)
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
 from business.research.application.single_paper_runtime import ResearchSinglePaperRuntime
@@ -13,12 +23,24 @@ from tests.business.research.fakes import (
 )
 
 
+class _WriteOnlyHarnessEventPort:
+    """Valid HarnessEventPort implementation without a public event buffer."""
+
+    def __init__(self) -> None:
+        self.record_count = 0
+
+    def record(self, event: HarnessEvent) -> HarnessEvent:
+        self.record_count += 1
+        return event
+
+
 def _use_case(
     *,
     llm: FakeResearchLLMWorker | None = None,
     compiler: FakeResearchDocumentCompiler | None = None,
     rag: FakeResearchRAGRuntime | None = None,
     artifact_port: FakeArtifactPort | None = None,
+    event_port_factory: Callable[[str], HarnessEventPort] | None = None,
 ) -> AnalyzePaperUseCase:
     runtime = ResearchSinglePaperRuntime(
         source_provider=FakeResearchSourceProvider(),
@@ -27,6 +49,8 @@ def _use_case(
         github_repository=FakeGithubRepositoryPort(),
         rag_runtime=rag or FakeResearchRAGRuntime(),
         artifact_port=artifact_port or FakeArtifactPort(),
+        event_port_factory=event_port_factory
+        or (lambda run_id: InMemoryHarnessEventPort()),
     )
     return AnalyzePaperUseCase(runtime)
 
@@ -54,6 +78,43 @@ def test_analyze_paper_use_case_runs_single_paper_loop_successfully() -> None:
     assert "research-reader-payload" in result.artifact_refs
     assert "research-paper-card" in result.artifact_refs
     assert result.skill_experience_refs
+
+
+def test_analyze_uses_committed_events_without_reading_port_storage() -> None:
+    event_port = _WriteOnlyHarnessEventPort()
+
+    result = _use_case(event_port_factory=lambda run_id: event_port).analyze(
+        AnalyzePaperRequest(
+            run_id="research-run-write-only-event-port",
+            paper_id="paper-harness-001",
+            source_ref="https://arxiv.org/abs/2606.00123",
+            user_id="user-1",
+        )
+    )
+
+    assert result.succeeded is True
+    assert event_port.record_count > 0
+    assert result.trace.events
+
+
+def test_analyze_rejects_unsafe_run_id_before_event_port_factory() -> None:
+    factory_calls: list[str] = []
+
+    def event_port_factory(run_id: str) -> HarnessEventPort:
+        factory_calls.append(run_id)
+        return _WriteOnlyHarnessEventPort()
+
+    with pytest.raises(ArtifactPathError, match="single path segment"):
+        _use_case(event_port_factory=event_port_factory).analyze(
+            AnalyzePaperRequest(
+                run_id="../escape",
+                paper_id="paper-harness-001",
+                source_ref="https://arxiv.org/abs/2606.00123",
+                user_id="user-1",
+            )
+        )
+
+    assert factory_calls == []
 
 
 def test_llm_flow_control_candidate_does_not_route_workflow() -> None:

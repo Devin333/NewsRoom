@@ -3,6 +3,7 @@ from __future__ import annotations
 from framework.harness import (
     FakeLLMWorker,
     HarnessControlPlane,
+    InMemoryHarnessEventPort,
     HarnessRunSpec,
     HarnessRunStatus,
     HarnessStepSpec,
@@ -21,7 +22,10 @@ def test_fake_llm_worker_can_be_called_by_harness_control_plane() -> None:
         entry_step_id="draft",
     )
 
-    result = HarnessControlPlane(worker_registry={"draft": worker}).run(
+    result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
+        worker_registry={"draft": worker},
+    ).run(
         HarnessRunSpec(run_id="run-llm-port", workflow=workflow)
     )
 

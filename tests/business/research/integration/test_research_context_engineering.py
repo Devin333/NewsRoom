@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.harness import FakeArtifactPort
+from framework.harness import FakeArtifactPort, InMemoryHarnessEventPort
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
 from business.research.application.single_paper_runtime import ResearchSinglePaperRuntime
@@ -22,6 +22,7 @@ def test_rag_context_writes_snapshot_before_llm_visible_artifacts() -> None:
             github_repository=FakeGithubRepositoryPort(),
             rag_runtime=FakeResearchRAGRuntime(),
             artifact_port=FakeArtifactPort(),
+            event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
         )
     ).analyze(
         AnalyzePaperRequest(
@@ -52,6 +53,7 @@ def test_context_compression_preserves_source_refs_and_budget() -> None:
             github_repository=FakeGithubRepositoryPort(),
             rag_runtime=FakeResearchRAGRuntime(),
             artifact_port=FakeArtifactPort(),
+            event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
         )
     ).analyze(
         AnalyzePaperRequest(

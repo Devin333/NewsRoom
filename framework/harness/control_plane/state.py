@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -8,7 +9,7 @@ from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudget
 from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.shared.json import stable_json_dumps, to_jsonable
-from framework.shared.time import format_datetime, utc_now
+from framework.shared.time import ensure_utc, format_datetime, utc_now
 
 
 class HarnessRunStatus(StrEnum):
@@ -48,6 +49,7 @@ class HarnessRunSpec:
     inputs: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     budget: HarnessBudget = field(default_factory=HarnessBudget.safe_default)
+    created_at: Any = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
         if not str(self.run_id).strip():
@@ -56,6 +58,12 @@ class HarnessRunSpec:
             raise HarnessValidationError("workflow must be HarnessWorkflowSpec")
         if not isinstance(self.budget, HarnessBudget):
             raise HarnessValidationError("budget must be HarnessBudget")
+        if (
+            not isinstance(self.created_at, datetime)
+            or self.created_at.tzinfo is None
+            or self.created_at.utcoffset() is None
+        ):
+            raise HarnessValidationError("created_at must be a timezone-aware datetime")
         try:
             stable_json_dumps(self.inputs)
             stable_json_dumps(self.metadata)
@@ -64,6 +72,7 @@ class HarnessRunSpec:
         object.__setattr__(self, "run_id", str(self.run_id))
         object.__setattr__(self, "inputs", dict(self.inputs))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "created_at", ensure_utc(self.created_at))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +81,7 @@ class HarnessRunSpec:
             "inputs": to_jsonable(self.inputs),
             "metadata": to_jsonable(self.metadata),
             "budget": self.budget.to_dict(),
+            "created_at": format_datetime(self.created_at),
         }
 
 

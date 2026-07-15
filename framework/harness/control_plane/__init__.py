@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from framework.harness.control_plane.decision import HarnessDecision, HarnessDecisionType
+from framework.harness.control_plane.durable_events import (
+    DurableHarnessEventPort,
+    HarnessEventCanonicalAdapter,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
-from framework.harness.control_plane.event_log import HarnessEventLogEntry, InMemoryHarnessEventLog, event_log_entry_from_harness_event
+from framework.harness.control_plane.event_log import (
+    HarnessEventLogEntry,
+    InMemoryHarnessEventLog,
+    event_log_entry_from_harness_event,
+    event_log_entry_from_stored_event,
+)
 from framework.harness.control_plane.gates import (
     BudgetGate,
     DeduplicationGate,
@@ -16,7 +25,12 @@ from framework.harness.control_plane.gates import (
     ToolAllowlistGate,
 )
 from framework.harness.control_plane.harness import HarnessControlPlane, HarnessRunResult, InMemoryHarnessEventPort
-from framework.harness.control_plane.phase import HarnessPhase, HarnessPhaseRecord, assert_step_completion_allowed
+from framework.harness.control_plane.phase import (
+    HarnessPhase,
+    HarnessPhaseBoundary,
+    HarnessPhaseRecord,
+    assert_step_completion_allowed,
+)
 from framework.harness.control_plane.policy import HarnessBudget, HarnessBudgetSnapshot
 from framework.harness.control_plane.routing import HarnessRoutingEvaluator
 from framework.harness.control_plane.scheduler import HarnessScheduler
@@ -45,6 +59,7 @@ __all__ = [
     "BudgetGate",
     "DeduplicationGate",
     "DeterministicGate",
+    "DurableHarnessEventPort",
     "GateContext",
     "HarnessBudgetSnapshot",
     "HarnessControlPlane",
@@ -54,8 +69,10 @@ __all__ = [
     "HarnessEvent",
     "HarnessEventLogEntry",
     "HarnessEventType",
+    "HarnessEventCanonicalAdapter",
     "HarnessGateResult",
     "HarnessPhase",
+    "HarnessPhaseBoundary",
     "HarnessPhaseRecord",
     "HarnessRoutingEvaluator",
     "HarnessRunSpec",
@@ -78,6 +95,7 @@ __all__ = [
     "ToolAllowlistGate",
     "assert_step_completion_allowed",
     "event_log_entry_from_harness_event",
+    "event_log_entry_from_stored_event",
     "get_step_state",
     "replace_step_state",
     "transition_run",

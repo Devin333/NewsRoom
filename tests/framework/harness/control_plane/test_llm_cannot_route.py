@@ -14,6 +14,7 @@ from framework.harness import (
     HarnessValidationError,
     HarnessWorkerResult,
     HarnessWorkflowSpec,
+    InMemoryHarnessEventPort,
 )
 from framework.harness.workers.result import HarnessWorkerStatus
 
@@ -54,6 +55,7 @@ def test_fake_llm_next_step_output_does_not_control_routing() -> None:
         entry_step_id="draft",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "draft": lambda task: LeakyWorkerResult(
                 status=HarnessWorkerStatus.SUCCEEDED,

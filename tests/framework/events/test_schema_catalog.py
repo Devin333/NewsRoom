@@ -247,6 +247,87 @@ def test_default_catalog_uses_real_workflow_and_harness_payload_contracts() -> N
     assert secret not in str(harness_error.value)
 
 
+def test_default_catalog_accepts_harness_safe_summary_contracts() -> None:
+    catalog = default_event_schema_catalog()
+    summaries = {
+        "decision_recorded": {
+            "projection_schema": "harness-safe-summary/v1",
+            "decision_type": "retry_step",
+            "step_id": "collect",
+            "target_step_id": None,
+            "reason_ref": "sha256:" + "1" * 64,
+            "decision_payload": {
+                "backoff_seconds": 1,
+                "decision_payload_ref": "sha256:" + "2" * 64,
+            },
+            "decided_by": "harness",
+            "decided_at": "2026-07-15T08:00:00Z",
+        },
+        "worker_called": {
+            "projection_schema": "harness-safe-summary/v1",
+            "worker_type": "llm",
+            "input_ref": "sha256:" + "3" * 64,
+            "input_count": 1,
+            "metadata_ref": "sha256:" + "4" * 64,
+        },
+        "worker_result_recorded": {
+            "projection_schema": "harness-safe-summary/v1",
+            "status": "succeeded",
+            "output_ref": "sha256:" + "5" * 64,
+            "diagnostics_ref": "sha256:" + "6" * 64,
+            "metric_count": 1,
+            "artifact_count": 0,
+            "artifact_ref_checksums": [],
+        },
+        "gate_evaluated": {
+            "projection_schema": "harness-safe-summary/v1",
+            "gate": "quality",
+            "passed": True,
+            "details_ref": "sha256:" + "7" * 64,
+        },
+    }
+
+    for event_type, payload in summaries.items():
+        assert catalog.validate(
+            event_type,
+            "newsroom.harness-event/v1",
+            payload,
+        ) == payload
+
+    with pytest.raises(EventSchemaValidationError) as invalid_ref:
+        catalog.validate(
+            "worker_called",
+            "newsroom.harness-event/v1",
+            {
+                **summaries["worker_called"],
+                "input_ref": "sk-raw-secret",
+            },
+        )
+    assert invalid_ref.value.path == "$.input_ref"
+
+    with pytest.raises(EventSchemaValidationError) as nested_bypass:
+        catalog.validate(
+            "phase_recorded",
+            "newsroom.harness-event/v1",
+            {
+                "projection_schema": "harness-safe-summary/v1",
+                "phase": "verify",
+                "boundary": "exit",
+                "input_ref_checksums": [],
+                "output_ref_checksums": [],
+                "gate_results": [
+                    {
+                        "gate": "quality",
+                        "passed": False,
+                        "operator_note": "sk-nested-policy-bypass",
+                    }
+                ],
+                "metadata": {},
+            },
+        )
+    assert nested_bypass.value.path == "$.gate_results[0]"
+
+
 def test_default_catalog_registers_schema_owned_sensitivity_policies() -> None:
     catalog = default_event_schema_catalog()
 
@@ -262,6 +343,22 @@ def test_default_catalog_registers_schema_owned_sensitivity_policies() -> None:
     assert stream_policy.disposition_for("/stream_event") is FieldDisposition.REFERENCE_ONLY
     assert stream_policy.allow_payload_reference is True
     assert worker_policy.disposition_for("/inputs") is FieldDisposition.REFERENCE_ONLY
+    assert worker_policy.disposition_for("/metadata") is FieldDisposition.REFERENCE_ONLY
+
+    decision_policy = catalog.get(
+        "decision_recorded",
+        "newsroom.harness-event/v1",
+    ).sensitivity_policy
+    phase_policy = catalog.get(
+        "phase_recorded",
+        "newsroom.harness-event/v1",
+    ).sensitivity_policy
+    assert decision_policy.disposition_for("/payload") is FieldDisposition.REFERENCE_ONLY
+    assert decision_policy.disposition_for("/reason") is FieldDisposition.SENSITIVE
+    assert (
+        phase_policy.disposition_for("/gate_results/0/diagnostics")
+        is FieldDisposition.REFERENCE_ONLY
+    )
 
 
 def test_registration_rejects_non_adjacent_and_impure_upcasters() -> None:

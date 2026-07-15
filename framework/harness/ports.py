@@ -68,7 +68,8 @@ class HarnessArtifactPort(Protocol):
 
 @runtime_checkable
 class HarnessEventPort(Protocol):
-    def record(self, event: HarnessEvent) -> None:
+    def record(self, event: HarnessEvent) -> HarnessEvent:
+        """Commit an event and return its authoritative post-commit projection."""
         ...
 
 

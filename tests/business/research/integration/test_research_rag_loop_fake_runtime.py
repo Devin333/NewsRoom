@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.harness import FakeArtifactPort
+from framework.harness import FakeArtifactPort, InMemoryHarnessEventPort
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
 from business.research.application.single_paper_runtime import ResearchSinglePaperRuntime
@@ -22,6 +22,7 @@ def _use_case(rag_runtime: FakeResearchRAGRuntime) -> AnalyzePaperUseCase:
             github_repository=FakeGithubRepositoryPort(),
             rag_runtime=rag_runtime,
             artifact_port=FakeArtifactPort(),
+            event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
         )
     )
 

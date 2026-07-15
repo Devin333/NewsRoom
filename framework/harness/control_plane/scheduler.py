@@ -151,7 +151,10 @@ class HarnessScheduler:
         if worker_result is None:
             return HarnessDecision(decision_type=HarnessDecisionType.EXECUTE_STEP, run_id=state.run_spec.run_id, step_id=step_id)
         if worker_result.status == HarnessWorkerStatus.SUCCEEDED:
-            if step_spec.metadata.get("approval_required") is True:
+            if (
+                step_spec.metadata.get("approval_required") is True
+                and not get_step_state(state, step_id).metadata.get("approval_granted")
+            ):
                 return HarnessDecision(
                     decision_type=HarnessDecisionType.WAIT_FOR_APPROVAL,
                     run_id=state.run_spec.run_id,

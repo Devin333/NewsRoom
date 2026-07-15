@@ -5,6 +5,7 @@ from framework.harness import (
     HarnessControlPlane,
     HarnessDecisionType,
     HarnessEventType,
+    InMemoryHarnessEventPort,
     HarnessRetryPolicy,
     HarnessRouteKind,
     HarnessRoutingRule,
@@ -27,6 +28,7 @@ def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> N
         entry_step_id="collect",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "collect": lambda task: HarnessWorkerResult(status="succeeded", output={"claim": "grounded"}),
             "summarize": lambda task: HarnessWorkerResult(status="succeeded", output={"summary": "done"}),
@@ -48,13 +50,19 @@ def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> N
         HarnessDecisionType.COMPLETE_RUN,
     ]
     phase_events = [event for event in result.events if event.event_type == HarnessEventType.PHASE_RECORDED]
-    assert [(event.step_id, event.payload["phase"]) for event in phase_events] == [
-        ("collect", "plan"),
-        ("collect", "execute"),
-        ("collect", "verify"),
-        ("summarize", "plan"),
-        ("summarize", "execute"),
-        ("summarize", "verify"),
+    assert [(event.step_id, event.payload["phase"], event.payload["boundary"]) for event in phase_events] == [
+        ("collect", "plan", "entry"),
+        ("collect", "plan", "exit"),
+        ("collect", "execute", "entry"),
+        ("collect", "execute", "exit"),
+        ("collect", "verify", "entry"),
+        ("collect", "verify", "exit"),
+        ("summarize", "plan", "entry"),
+        ("summarize", "plan", "exit"),
+        ("summarize", "execute", "entry"),
+        ("summarize", "execute", "exit"),
+        ("summarize", "verify", "entry"),
+        ("summarize", "verify", "exit"),
     ]
 
 
@@ -77,6 +85,7 @@ def test_routing_rule_jumps_to_declared_step() -> None:
         ),
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "classify": lambda task: HarnessWorkerResult(status="succeeded", output={"quality_score": 0.95}),
             "repair": lambda task: HarnessWorkerResult(status="succeeded", output={"fixed": True}),
@@ -106,6 +115,7 @@ def test_quality_gate_failed_routes_to_repair_step() -> None:
         entry_step_id="draft",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "draft": lambda task: HarnessWorkerResult(status="succeeded", output={"body": "missing title"}),
             "repair": lambda task: HarnessWorkerResult(status="succeeded", output={"title": "fixed"}),
@@ -133,6 +143,7 @@ def test_max_replans_exhaustion_halts_run() -> None:
         entry_step_id="draft",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={"draft": lambda task: HarnessWorkerResult(status="succeeded", output={"body": "missing title"})}
     ).run(
         HarnessRunSpec(
@@ -154,6 +165,7 @@ def test_max_turns_exhaustion_halts_run() -> None:
         entry_step_id="collect",
     )
     result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
         worker_registry={"collect": lambda task: HarnessWorkerResult(status="succeeded", output={"ok": True})}
     ).run(
         HarnessRunSpec(

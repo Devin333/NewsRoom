@@ -17,10 +17,16 @@ class HarnessPhase(StrEnum):
     HALT = "halt"
 
 
+class HarnessPhaseBoundary(StrEnum):
+    ENTRY = "entry"
+    EXIT = "exit"
+
+
 @dataclass(frozen=True)
 class HarnessPhaseRecord:
     phase: HarnessPhase | str
     step_id: str
+    boundary: HarnessPhaseBoundary | str = HarnessPhaseBoundary.EXIT
     input_refs: tuple[str, ...] = ()
     output_refs: tuple[str, ...] = ()
     gate_results: tuple[dict[str, Any], ...] = ()
@@ -29,6 +35,7 @@ class HarnessPhaseRecord:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "phase", HarnessPhase(self.phase))
+        object.__setattr__(self, "boundary", HarnessPhaseBoundary(self.boundary))
         if not str(self.step_id).strip():
             raise HarnessValidationError("step_id is required")
         object.__setattr__(self, "step_id", str(self.step_id))
@@ -44,6 +51,7 @@ class HarnessPhaseRecord:
     def to_dict(self) -> dict[str, Any]:
         return {
             "phase": self.phase.value,
+            "boundary": self.boundary.value,
             "step_id": self.step_id,
             "input_refs": list(self.input_refs),
             "output_refs": list(self.output_refs),
@@ -58,4 +66,9 @@ def assert_step_completion_allowed(phase_record: HarnessPhaseRecord) -> None:
         raise HarnessValidationError("step completion requires VERIFY phase with gate results")
 
 
-__all__ = ["HarnessPhase", "HarnessPhaseRecord", "assert_step_completion_allowed"]
+__all__ = [
+    "HarnessPhase",
+    "HarnessPhaseBoundary",
+    "HarnessPhaseRecord",
+    "assert_step_completion_allowed",
+]

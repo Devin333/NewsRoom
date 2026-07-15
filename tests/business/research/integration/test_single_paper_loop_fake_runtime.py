@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.harness import FakeArtifactPort
+from framework.harness import FakeArtifactPort, InMemoryHarnessEventPort
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
 from business.research.application.single_paper_runtime import ResearchSinglePaperRuntime
@@ -22,6 +22,10 @@ def _runtime(**overrides):
         github_repository=overrides.pop("github_repository", FakeGithubRepositoryPort()),
         rag_runtime=overrides.pop("rag_runtime", FakeResearchRAGRuntime()),
         artifact_port=artifact_port,
+        event_port_factory=overrides.pop(
+            "event_port_factory",
+            lambda run_id: InMemoryHarnessEventPort(),
+        ),
     )
 
 
