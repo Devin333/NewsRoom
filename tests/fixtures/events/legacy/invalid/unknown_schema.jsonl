@@ -1,0 +1,2 @@
+{"event_id":"evt-unknown-schema-001","event_type":"workflow_started","occurred_at":"2026-05-25T06:01:00Z","payload":{},"run_id":"run-fixture-unknown","schema_version":"newsroom.event_record.v999"}
+

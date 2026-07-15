@@ -1,0 +1,3 @@
+{"event_type":"phase_recorded","metadata":{"attempt":1},"occurred_at":"2026-05-24T05:00:00Z","payload":{"from_phase":"PLAN","to_phase":"EXECUTE"},"run_id":"run-fixture-5","step_id":"collect","trace_id":"55555555555555555555555555555555"}
+{"decision":null,"error":null,"event_id":"harness-event-log-001","event_type":"gate_evaluated","metadata":{"gate":"evidence"},"payload":{"passed":true},"retry_count":0,"run_id":"run-fixture-5","status":"passed","step_id":"collect","timestamp":"2026-05-24T05:01:00Z","worker_id":null}
+

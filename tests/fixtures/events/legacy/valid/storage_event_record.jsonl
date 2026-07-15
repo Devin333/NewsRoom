@@ -1,0 +1,2 @@
+{"agent_id":"agent-fixture","event_id":"evt-storage-001","event_type":"tool_called","metadata":{"source_offset":7},"payload":{"arguments_ref":"artifact://run-fixture-3/tool-call.json"},"redacted":true,"request_id":"request-fixture","run_id":"run-fixture-3","severity":"info","step_id":"step-tool","task_id":"task-fixture","timestamp":"2026-05-22T03:00:00Z","tool_call_id":"tool-call-fixture","trace_id":"44444444444444444444444444444444","workflow_id":"wf-fixture"}
+

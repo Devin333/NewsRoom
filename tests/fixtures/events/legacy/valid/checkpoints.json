@@ -1,0 +1,29 @@
+{
+  "workflow_v0": {
+    "checkpoint_id": "cp-000001-step-1",
+    "event_offset": 1,
+    "run_id": "run-fixture-1",
+    "step_id": "step-1"
+  },
+  "workflow_v1_envelope": {
+    "metadata": {
+      "event_offset": 1
+    },
+    "payload": {
+      "checkpoint_id": "cp-000001-step-1",
+      "run_id": "run-fixture-1",
+      "step_id": "step-1"
+    },
+    "schema_version": "newsroom.workflow_checkpoint.v1"
+  },
+  "harness": {
+    "checkpoint_id": "harness-cp-001",
+    "last_event_id": "harness-event-log-001",
+    "run_id": "run-fixture-5"
+  },
+  "expected_offset_mapping": [
+    {"legacy_offset": 0, "stream_sequence": 1},
+    {"legacy_offset": 1, "stream_sequence": 2}
+  ]
+}
+
