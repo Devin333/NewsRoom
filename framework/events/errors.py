@@ -122,6 +122,30 @@ class EventStoreCorruptionError(EventStoreError):
     """Raised when the durable store fails an integrity check."""
 
 
+class EventSubscriptionPositionError(EventStoreError, ValueError):
+    """Raised when a subscription start cannot be represented for a stream."""
+
+    def __init__(
+        self,
+        *,
+        subscription_id: str,
+        subscription_version: int,
+        stream_id: str,
+        requested_sequence: int,
+        maximum_sequence: int,
+    ) -> None:
+        self.subscription_id = str(subscription_id)
+        self.subscription_version = int(subscription_version)
+        self.stream_id = str(stream_id)
+        self.requested_sequence = int(requested_sequence)
+        self.maximum_sequence = int(maximum_sequence)
+        super().__init__(
+            "subscription start position exceeds the retained one-past-end boundary: "
+            f"{self.subscription_id}@{self.subscription_version} stream={self.stream_id}; "
+            f"requested={self.requested_sequence}, maximum={self.maximum_sequence}"
+        )
+
+
 class EventDeliveryError(EventRuntimeError):
     """Base class for durable delivery-state failures."""
 

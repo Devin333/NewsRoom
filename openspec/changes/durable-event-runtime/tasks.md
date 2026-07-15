@@ -16,16 +16,16 @@
 ## 3. Durable Storage Ports And Schemas
 
 - [x] 3.1 Define framework-owned event runtime/store/reader/unit-of-work protocols for atomic append, ordered reads, identity lookup, pagination, delivery ledger, inbox, checkpoint, dead letter, quarantine, and replay access.
-- [ ] 3.2 Add an additive SQLite schema and adapter using WAL, foreign keys, unique constraints, bounded busy timeout, transactional sequence allocation, integrity checks, and explicit single-host support documentation.
-- [ ] 3.3 Define and test SQLite durability behavior for commit, process death, database lock timeout, read-only filesystem, disk-full failure, corrupt database, backup/recovery, and synchronous/fsync policy; fail before publication when durability is unavailable.
+- [x] 3.2 Add an additive SQLite schema and adapter using WAL, foreign keys, unique constraints, bounded busy timeout, transactional sequence allocation, integrity checks, and explicit single-host support documentation.
+- [x] 3.3 Define and test SQLite durability behavior for commit, process death, database lock timeout, read-only filesystem, disk-full failure, corrupt database, backup/recovery, and synchronous/fsync policy; fail before publication when durability is unavailable.
 - [x] 3.4 Add a new PostgreSQL migration for canonical events, stream sequence state, pending deliveries, inbox, consumer checkpoints, leases, dead letters, quarantine, and replay reports without modifying deployed migration `001_initial.sql`.
-- [ ] 3.5 Replace PostgreSQL `COUNT(*)` offset allocation with transaction-safe per-stream sequence allocation and make duplicate `event_id` return the existing committed sequence only when checksum matches.
-- [ ] 3.6 Apply the same pre-storage security projection to PostgreSQL and SQLite, then run one adapter conformance suite proving byte-equivalent canonical payload/checksum and matching error semantics.
-- [ ] 3.7 Update `event_store_from_env()` so `NEWS_DATABASE_DSN` selects PostgreSQL and local composition selects SQLite; retain JSONL stores only as legacy import/export compatibility adapters.
+- [x] 3.5 Replace PostgreSQL `COUNT(*)` offset allocation with transaction-safe per-stream sequence allocation and make duplicate `event_id` return the existing committed sequence only when checksum matches.
+- [x] 3.6 Apply the same pre-storage security projection to PostgreSQL and SQLite, then run one adapter conformance suite proving byte-equivalent canonical payload/checksum and matching error semantics.
+- [x] 3.7 Update `event_store_from_env()` so `NEWS_DATABASE_DSN` selects PostgreSQL and local composition selects SQLite; retain JSONL stores only as legacy import/export compatibility adapters.
 
 ## 4. Durable Publish And Delivery Runtime
 
-- [ ] 4.1 Implement `EventRuntime.publish()` so validation, projection, stable content checksum, store-assigned observation time/sequence, final record checksum, canonical append, and pending consumer work commit atomically before subscriber visibility.
+- [x] 4.1 Implement `EventRuntime.publish()` so validation, projection, stable content checksum, store-assigned observation time/sequence, final record checksum, canonical append, and pending consumer work commit atomically before subscriber visibility.
 - [ ] 4.2 Implement durable versioned consumer subscriptions with independent `(subscription_id, version, stream_id)` checkpoint/delivery identity, deterministic filters, `EARLIEST`/`LATEST`/`AT_SEQUENCE`, pause materialization/resume drainage, retire watermark/drain-or-cancel, and registration-versus-publication race tests proving no boundary gap or duplicate delivery row.
 - [ ] 4.3 Implement `ACK`/`RETRY`/`DROP`, with `DROP` restricted to policy-approved non-error skips and permanent processing failure routed directly to DLQ; test isolated consumer progress and prove one failure does not block or roll back other consumers.
 - [ ] 4.4 Implement stable `consumer_effect_id`, inbox uniqueness, and helpers coupling `(event_id, consumer_effect_id)` or an equivalent idempotency key to external effects; reject activation or first delivery for an external-effect subscription without a valid idempotency contract and test automatic retry, lease recovery, requeue, and redelivery.

@@ -68,6 +68,7 @@ from framework.events.runtime.idempotency import (
     effect_idempotency_key,
     subscription_definition_fingerprint,
 )
+from framework.events.runtime.identity import dead_letter_id_for, delivery_id_for
 from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
 from framework.events.runtime.retry import RetryPlan, RetryPlanner
 
@@ -141,5 +142,7 @@ __all__ = [
     "SubscriptionStreamStatePage",
     "SubscriptionStreamStateQuery",
     "effect_idempotency_key",
+    "dead_letter_id_for",
+    "delivery_id_for",
     "subscription_definition_fingerprint",
 ]

@@ -217,6 +217,35 @@ CREATE INDEX IF NOT EXISTS idx_event_subscriptions_event_types_gin
 CREATE INDEX IF NOT EXISTS idx_event_subscriptions_data_schemas_gin
     ON event_subscriptions USING GIN (data_schemas);
 
+CREATE TABLE IF NOT EXISTS event_subscription_status_audit (
+    audit_id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    subscription_id        TEXT NOT NULL,
+    subscription_version   INTEGER NOT NULL,
+    previous_status        TEXT NOT NULL,
+    new_status             TEXT NOT NULL,
+    changed_at             TIMESTAMPTZ NOT NULL,
+    reason                 TEXT NOT NULL,
+    CONSTRAINT fk_event_subscription_status_audit_subscription
+        FOREIGN KEY (subscription_id, subscription_version)
+        REFERENCES event_subscriptions (subscription_id, subscription_version)
+        ON DELETE RESTRICT,
+    CONSTRAINT ck_event_subscription_status_audit_status
+        CHECK (
+            previous_status IN ('active', 'paused', 'retired')
+            AND new_status IN ('active', 'paused', 'retired')
+        ),
+    CONSTRAINT ck_event_subscription_status_audit_reason
+        CHECK (btrim(reason) <> '')
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_subscription_status_audit_subscription
+    ON event_subscription_status_audit (
+        subscription_id,
+        subscription_version,
+        changed_at,
+        audit_id
+    );
+
 CREATE TABLE IF NOT EXISTS event_subscription_stream_states (
     tenant_id                 TEXT,
     tenant_scope              TEXT GENERATED ALWAYS AS (COALESCE(tenant_id, '')) STORED,
