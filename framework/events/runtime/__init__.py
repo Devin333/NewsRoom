@@ -61,6 +61,7 @@ from framework.events.runtime.models import (
     SubscriptionStreamStateQuery,
 )
 from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
+from framework.events.runtime.retry import RetryPlan, RetryPlanner
 
 __all__ = [
     "AppendResult",
@@ -113,6 +114,8 @@ __all__ = [
     "ReplayStatus",
     "ReplayVersion",
     "RetryPolicy",
+    "RetryPlan",
+    "RetryPlanner",
     "StreamReadRequest",
     "StreamSequenceCursor",
     "SubscriptionFilter",
