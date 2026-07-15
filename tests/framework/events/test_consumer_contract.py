@@ -62,6 +62,8 @@ def test_consumer_outcome_has_typed_ack_retry_and_drop_invariants() -> None:
         ConsumerOutcome(ConsumerDisposition.ACK, redacted_diagnostic="not-an-error")
     with pytest.raises(ValueError, match="2048"):
         ConsumerOutcome.retry("temporary_backend", "x" * 2_049)
+    with pytest.raises(ValueError, match="128"):
+        ConsumerOutcome.retry("x" * 129)
 
 
 def test_delivery_context_requires_effect_identity_and_idempotency_key_together() -> None:
@@ -166,4 +168,3 @@ def test_retry_outcome_is_transient_while_ack_has_no_failure() -> None:
     )
     assert failure is not None
     assert failure.kind is ConsumerFailureKind.TRANSIENT
-

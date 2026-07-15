@@ -19,6 +19,7 @@ MAX_CONFIGURED_ATTEMPTS: Final = DEFAULT_MAX_ATTEMPTS
 MIN_LEASE_SECONDS: Final = 5.0
 MAX_LEASE_SECONDS: Final = 300.0
 MAX_REDACTED_DIAGNOSTIC_LENGTH: Final = 2_048
+MAX_REASON_CLASS_LENGTH: Final = 128
 _CHECKSUM_PATTERN: Final = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _T = TypeVar("_T")
 
@@ -124,6 +125,19 @@ def _diagnostic(value: str | None) -> str | None:
             f"{MAX_REDACTED_DIAGNOSTIC_LENGTH} characters"
         )
     return normalized or None
+
+
+def _reason_class(value: str | None, *, required: bool = False) -> str | None:
+    normalized = _optional_text(value, "reason_class")
+    if normalized is None:
+        if required:
+            raise ValueError("reason_class is required")
+        return None
+    if len(normalized) > MAX_REASON_CLASS_LENGTH:
+        raise ValueError(
+            f"reason_class exceeds {MAX_REASON_CLASS_LENGTH} characters"
+        )
+    return normalized
 
 
 def _page_limit(value: int) -> int:
@@ -818,7 +832,7 @@ class DeliveryRecord:
             raise ValueError("PENDING delivery must have zero attempts")
         if self.state is not DeliveryState.PENDING and self.attempt_count == 0:
             raise ValueError("non-pending delivery requires at least one attempt")
-        object.__setattr__(self, "reason_class", _optional_text(self.reason_class, "reason_class"))
+        object.__setattr__(self, "reason_class", _reason_class(self.reason_class))
         object.__setattr__(self, "redacted_diagnostic", _diagnostic(self.redacted_diagnostic))
         if (self.first_failure_at is None) != (self.last_failure_at is None):
             raise ValueError("first_failure_at and last_failure_at must be set together")
@@ -1203,7 +1217,7 @@ class DeliverySettlement:
             DeliveryState.DEAD_LETTER,
         }:
             raise ValueError("delivery settlement target must be terminal or RETRY_WAIT")
-        reason = _optional_text(self.reason_class, "reason_class")
+        reason = _reason_class(self.reason_class)
         settled_at = _required_utc(self.settled_at, "settled_at")
         retry_at = _utc(self.retry_available_at, "retry_available_at")
         if target is DeliveryState.RETRY_WAIT and retry_at is None:
@@ -1334,13 +1348,17 @@ class DeadLetterRecord:
             "stream_id",
             "subscription_id",
             "consumer_id",
-            "reason_class",
         ):
             object.__setattr__(
                 self,
                 field_name,
                 _required_text(getattr(self, field_name), field_name),
             )
+        object.__setattr__(
+            self,
+            "reason_class",
+            _reason_class(self.reason_class, required=True),
+        )
         object.__setattr__(
             self,
             "stream_sequence",
@@ -1697,12 +1715,13 @@ class ReplayReport:
             "quarantine_refs",
             tuple(_required_text(value, "quarantine_ref") for value in self.quarantine_refs),
         )
-        for field_name in ("reason_class", "tenant_id", "operator_id", "operator_reason"):
+        for field_name in ("tenant_id", "operator_id", "operator_reason"):
             object.__setattr__(
                 self,
                 field_name,
                 _optional_text(getattr(self, field_name), field_name),
             )
+        object.__setattr__(self, "reason_class", _reason_class(self.reason_class))
         object.__setattr__(
             self,
             "result_checksum",

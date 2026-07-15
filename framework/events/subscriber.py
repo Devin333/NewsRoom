@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 
 MAX_CONSUMER_DIAGNOSTIC_LENGTH = 2_048
+MAX_CONSUMER_REASON_CLASS_LENGTH = 128
 
 
 class EventSubscriber(Protocol):
@@ -49,7 +50,7 @@ class ConsumerOutcome:
 
     def __post_init__(self) -> None:
         disposition = ConsumerDisposition(self.disposition)
-        reason = _optional_text(self.reason_class, "reason_class")
+        reason = _optional_reason_class(self.reason_class)
         diagnostic = _diagnostic(self.redacted_diagnostic)
         if disposition in {ConsumerDisposition.RETRY, ConsumerDisposition.DROP}:
             if reason is None:
@@ -153,7 +154,7 @@ class ConsumerFailure:
         object.__setattr__(
             self,
             "reason_class",
-            _required_text(self.reason_class, "reason_class"),
+            _reason_class(self.reason_class),
         )
         object.__setattr__(
             self,
@@ -171,7 +172,7 @@ class EventProcessingError(RuntimeError):
         *,
         redacted_diagnostic: str | None = None,
     ) -> None:
-        self.reason_class = _required_text(reason_class, "reason_class")
+        self.reason_class = _reason_class(reason_class)
         self.redacted_diagnostic = _diagnostic(redacted_diagnostic)
         super().__init__(f"event processing failed: {self.reason_class}")
 
@@ -217,7 +218,7 @@ class DropAuthorizationRule:
         object.__setattr__(
             self,
             "reason_class",
-            _required_text(self.reason_class, "reason_class"),
+            _reason_class(self.reason_class),
         )
         object.__setattr__(
             self,
@@ -341,6 +342,22 @@ def _diagnostic(value: object) -> str | None:
     return normalized or None
 
 
+def _optional_reason_class(value: object) -> str | None:
+    if value is None:
+        return None
+    return _reason_class(value)
+
+
+def _reason_class(value: object) -> str:
+    normalized = _required_text(value, "reason_class")
+    if len(normalized) > MAX_CONSUMER_REASON_CLASS_LENGTH:
+        raise ValueError(
+            "reason_class exceeds the "
+            f"{MAX_CONSUMER_REASON_CLASS_LENGTH} character limit"
+        )
+    return normalized
+
+
 def _text_set(values: Iterable[str], field_name: str) -> frozenset[str]:
     if isinstance(values, (str, bytes)):
         raise TypeError(f"{field_name}s must be a collection")
@@ -362,6 +379,7 @@ __all__ = [
     "EventSubscriber",
     "FunctionEventSubscriber",
     "MAX_CONSUMER_DIAGNOSTIC_LENGTH",
+    "MAX_CONSUMER_REASON_CLASS_LENGTH",
     "PermanentEventProcessingError",
     "StaticDropAuthorizationPolicy",
     "TransientEventProcessingError",

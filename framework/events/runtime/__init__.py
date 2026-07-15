@@ -68,6 +68,32 @@ from framework.events.runtime.idempotency import (
     effect_idempotency_key,
     subscription_definition_fingerprint,
 )
+from framework.events.runtime.diagnostics import (
+    DeliveryDiagnosticProjector,
+    ProjectedDeliveryDiagnostic,
+)
+from framework.events.runtime.delivery import (
+    Clock,
+    DeliveryAttemptResult,
+    DeliveryBatchResult,
+    DeliveryFailurePhase,
+    DeliveryProcessingFailure,
+    DurableConsumerRegistry,
+    DurableDeliveryRuntime,
+    EventConsumerMismatchError,
+    EventConsumerNotRegisteredError,
+    EventDeadLetterNotFoundError,
+    EventDeliveryConfigurationError,
+    EventDeliveryContractError,
+    EventDeliveryStoreOperationError,
+    EventSubscriptionNotFoundError,
+)
+from framework.events.runtime.inbox import (
+    InboxTransactionCapability,
+    InboxTransactionResult,
+    InboxTransactionalEffectRunner,
+    validate_inbox_transaction_capability,
+)
 from framework.events.runtime.identity import dead_letter_id_for, delivery_id_for
 from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
 from framework.events.runtime.retry import RetryPlan, RetryPlanner
@@ -75,6 +101,7 @@ from framework.events.runtime.retry import RetryPlan, RetryPlanner
 __all__ = [
     "AppendResult",
     "AutomaticDeliveryOperation",
+    "Clock",
     "CheckpointKey",
     "CheckpointPage",
     "CheckpointQuery",
@@ -89,6 +116,8 @@ __all__ = [
     "DeadLetterPage",
     "DeadLetterQuery",
     "DeadLetterRecord",
+    "DeliveryAttemptResult",
+    "DeliveryBatchResult",
     "DeliveryClaimRequest",
     "DeliveryKey",
     "DeliveryLeaseToken",
@@ -99,14 +128,29 @@ __all__ = [
     "DeliverySettlement",
     "DeliverySettlementResult",
     "DeliveryState",
+    "DeliveryFailurePhase",
+    "DeliveryDiagnosticProjector",
+    "DeliveryProcessingFailure",
+    "DurableConsumerRegistry",
+    "DurableDeliveryRuntime",
     "DurableSubscription",
     "EffectIdempotencyStrategy",
     "EffectIdempotencyCapability",
     "EventPage",
+    "EventConsumerMismatchError",
+    "EventConsumerNotRegisteredError",
+    "EventDeadLetterNotFoundError",
+    "EventDeliveryConfigurationError",
+    "EventDeliveryContractError",
+    "EventDeliveryStoreOperationError",
     "EventPublishRequest",
     "EventRuntime",
+    "EventSubscriptionNotFoundError",
     "InboxEntry",
     "InboxKey",
+    "InboxTransactionCapability",
+    "InboxTransactionResult",
+    "InboxTransactionalEffectRunner",
     "IdempotencyCapabilityRegistry",
     "LeasePolicy",
     "LegacyEventOffset",
@@ -114,6 +158,7 @@ __all__ = [
     "MAX_PAGE_LIMIT",
     "MIN_LEASE_SECONDS",
     "PendingDeliveryStats",
+    "ProjectedDeliveryDiagnostic",
     "QuarantineDisposition",
     "QuarantinePage",
     "QuarantineQuery",
@@ -145,4 +190,5 @@ __all__ = [
     "dead_letter_id_for",
     "delivery_id_for",
     "subscription_definition_fingerprint",
+    "validate_inbox_transaction_capability",
 ]

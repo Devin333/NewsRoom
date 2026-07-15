@@ -412,6 +412,13 @@ def test_delivery_lease_and_retry_settlement_keep_fencing_and_time_invariants() 
             settled_at=now,
             redacted_diagnostic=object(),  # type: ignore[arg-type]
         )
+    with pytest.raises(ValueError, match="reason_class exceeds"):
+        DeliverySettlement(
+            lease=token,
+            target_state=DeliveryState.DEAD_LETTER,
+            settled_at=now,
+            reason_class="x" * (models.MAX_REASON_CLASS_LENGTH + 1),
+        )
 
 
 def test_effect_identity_is_independent_of_subscription_version_and_generation() -> None:
