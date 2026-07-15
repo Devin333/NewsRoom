@@ -1213,6 +1213,10 @@ class LocalWorkflowRunOperationService:
     ) -> None:
         if self.event_runtime is None or self.event_reader is None:
             raise ValueError("durable event runtime is required for run operations")
+        if manifest.get("run_id") != run_id:
+            raise WorkflowEventProjectionMigrationRequiredError(
+                "run manifest run_id must match the requested run before an operation"
+            )
         events_path = self._run_dir(run_id) / "events.jsonl"
         try:
             has_historical_rows = events_path.exists() and events_path.stat().st_size > 0
@@ -1242,6 +1246,24 @@ class LocalWorkflowRunOperationService:
         if not isinstance(metadata, Mapping):
             raise WorkflowEventProjectionMigrationRequiredError(
                 "legacy run event history must be migrated before an operation"
+            )
+        required_projection_fields = {
+            "path",
+            "stream_id",
+            "high_watermark",
+            "event_count",
+            "checksum",
+        }
+        required_manifest_fields = {
+            "event_projection_high_watermark",
+            "event_projection_checksum",
+            "event_count",
+        }
+        if not required_projection_fields.issubset(metadata) or not (
+            required_manifest_fields.issubset(manifest)
+        ):
+            raise WorkflowEventProjectionMigrationRequiredError(
+                "run event projection metadata is incomplete or conflicting"
             )
         stream_id = f"run:{run_id}"
         high_watermark = metadata.get("high_watermark")

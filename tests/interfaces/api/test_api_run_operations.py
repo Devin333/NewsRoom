@@ -17,6 +17,22 @@ from interfaces.services.run_operation_service import RunOperationApplicationSer
 from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
+_OPERATION_REQUESTS = (
+    ("cancel", {"reason": "stop"}),
+    ("rerun-from-step", {"step_id": "collect"}),
+    ("resume-with-patch", {"patch": {"decision": "approve"}}),
+    ("skip-step", {"step_id": "optional", "reason": "not needed"}),
+    (
+        "mark-blocked-resolved",
+        {
+            "reason": "fixed",
+            "resolved_by": "operator",
+            "resolution_type": "manual",
+        },
+    ),
+)
+
+
 def test_cancel_operation_returns_operation_status_and_writes_event(tmp_path) -> None:
     _write_manifest(tmp_path, "run-1", status="running")
     client = TestClient(_app(tmp_path))
@@ -74,20 +90,7 @@ def test_operation_unsafe_run_id_returns_400_before_service_side_effect(tmp_path
 
 @pytest.mark.parametrize(
     ("operation_path", "body"),
-    [
-        ("cancel", {"reason": "stop"}),
-        ("rerun-from-step", {"step_id": "collect"}),
-        ("resume-with-patch", {"patch": {"decision": "approve"}}),
-        ("skip-step", {"step_id": "optional", "reason": "not needed"}),
-        (
-            "mark-blocked-resolved",
-            {
-                "reason": "fixed",
-                "resolved_by": "operator",
-                "resolution_type": "manual",
-            },
-        ),
-    ],
+    _OPERATION_REQUESTS,
 )
 def test_operation_refuses_to_overwrite_unmigrated_legacy_events(
     tmp_path,
@@ -132,20 +135,7 @@ def test_operation_refuses_to_overwrite_unmigrated_legacy_events(
 
 @pytest.mark.parametrize(
     ("operation_path", "body"),
-    [
-        ("cancel", {"reason": "stop"}),
-        ("rerun-from-step", {"step_id": "collect"}),
-        ("resume-with-patch", {"patch": {"decision": "approve"}}),
-        ("skip-step", {"step_id": "optional", "reason": "not needed"}),
-        (
-            "mark-blocked-resolved",
-            {
-                "reason": "fixed",
-                "resolved_by": "operator",
-                "resolution_type": "manual",
-            },
-        ),
-    ],
+    _OPERATION_REQUESTS,
 )
 @pytest.mark.parametrize("events_artifact", ["empty", "missing"])
 def test_operation_refuses_declared_projection_with_missing_history(
@@ -189,6 +179,94 @@ def test_operation_refuses_declared_projection_with_missing_history(
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_run_operation_request"
     assert "migrated" in response.json()["error"]["message"]
+    assert _snapshot_files(run_dir) == original_run_files
+    event_store = SQLiteEventStore(tmp_path / "_records" / "events.sqlite3")
+    assert event_store.get_stream_high_watermark(f"run:{run_id}") is None
+
+
+@pytest.mark.parametrize(("operation_path", "body"), _OPERATION_REQUESTS)
+def test_operation_refuses_manifest_run_id_mismatch(
+    tmp_path,
+    operation_path: str,
+    body: dict[str, Any],
+) -> None:
+    requested_run_id = "run-requested"
+    manifest_run_id = "run-other"
+    _write_manifest(tmp_path, requested_run_id, status="running")
+    _write_manifest(tmp_path, manifest_run_id, status="running")
+    requested_manifest_path = tmp_path / requested_run_id / "manifest.json"
+    requested_manifest = json.loads(requested_manifest_path.read_text(encoding="utf-8"))
+    requested_manifest["run_id"] = manifest_run_id
+    requested_manifest_path.write_text(json.dumps(requested_manifest), encoding="utf-8")
+    original_requested_files = _snapshot_files(tmp_path / requested_run_id)
+    original_other_files = _snapshot_files(tmp_path / manifest_run_id)
+    client = TestClient(_app(tmp_path))
+
+    response = client.post(
+        f"/api/v1/runs/{requested_run_id}/operations/{operation_path}",
+        json=body,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_run_operation_request"
+    assert "run_id" in response.json()["error"]["message"]
+    assert _snapshot_files(tmp_path / requested_run_id) == original_requested_files
+    assert _snapshot_files(tmp_path / manifest_run_id) == original_other_files
+    event_store = SQLiteEventStore(tmp_path / "_records" / "events.sqlite3")
+    assert event_store.get_stream_high_watermark(f"run:{requested_run_id}") is None
+    assert event_store.get_stream_high_watermark(f"run:{manifest_run_id}") is None
+
+
+@pytest.mark.parametrize(("operation_path", "body"), _OPERATION_REQUESTS)
+@pytest.mark.parametrize(
+    "missing_watermark_key",
+    ["event_projection.high_watermark", "event_projection_high_watermark"],
+)
+def test_operation_refuses_incomplete_empty_projection_metadata(
+    tmp_path,
+    operation_path: str,
+    body: dict[str, Any],
+    missing_watermark_key: str,
+) -> None:
+    run_id = "run-incomplete-projection"
+    _write_manifest(tmp_path, run_id, status="running")
+    run_dir = tmp_path / run_id
+    manifest_path = run_dir / "manifest.json"
+    empty_checksum = (
+        "sha256:e3b0c44298fc1c149afbf4c8996fb924"
+        "27ae41e4649b934ca495991b7852b855"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "event_projection": {
+                "path": "events.jsonl",
+                "stream_id": f"run:{run_id}",
+                "high_watermark": None,
+                "event_count": 0,
+                "checksum": empty_checksum,
+            },
+            "event_projection_high_watermark": None,
+            "event_projection_checksum": empty_checksum,
+            "event_count": 0,
+        }
+    )
+    if missing_watermark_key == "event_projection.high_watermark":
+        manifest["event_projection"].pop("high_watermark")
+    else:
+        manifest.pop("event_projection_high_watermark")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    original_run_files = _snapshot_files(run_dir)
+    client = TestClient(_app(tmp_path))
+
+    response = client.post(
+        f"/api/v1/runs/{run_id}/operations/{operation_path}",
+        json=body,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_run_operation_request"
+    assert "metadata" in response.json()["error"]["message"]
     assert _snapshot_files(run_dir) == original_run_files
     event_store = SQLiteEventStore(tmp_path / "_records" / "events.sqlite3")
     assert event_store.get_stream_high_watermark(f"run:{run_id}") is None
