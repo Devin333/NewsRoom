@@ -87,6 +87,7 @@ max_worker_calls
 | --- | --- | --- | --- | --- | --- |
 | 18 | [18-artifact-boundary-integrity-hardening.md](18-artifact-boundary-integrity-hardening.md) | `FINAL` | `IMPLEMENTED` | 2026-07-10 artifact audit；2026-07-14 completion audit；不依赖阶段 10-17 | strict verified snapshot、transitive index/manifest integrity、store/reference/path closure、结构化 observability 与真实 adapter fail-closed 回归已完成；实现 `59e633e8`，归档 `7cf5e82e`。 |
 | 19 | [19-durable-event-runtime-hardening.md](19-durable-event-runtime-hardening.md) | `READY_FOR_IMPLEMENTATION` | `NOT_STARTED` | 阶段 4 的 trace/checkpoint/replay 语义；2026-07-14 `framework/events` live audit | 收敛 canonical event、durable append、per-stream ordering、outbox/inbox、retry/DLQ、deterministic replay、schema evolution 和 OTel/W3C propagation。 |
+| 19A | [19a-event-record-envelope-migration.md](19a-event-record-envelope-migration.md) | `READY_FOR_IMPLEMENTATION` | `NOT_STARTED` | 阶段 19；OpenSpec `durable-event-runtime` | 聚焦删除 framework legacy `EventRecord`、收敛 Recorder 单模型 API、迁移 workflow/checkpoint/JSONL、移除 Bus mixed payload，并以一版兼容期限完成最终删除。 |
 
 依赖解释：
 
@@ -95,6 +96,7 @@ max_worker_calls
 - 3A 最后做 skill evolution，因为它会消费 RAG、SubAgent、Context 和端口能力。
 - 4 是 durable trace/replay 的完整实现；3A/3B/3C/3D 只需先写事件契约和 refs，完整 replay 在阶段 4 收口。
 - 19 不替换阶段 4 的 Harness 控制语义，而是把阶段 4 的 event/transcript/replay 约束生产化：统一 `framework/events`、Workflow/Harness live durable write、storage delivery ledger、schema 演进和标准 trace propagation；第一版不引入外部 broker。
+- 19A 不是新的独立 capability 或 OpenSpec change；它是阶段 19 的聚焦实施切片，复用 `durable-event-runtime` 的 canonical `StoredEvent`、migration 和 deletion tasks，禁止把 `EventEnvelope` 变成第二个永久 durable model。
 - 5A 是需求澄清文档，5 是实现文档；如果只复制一个阶段给 Codex，必须先复制 5A 再复制 5。
 
 ## 推荐执行方式
