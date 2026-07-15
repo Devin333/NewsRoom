@@ -20,6 +20,7 @@ from framework.events.errors import (
     EventIdentityCollisionError,
     EventIntegrityError,
     EventPayloadTooLargeError,
+    EventTimeError,
 )
 from framework.events.schema import SecurityClassification
 
@@ -80,6 +81,15 @@ def test_payload_and_extension_limits_are_enforced() -> None:
         _candidate(extensions={"a": 1, "b": 2}, max_extension_count=1)
     with pytest.raises(EventExtensionLimitError):
         _candidate(extensions={"a": "x" * 128}, max_extension_bytes=32)
+
+
+def test_candidate_and_stored_event_reject_naive_timestamps() -> None:
+    naive = datetime(2026, 7, 15, 8, 0)
+
+    with pytest.raises(EventTimeError, match="timezone-aware"):
+        _candidate(occurred_at=naive)
+    with pytest.raises(EventTimeError, match="timezone-aware"):
+        StoredEvent(_candidate(), observed_at=naive, stream_sequence=1)
 
 
 def test_content_and_record_checksums_round_trip_and_detect_tampering() -> None:

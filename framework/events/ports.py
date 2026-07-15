@@ -47,6 +47,7 @@ from framework.events.runtime.models import (
 
 if TYPE_CHECKING:
     from framework.events.canonical import EventCandidate, StoredEvent
+    from framework.events.runtime.publisher import EventPublishRequest
 
 
 @runtime_checkable
@@ -311,7 +312,7 @@ class EventRuntimePort(Protocol):
 
     def publish(
         self,
-        event: EventCandidate,
+        event: EventPublishRequest,
         *,
         unit_of_work: EventUnitOfWorkPort | None = None,
     ) -> StoredEvent:

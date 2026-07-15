@@ -152,6 +152,18 @@ def test_protected_content_fails_without_secure_payload_store(
         )
 
 
+def test_secure_reference_still_requires_schema_reference_permission() -> None:
+    with pytest.raises(EventSecurityError, match="does not permit"):
+        EventSecurityProjector().project(
+            payload=None,
+            payload_ref=_Reference(),
+            extensions={},
+            tenant_id="tenant-1",
+            classification=SecurityClassification.CONFIDENTIAL,
+            policy=SensitivityPolicy(),
+        )
+
+
 def test_ordinary_reference_is_allowed_only_for_schema_permitted_non_sensitive_data() -> None:
     reference = _Reference(uri="artifact://run-1/large.json")
 

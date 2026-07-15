@@ -60,6 +60,7 @@ from framework.events.runtime.models import (
     SubscriptionStreamStatePage,
     SubscriptionStreamStateQuery,
 )
+from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
 
 __all__ = [
     "AppendResult",
@@ -89,6 +90,8 @@ __all__ = [
     "DurableSubscription",
     "EffectIdempotencyStrategy",
     "EventPage",
+    "EventPublishRequest",
+    "EventRuntime",
     "InboxEntry",
     "InboxKey",
     "LeasePolicy",

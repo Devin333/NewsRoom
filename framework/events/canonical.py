@@ -352,6 +352,12 @@ class EventCandidate:
                 PayloadReference.from_dict(self.payload_ref),
             )
 
+        if (
+            self.payload_ref is not None
+            and self.payload_ref.content_type != self.content_type
+        ):
+            raise ValueError("payload_ref content_type must match event content_type")
+
         if self.payload is not None and self.payload_ref is not None:
             raise ValueError("payload and payload_ref are mutually exclusive")
         if self.payload is None and self.payload_ref is None:
@@ -699,6 +705,8 @@ def assert_same_event_identity(
 def _required_time(value: datetime, field_name: str) -> datetime:
     if not isinstance(value, datetime):
         raise EventTimeError(f"event {field_name} is required")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise EventTimeError(f"event {field_name} must be timezone-aware")
     return ensure_utc(value)
 
 

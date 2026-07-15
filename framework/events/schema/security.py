@@ -245,6 +245,9 @@ class EventSecurityProjector:
         if payload_ref is not None and policy.has_reference_only_fields:
             requires_secure_reference = True
 
+        if payload_ref is not None and not policy.allow_payload_reference:
+            raise EventSecurityError("event schema does not permit payload references")
+
         if requires_secure_reference:
             if actual_payload not in (None, {}):
                 raise EventSecurePayloadRequiredError(
