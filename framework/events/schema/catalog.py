@@ -8,7 +8,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from types import FunctionType, ModuleType
+from types import CodeType, FunctionType, ModuleType
 from types import MappingProxyType
 from typing import Any
 
@@ -101,8 +101,12 @@ class EventSchemaRegistration:
                 raise EventSchemaError("a current event schema cannot declare an upcaster")
             _validate_adjacent_schema_versions(data_schema, upcast_to)
             _validate_upcaster_purity(self.upcaster, event_type, data_schema)
-        if self.custom_validator is not None and not callable(self.custom_validator):
-            raise TypeError("custom_validator must be callable")
+        if self.custom_validator is not None:
+            _validate_custom_validator_purity(
+                self.custom_validator,
+                event_type,
+                data_schema,
+            )
         if not isinstance(self.json_schema, Mapping):
             raise TypeError("json_schema must be a mapping")
         schema = copy.deepcopy(dict(self.json_schema))
@@ -176,15 +180,21 @@ class EventSchemaCatalog:
         payload: Mapping[str, Any],
     ) -> dict[str, Any]:
         registration = self.get(event_type, data_schema)
+        canonicalization_failed = False
+        snapshot: dict[str, Any] | None = None
         try:
             snapshot = _thaw_mapping(_freeze_mapping(payload))
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError):
+            canonicalization_failed = True
+        if canonicalization_failed:
             raise EventSchemaValidationError(
                 event_type=registration.event_type,
                 data_schema=registration.data_schema,
                 path="$",
                 rule="canonical_json",
-            ) from exc
+            ) from None
+        if snapshot is None:  # pragma: no cover - freeze returns or raises
+            raise AssertionError("schema payload canonicalization returned no value")
         schema = registration.schema_copy()
         validator_cls = validator_for(schema)
         validator = validator_cls(schema)
@@ -200,17 +210,25 @@ class EventSchemaCatalog:
         if first_error is not None:
             raise _validation_error(registration, first_error)
         if registration.custom_validator is not None:
+            custom_failure: EventSchemaValidationError | None = None
             try:
-                registration.custom_validator(_freeze_mapping(snapshot))
-            except EventSchemaValidationError:
-                raise
-            except Exception as exc:
-                raise EventSchemaValidationError(
+                _run_pure_validator(registration.custom_validator, snapshot)
+            except EventSchemaValidationError as error:
+                custom_failure = EventSchemaValidationError(
+                    event_type=error.event_type,
+                    data_schema=error.data_schema,
+                    path=error.path,
+                    rule=error.rule,
+                )
+            except Exception:
+                custom_failure = EventSchemaValidationError(
                     event_type=registration.event_type,
                     data_schema=registration.data_schema,
                     path="$",
                     rule="custom",
-                ) from exc
+                )
+            if custom_failure is not None:
+                raise custom_failure from None
         return snapshot
 
     def upcast(
@@ -238,23 +256,28 @@ class EventSchemaCatalog:
                 raise EventUpcastError(
                     f"no event upcast path: {event_type} ({current_schema} -> {desired})"
                 )
+            upcaster_failed = False
+            next_payload: dict[str, Any] | None = None
             try:
                 next_payload = _run_pure_upcaster(registration.upcaster, current_payload)
-            except EventUpcastError:
-                raise
-            except Exception as exc:
+            except Exception:
+                upcaster_failed = True
+            if upcaster_failed or next_payload is None:
                 raise EventUpcastError(
                     f"event upcaster failed: {event_type} ({current_schema})"
-                ) from exc
+                ) from None
             next_schema = registration.upcast_to
+            output_validation_failed = False
             try:
                 self.get(event_type, next_schema)
                 current_payload = self.validate(event_type, next_schema, next_payload)
-            except (EventUnknownSchemaError, EventSchemaValidationError) as exc:
+            except (EventUnknownSchemaError, EventSchemaValidationError):
+                output_validation_failed = True
+            if output_validation_failed:
                 raise EventUpcastError(
                     f"event upcaster output failed validation: "
                     f"{event_type} ({current_schema} -> {next_schema})"
-                ) from exc
+                ) from None
             applied.append(f"{current_schema}->{next_schema}")
             current_schema = next_schema
 
@@ -287,26 +310,40 @@ class EventSchemaCatalog:
             raise EventQuarantineError("missing_occurred_at", source=source)
         if not isinstance(occurred_at, (str, datetime)):
             raise EventQuarantineError("invalid_occurred_at", source=source)
+        historical_time_invalid = False
+        parsed_time: datetime | None = None
         try:
             parsed_time = _parse_historical_time(occurred_at)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise EventQuarantineError("invalid_occurred_at", source=source) from exc
+        except (TypeError, ValueError, OverflowError):
+            historical_time_invalid = True
+        if historical_time_invalid or parsed_time is None:
+            raise EventQuarantineError("invalid_occurred_at", source=source) from None
 
+        schema_is_unknown = False
         try:
             self.get(event_type, data_schema)
-        except EventUnknownSchemaError as exc:
-            raise EventQuarantineError("unknown_data_schema", source=source) from exc
+        except EventUnknownSchemaError:
+            schema_is_unknown = True
+        if schema_is_unknown:
+            raise EventQuarantineError("unknown_data_schema", source=source) from None
+        historical_failure: str | None = None
+        resolution: tuple[str, dict[str, Any], tuple[str, ...]] | None = None
         try:
-            resolved_schema, resolved_payload, applied = self.upcast(
+            resolution = self.upcast(
                 event_type,
                 data_schema,
                 payload,
                 target_schema=target_schema,
             )
-        except EventSchemaValidationError as exc:
-            raise EventQuarantineError("schema_validation_failed", source=source) from exc
-        except EventUpcastError as exc:
-            raise EventQuarantineError("upcast_failed", source=source) from exc
+        except EventSchemaValidationError:
+            historical_failure = "schema_validation_failed"
+        except EventUpcastError:
+            historical_failure = "upcast_failed"
+        if historical_failure is not None:
+            raise EventQuarantineError(historical_failure, source=source) from None
+        if resolution is None:  # pragma: no cover - upcast returns or raises
+            raise AssertionError("historical schema resolution returned no value")
+        resolved_schema, resolved_payload, applied = resolution
 
         return HistoricalSchemaResolution(
             event_type=_required_text(event_type, "event_type"),
@@ -820,10 +857,11 @@ def _json_path(error: ValidationError) -> str:
 def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError("JSON value must be an object")
+    if any(not isinstance(key, str) for key in value):
+        raise TypeError("JSON object keys must be strings")
     frozen: dict[str, Any] = {}
-    for key, item in value.items():
-        if not isinstance(key, str):
-            raise TypeError("JSON object keys must be strings")
+    for key in sorted(value):
+        item = value[key]
         frozen[key] = _freeze_value(item)
     return MappingProxyType(frozen)
 
@@ -890,58 +928,87 @@ def _required_text(value: Any, field_name: str) -> str:
 
 
 _SCHEMA_VERSION_PATTERN = re.compile(r"^(?P<prefix>.*(?:/|^))v(?P<version>[1-9][0-9]*)$")
-_FORBIDDEN_UPCASTER_NAMES = frozenset(
+_PURE_CALLABLE_FORBIDDEN_OPCODES = frozenset(
     {
-        "__import__",
-        "compile",
-        "connect",
-        "datetime",
-        "date",
-        "eval",
-        "exec",
-        "getenv",
-        "input",
-        "monotonic",
-        "now",
-        "open",
-        "perf_counter",
-        "print",
-        "process_time",
-        "random",
-        "read_bytes",
-        "read_text",
-        "request",
-        "secrets",
-        "sleep",
-        "socket",
-        "subprocess",
-        "system",
-        "time",
-        "today",
-        "urlopen",
-        "utc_now",
-        "uuid",
-        "write_bytes",
-        "write_text",
+        "BUILD_SET",
+        "DELETE_DEREF",
+        "DELETE_GLOBAL",
+        "IMPORT_FROM",
+        "IMPORT_NAME",
+        "IMPORT_STAR",
+        "LOAD_BUILD_CLASS",
+        "MAKE_FUNCTION",
+        "SET_ADD",
+        "SET_UPDATE",
+        "STORE_DEREF",
+        "STORE_GLOBAL",
     }
 )
-_FORBIDDEN_UPCASTER_MODULES = frozenset(
+_PURE_CALLABLE_ALLOWED_BUILTINS = frozenset(
     {
-        "aiohttp",
-        "datetime",
-        "http",
-        "httpx",
-        "io",
-        "os",
-        "pathlib",
-        "random",
-        "requests",
-        "secrets",
-        "socket",
-        "subprocess",
-        "time",
-        "urllib",
-        "uuid",
+        "AssertionError",
+        "TypeError",
+        "ValueError",
+        "abs",
+        "all",
+        "any",
+        "bool",
+        "dict",
+        "float",
+        "int",
+        "isinstance",
+        "len",
+        "list",
+        "max",
+        "min",
+        "range",
+        "round",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+    }
+)
+_PURE_CALLABLE_ALLOWED_METHODS = frozenset(
+    {
+        "count",
+        "endswith",
+        "get",
+        "index",
+        "items",
+        "join",
+        "keys",
+        "lower",
+        "lstrip",
+        "replace",
+        "rsplit",
+        "rstrip",
+        "split",
+        "startswith",
+        "strip",
+        "upper",
+        "values",
+    }
+)
+_PURE_CALLABLE_REFLECTION_CONSTANTS = frozenset(
+    {
+        "__builtins__",
+        "__class__",
+        "__closure__",
+        "__code__",
+        "__dict__",
+        "__func__",
+        "__getattribute__",
+        "__globals__",
+        "__mro__",
+        "__subclasses__",
+        "cr_frame",
+        "f_builtins",
+        "f_globals",
+        "f_locals",
+        "func_globals",
+        "gi_frame",
+        "mro",
     }
 )
 
@@ -968,71 +1035,162 @@ def _validate_upcaster_purity(
     event_type: str,
     data_schema: str,
 ) -> None:
-    if upcaster is None or not isinstance(upcaster, FunctionType):
+    _validate_pure_schema_callable(
+        upcaster,
+        role="upcaster",
+        event_type=event_type,
+        data_schema=data_schema,
+    )
+
+
+def _validate_custom_validator_purity(
+    validator: PayloadValidator,
+    event_type: str,
+    data_schema: str,
+) -> None:
+    _validate_pure_schema_callable(
+        validator,
+        role="custom validator",
+        event_type=event_type,
+        data_schema=data_schema,
+    )
+
+
+def _validate_pure_schema_callable(
+    function: Any,
+    *,
+    role: str,
+    event_type: str,
+    data_schema: str,
+) -> None:
+    if not isinstance(function, FunctionType):
         raise EventSchemaError(
-            f"event upcaster must be a plain function: {event_type} ({data_schema})"
+            f"event {role} must be a plain function: {event_type} ({data_schema})"
         )
-    if inspect.iscoroutinefunction(upcaster) or inspect.isgeneratorfunction(upcaster):
+    if inspect.iscoroutinefunction(function) or inspect.isgeneratorfunction(function):
         raise EventSchemaError(
-            f"event upcaster must be synchronous: {event_type} ({data_schema})"
+            f"event {role} must be synchronous: {event_type} ({data_schema})"
         )
+    parameters = tuple(inspect.signature(function).parameters.values())
+    if len(parameters) != 1 or any(
+        parameter.kind
+        not in {parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD}
+        for parameter in parameters
+    ):
+        raise EventSchemaError(f"event {role} must accept exactly one payload argument")
     try:
-        _audit_function_purity(upcaster, seen=set())
+        _audit_pure_schema_function(function)
     except EventSchemaError:
         raise
     except Exception as exc:
         raise EventSchemaError(
-            f"event upcaster purity could not be verified: {event_type} ({data_schema})"
+            f"event {role} purity could not be verified: {event_type} ({data_schema})"
         ) from exc
 
 
-def _audit_function_purity(function: FunctionType, *, seen: set[int]) -> None:
-    identity = id(function)
+def _audit_pure_schema_function(function: FunctionType) -> None:
+    closure = inspect.getclosurevars(function)
+    for name in closure.builtins:
+        if name not in _PURE_CALLABLE_ALLOWED_BUILTINS:
+            raise EventSchemaError(f"event schema callable uses forbidden builtin: {name}")
+    for name, value in {**closure.globals, **closure.nonlocals}.items():
+        if isinstance(value, ModuleType) or not _is_pure_schema_constant(value):
+            raise EventSchemaError(
+                f"event schema callable captures forbidden dependency: {name}"
+            )
+    for value in function.__defaults__ or ():
+        if not _is_pure_schema_constant(value):
+            raise EventSchemaError("event schema callable has a mutable default")
+    for value in (function.__kwdefaults__ or {}).values():
+        if not _is_pure_schema_constant(value):
+            raise EventSchemaError("event schema callable has a mutable default")
+    _audit_pure_schema_code(function.__code__, function=function, seen=set())
+
+
+def _audit_pure_schema_code(
+    code: CodeType,
+    *,
+    function: FunctionType,
+    seen: set[int],
+) -> None:
+    identity = id(code)
     if identity in seen:
         return
     seen.add(identity)
-    for instruction in dis.get_instructions(function):
-        if instruction.opname in {"IMPORT_NAME", "IMPORT_FROM"}:
-            raise EventSchemaError("event upcaster must not import modules")
+    for instruction in dis.get_instructions(code):
+        operation = instruction.opname
+        name = str(instruction.argval) if instruction.argval is not None else ""
+        if operation in _PURE_CALLABLE_FORBIDDEN_OPCODES:
+            raise EventSchemaError(
+                f"event schema callable uses forbidden operation: {operation}"
+            )
+        if operation == "LOAD_ATTR":
+            raise EventSchemaError(
+                f"event schema callable uses forbidden attribute: {name}"
+            )
+        if operation == "LOAD_METHOD" and name not in _PURE_CALLABLE_ALLOWED_METHODS:
+            raise EventSchemaError(
+                f"event schema callable uses forbidden method: {name}"
+            )
+        if operation == "LOAD_GLOBAL" and name not in _PURE_CALLABLE_ALLOWED_BUILTINS:
+            raise EventSchemaError(
+                f"event schema callable uses forbidden global: {name}"
+            )
+        if operation == "LOAD_CONST":
+            _audit_pure_schema_constant(instruction.argval, function=function, seen=seen)
+
+
+def _audit_pure_schema_constant(
+    value: Any,
+    *,
+    function: FunctionType,
+    seen: set[int],
+) -> None:
+    if isinstance(value, CodeType):
+        _audit_pure_schema_code(value, function=function, seen=seen)
+        return
+    if isinstance(value, str):
         if (
-            instruction.opname
-            in {"LOAD_GLOBAL", "LOAD_NAME", "LOAD_DEREF", "LOAD_ATTR", "LOAD_METHOD"}
-            and str(instruction.argval) in _FORBIDDEN_UPCASTER_NAMES
+            value in _PURE_CALLABLE_REFLECTION_CONSTANTS
+            or (value.startswith("__") and value.endswith("__"))
         ):
             raise EventSchemaError(
-                f"event upcaster uses forbidden dependency: {instruction.argval}"
+                f"event schema callable contains forbidden reflection constant: {value}"
             )
-
-    closure = inspect.getclosurevars(function)
-    for name, value in {**closure.globals, **closure.nonlocals}.items():
-        if name in _FORBIDDEN_UPCASTER_NAMES or _is_forbidden_dependency(value):
-            raise EventSchemaError(f"event upcaster uses forbidden dependency: {name}")
-        if isinstance(value, (dict, list, set, bytearray)):
-            raise EventSchemaError(f"event upcaster captures mutable state: {name}")
-        if isinstance(value, FunctionType):
-            _audit_function_purity(value, seen=seen)
-    for name in closure.builtins:
-        if name in _FORBIDDEN_UPCASTER_NAMES:
-            raise EventSchemaError(f"event upcaster uses forbidden builtin: {name}")
+        return
+    if value is None or isinstance(value, (bool, int, float, bytes)):
+        return
+    if isinstance(value, tuple):
+        for item in value:
+            _audit_pure_schema_constant(item, function=function, seen=seen)
+        return
+    raise EventSchemaError(
+        f"event schema callable contains unsupported constant: {type(value).__name__}"
+    )
 
 
-def _is_forbidden_dependency(value: Any) -> bool:
-    if isinstance(value, ModuleType):
-        return value.__name__.split(".", 1)[0] in _FORBIDDEN_UPCASTER_MODULES
-    module_name = str(getattr(value, "__module__", ""))
-    return bool(module_name) and module_name.split(".", 1)[0] in _FORBIDDEN_UPCASTER_MODULES
+def _is_pure_schema_constant(value: Any) -> bool:
+    if value is None or isinstance(value, (bool, int, float, str, bytes)):
+        return True
+    if isinstance(value, tuple):
+        return all(_is_pure_schema_constant(item) for item in value)
+    return False
 
 
 def _run_pure_upcaster(
     upcaster: EventUpcaster,
     payload: Mapping[str, Any],
 ) -> dict[str, Any]:
-    outputs: list[dict[str, Any]] = []
-    for _ in range(2):
-        produced = upcaster(_freeze_mapping(_thaw_mapping(_freeze_mapping(payload))))
-        if not isinstance(produced, Mapping):
-            raise TypeError("upcaster must return a mapping")
-        outputs.append(_thaw_mapping(_freeze_mapping(produced)))
-    if outputs[0] != outputs[1]:
-        raise EventUpcastError("event upcaster is nondeterministic")
-    return outputs[0]
+    produced = upcaster(_freeze_mapping(_thaw_mapping(_freeze_mapping(payload))))
+    if not isinstance(produced, Mapping):
+        raise TypeError("upcaster must return a mapping")
+    return _thaw_mapping(_freeze_mapping(produced))
+
+
+def _run_pure_validator(
+    validator: PayloadValidator,
+    payload: Mapping[str, Any],
+) -> None:
+    result = validator(_freeze_mapping(_thaw_mapping(_freeze_mapping(payload))))
+    if result is not None:
+        raise TypeError("custom validator must return None")
