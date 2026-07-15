@@ -3,7 +3,7 @@
 - [x] 1.1 Inventory every production event model, event type, writer, reader, subscriber, storage adapter, public import, checkpoint offset, API/CLI/MCP response, and historical JSONL variant; record keep/adapt/delete ownership and freeze representative fixtures.
 - [x] 1.2 Archive or baseline the completed capabilities directly modified by this change, especially event-store, workflow event indexing, checkpoint/replay, and run-event interface requirements, without editing completed change history in place.
 - [x] 1.3 Convert the confirmed shallow-mutation, context-conflict, recorder-dual-ledger, partial-delivery, duplicate-replay, secret-export, missing-time, and PostgreSQL `COUNT(*)` race reproductions into failing regression or conformance tests.
-- [ ] 1.4 Add a migration dry-run command that scans legacy run JSONL, local event records, PostgreSQL rows, checkpoints, and Harness histories and reports importable, duplicate, conflicting, unknown-schema, missing-time, and quarantined counts without mutating source data.
+- [x] 1.4 Add a migration dry-run command that scans legacy run JSONL, local event records, PostgreSQL rows, checkpoints, and Harness histories and reports importable, duplicate, conflicting, unknown-schema, missing-time, and quarantined counts without mutating source data.
 
 ## 2. Canonical Event Contract
 

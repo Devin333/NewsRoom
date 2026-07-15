@@ -11,6 +11,7 @@ def test_cli_command_group_modules_exist() -> None:
         "diagnose",
         "dispatch",
         "entities",
+        "events",
         "mcp",
         "memory",
         "reports",

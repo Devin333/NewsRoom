@@ -404,6 +404,26 @@ def test_historical_unknown_version_and_missing_time_are_quarantined() -> None:
     assert data_schema_error.value.reason == "unknown_data_schema"
 
 
+@pytest.mark.parametrize(
+    "occurred_at",
+    ["2026-05-25T06:01:00", datetime(2026, 5, 25, 6, 1)],
+)
+def test_historical_time_without_explicit_timezone_is_quarantined(
+    occurred_at: str | datetime,
+) -> None:
+    with pytest.raises(EventQuarantineError) as caught:
+        default_event_schema_catalog().resolve_historical(
+            "workflow_started",
+            "newsroom.workflow-event/v1",
+            {"run_id": "run-naive-time"},
+            occurred_at=occurred_at,
+            envelope_schema="newsroom.event_record.v1",
+            source="legacy-naive-time.jsonl:1",
+        )
+
+    assert caught.value.reason == "invalid_occurred_at"
+
+
 def test_historical_upcaster_failure_is_quarantined_without_payload_diagnostic() -> None:
     fixture_path = _LEGACY_FIXTURES / "invalid" / "upcast_failure.jsonl"
     record = json.loads(fixture_path.read_text(encoding="utf-8"))

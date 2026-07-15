@@ -7,7 +7,7 @@ import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from types import FunctionType, ModuleType
 from types import MappingProxyType
 from typing import Any
@@ -23,7 +23,7 @@ from framework.events.errors import (
     EventUpcastError,
 )
 from framework.events.schema.policy import FieldDisposition, SensitivityPolicy
-from framework.shared.time import ensure_utc, parse_datetime
+from framework.shared.time import ensure_utc
 
 
 PayloadValidator = Callable[[Mapping[str, Any]], None]
@@ -59,6 +59,8 @@ class HistoricalSchemaResolution:
         object.__setattr__(self, "data_schema", _required_text(self.data_schema, "data_schema"))
         if not isinstance(self.occurred_at, datetime):
             raise TypeError("occurred_at must be a datetime")
+        if self.occurred_at.tzinfo is None or self.occurred_at.utcoffset() is None:
+            raise ValueError("occurred_at must be timezone-aware")
         object.__setattr__(self, "occurred_at", ensure_utc(self.occurred_at))
         object.__setattr__(self, "payload", _freeze_mapping(self.payload))
         if isinstance(self.applied_upcasters, (str, bytes)):
@@ -286,11 +288,9 @@ class EventSchemaCatalog:
         if not isinstance(occurred_at, (str, datetime)):
             raise EventQuarantineError("invalid_occurred_at", source=source)
         try:
-            parsed_time = parse_datetime(occurred_at)
+            parsed_time = _parse_historical_time(occurred_at)
         except (TypeError, ValueError, OverflowError) as exc:
             raise EventQuarantineError("invalid_occurred_at", source=source) from exc
-        if parsed_time is None:
-            raise EventQuarantineError("missing_occurred_at", source=source)
 
         try:
             self.get(event_type, data_schema)
@@ -863,6 +863,21 @@ def _optional_text(value: Any) -> str | None:
         raise TypeError("optional schema text must be a string")
     text = value.strip()
     return text or None
+
+
+def _parse_historical_time(value: str | datetime) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError("occurred_at is empty")
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    else:
+        raise TypeError("occurred_at must be a string or datetime")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("occurred_at must contain an explicit timezone")
+    return parsed.astimezone(UTC)
 
 
 def _required_text(value: Any, field_name: str) -> str:
