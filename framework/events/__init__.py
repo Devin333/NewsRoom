@@ -70,8 +70,6 @@ from framework.events.ports import (
 )
 from framework.events.publisher import EventPublisher
 from framework.events.recorder import (
-    EventRecord,
-    EventRecorder,
     EventRecorderProtocol,
     InMemoryEventRecorder,
 )
@@ -292,8 +290,6 @@ __all__ = [
     "ReplayCheckpointCollisionError",
     "ReplayCheckpointCorruptionError",
     "EventReaderPort",
-    "EventRecord",
-    "EventRecorder",
     "EventRecorderProtocol",
     "EventReplay",
     "EventReplayError",

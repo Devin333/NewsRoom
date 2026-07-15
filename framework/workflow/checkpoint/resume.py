@@ -4,11 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, TypeAlias
 
 from framework.specs import StepSpec, WorkflowSpec
-from framework.workflow.checkpoint.envelope import WorkflowCheckpointEnvelope
+from framework.workflow.checkpoint.durable import (
+    DurableWorkflowCheckpoint,
+    WorkflowCheckpointRecoveryCursor,
+    WorkflowCheckpointV2Envelope,
+    durable_envelope_from_checkpoint,
+)
+from framework.workflow.checkpoint.envelope import (
+    WorkflowCheckpointEnvelope,
+    envelope_from_checkpoint,
+)
 from framework.workflow.checkpoint.migration import check_checkpoint_compatibility
+from framework.workflow.checkpoint.model import WorkflowCheckpoint
 from framework.workflow.runners.human_review import (
     HumanReviewDecision,
     ensure_human_review_not_expired,
@@ -29,6 +39,9 @@ PATCH_SYSTEM_KEYS = {
     "path",
     "run_id",
     "schema_version",
+    "stream_id",
+    "last_durable_stream_sequence",
+    "last_event_id",
     "step_results",
     "workflow_id",
     "workflow_version",
@@ -38,15 +51,24 @@ __all__ = [
     "HumanReviewResumeDecision",
     "PATCH_SYSTEM_KEYS",
     "RESUME_DECISIONS",
+    "ResumeCheckpoint",
+    "ResumeCheckpointEnvelope",
     "ResumeMode",
     "ResumePatchValidationResult",
     "WorkflowResumePlan",
     "WorkflowResumePlanner",
     "WorkflowResumeRequest",
+    "checkpoint_envelope_for_resume",
     "coerce_human_review_resume_decision",
     "validate_approval_resume_binding",
     "validate_resume_patch",
 ]
+
+
+ResumeCheckpointEnvelope: TypeAlias = (
+    WorkflowCheckpointEnvelope | WorkflowCheckpointV2Envelope
+)
+ResumeCheckpoint: TypeAlias = WorkflowCheckpoint | DurableWorkflowCheckpoint
 
 
 class ResumeMode(str, Enum):
@@ -60,7 +82,8 @@ class ResumeMode(str, Enum):
 @dataclass(frozen=True)
 class WorkflowResumeRequest:
     mode: ResumeMode
-    checkpoint: WorkflowCheckpointEnvelope
+    checkpoint: ResumeCheckpointEnvelope
+    recovery_cursor: WorkflowCheckpointRecoveryCursor | None = None
     run_id: str | None = None
     patch: dict[str, Any] = field(default_factory=dict)
     target_step_id: str | None = None
@@ -71,6 +94,7 @@ class WorkflowResumeRequest:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mode", ResumeMode(self.mode))
+        _validate_resume_recovery_cursor(self.checkpoint, self.recovery_cursor)
         if self.mode == ResumeMode.EXACT and self.patch:
             raise ValueError("resume_exact does not allow patch")
         if self.mode == ResumeMode.WITH_PATCH and not self.patch:
@@ -136,12 +160,23 @@ class WorkflowResumePlan:
     initial_step_results: dict[str, StepOutcome]
     resumed_from_checkpoint_id: str
     resume_metadata: dict[str, Any]
+    recovery_cursor: WorkflowCheckpointRecoveryCursor | None = None
+
+
+def checkpoint_envelope_for_resume(
+    checkpoint: ResumeCheckpoint,
+) -> ResumeCheckpointEnvelope:
+    if isinstance(checkpoint, DurableWorkflowCheckpoint):
+        return durable_envelope_from_checkpoint(checkpoint)
+    if isinstance(checkpoint, WorkflowCheckpoint):
+        return envelope_from_checkpoint(checkpoint)
+    raise TypeError("checkpoint must be WorkflowCheckpoint or DurableWorkflowCheckpoint")
 
 
 def validate_resume_patch(
     *,
     workflow: WorkflowSpec,
-    checkpoint: WorkflowCheckpointEnvelope,
+    checkpoint: ResumeCheckpointEnvelope,
     patch: dict[str, Any],
     allowed_patch_keys: list[str] | None = None,
     allow_request_patch: bool = False,
@@ -296,13 +331,14 @@ class WorkflowResumePlanner:
             initial_step_results=step_results,
             resumed_from_checkpoint_id=checkpoint.checkpoint_id,
             resume_metadata=resume_metadata,
+            recovery_cursor=request.recovery_cursor,
         )
 
     def _apply_patch(
         self,
         *,
         workflow: WorkflowSpec,
-        checkpoint: WorkflowCheckpointEnvelope,
+        checkpoint: ResumeCheckpointEnvelope,
         buffer_values: dict[str, Any],
         patch: dict[str, Any],
         metadata: dict[str, Any],
@@ -322,7 +358,7 @@ class WorkflowResumePlanner:
 
 def validate_approval_resume_binding(
     *,
-    checkpoint: WorkflowCheckpointEnvelope,
+    checkpoint: ResumeCheckpointEnvelope,
     approval_context: dict[str, Any],
 ) -> None:
     approval_id = str(approval_context.get("approval_id") or "")
@@ -396,7 +432,7 @@ def coerce_human_review_resume_decision(
 
 
 def _human_review_request_from_checkpoint(
-    checkpoint: WorkflowCheckpointEnvelope,
+    checkpoint: ResumeCheckpointEnvelope,
 ) -> dict[str, Any] | None:
     for value in checkpoint.data_buffer_snapshot.values():
         if not isinstance(value, dict):
@@ -409,7 +445,7 @@ def _human_review_request_from_checkpoint(
 def _allowed_resume_patch_keys(
     *,
     workflow: WorkflowSpec,
-    checkpoint: WorkflowCheckpointEnvelope,
+    checkpoint: ResumeCheckpointEnvelope,
     allowed_patch_keys: list[str] | None,
     allow_request_patch: bool,
 ) -> set[str]:
@@ -428,7 +464,7 @@ def _allowed_resume_patch_keys(
 
 def _current_workflow_step(
     workflow: WorkflowSpec,
-    checkpoint: WorkflowCheckpointEnvelope,
+    checkpoint: ResumeCheckpointEnvelope,
 ) -> StepSpec | None:
     if not checkpoint.current_step_ids:
         return None
@@ -505,7 +541,41 @@ def _base_resume_metadata(request: WorkflowResumeRequest) -> dict[str, Any]:
     if isinstance(budget_usage, dict):
         metadata["budget_usage"] = dict(budget_usage)
         metadata["resume_budget_inherited"] = True
+    if isinstance(checkpoint, WorkflowCheckpointV2Envelope):
+        cursor = request.recovery_cursor
+        if cursor is None:
+            raise ValueError("durable checkpoint requires a verified recovery cursor")
+        metadata.update(
+            {
+                "checkpoint_stream_id": cursor.stream_id,
+                "checkpoint_after_sequence": cursor.after_sequence,
+                "checkpoint_last_event_id": cursor.last_event_id,
+                "checkpoint_boundary_verified": cursor.boundary_verified,
+            }
+        )
     return metadata
+
+
+def _validate_resume_recovery_cursor(
+    checkpoint: ResumeCheckpointEnvelope,
+    cursor: WorkflowCheckpointRecoveryCursor | None,
+) -> None:
+    if isinstance(checkpoint, WorkflowCheckpointEnvelope):
+        if cursor is not None:
+            raise ValueError("legacy checkpoint cannot carry a durable recovery cursor")
+        return
+    if not isinstance(checkpoint, WorkflowCheckpointV2Envelope):
+        raise TypeError("checkpoint must be a supported v1 or v2 envelope")
+    if cursor is None:
+        raise ValueError("durable checkpoint requires a verified recovery cursor")
+    if not cursor.boundary_verified:
+        raise ValueError("durable checkpoint recovery cursor must be boundary-verified")
+    if (
+        cursor.stream_id != checkpoint.stream_id
+        or cursor.after_sequence != checkpoint.last_durable_stream_sequence
+        or cursor.last_event_id != checkpoint.last_event_id
+    ):
+        raise ValueError("durable recovery cursor does not match checkpoint boundary")
 
 
 def _approval_actor_id(approval_context: dict[str, Any]) -> str:

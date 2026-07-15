@@ -9,9 +9,16 @@ from uuid import uuid4
 
 from framework.specs import StepStatus, WorkflowSpec, WorkflowStatus
 from framework.workflow.buffer import DataBuffer, DataBufferSnapshot, step_scope_from_spec
+from framework.events.canonical import BusinessContext
+from framework.events.ports import EventReaderPort, EventRuntimePort
+from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.events.trace import TraceContext
 from framework.artifacts import ArtifactManager, validate_artifact_path_segment
-from framework.events import EventBus, EventRecorder
+from framework.events import EventBus
+from framework.workflow.runtime.event_emitter import (
+    ScopedDurableWorkflowEventEmitter,
+    WorkflowEventRecorderFacade,
+)
 from framework.workflow.runtime.manifest import (
     build_runner_manifest,
     build_run_manifest,
@@ -32,7 +39,8 @@ class WorkflowExecutionContext:
     workflow: WorkflowSpec
     request: dict[str, Any]
     profile: str
-    recorder: EventRecorder
+    event_emitter: ScopedDurableWorkflowEventEmitter
+    recorder: WorkflowEventRecorderFacade
     trace_context: TraceContext
     buffer: DataBuffer
     initial_buffer_snapshot: DataBufferSnapshot
@@ -57,6 +65,9 @@ def build_execution_context(
     artifact_manager: ArtifactManager,
     step_runner_registry: StepRunnerRegistry,
     event_bus: EventBus | None,
+    event_runtime: EventRuntimePort | None = None,
+    event_reader: EventReaderPort | None = None,
+    event_schema_catalog: EventSchemaCatalog | None = None,
     started_monotonic: float,
     run_id: str | None = None,
     initial_buffer_values: dict[str, Any] | None = None,
@@ -69,8 +80,27 @@ def build_execution_context(
         if run_id is None
         else validate_artifact_path_segment(run_id, field="run_id")
     )
+    if event_runtime is None:
+        raise ValueError("event_runtime is required for durable workflow execution")
+    if event_reader is None:
+        raise ValueError("event_reader is required for durable workflow execution")
+    if event_bus is not None:
+        raise ValueError(
+            "workflow event_bus dispatch is not supported after durable writer cutover"
+        )
     run_dir = artifact_manager.start_run(actual_run_id)
-    recorder = EventRecorder(actual_run_id, event_bus=event_bus)
+    schema_catalog = event_schema_catalog or default_event_schema_catalog()
+    event_emitter = ScopedDurableWorkflowEventEmitter(
+        runtime=event_runtime,
+        reader=event_reader,
+        schema_catalog=schema_catalog,
+        stream_id=f"run:{actual_run_id}",
+        base_business_context=BusinessContext(
+            run_id=actual_run_id,
+            workflow_id=workflow.workflow_id,
+        ),
+    )
+    recorder = WorkflowEventRecorderFacade(event_emitter)
     buffer = DataBuffer(initial_buffer_values or {"request": request})
     buffer.register_scopes(step_scope_from_spec(step) for step in workflow.steps)
     initial_buffer_snapshot = buffer.snapshot()
@@ -89,7 +119,6 @@ def build_execution_context(
         workflow_id=workflow.workflow_id,
         metadata={"profile": profile},
     )
-    recorder.with_trace_context(trace_context)
     manifest["trace_id"] = trace_context.trace_id
     manifest["root_span_id"] = trace_context.span_id
     manifest["trace_events_ref"] = "events.jsonl"
@@ -108,6 +137,7 @@ def build_execution_context(
         workflow=workflow,
         request=request,
         profile=profile,
+        event_emitter=event_emitter,
         recorder=recorder,
         trace_context=trace_context,
         buffer=buffer,

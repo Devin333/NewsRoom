@@ -1,7 +1,10 @@
 from framework.events.schema.catalog import (
     HARNESS_EVENT_ALIASES,
+    LEGACY_WORKFLOW_EVENT_ALIASES,
     SUPPORTED_HISTORICAL_ENVELOPE_SCHEMAS,
     WORKFLOW_EVENT_ALIASES,
+    WORKFLOW_EVENT_TYPES,
+    WORKFLOW_OPERATION_EVENT_TYPES,
     EventSchemaCatalog,
     EventSchemaRegistration,
     HistoricalSchemaResolution,
@@ -33,6 +36,7 @@ __all__ = [
     "DEFAULT_INLINE_PAYLOAD_BYTES",
     "HARNESS_EVENT_ALIASES",
     "HistoricalSchemaResolution",
+    "LEGACY_WORKFLOW_EVENT_ALIASES",
     "PROTECTED_CLASSIFICATIONS",
     "RESERVED_EVENT_FIELDS",
     "EventSchemaCatalog",
@@ -50,6 +54,8 @@ __all__ = [
     "WholeDocumentReferenceDisposition",
     "SUPPORTED_HISTORICAL_ENVELOPE_SCHEMAS",
     "WORKFLOW_EVENT_ALIASES",
+    "WORKFLOW_EVENT_TYPES",
+    "WORKFLOW_OPERATION_EVENT_TYPES",
     "default_event_schema_catalog",
     "redact_event_value",
 ]

@@ -169,10 +169,11 @@ class EventRuntime:
 
         validated_payload: Mapping[str, Any] | None
         if event.payload_ref is None:
-            validated_payload = self._schema_catalog.validate(
+            validated_payload = self._schema_catalog.prepare_publish_payload(
                 event.event_type,
                 event.data_schema,
                 event.payload or {},
+                business_context=event.business_context,
             )
         else:
             # Referenced bytes are not fetched through the event runtime.  The

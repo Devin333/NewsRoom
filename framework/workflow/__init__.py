@@ -232,7 +232,6 @@ from framework.workflow.operations import (
     WorkflowOperationRecord,
     WorkflowOperationStatus,
     WorkflowOperationType,
-    append_operation_event,
     append_operation_record,
     checkpoint_from_run_artifacts,
     load_run_manifest,
@@ -254,7 +253,7 @@ from framework.workflow.runtime import (
     WorkflowRunner,
 )
 from framework.artifacts import ArtifactManager, ArtifactRef
-from framework.events import EventBus, EventRecord, EventRecorder
+from framework.events import EventBus
 from framework.workflow.runtime.result import StepOutcome, WorkflowError, WorkflowResult
 from framework.workflow.runners.base import (
     StepExecutionError,

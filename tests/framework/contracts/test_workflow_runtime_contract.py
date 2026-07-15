@@ -8,8 +8,10 @@ from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, Workfl
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
 from framework.artifacts import ArtifactManager
+from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.result import StepOutcome
+from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
 class _FunctionRunner:
@@ -40,10 +42,15 @@ class _FunctionRunner:
 def _executor(tmp_path: Path, outputs: dict[str, dict[str, Any]], **kwargs: Any) -> WorkflowExecutor:
     registry = StepRunnerRegistry()
     registry.register(StepType.FUNCTION, _FunctionRunner(outputs))
+    event_store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    event_catalog = default_event_schema_catalog()
     return WorkflowExecutor(
         function_step_runner=None,
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=registry,
+        event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
+        event_reader=event_store,
+        event_schema_catalog=event_catalog,
         **kwargs,
     )
 

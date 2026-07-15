@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 from framework.specs import StepSpec
-from framework.workflow.checkpoint.model import WorkflowCheckpoint
+from framework.workflow.checkpoint.durable import DurableWorkflowCheckpoint
 from framework.artifacts import ArtifactManager
+from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
 from framework.workflow.runtime.execution_context import build_execution_context
 from framework.workflow.runtime.result import StepOutcome
+from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
 class _CheckpointStore:
     def __init__(self) -> None:
-        self.saved: list[WorkflowCheckpoint] = []
+        self.saved: list[DurableWorkflowCheckpoint] = []
 
-    def save_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
+    def save_checkpoint(self, checkpoint: DurableWorkflowCheckpoint) -> None:
         self.saved.append(checkpoint)
 
 
@@ -28,6 +30,8 @@ def test_checkpoint_coordinator_records_checkpoint_reference(tmp_path) -> None:
         steps=[step],
         terminal_step_ids=["s1"],
     )
+    event_store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    event_catalog = default_event_schema_catalog()
     context = build_execution_context(
         workflow=workflow,
         request={},
@@ -35,6 +39,9 @@ def test_checkpoint_coordinator_records_checkpoint_reference(tmp_path) -> None:
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=StepRunnerRegistry(),
         event_bus=None,
+        event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
+        event_reader=event_store,
+        event_schema_catalog=event_catalog,
         started_monotonic=0.0,
         run_id="run-checkpoint-ref",
     )

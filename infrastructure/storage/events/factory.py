@@ -7,7 +7,9 @@ from pathlib import Path
 
 from framework.events.errors import EventStoreUnavailableError
 from framework.events.ports import EventStorePort
+from framework.events.runtime.publisher import EventRuntime
 from framework.events.runtime.replay_engine import ReplayCheckpointStorePort
+from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from infrastructure.storage.events.replay_checkpoints import (
     PostgresReplayCheckpointStore,
     SQLiteReplayCheckpointStore,
@@ -25,6 +27,8 @@ class DurableEventStorage:
 
     event_store: EventStorePort
     replay_checkpoint_store: ReplayCheckpointStorePort
+    event_runtime: EventRuntime
+    schema_catalog: EventSchemaCatalog
 
 
 def event_store_from_env(
@@ -66,9 +70,16 @@ def durable_event_storage_from_env(
                 "PostgreSQL durable event storage requires psycopg"
             ) from exc
 
+        event_store = PostgresDurableEventStore(dsn)
+        schema_catalog = default_event_schema_catalog()
         return DurableEventStorage(
-            event_store=PostgresDurableEventStore(dsn),
+            event_store=event_store,
             replay_checkpoint_store=PostgresReplayCheckpointStore(dsn),
+            event_runtime=EventRuntime(
+                store=event_store,
+                schema_catalog=schema_catalog,
+            ),
+            schema_catalog=schema_catalog,
         )
 
     configured_root_value = str(values.get("NEWS_ARTIFACT_ROOT") or "").strip()
@@ -79,9 +90,15 @@ def durable_event_storage_from_env(
     )
     database = configured_root / LOCAL_EVENT_DATABASE
     event_store = SQLiteEventStore(database)
+    schema_catalog = default_event_schema_catalog()
     return DurableEventStorage(
         event_store=event_store,
         replay_checkpoint_store=SQLiteReplayCheckpointStore(database),
+        event_runtime=EventRuntime(
+            store=event_store,
+            schema_catalog=schema_catalog,
+        ),
+        schema_catalog=schema_catalog,
     )
 
 

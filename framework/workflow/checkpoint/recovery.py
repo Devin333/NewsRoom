@@ -11,11 +11,18 @@ from framework.artifacts import (
     validate_artifact_path_segment,
     validate_relative_artifact_path,
 )
+from framework.events.ports import EventReaderPort
+from framework.workflow.checkpoint.durable import (
+    WorkflowCheckpointRecoveryCursor,
+    WorkflowCheckpointV2Envelope,
+    recovery_cursor_from_durable_checkpoint,
+)
 from framework.workflow.checkpoint.envelope import WorkflowCheckpointEnvelope
 
 __all__ = [
     "PartialArtifactRecoveryReport",
     "inspect_checkpoint_artifacts",
+    "verified_checkpoint_recovery_cursor",
 ]
 
 
@@ -39,7 +46,7 @@ class PartialArtifactRecoveryReport:
 
 def inspect_checkpoint_artifacts(
     *,
-    checkpoint: WorkflowCheckpointEnvelope,
+    checkpoint: WorkflowCheckpointEnvelope | WorkflowCheckpointV2Envelope,
     manifest: dict[str, Any] | None,
     artifact_root: Path,
     strict: bool,
@@ -101,6 +108,34 @@ def inspect_checkpoint_artifacts(
         missing_optional_artifacts=sorted(set(missing_optional)),
         recovered_artifacts=sorted(set(recovered)),
         warnings=warnings,
+    )
+
+
+def verified_checkpoint_recovery_cursor(
+    *,
+    checkpoint: WorkflowCheckpointV2Envelope,
+    reader: EventReaderPort,
+) -> WorkflowCheckpointRecoveryCursor:
+    """Verify the v2 boundary against durable history before resuming after it."""
+
+    sequence = checkpoint.last_durable_stream_sequence
+    event_id = checkpoint.last_event_id
+    if sequence is None:
+        return recovery_cursor_from_durable_checkpoint(checkpoint)
+    if event_id is None:
+        raise ValueError("durable checkpoint boundary event_id is required")
+
+    boundary = reader.get_event(event_id)
+    if boundary is None:
+        raise ValueError("checkpoint boundary event is missing from durable history")
+    boundary.verify_integrity()
+    if boundary.business_context.run_id != checkpoint.run_id:
+        raise ValueError("checkpoint boundary event run_id does not match checkpoint")
+    return recovery_cursor_from_durable_checkpoint(
+        checkpoint,
+        boundary_event_stream_id=boundary.stream_id,
+        boundary_event_sequence=boundary.stream_sequence,
+        boundary_event_id=boundary.event_id,
     )
 
 

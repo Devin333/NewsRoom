@@ -55,6 +55,41 @@ def test_event_candidate_construction_stays_behind_security_projection() -> None
     assert violations == []
 
 
+def test_workflow_runner_cannot_reintroduce_post_run_event_indexing() -> None:
+    runner = PROJECT_ROOT / "framework" / "workflow" / "runtime" / "runner.py"
+    tree = ast.parse(runner.read_text(encoding="utf-8"), filename=str(runner))
+    defined_names = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    imported_names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+
+    assert defined_names.isdisjoint(
+        {"_index_events", "WorkflowEventRecord", "LocalJsonWorkflowEventStore"}
+    )
+    assert "event_store_from_env" not in imported_names
+
+
+def test_framework_legacy_event_recorders_are_not_public_writers() -> None:
+    recorder = EVENTS_ROOT / "recorder.py"
+    tree = ast.parse(recorder.read_text(encoding="utf-8"), filename=str(recorder))
+    class_names = {
+        node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+    }
+    events_init = (EVENTS_ROOT / "__init__.py").read_text(encoding="utf-8")
+
+    assert "EventRecord" not in class_names
+    assert "EventRecorder" not in class_names
+    assert '"EventRecord"' not in events_init
+    assert '"EventRecorder"' not in events_init
+
+
 def _imported_modules(tree: ast.AST) -> list[str]:
     modules: list[str] = []
     for node in ast.walk(tree):

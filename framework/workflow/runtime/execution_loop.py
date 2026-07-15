@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
+from framework.events.trace import TraceContext
 from framework.specs import EdgeCondition, StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
 from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
 from framework.workflow.runtime.execution_context import WorkflowExecutionContext
@@ -121,7 +122,19 @@ class WorkflowExecutionLoop:
             {
                 "run_id": context.run_id,
                 "workflow_id": context.workflow.workflow_id,
-                **details,
+                "timeout_seconds": details["timeout_seconds"],
+                "elapsed_seconds": details["elapsed_seconds"],
+                "policy_source": details["policy_source"],
+                **(
+                    {"step_id": step_id}
+                    if step_id is not None
+                    else {}
+                ),
+                **(
+                    {"pending_step_id": pending_step_id}
+                    if pending_step_id is not None
+                    else {}
+                ),
             },
             trace_context=(
                 context.step_trace_contexts.get(step_id)
@@ -187,6 +200,7 @@ class WorkflowExecutionLoop:
                 "max_step_visits": context.workflow.max_step_visits,
                 "visit_count": visit_count,
             },
+            trace_context=self._step_trace_context(context, current_step_id),
         )
         context.current_step_ids = []
         return True
@@ -197,14 +211,7 @@ class WorkflowExecutionLoop:
         step: StepSpec,
     ) -> StepOutcome:
         context.path.append(step.step_id)
-        step_trace = context.step_trace_contexts.get(step.step_id)
-        if step_trace is None:
-            step_trace = context.trace_context.child(
-                span_id=f"step:{step.step_id}",
-                step_id=step.step_id,
-            )
-            context.step_trace_contexts[step.step_id] = step_trace
-        context.recorder.with_trace_context(step_trace)
+        step_trace = self._step_trace_context(context, step.step_id)
         context.manifest.setdefault("step_spans", {})[step.step_id] = {
             "step_id": step.step_id,
             "span_id": step_trace.span_id,
@@ -251,6 +258,20 @@ class WorkflowExecutionLoop:
             step_results=context.step_results,
         )
         return outcome
+
+    @staticmethod
+    def _step_trace_context(
+        context: WorkflowExecutionContext,
+        step_id: str,
+    ) -> TraceContext:
+        step_trace = context.step_trace_contexts.get(step_id)
+        if step_trace is None:
+            step_trace = context.trace_context.child(
+                span_id=f"step:{step_id}",
+                step_id=step_id,
+            )
+            context.step_trace_contexts[step_id] = step_trace
+        return step_trace
 
     def _handle_step_outcome(
         self,

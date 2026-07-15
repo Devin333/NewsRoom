@@ -11,11 +11,14 @@ from framework.artifacts import (
     validate_artifact_path_segment,
 )
 from framework.events import EventBus
+from framework.events.ports import EventReaderPort, EventRuntimePort
+from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.specs import (
     WorkflowSpec,
     WorkflowStatus,
 )
-from framework.workflow.checkpoint.model import WorkflowCheckpoint
+from framework.workflow.checkpoint.durable import WorkflowCheckpointV2Envelope
+from framework.workflow.checkpoint.store import StoredWorkflowCheckpoint
 from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
 from framework.workflow.runtime.execution_context import build_execution_context
 from framework.workflow.runtime.execution_loop import WorkflowExecutionLoop
@@ -27,12 +30,15 @@ from framework.workflow.runtime.artifact_publishers import (
     WorkflowArtifactPublisherRegistry,
 )
 from framework.workflow.governance.budget import restore_global_budget_tracker_usage
-from framework.workflow.checkpoint.envelope import envelope_from_checkpoint
-from framework.workflow.checkpoint.recovery import inspect_checkpoint_artifacts
+from framework.workflow.checkpoint.recovery import (
+    inspect_checkpoint_artifacts,
+    verified_checkpoint_recovery_cursor,
+)
 from framework.workflow.checkpoint.resume import (
     ResumeMode,
     WorkflowResumePlanner,
     WorkflowResumeRequest,
+    checkpoint_envelope_for_resume,
 )
 from framework.workflow.runtime.manifest_updater import ManifestUpdater, public_resume_metadata
 from framework.workflow.runtime.outcome_finalizer import WorkflowOutcomeFinalizer
@@ -78,6 +84,9 @@ class WorkflowExecutor:
         step_runner_registry: StepRunnerRegistry | None = None,
         checkpoint_store: Any | None = None,
         event_bus: EventBus | None = None,
+        event_runtime: EventRuntimePort | None = None,
+        event_reader: EventReaderPort | None = None,
+        event_schema_catalog: EventSchemaCatalog | None = None,
         global_budget_tracker: Any | None = None,
         artifact_publishers: list[WorkflowArtifactPublisher]
         | WorkflowArtifactPublisherRegistry
@@ -94,6 +103,11 @@ class WorkflowExecutor:
         self._sleep_fn = sleep_fn or time.sleep
         self._checkpoint_store = checkpoint_store
         self._event_bus = event_bus
+        self._event_runtime = event_runtime
+        self._event_reader = event_reader
+        self._event_schema_catalog = (
+            event_schema_catalog or default_event_schema_catalog()
+        )
         self._global_budget_tracker = global_budget_tracker
         self._artifact_publishers = _artifact_publisher_registry(artifact_publishers)
         self._workflow_state_machine = WorkflowStateMachine()
@@ -130,6 +144,9 @@ class WorkflowExecutor:
             artifact_manager=self._artifact_manager,
             step_runner_registry=self._step_runner_registry,
             event_bus=self._event_bus,
+            event_runtime=self._event_runtime,
+            event_reader=self._event_reader,
+            event_schema_catalog=self._event_schema_catalog,
             started_monotonic=started_monotonic,
             run_id=run_id,
             initial_buffer_values=initial_buffer_values,
@@ -142,6 +159,9 @@ class WorkflowExecutor:
             artifact_manager=self._artifact_manager,
             run_id=context.run_id,
             workflow=workflow,
+            event_runtime=self._event_runtime,
+            event_reader=self._event_reader,
+            event_schema_catalog=self._event_schema_catalog,
             global_budget_tracker=self._global_budget_tracker,
         )
         manifest_updater = ManifestUpdater(
@@ -236,7 +256,7 @@ class WorkflowExecutor:
     def resume_from_checkpoint(
         self,
         workflow: WorkflowSpec,
-        checkpoint: WorkflowCheckpoint,
+        checkpoint: StoredWorkflowCheckpoint,
         *,
         profile: str,
         run_id: str | None = None,
@@ -244,7 +264,20 @@ class WorkflowExecutor:
         resume_metadata: dict[str, Any] | None = None,
         target_step_id: str | None = None,
     ) -> WorkflowResult:
-        envelope = envelope_from_checkpoint(checkpoint)
+        envelope = checkpoint_envelope_for_resume(checkpoint)
+        recovery_cursor = None
+        if isinstance(envelope, WorkflowCheckpointV2Envelope):
+            if self._event_reader is None:
+                raise StepExecutionError(
+                    "durable event reader is required to verify checkpoint recovery"
+                )
+            try:
+                recovery_cursor = verified_checkpoint_recovery_cursor(
+                    checkpoint=envelope,
+                    reader=self._event_reader,
+                )
+            except (TypeError, ValueError) as exc:
+                raise StepExecutionError(str(exc)) from exc
         public_resume_metadata = dict(resume_metadata or {})
         actual_resume_metadata = dict(public_resume_metadata)
         recovery_report = inspect_checkpoint_artifacts(
@@ -269,6 +302,7 @@ class WorkflowExecutor:
         resume_request = WorkflowResumeRequest(
             mode=mode,
             checkpoint=envelope,
+            recovery_cursor=recovery_cursor,
             run_id=run_id,
             patch=dict(buffer_updates or {}),
             target_step_id=target_step_id,
@@ -353,6 +387,9 @@ def _configure_step_runners(
     artifact_manager: ArtifactManager,
     run_id: str,
     workflow: WorkflowSpec,
+    event_runtime: EventRuntimePort | None,
+    event_reader: EventReaderPort | None,
+    event_schema_catalog: EventSchemaCatalog,
     global_budget_tracker: Any | None = None,
 ) -> None:
     configured_runner_ids: set[str] = set()
@@ -369,8 +406,17 @@ def _configure_step_runners(
         configure_workflow = getattr(runner, "configure_workflow_context", None)
         if callable(configure_workflow):
             configure_workflow(workflow=workflow)
+        configure_events = getattr(runner, "configure_event_runtime", None)
+        if callable(configure_events):
+            if event_runtime is None or event_reader is None:
+                raise ValueError(
+                    "durable event runtime and reader are required for nested workflows"
+                )
+            configure_events(
+                event_runtime=event_runtime,
+                event_reader=event_reader,
+                event_schema_catalog=event_schema_catalog,
+            )
         configure_budget = getattr(runner, "configure_global_budget_tracker", None)
         if callable(configure_budget) and global_budget_tracker is not None:
             configure_budget(global_budget_tracker)
-
-

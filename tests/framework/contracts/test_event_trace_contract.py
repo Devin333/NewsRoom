@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from framework.events import Event, EventBus, EventEnvelope, EventRecorder, TraceContext
+from framework.events import (
+    Event,
+    EventBus,
+    EventEnvelope,
+    EventSubscriberError,
+    TraceContext,
+)
 
 
-def test_event_trace_contract_envelope_record_jsonl_and_subscriber_failure(tmp_path) -> None:
+def test_event_trace_contract_envelope_round_trip_and_subscriber_failure() -> None:
     context = TraceContext.root(
         run_id="run-events-contract",
         workflow_id="wf",
@@ -27,27 +31,15 @@ def test_event_trace_contract_envelope_record_jsonl_and_subscriber_failure(tmp_p
         event_id="evt-1",
     )
     bus = EventBus()
-    recorder = EventRecorder("run-events-contract", event_bus=bus, trace_context=context)
 
     def _boom(envelope: EventEnvelope) -> None:
         raise RuntimeError("subscriber failed")
 
     bus.subscribe(_boom)
-    with pytest.raises(RuntimeError):
-        recorder.emit(
-            "step_started",
-            {
-                "step_id": "s1",
-                "step_type": "source",
-                "attempt": 1,
-                "max_attempts": 1,
-            },
-        )
+    with pytest.raises(EventSubscriberError) as caught:
+        bus.publish(envelope)
 
     restored_envelope = EventEnvelope.from_dict(envelope.to_dict())
-    path = recorder.write_jsonl(tmp_path / "events.jsonl")
-    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-
     assert restored_envelope.trace_id == "trace-events"
-    assert lines[0]["trace_id"] == "trace-events"
-    assert lines[0]["span_id"] == "step:s1"
+    assert restored_envelope.span_id == "step:s1"
+    assert isinstance(caught.value.__cause__, RuntimeError)

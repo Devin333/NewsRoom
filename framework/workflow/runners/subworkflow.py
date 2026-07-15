@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
+from framework.events.ports import EventReaderPort, EventRuntimePort
+from framework.events.schema import EventSchemaCatalog
 
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import StepScopedDataBufferView
@@ -49,6 +51,9 @@ class SubworkflowStepRunner:
         self._artifact_manager = artifact_manager
         self._run_id = run_id
         self._global_budget_tracker: Any | None = None
+        self._event_runtime: EventRuntimePort | None = None
+        self._event_reader: EventReaderPort | None = None
+        self._event_schema_catalog: EventSchemaCatalog | None = None
 
     def configure_run_context(
         self,
@@ -63,6 +68,17 @@ class SubworkflowStepRunner:
         self, global_budget_tracker: Any | None
     ) -> None:
         self._global_budget_tracker = global_budget_tracker
+
+    def configure_event_runtime(
+        self,
+        *,
+        event_runtime: EventRuntimePort,
+        event_reader: EventReaderPort,
+        event_schema_catalog: EventSchemaCatalog,
+    ) -> None:
+        self._event_runtime = event_runtime
+        self._event_reader = event_reader
+        self._event_schema_catalog = event_schema_catalog
 
     def can_resolve(self, step: StepSpec) -> bool:
         if step.step_type != StepType.SUBWORKFLOW:
@@ -92,6 +108,14 @@ class SubworkflowStepRunner:
                 )
             if self._artifact_manager is None or self._run_id is None:
                 raise StepExecutionError("SubworkflowStepRunner requires run context")
+            if (
+                self._event_runtime is None
+                or self._event_reader is None
+                or self._event_schema_catalog is None
+            ):
+                raise StepExecutionError(
+                    "SubworkflowStepRunner requires durable event runtime context"
+                )
             parent_run_id = self._run_id
 
             workflow_id = str(step.metadata.get("workflow_id") or step.implementation)
@@ -114,6 +138,9 @@ class SubworkflowStepRunner:
                 function_step_runner=None,
                 step_runner_registry=self._step_runner_registry,
                 artifact_manager=self._artifact_manager,
+                event_runtime=self._event_runtime,
+                event_reader=self._event_reader,
+                event_schema_catalog=self._event_schema_catalog,
                 global_budget_tracker=(
                     self._global_budget_tracker
                     if _subworkflow_inherits_budget(step)

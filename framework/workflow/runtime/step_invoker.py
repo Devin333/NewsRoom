@@ -11,7 +11,7 @@ from framework.shared.time import utc_now
 from framework.workflow.buffer import DataBuffer
 from framework.workflow.governance.resource import StepResourceEstimator, StepResourceGuard
 from framework.workflow.governance.safety import safety_violation_for_step
-from framework.events import EventRecorder
+from framework.workflow.runtime.event_emitter import WorkflowEventRecorder
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners.base import StepExecutionError, StepRunnerResolutionError
 from framework.workflow.runners.registry import StepRunnerRegistry
@@ -33,7 +33,7 @@ class StepInvoker:
         self,
         step: StepSpec,
         buffer: DataBuffer,
-        recorder: EventRecorder,
+        recorder: WorkflowEventRecorder,
         *,
         trace_context: TraceContext | None = None,
     ) -> StepOutcome:

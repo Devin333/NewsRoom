@@ -8,6 +8,7 @@ from framework.events import (
     AppendResult,
     BusinessContext,
     EventCandidate,
+    EventContextConflictError,
     EventPublishRequest,
     EventRuntime,
     EventSchemaCatalog,
@@ -167,6 +168,55 @@ def test_validation_and_security_fail_before_store_or_sequence_allocation() -> N
 
     assert store.unit_of_work_calls == 0
     assert unit_of_work.appended == []
+
+
+def test_publish_strips_equal_context_duplicate_and_rejects_conflict_before_store() -> None:
+    catalog = EventSchemaCatalog()
+    catalog.register(
+        EventSchemaRegistration(
+            event_type="io.newsroom.test.context",
+            data_schema="io.newsroom.test.context/v1",
+            json_schema={
+                "type": "object",
+                "properties": {"message": {"type": "string"}},
+                "required": ["message"],
+                "additionalProperties": False,
+            },
+            authoritative_context_fields=("run_id",),
+            current=True,
+        )
+    )
+    unit_of_work = _UnitOfWork()
+    store = _Store(unit_of_work)
+    runtime = EventRuntime(store=store, schema_catalog=catalog)
+    request_values = {
+        "event_id": "evt-context-1",
+        "event_type": "io.newsroom.test.context",
+        "data_schema": "io.newsroom.test.context/v1",
+        "source": "tests.publisher",
+        "occurred_at": OCCURRED_AT,
+        "stream_id": "run:publish-1",
+        "business_context": BusinessContext(run_id="publish-1"),
+        "producer": ProducerIdentity(component="publisher-test", version="1"),
+    }
+
+    accepted = runtime.publish(
+        EventPublishRequest(
+            **request_values,
+            payload={"message": "accepted", "run_id": "publish-1"},
+        )
+    )
+
+    assert accepted.payload == {"message": "accepted"}
+    assert store.unit_of_work_calls == 1
+    with pytest.raises(EventContextConflictError, match="run_id"):
+        runtime.publish(
+            EventPublishRequest(
+                **{**request_values, "event_id": "evt-context-2"},
+                payload={"message": "rejected", "run_id": "another-run"},
+            )
+        )
+    assert store.unit_of_work_calls == 1
 
 
 def test_caller_owned_unit_of_work_is_not_committed_by_runtime() -> None:

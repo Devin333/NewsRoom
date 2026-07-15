@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from framework.events import Event, EventEnvelope, EventRecorder, TraceContext, TraceEvent
+from framework.events import Event, EventEnvelope, TraceContext, TraceEvent
 from framework.events.trace import redact_trace_payload
 
 
@@ -44,7 +44,7 @@ def test_trace_event_round_trip_and_redaction() -> None:
     assert restored.timestamp == datetime(2026, 5, 20, 1, 2, tzinfo=UTC)
 
 
-def test_event_envelope_and_legacy_record_include_trace_fields() -> None:
+def test_event_envelope_round_trip_preserves_trace_fields() -> None:
     context = TraceContext.root(
         run_id="run-1",
         workflow_id="wf-1",
@@ -63,13 +63,10 @@ def test_event_envelope_and_legacy_record_include_trace_fields() -> None:
     )
     envelope = EventEnvelope(event=event, event_id="evt-1")
 
-    recorder = EventRecorder("run-1", trace_context=context)
-    record = recorder.emit("step_started", {"ok": True})
-
     assert envelope.to_dict()["trace_id"] == "trace-1"
     assert EventEnvelope.from_dict(envelope.to_dict()).span_id == "step:s1"
-    assert record.to_dict()["parent_span_id"] == "root"
-    assert EventEnvelope.from_dict(record.to_dict()).trace_id == "trace-1"
+    assert envelope.to_dict()["parent_span_id"] == "root"
+    assert EventEnvelope.from_dict(envelope.to_dict()).trace_id == "trace-1"
 
 
 def test_redact_trace_payload_redacts_secret_like_keys() -> None:

@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from framework.events.canonical import BusinessContext
 from framework.events.errors import (
+    EventContextConflictError,
     EventQuarantineError,
     EventSchemaError,
     EventSchemaValidationError,
@@ -22,13 +24,26 @@ from framework.events.schema import (
     FieldDisposition,
     SensitivityPolicy,
     WholeDocumentReferenceDisposition,
+    WORKFLOW_EVENT_TYPES,
+    WORKFLOW_OPERATION_EVENT_TYPES,
     default_event_schema_catalog,
 )
 from framework.events.schema.catalog import _run_pure_validator
 
 
 _LEGACY_FIXTURES = Path(__file__).parents[2] / "fixtures" / "events" / "legacy"
+_SCHEMA_FIXTURES = Path(__file__).parents[2] / "fixtures" / "events" / "schema"
 ROOT = Path(__file__).resolve().parents[3]
+
+_WORKFLOW_PAYLOAD_FIXTURE = json.loads(
+    (_SCHEMA_FIXTURES / "workflow_payloads_v1.json").read_text(encoding="utf-8")
+)
+_WORKFLOW_EVENT_CASES = tuple(
+    sorted(_WORKFLOW_PAYLOAD_FIXTURE["workflow_events"].items())
+)
+_WORKFLOW_OPERATION_CASES = tuple(
+    sorted(_WORKFLOW_PAYLOAD_FIXTURE["workflow_operations"].items())
+)
 
 
 def test_catalog_validates_without_exposing_instance_values() -> None:
@@ -212,6 +227,160 @@ def test_default_catalog_registers_workflow_and_harness_aliases() -> None:
     ) == {"workflow_id": "wf-1", "workflow_version": "1", "profile": "live"}
 
 
+def test_workflow_payload_fixture_covers_every_current_event_and_operation() -> None:
+    assert len(WORKFLOW_EVENT_TYPES) == 36
+    assert set(_WORKFLOW_PAYLOAD_FIXTURE["workflow_events"]) == set(
+        WORKFLOW_EVENT_TYPES
+    )
+    assert set(_WORKFLOW_PAYLOAD_FIXTURE["workflow_operations"]) == set(
+        WORKFLOW_OPERATION_EVENT_TYPES
+    )
+
+
+@pytest.mark.parametrize(
+    ("event_type", "case"),
+    _WORKFLOW_EVENT_CASES,
+    ids=[event_type for event_type, _case in _WORKFLOW_EVENT_CASES],
+)
+def test_default_catalog_prepares_context_stripped_workflow_payloads(
+    event_type: str,
+    case: dict[str, object],
+) -> None:
+    catalog = default_event_schema_catalog()
+    data_schema = _WORKFLOW_PAYLOAD_FIXTURE["workflow_schema"]
+    context = BusinessContext.from_dict(case["business_context"])
+    canonical_payload = case["payload"]
+    assert isinstance(canonical_payload, dict)
+    assert catalog.validate(event_type, data_schema, canonical_payload) == (
+        canonical_payload
+    )
+    legacy_payload = {
+        **canonical_payload,
+        **{
+            field_name: field_value
+            for field_name, field_value in context.to_dict().items()
+            if field_value is not None
+        },
+    }
+
+    prepared = catalog.prepare_publish_payload(
+        event_type,
+        data_schema,
+        legacy_payload,
+        business_context=context,
+    )
+
+    assert prepared == canonical_payload
+    assert all(field_name not in prepared for field_name in context.to_dict())
+    assert legacy_payload != prepared
+
+
+@pytest.mark.parametrize(
+    ("event_type", "case"),
+    _WORKFLOW_OPERATION_CASES,
+    ids=[event_type for event_type, _case in _WORKFLOW_OPERATION_CASES],
+)
+def test_default_catalog_registers_independent_workflow_operation_schema(
+    event_type: str,
+    case: dict[str, object],
+) -> None:
+    catalog = default_event_schema_catalog()
+    data_schema = _WORKFLOW_PAYLOAD_FIXTURE["operation_schema"]
+    context = BusinessContext.from_dict(case["business_context"])
+    canonical_payload = case["payload"]
+    assert isinstance(canonical_payload, dict)
+    legacy_payload = {**canonical_payload, "run_id": context.run_id}
+
+    assert catalog.current_schema(event_type) == data_schema
+    assert catalog.prepare_publish_payload(
+        event_type,
+        data_schema,
+        legacy_payload,
+        business_context=context,
+    ) == canonical_payload
+
+
+def test_prepare_publish_payload_rejects_conflicting_or_payload_only_context() -> None:
+    catalog = default_event_schema_catalog()
+    schema = "newsroom.workflow-event/v1"
+    payload = {
+        "workflow_id": "workflow-other",
+        "workflow_version": "1",
+        "profile": "default",
+    }
+    with pytest.raises(EventContextConflictError) as conflict:
+        catalog.prepare_publish_payload(
+            "workflow_started",
+            schema,
+            payload,
+            business_context=BusinessContext(
+                run_id="run-1",
+                workflow_id="workflow-1",
+            ),
+        )
+    assert conflict.value.field_name == "workflow_id"
+
+    with pytest.raises(EventContextConflictError) as payload_only:
+        catalog.prepare_publish_payload(
+            "workflow_started",
+            schema,
+            payload,
+            business_context=BusinessContext(run_id="run-1"),
+        )
+    assert payload_only.value.field_name == "workflow_id"
+
+
+def test_prepare_publish_payload_is_detached_from_legacy_input() -> None:
+    catalog = default_event_schema_catalog()
+    source = {
+        "run_id": "run-1",
+        "workflow_id": "workflow-1",
+        "workflow_version": "1",
+        "profile": "default",
+        "topic": "daily briefing",
+    }
+    prepared = catalog.prepare_publish_payload(
+        "workflow_started",
+        "newsroom.workflow-event/v1",
+        source,
+        business_context=BusinessContext(
+            run_id="run-1",
+            workflow_id="workflow-1",
+        ),
+    )
+
+    source["topic"] = "changed"
+
+    assert prepared == {
+        "workflow_version": "1",
+        "profile": "default",
+        "topic": "daily briefing",
+    }
+
+
+def test_workflow_timeout_schema_keeps_policy_source_and_rejects_monotonic_values() -> None:
+    catalog = default_event_schema_catalog()
+    schema = "newsroom.workflow-event/v1"
+    valid = _WORKFLOW_PAYLOAD_FIXTURE["workflow_events"][
+        "workflow_timeout_exceeded"
+    ]["payload"]
+    assert catalog.validate("workflow_timeout_exceeded", schema, valid) == valid
+
+    with pytest.raises(EventSchemaValidationError) as absolute_clock:
+        catalog.validate(
+            "workflow_timeout_exceeded",
+            schema,
+            {**valid, "started_monotonic": 12834.5},
+        )
+    assert absolute_clock.value.rule == "additionalProperties"
+
+    without_policy = dict(valid)
+    del without_policy["policy_source"]
+    with pytest.raises(EventSchemaValidationError) as missing_policy:
+        catalog.validate("workflow_timeout_exceeded", schema, without_policy)
+    assert missing_policy.value.rule == "required"
+
+
 def test_default_catalog_uses_real_workflow_and_harness_payload_contracts() -> None:
     catalog = default_event_schema_catalog()
 
@@ -332,10 +501,12 @@ def test_default_catalog_accepts_harness_safe_summary_contracts() -> None:
 def test_default_catalog_registers_schema_owned_sensitivity_policies() -> None:
     catalog = default_event_schema_catalog()
 
-    stream_policy = catalog.get(
+    stream_registration = catalog.get(
         "agent_llm_stream_event",
         "newsroom.workflow-event/v1",
-    ).sensitivity_policy
+    )
+    stream_schema = stream_registration.schema_copy()
+    stream_policy = stream_registration.sensitivity_policy
     worker_policy = catalog.get(
         "worker_called",
         "newsroom.harness-event/v1",
@@ -349,11 +520,14 @@ def test_default_catalog_registers_schema_owned_sensitivity_policies() -> None:
         "newsroom.harness-event/v1",
     ).sensitivity_policy
 
-    assert stream_policy.disposition_for("/stream_event") is FieldDisposition.REFERENCE_ONLY
-    assert (
-        stream_policy.whole_document_reference
-        is WholeDocumentReferenceDisposition.SECURE_REQUIRED
-    )
+    assert "stream_event" not in stream_schema["properties"]
+    assert stream_schema["properties"]["stream_event_ref"] == {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$",
+    }
+    assert "stream_event_ref" in stream_schema["required"]
+    assert stream_policy.disposition_for("/stream_event_ref") is FieldDisposition.ALLOWED
+    assert not stream_policy.has_reference_only_fields
     assert worker_policy.disposition_for("/inputs") is FieldDisposition.REFERENCE_ONLY
     assert worker_policy.disposition_for("/metadata") is FieldDisposition.REFERENCE_ONLY
     assert (
@@ -383,6 +557,91 @@ def test_default_catalog_registers_schema_owned_sensitivity_policies() -> None:
         phase_policy.disposition_for("/gate_results/0/diagnostics")
         is FieldDisposition.REFERENCE_ONLY
     )
+
+
+@pytest.mark.parametrize(
+    ("event_type", "data_schema", "path", "expected"),
+    [
+        (
+            "edge_evaluated",
+            "newsroom.workflow-event/v1",
+            "/condition_expr",
+            FieldDisposition.SENSITIVE,
+        ),
+        (
+            "human_review_approved",
+            "newsroom.workflow-event/v1",
+            "/actor_id",
+            FieldDisposition.SENSITIVE,
+        ),
+        (
+            "step_retry_scheduled",
+            "newsroom.workflow-event/v1",
+            "/error_message",
+            FieldDisposition.SENSITIVE,
+        ),
+        (
+            "policy_violation",
+            "newsroom.workflow-event/v1",
+            "/resource_estimate/input_keys",
+            FieldDisposition.SENSITIVE,
+        ),
+        (
+            "runtime_safety_violation",
+            "newsroom.workflow-event/v1",
+            "/metadata",
+            FieldDisposition.SENSITIVE,
+        ),
+        (
+            "runner_capability_violation",
+            "newsroom.workflow-event/v1",
+            "/implementation",
+            FieldDisposition.SENSITIVE,
+        ),
+        (
+            "run_operation_requested",
+            "newsroom.workflow-operation/v1",
+            "/details",
+            FieldDisposition.SENSITIVE,
+        ),
+        (
+            "run_operation_failed",
+            "newsroom.workflow-operation/v1",
+            "/reason",
+            FieldDisposition.SENSITIVE,
+        ),
+    ],
+)
+def test_workflow_schema_sensitive_fields_are_catalog_owned(
+    event_type: str,
+    data_schema: str,
+    path: str,
+    expected: FieldDisposition,
+) -> None:
+    policy = default_event_schema_catalog().get(
+        event_type,
+        data_schema,
+    ).sensitivity_policy
+
+    assert policy.disposition_for(path) is expected
+    assert policy.redact_sensitive
+
+
+def test_current_workflow_schemas_declare_authoritative_context_fields() -> None:
+    catalog = default_event_schema_catalog()
+    expected = {
+        "run_id",
+        "workflow_id",
+        "step_id",
+        "task_id",
+        "agent_id",
+        "tool_call_id",
+        "request_id",
+    }
+
+    for event_type in (*WORKFLOW_EVENT_TYPES, *WORKFLOW_OPERATION_EVENT_TYPES):
+        registration = catalog.get(event_type, catalog.current_schema(event_type))
+        assert set(registration.authoritative_context_fields) == expected
 
 
 def test_registration_rejects_non_adjacent_and_impure_upcasters() -> None:

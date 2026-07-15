@@ -4,15 +4,16 @@ from typing import Any
 
 from framework.specs import StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from framework.events.trace import TraceContext
+from framework.events.canonical import checksum_for
 from framework.workflow.routing import RoutingDecision
-from framework.events import EventRecorder
+from framework.workflow.runtime.event_emitter import WorkflowEventRecorder
 from framework.workflow.runtime.result import StepOutcome, WorkflowError
 
 
 class RuntimeEventBridge:
     def emit_workflow_started(
         self,
-        recorder: EventRecorder,
+        recorder: WorkflowEventRecorder,
         *,
         workflow: WorkflowSpec,
         profile: str,
@@ -30,7 +31,7 @@ class RuntimeEventBridge:
 
     def emit_workflow_resumed(
         self,
-        recorder: EventRecorder,
+        recorder: WorkflowEventRecorder,
         *,
         workflow: WorkflowSpec,
         profile: str,
@@ -61,7 +62,7 @@ class RuntimeEventBridge:
 
     def emit_routing_events(
         self,
-        recorder: EventRecorder,
+        recorder: WorkflowEventRecorder,
         decision: RoutingDecision,
         *,
         trace_context: TraceContext | None = None,
@@ -76,7 +77,7 @@ class RuntimeEventBridge:
 
     def emit_human_review_resume_events(
         self,
-        recorder: EventRecorder,
+        recorder: WorkflowEventRecorder,
         resume_metadata: dict[str, Any] | None,
         *,
         trace_context: TraceContext | None = None,
@@ -102,7 +103,7 @@ class RuntimeEventBridge:
 
     def emit_agent_loop_stream_events(
         self,
-        recorder: EventRecorder,
+        recorder: WorkflowEventRecorder,
         step: StepSpec,
         outcome: StepOutcome,
         trace_context: TraceContext | None = None,
@@ -124,14 +125,14 @@ class RuntimeEventBridge:
                     "sequence": event.get("sequence"),
                     "stream_event_type": event.get("stream_event_type"),
                     "text_delta_chars": event.get("text_delta_chars"),
-                    "stream_event": event.get("stream_event"),
+                    "stream_event_ref": checksum_for(event.get("stream_event")),
                 },
                 trace_context=trace_context,
             )
 
     def emit_memory_operation_events(
         self,
-        recorder: EventRecorder,
+        recorder: WorkflowEventRecorder,
         step: StepSpec,
         outcome: StepOutcome,
         trace_context: TraceContext | None = None,
@@ -162,7 +163,7 @@ class RuntimeEventBridge:
 
     def emit_terminal_workflow_event(
         self,
-        recorder: EventRecorder,
+        recorder: WorkflowEventRecorder,
         *,
         status: WorkflowStatus,
         path: list[str],

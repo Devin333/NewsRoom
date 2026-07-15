@@ -10,6 +10,7 @@ from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSide
 from framework.workflow.runners.registry import StepRunnerRegistry
 from framework.workflow.runtime.artifact_publishers import WorkflowArtifactPublisherRegistry
 from framework.artifacts import ArtifactManager
+from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
 from framework.workflow.runtime.execution_context import build_execution_context
 from framework.workflow.runtime.execution_loop import WorkflowExecutionLoop
@@ -21,6 +22,7 @@ from framework.workflow.runtime.state_machine import WorkflowStateMachine
 from framework.workflow.runtime.step_invoker import StepInvoker
 from framework.workflow.runtime.timeout import workflow_timeout_budget
 from framework.workflow.routing import RoutingEngine
+from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
 class _Runner:
@@ -60,6 +62,16 @@ def _registry(runner: _Runner) -> StepRunnerRegistry:
     registry = StepRunnerRegistry()
     registry.register(StepType.FUNCTION, runner)
     return registry
+
+
+def _event_dependencies(tmp_path: Path) -> dict[str, Any]:
+    store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    catalog = default_event_schema_catalog()
+    return {
+        "event_runtime": EventRuntime(store=store, schema_catalog=catalog),
+        "event_reader": store,
+        "event_schema_catalog": catalog,
+    }
 
 
 def _workflow(step: StepSpec | None = None) -> WorkflowSpec:
@@ -108,6 +120,7 @@ def test_step_invoker_retries_and_preserves_attempt_metrics(tmp_path: Path) -> N
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=_registry(runner),
         event_bus=None,
+        **_event_dependencies(tmp_path),
         started_monotonic=0.0,
         run_id="run-step-invoker",
     )
@@ -115,9 +128,17 @@ def test_step_invoker_retries_and_preserves_attempt_metrics(tmp_path: Path) -> N
     outcome = StepInvoker(
         step_runner_registry=_registry(runner),
         sleep_fn=lambda _delay: None,
-    ).run_step_with_retries(step, context.buffer, context.recorder)
+    ).run_step_with_retries(
+        step,
+        context.buffer,
+        context.recorder,
+        trace_context=context.trace_context.child(
+            span_id="step:s1",
+            step_id="s1",
+        ),
+    )
 
-    event_types = [event.event_type for event in context.recorder.list_events()]
+    event_types = [event.event.event_type for event in context.recorder.list_events()]
     assert outcome.status == StepStatus.SUCCEEDED
     assert outcome.metrics["attempt"] == 2
     assert "step_retry_scheduled" in event_types
@@ -133,6 +154,7 @@ def test_checkpoint_coordinator_writes_checkpoint_and_manifest(tmp_path: Path) -
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=_registry(_Runner([])),
         event_bus=None,
+        **_event_dependencies(tmp_path),
         started_monotonic=0.0,
         run_id="run-checkpoint",
     )
@@ -156,7 +178,7 @@ def test_checkpoint_coordinator_writes_checkpoint_and_manifest(tmp_path: Path) -
     assert store.saved[0].checkpoint_id == checkpoint_id
     assert context.checkpoint_ids == [checkpoint_id]
     assert context.manifest["checkpoints"] == [checkpoint_id]
-    assert context.recorder.list_events()[-1].event_type == "checkpoint_created"
+    assert context.recorder.list_events()[-1].event.event_type == "checkpoint_created"
 
 
 def test_execution_loop_stops_when_workflow_timeout_exceeds_after_step(tmp_path: Path) -> None:
@@ -186,6 +208,7 @@ def test_execution_loop_stops_when_workflow_timeout_exceeds_after_step(tmp_path:
         artifact_manager=artifact_manager,
         step_runner_registry=registry,
         event_bus=None,
+        **_event_dependencies(tmp_path),
         started_monotonic=0.0,
         run_id="run-workflow-timeout",
     )
@@ -216,9 +239,77 @@ def test_execution_loop_stops_when_workflow_timeout_exceeds_after_step(tmp_path:
         "policies.timeout_policy.timeout_seconds"
     )
     assert any(
-        event.event_type == "workflow_timeout_exceeded"
+        event.event.event_type == "workflow_timeout_exceeded"
         for event in context.recorder.list_events()
     )
+
+
+def test_execution_loop_persists_loop_limit_with_step_context(tmp_path: Path) -> None:
+    step = StepSpec(
+        step_id="repeat",
+        step_type=StepType.FUNCTION,
+        write_keys=["ok"],
+        idempotent=True,
+    )
+    workflow = WorkflowSpec(
+        workflow_id="wf-loop-limit",
+        name="Workflow Loop Limit",
+        version="1.0",
+        start_step_id=step.step_id,
+        steps=[step],
+        edges=[EdgeSpec(source_step_id=step.step_id, target_step_id=step.step_id)],
+        max_step_visits=1,
+    )
+    runner = _Runner(
+        [StepOutcome(status=StepStatus.SUCCEEDED, outputs={"ok": True})]
+    )
+    registry = _registry(runner)
+    artifact_manager = ArtifactManager(tmp_path)
+    context = build_execution_context(
+        workflow=workflow,
+        request={},
+        profile="test",
+        artifact_manager=artifact_manager,
+        step_runner_registry=registry,
+        event_bus=None,
+        **_event_dependencies(tmp_path),
+        started_monotonic=0.0,
+        run_id="run-loop-limit",
+    )
+
+    WorkflowExecutionLoop(
+        state_machine=WorkflowStateMachine(),
+        routing_engine=RoutingEngine(),
+        step_invoker=StepInvoker(
+            step_runner_registry=registry,
+            sleep_fn=lambda _delay: None,
+        ),
+        checkpoint_coordinator=CheckpointCoordinator(checkpoint_store=None),
+        event_bridge=RuntimeEventBridge(),
+        manifest_updater=ManifestUpdater(
+            artifact_manager=artifact_manager,
+            run_id=context.run_id,
+            manifest=context.manifest,
+        ),
+        is_run_cancelled=lambda _run_id: False,
+    ).run(context)
+
+    loop_events = [
+        event
+        for event in context.recorder.list_events()
+        if event.event.event_type == "workflow_loop_limit_exceeded"
+    ]
+    assert context.status == WorkflowStatus.FAILED
+    assert context.error is not None
+    assert context.error.error_type == "WorkflowLoopLimitExceeded"
+    assert context.error.step_id == "repeat"
+    assert context.current_step_ids == []
+    assert len(loop_events) == 1
+    assert loop_events[0].step_id == "repeat"
+    assert loop_events[0].event.payload == {
+        "max_step_visits": 1,
+        "visit_count": 2,
+    }
 
 
 def test_workflow_timeout_budget_uses_earliest_runtime_policy() -> None:
@@ -250,6 +341,7 @@ def test_runtime_event_bridge_emits_routing_events(tmp_path: Path) -> None:
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=_registry(_Runner([])),
         event_bus=None,
+        **_event_dependencies(tmp_path),
         started_monotonic=0.0,
         run_id="run-events",
     )
@@ -269,6 +361,7 @@ def test_outcome_finalizer_returns_workflow_result_and_terminal_manifest(tmp_pat
         artifact_manager=artifact_manager,
         step_runner_registry=_registry(_Runner([])),
         event_bus=None,
+        **_event_dependencies(tmp_path),
         started_monotonic=0.0,
         run_id="run-finalizer",
     )

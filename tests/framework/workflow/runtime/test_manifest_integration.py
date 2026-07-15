@@ -10,9 +10,11 @@ from framework.workflow.runners.registry import StepRunnerRegistry
 import pytest
 
 from framework.artifacts import ArtifactManager, ArtifactPathError
+from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.manifest import validate_run_manifest
 from framework.workflow.runtime.result import StepOutcome
+from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
 class _Runner:
@@ -47,11 +49,16 @@ def test_workflow_manifest_contains_q05_run_evidence(tmp_path) -> None:
         steps=[StepSpec(step_id="s1", write_keys=["ok"])],
         terminal_step_ids=["s1"],
     )
+    event_store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    event_catalog = default_event_schema_catalog()
 
     result = WorkflowExecutor(
         function_step_runner=None,
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=registry,
+        event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
+        event_reader=event_store,
+        event_schema_catalog=event_catalog,
     ).execute(workflow, {}, profile="test", run_id="run-manifest")
 
     manifest_path = tmp_path / "run-manifest" / "manifest.json"

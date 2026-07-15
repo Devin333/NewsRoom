@@ -12,6 +12,9 @@ from framework.workflow.runtime.artifact_publishers import (
 )
 from framework.artifacts import ArtifactManager
 from framework.workflow.runtime.execution_context import WorkflowExecutionContext, utc_now
+from framework.workflow.runtime.event_projection import (
+    WorkflowEventProjectionExporter,
+)
 from framework.workflow.runtime.manifest import (
     append_manifest_artifact_index,
     register_manifest_artifact,
@@ -51,7 +54,6 @@ class WorkflowOutcomeFinalizer:
         context.manifest["status"] = context.status.value
         context.manifest["finished_at"] = utc_now()
         context.manifest["completed_at"] = context.manifest["finished_at"]
-        context.manifest["event_count"] = len(context.recorder.list_events()) + 1
         context.manifest["step_count"] = len(context.step_results)
         context.manifest["current_step_ids"] = list(context.current_step_ids)
         context.manifest["checkpoint_count"] = len(context.checkpoint_ids)
@@ -71,6 +73,9 @@ class WorkflowOutcomeFinalizer:
             trace_context=context.trace_context,
         )
 
+        durable_event_count = context.event_emitter.last_accepted_sequence or 0
+        context.manifest["event_count"] = durable_event_count
+
         metrics_payload = workflow_metrics_payload(
             started_monotonic=context.started_monotonic,
             status=context.status,
@@ -78,14 +83,37 @@ class WorkflowOutcomeFinalizer:
             step_results=context.step_results,
             checkpoint_count=len(context.checkpoint_ids),
             artifact_count=len(context.manifest.get("artifacts") or {}),
-            event_count=len(context.recorder.list_events()),
+            event_count=durable_event_count,
             output=output,
             global_budget_tracker=self._global_budget_tracker,
         )
         context.manifest["memory_operations"] = metrics_payload.get("memory_operations", {})
         redaction_report = redaction_report_for_output(output)
         update_manifest_metrics(context.manifest, metrics_payload)
-        events_path = context.recorder.write_jsonl(context.run_dir / "events.jsonl")
+        event_projection = WorkflowEventProjectionExporter(
+            reader=context.event_emitter.reader,
+            schema_catalog=context.event_emitter.schema_catalog,
+        ).export(
+            stream_id=context.event_emitter.stream_id,
+            tenant_id=context.event_emitter.tenant_id,
+            target=context.run_dir / "events.jsonl",
+            through_sequence=(
+                durable_event_count if durable_event_count > 0 else None
+            ),
+        )
+        events_path = event_projection.path
+        context.manifest["event_projection"] = {
+            "path": "events.jsonl",
+            "stream_id": event_projection.stream_id,
+            "high_watermark": event_projection.high_watermark,
+            "event_count": event_projection.event_count,
+            "checksum": event_projection.checksum,
+        }
+        context.manifest["event_projection_high_watermark"] = (
+            event_projection.high_watermark
+        )
+        context.manifest["event_projection_checksum"] = event_projection.checksum
+        context.manifest["event_count"] = event_projection.event_count
         context.manifest["trace_ref"] = "events.jsonl"
         context.manifest["warnings"] = [
             *[

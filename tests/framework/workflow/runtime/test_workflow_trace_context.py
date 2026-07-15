@@ -6,8 +6,10 @@ from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
 from framework.artifacts import ArtifactManager
+from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.result import StepOutcome
+from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
 class _TraceAwareRunner:
@@ -49,11 +51,16 @@ def test_workflow_run_manifest_and_events_include_trace_context(tmp_path) -> Non
         start_step_id="s1",
         steps=[StepSpec(step_id="s1", step_type=StepType.FUNCTION, write_keys=["done"])],
     )
+    event_store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    event_catalog = default_event_schema_catalog()
 
     result = WorkflowExecutor(
         function_step_runner=None,
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=registry,
+        event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
+        event_reader=event_store,
+        event_schema_catalog=event_catalog,
     ).execute(workflow, {}, profile="test", run_id="run-trace")
 
     step_span = result.manifest["step_spans"]["s1"]
@@ -65,4 +72,5 @@ def test_workflow_run_manifest_and_events_include_trace_context(tmp_path) -> Non
     assert step_span["parent_span_id"] == "workflow:run-trace"
     assert runner.trace_context.span_id == "step:s1"
     assert '"trace_id"' in events
-    assert '"span_id": "step:s1"' in events
+    assert '"io.newsroom.legacy"' in events
+    assert '"span_id":"step:s1"' in events

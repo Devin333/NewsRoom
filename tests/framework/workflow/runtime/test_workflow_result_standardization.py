@@ -8,11 +8,13 @@ from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSide
 from framework.workflow.runners.registry import StepRunnerRegistry
 from framework.workflow.runtime.artifact_publishers import WorkflowArtifactPublisherRegistry
 from framework.artifacts import ArtifactManager
+from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.execution_context import build_execution_context
 from framework.workflow.runtime.manifest_updater import ManifestUpdater
 from framework.workflow.runtime.outcome_finalizer import WorkflowOutcomeFinalizer
 from framework.workflow.runtime.result import StepOutcome, WorkflowResult
 from framework.workflow.runtime.runtime_event_bridge import RuntimeEventBridge
+from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
 class _Runner:
@@ -70,6 +72,8 @@ def test_outcome_finalizer_populates_standard_workflow_result_fields(tmp_path: P
     )
     registry = StepRunnerRegistry()
     registry.register(StepType.FUNCTION, _Runner())
+    event_store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    event_catalog = default_event_schema_catalog()
     context = build_execution_context(
         workflow=workflow,
         request={},
@@ -77,6 +81,9 @@ def test_outcome_finalizer_populates_standard_workflow_result_fields(tmp_path: P
         artifact_manager=artifact_manager,
         step_runner_registry=registry,
         event_bus=None,
+        event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
+        event_reader=event_store,
+        event_schema_catalog=event_catalog,
         started_monotonic=0.0,
         run_id="run-standard",
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +31,11 @@ class RunOperationApplicationService:
         artifact_root: str | Path = ".newsroom/runs",
         *,
         operation_service: WorkflowRunOperationService | None = None,
+        event_env: Mapping[str, str] | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
-        self.operation_service = operation_service or LocalWorkflowRunOperationService(
-            artifact_root=self.artifact_root
-        )
+        self._operation_service = operation_service
+        self._event_env = None if event_env is None else dict(event_env)
 
     def cancel_run(
         self,
@@ -45,8 +46,9 @@ class RunOperationApplicationService:
         metadata: dict[str, Any] | None = None,
     ) -> RunOperationApplicationResult:
         self._ensure_run_exists(run_id)
+        operation_service = self._get_operation_service()
         return RunOperationApplicationResult(
-            self.operation_service.cancel_run(
+            operation_service.cancel_run(
                 run_id,
                 reason or "cancel requested through API",
                 actor=_actor(actor_id, metadata),
@@ -62,8 +64,9 @@ class RunOperationApplicationService:
         metadata: dict[str, Any] | None = None,
     ) -> RunOperationApplicationResult:
         self._ensure_run_exists(run_id)
+        operation_service = self._get_operation_service()
         return RunOperationApplicationResult(
-            self.operation_service.rerun_from_step(
+            operation_service.rerun_from_step(
                 run_id,
                 step_id,
                 actor=_actor(actor_id, metadata),
@@ -79,8 +82,9 @@ class RunOperationApplicationService:
         metadata: dict[str, Any] | None = None,
     ) -> RunOperationApplicationResult:
         self._ensure_run_exists(run_id)
+        operation_service = self._get_operation_service()
         return RunOperationApplicationResult(
-            self.operation_service.resume_with_patch(
+            operation_service.resume_with_patch(
                 run_id,
                 patch,
                 actor=_actor(actor_id, metadata),
@@ -97,8 +101,9 @@ class RunOperationApplicationService:
         metadata: dict[str, Any] | None = None,
     ) -> RunOperationApplicationResult:
         self._ensure_run_exists(run_id)
+        operation_service = self._get_operation_service()
         return RunOperationApplicationResult(
-            self.operation_service.skip_step(
+            operation_service.skip_step(
                 run_id,
                 step_id,
                 reason or "skip requested through API",
@@ -117,6 +122,7 @@ class RunOperationApplicationService:
         metadata: dict[str, Any] | None = None,
     ) -> RunOperationApplicationResult:
         self._ensure_run_exists(run_id)
+        operation_service = self._get_operation_service()
         actual_actor_id = actor_id or resolved_by
         resolution = {
             "reason": reason or "blocked run resolved through API",
@@ -125,7 +131,7 @@ class RunOperationApplicationService:
             "metadata": dict(metadata or {}),
         }
         return RunOperationApplicationResult(
-            self.operation_service.mark_blocked_resolved(
+            operation_service.mark_blocked_resolved(
                 run_id,
                 resolution,
                 actor=_actor(actual_actor_id, metadata),
@@ -146,6 +152,28 @@ class RunOperationApplicationService:
         )
         if not manifest_path.exists():
             raise FileNotFoundError(f"run not found: {run_id}")
+
+    def _get_operation_service(self) -> WorkflowRunOperationService:
+        operation_service = self._operation_service
+        if operation_service is not None:
+            return operation_service
+
+        from infrastructure.storage.events.factory import (
+            durable_event_storage_from_env,
+        )
+
+        event_storage = durable_event_storage_from_env(
+            artifact_root=self.artifact_root,
+            env=self._event_env,
+        )
+        operation_service = LocalWorkflowRunOperationService(
+            artifact_root=self.artifact_root,
+            event_runtime=event_storage.event_runtime,
+            event_reader=event_storage.event_store,
+            event_schema_catalog=event_storage.schema_catalog,
+        )
+        self._operation_service = operation_service
+        return operation_service
 
 
 def _actor(actor_id: str | None, metadata: dict[str, Any] | None) -> OperationActor | None:

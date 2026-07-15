@@ -14,6 +14,7 @@ as read-only. Fixed identities and timestamps make repeated scans deterministic.
 | `valid/workflow_flat.jsonl` | minimal historical workflow artifact | Use registered legacy mapping and deterministic identity; never invent current time |
 | `valid/harness_history.jsonl` | typed Harness event and event-log projection | Preserve transition time/run/step and map through Harness schemas |
 | `valid/checkpoints.json` | legacy workflow and Harness checkpoint boundaries | Preserve legacy offset metadata and map through an explicit 0-based-to-1-based table |
+| `valid/checkpoint_boundary_mappings.json` | recorded checkpoint-to-import boundary identities | Resolve offset zero, last line, and empty history without assuming offset arithmetic |
 | `valid/schema_upcast_v1.jsonl` | registered historical payload schema | Resolve through the complete adjacent upcaster chain without changing occurrence time or source bytes |
 
 ## Quarantine fixtures

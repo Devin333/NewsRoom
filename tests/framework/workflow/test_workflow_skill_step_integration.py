@@ -7,9 +7,11 @@ from typing import Any
 from framework.specs import EdgeSpec, StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from framework.workflow.compiler import WorkflowCompiler
 from framework.artifacts import ArtifactManager
+from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runners import FunctionStepRegistry, build_default_step_runner_registry
 from framework.workflow.runners.skill import SkillStepRunner
+from infrastructure.storage.events.sqlite import SQLiteEventStore
 
 
 @dataclass
@@ -80,11 +82,9 @@ def test_workflow_skill_step_passes_upstream_output_to_skill(tmp_path: Path) -> 
     registry = _registry(skill_runner)
     workflow = _workflow()
 
-    result = WorkflowExecutor(
-        function_step_runner=None,
-        artifact_manager=ArtifactManager(tmp_path),
-        step_runner_registry=registry,
-    ).execute(workflow, {}, profile="test", run_id="run-skill-upstream")
+    result = _executor(tmp_path, registry).execute(
+        workflow, {}, profile="test", run_id="run-skill-upstream"
+    )
 
     assert result.status == WorkflowStatus.SUCCEEDED
     assert skill_runner.calls[0]["input_data"] == {"item": {"title": "OpenAI news"}}
@@ -96,11 +96,9 @@ def test_skill_output_can_be_read_by_downstream_step(tmp_path: Path) -> None:
     )
     registry = _registry(skill_runner)
 
-    result = WorkflowExecutor(
-        function_step_runner=None,
-        artifact_manager=ArtifactManager(tmp_path),
-        step_runner_registry=registry,
-    ).execute(_workflow(), {}, profile="test", run_id="run-skill-downstream")
+    result = _executor(tmp_path, registry).execute(
+        _workflow(), {}, profile="test", run_id="run-skill-downstream"
+    )
 
     assert result.output["extracted_entities"] == {"entities": ["OpenAI"]}
     assert result.output["summary"] == "OpenAI"
@@ -114,6 +112,19 @@ def test_default_registry_can_register_skill_step_runner() -> None:
 
     assert registry.has_step_type(StepType.SKILL)
     assert isinstance(registry.get(StepType.SKILL), SkillStepRunner)
+
+
+def _executor(tmp_path: Path, registry: Any) -> WorkflowExecutor:
+    event_store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    event_catalog = default_event_schema_catalog()
+    return WorkflowExecutor(
+        function_step_runner=None,
+        artifact_manager=ArtifactManager(tmp_path),
+        step_runner_registry=registry,
+        event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
+        event_reader=event_store,
+        event_schema_catalog=event_catalog,
+    )
 
 
 def test_compiler_and_validator_accept_skill_step() -> None:

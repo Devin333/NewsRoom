@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -31,8 +30,6 @@ from framework.workflow.runtime.manifest import (
 )
 from framework.workflow.runtime.runner import (
     LocalJsonWorkflowArtifactIndexStore,
-    LocalJsonWorkflowEventStore,
-    WorkflowEventRecord,
 )
 from infrastructure.storage.checkpoint.local_json import (
     LocalJsonCheckpointStore as InfrastructureCheckpointStore,
@@ -51,11 +48,46 @@ class _RecordingArtifactManager:
         raise AssertionError("start_run must not be called for an unsafe explicit run id")
 
 
-@pytest.mark.parametrize("run_id", ["", "../escape", "nested/run", "run:stream", "CON"])
+class _RecordingEventRuntime:
+    def __init__(self) -> None:
+        self.published: list[Any] = []
+
+    def publish(self, event: Any, *, unit_of_work: Any = None) -> Any:
+        self.published.append(event)
+        raise AssertionError("publish must not be called for an unsafe explicit run id")
+
+
+class _FailIfReadEventReader:
+    def __getattr__(self, name: str) -> Any:
+        raise AssertionError(f"event reader must not be used for an unsafe run id: {name}")
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        "",
+        ".",
+        "..",
+        "../escape",
+        "/absolute",
+        "nested/run",
+        "nested\\run",
+        "C:\\absolute",
+        "C:drive-relative",
+        "\\\\server\\share",
+        "\\\\?\\C:\\device",
+        "run:stream",
+        "CON",
+        "con.txt",
+        "NUL",
+        "LPT1",
+    ],
+)
 def test_execution_context_rejects_unsafe_explicit_run_id_before_manager(
     run_id: str,
 ) -> None:
     manager = _RecordingArtifactManager()
+    runtime = _RecordingEventRuntime()
 
     with pytest.raises(ArtifactPathError):
         build_execution_context(
@@ -65,11 +97,14 @@ def test_execution_context_rejects_unsafe_explicit_run_id_before_manager(
             artifact_manager=cast(Any, manager),
             step_runner_registry=cast(Any, object()),
             event_bus=None,
+            event_runtime=cast(Any, runtime),
+            event_reader=cast(Any, _FailIfReadEventReader()),
             started_monotonic=0.0,
             run_id=run_id,
         )
 
     assert manager.started_run_ids == []
+    assert runtime.published == []
 
 
 def test_manifest_store_rejects_traversal_before_external_manifest_read(
@@ -371,20 +406,3 @@ def test_workflow_artifact_index_rejects_blank_logical_artifact_id_without_recor
         LocalJsonWorkflowArtifactIndexStore(index_root).index_artifact(ref)
 
     assert not index_root.exists()
-
-
-def test_workflow_event_store_rejects_unsafe_run_id_without_record(
-    tmp_path: Path,
-) -> None:
-    event_root = tmp_path / "events"
-    event = WorkflowEventRecord(
-        event_id="event-1",
-        run_id="run:stream",
-        event_type="run_started",
-        timestamp=datetime.now(timezone.utc),
-    )
-
-    with pytest.raises(ArtifactPathError, match="invalid run_id"):
-        LocalJsonWorkflowEventStore(event_root).append_event(event)
-
-    assert not event_root.exists()

@@ -1,0 +1,168 @@
+{
+  "workflow_schema": "newsroom.workflow-event/v1",
+  "workflow_events": {
+    "workflow_started": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1"},
+      "payload": {"workflow_version": "1", "profile": "default", "topic": "daily briefing"}
+    },
+    "workflow_resumed": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1"},
+      "payload": {"workflow_version": "1", "profile": "default", "checkpoint_id": "checkpoint-1", "resume_metadata": {"mode": "resume"}}
+    },
+    "checkpoint_restored": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1"},
+      "payload": {"checkpoint_id": "checkpoint-1"}
+    },
+    "checkpoint_created": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1"},
+      "payload": {"checkpoint_id": "checkpoint-2", "current_step_ids": ["step-1"], "path": ["step-0"]}
+    },
+    "edge_evaluated": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"edge_id": "edge-1", "source_step_id": "step-1", "target_step_id": "step-2", "condition": "always", "matched": true, "condition_expr": null}
+    },
+    "edge_traversed": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"edge_id": "edge-1", "source_step_id": "step-1", "target_step_id": "step-2", "condition": "always", "matched": true, "condition_expr": null}
+    },
+    "edge_rejected": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"edge_id": "edge-2", "source_step_id": "step-1", "target_step_id": "step-3", "condition": "never", "matched": false, "condition_expr": "score > 1"}
+    },
+    "human_review_decision_received": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review", "request_id": "request-1"},
+      "payload": {"decision": "approved", "actor_id": "reviewer-1", "approval_id": "approval-1"}
+    },
+    "human_review_requested": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review", "request_id": "request-1"},
+      "payload": {"checkpoint_id": "checkpoint-review"}
+    },
+    "human_review_paused": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review"},
+      "payload": {"outcome": {"status": "paused"}}
+    },
+    "human_review_approved": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review", "request_id": "request-1"},
+      "payload": {"decision": "approved", "actor_id": "reviewer-1", "approval_id": "approval-1"}
+    },
+    "human_review_rejected": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review", "request_id": "request-1"},
+      "payload": {"decision": "rejected", "actor_id": "reviewer-1", "approval_id": "approval-1"}
+    },
+    "human_review_needs_changes": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review", "request_id": "request-1"},
+      "payload": {"decision": "needs_changes", "actor_id": "reviewer-1", "approval_id": "approval-1"}
+    },
+    "agent_llm_stream_event": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "agent", "agent_id": "agent-1"},
+      "payload": {"iteration": 1, "sequence": 2, "stream_event_type": "text_delta", "text_delta_chars": 12, "stream_event_ref": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+    },
+    "memory_recall": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "memory-recall"},
+      "payload": {"status": "succeeded", "operation": "recall", "result_count": 1, "memory_ids": ["memory-1"], "context_token_estimate": 32}
+    },
+    "memory_write": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "memory-write"},
+      "payload": {"status": "succeeded", "operation": "write", "accepted_count": 1, "written_count": 1, "skipped_count": 0, "memory_ids": ["memory-2"]}
+    },
+    "memory_consolidate": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "memory-consolidate"},
+      "payload": {"status": "succeeded", "operation": "consolidate", "consolidated_count": 1, "skipped_count": 0, "memory_ids": ["memory-3"], "source_memory_ids": ["memory-1", "memory-2"]}
+    },
+    "workflow_succeeded": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1"},
+      "payload": {"path": ["step-1", "step-2"]}
+    },
+    "workflow_blocked": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-2"},
+      "payload": {"path": ["step-1", "step-2"], "error": {"error_type": "Blocked"}}
+    },
+    "workflow_budget_exceeded": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-2"},
+      "payload": {"path": ["step-1", "step-2"], "error": {"error_type": "BudgetExceeded"}}
+    },
+    "workflow_failed": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-2"},
+      "payload": {"path": ["step-1", "step-2"], "error": {"error_type": "WorkflowFailed"}}
+    },
+    "workflow_timeout_exceeded": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-2"},
+      "payload": {"pending_step_id": "step-3", "timeout_seconds": 30.0, "elapsed_seconds": 30.5, "policy_source": "policies.timeout_policy.timeout_seconds"}
+    },
+    "workflow_cancelled": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1"},
+      "payload": {}
+    },
+    "workflow_loop_limit_exceeded": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-loop"},
+      "payload": {"max_step_visits": 3, "visit_count": 4}
+    },
+    "workflow_paused": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review"},
+      "payload": {"reason": "human_review"}
+    },
+    "step_started": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"step_type": "tool_call", "attempt": 1, "max_attempts": 2}
+    },
+    "step_succeeded": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"outputs": ["result"]}
+    },
+    "step_skipped": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"outputs": []}
+    },
+    "step_paused": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"outcome": {"status": "paused"}}
+    },
+    "step_blocked": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"outcome": {"status": "blocked", "error_message": "redacted"}}
+    },
+    "step_failed": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"outcome": {"status": "failed", "error_message": "redacted"}}
+    },
+    "step_retry_scheduled": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"attempt": 1, "next_attempt": 2, "max_attempts": 3, "error_type": "TransientError", "error_message": "redacted", "delay_seconds": 1.0}
+    },
+    "step_timeout": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"attempt": 1, "max_attempts": 2, "timeout_seconds": 30.0, "on_timeout": "retry"}
+    },
+    "policy_violation": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"code": "resource.max_items", "message": "bounded diagnostic", "policy": "resource.max_items", "limit": 10, "actual": 11, "metadata": {}, "resource_estimate": {"input_items": 11, "input_keys": ["items"]}, "item_count": 11, "max_items": 10}
+    },
+    "runtime_safety_violation": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"step_type": "notification", "policy": "runtime_safety.notification_requires_approval", "code": "runtime_safety.notification_requires_approval", "message": "bounded diagnostic", "metadata": {"implementation": "builtin.notification"}}
+    },
+    "runner_capability_violation": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
+      "payload": {"runner_id": "builtin.tool", "capability": "timeout", "message": "bounded diagnostic"}
+    }
+  },
+  "operation_schema": "newsroom.workflow-operation/v1",
+  "workflow_operations": {
+    "run_operation_requested": {
+      "business_context": {"run_id": "run-1"},
+      "payload": {"operation_id": "op_requested", "operation_type": "cancel_run", "actor_id": "operator-1", "actor_type": "user", "reason": "operator request", "details": {"previous_status": "running"}}
+    },
+    "run_operation_applied": {
+      "business_context": {"run_id": "run-1"},
+      "payload": {"operation_id": "op_applied", "operation_type": "rerun_from_step", "actor_id": "operator-1", "actor_type": "user", "reason": null, "details": {"target_step_id": "step-1"}}
+    },
+    "run_operation_rejected": {
+      "business_context": {"run_id": "run-1"},
+      "payload": {"operation_id": "op_rejected", "operation_type": "skip_step", "actor_id": "operator-1", "actor_type": "user", "reason": "not allowed", "details": {"status": "running"}}
+    },
+    "run_operation_failed": {
+      "business_context": {"run_id": "run-1"},
+      "payload": {"operation_id": "op_failed", "operation_type": "resume_with_patch", "actor_id": null, "actor_type": null, "reason": null, "details": {"exception_type": "RuntimeError"}}
+    }
+  }
+}

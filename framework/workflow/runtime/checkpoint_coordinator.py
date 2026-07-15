@@ -1,17 +1,34 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, Protocol
 
+from framework.events.canonical import StoredEvent
+from framework.events.trace import TraceContext
 from framework.specs import WorkflowSpec
 from framework.workflow.buffer import DataBuffer
-from framework.workflow.checkpoint.envelope import envelope_from_checkpoint, envelope_to_checkpoint
-from framework.workflow.checkpoint.model import WorkflowCheckpoint
+from framework.workflow.checkpoint.durable import (
+    DurableWorkflowCheckpoint,
+    canonical_run_stream_id,
+)
 from framework.workflow.checkpoint.reference import CheckpointReference
-from framework.events.trace import TraceContext
-from framework.events import EventRecorder
 from framework.workflow.runtime.manifest import add_manifest_checkpoint, add_manifest_checkpoint_ref
 from framework.workflow.runtime.result import StepOutcome
+
+
+class CheckpointEventRecorder(Protocol):
+    @property
+    def last_accepted_event(self) -> StoredEvent | None: ...
+
+    def emit(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        trace_context: TraceContext | None = None,
+        component: str | None = None,
+    ) -> Any: ...
 
 
 class CheckpointCoordinator:
@@ -34,7 +51,7 @@ class CheckpointCoordinator:
         buffer: DataBuffer,
         step_results: dict[str, StepOutcome],
         path: list[str],
-        recorder: EventRecorder,
+        recorder: CheckpointEventRecorder,
         manifest: dict[str, Any] | None = None,
         checkpoint_ids: list[str] | None = None,
         trace_context: TraceContext | None = None,
@@ -42,9 +59,24 @@ class CheckpointCoordinator:
         if self._checkpoint_store is None:
             return None
 
-        event_offset = len(recorder.list_events())
-        checkpoint_id = checkpoint_id_for(path[-1] if path else "start", event_offset)
-        checkpoint = WorkflowCheckpoint(
+        stream_id = canonical_run_stream_id(run_id)
+        boundary_event = recorder.last_accepted_event
+        last_sequence, last_event_id = _durable_boundary(
+            boundary_event,
+            stream_id=stream_id,
+            run_id=run_id,
+        )
+        checkpoint_id = checkpoint_id_for(
+            path[-1] if path else "start",
+            last_sequence,
+        )
+        metadata: dict[str, Any] = {"profile": profile}
+        if self._global_budget_tracker is not None and hasattr(
+            self._global_budget_tracker,
+            "snapshot",
+        ):
+            metadata["budget_usage"] = self._global_budget_tracker.snapshot()
+        checkpoint = DurableWorkflowCheckpoint(
             checkpoint_id=checkpoint_id,
             run_id=run_id,
             workflow_id=workflow.workflow_id,
@@ -56,16 +88,14 @@ class CheckpointCoordinator:
                 for step_id, outcome in step_results.items()
             },
             path=list(path),
-            event_offset=event_offset,
-            metadata={"profile": profile},
+            stream_id=stream_id,
+            last_durable_stream_sequence=last_sequence,
+            last_event_id=last_event_id,
+            metadata=metadata,
         )
-        if self._global_budget_tracker is not None and hasattr(
-            self._global_budget_tracker,
-            "snapshot",
-        ):
-            checkpoint.metadata["budget_usage"] = self._global_budget_tracker.snapshot()
-        checkpoint = envelope_to_checkpoint(envelope_from_checkpoint(checkpoint))
         self._checkpoint_store.save_checkpoint(checkpoint)
+
+        # The checkpoint fact can only be published after its durable file exists.
         recorder.emit(
             "checkpoint_created",
             {
@@ -88,9 +118,12 @@ class CheckpointCoordinator:
                     status="created",
                     path=f"checkpoints/{checkpoint_id}.json",
                     metadata={
-                        "event_offset": event_offset,
+                        "stream_id": stream_id,
+                        "last_durable_stream_sequence": last_sequence,
+                        "last_event_id": last_event_id,
                         "profile": profile,
                         "current_step_ids": list(current_step_ids),
+                        "path": list(path),
                     },
                 ),
             )
@@ -115,9 +148,37 @@ class CheckpointCoordinator:
         return self._checkpoint_store is not None
 
 
-def checkpoint_id_for(step_id: str, event_offset: int) -> str:
+def checkpoint_id_for(step_id: str, stream_sequence: int | None) -> str:
+    if stream_sequence is None:
+        checkpoint_sequence = 0
+    elif (
+        isinstance(stream_sequence, bool)
+        or not isinstance(stream_sequence, int)
+        or stream_sequence < 1
+    ):
+        raise ValueError("stream_sequence must be a positive 1-based integer or None")
+    else:
+        checkpoint_sequence = stream_sequence
     safe_step_id = "".join(
         character if character.isalnum() or character in "._-" else "_"
         for character in step_id
     ).strip("._-")
-    return f"cp-{event_offset:06d}-{safe_step_id or 'step'}"
+    return f"cp-{checkpoint_sequence:06d}-{safe_step_id or 'step'}"
+
+
+def _durable_boundary(
+    event: StoredEvent | None,
+    *,
+    stream_id: str,
+    run_id: str,
+) -> tuple[int | None, str | None]:
+    if event is None:
+        return None, None
+    if not isinstance(event, StoredEvent):
+        raise TypeError("checkpoint recorder must expose an accepted StoredEvent boundary")
+    event.verify_integrity()
+    if event.stream_id != stream_id:
+        raise ValueError("checkpoint boundary event does not belong to the run stream")
+    if event.business_context.run_id != run_id:
+        raise ValueError("checkpoint boundary event run_id does not match the checkpoint")
+    return event.stream_sequence, event.event_id

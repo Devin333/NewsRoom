@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
@@ -19,9 +18,10 @@ from framework.artifacts import (
 )
 from framework.artifacts.models import ArtifactRef
 from framework.events import EventBus
+from framework.events.ports import EventReaderPort, EventRuntimePort
+from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
 from framework.shared.hashing import hash_text
-from framework.shared.time import ensure_utc
 from framework.specs import WorkflowSpec
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.run_result import RunResult
@@ -49,7 +49,7 @@ from framework.workflow.operations import (
 from framework.workflow.runtime.result import WorkflowResult
 from framework.workflow.routing import RoutingEngine
 from framework.workflow.checkpoint.resume import WorkflowResumePlan
-from framework.workflow.checkpoint.model import WorkflowCheckpoint
+from framework.workflow.checkpoint.store import StoredWorkflowCheckpoint
 from framework.workflow.runners import build_default_step_runner_registry
 from framework.workflow.runners.function import FunctionStepRegistry
 from framework.workflow.runners.registry import StepRunnerRegistry
@@ -63,16 +63,8 @@ class ArtifactIndexStore(Protocol):
     def index_artifact(self, ref: ArtifactRef) -> Any: ...
 
 
-class EventStore(Protocol):
-    def append_event(self, event: Any) -> Any: ...
-
-
 class LineageStore(Protocol):
     def record_many(self, refs: list[Any]) -> Any: ...
-
-
-class PayloadRedactor(Protocol):
-    def redact(self, value: Any, *, run_id: str, artifact_id: str) -> Any: ...
 
 
 class WorkflowRunner:
@@ -92,11 +84,12 @@ class WorkflowRunner:
         max_parallel_workers: int = 4,
         max_tool_batch_workers: int = 4,
         artifact_index_store: Any | None = None,
-        event_store: Any | None = None,
+        event_runtime: EventRuntimePort | None = None,
+        event_reader: EventReaderPort | None = None,
+        event_schema_catalog: EventSchemaCatalog | None = None,
         lineage_store: Any | None = None,
         checkpoint_store: Any | None = None,
         event_bus: EventBus | None = None,
-        redactor: PayloadRedactor | None = None,
         global_budget_policy: GlobalBudgetPolicy | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         artifact_publishers: Sequence[WorkflowArtifactPublisher] | None = None,
@@ -124,12 +117,19 @@ class WorkflowRunner:
                 max_tool_batch_workers=max_tool_batch_workers,
             )
         self._step_runner_registry = step_runner_registry
+        if event_runtime is None:
+            raise ValueError("event_runtime is required for durable workflow execution")
+        if event_reader is None:
+            raise ValueError("event_reader is required for durable workflow execution")
+        self._event_runtime = event_runtime
+        self._event_reader = event_reader
+        self._event_schema_catalog = (
+            event_schema_catalog or default_event_schema_catalog()
+        )
         self._indexer = WorkflowRunIndexer(
             artifact_index_store=artifact_index_store
             or artifact_index_store_from_env(artifact_root=self._artifact_root),
-            event_store=event_store or event_store_from_env(artifact_root=self._artifact_root),
             lineage_store=lineage_store or lineage_store_from_env(artifact_root=self._artifact_root),
-            redactor=redactor or WorkflowEventRedactor(),
             artifact_ref_extractors=artifact_ref_extractors,
             lineage_extractors=lineage_extractors,
         )
@@ -144,6 +144,9 @@ class WorkflowRunner:
             artifact_root=self._artifact_root,
             runner=self,
             checkpoint_store=self._checkpoint_store,
+            event_runtime=self._event_runtime,
+            event_reader=self._event_reader,
+            event_schema_catalog=self._event_schema_catalog,
         )
 
     def run(
@@ -160,6 +163,9 @@ class WorkflowRunner:
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
             event_bus=self._event_bus,
+            event_runtime=self._event_runtime,
+            event_reader=self._event_reader,
+            event_schema_catalog=self._event_schema_catalog,
             global_budget_tracker=self._budget_tracker_for_run(),
             artifact_publishers=self._artifact_publishers,
             routing_engine=self._routing_engine,
@@ -181,6 +187,9 @@ class WorkflowRunner:
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
             event_bus=self._event_bus,
+            event_runtime=self._event_runtime,
+            event_reader=self._event_reader,
+            event_schema_catalog=self._event_schema_catalog,
             global_budget_tracker=self._budget_tracker_for_run(),
             artifact_publishers=self._artifact_publishers,
             routing_engine=self._routing_engine,
@@ -206,7 +215,7 @@ class WorkflowRunner:
     def resume_from_checkpoint(
         self,
         workflow: WorkflowSpec,
-        checkpoint: WorkflowCheckpoint,
+        checkpoint: StoredWorkflowCheckpoint,
         *,
         profile: str,
         run_id: str | None = None,
@@ -220,6 +229,9 @@ class WorkflowRunner:
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
             event_bus=self._event_bus,
+            event_runtime=self._event_runtime,
+            event_reader=self._event_reader,
+            event_schema_catalog=self._event_schema_catalog,
             global_budget_tracker=self._budget_tracker_for_run(),
             artifact_publishers=self._artifact_publishers,
             routing_engine=self._routing_engine,
@@ -471,22 +483,17 @@ class WorkflowRunIndexer:
         self,
         *,
         artifact_index_store: ArtifactIndexStore,
-        event_store: EventStore,
         lineage_store: LineageStore,
-        redactor: PayloadRedactor,
         artifact_ref_extractors: Sequence[ArtifactRefExtractor] | None = None,
         lineage_extractors: Sequence[LineageExtractor] | None = None,
     ) -> None:
         self._artifact_index_store = artifact_index_store
-        self._event_store = event_store
         self._lineage_store = lineage_store
-        self._redactor = redactor
         self._artifact_ref_extractors = list(artifact_ref_extractors or [])
         self._lineage_extractors = list(lineage_extractors or [])
 
     def index(self, result: WorkflowResult) -> None:
         self._index_artifacts(result)
-        self._index_events(result)
         self._index_lineage(result)
 
     def _index_artifacts(self, result: WorkflowResult) -> None:
@@ -530,45 +537,6 @@ class WorkflowRunIndexer:
             ):
                 self._artifact_index_store.index_artifact(artifact_ref)
 
-    def _index_events(self, result: WorkflowResult) -> None:
-        if result.events_path is None or result.artifact_dir is None:
-            return
-        artifacts = result.manifest.get("artifacts") or {}
-        relative_path = artifacts.get("events") if isinstance(artifacts, dict) else None
-        if not isinstance(relative_path, str):
-            return
-        try:
-            events_path = _artifact_path(Path(result.artifact_dir), relative_path)
-        except FileNotFoundError:
-            return
-        with events_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                event = WorkflowEventRecord.from_dict(json.loads(stripped))
-                payload_step_id = event.payload.get("step_id")
-                redaction = self._redactor.redact(
-                    event.payload,
-                    run_id=result.run_id,
-                    artifact_id="events",
-                )
-                metadata = {
-                    **event.metadata,
-                    "workflow_version": result.workflow_version,
-                }
-                if redaction.redacted:
-                    metadata["redaction_report"] = redaction.report.to_dict()
-                event = replace(
-                    event,
-                    workflow_id=event.workflow_id or result.workflow_id,
-                    step_id=event.step_id or (str(payload_step_id) if payload_step_id else None),
-                    payload=redaction.value,
-                    redacted=True,
-                    metadata=metadata,
-                )
-                self._event_store.append_event(event)
-
     def _index_lineage(self, result: WorkflowResult) -> None:
         for extractor in self._lineage_extractors:
             refs = extractor(
@@ -602,95 +570,6 @@ class LocalJsonWorkflowArtifactIndexStore:
             encoding="utf-8",
         )
         return path
-
-
-@dataclass(frozen=True)
-class WorkflowEventRecord:
-    event_id: str
-    run_id: str
-    event_type: str
-    timestamp: datetime
-    payload: dict[str, Any] = field(default_factory=dict)
-    workflow_id: str | None = None
-    step_id: str | None = None
-    task_id: str | None = None
-    agent_id: str | None = None
-    tool_call_id: str | None = None
-    request_id: str | None = None
-    severity: str = "info"
-    trace_id: str | None = None
-    redacted: bool = True
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "timestamp", ensure_utc(self.timestamp))
-        object.__setattr__(self, "payload", dict(self.payload))
-        object.__setattr__(self, "metadata", dict(self.metadata))
-
-    @property
-    def occurred_at(self) -> datetime:
-        return self.timestamp
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "event_id": self.event_id,
-            "run_id": self.run_id,
-            "event_type": self.event_type,
-            "timestamp": self.timestamp.isoformat().replace("+00:00", "Z"),
-            "workflow_id": self.workflow_id,
-            "step_id": self.step_id,
-            "task_id": self.task_id,
-            "agent_id": self.agent_id,
-            "tool_call_id": self.tool_call_id,
-            "request_id": self.request_id,
-            "payload": self.payload,
-            "severity": self.severity,
-            "trace_id": self.trace_id,
-            "redacted": self.redacted,
-            "metadata": self.metadata,
-        }
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> WorkflowEventRecord:
-        timestamp = payload.get("timestamp", payload.get("occurred_at"))
-        if timestamp is None:
-            raise KeyError("timestamp")
-        return cls(
-            event_id=str(payload["event_id"]),
-            run_id=str(payload["run_id"]),
-            event_type=str(payload["event_type"]),
-            timestamp=_parse_datetime(timestamp) or datetime.now(UTC),
-            workflow_id=_optional_str(payload.get("workflow_id")),
-            step_id=_optional_str(payload.get("step_id")),
-            task_id=_optional_str(payload.get("task_id")),
-            agent_id=_optional_str(payload.get("agent_id")),
-            tool_call_id=_optional_str(payload.get("tool_call_id")),
-            request_id=_optional_str(payload.get("request_id")),
-            payload=dict(payload.get("payload") or {}),
-            severity=str(payload.get("severity") or "info"),
-            trace_id=_optional_str(payload.get("trace_id")),
-            redacted=bool(payload.get("redacted", True)),
-            metadata=dict(payload.get("metadata") or {}),
-        )
-
-
-class LocalJsonWorkflowEventStore:
-    def __init__(self, root: str | Path) -> None:
-        self.root = Path(root)
-
-    def append_event(self, event: WorkflowEventRecord) -> int:
-        validated_run_id = _validate_id(event.run_id, "run_id")
-        path = resolve_artifact_descendant(
-            self.root,
-            f"{validated_run_id}.jsonl",
-            field="event_store_path",
-        )
-        offset = _line_count(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event.to_dict(), ensure_ascii=False, sort_keys=True))
-            handle.write("\n")
-        return offset
 
 
 class LocalJsonWorkflowLineageStore:
@@ -727,16 +606,6 @@ def artifact_index_store_from_env(*, artifact_root: str | Path) -> ArtifactIndex
     )
 
 
-def event_store_from_env(*, artifact_root: str | Path) -> EventStore:
-    return LocalJsonWorkflowEventStore(
-        resolve_artifact_descendant(
-            artifact_root,
-            "_records/events",
-            field="event_store_root",
-        )
-    )
-
-
 def lineage_store_from_env(*, artifact_root: str | Path) -> LineageStore:
     return LocalJsonWorkflowLineageStore(
         resolve_artifact_descendant(
@@ -745,78 +614,6 @@ def lineage_store_from_env(*, artifact_root: str | Path) -> LineageStore:
             field="lineage_store_root",
         )
     )
-
-
-class WorkflowEventRedactor:
-    def redact(self, value: Any, *, run_id: str, artifact_id: str) -> RedactionResult:
-        fields: set[str] = set()
-        rules: set[str] = set()
-        redacted_value = self._redact(value, path="$", fields=fields, rules=rules)
-        return RedactionResult(
-            value=redacted_value,
-            report=RedactionReport(
-                run_id=run_id,
-                artifact_id=artifact_id,
-                redacted_fields=sorted(fields),
-                redaction_rules_applied=sorted(rules),
-            ),
-        )
-
-    def _redact(self, value: Any, *, path: str, fields: set[str], rules: set[str]) -> Any:
-        if isinstance(value, dict):
-            redacted: dict[str, Any] = {}
-            for key, item in value.items():
-                child_path = f"{path}.{key}"
-                if _is_sensitive_key(key):
-                    redacted[str(key)] = "[redacted]"
-                    fields.add(child_path)
-                    rules.add("sensitive_key")
-                else:
-                    redacted[str(key)] = self._redact(item, path=child_path, fields=fields, rules=rules)
-            return redacted
-        if isinstance(value, list):
-            return [
-                self._redact(item, path=f"{path}[{index}]", fields=fields, rules=rules)
-                for index, item in enumerate(value)
-            ]
-        if isinstance(value, str):
-            return _redact_string(value, path=path, fields=fields, rules=rules)
-        return value
-
-
-class RedactionReport:
-    def __init__(
-        self,
-        *,
-        run_id: str,
-        artifact_id: str,
-        redacted_fields: list[str],
-        redaction_rules_applied: list[str],
-    ) -> None:
-        self.run_id = run_id
-        self.artifact_id = artifact_id
-        self.redacted_fields = redacted_fields
-        self.redaction_rules_applied = redaction_rules_applied
-        self.created_at = datetime.now(UTC)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "run_id": self.run_id,
-            "artifact_id": self.artifact_id,
-            "redacted_fields": list(self.redacted_fields),
-            "redaction_rules_applied": list(self.redaction_rules_applied),
-            "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
-        }
-
-
-class RedactionResult:
-    def __init__(self, *, value: Any, report: RedactionReport) -> None:
-        self.value = value
-        self.report = report
-
-    @property
-    def redacted(self) -> bool:
-        return bool(self.report.redacted_fields)
 
 
 def _artifact_path(run_dir: Path, relative_path: str) -> Path:
@@ -909,12 +706,6 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
 def _validate_id(value: str, label: str) -> str:
     try:
         return validate_artifact_path_segment(value, field=label)
@@ -937,44 +728,3 @@ def _require_artifact_id(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("artifact_id is required")
     return value
-
-
-def _line_count(path: Path) -> int:
-    if not path.exists():
-        return 0
-    with path.open("r", encoding="utf-8") as handle:
-        return sum(1 for line in handle if line.strip())
-
-
-def _is_sensitive_key(key: Any) -> bool:
-    normalized = str(key).replace("-", "_").casefold()
-    return any(
-        part in normalized
-        for part in (
-            "authorization",
-            "cookie",
-            "api_key",
-            "apikey",
-            "access_token",
-            "refresh_token",
-            "token",
-            "secret",
-            "password",
-            "signature",
-            "database_url",
-            "dsn",
-        )
-    )
-
-
-def _redact_string(value: str, *, path: str, fields: set[str], rules: set[str]) -> str:
-    redacted = value
-    redacted, bearer_count = re.subn(r"(?i)(bearer\s+)[^\s,;]+", r"\1[redacted]", redacted)
-    if bearer_count:
-        fields.add(path)
-        rules.add("bearer_token")
-    redacted, secret_count = re.subn(r"(?i)sk-[A-Za-z0-9_-]{8,}", "[redacted]", redacted)
-    if secret_count:
-        fields.add(path)
-        rules.add("secret_like_string")
-    return redacted

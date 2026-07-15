@@ -8,6 +8,7 @@ written here, such as cancel.json.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from dataclasses import replace
 from datetime import datetime, timezone as _tz
@@ -22,17 +23,32 @@ from framework.artifacts import (
     validate_artifact_path_segment,
     validate_relative_artifact_path,
 )
+from framework.events.canonical import BusinessContext
+from framework.events.errors import EventContractError
+from framework.events.ports import EventReaderPort, EventRuntimePort
+from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.shared.json import to_jsonable as to_json_safe
+from framework.shared.time import parse_datetime
 from framework.specs import StepStatus, WorkflowSpec
 from framework.workflow.buffer import DataBuffer, step_scope_from_spec
-from framework.workflow.checkpoint.envelope import envelope_from_checkpoint
+from framework.workflow.checkpoint.durable import (
+    DurableWorkflowCheckpoint,
+    WorkflowCheckpointRecoveryCursor,
+    WorkflowCheckpointV2Envelope,
+)
+from framework.workflow.checkpoint.recovery import verified_checkpoint_recovery_cursor
 from framework.workflow.checkpoint.resume import (
     ResumeMode,
+    ResumeCheckpointEnvelope,
     WorkflowResumePlan,
     WorkflowResumePlanner,
     WorkflowResumeRequest,
+    checkpoint_envelope_for_resume,
 )
+from framework.workflow.checkpoint.store import StoredWorkflowCheckpoint
 from framework.workflow.runtime.manifest import manifest_hash, normalize_legacy_run_manifest, stable_json_dumps
+from framework.workflow.runtime.event_emitter import ScopedDurableWorkflowEventEmitter
+from framework.workflow.runtime.event_projection import WorkflowEventProjectionExporter
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.routing import RoutingEngine
 from framework.workflow.checkpoint.model import WorkflowCheckpoint
@@ -89,6 +105,10 @@ class WorkflowOperationStatus(str, Enum):
     REJECTED = "rejected"
     APPLIED = "applied"
     FAILED = "failed"
+
+
+class WorkflowEventProjectionMigrationRequiredError(EventContractError):
+    """Raised before an operation can replace unverified historical events."""
 
 
 @dataclass(frozen=True)
@@ -220,7 +240,7 @@ class WorkflowRunOperationService(Protocol):
 
 
 class CheckpointReader(Protocol):
-    def get_latest_checkpoint(self, run_id: str) -> WorkflowCheckpoint | None:
+    def get_latest_checkpoint(self, run_id: str) -> StoredWorkflowCheckpoint | None:
         ...
 
 
@@ -279,6 +299,9 @@ class LocalWorkflowRunOperationService:
         checkpoint_store: CheckpointReader | None = None,
         guard: RunOperationGuard | None = None,
         routing_engine: RoutingEngine | None = None,
+        event_runtime: EventRuntimePort | None = None,
+        event_reader: EventReaderPort | None = None,
+        event_schema_catalog: EventSchemaCatalog | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
         self.workflow = workflow
@@ -286,6 +309,11 @@ class LocalWorkflowRunOperationService:
         self.checkpoint_store = checkpoint_store
         self.guard = guard or RunOperationGuard()
         self.routing_engine = routing_engine or RoutingEngine()
+        self.event_runtime = event_runtime
+        self.event_reader = event_reader
+        self.event_schema_catalog = (
+            event_schema_catalog or default_event_schema_catalog()
+        )
 
     def cancel_run(
         self,
@@ -308,9 +336,10 @@ class LocalWorkflowRunOperationService:
                 message=str(exc),
             )
 
+        self._verify_existing_event_projection(manifest, run_id=run_id)
         details = {"previous_status": str(manifest.get("status") or "")}
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_requested",
                 operation_id=operation_id,
@@ -362,8 +391,8 @@ class LocalWorkflowRunOperationService:
             reason=reason,
             created_at=requested_at,
         )
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_applied",
                 operation_id=operation_id,
@@ -375,7 +404,7 @@ class LocalWorkflowRunOperationService:
                 created_at=requested_at,
             ),
         )
-        save_run_manifest(self.artifact_root, run_id, manifest)
+        self._save_manifest_with_event_projection(manifest)
         return result
 
     def rerun_from_step(
@@ -398,9 +427,10 @@ class LocalWorkflowRunOperationService:
                 run_id=run_id,
                 message=str(exc),
             )
+        self._verify_existing_event_projection(manifest, run_id=run_id)
         details = {"target_step_id": step_id, "previous_status": _manifest_status(manifest)}
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_requested",
                 operation_id=operation_id,
@@ -464,11 +494,13 @@ class LocalWorkflowRunOperationService:
 
         new_run_id = f"{run_id}-rerun-{operation_id}"
         try:
+            checkpoint_envelope, recovery_cursor = self._resume_checkpoint(checkpoint)
             plan = WorkflowResumePlanner().plan(
                 workflow,
                 WorkflowResumeRequest(
                     mode=ResumeMode.FROM_STEP,
-                    checkpoint=envelope_from_checkpoint(checkpoint),
+                    checkpoint=checkpoint_envelope,
+                    recovery_cursor=recovery_cursor,
                     run_id=new_run_id,
                     target_step_id=step_id,
                     metadata={
@@ -537,8 +569,8 @@ class LocalWorkflowRunOperationService:
             reason=None,
             created_at=requested_at,
         )
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_applied",
                 operation_id=operation_id,
@@ -550,7 +582,7 @@ class LocalWorkflowRunOperationService:
                 created_at=requested_at,
             ),
         )
-        save_run_manifest(self.artifact_root, run_id, manifest)
+        self._save_manifest_with_event_projection(manifest)
         return result
 
     def resume_with_patch(
@@ -574,13 +606,14 @@ class LocalWorkflowRunOperationService:
                 message=str(exc),
             )
 
+        self._verify_existing_event_projection(manifest, run_id=run_id)
         patch_diff = _patch_diff(run_id=run_id, patch=patch, artifact_root=self.artifact_root)
         details = {
             "patch_keys": sorted(str(key) for key in patch),
             "patch_diff": patch_diff,
         }
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_requested",
                 operation_id=operation_id,
@@ -631,11 +664,13 @@ class LocalWorkflowRunOperationService:
 
         new_run_id = f"{run_id}-resume-{operation_id}"
         try:
+            checkpoint_envelope, recovery_cursor = self._resume_checkpoint(checkpoint)
             plan = WorkflowResumePlanner().plan(
                 self.workflow,
                 WorkflowResumeRequest(
                     mode=ResumeMode.WITH_PATCH,
-                    checkpoint=envelope_from_checkpoint(checkpoint),
+                    checkpoint=checkpoint_envelope,
+                    recovery_cursor=recovery_cursor,
                     run_id=new_run_id,
                     patch=dict(patch),
                     strict=True,
@@ -693,8 +728,8 @@ class LocalWorkflowRunOperationService:
             reason=None,
             created_at=requested_at,
         )
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_applied",
                 operation_id=operation_id,
@@ -706,7 +741,7 @@ class LocalWorkflowRunOperationService:
                 created_at=requested_at,
             ),
         )
-        save_run_manifest(self.artifact_root, run_id, manifest)
+        self._save_manifest_with_event_projection(manifest)
         return result
 
     def skip_step(
@@ -730,9 +765,10 @@ class LocalWorkflowRunOperationService:
                 run_id=run_id,
                 message=str(exc),
             )
+        self._verify_existing_event_projection(manifest, run_id=run_id)
         details = {"step_id": step_id, "reason": reason, "previous_status": _manifest_status(manifest)}
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_requested",
                 operation_id=operation_id,
@@ -835,11 +871,13 @@ class LocalWorkflowRunOperationService:
         )
         new_run_id = f"{run_id}-skip-{operation_id}"
         try:
+            checkpoint_envelope, recovery_cursor = self._resume_checkpoint(checkpoint)
             base_plan = WorkflowResumePlanner().plan(
                 workflow,
                 WorkflowResumeRequest(
                     mode=ResumeMode.FROM_STEP,
-                    checkpoint=envelope_from_checkpoint(checkpoint),
+                    checkpoint=checkpoint_envelope,
+                    recovery_cursor=recovery_cursor,
                     run_id=new_run_id,
                     target_step_id=step_id,
                     metadata={
@@ -908,8 +946,8 @@ class LocalWorkflowRunOperationService:
             reason=reason,
             created_at=requested_at,
         )
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_applied",
                 operation_id=operation_id,
@@ -921,20 +959,7 @@ class LocalWorkflowRunOperationService:
                 created_at=requested_at,
             ),
         )
-        append_operation_event(
-            self._run_dir(run_id),
-            operation_event(
-                "step_skipped",
-                operation_id=operation_id,
-                operation_type=operation_type,
-                run_id=run_id,
-                actor=actor,
-                reason=reason,
-                details={"step_id": step_id, "new_run_id": new_run_id},
-                created_at=requested_at,
-            ),
-        )
-        save_run_manifest(self.artifact_root, run_id, manifest)
+        self._save_manifest_with_event_projection(manifest)
         return result
 
     def mark_blocked_resolved(
@@ -957,9 +982,10 @@ class LocalWorkflowRunOperationService:
                 run_id=run_id,
                 message=str(exc),
             )
+        self._verify_existing_event_projection(manifest, run_id=run_id)
         details = {"resolution": to_json_safe(resolution), "previous_status": _manifest_status(manifest)}
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_requested",
                 operation_id=operation_id,
@@ -1018,8 +1044,8 @@ class LocalWorkflowRunOperationService:
             reason=str(resolution["reason"]),
             created_at=requested_at,
         )
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_applied",
                 operation_id=operation_id,
@@ -1031,7 +1057,7 @@ class LocalWorkflowRunOperationService:
                 created_at=requested_at,
             ),
         )
-        save_run_manifest(self.artifact_root, run_id, manifest)
+        self._save_manifest_with_event_projection(manifest)
         return result
 
     def _reject(
@@ -1062,8 +1088,8 @@ class LocalWorkflowRunOperationService:
             reason=reason,
             created_at=created_at,
         )
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_rejected",
                 operation_id=operation_id,
@@ -1075,7 +1101,7 @@ class LocalWorkflowRunOperationService:
                 created_at=created_at,
             ),
         )
-        save_run_manifest(self.artifact_root, run_id, manifest)
+        self._save_manifest_with_event_projection(manifest)
         return result
 
     def _fail(
@@ -1106,8 +1132,8 @@ class LocalWorkflowRunOperationService:
             reason=reason,
             created_at=created_at,
         )
-        append_operation_event(
-            self._run_dir(run_id),
+        self._append_operation_event(
+            manifest,
             operation_event(
                 "run_operation_failed",
                 operation_id=operation_id,
@@ -1119,7 +1145,7 @@ class LocalWorkflowRunOperationService:
                 created_at=created_at,
             ),
         )
-        save_run_manifest(self.artifact_root, run_id, manifest)
+        self._save_manifest_with_event_projection(manifest)
         return result
 
     def _record_result(
@@ -1151,6 +1177,125 @@ class LocalWorkflowRunOperationService:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(stable_json_dumps(to_json_safe(payload), indent=2) + "\n", encoding="utf-8")
 
+    def _append_operation_event(
+        self,
+        manifest: dict[str, Any],
+        event: dict[str, Any],
+    ) -> None:
+        if self.event_runtime is None or self.event_reader is None:
+            raise ValueError("durable event runtime is required for run operations")
+        run_id = validate_artifact_path_segment(str(manifest["run_id"]), field="run_id")
+        occurred_at = parse_datetime(event.get("occurred_at"))
+        if occurred_at is None:
+            raise ValueError("run operation event occurred_at is required")
+        emitter = ScopedDurableWorkflowEventEmitter(
+            runtime=self.event_runtime,
+            reader=self.event_reader,
+            schema_catalog=self.event_schema_catalog,
+            stream_id=f"run:{run_id}",
+            base_business_context=BusinessContext(
+                run_id=run_id,
+                workflow_id=str(manifest.get("workflow_id") or "") or None,
+            ),
+        )
+        emitter.emit_default(
+            str(event["event_type"]),
+            dict(event.get("payload") or {}),
+            event_id=str(event["event_id"]),
+            occurred_at=occurred_at,
+        )
+
+    def _verify_existing_event_projection(
+        self,
+        manifest: dict[str, Any],
+        *,
+        run_id: str,
+    ) -> None:
+        if self.event_runtime is None or self.event_reader is None:
+            raise ValueError("durable event runtime is required for run operations")
+        events_path = self._run_dir(run_id) / "events.jsonl"
+        try:
+            has_historical_rows = events_path.exists() and events_path.stat().st_size > 0
+        except OSError as exc:
+            raise WorkflowEventProjectionMigrationRequiredError(
+                "run event history must be readable before an operation"
+            ) from exc
+        projection_metadata_declared = (
+            "event_projection" in manifest
+            or "event_projection_high_watermark" in manifest
+            or "event_projection_checksum" in manifest
+        )
+        manifest_event_count = manifest.get("event_count")
+        has_fresh_event_count = manifest_event_count is None or (
+            isinstance(manifest_event_count, int)
+            and not isinstance(manifest_event_count, bool)
+            and manifest_event_count == 0
+        )
+        if (
+            not has_historical_rows
+            and not projection_metadata_declared
+            and has_fresh_event_count
+        ):
+            return
+
+        metadata = manifest.get("event_projection")
+        if not isinstance(metadata, Mapping):
+            raise WorkflowEventProjectionMigrationRequiredError(
+                "legacy run event history must be migrated before an operation"
+            )
+        stream_id = f"run:{run_id}"
+        high_watermark = metadata.get("high_watermark")
+        event_count = metadata.get("event_count")
+        checksum = metadata.get("checksum")
+        if (
+            metadata.get("path") != "events.jsonl"
+            or metadata.get("stream_id") != stream_id
+            or manifest.get("event_projection_high_watermark") != high_watermark
+            or manifest.get("event_projection_checksum") != checksum
+            or manifest.get("event_count") != event_count
+        ):
+            raise WorkflowEventProjectionMigrationRequiredError(
+                "run event projection metadata is incomplete or conflicting"
+            )
+        try:
+            WorkflowEventProjectionExporter(
+                reader=self.event_reader,
+                schema_catalog=self.event_schema_catalog,
+            ).verify_existing(
+                stream_id=stream_id,
+                target=events_path,
+                high_watermark=high_watermark,
+                event_count=event_count,
+                checksum=checksum,
+            )
+        except EventContractError as exc:
+            raise WorkflowEventProjectionMigrationRequiredError(
+                "run event history must be migrated and verified before an operation"
+            ) from exc
+
+    def _save_manifest_with_event_projection(self, manifest: dict[str, Any]) -> None:
+        if self.event_reader is None:
+            raise ValueError("durable event reader is required for run operations")
+        run_id = validate_artifact_path_segment(str(manifest["run_id"]), field="run_id")
+        projection = WorkflowEventProjectionExporter(
+            reader=self.event_reader,
+            schema_catalog=self.event_schema_catalog,
+        ).export(
+            stream_id=f"run:{run_id}",
+            target=self._run_dir(run_id) / "events.jsonl",
+        )
+        manifest["event_projection"] = {
+            "path": "events.jsonl",
+            "stream_id": projection.stream_id,
+            "high_watermark": projection.high_watermark,
+            "event_count": projection.event_count,
+            "checksum": projection.checksum,
+        }
+        manifest["event_projection_high_watermark"] = projection.high_watermark
+        manifest["event_projection_checksum"] = projection.checksum
+        manifest["event_count"] = projection.event_count
+        save_run_manifest(self.artifact_root, run_id, manifest)
+
     def _workflow_for_manifest(self, manifest: dict[str, Any]) -> WorkflowSpec | None:
         if self.workflow is None:
             return load_workflow_spec_from_run(self.artifact_root, str(manifest["run_id"]))
@@ -1161,7 +1306,10 @@ class LocalWorkflowRunOperationService:
             return None
         return self.workflow
 
-    def _checkpoint_for_manifest(self, manifest: dict[str, Any]) -> WorkflowCheckpoint | None:
+    def _checkpoint_for_manifest(
+        self,
+        manifest: dict[str, Any],
+    ) -> StoredWorkflowCheckpoint | None:
         run_id = str(manifest["run_id"])
         if self.checkpoint_store is not None:
             checkpoint = self.checkpoint_store.get_latest_checkpoint(run_id)
@@ -1172,6 +1320,23 @@ class LocalWorkflowRunOperationService:
             run_id=run_id,
             manifest=manifest,
         )
+
+    def _resume_checkpoint(
+        self,
+        checkpoint: StoredWorkflowCheckpoint,
+    ) -> tuple[ResumeCheckpointEnvelope, WorkflowCheckpointRecoveryCursor | None]:
+        envelope = checkpoint_envelope_for_resume(checkpoint)
+        recovery_cursor = None
+        if isinstance(envelope, WorkflowCheckpointV2Envelope):
+            if self.event_reader is None:
+                raise ValueError(
+                    "durable event reader is required to verify checkpoint recovery"
+                )
+            recovery_cursor = verified_checkpoint_recovery_cursor(
+                checkpoint=envelope,
+                reader=self.event_reader,
+            )
+        return envelope, recovery_cursor
 
     def _execute_resume_plan(
         self,
@@ -1253,7 +1418,7 @@ def checkpoint_from_run_artifacts(
     *,
     run_id: str,
     manifest: dict[str, Any] | None = None,
-) -> WorkflowCheckpoint | None:
+) -> StoredWorkflowCheckpoint | None:
     run_dir = _resolve_run_dir(artifact_root, run_id)
     manifest = dict(manifest or load_run_manifest(artifact_root, run_id))
     snapshot = _read_json(
@@ -1274,8 +1439,50 @@ def checkpoint_from_run_artifacts(
     )
     if not isinstance(step_results, dict):
         step_results = {}
+    checkpoint_id = str(
+        manifest.get("latest_checkpoint_id") or f"manifest:{run_id}"
+    )
+    durable_ref = _durable_checkpoint_reference(manifest, checkpoint_id)
+    if durable_ref is not None:
+        metadata = dict(durable_ref["metadata"])
+        created_at = parse_datetime(durable_ref.get("created_at"))
+        if created_at is None:
+            raise ValueError("durable checkpoint reference created_at is required")
+        raw_sequence = metadata["last_durable_stream_sequence"]
+        return DurableWorkflowCheckpoint(
+            checkpoint_id=checkpoint_id,
+            run_id=run_id,
+            workflow_id=str(manifest["workflow_id"]),
+            workflow_version=str(manifest["workflow_version"]),
+            current_step_ids=[
+                str(step_id)
+                for step_id in metadata.get("current_step_ids", [])
+                if step_id is not None
+            ],
+            data_buffer_snapshot=snapshot,
+            step_results=step_results,
+            path=[
+                str(step_id)
+                for step_id in metadata.get("path", manifest.get("path", []))
+                if step_id is not None
+            ],
+            stream_id=str(metadata["stream_id"]),
+            last_durable_stream_sequence=(
+                None if raw_sequence is None else int(raw_sequence)
+            ),
+            last_event_id=(
+                None
+                if metadata["last_event_id"] is None
+                else str(metadata["last_event_id"])
+            ),
+            created_at=created_at,
+            metadata={
+                "profile": str(metadata.get("profile") or manifest.get("profile") or "default"),
+                "recovered_from_manifest_ref": True,
+            },
+        )
     return WorkflowCheckpoint(
-        checkpoint_id=str(manifest.get("latest_checkpoint_id") or f"manifest:{run_id}"),
+        checkpoint_id=checkpoint_id,
         run_id=run_id,
         workflow_id=str(manifest["workflow_id"]),
         workflow_version=str(manifest["workflow_version"]),
@@ -1288,20 +1495,44 @@ def checkpoint_from_run_artifacts(
         step_results=step_results,
         path=[str(step_id) for step_id in manifest.get("path", [])],
         event_offset=int(manifest.get("event_count") or 0),
-        metadata={"profile": str(manifest.get("profile") or "default")},
+        metadata={
+            "profile": str(manifest.get("profile") or "default"),
+            "legacy_artifact_fallback": True,
+            "legacy_offset_semantics": "workflow_recorder_event_count",
+        },
     )
 
 
-def append_operation_event(run_dir: Path, event: dict[str, Any]) -> None:
-    run_dir.mkdir(parents=True, exist_ok=True)
-    events_path = resolve_artifact_descendant(
-        run_dir,
-        "events.jsonl",
-        field="events_path",
-    )
-    with events_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(to_json_safe(event), ensure_ascii=False, sort_keys=True))
-        handle.write("\n")
+def _durable_checkpoint_reference(
+    manifest: dict[str, Any],
+    checkpoint_id: str,
+) -> dict[str, Any] | None:
+    refs = manifest.get("checkpoint_refs")
+    if not isinstance(refs, list):
+        return None
+    boundary_fields = {
+        "stream_id",
+        "last_durable_stream_sequence",
+        "last_event_id",
+    }
+    for candidate in reversed(refs):
+        if not isinstance(candidate, dict):
+            continue
+        if str(candidate.get("checkpoint_id") or "") != checkpoint_id:
+            continue
+        metadata = candidate.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        present = boundary_fields.intersection(metadata)
+        if present and present != boundary_fields:
+            missing = ", ".join(sorted(boundary_fields - present))
+            raise ValueError(
+                "durable checkpoint reference has an incomplete boundary: " + missing
+            )
+        if present == boundary_fields:
+            return {**candidate, "metadata": dict(metadata)}
+        return None
+    return None
 
 
 def append_operation_record(

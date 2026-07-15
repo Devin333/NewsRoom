@@ -6,7 +6,6 @@ from typing import Any
 from framework.events.envelope import EventEnvelope
 from framework.events.errors import EventSubscriberError
 from framework.events.event import Event
-from framework.events.recorder import EventRecord
 from framework.events.subscriber import EventSubscriber
 
 
@@ -22,7 +21,7 @@ class InMemoryEventBus:
         self._subscribers: list[_Subscription] = []
         self._published: list[EventEnvelope] = []
 
-    def publish(self, event: Event | EventEnvelope | EventRecord) -> EventEnvelope:
+    def publish(self, event: Event | EventEnvelope) -> EventEnvelope:
         envelope = _to_envelope(event)
         self._published.append(envelope)
         first_failure: tuple[str, Exception] | None = None
@@ -74,11 +73,9 @@ class InMemoryEventBus:
 EventBus = InMemoryEventBus
 
 
-def _to_envelope(event: Event | EventEnvelope | EventRecord) -> EventEnvelope:
+def _to_envelope(event: Event | EventEnvelope) -> EventEnvelope:
     if isinstance(event, EventEnvelope):
         return event
-    if isinstance(event, EventRecord):
-        return event.to_envelope()
     if isinstance(event, Event):
         return EventEnvelope(event=event)
-    return EventEnvelope(event=Event.from_dict(dict(event)))
+    raise TypeError("event bus accepts Event or EventEnvelope")

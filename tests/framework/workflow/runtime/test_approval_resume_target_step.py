@@ -7,14 +7,22 @@ from framework.specs import EdgeSpec, StepSpec, WorkflowSpec, WorkflowStatus
 from framework.workflow import FunctionStepRegistry
 from framework.workflow.buffer.data_buffer import StepScopedDataBufferView
 from framework.workflow.checkpoint.store import LocalJsonCheckpointStore
+from infrastructure.storage.events.factory import durable_event_storage_from_env
 
 
 def test_approval_resume_context_can_resume_from_metadata_target_step(tmp_path) -> None:
     checkpoint_store = LocalJsonCheckpointStore(tmp_path / "checkpoints")
+    event_storage = durable_event_storage_from_env(
+        artifact_root=tmp_path / "runs",
+        env={},
+    )
     runner = WorkflowRunner(
         artifact_root=tmp_path / "runs",
         function_registry=_registry(),
         checkpoint_store=checkpoint_store,
+        event_runtime=event_storage.event_runtime,
+        event_reader=event_storage.event_store,
+        event_schema_catalog=event_storage.schema_catalog,
     )
     workflow = _workflow()
     source = runner.run(
@@ -46,6 +54,10 @@ def test_approval_resume_context_can_resume_from_metadata_target_step(tmp_path) 
     assert resumed.manifest["resume_mode"] == "resume_from_step"
     assert resumed.manifest["resume_target_step_id"] == "s2"
     assert resumed.manifest["resume_patch_keys"] == ["patch_marker"]
+    assert resumed.manifest["checkpoint_schema_version"] == "workflow-checkpoint/v2"
+    assert resumed.manifest["checkpoint_stream_id"] == "run:source-run"
+    assert resumed.manifest["checkpoint_after_sequence"] >= 1
+    assert resumed.manifest["checkpoint_boundary_verified"] is True
 
 
 def _workflow() -> WorkflowSpec:
@@ -54,7 +66,12 @@ def _workflow() -> WorkflowSpec:
         name="Approval Resume Target",
         version="1",
         steps=[
-            StepSpec("s1", implementation="test.s1", write_keys=["a", "patch_marker"]),
+            StepSpec(
+                "s1",
+                implementation="test.s1",
+                write_keys=["a", "patch_marker"],
+                idempotent=False,
+            ),
             StepSpec(
                 "s2",
                 implementation="test.s2",

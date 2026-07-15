@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from framework.events import (
     Event,
     EventBus,
     EventEnvelope,
-    EventRecord as FrameworkEventRecord,
-    EventRecorder,
+    EventQuarantineError,
     EventReplay,
     EventRuntimeError,
-    EventSecurePayloadRequiredError,
     EventSubscriberError,
     FunctionEventSubscriber,
     TraceContext,
     TraceEvent,
+    default_event_schema_catalog,
 )
 
 
@@ -102,63 +99,6 @@ def test_event_envelope_accepts_equal_legacy_duplicate_context() -> None:
     assert (restored.run_id, restored.trace_id) == ("run-equal", "trace-equal")
 
 
-def test_recorder_emit_and_record_share_one_identity_ledger(tmp_path) -> None:
-    recorder = EventRecorder("run-recorder-ledger")
-    emitted = recorder.emit(
-        "step_started",
-        {
-            "step_id": "collect",
-            "step_type": "source",
-            "attempt": 1,
-            "max_attempts": 1,
-        },
-    )
-    recorded = EventEnvelope(
-        event=Event(
-            "step_finished",
-            {"step_id": "collect"},
-            run_id="run-recorder-ledger",
-        ),
-        event_id="evt-recorded-directly",
-        run_id="run-recorder-ledger",
-    )
-    recorder.record(recorded)
-
-    listed = recorder.list_events()
-    target = recorder.write_jsonl(tmp_path / "events.jsonl")
-    jsonl_rows = [
-        json.loads(line)
-        for line in target.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    expected_ids = [emitted.event_id, recorded.event_id]
-
-    assert {
-        "listed": [event.event_id for event in listed],
-        "jsonl": [row["event_id"] for row in jsonl_rows],
-    } == {
-        "listed": expected_ids,
-        "jsonl": expected_ids,
-    }
-
-
-def test_recorder_emit_and_list_have_one_envelope_type() -> None:
-    recorder = EventRecorder("run-recorder-types")
-    emitted = recorder.emit("step_started", {"step_id": "collect"})
-    recorder.record(
-        EventEnvelope(
-            event=Event("step_finished", run_id="run-recorder-types"),
-            event_id="evt-recorded-type",
-            run_id="run-recorder-types",
-        )
-    )
-    listed = recorder.list_events()
-
-    assert type(emitted) is EventEnvelope
-    assert listed
-    assert {type(event) for event in listed} == {EventEnvelope}
-
-
 class _SubscriberFailure(RuntimeError):
     pass
 
@@ -208,100 +148,6 @@ def test_compatibility_replay_deduplicates_event_id_before_effect() -> None:
     assert applied_event_ids == ["evt-replayed-once"]
 
 
-def test_write_jsonl_never_persists_raw_secret_sentinel(tmp_path) -> None:
-    raw_secret = "sk-DURABLEEVENTSENTINEL123456789"
-    recorder = EventRecorder("run-secret-export")
-    recorder.emit(
-        "tool_called",
-        {
-            "credentials": {"api_key": raw_secret},
-            "diagnostic": f"Bearer {raw_secret}",
-        },
-    )
-
-    target = recorder.write_jsonl(tmp_path / "events.jsonl")
-
-    assert raw_secret not in target.read_text(encoding="utf-8")
-
-
-def test_write_jsonl_redacts_metadata_and_duplicate_diagnostics(tmp_path) -> None:
-    raw_secret = "metadata-DURABLEEVENTSENTINEL123456789"
-    recorder = EventRecorder("run-secret-metadata-export")
-    recorder.record(
-        EventEnvelope(
-            event=Event(
-                "tool_called",
-                payload={"safe": True},
-                metadata={
-                    "authorization": f"Bearer {raw_secret}",
-                    "diagnostic": f"request failed with {raw_secret}",
-                },
-                run_id="run-secret-metadata-export",
-            ),
-            event_id="evt-secret-metadata",
-            run_id="run-secret-metadata-export",
-        )
-    )
-
-    target = recorder.write_jsonl(tmp_path / "events.jsonl")
-    content = target.read_text(encoding="utf-8")
-
-    assert raw_secret not in content
-    assert "[REDACTED]" in content
-
-
-def test_write_jsonl_applies_schema_sensitive_policy_before_export(tmp_path) -> None:
-    raw_secret = "schema-sensitive-export-sentinel"
-    recorder = EventRecorder("run-schema-sensitive-export")
-    recorder.record(
-        EventEnvelope(
-            event=Event(
-                "workflow_resumed",
-                payload={
-                    "workflow_id": "workflow-1",
-                    "workflow_version": "v1",
-                    "profile": "default",
-                    "checkpoint_id": "checkpoint-1",
-                    "resume_metadata": {"credential": raw_secret},
-                },
-                metadata={
-                    "diagnostic": f"resume failed for {raw_secret}",
-                },
-                run_id="run-schema-sensitive-export",
-            ),
-            event_id="evt-schema-sensitive-export",
-            run_id="run-schema-sensitive-export",
-        )
-    )
-
-    target = recorder.write_jsonl(tmp_path / "events.jsonl")
-    content = target.read_text(encoding="utf-8")
-    row = json.loads(content)
-
-    assert raw_secret not in content
-    assert row["payload"]["resume_metadata"] == "[REDACTED]"
-    assert raw_secret not in row["event"]["metadata"]["diagnostic"]
-
-
-def test_write_jsonl_rejects_reference_only_inline_content_before_file_creation(
-    tmp_path,
-) -> None:
-    target = tmp_path / "events.jsonl"
-    recorder = EventRecorder("run-reference-only-export")
-    recorder.emit(
-        "agent_llm_stream_event",
-        {
-            "step_id": "draft",
-            "stream_event": {"text": "raw-stream-content"},
-        },
-    )
-
-    with pytest.raises(EventSecurePayloadRequiredError, match="cannot be exported"):
-        recorder.write_jsonl(target)
-
-    assert not target.exists()
-
-
 @pytest.mark.parametrize(
     "time_fields",
     [{}, {"created_at": ""}],
@@ -326,20 +172,17 @@ def test_event_history_without_occurrence_time_fails_closed(
     [{}, {"occurred_at": ""}],
     ids=["missing", "blank"],
 )
-def test_framework_event_record_history_without_occurrence_time_fails_closed(
+def test_framework_event_record_history_without_occurrence_time_is_quarantined(
     time_fields: dict[str, str],
 ) -> None:
-    payload = {
-        "schema_version": "newsroom.event_record.v1",
-        "event_id": "evt-missing-framework-time",
-        "run_id": "run-missing-framework-time",
-        "event_type": "workflow_started",
-        "payload": {},
-        **time_fields,
-    }
-
-    with pytest.raises((KeyError, ValueError)):
-        FrameworkEventRecord.from_dict(payload)
+    with pytest.raises(EventQuarantineError, match="missing_occurred_at"):
+        default_event_schema_catalog().resolve_historical(
+            "workflow_started",
+            "newsroom.workflow-event/v1",
+            {"workflow_version": "1", "profile": "default"},
+            occurred_at=time_fields.get("occurred_at"),
+            envelope_schema="newsroom.event_record.v1",
+        )
 
 
 @pytest.mark.parametrize(

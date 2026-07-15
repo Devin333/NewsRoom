@@ -2,14 +2,14 @@ from __future__ import annotations
 
 
 def test_public_imports_are_available() -> None:
+    import framework.events as events
+
     from framework.events import (  # noqa: PLC0415
         Event,
         EventBus,
         EventEnvelope,
         EventFilter,
         EventPublisher,
-        EventRecord,
-        EventRecorder,
         EventReplay,
         EventType,
         FunctionEventSubscriber,
@@ -29,8 +29,8 @@ def test_public_imports_are_available() -> None:
     assert EventEnvelope is not None
     assert EventFilter is not None
     assert EventPublisher is not None
-    assert EventRecord is not None
-    assert EventRecorder is not None
+    assert not hasattr(events, "EventRecord")
+    assert not hasattr(events, "EventRecorder")
     assert EventReplay is not None
     assert EventType is not None
     assert FunctionEventSubscriber is not None

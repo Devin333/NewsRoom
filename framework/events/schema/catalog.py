@@ -10,12 +10,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import CodeType, FunctionType, ModuleType
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jsonschema.exceptions import SchemaError, ValidationError
 from jsonschema.validators import validator_for
 
 from framework.events.errors import (
+    EventContextConflictError,
     EventSchemaError,
     EventSchemaValidationError,
     EventUnknownSchemaError,
@@ -29,9 +30,23 @@ from framework.events.schema.policy import (
 )
 from framework.shared.time import ensure_utc
 
+if TYPE_CHECKING:
+    from framework.events.canonical import BusinessContext
+
 
 PayloadValidator = Callable[[Mapping[str, Any]], None]
 EventUpcaster = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+
+
+_BUSINESS_CONTEXT_FIELDS = (
+    "run_id",
+    "workflow_id",
+    "step_id",
+    "task_id",
+    "agent_id",
+    "tool_call_id",
+    "request_id",
+)
 
 
 SUPPORTED_HISTORICAL_ENVELOPE_SCHEMAS = frozenset(
@@ -89,6 +104,7 @@ class EventSchemaRegistration:
     upcaster: EventUpcaster | None = None
     custom_validator: PayloadValidator | None = None
     current: bool = False
+    authoritative_context_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         event_type = _required_text(self.event_type, "event_type")
@@ -98,6 +114,18 @@ class EventSchemaRegistration:
             raise ValueError("upcast_to and upcaster must be configured together")
         if not isinstance(self.current, bool):
             raise TypeError("current must be a bool")
+        if isinstance(self.authoritative_context_fields, (str, bytes)):
+            raise TypeError("authoritative_context_fields must be a sequence")
+        context_fields = tuple(self.authoritative_context_fields)
+        if len(context_fields) != len(set(context_fields)):
+            raise EventSchemaError("authoritative context fields must be unique")
+        unknown_context_fields = sorted(
+            set(context_fields) - set(_BUSINESS_CONTEXT_FIELDS)
+        )
+        if unknown_context_fields:
+            raise EventSchemaError(
+                "unknown authoritative context field: " + unknown_context_fields[0]
+            )
         if not isinstance(self.sensitivity_policy, SensitivityPolicy):
             raise TypeError("sensitivity_policy must be SensitivityPolicy")
         if upcast_to is not None:
@@ -125,6 +153,11 @@ class EventSchemaRegistration:
         object.__setattr__(self, "data_schema", data_schema)
         object.__setattr__(self, "upcast_to", upcast_to)
         object.__setattr__(self, "json_schema", _freeze_mapping(schema))
+        object.__setattr__(
+            self,
+            "authoritative_context_fields",
+            context_fields,
+        )
 
     def schema_copy(self) -> dict[str, Any]:
         return _thaw_mapping(self.json_schema)
@@ -234,6 +267,46 @@ class EventSchemaCatalog:
             if custom_failure is not None:
                 raise custom_failure from None
         return snapshot
+
+    def prepare_publish_payload(
+        self,
+        event_type: str,
+        data_schema: str,
+        payload: Mapping[str, Any],
+        *,
+        business_context: BusinessContext,
+    ) -> dict[str, Any]:
+        """Return the detached canonical payload accepted for publication.
+
+        Workflow compatibility inputs may repeat fields that are authoritative
+        in ``BusinessContext``. Equal duplicates are removed before schema
+        validation; a conflicting or payload-only value fails with the typed
+        context error instead of silently choosing one authority.
+        """
+
+        from framework.events.canonical import BusinessContext
+
+        registration = self.get(event_type, data_schema)
+        if not isinstance(business_context, BusinessContext):
+            raise TypeError("business_context must be BusinessContext")
+        try:
+            snapshot = _thaw_mapping(_freeze_mapping(payload))
+        except (TypeError, ValueError):
+            raise EventSchemaValidationError(
+                event_type=registration.event_type,
+                data_schema=registration.data_schema,
+                path="$",
+                rule="canonical_json",
+            ) from None
+
+        for field_name in registration.authoritative_context_fields:
+            if field_name not in snapshot:
+                continue
+            if snapshot[field_name] != getattr(business_context, field_name):
+                raise EventContextConflictError(field_name)
+            del snapshot[field_name]
+
+        return self.validate(event_type, data_schema, snapshot)
 
     def upcast(
         self,
@@ -359,7 +432,7 @@ class EventSchemaCatalog:
         )
 
 
-WORKFLOW_EVENT_ALIASES = (
+WORKFLOW_EVENT_TYPES = (
     "workflow_started",
     "workflow_resumed",
     "checkpoint_restored",
@@ -396,6 +469,9 @@ WORKFLOW_EVENT_ALIASES = (
     "policy_violation",
     "runtime_safety_violation",
     "runner_capability_violation",
+)
+
+LEGACY_WORKFLOW_EVENT_ALIASES = (
     # Legacy typed aliases retained for the bounded migration release.
     "workflow_finished",
     "step_finished",
@@ -405,6 +481,15 @@ WORKFLOW_EVENT_ALIASES = (
     "memory_written",
     "worker_task_started",
     "worker_task_finished",
+)
+
+WORKFLOW_EVENT_ALIASES = WORKFLOW_EVENT_TYPES + LEGACY_WORKFLOW_EVENT_ALIASES
+
+WORKFLOW_OPERATION_EVENT_TYPES = (
+    "run_operation_requested",
+    "run_operation_applied",
+    "run_operation_rejected",
+    "run_operation_failed",
 )
 
 HARNESS_EVENT_ALIASES = (
@@ -430,6 +515,18 @@ def default_event_schema_catalog() -> EventSchemaCatalog:
                 json_schema=_workflow_payload_schema(event_type),
                 sensitivity_policy=_workflow_sensitivity_policy(event_type),
                 current=True,
+                authoritative_context_fields=_BUSINESS_CONTEXT_FIELDS,
+            )
+        )
+    for event_type in WORKFLOW_OPERATION_EVENT_TYPES:
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema="newsroom.workflow-operation/v1",
+                json_schema=_workflow_operation_payload_schema(event_type),
+                sensitivity_policy=_workflow_operation_sensitivity_policy(),
+                current=True,
+                authoritative_context_fields=_BUSINESS_CONTEXT_FIELDS,
             )
         )
     for event_type in HARNESS_EVENT_ALIASES:
@@ -455,7 +552,27 @@ _ARRAY_OF_TEXT = {"type": "array", "items": _TEXT, "maxItems": 4096}
 _NONNEGATIVE_INTEGER = {"type": "integer", "minimum": 0}
 _POSITIVE_INTEGER = {"type": "integer", "minimum": 1}
 _NUMBER = {"type": "number"}
+_NONNEGATIVE_NUMBER = {"type": "number", "minimum": 0}
+_POSITIVE_NUMBER = {"type": "number", "exclusiveMinimum": 0}
+_NULLABLE_POSITIVE_NUMBER = {
+    "anyOf": [_POSITIVE_NUMBER, {"type": "null"}],
+}
 _BOOLEAN = {"type": "boolean"}
+_WORKFLOW_TIMEOUT_POLICY_SOURCE = {
+    "enum": [
+        "policies.timeout_policy.timeout_seconds",
+        "policies.resource_policy.max_runtime_seconds",
+    ]
+}
+_WORKFLOW_OPERATION_TYPE = {
+    "enum": [
+        "cancel_run",
+        "rerun_from_step",
+        "resume_with_patch",
+        "skip_step",
+        "mark_blocked_resolved",
+    ]
+}
 _CHECKSUM_TEXT = {
     "type": "string",
     "pattern": "^sha256:[0-9a-f]{64}$",
@@ -559,7 +676,7 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "topic": _TEXT,
             },
             any_of=(
-                {"required": ["workflow_id", "workflow_version", "profile"]},
+                {"required": ["workflow_version", "profile"]},
                 {"required": ["run_id"]},
             ),
         )
@@ -572,7 +689,7 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "checkpoint_id": _TEXT,
                 "resume_metadata": _OBJECT,
             },
-            required=("workflow_id", "workflow_version", "profile", "checkpoint_id"),
+            required=("workflow_version", "profile", "checkpoint_id"),
         )
     if event_type in {"checkpoint_restored", "checkpoint_created"}:
         return _payload_schema(
@@ -623,12 +740,12 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "request_id": _TEXT,
                 "checkpoint_id": _TEXT,
             },
-            required=("step_id", "request_id", "checkpoint_id"),
+            required=("checkpoint_id",),
         )
     if event_type == "human_review_paused":
         return _payload_schema(
             properties={"step_id": _TEXT, "outcome": _OBJECT},
-            required=("step_id", "outcome"),
+            required=("outcome",),
         )
     if event_type == "agent_llm_stream_event":
         return _payload_schema(
@@ -639,15 +756,67 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "sequence": {"type": ["integer", "null"], "minimum": 0},
                 "stream_event_type": _NULLABLE_TEXT,
                 "text_delta_chars": {"type": ["integer", "null"], "minimum": 0},
-                "stream_event": {},
+                "stream_event_ref": _CHECKSUM_TEXT,
             },
-            required=("step_id",),
+            required=("stream_event_ref",),
         )
-    if event_type in {"memory_recall", "memory_write", "memory_consolidate"}:
+    if event_type == "memory_recall":
         return _payload_schema(
-            properties={"step_id": _TEXT, "status": _TEXT},
-            required=("step_id", "status"),
-            additional_properties=True,
+            properties={
+                "step_id": _TEXT,
+                "status": _TEXT,
+                "operation": {"const": "recall"},
+                "result_count": _NONNEGATIVE_INTEGER,
+                "memory_ids": _ARRAY_OF_TEXT,
+                "context_token_estimate": _NONNEGATIVE_INTEGER,
+            },
+            required=(
+                "status",
+                "operation",
+                "result_count",
+                "memory_ids",
+                "context_token_estimate",
+            ),
+        )
+    if event_type == "memory_write":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "status": _TEXT,
+                "operation": {"const": "write"},
+                "accepted_count": _NONNEGATIVE_INTEGER,
+                "written_count": _NONNEGATIVE_INTEGER,
+                "skipped_count": _NONNEGATIVE_INTEGER,
+                "memory_ids": _ARRAY_OF_TEXT,
+            },
+            required=(
+                "status",
+                "operation",
+                "accepted_count",
+                "written_count",
+                "skipped_count",
+                "memory_ids",
+            ),
+        )
+    if event_type == "memory_consolidate":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "status": _TEXT,
+                "operation": {"const": "consolidate"},
+                "consolidated_count": _NONNEGATIVE_INTEGER,
+                "skipped_count": _NONNEGATIVE_INTEGER,
+                "memory_ids": _ARRAY_OF_TEXT,
+                "source_memory_ids": _ARRAY_OF_TEXT,
+            },
+            required=(
+                "status",
+                "operation",
+                "consolidated_count",
+                "skipped_count",
+                "memory_ids",
+                "source_memory_ids",
+            ),
         )
     if event_type == "workflow_succeeded":
         return _payload_schema(properties={"path": _ARRAY_OF_TEXT}, required=("path",))
@@ -666,13 +835,14 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "workflow_id": _TEXT,
                 "step_id": _TEXT,
                 "pending_step_id": _TEXT,
-                "timeout_seconds": _NUMBER,
-                "elapsed_seconds": _NUMBER,
+                "timeout_seconds": _POSITIVE_NUMBER,
+                "elapsed_seconds": _NONNEGATIVE_NUMBER,
+                "policy_source": _WORKFLOW_TIMEOUT_POLICY_SOURCE,
             },
-            required=("run_id", "workflow_id", "timeout_seconds"),
+            required=("timeout_seconds", "elapsed_seconds", "policy_source"),
         )
     if event_type == "workflow_cancelled":
-        return _payload_schema(properties={"run_id": _TEXT}, required=("run_id",))
+        return _payload_schema(properties={"run_id": _TEXT})
     if event_type == "workflow_loop_limit_exceeded":
         return _payload_schema(
             properties={
@@ -680,12 +850,12 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "max_step_visits": _POSITIVE_INTEGER,
                 "visit_count": _POSITIVE_INTEGER,
             },
-            required=("step_id", "max_step_visits", "visit_count"),
+            required=("max_step_visits", "visit_count"),
         )
     if event_type == "workflow_paused":
         return _payload_schema(
             properties={"reason": _TEXT, "step_id": _TEXT},
-            required=("reason", "step_id"),
+            required=("reason",),
         )
     if event_type == "step_started":
         return _payload_schema(
@@ -695,17 +865,17 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "attempt": _POSITIVE_INTEGER,
                 "max_attempts": _POSITIVE_INTEGER,
             },
-            required=("step_id", "step_type", "attempt", "max_attempts"),
+            required=("step_type", "attempt", "max_attempts"),
         )
     if event_type in {"step_succeeded", "step_skipped"}:
         return _payload_schema(
             properties={"step_id": _TEXT, "outputs": _ARRAY_OF_TEXT},
-            required=("step_id", "outputs"),
+            required=("outputs",),
         )
     if event_type in {"step_paused", "step_blocked", "step_failed"}:
         return _payload_schema(
             properties={"step_id": _TEXT, "outcome": _OBJECT},
-            required=("step_id", "outcome"),
+            required=("outcome",),
         )
     if event_type == "step_retry_scheduled":
         return _payload_schema(
@@ -718,7 +888,7 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "error_message": _NULLABLE_TEXT,
                 "delay_seconds": {"type": "number", "minimum": 0},
             },
-            required=("step_id", "attempt", "next_attempt", "max_attempts", "delay_seconds"),
+            required=("attempt", "next_attempt", "max_attempts", "delay_seconds"),
         )
     if event_type == "step_timeout":
         return _payload_schema(
@@ -731,22 +901,68 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "termination_confirmed": {"type": ["boolean", "null"]},
                 "indeterminate": _BOOLEAN,
             },
-            required=("step_id", "attempt", "max_attempts", "timeout_seconds", "on_timeout"),
+            required=(
+                "attempt",
+                "max_attempts",
+                "timeout_seconds",
+                "on_timeout",
+            ),
         )
-    if event_type in {
-        "policy_violation",
-        "runtime_safety_violation",
-        "runner_capability_violation",
-    }:
+    if event_type == "policy_violation":
         return _payload_schema(
-            properties={"message": _TEXT},
+            properties={
+                "step_id": _TEXT,
+                "code": _TEXT,
+                "message": _TEXT,
+                "policy": _TEXT,
+                "limit": _NONNEGATIVE_NUMBER,
+                "actual": _NONNEGATIVE_NUMBER,
+                "metadata": _OBJECT,
+                "resource_estimate": _OBJECT,
+                "item_count": _NONNEGATIVE_INTEGER,
+                "max_items": _NONNEGATIVE_INTEGER,
+            },
+            required=(
+                "code",
+                "message",
+                "policy",
+                "limit",
+                "actual",
+                "metadata",
+                "resource_estimate",
+            ),
+        )
+    if event_type == "runtime_safety_violation":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "step_type": _TEXT,
+                "policy": _TEXT,
+                "code": _TEXT,
+                "message": _TEXT,
+                "metadata": _OBJECT,
+            },
+            required=("step_type", "policy", "code", "message", "metadata"),
+        )
+    if event_type == "runner_capability_violation":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "step_type": _TEXT,
+                "implementation": _NULLABLE_TEXT,
+                "runner_id": _TEXT,
+                "capability": {"enum": ["timeout", "retry", "resume"]},
+                "message": _TEXT,
+            },
             required=("message",),
-            additional_properties=True,
+            any_of=(
+                {"required": ["step_type"]},
+                {"required": ["runner_id", "capability"]},
+            ),
         )
     if event_type in {"step_finished", "worker_task_started", "worker_task_finished"}:
         return _payload_schema(
             properties={"step_id": _TEXT},
-            required=("step_id",),
             additional_properties=True,
         )
     if event_type in {
@@ -758,6 +974,25 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
     }:
         return _payload_schema(additional_properties=True, min_properties=1)
     raise EventSchemaError(f"workflow event schema is not defined: {event_type}")
+
+
+def _workflow_operation_payload_schema(event_type: str) -> dict[str, Any]:
+    if event_type not in WORKFLOW_OPERATION_EVENT_TYPES:
+        raise EventSchemaError(
+            f"workflow operation event schema is not defined: {event_type}"
+        )
+    return _payload_schema(
+        properties={
+            "run_id": _TEXT,
+            "operation_id": _TEXT,
+            "operation_type": _WORKFLOW_OPERATION_TYPE,
+            "actor_id": _NULLABLE_TEXT,
+            "actor_type": _NULLABLE_TEXT,
+            "reason": _NULLABLE_TEXT,
+            "details": _OBJECT,
+        },
+        required=("operation_id", "operation_type", "details"),
+    )
 
 
 def _harness_payload_schema(event_type: str) -> dict[str, Any]:
@@ -1000,16 +1235,34 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
 
 
 def _workflow_sensitivity_policy(event_type: str) -> SensitivityPolicy:
-    if event_type == "agent_llm_stream_event":
-        return SensitivityPolicy(
-            field_rules={"/stream_event": FieldDisposition.REFERENCE_ONLY},
-            whole_document_reference=(
-                WholeDocumentReferenceDisposition.SECURE_REQUIRED
-            ),
-        )
     if event_type == "workflow_resumed":
         return SensitivityPolicy(
             field_rules={"/resume_metadata": FieldDisposition.SENSITIVE},
+            redact_sensitive=True,
+        )
+    if event_type in {
+        "edge_evaluated",
+        "edge_traversed",
+        "edge_rejected",
+    }:
+        return SensitivityPolicy(
+            field_rules={
+                "/condition": FieldDisposition.SENSITIVE,
+                "/condition_expr": FieldDisposition.SENSITIVE,
+            },
+            redact_sensitive=True,
+        )
+    if event_type in {
+        "human_review_decision_received",
+        "human_review_approved",
+        "human_review_rejected",
+        "human_review_needs_changes",
+    }:
+        return SensitivityPolicy(
+            field_rules={
+                "/actor_id": FieldDisposition.SENSITIVE,
+                "/approval_id": FieldDisposition.SENSITIVE,
+            },
             redact_sensitive=True,
         )
     if event_type in {"workflow_blocked", "workflow_budget_exceeded", "workflow_failed"}:
@@ -1025,7 +1278,49 @@ def _workflow_sensitivity_policy(event_type: str) -> SensitivityPolicy:
             },
             redact_sensitive=True,
         )
+    if event_type == "step_retry_scheduled":
+        return SensitivityPolicy(
+            field_rules={"/error_message": FieldDisposition.SENSITIVE},
+            redact_sensitive=True,
+        )
+    if event_type == "policy_violation":
+        return SensitivityPolicy(
+            field_rules={
+                "/message": FieldDisposition.SENSITIVE,
+                "/metadata": FieldDisposition.SENSITIVE,
+                "/resource_estimate/input_keys": FieldDisposition.SENSITIVE,
+            },
+            redact_sensitive=True,
+        )
+    if event_type == "runtime_safety_violation":
+        return SensitivityPolicy(
+            field_rules={
+                "/message": FieldDisposition.SENSITIVE,
+                "/metadata": FieldDisposition.SENSITIVE,
+            },
+            redact_sensitive=True,
+        )
+    if event_type == "runner_capability_violation":
+        return SensitivityPolicy(
+            field_rules={
+                "/implementation": FieldDisposition.SENSITIVE,
+                "/message": FieldDisposition.SENSITIVE,
+            },
+            redact_sensitive=True,
+        )
     return SensitivityPolicy()
+
+
+def _workflow_operation_sensitivity_policy() -> SensitivityPolicy:
+    return SensitivityPolicy(
+        field_rules={
+            "/actor_id": FieldDisposition.SENSITIVE,
+            "/reason": FieldDisposition.SENSITIVE,
+            "/details": FieldDisposition.SENSITIVE,
+        },
+        whole_document_reference=WholeDocumentReferenceDisposition.SECURE_REQUIRED,
+        redact_sensitive=True,
+    )
 
 
 def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
