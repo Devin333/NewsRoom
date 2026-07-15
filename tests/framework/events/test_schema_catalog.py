@@ -21,6 +21,7 @@ from framework.events.schema import (
     EventSchemaRegistration,
     FieldDisposition,
     SensitivityPolicy,
+    WholeDocumentReferenceDisposition,
     default_event_schema_catalog,
 )
 from framework.events.schema.catalog import _run_pure_validator
@@ -339,11 +340,34 @@ def test_default_catalog_registers_schema_owned_sensitivity_policies() -> None:
         "worker_called",
         "newsroom.harness-event/v1",
     ).sensitivity_policy
+    phase_policy = catalog.get(
+        "phase_recorded",
+        "newsroom.harness-event/v1",
+    ).sensitivity_policy
+    step_state_policy = catalog.get(
+        "step_state_changed",
+        "newsroom.harness-event/v1",
+    ).sensitivity_policy
 
     assert stream_policy.disposition_for("/stream_event") is FieldDisposition.REFERENCE_ONLY
-    assert stream_policy.allow_payload_reference is True
+    assert (
+        stream_policy.whole_document_reference
+        is WholeDocumentReferenceDisposition.SECURE_REQUIRED
+    )
     assert worker_policy.disposition_for("/inputs") is FieldDisposition.REFERENCE_ONLY
     assert worker_policy.disposition_for("/metadata") is FieldDisposition.REFERENCE_ONLY
+    assert (
+        worker_policy.whole_document_reference
+        is WholeDocumentReferenceDisposition.SECURE_REQUIRED
+    )
+    assert (
+        phase_policy.whole_document_reference
+        is WholeDocumentReferenceDisposition.SECURE_REQUIRED
+    )
+    assert (
+        step_state_policy.whole_document_reference
+        is WholeDocumentReferenceDisposition.SECURE_REQUIRED
+    )
 
     decision_policy = catalog.get(
         "decision_recorded",

@@ -15,7 +15,7 @@ from framework.events.canonical import (
     assert_same_event_identity,
     normalize_canonical_json,
 )
-from framework.events.errors import EventContractError, EventSecurityError
+from framework.events.errors import EventContractError
 from framework.events.runtime.fallback import (
     LocalRuntimeDiagnosticFallback,
     RuntimeDiagnosticCategory,
@@ -176,10 +176,8 @@ class EventRuntime:
             )
         else:
             # Referenced bytes are not fetched through the event runtime.  The
-            # schema must explicitly opt into that representation, while the
-            # projector separately proves its security/integrity boundary.
-            if not policy.allow_payload_reference:
-                raise EventSecurityError("event schema does not permit payload references")
+            # shared projector owns the schema reference disposition and proves
+            # the ordinary or secure integrity boundary before append.
             validated_payload = None
 
         projection = self._security_projector.project(

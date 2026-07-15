@@ -16,6 +16,14 @@ class FieldDisposition(StrEnum):
     FORBIDDEN = "forbidden"
 
 
+class WholeDocumentReferenceDisposition(StrEnum):
+    """Schema-owned authorization for replacing the whole payload with a ref."""
+
+    DENY = "deny"
+    NON_SENSITIVE = "non_sensitive"
+    SECURE_REQUIRED = "secure_required"
+
+
 @dataclass(frozen=True)
 class SensitivityPolicy:
     """Schema-owned policy for values crossing the durable boundary.
@@ -26,7 +34,9 @@ class SensitivityPolicy:
     """
 
     field_rules: Mapping[str, FieldDisposition | str] = field(default_factory=dict)
-    allow_payload_reference: bool = False
+    whole_document_reference: WholeDocumentReferenceDisposition | str = (
+        WholeDocumentReferenceDisposition.DENY
+    )
     redact_sensitive: bool = False
     max_inline_payload_bytes: int = DEFAULT_INLINE_PAYLOAD_BYTES
 
@@ -37,12 +47,21 @@ class SensitivityPolicy:
             or self.max_inline_payload_bytes <= 0
         ):
             raise ValueError("max_inline_payload_bytes must be positive")
-        if not isinstance(self.allow_payload_reference, bool):
-            raise TypeError("allow_payload_reference must be a bool")
         if not isinstance(self.redact_sensitive, bool):
             raise TypeError("redact_sensitive must be a bool")
         if not isinstance(self.field_rules, Mapping):
             raise TypeError("field_rules must be a mapping")
+        if isinstance(self.whole_document_reference, bool):
+            raise TypeError(
+                "whole_document_reference must be a "
+                "WholeDocumentReferenceDisposition"
+            )
+        try:
+            reference_disposition = WholeDocumentReferenceDisposition(
+                self.whole_document_reference
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid whole-document reference disposition") from exc
         normalized: dict[str, FieldDisposition] = {}
         for raw_path, raw_disposition in self.field_rules.items():
             path = _normalize_pointer(raw_path)
@@ -50,6 +69,19 @@ class SensitivityPolicy:
                 raise ValueError(f"duplicate sensitivity path: {path}")
             normalized[path] = FieldDisposition(raw_disposition)
         object.__setattr__(self, "field_rules", MappingProxyType(normalized))
+        object.__setattr__(
+            self,
+            "whole_document_reference",
+            reference_disposition,
+        )
+        if (
+            reference_disposition is WholeDocumentReferenceDisposition.NON_SENSITIVE
+            and self.has_protected_fields
+        ):
+            raise ValueError(
+                "a non-sensitive whole-document reference cannot be combined "
+                "with sensitive, reference-only, or forbidden field rules"
+            )
 
     def disposition_for(self, path: str) -> FieldDisposition:
         normalized = _normalize_pointer(path)
@@ -73,14 +105,37 @@ class SensitivityPolicy:
             for disposition in self.field_rules.values()
         )
 
+    @property
+    def has_protected_fields(self) -> bool:
+        return any(
+            disposition
+            in {
+                FieldDisposition.SENSITIVE,
+                FieldDisposition.REFERENCE_ONLY,
+                FieldDisposition.FORBIDDEN,
+            }
+            for disposition in self.field_rules.values()
+        )
+
     def permits_ordinary_reference(self, *, size_bytes: int | None) -> bool:
         """Return whether a non-sensitive reference proves the inline limit was exceeded."""
 
-        if not self.allow_payload_reference:
+        if (
+            self.whole_document_reference
+            is not WholeDocumentReferenceDisposition.NON_SENSITIVE
+            or self.has_protected_fields
+        ):
             return False
         if isinstance(size_bytes, bool) or not isinstance(size_bytes, int):
             return False
         return size_bytes > self.max_inline_payload_bytes
+
+    @property
+    def permits_secure_reference(self) -> bool:
+        return (
+            self.whole_document_reference
+            is WholeDocumentReferenceDisposition.SECURE_REQUIRED
+        )
 
 
 def _normalize_pointer(path: str) -> str:

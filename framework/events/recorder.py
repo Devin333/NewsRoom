@@ -10,6 +10,11 @@ from uuid import uuid4
 
 from framework.events.canonical import normalize_canonical_json
 from framework.events.errors import EventContextConflictError, EventTimeError
+from framework.events.schema import (
+    EventSchemaCatalog,
+    EventSecurityProjector,
+    default_event_schema_catalog,
+)
 from framework.events.schema.security import redact_event_value
 from framework.shared.json import to_jsonable
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
@@ -149,10 +154,14 @@ class EventRecorder:
         run_id: str | None = None,
         event_bus: Any | None = None,
         trace_context: TraceContext | None = None,
+        schema_catalog: EventSchemaCatalog | None = None,
+        security_projector: EventSecurityProjector | None = None,
     ) -> None:
         self.run_id = run_id
         self._event_bus = event_bus
         self._trace_context = trace_context
+        self._schema_catalog = schema_catalog or default_event_schema_catalog()
+        self._security_projector = security_projector or EventSecurityProjector()
         self._events: list[EventEnvelope] = []
 
     @property
@@ -224,23 +233,39 @@ class EventRecorder:
 
     def write_jsonl(self, path: str | Path) -> Path:
         target = Path(path)
+        safe_rows = [self._safe_export_row(event) for event in self._events]
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("w", encoding="utf-8") as handle:
-            for event in self._events:
-                row = event.to_dict()
-                row.update(
-                    {
-                        "event_type": event.event.event_type,
-                        "payload": redact_event_value(to_jsonable(event.event.payload)),
-                        "occurred_at": format_datetime(event.event.created_at),
-                    }
-                )
-                nested_event = dict(row["event"])
-                nested_event["payload"] = redact_event_value(
-                    to_jsonable(event.event.payload)
-                )
-                row["event"] = nested_event
-                safe_row = redact_event_value(to_jsonable(row))
+            for safe_row in safe_rows:
                 handle.write(json.dumps(safe_row, ensure_ascii=False, sort_keys=True))
                 handle.write("\n")
         return target
+
+    def _safe_export_row(self, envelope: EventEnvelope) -> dict[str, Any]:
+        event_type = str(envelope.event.event_type)
+        data_schema = self._schema_catalog.current_schema(event_type)
+        registration = self._schema_catalog.get(event_type, data_schema)
+        validated_payload = self._schema_catalog.validate(
+            event_type,
+            data_schema,
+            envelope.event.payload,
+        )
+        projection = self._security_projector.project_export(
+            payload=validated_payload,
+            extensions=envelope.event.metadata,
+            policy=registration.sensitivity_policy,
+        )
+        safe_payload = to_jsonable(projection.payload or {})
+        row = envelope.to_dict()
+        row.update(
+            {
+                "event_type": event_type,
+                "payload": safe_payload,
+                "occurred_at": format_datetime(envelope.event.created_at),
+            }
+        )
+        nested_event = dict(row["event"])
+        nested_event["payload"] = safe_payload
+        nested_event["metadata"] = to_jsonable(projection.extensions)
+        row["event"] = nested_event
+        return redact_event_value(to_jsonable(row))

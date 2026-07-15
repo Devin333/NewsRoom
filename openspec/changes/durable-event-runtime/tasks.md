@@ -11,7 +11,7 @@
 - [x] 2.2 Implement canonical JSON normalization, recursive immutable views, the specified content-checksum include/exclude projection, complete-record-checksum coverage, payload/extension limits, and tests proving mutations cannot alter accepted content and same-id changes to stream, tenant, schema, classification, context, or payload reference are collisions.
 - [x] 2.3 Implement one authority rule for business and trace fields; add compatibility parsing that accepts equal legacy duplicates and rejects or quarantines conflicts.
 - [x] 2.4 Implement `EventSchemaCatalog`, current workflow/Harness schema registrations, payload validators, pure ordered upcasters, sensitivity policies, and historical fixture tests including unknown-version quarantine and missing-time handling.
-- [ ] 2.5 Implement the shared security projector before all store adapters and exports, reserved-field protection, tenant/classification propagation, and no-secret persistence/diagnostic tests; allow ordinary artifact refs only for schema-permitted oversized non-sensitive data and fail closed for reference-only/confidential/restricted content unless a separately authorized, encrypted, integrity-checked, audited secure payload store is composed.
+- [x] 2.5 Implement the shared security projector before all store adapters and exports, reserved-field protection, tenant/classification propagation, and no-secret persistence/diagnostic tests; allow ordinary artifact refs only for schema-permitted oversized non-sensitive data and fail closed for reference-only/confidential/restricted content unless a separately authorized, encrypted, integrity-checked, audited secure payload store is composed.
 
 ## 3. Durable Storage Ports And Schemas
 

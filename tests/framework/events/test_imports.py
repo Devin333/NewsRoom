@@ -17,6 +17,11 @@ def test_public_imports_are_available() -> None:
         InMemoryEventRecorder,
         ReplayCheckpointCollisionError,
         ReplayCheckpointCorruptionError,
+        REQUIRED_SECURE_PAYLOAD_CAPABILITIES,
+        SecurePayloadCapability,
+        SecurePayloadValidation,
+        SecurityExportProjection,
+        WholeDocumentReferenceDisposition,
     )
 
     assert Event is not None
@@ -32,3 +37,7 @@ def test_public_imports_are_available() -> None:
     assert InMemoryEventRecorder is not None
     assert ReplayCheckpointCollisionError is not None
     assert ReplayCheckpointCorruptionError is not None
+    assert REQUIRED_SECURE_PAYLOAD_CAPABILITIES == frozenset(SecurePayloadCapability)
+    assert SecurePayloadValidation is not None
+    assert SecurityExportProjection is not None
+    assert WholeDocumentReferenceDisposition is not None

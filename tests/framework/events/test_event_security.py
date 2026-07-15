@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import pytest
@@ -11,9 +12,12 @@ from framework.events.errors import (
 )
 from framework.events.schema import (
     EventSecurityProjector,
-    SecurePayloadCapabilities,
+    REQUIRED_SECURE_PAYLOAD_CAPABILITIES,
+    SecurePayloadCapability,
+    SecurePayloadValidation,
     SecurityClassification,
     SensitivityPolicy,
+    WholeDocumentReferenceDisposition,
 )
 
 
@@ -21,33 +25,87 @@ from framework.events.schema import (
 class _Reference:
     uri: str = "secure://tenant/event-payload"
     expected_checksum: str = "sha256:" + "a" * 64
+    content_type: str = "application/json"
     size_bytes: int | None = 128 * 1024
 
 
 class _SecureStore:
-    def __init__(self, capabilities: SecurePayloadCapabilities) -> None:
+    def __init__(
+        self,
+        *,
+        validation_changes: Mapping[str, object] | None = None,
+        capabilities: frozenset[SecurePayloadCapability | str] = (
+            REQUIRED_SECURE_PAYLOAD_CAPABILITIES
+        ),
+        return_unbound: bool = False,
+    ) -> None:
+        self.validation_changes = dict(validation_changes or {})
         self.capabilities = capabilities
-        self.calls: list[tuple[object, str | None, SecurityClassification]] = []
+        self.return_unbound = return_unbound
+        self.calls: list[
+            tuple[dict[str, object], str | None, SecurityClassification]
+        ] = []
 
     def validate_reference(
         self,
-        reference: object,
+        reference: Mapping[str, object],
         *,
         tenant_id: str | None,
         classification: SecurityClassification,
-    ) -> SecurePayloadCapabilities:
-        self.calls.append((reference, tenant_id, classification))
-        return self.capabilities
+    ) -> SecurePayloadValidation | object:
+        canonical_reference = dict(reference)
+        self.calls.append((canonical_reference, tenant_id, classification))
+        if self.return_unbound:
+            return object()
+        assert tenant_id is not None
+        values: dict[str, object] = {
+            **canonical_reference,
+            "tenant_id": tenant_id,
+            "classification": classification,
+            "capabilities": self.capabilities,
+        }
+        values.update(self.validation_changes)
+        return SecurePayloadValidation(**values)  # type: ignore[arg-type]
 
 
-def _complete_capabilities() -> SecurePayloadCapabilities:
-    return SecurePayloadCapabilities(
-        tenant_authorization=True,
-        encryption_in_transit=True,
-        encryption_at_rest=True,
-        integrity_verification=True,
-        audited_access=True,
+class _LeakySecureStore:
+    def __init__(self, secret: str) -> None:
+        self.secret = secret
+
+    def validate_reference(
+        self,
+        reference: Mapping[str, object],
+        *,
+        tenant_id: str,
+        classification: SecurityClassification,
+    ) -> SecurePayloadValidation:
+        del reference, tenant_id, classification
+        raise EventSecurityError(f"secure store failed with {self.secret}")
+
+
+def _ordinary_reference_policy() -> SensitivityPolicy:
+    return SensitivityPolicy(
+        whole_document_reference=(
+            WholeDocumentReferenceDisposition.NON_SENSITIVE
+        )
     )
+
+
+def _secure_reference_policy(
+    *,
+    field_rules: Mapping[str, str] | None = None,
+) -> SensitivityPolicy:
+    return SensitivityPolicy(
+        field_rules=field_rules or {},
+        whole_document_reference=(
+            WholeDocumentReferenceDisposition.SECURE_REQUIRED
+        ),
+    )
+
+
+def test_whole_document_reference_policy_rejects_boolean_guessing() -> None:
+    with pytest.raises(TypeError, match="WholeDocumentReferenceDisposition"):
+        SensitivityPolicy(whole_document_reference=True)  # type: ignore[arg-type]
 
 
 def test_projector_rejects_reserved_extension_override() -> None:
@@ -148,7 +206,7 @@ def test_protected_content_fails_without_secure_payload_store(
             extensions={},
             tenant_id="tenant-1",
             classification=classification,
-            policy=SensitivityPolicy(allow_payload_reference=True),
+            policy=_secure_reference_policy(),
         )
 
 
@@ -179,7 +237,7 @@ def test_ordinary_reference_is_allowed_only_for_schema_permitted_non_sensitive_d
         payload=None,
         payload_ref=reference,
         extensions={},
-        policy=SensitivityPolicy(allow_payload_reference=True),
+        policy=_ordinary_reference_policy(),
     )
     assert projected.payload_ref == {
         "uri": reference.uri,
@@ -194,29 +252,69 @@ def test_ordinary_reference_is_allowed_only_for_schema_permitted_non_sensitive_d
                 payload=None,
                 payload_ref=_Reference(size_bytes=unproven_size),
                 extensions={},
-                policy=SensitivityPolicy(allow_payload_reference=True),
+                policy=_ordinary_reference_policy(),
             )
 
 
-def test_secure_store_must_prove_every_required_capability() -> None:
-    incomplete = SecurePayloadCapabilities(
-        tenant_authorization=True,
-        encryption_in_transit=True,
-        encryption_at_rest=False,
-        integrity_verification=True,
-        audited_access=True,
-    )
-    with pytest.raises(EventSecurePayloadRequiredError):
-        EventSecurityProjector(secure_payload_store=_SecureStore(incomplete)).project(
-            payload=None,
-            payload_ref=_Reference(),
-            extensions={},
-            tenant_id="tenant-1",
-            classification=SecurityClassification.CONFIDENTIAL,
-            policy=SensitivityPolicy(allow_payload_reference=True),
+@pytest.mark.parametrize(
+    "protected_disposition",
+    ["sensitive", "reference_only", "forbidden"],
+)
+def test_ordinary_reference_policy_rejects_any_protected_path(
+    protected_disposition: str,
+) -> None:
+    with pytest.raises(ValueError, match="non-sensitive"):
+        SensitivityPolicy(
+            field_rules={"/protected": protected_disposition},
+            whole_document_reference=(
+                WholeDocumentReferenceDisposition.NON_SENSITIVE
+            ),
         )
 
-    store = _SecureStore(_complete_capabilities())
+
+@pytest.mark.parametrize(
+    ("classification", "disposition", "accepted"),
+    [
+        (SecurityClassification.PUBLIC, "non_sensitive", True),
+        (SecurityClassification.INTERNAL, "non_sensitive", True),
+        (SecurityClassification.CONFIDENTIAL, "non_sensitive", False),
+        (SecurityClassification.RESTRICTED, "non_sensitive", False),
+        (SecurityClassification.PUBLIC, "secure_required", True),
+        (SecurityClassification.INTERNAL, "secure_required", True),
+        (SecurityClassification.CONFIDENTIAL, "secure_required", True),
+        (SecurityClassification.RESTRICTED, "secure_required", True),
+    ],
+)
+def test_whole_document_reference_classification_matrix(
+    classification: SecurityClassification,
+    disposition: str,
+    accepted: bool,
+) -> None:
+    policy = SensitivityPolicy(whole_document_reference=disposition)
+    store = _SecureStore()
+    projector = EventSecurityProjector(secure_payload_store=store)
+    operation = lambda: projector.project(
+        payload=None,
+        payload_ref=_Reference(),
+        extensions={},
+        tenant_id="tenant-1",
+        classification=classification,
+        policy=policy,
+    )
+    if accepted:
+        assert operation().payload_ref is not None
+    elif classification in {
+        SecurityClassification.CONFIDENTIAL,
+        SecurityClassification.RESTRICTED,
+    }:
+        with pytest.raises(EventSecurePayloadRequiredError, match="schema-declared"):
+            operation()
+    else:  # pragma: no cover - table documents the complete product
+        raise AssertionError("invalid matrix case")
+
+
+def test_secure_store_validation_is_bound_to_exact_reference_and_scope() -> None:
+    store = _SecureStore()
     reference = _Reference()
     projected = EventSecurityProjector(secure_payload_store=store).project(
         payload=None,
@@ -224,7 +322,7 @@ def test_secure_store_must_prove_every_required_capability() -> None:
         extensions={},
         tenant_id="tenant-1",
         classification=SecurityClassification.CONFIDENTIAL,
-        policy=SensitivityPolicy(allow_payload_reference=True),
+        policy=_secure_reference_policy(),
     )
     assert projected.payload_ref == {
         "uri": reference.uri,
@@ -232,7 +330,115 @@ def test_secure_store_must_prove_every_required_capability() -> None:
         "content_type": "application/json",
         "size_bytes": reference.size_bytes,
     }
-    assert store.calls == [(reference, "tenant-1", SecurityClassification.CONFIDENTIAL)]
+    assert store.calls == [
+        (
+            {
+                "uri": reference.uri,
+                "expected_checksum": reference.expected_checksum,
+                "content_type": reference.content_type,
+                "size_bytes": reference.size_bytes,
+            },
+            "tenant-1",
+            SecurityClassification.CONFIDENTIAL,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("changed_field", "changed_value"),
+    [
+        ("uri", "secure://tenant/other"),
+        ("expected_checksum", "sha256:" + "b" * 64),
+        ("content_type", "application/octet-stream"),
+        ("size_bytes", 256 * 1024),
+        ("tenant_id", "tenant-other"),
+        ("classification", SecurityClassification.RESTRICTED),
+    ],
+)
+def test_secure_store_validation_rejects_any_exact_binding_mismatch(
+    changed_field: str,
+    changed_value: object,
+) -> None:
+    projector = EventSecurityProjector(
+        secure_payload_store=_SecureStore(
+            validation_changes={changed_field: changed_value}
+        )
+    )
+    with pytest.raises(EventSecurePayloadRequiredError, match="exact reference"):
+        projector.project(
+            payload=None,
+            payload_ref=_Reference(),
+            extensions={},
+            tenant_id="tenant-1",
+            classification=SecurityClassification.CONFIDENTIAL,
+            policy=_secure_reference_policy(),
+        )
+
+
+def test_secure_store_cannot_return_an_unbound_capability_claim() -> None:
+    projector = EventSecurityProjector(
+        secure_payload_store=_SecureStore(return_unbound=True)
+    )
+    with pytest.raises(EventSecurePayloadRequiredError, match="reference-bound"):
+        projector.project(
+            payload=None,
+            payload_ref=_Reference(),
+            extensions={},
+            tenant_id="tenant-1",
+            classification=SecurityClassification.CONFIDENTIAL,
+            policy=_secure_reference_policy(),
+        )
+
+
+def test_secure_store_failure_is_not_retained_in_the_exception_chain() -> None:
+    secret = "secure-store-password-must-not-leak"
+    projector = EventSecurityProjector(
+        secure_payload_store=_LeakySecureStore(secret)
+    )
+
+    with pytest.raises(EventSecurePayloadRequiredError) as caught:
+        projector.project(
+            payload=None,
+            payload_ref=_Reference(),
+            extensions={},
+            tenant_id="tenant-1",
+            classification=SecurityClassification.CONFIDENTIAL,
+            policy=_secure_reference_policy(),
+        )
+
+    assert secret not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        {
+            "reference": "secure://tenant/event-payload",
+            "checksum": "sha256:" + "a" * 64,
+            "content_type": "application/json",
+            "size_bytes": 128 * 1024,
+        },
+        {
+            "uri": "secure://tenant/event-payload",
+            "expected_checksum": "sha256:" + "a" * 64,
+            "content_type": "application/json",
+            "size_bytes": 128 * 1024,
+            "tenant_id": "tenant-1",
+        },
+    ],
+)
+def test_payload_reference_rejects_alias_and_unknown_authority_fields(
+    reference: dict[str, object],
+) -> None:
+    with pytest.raises(EventSecurityError, match="unknown authority field"):
+        EventSecurityProjector().project(
+            payload=None,
+            payload_ref=reference,
+            extensions={},
+            policy=_ordinary_reference_policy(),
+        )
 
 
 def test_reference_only_policy_fails_closed_without_secure_store() -> None:
@@ -243,7 +449,9 @@ def test_reference_only_policy_fails_closed_without_secure_store() -> None:
             extensions={},
             policy=SensitivityPolicy(
                 field_rules={"/body": "reference_only"},
-                allow_payload_reference=True,
+                whole_document_reference=(
+                    WholeDocumentReferenceDisposition.SECURE_REQUIRED
+                ),
             ),
         )
 
@@ -251,7 +459,9 @@ def test_reference_only_policy_fails_closed_without_secure_store() -> None:
 def test_reference_only_field_is_optional_but_secure_when_present() -> None:
     policy = SensitivityPolicy(
         field_rules={"/items/*/body": "reference_only"},
-        allow_payload_reference=True,
+        whole_document_reference=(
+            WholeDocumentReferenceDisposition.SECURE_REQUIRED
+        ),
     )
     projected = EventSecurityProjector().project(
         payload={"items": [{"title": "safe"}]},
@@ -273,14 +483,14 @@ def test_reference_only_field_is_optional_but_secure_when_present() -> None:
 
 
 def test_secure_reference_requires_authoritative_tenant_scope() -> None:
-    store = _SecureStore(_complete_capabilities())
+    store = _SecureStore()
     with pytest.raises(EventSecurePayloadRequiredError, match="tenant scope"):
         EventSecurityProjector(secure_payload_store=store).project(
             payload=None,
             payload_ref=_Reference(),
             extensions={},
             classification=SecurityClassification.CONFIDENTIAL,
-            policy=SensitivityPolicy(allow_payload_reference=True),
+            policy=_secure_reference_policy(),
         )
     assert store.calls == []
 
@@ -296,15 +506,9 @@ def test_secure_reference_requires_authoritative_tenant_scope() -> None:
     ],
 )
 def test_secure_reference_requires_each_capability(missing_capability: str) -> None:
-    values = {
-        "tenant_authorization": True,
-        "encryption_in_transit": True,
-        "encryption_at_rest": True,
-        "integrity_verification": True,
-        "audited_access": True,
-    }
-    values[missing_capability] = False
-    store = _SecureStore(SecurePayloadCapabilities(**values))
+    capabilities = set(REQUIRED_SECURE_PAYLOAD_CAPABILITIES)
+    capabilities.remove(SecurePayloadCapability(missing_capability))
+    store = _SecureStore(capabilities=frozenset(capabilities))
 
     with pytest.raises(EventSecurePayloadRequiredError, match="capabilities"):
         EventSecurityProjector(secure_payload_store=store).project(
@@ -313,7 +517,7 @@ def test_secure_reference_requires_each_capability(missing_capability: str) -> N
             extensions={},
             tenant_id="tenant-1",
             classification=SecurityClassification.RESTRICTED,
-            policy=SensitivityPolicy(allow_payload_reference=True),
+            policy=_secure_reference_policy(),
         )
     assert len(store.calls) == 1
 
@@ -342,6 +546,157 @@ def test_tenant_and_classification_are_authoritative_and_propagated() -> None:
                 tenant_id="tenant-1",
                 policy=SensitivityPolicy(),
             )
+
+
+def test_extension_policy_redacts_schema_sensitive_values_and_duplicates() -> None:
+    secret = "extension-sensitive-value"
+    projected = EventSecurityProjector().project(
+        payload={"diagnostic": f"operation failed with {secret}"},
+        payload_ref=None,
+        extensions={"reason": secret},
+        policy=SensitivityPolicy(
+            field_rules={"/extensions/reason": "sensitive"},
+            redact_sensitive=True,
+        ),
+    )
+
+    assert projected.extensions["reason"] == "[REDACTED]"
+    assert secret not in projected.payload["diagnostic"]
+
+
+def test_export_projection_is_schema_aware_and_redacts_duplicate_values() -> None:
+    secret = "schema-sensitive-export-value"
+    projected = EventSecurityProjector().project_export(
+        payload={"resume_metadata": {"credential": secret}},
+        extensions={
+            "diagnostic": f"resume failed for {secret}",
+            "authorization": f"Bearer {secret}",
+        },
+        policy=SensitivityPolicy(
+            field_rules={"/resume_metadata": "sensitive"},
+            redact_sensitive=True,
+        ),
+    )
+
+    assert projected.payload["resume_metadata"] == "[REDACTED]"
+    assert secret not in projected.extensions["diagnostic"]
+    assert projected.extensions["authorization"] == "[REDACTED]"
+
+
+def test_export_projection_rejects_inline_reference_only_content() -> None:
+    with pytest.raises(EventSecurePayloadRequiredError, match="cannot be exported"):
+        EventSecurityProjector().project_export(
+            payload={"stream_event": {"chunk": "raw"}},
+            extensions={},
+            policy=SensitivityPolicy(
+                field_rules={"/stream_event": "reference_only"},
+                whole_document_reference=(
+                    WholeDocumentReferenceDisposition.SECURE_REQUIRED
+                ),
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("extensions", "expected_path"),
+    [
+        (
+            {"metadata": {"nested": {"tenant_id": "forged"}}},
+            "/extensions/metadata/nested/tenant_id",
+        ),
+        (
+            {"envelope": {"items": [{"security-classification": "public"}]}},
+            "/extensions/envelope/items/0/security-classification",
+        ),
+        (
+            {
+                "io.newsroom.legacy": {
+                    "metadata": {"nested": {"event_id": "forged"}}
+                }
+            },
+            "/extensions/io.newsroom.legacy/metadata/nested/event_id",
+        ),
+        (
+            {
+                "io.newsroom.legacy": {
+                    "envelope": {"nested": {"trace_id": "forged"}}
+                }
+            },
+            "/extensions/io.newsroom.legacy/envelope/nested/trace_id",
+        ),
+    ],
+)
+def test_authority_containers_recursively_reject_reserved_overrides(
+    extensions: dict[str, object],
+    expected_path: str,
+) -> None:
+    with pytest.raises(EventReservedFieldError) as caught:
+        EventSecurityProjector().project(
+            payload={"safe": True},
+            payload_ref=None,
+            extensions=extensions,
+            tenant_id="tenant-1",
+            policy=SensitivityPolicy(),
+        )
+    assert caught.value.path == expected_path
+
+
+@pytest.mark.parametrize(
+    "extensions",
+    [
+        {"metadata": "tenant_id=forged"},
+        {"envelope": ["security_classification=public"]},
+        {"io.newsroom.legacy": "event_id=forged"},
+    ],
+)
+def test_authority_containers_fail_closed_when_not_objects(
+    extensions: dict[str, object],
+) -> None:
+    with pytest.raises(EventSecurityError, match="must be an object"):
+        EventSecurityProjector().project(
+            payload={"safe": True},
+            payload_ref=None,
+            extensions=extensions,
+            policy=SensitivityPolicy(),
+        )
+
+
+def test_reserved_guard_does_not_scan_arbitrary_business_nesting() -> None:
+    projected = EventSecurityProjector().project(
+        payload={
+            "document": {
+                "tenant_id": "business-value",
+                "metadata": {"event_type": "business-event"},
+            }
+        },
+        payload_ref=None,
+        extensions={
+            "io.newsroom.feature": {
+                "metadata": {"event_id": "business-value"},
+                "envelope": {"security_classification": "business-label"},
+            }
+        },
+        policy=SensitivityPolicy(),
+    )
+
+    assert projected.payload["document"]["tenant_id"] == "business-value"
+    assert (
+        projected.extensions["io.newsroom.feature"]["metadata"]["event_id"]
+        == "business-value"
+    )
+
+
+@pytest.mark.parametrize("reserved_alias", ["event", "event_envelope"])
+def test_legacy_envelope_aliases_are_reserved_not_extension_containers(
+    reserved_alias: str,
+) -> None:
+    with pytest.raises(EventReservedFieldError):
+        EventSecurityProjector().project(
+            payload={"safe": True},
+            payload_ref=None,
+            extensions={reserved_alias: {"safe": True}},
+            policy=SensitivityPolicy(),
+        )
 
 
 def test_redacted_diagnostic_removes_secret_values_without_key_substring_false_positive() -> None:

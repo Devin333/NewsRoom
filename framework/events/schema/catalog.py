@@ -22,7 +22,11 @@ from framework.events.errors import (
     EventQuarantineError,
     EventUpcastError,
 )
-from framework.events.schema.policy import FieldDisposition, SensitivityPolicy
+from framework.events.schema.policy import (
+    FieldDisposition,
+    SensitivityPolicy,
+    WholeDocumentReferenceDisposition,
+)
 from framework.shared.time import ensure_utc
 
 
@@ -999,7 +1003,9 @@ def _workflow_sensitivity_policy(event_type: str) -> SensitivityPolicy:
     if event_type == "agent_llm_stream_event":
         return SensitivityPolicy(
             field_rules={"/stream_event": FieldDisposition.REFERENCE_ONLY},
-            allow_payload_reference=True,
+            whole_document_reference=(
+                WholeDocumentReferenceDisposition.SECURE_REQUIRED
+            ),
         )
     if event_type == "workflow_resumed":
         return SensitivityPolicy(
@@ -1032,6 +1038,9 @@ def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
                 "/gate_results/*/diagnostics": FieldDisposition.REFERENCE_ONLY,
                 "/gate_results/*/reason": FieldDisposition.SENSITIVE,
             },
+            whole_document_reference=(
+                WholeDocumentReferenceDisposition.SECURE_REQUIRED
+            ),
             redact_sensitive=True,
         )
     if event_type == "decision_recorded":
@@ -1040,7 +1049,9 @@ def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
                 "/payload": FieldDisposition.REFERENCE_ONLY,
                 "/reason": FieldDisposition.SENSITIVE,
             },
-            allow_payload_reference=True,
+            whole_document_reference=(
+                WholeDocumentReferenceDisposition.SECURE_REQUIRED
+            ),
             redact_sensitive=True,
         )
     if event_type == "worker_called":
@@ -1049,7 +1060,9 @@ def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
                 "/inputs": FieldDisposition.REFERENCE_ONLY,
                 "/metadata": FieldDisposition.REFERENCE_ONLY,
             },
-            allow_payload_reference=True,
+            whole_document_reference=(
+                WholeDocumentReferenceDisposition.SECURE_REQUIRED
+            ),
         )
     if event_type == "worker_result_recorded":
         return SensitivityPolicy(
@@ -1060,7 +1073,9 @@ def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
                 "/metrics": FieldDisposition.SENSITIVE,
                 "/error": FieldDisposition.SENSITIVE,
             },
-            allow_payload_reference=True,
+            whole_document_reference=(
+                WholeDocumentReferenceDisposition.SECURE_REQUIRED
+            ),
             redact_sensitive=True,
         )
     if event_type == "gate_evaluated":
@@ -1078,6 +1093,9 @@ def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
                 "/output_ref": FieldDisposition.REFERENCE_ONLY,
                 "/metadata/worker_result": FieldDisposition.REFERENCE_ONLY,
             },
+            whole_document_reference=(
+                WholeDocumentReferenceDisposition.SECURE_REQUIRED
+            ),
             redact_sensitive=True,
         )
     return SensitivityPolicy()

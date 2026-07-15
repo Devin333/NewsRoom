@@ -34,7 +34,15 @@ def test_event_trace_contract_envelope_record_jsonl_and_subscriber_failure(tmp_p
 
     bus.subscribe(_boom)
     with pytest.raises(RuntimeError):
-        recorder.emit("step_started", {"ok": True})
+        recorder.emit(
+            "step_started",
+            {
+                "step_id": "s1",
+                "step_type": "source",
+                "attempt": 1,
+                "max_attempts": 1,
+            },
+        )
 
     restored_envelope = EventEnvelope.from_dict(envelope.to_dict())
     path = recorder.write_jsonl(tmp_path / "events.jsonl")

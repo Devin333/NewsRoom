@@ -12,6 +12,7 @@ from framework.events import (
     EventRecorder,
     EventReplay,
     EventRuntimeError,
+    EventSecurePayloadRequiredError,
     EventSubscriberError,
     FunctionEventSubscriber,
     TraceContext,
@@ -103,7 +104,15 @@ def test_event_envelope_accepts_equal_legacy_duplicate_context() -> None:
 
 def test_recorder_emit_and_record_share_one_identity_ledger(tmp_path) -> None:
     recorder = EventRecorder("run-recorder-ledger")
-    emitted = recorder.emit("step_started", {"step_id": "collect"})
+    emitted = recorder.emit(
+        "step_started",
+        {
+            "step_id": "collect",
+            "step_type": "source",
+            "attempt": 1,
+            "max_attempts": 1,
+        },
+    )
     recorded = EventEnvelope(
         event=Event(
             "step_finished",
@@ -239,6 +248,58 @@ def test_write_jsonl_redacts_metadata_and_duplicate_diagnostics(tmp_path) -> Non
 
     assert raw_secret not in content
     assert "[REDACTED]" in content
+
+
+def test_write_jsonl_applies_schema_sensitive_policy_before_export(tmp_path) -> None:
+    raw_secret = "schema-sensitive-export-sentinel"
+    recorder = EventRecorder("run-schema-sensitive-export")
+    recorder.record(
+        EventEnvelope(
+            event=Event(
+                "workflow_resumed",
+                payload={
+                    "workflow_id": "workflow-1",
+                    "workflow_version": "v1",
+                    "profile": "default",
+                    "checkpoint_id": "checkpoint-1",
+                    "resume_metadata": {"credential": raw_secret},
+                },
+                metadata={
+                    "diagnostic": f"resume failed for {raw_secret}",
+                },
+                run_id="run-schema-sensitive-export",
+            ),
+            event_id="evt-schema-sensitive-export",
+            run_id="run-schema-sensitive-export",
+        )
+    )
+
+    target = recorder.write_jsonl(tmp_path / "events.jsonl")
+    content = target.read_text(encoding="utf-8")
+    row = json.loads(content)
+
+    assert raw_secret not in content
+    assert row["payload"]["resume_metadata"] == "[REDACTED]"
+    assert raw_secret not in row["event"]["metadata"]["diagnostic"]
+
+
+def test_write_jsonl_rejects_reference_only_inline_content_before_file_creation(
+    tmp_path,
+) -> None:
+    target = tmp_path / "events.jsonl"
+    recorder = EventRecorder("run-reference-only-export")
+    recorder.emit(
+        "agent_llm_stream_event",
+        {
+            "step_id": "draft",
+            "stream_event": {"text": "raw-stream-content"},
+        },
+    )
+
+    with pytest.raises(EventSecurePayloadRequiredError, match="cannot be exported"):
+        recorder.write_jsonl(target)
+
+    assert not target.exists()
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,7 @@ from framework.events import (
     SensitivityPolicy,
     StoredEvent,
 )
+from framework.events.schema import WholeDocumentReferenceDisposition
 
 
 CHECKSUM = "sha256:" + "a" * 64
@@ -230,7 +231,9 @@ def test_payload_reference_requires_schema_opt_in_and_matching_content_type() ->
         store=_Store(_UnitOfWork()),
         schema_catalog=_catalog(
             policy=SensitivityPolicy(
-                allow_payload_reference=True,
+                whole_document_reference=(
+                    WholeDocumentReferenceDisposition.NON_SENSITIVE
+                ),
                 max_inline_payload_bytes=8,
             )
         ),
@@ -255,7 +258,9 @@ def test_protected_content_fails_closed_before_store_without_secure_composition(
         store=_Store(unit_of_work),
         schema_catalog=_catalog(
             policy=SensitivityPolicy(
-                allow_payload_reference=True,
+                whole_document_reference=(
+                    WholeDocumentReferenceDisposition.SECURE_REQUIRED
+                ),
                 max_inline_payload_bytes=8,
             )
         ),
