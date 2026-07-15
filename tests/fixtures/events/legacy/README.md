@@ -14,6 +14,7 @@ as read-only. Fixed identities and timestamps make repeated scans deterministic.
 | `valid/workflow_flat.jsonl` | minimal historical workflow artifact | Use registered legacy mapping and deterministic identity; never invent current time |
 | `valid/harness_history.jsonl` | typed Harness event and event-log projection | Preserve transition time/run/step and map through Harness schemas |
 | `valid/checkpoints.json` | legacy workflow and Harness checkpoint boundaries | Preserve legacy offset metadata and map through an explicit 0-based-to-1-based table |
+| `valid/schema_upcast_v1.jsonl` | registered historical payload schema | Resolve through the complete adjacent upcaster chain without changing occurrence time or source bytes |
 
 ## Quarantine fixtures
 
@@ -27,8 +28,8 @@ as read-only. Fixed identities and timestamps make repeated scans deterministic.
 | `invalid/unsafe_run_id.jsonl` | `invalid_stream_identity` before any write |
 | `invalid/secret_payload.jsonl` | `security_policy_violation`; raw secret must never reach a new durable write or diagnostic |
 | `invalid/same_id_collision.jsonl` | first record importable, second record `identity_collision` |
+| `invalid/upcast_failure.jsonl` | `upcast_failed`; bounded diagnostic must not include payload values |
 
 Blank lines may be ignored but must retain physical source location in the
 migration report. Re-reading any fixture must yield the same import/quarantine
 classification, stable import key, and checksum.
-

@@ -5,9 +5,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 from uuid import uuid4
 
+from framework.events.canonical import normalize_canonical_json
+from framework.events.errors import EventContextConflictError, EventTimeError
+from framework.events.schema.security import redact_event_value
 from framework.shared.json import to_jsonable
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 from framework.events.envelope import EventEnvelope
@@ -20,7 +23,7 @@ from framework.events.trace import TraceContext, trace_fields
 class EventRecord:
     run_id: str
     event_type: str
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: Mapping[str, Any] = field(default_factory=dict)
     event_id: str = field(default_factory=lambda: uuid4().hex)
     occurred_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     trace_id: str | None = None
@@ -36,7 +39,13 @@ class EventRecord:
             raise ValueError("run_id is required")
         if not self.event_type:
             raise ValueError("event_type is required")
-        object.__setattr__(self, "payload", dict(self.payload))
+        normalized_payload = normalize_canonical_json(
+            to_jsonable(self.payload),
+            path="$.payload",
+        )
+        if not isinstance(normalized_payload, Mapping):
+            raise TypeError("event payload must be an object")
+        object.__setattr__(self, "payload", normalized_payload)
         object.__setattr__(self, "occurred_at", ensure_utc(self.occurred_at))
 
     def to_event(self) -> Event:
@@ -87,12 +96,18 @@ class EventRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "EventRecord":
+        occurred_at = parse_datetime(data.get("occurred_at") or data.get("timestamp"))
+        if occurred_at is None:
+            raise EventTimeError("event occurred_at is required")
+        event_id = str(data.get("event_id") or "").strip()
+        if not event_id:
+            raise ValueError("event_id is required for historical event records")
         return cls(
             run_id=str(data["run_id"]),
             event_type=str(data["event_type"]),
             payload=dict(data.get("payload") or {}),
-            event_id=str(data.get("event_id") or uuid4().hex),
-            occurred_at=parse_datetime(data.get("occurred_at") or data.get("timestamp")) or datetime.now(UTC),
+            event_id=event_id,
+            occurred_at=occurred_at,
             trace_id=data.get("trace_id"),
             span_id=data.get("span_id"),
             parent_span_id=data.get("parent_span_id"),
@@ -138,8 +153,7 @@ class EventRecorder:
         self.run_id = run_id
         self._event_bus = event_bus
         self._trace_context = trace_context
-        self._records: list[EventRecord] = []
-        self._envelopes: list[EventEnvelope] = []
+        self._events: list[EventEnvelope] = []
 
     @property
     def trace_context(self) -> TraceContext | None:
@@ -156,15 +170,21 @@ class EventRecorder:
         *,
         trace_context: TraceContext | None = None,
         component: str | None = None,
-    ) -> EventRecord:
+    ) -> EventEnvelope:
         if not self.run_id:
             raise ValueError("run_id is required for emit()")
         context = trace_context or self._trace_context
         fields = trace_fields(context)
-        event = EventRecord(
-            run_id=str(fields.get("run_id") or self.run_id),
+        context_run_id = fields.get("run_id")
+        if context_run_id is not None and str(context_run_id) != str(self.run_id):
+            raise EventContextConflictError("run_id")
+        run_id = str(self.run_id)
+        event = Event(
             event_type=event_type,
             payload=payload or {},
+            source="workflow",
+            metadata={"run_id": run_id},
+            run_id=run_id,
             trace_id=fields.get("trace_id"),
             span_id=fields.get("span_id"),
             parent_span_id=fields.get("parent_span_id"),
@@ -172,19 +192,32 @@ class EventRecorder:
             step_id=fields.get("step_id"),
             component=component or fields.get("component") or "workflow",
         )
-        self._records.append(event)
-        self._envelopes.append(event.to_envelope())
+        envelope = EventEnvelope(
+            event=event,
+            correlation_id=run_id,
+            run_id=run_id,
+            trace_id=event.trace_id,
+            span_id=event.span_id,
+            parent_span_id=event.parent_span_id,
+            workflow_id=event.workflow_id,
+            step_id=event.step_id,
+            component=event.component,
+        )
+        self._events.append(envelope)
         if self._event_bus is not None:
-            self._event_bus.publish(event)
-        return event
+            self._event_bus.publish(envelope)
+        return envelope
 
     def record(self, envelope: EventEnvelope) -> None:
-        self._envelopes.append(envelope)
+        if not isinstance(envelope, EventEnvelope):
+            raise TypeError("record() requires EventEnvelope")
+        if self.run_id is not None and envelope.run_id is not None:
+            if str(self.run_id) != str(envelope.run_id):
+                raise EventContextConflictError("run_id")
+        self._events.append(envelope)
 
-    def list_events(self, filters: EventFilter | None = None) -> list[Any]:
-        if filters is None and self._records:
-            return list(self._records)
-        events = list(self._envelopes)
+    def list_events(self, filters: EventFilter | None = None) -> list[EventEnvelope]:
+        events = list(self._events)
         if filters is not None:
             return [event for event in events if filters.matches(event)]
         return events
@@ -193,7 +226,21 @@ class EventRecorder:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("w", encoding="utf-8") as handle:
-            for event in self._records:
-                handle.write(json.dumps(event.to_dict(), ensure_ascii=False, sort_keys=True))
+            for event in self._events:
+                row = event.to_dict()
+                row.update(
+                    {
+                        "event_type": event.event.event_type,
+                        "payload": redact_event_value(to_jsonable(event.event.payload)),
+                        "occurred_at": format_datetime(event.event.created_at),
+                    }
+                )
+                nested_event = dict(row["event"])
+                nested_event["payload"] = redact_event_value(
+                    to_jsonable(event.event.payload)
+                )
+                row["event"] = nested_event
+                safe_row = redact_event_value(to_jsonable(row))
+                handle.write(json.dumps(safe_row, ensure_ascii=False, sort_keys=True))
                 handle.write("\n")
         return target

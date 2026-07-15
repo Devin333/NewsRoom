@@ -8,6 +8,7 @@ from framework.artifacts.paths import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
 )
+from framework.shared.json import to_jsonable
 from infrastructure.storage.events.models import EventRecord
 from infrastructure.storage.security import StorageRedactor
 
@@ -83,12 +84,12 @@ class LocalJsonEventStore:
 
     def _redacted_event(self, event: EventRecord) -> EventRecord:
         payload_redaction = self.redactor.redact(
-            event.payload,
+            to_jsonable(event.payload),
             run_id=event.run_id,
             artifact_id=event.event_id,
         )
         metadata_redaction = self.redactor.redact(
-            event.metadata,
+            to_jsonable(event.metadata),
             run_id=event.run_id,
             artifact_id=f"{event.event_id}:metadata",
         )

@@ -2,23 +2,23 @@
 
 - [x] 1.1 Inventory every production event model, event type, writer, reader, subscriber, storage adapter, public import, checkpoint offset, API/CLI/MCP response, and historical JSONL variant; record keep/adapt/delete ownership and freeze representative fixtures.
 - [x] 1.2 Archive or baseline the completed capabilities directly modified by this change, especially event-store, workflow event indexing, checkpoint/replay, and run-event interface requirements, without editing completed change history in place.
-- [ ] 1.3 Convert the confirmed shallow-mutation, context-conflict, recorder-dual-ledger, partial-delivery, duplicate-replay, secret-export, missing-time, and PostgreSQL `COUNT(*)` race reproductions into failing regression or conformance tests.
+- [x] 1.3 Convert the confirmed shallow-mutation, context-conflict, recorder-dual-ledger, partial-delivery, duplicate-replay, secret-export, missing-time, and PostgreSQL `COUNT(*)` race reproductions into failing regression or conformance tests.
 - [ ] 1.4 Add a migration dry-run command that scans legacy run JSONL, local event records, PostgreSQL rows, checkpoints, and Harness histories and reports importable, duplicate, conflicting, unknown-schema, missing-time, and quarantined counts without mutating source data.
 
 ## 2. Canonical Event Contract
 
-- [ ] 2.1 Add the canonical `StoredEvent`, business context, producer identity, trace block, payload reference, schema identity, security classification, distinct content/record checksums, and typed error models under `framework/events` with no infrastructure imports.
-- [ ] 2.2 Implement canonical JSON normalization, recursive immutable views, the specified content-checksum include/exclude projection, complete-record-checksum coverage, payload/extension limits, and tests proving mutations cannot alter accepted content and same-id changes to stream, tenant, schema, classification, context, or payload reference are collisions.
-- [ ] 2.3 Implement one authority rule for business and trace fields; add compatibility parsing that accepts equal legacy duplicates and rejects or quarantines conflicts.
-- [ ] 2.4 Implement `EventSchemaCatalog`, current workflow/Harness schema registrations, payload validators, pure ordered upcasters, sensitivity policies, and historical fixture tests including unknown-version quarantine and missing-time handling.
+- [x] 2.1 Add the canonical `StoredEvent`, business context, producer identity, trace block, payload reference, schema identity, security classification, distinct content/record checksums, and typed error models under `framework/events` with no infrastructure imports.
+- [x] 2.2 Implement canonical JSON normalization, recursive immutable views, the specified content-checksum include/exclude projection, complete-record-checksum coverage, payload/extension limits, and tests proving mutations cannot alter accepted content and same-id changes to stream, tenant, schema, classification, context, or payload reference are collisions.
+- [x] 2.3 Implement one authority rule for business and trace fields; add compatibility parsing that accepts equal legacy duplicates and rejects or quarantines conflicts.
+- [x] 2.4 Implement `EventSchemaCatalog`, current workflow/Harness schema registrations, payload validators, pure ordered upcasters, sensitivity policies, and historical fixture tests including unknown-version quarantine and missing-time handling.
 - [ ] 2.5 Implement the shared security projector before all store adapters and exports, reserved-field protection, tenant/classification propagation, and no-secret persistence/diagnostic tests; allow ordinary artifact refs only for schema-permitted oversized non-sensitive data and fail closed for reference-only/confidential/restricted content unless a separately authorized, encrypted, integrity-checked, audited secure payload store is composed.
 
 ## 3. Durable Storage Ports And Schemas
 
-- [ ] 3.1 Define framework-owned event runtime/store/reader/unit-of-work protocols for atomic append, ordered reads, identity lookup, pagination, delivery ledger, inbox, checkpoint, dead letter, quarantine, and replay access.
+- [x] 3.1 Define framework-owned event runtime/store/reader/unit-of-work protocols for atomic append, ordered reads, identity lookup, pagination, delivery ledger, inbox, checkpoint, dead letter, quarantine, and replay access.
 - [ ] 3.2 Add an additive SQLite schema and adapter using WAL, foreign keys, unique constraints, bounded busy timeout, transactional sequence allocation, integrity checks, and explicit single-host support documentation.
 - [ ] 3.3 Define and test SQLite durability behavior for commit, process death, database lock timeout, read-only filesystem, disk-full failure, corrupt database, backup/recovery, and synchronous/fsync policy; fail before publication when durability is unavailable.
-- [ ] 3.4 Add a new PostgreSQL migration for canonical events, stream sequence state, pending deliveries, inbox, consumer checkpoints, leases, dead letters, quarantine, and replay reports without modifying deployed migration `001_initial.sql`.
+- [x] 3.4 Add a new PostgreSQL migration for canonical events, stream sequence state, pending deliveries, inbox, consumer checkpoints, leases, dead letters, quarantine, and replay reports without modifying deployed migration `001_initial.sql`.
 - [ ] 3.5 Replace PostgreSQL `COUNT(*)` offset allocation with transaction-safe per-stream sequence allocation and make duplicate `event_id` return the existing committed sequence only when checksum matches.
 - [ ] 3.6 Apply the same pre-storage security projection to PostgreSQL and SQLite, then run one adapter conformance suite proving byte-equivalent canonical payload/checksum and matching error semantics.
 - [ ] 3.7 Update `event_store_from_env()` so `NEWS_DATABASE_DSN` selects PostgreSQL and local composition selects SQLite; retain JSONL stores only as legacy import/export compatibility adapters.

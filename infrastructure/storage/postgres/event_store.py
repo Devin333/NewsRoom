@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from pathlib import Path
@@ -9,6 +9,8 @@ from typing import Any, Callable
 
 import psycopg
 
+from framework.events.errors import EventIdentityCollisionError, EventStoreCorruptionError
+from framework.shared.json import stable_json_dumps
 from infrastructure.storage.postgres.dsn import normalize_dsn
 
 from infrastructure.storage.events.models import EventRecord
@@ -24,8 +26,24 @@ class PostgresEventStore:
 
     def append_event(self, event: EventRecord) -> int:
         _validate_event(event)
-        offset = self._next_offset(event.run_id)
-        sql = """
+        with self._connection_factory() as connection:
+            transaction_factory = getattr(connection, "transaction", None)
+            if callable(transaction_factory):
+                # An explicit transaction remains effective even if a caller
+                # supplied an autocommit connection.
+                with transaction_factory():
+                    return self._append_event_in_transaction(connection, event)
+            offset = self._append_event_in_transaction(connection, event)
+            connection.commit()
+            return offset
+
+    def _append_event_in_transaction(self, connection: Any, event: EventRecord) -> int:
+        allocation_sql = """
+        SELECT COALESCE(MAX(event_offset), -1) + 1
+        FROM workflow_events
+        WHERE run_id = %s
+        """
+        insert_sql = """
         INSERT INTO workflow_events (
             event_id, run_id, event_offset, event_type, timestamp,
             workflow_id, step_id, task_id, agent_id, tool_call_id, request_id,
@@ -37,26 +55,60 @@ class PostgresEventStore:
             %s, %s, %s, %s::jsonb, %s::jsonb
         )
         ON CONFLICT (event_id) DO NOTHING
+        RETURNING event_offset
         """
-        params = (
-            event.event_id,
-            event.run_id,
-            offset,
-            event.event_type,
-            event.timestamp,
-            event.workflow_id,
-            event.step_id,
-            event.task_id,
-            event.agent_id,
-            event.tool_call_id,
-            event.request_id,
-            event.severity,
-            event.trace_id,
-            event.redacted,
-            _json(event.payload),
-            _json(event.metadata),
-        )
-        self._execute(sql, params)
+        with connection.cursor() as cursor:
+            _cursor_execute(cursor, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED", ())
+            # Serialize legacy writers per run inside the same transaction.
+            # The canonical migration replaces this compatibility path with a
+            # stream-counter row, but this removes the unsafe COUNT/INSERT split
+            # immediately without taking a global table lock.
+            _cursor_execute(
+                cursor,
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (event.run_id,),
+            )
+            _cursor_execute(cursor, allocation_sql, (event.run_id,))
+            row = cursor.fetchone()
+            offset = int(row[0]) if row else 0
+            params = (
+                event.event_id,
+                event.run_id,
+                offset,
+                event.event_type,
+                event.timestamp,
+                event.workflow_id,
+                event.step_id,
+                event.task_id,
+                event.agent_id,
+                event.tool_call_id,
+                event.request_id,
+                event.severity,
+                event.trace_id,
+                event.redacted,
+                _json(event.payload),
+                _json(event.metadata),
+            )
+            _cursor_execute(cursor, insert_sql, params)
+            inserted = cursor.fetchone()
+            if inserted is None:
+                _cursor_execute(
+                    cursor,
+                    _select_existing_sql(),
+                    (event.event_id,),
+                )
+                existing_row = cursor.fetchone()
+                if existing_row is None:
+                    raise EventStoreCorruptionError(
+                        "duplicate event id was reported but no committed row exists"
+                    )
+                existing_offset = int(existing_row[0])
+                existing_event = _event_from_row(existing_row[1:])
+                if _legacy_identity_projection(existing_event) != _legacy_identity_projection(
+                    event
+                ):
+                    raise EventIdentityCollisionError(event.event_id)
+                offset = existing_offset
         return offset
 
     def list_by_run(self, run_id: str, limit: int | None = None) -> list[EventRecord]:
@@ -107,23 +159,6 @@ class PostgresEventStore:
         for event in events:
             yield event
 
-    def _next_offset(self, run_id: str) -> int:
-        sql = "SELECT COUNT(*) FROM workflow_events WHERE run_id = %s"
-        row = self._fetch_one(sql, (run_id,))
-        return int(row[0]) if row else 0
-
-    def _execute(self, sql: str, params: tuple[Any, ...]) -> None:
-        with self._connection_factory() as connection:
-            with connection.cursor() as cursor:
-                _cursor_execute(cursor, sql, params)
-            connection.commit()
-
-    def _fetch_one(self, sql: str, params: tuple[Any, ...]) -> tuple[Any, ...] | None:
-        with self._connection_factory() as connection:
-            with connection.cursor() as cursor:
-                _cursor_execute(cursor, sql, params)
-                return cursor.fetchone()
-
     def _fetch_events(self, sql: str, params: tuple[Any, ...]) -> list[EventRecord]:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
@@ -140,6 +175,18 @@ def _select_sql(where_clause: str) -> str:
         FROM workflow_events
         {where_clause}
         ORDER BY event_offset ASC
+    """
+
+
+def _select_existing_sql() -> str:
+    return """
+        SELECT
+            event_offset,
+            event_id, run_id, event_type, timestamp, workflow_id, step_id,
+            task_id, agent_id, tool_call_id, request_id, payload, severity,
+            trace_id, redacted, metadata
+        FROM workflow_events
+        WHERE event_id = %s
     """
 
 
@@ -164,7 +211,7 @@ def _event_from_row(row: tuple[Any, ...]) -> EventRecord:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+    return stable_json_dumps(value or {})
 
 
 def _cursor_execute(cursor: Any, sql: str, params: tuple[Any, ...]) -> Any:
@@ -174,12 +221,23 @@ def _cursor_execute(cursor: Any, sql: str, params: tuple[Any, ...]) -> Any:
 def _dict(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
-    if isinstance(value, dict):
-        return value
+    if isinstance(value, Mapping):
+        return dict(value)
     if isinstance(value, str):
         payload = json.loads(value)
-        return payload if isinstance(payload, dict) else {}
-    return dict(value)
+        if not isinstance(payload, dict):
+            raise EventStoreCorruptionError("stored event JSONB value must be an object")
+        return payload
+    try:
+        return dict(value)
+    except (TypeError, ValueError) as exc:
+        raise EventStoreCorruptionError(
+            "stored event JSONB value must be an object"
+        ) from exc
+
+
+def _legacy_identity_projection(event: EventRecord) -> str:
+    return stable_json_dumps(event.to_dict())
 
 
 def _timestamp(value: Any) -> datetime:

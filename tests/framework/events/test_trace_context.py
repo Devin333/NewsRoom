@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from framework.events import Event, EventEnvelope, EventRecord, EventRecorder, TraceContext, TraceEvent
+from framework.events import Event, EventEnvelope, EventRecorder, TraceContext, TraceEvent
 from framework.events.trace import redact_trace_payload
 
 
@@ -69,7 +69,7 @@ def test_event_envelope_and_legacy_record_include_trace_fields() -> None:
     assert envelope.to_dict()["trace_id"] == "trace-1"
     assert EventEnvelope.from_dict(envelope.to_dict()).span_id == "step:s1"
     assert record.to_dict()["parent_span_id"] == "root"
-    assert EventRecord.from_dict(record.to_dict()).trace_id == "trace-1"
+    assert EventEnvelope.from_dict(record.to_dict()).trace_id == "trace-1"
 
 
 def test_redact_trace_payload_redacts_secret_like_keys() -> None:

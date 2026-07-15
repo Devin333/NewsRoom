@@ -6,6 +6,7 @@ UTC = _tz.utc
 from typing import Any
 from uuid import uuid4
 
+from framework.events.errors import EventTimeError
 from framework.shared.json import to_jsonable
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 
@@ -178,11 +179,14 @@ class TraceEvent:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "TraceEvent":
+        timestamp = parse_datetime(payload.get("timestamp"))
+        if timestamp is None:
+            raise EventTimeError("trace event timestamp is required")
         return cls(
             schema_version=str(payload.get("schema_version") or TRACE_EVENT_SCHEMA_VERSION),
             event_id=str(payload.get("event_id") or uuid4().hex),
             event_type=str(payload["event_type"]),
-            timestamp=parse_datetime(payload.get("timestamp")) or datetime.now(UTC),
+            timestamp=timestamp,
             context=TraceContext.from_dict(dict(payload["context"])),
             component=str(payload["component"]),
             operation=str(payload["operation"]),

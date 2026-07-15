@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
@@ -38,7 +39,7 @@ def to_jsonable(value: Any) -> Any:
         return to_jsonable(to_dict())
     if is_dataclass(value) and not isinstance(value, type):
         return to_jsonable(asdict(value))
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {_json_key(key): to_jsonable(item) for key, item in value.items()}
     if isinstance(value, list):
         return [to_jsonable(item) for item in value]

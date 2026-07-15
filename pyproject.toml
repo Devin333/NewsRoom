@@ -95,6 +95,9 @@ exclude = [
   "skills/**/*.yaml",
   "skills/**/*.yml",
 ]
+"infrastructure.storage.postgres" = [
+  "migrations/*.sql",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

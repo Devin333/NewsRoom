@@ -1,0 +1,1 @@
+{"data_schema":"io.newsroom.fixture/v1","event_type":"io.newsroom.fixture","occurred_at":"2026-05-25T06:06:00Z","payload":{"count":2,"diagnostic_secret":"must-not-leak-from-upcaster"}}

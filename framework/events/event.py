@@ -4,8 +4,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
+from framework.events.canonical import normalize_canonical_json
+from framework.events.errors import EventTimeError
 from framework.shared.json import to_jsonable
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 
@@ -26,9 +28,9 @@ class EventType(str, Enum):
 @dataclass(frozen=True)
 class Event:
     event_type: str | EventType
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: Mapping[str, Any] = field(default_factory=dict)
     source: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     run_id: str | None = None
     trace_id: str | None = None
@@ -44,8 +46,8 @@ class Event:
         if not event_type:
             raise ValueError("event_type is required")
         object.__setattr__(self, "event_type", event_type)
-        object.__setattr__(self, "payload", dict(self.payload))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "payload", _canonical_mapping(self.payload, "payload"))
+        object.__setattr__(self, "metadata", _canonical_mapping(self.metadata, "metadata"))
         object.__setattr__(self, "created_at", ensure_utc(self.created_at))
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,12 +69,15 @@ class Event:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Event":
+        created_at = parse_datetime(data.get("created_at"))
+        if created_at is None:
+            raise EventTimeError("event created_at is required")
         return cls(
             event_type=str(data["event_type"]),
             payload=dict(data.get("payload") or {}),
             source=data.get("source"),
             metadata=dict(data.get("metadata") or {}),
-            created_at=parse_datetime(data.get("created_at")) or datetime.now(UTC),
+            created_at=created_at,
             run_id=data.get("run_id"),
             trace_id=data.get("trace_id"),
             span_id=data.get("span_id"),
@@ -82,3 +87,10 @@ class Event:
             component=data.get("component"),
             schema_version=str(data.get("schema_version") or "newsroom.event.v1"),
         )
+
+
+def _canonical_mapping(value: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
+    normalized = normalize_canonical_json(to_jsonable(value), path=f"$.{field_name}")
+    if not isinstance(normalized, Mapping):
+        raise TypeError(f"event {field_name} must be an object")
+    return normalized

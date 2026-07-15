@@ -2,7 +2,7 @@
 
 > Document status: READY_FOR_IMPLEMENTATION
 >
-> Implementation status: NOT_STARTED
+> Implementation status: IN_PROGRESS
 >
 > Version: v1.0
 >

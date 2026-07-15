@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from framework.shared.ids import generate_id
+from framework.events.errors import EventContextConflictError
 from framework.events.event import Event
 
 
@@ -37,8 +38,13 @@ class EventEnvelope:
             "step_id",
             "component",
         ):
-            if getattr(self, name) is None and getattr(self.event, name, None) is not None:
-                object.__setattr__(self, name, getattr(self.event, name))
+            envelope_value = getattr(self, name)
+            event_value = getattr(self.event, name, None)
+            if envelope_value is not None and event_value is not None:
+                if str(envelope_value) != str(event_value):
+                    raise EventContextConflictError(name)
+            elif envelope_value is None and event_value is not None:
+                object.__setattr__(self, name, event_value)
 
     def with_sequence(self, sequence: int) -> "EventEnvelope":
         return replace(self, sequence=int(sequence))

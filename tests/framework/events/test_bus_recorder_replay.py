@@ -13,7 +13,7 @@ from framework.events import (
 )
 
 
-def test_event_bus_publishes_envelopes_and_legacy_records() -> None:
+def test_event_bus_publishes_one_envelope_type_for_legacy_inputs() -> None:
     bus = EventBus()
     received = []
     bus.subscribe(received.append)
@@ -29,7 +29,9 @@ def test_event_bus_publishes_envelopes_and_legacy_records() -> None:
     record = EventRecord(run_id="run-1", event_type="workflow_started")
     legacy_bus.publish(record)
 
-    assert legacy_events == [record]
+    assert len(legacy_events) == 1
+    assert legacy_events[0].event_id == record.event_id
+    assert legacy_events[0].event.event_type == record.event_type
 
 
 def test_publisher_recorder_ordering_and_replay() -> None:

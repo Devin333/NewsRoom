@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from framework.events.errors import EventStoreCorruptionError
 from infrastructure.storage.events import EventRecord
 from infrastructure.storage.postgres import PostgresEventStore
 
@@ -65,13 +66,25 @@ def test_postgres_event_store_appends_event_with_run_offset() -> None:
     )
 
     assert offset == 2
-    assert "SELECT COUNT(*) FROM workflow_events" in connection.calls[0][0]
-    insert_sql, insert_params = connection.calls[1]
+    assert "READ COMMITTED" in connection.calls[0][0]
+    assert "pg_advisory_xact_lock" in connection.calls[1][0]
+    assert "MAX(event_offset)" in connection.calls[2][0]
+    insert_sql, insert_params = connection.calls[3]
     assert "INSERT INTO workflow_events" in insert_sql
     assert insert_params[0] == "event-1"
     assert insert_params[2] == 2
-    assert insert_params[14] == '{"safe": "visible"}'
+    assert insert_params[14] == '{"safe":"visible"}'
     assert connection.commits == 1
+
+
+def test_postgres_event_store_rejects_non_object_jsonb_payload() -> None:
+    row = list(_event_row(step_id="collect"))
+    row[10] = "[]"
+    connection = FakeConnection(rows=[tuple(row)])
+    store = PostgresEventStore("postgresql://example", connection_factory=lambda: connection)
+
+    with pytest.raises(EventStoreCorruptionError):
+        store.list_by_run("run-1")
 
 
 def test_postgres_event_store_lists_events_by_run_and_step() -> None:

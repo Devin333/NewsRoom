@@ -1,0 +1,1023 @@
+from __future__ import annotations
+
+import copy
+import dis
+import inspect
+import math
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+from types import FunctionType, ModuleType
+from types import MappingProxyType
+from typing import Any
+
+from jsonschema.exceptions import SchemaError, ValidationError
+from jsonschema.validators import validator_for
+
+from framework.events.errors import (
+    EventSchemaError,
+    EventSchemaValidationError,
+    EventUnknownSchemaError,
+    EventQuarantineError,
+    EventUpcastError,
+)
+from framework.events.schema.policy import FieldDisposition, SensitivityPolicy
+from framework.shared.time import ensure_utc, parse_datetime
+
+
+PayloadValidator = Callable[[Mapping[str, Any]], None]
+EventUpcaster = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+
+
+SUPPORTED_HISTORICAL_ENVELOPE_SCHEMAS = frozenset(
+    {
+        "newsroom.event-envelope/v2",
+        "newsroom.event.v1",
+        "newsroom.event_envelope.v1",
+        "newsroom.event_record.v1",
+    }
+)
+
+
+@dataclass(frozen=True)
+class HistoricalSchemaResolution:
+    event_type: str
+    source_data_schema: str
+    data_schema: str
+    occurred_at: datetime
+    payload: Mapping[str, Any]
+    applied_upcasters: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "event_type", _required_text(self.event_type, "event_type"))
+        object.__setattr__(
+            self,
+            "source_data_schema",
+            _required_text(self.source_data_schema, "source_data_schema"),
+        )
+        object.__setattr__(self, "data_schema", _required_text(self.data_schema, "data_schema"))
+        if not isinstance(self.occurred_at, datetime):
+            raise TypeError("occurred_at must be a datetime")
+        object.__setattr__(self, "occurred_at", ensure_utc(self.occurred_at))
+        object.__setattr__(self, "payload", _freeze_mapping(self.payload))
+        if isinstance(self.applied_upcasters, (str, bytes)):
+            raise TypeError("applied_upcasters must be a sequence of strings")
+        object.__setattr__(
+            self,
+            "applied_upcasters",
+            tuple(_required_text(item, "applied_upcaster") for item in self.applied_upcasters),
+        )
+
+    def payload_copy(self) -> dict[str, Any]:
+        return _thaw_mapping(self.payload)
+
+
+@dataclass(frozen=True)
+class EventSchemaRegistration:
+    event_type: str
+    data_schema: str
+    json_schema: Mapping[str, Any]
+    sensitivity_policy: SensitivityPolicy = field(default_factory=SensitivityPolicy)
+    upcast_to: str | None = None
+    upcaster: EventUpcaster | None = None
+    custom_validator: PayloadValidator | None = None
+    current: bool = False
+
+    def __post_init__(self) -> None:
+        event_type = _required_text(self.event_type, "event_type")
+        data_schema = _required_text(self.data_schema, "data_schema")
+        upcast_to = _optional_text(self.upcast_to)
+        if (upcast_to is None) != (self.upcaster is None):
+            raise ValueError("upcast_to and upcaster must be configured together")
+        if not isinstance(self.current, bool):
+            raise TypeError("current must be a bool")
+        if not isinstance(self.sensitivity_policy, SensitivityPolicy):
+            raise TypeError("sensitivity_policy must be SensitivityPolicy")
+        if upcast_to is not None:
+            if self.current:
+                raise EventSchemaError("a current event schema cannot declare an upcaster")
+            _validate_adjacent_schema_versions(data_schema, upcast_to)
+            _validate_upcaster_purity(self.upcaster, event_type, data_schema)
+        if self.custom_validator is not None and not callable(self.custom_validator):
+            raise TypeError("custom_validator must be callable")
+        if not isinstance(self.json_schema, Mapping):
+            raise TypeError("json_schema must be a mapping")
+        schema = copy.deepcopy(dict(self.json_schema))
+        try:
+            validator_cls = validator_for(schema)
+            validator_cls.check_schema(schema)
+        except SchemaError as exc:
+            raise EventSchemaError(
+                f"invalid JSON schema for {event_type} ({data_schema})"
+            ) from exc
+        object.__setattr__(self, "event_type", event_type)
+        object.__setattr__(self, "data_schema", data_schema)
+        object.__setattr__(self, "upcast_to", upcast_to)
+        object.__setattr__(self, "json_schema", _freeze_mapping(schema))
+
+    def schema_copy(self) -> dict[str, Any]:
+        return _thaw_mapping(self.json_schema)
+
+
+class EventSchemaCatalog:
+    """Deterministic registry for event payload schemas and adjacent upcasters."""
+
+    def __init__(self) -> None:
+        self._registrations: dict[tuple[str, str], EventSchemaRegistration] = {}
+        self._current: dict[str, str] = {}
+
+    def register(self, registration: EventSchemaRegistration) -> None:
+        key = (registration.event_type, registration.data_schema)
+        if key in self._registrations:
+            raise EventSchemaError(
+                f"duplicate event schema registration: {registration.event_type} "
+                f"({registration.data_schema})"
+            )
+        if registration.current and registration.event_type in self._current:
+            raise EventSchemaError(
+                f"multiple current schemas for event type: {registration.event_type}"
+            )
+        if registration.upcast_to == registration.data_schema:
+            raise EventSchemaError("event schema cannot upcast to itself")
+        self._registrations[key] = registration
+        if registration.current:
+            self._current[registration.event_type] = registration.data_schema
+
+    def get(self, event_type: str, data_schema: str) -> EventSchemaRegistration:
+        key = (
+            _required_text(event_type, "event_type"),
+            _required_text(data_schema, "data_schema"),
+        )
+        registration = self._registrations.get(key)
+        if registration is None:
+            raise EventUnknownSchemaError(*key)
+        return registration
+
+    def current_schema(self, event_type: str) -> str:
+        event_type = _required_text(event_type, "event_type")
+        current = self._current.get(event_type)
+        if current is None:
+            raise EventUnknownSchemaError(event_type, "<current>")
+        return current
+
+    def registrations(self) -> tuple[EventSchemaRegistration, ...]:
+        return tuple(
+            self._registrations[key]
+            for key in sorted(self._registrations, key=lambda item: (item[0], item[1]))
+        )
+
+    def validate(
+        self,
+        event_type: str,
+        data_schema: str,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        registration = self.get(event_type, data_schema)
+        try:
+            snapshot = _thaw_mapping(_freeze_mapping(payload))
+        except (TypeError, ValueError) as exc:
+            raise EventSchemaValidationError(
+                event_type=registration.event_type,
+                data_schema=registration.data_schema,
+                path="$",
+                rule="canonical_json",
+            ) from exc
+        schema = registration.schema_copy()
+        validator_cls = validator_for(schema)
+        validator = validator_cls(schema)
+        first_error = next(
+            iter(
+                sorted(
+                    validator.iter_errors(snapshot),
+                    key=lambda item: (_json_path(item), str(item.validator)),
+                )
+            ),
+            None,
+        )
+        if first_error is not None:
+            raise _validation_error(registration, first_error)
+        if registration.custom_validator is not None:
+            try:
+                registration.custom_validator(_freeze_mapping(snapshot))
+            except EventSchemaValidationError:
+                raise
+            except Exception as exc:
+                raise EventSchemaValidationError(
+                    event_type=registration.event_type,
+                    data_schema=registration.data_schema,
+                    path="$",
+                    rule="custom",
+                ) from exc
+        return snapshot
+
+    def upcast(
+        self,
+        event_type: str,
+        data_schema: str,
+        payload: Mapping[str, Any],
+        *,
+        target_schema: str | None = None,
+    ) -> tuple[str, dict[str, Any], tuple[str, ...]]:
+        desired = target_schema or self.current_schema(event_type)
+        current_schema = str(data_schema)
+        current_payload = self.validate(event_type, current_schema, payload)
+        applied: list[str] = []
+        visited: set[str] = set()
+
+        while current_schema != desired:
+            if current_schema in visited:
+                raise EventUpcastError(
+                    f"event upcast cycle: {event_type} ({current_schema})"
+                )
+            visited.add(current_schema)
+            registration = self.get(event_type, current_schema)
+            if registration.upcast_to is None or registration.upcaster is None:
+                raise EventUpcastError(
+                    f"no event upcast path: {event_type} ({current_schema} -> {desired})"
+                )
+            try:
+                next_payload = _run_pure_upcaster(registration.upcaster, current_payload)
+            except EventUpcastError:
+                raise
+            except Exception as exc:
+                raise EventUpcastError(
+                    f"event upcaster failed: {event_type} ({current_schema})"
+                ) from exc
+            next_schema = registration.upcast_to
+            try:
+                self.get(event_type, next_schema)
+                current_payload = self.validate(event_type, next_schema, next_payload)
+            except (EventUnknownSchemaError, EventSchemaValidationError) as exc:
+                raise EventUpcastError(
+                    f"event upcaster output failed validation: "
+                    f"{event_type} ({current_schema} -> {next_schema})"
+                ) from exc
+            applied.append(f"{current_schema}->{next_schema}")
+            current_schema = next_schema
+
+        return current_schema, current_payload, tuple(applied)
+
+    def resolve_historical(
+        self,
+        event_type: str,
+        data_schema: str,
+        payload: Mapping[str, Any],
+        *,
+        occurred_at: str | datetime | None,
+        envelope_schema: str | None = None,
+        source: str | None = None,
+        target_schema: str | None = None,
+    ) -> HistoricalSchemaResolution:
+        """Resolve a historical payload without inventing time or schema identity.
+
+        The migration layer persists the quarantine record.  This method owns the
+        deterministic classification used by import, replay, and verification.
+        It intentionally returns no raw diagnostic or source payload on failure.
+        """
+
+        if envelope_schema is not None:
+            normalized_envelope = _required_text(envelope_schema, "envelope_schema")
+            if normalized_envelope not in SUPPORTED_HISTORICAL_ENVELOPE_SCHEMAS:
+                raise EventQuarantineError("unknown_envelope_schema", source=source)
+
+        if occurred_at is None or (isinstance(occurred_at, str) and not occurred_at.strip()):
+            raise EventQuarantineError("missing_occurred_at", source=source)
+        if not isinstance(occurred_at, (str, datetime)):
+            raise EventQuarantineError("invalid_occurred_at", source=source)
+        try:
+            parsed_time = parse_datetime(occurred_at)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise EventQuarantineError("invalid_occurred_at", source=source) from exc
+        if parsed_time is None:
+            raise EventQuarantineError("missing_occurred_at", source=source)
+
+        try:
+            self.get(event_type, data_schema)
+        except EventUnknownSchemaError as exc:
+            raise EventQuarantineError("unknown_data_schema", source=source) from exc
+        try:
+            resolved_schema, resolved_payload, applied = self.upcast(
+                event_type,
+                data_schema,
+                payload,
+                target_schema=target_schema,
+            )
+        except EventSchemaValidationError as exc:
+            raise EventQuarantineError("schema_validation_failed", source=source) from exc
+        except EventUpcastError as exc:
+            raise EventQuarantineError("upcast_failed", source=source) from exc
+
+        return HistoricalSchemaResolution(
+            event_type=_required_text(event_type, "event_type"),
+            source_data_schema=_required_text(data_schema, "data_schema"),
+            data_schema=resolved_schema,
+            occurred_at=parsed_time,
+            payload=resolved_payload,
+            applied_upcasters=applied,
+        )
+
+
+WORKFLOW_EVENT_ALIASES = (
+    "workflow_started",
+    "workflow_resumed",
+    "checkpoint_restored",
+    "checkpoint_created",
+    "edge_evaluated",
+    "edge_traversed",
+    "edge_rejected",
+    "human_review_decision_received",
+    "human_review_requested",
+    "human_review_paused",
+    "human_review_approved",
+    "human_review_rejected",
+    "human_review_needs_changes",
+    "agent_llm_stream_event",
+    "memory_recall",
+    "memory_write",
+    "memory_consolidate",
+    "workflow_succeeded",
+    "workflow_blocked",
+    "workflow_budget_exceeded",
+    "workflow_failed",
+    "workflow_timeout_exceeded",
+    "workflow_cancelled",
+    "workflow_loop_limit_exceeded",
+    "workflow_paused",
+    "step_started",
+    "step_succeeded",
+    "step_skipped",
+    "step_paused",
+    "step_blocked",
+    "step_failed",
+    "step_retry_scheduled",
+    "step_timeout",
+    "policy_violation",
+    "runtime_safety_violation",
+    "runner_capability_violation",
+    # Legacy typed aliases retained for the bounded migration release.
+    "workflow_finished",
+    "step_finished",
+    "tool_called",
+    "agent_iteration",
+    "memory_recalled",
+    "memory_written",
+    "worker_task_started",
+    "worker_task_finished",
+)
+
+HARNESS_EVENT_ALIASES = (
+    "run_created",
+    "run_state_changed",
+    "step_state_changed",
+    "phase_recorded",
+    "decision_recorded",
+    "worker_called",
+    "worker_result_recorded",
+    "gate_evaluated",
+    "checkpoint_created",
+)
+
+
+def default_event_schema_catalog() -> EventSchemaCatalog:
+    catalog = EventSchemaCatalog()
+    for event_type in WORKFLOW_EVENT_ALIASES:
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema="newsroom.workflow-event/v1",
+                json_schema=_workflow_payload_schema(event_type),
+                sensitivity_policy=_workflow_sensitivity_policy(event_type),
+                current=True,
+            )
+        )
+    for event_type in HARNESS_EVENT_ALIASES:
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema="newsroom.harness-event/v1",
+                json_schema=_harness_payload_schema(event_type),
+                sensitivity_policy=_harness_sensitivity_policy(event_type),
+                # `checkpoint_created` is a legacy name shared with Workflow.
+                # The producer adapter must pass its explicit data schema; the
+                # Workflow alias remains the default during migration.
+                current=event_type not in WORKFLOW_EVENT_ALIASES,
+            )
+        )
+    return catalog
+
+
+_TEXT = {"type": "string", "minLength": 1, "maxLength": 1024}
+_NULLABLE_TEXT = {"type": ["string", "null"], "maxLength": 4096}
+_OBJECT = {"type": "object", "maxProperties": 128}
+_ARRAY_OF_TEXT = {"type": "array", "items": _TEXT, "maxItems": 4096}
+_NONNEGATIVE_INTEGER = {"type": "integer", "minimum": 0}
+_POSITIVE_INTEGER = {"type": "integer", "minimum": 1}
+_NUMBER = {"type": "number"}
+_BOOLEAN = {"type": "boolean"}
+
+
+def _payload_schema(
+    *,
+    properties: Mapping[str, Any] | None = None,
+    required: tuple[str, ...] = (),
+    additional_properties: bool = False,
+    any_of: tuple[Mapping[str, Any], ...] = (),
+    min_properties: int | None = None,
+) -> dict[str, Any]:
+    schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "maxProperties": 128,
+        "properties": copy.deepcopy(dict(properties or {})),
+        "additionalProperties": additional_properties,
+    }
+    if required:
+        schema["required"] = list(required)
+    if any_of:
+        schema["anyOf"] = [copy.deepcopy(dict(item)) for item in any_of]
+    if min_properties is not None:
+        schema["minProperties"] = min_properties
+    return schema
+
+
+def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
+    if event_type == "workflow_started":
+        return _payload_schema(
+            properties={
+                "workflow_id": _TEXT,
+                "workflow_version": _TEXT,
+                "profile": _TEXT,
+                "run_id": _TEXT,
+                "topic": _TEXT,
+            },
+            any_of=(
+                {"required": ["workflow_id", "workflow_version", "profile"]},
+                {"required": ["run_id"]},
+            ),
+        )
+    if event_type == "workflow_resumed":
+        return _payload_schema(
+            properties={
+                "workflow_id": _TEXT,
+                "workflow_version": _TEXT,
+                "profile": _TEXT,
+                "checkpoint_id": _TEXT,
+                "resume_metadata": _OBJECT,
+            },
+            required=("workflow_id", "workflow_version", "profile", "checkpoint_id"),
+        )
+    if event_type in {"checkpoint_restored", "checkpoint_created"}:
+        return _payload_schema(
+            properties={
+                "checkpoint_id": _TEXT,
+                "current_step_ids": _ARRAY_OF_TEXT,
+                "path": _ARRAY_OF_TEXT,
+            },
+            required=("checkpoint_id",),
+        )
+    if event_type in {"edge_evaluated", "edge_traversed", "edge_rejected"}:
+        return _payload_schema(
+            properties={
+                "edge_id": _TEXT,
+                "source_step_id": _TEXT,
+                "target_step_id": _TEXT,
+                "condition": _TEXT,
+                "matched": _BOOLEAN,
+                "condition_expr": _NULLABLE_TEXT,
+            },
+            required=(
+                "edge_id",
+                "source_step_id",
+                "target_step_id",
+                "condition",
+                "matched",
+            ),
+        )
+    if event_type in {
+        "human_review_decision_received",
+        "human_review_approved",
+        "human_review_rejected",
+        "human_review_needs_changes",
+    }:
+        return _payload_schema(
+            properties={
+                "decision": _TEXT,
+                "actor_id": _NULLABLE_TEXT,
+                "approval_id": _NULLABLE_TEXT,
+                "request_id": _NULLABLE_TEXT,
+            },
+            required=("decision",),
+        )
+    if event_type == "human_review_requested":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "request_id": _TEXT,
+                "checkpoint_id": _TEXT,
+            },
+            required=("step_id", "request_id", "checkpoint_id"),
+        )
+    if event_type == "human_review_paused":
+        return _payload_schema(
+            properties={"step_id": _TEXT, "outcome": _OBJECT},
+            required=("step_id", "outcome"),
+        )
+    if event_type == "agent_llm_stream_event":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "agent_id": _NULLABLE_TEXT,
+                "iteration": {"type": ["integer", "null"], "minimum": 0},
+                "sequence": {"type": ["integer", "null"], "minimum": 0},
+                "stream_event_type": _NULLABLE_TEXT,
+                "text_delta_chars": {"type": ["integer", "null"], "minimum": 0},
+                "stream_event": {},
+            },
+            required=("step_id",),
+        )
+    if event_type in {"memory_recall", "memory_write", "memory_consolidate"}:
+        return _payload_schema(
+            properties={"step_id": _TEXT, "status": _TEXT},
+            required=("step_id", "status"),
+            additional_properties=True,
+        )
+    if event_type == "workflow_succeeded":
+        return _payload_schema(properties={"path": _ARRAY_OF_TEXT}, required=("path",))
+    if event_type in {"workflow_blocked", "workflow_budget_exceeded", "workflow_failed"}:
+        return _payload_schema(
+            properties={
+                "path": _ARRAY_OF_TEXT,
+                "error": {"type": ["object", "null"]},
+            },
+            required=("path", "error"),
+        )
+    if event_type == "workflow_timeout_exceeded":
+        return _payload_schema(
+            properties={
+                "run_id": _TEXT,
+                "workflow_id": _TEXT,
+                "step_id": _TEXT,
+                "pending_step_id": _TEXT,
+                "timeout_seconds": _NUMBER,
+                "elapsed_seconds": _NUMBER,
+            },
+            required=("run_id", "workflow_id", "timeout_seconds"),
+        )
+    if event_type == "workflow_cancelled":
+        return _payload_schema(properties={"run_id": _TEXT}, required=("run_id",))
+    if event_type == "workflow_loop_limit_exceeded":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "max_step_visits": _POSITIVE_INTEGER,
+                "visit_count": _POSITIVE_INTEGER,
+            },
+            required=("step_id", "max_step_visits", "visit_count"),
+        )
+    if event_type == "workflow_paused":
+        return _payload_schema(
+            properties={"reason": _TEXT, "step_id": _TEXT},
+            required=("reason", "step_id"),
+        )
+    if event_type == "step_started":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "step_type": _TEXT,
+                "attempt": _POSITIVE_INTEGER,
+                "max_attempts": _POSITIVE_INTEGER,
+            },
+            required=("step_id", "step_type", "attempt", "max_attempts"),
+        )
+    if event_type in {"step_succeeded", "step_skipped"}:
+        return _payload_schema(
+            properties={"step_id": _TEXT, "outputs": _ARRAY_OF_TEXT},
+            required=("step_id", "outputs"),
+        )
+    if event_type in {"step_paused", "step_blocked", "step_failed"}:
+        return _payload_schema(
+            properties={"step_id": _TEXT, "outcome": _OBJECT},
+            required=("step_id", "outcome"),
+        )
+    if event_type == "step_retry_scheduled":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "attempt": _POSITIVE_INTEGER,
+                "next_attempt": _POSITIVE_INTEGER,
+                "max_attempts": _POSITIVE_INTEGER,
+                "error_type": _NULLABLE_TEXT,
+                "error_message": _NULLABLE_TEXT,
+                "delay_seconds": {"type": "number", "minimum": 0},
+            },
+            required=("step_id", "attempt", "next_attempt", "max_attempts", "delay_seconds"),
+        )
+    if event_type == "step_timeout":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "attempt": _POSITIVE_INTEGER,
+                "max_attempts": _POSITIVE_INTEGER,
+                "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+                "on_timeout": _TEXT,
+                "termination_confirmed": {"type": ["boolean", "null"]},
+                "indeterminate": _BOOLEAN,
+            },
+            required=("step_id", "attempt", "max_attempts", "timeout_seconds", "on_timeout"),
+        )
+    if event_type in {
+        "policy_violation",
+        "runtime_safety_violation",
+        "runner_capability_violation",
+    }:
+        return _payload_schema(
+            properties={"message": _TEXT},
+            required=("message",),
+            additional_properties=True,
+        )
+    if event_type in {"step_finished", "worker_task_started", "worker_task_finished"}:
+        return _payload_schema(
+            properties={"step_id": _TEXT},
+            required=("step_id",),
+            additional_properties=True,
+        )
+    if event_type in {
+        "workflow_finished",
+        "tool_called",
+        "agent_iteration",
+        "memory_recalled",
+        "memory_written",
+    }:
+        return _payload_schema(additional_properties=True, min_properties=1)
+    raise EventSchemaError(f"workflow event schema is not defined: {event_type}")
+
+
+def _harness_payload_schema(event_type: str) -> dict[str, Any]:
+    if event_type == "run_created":
+        return _payload_schema()
+    if event_type == "run_state_changed":
+        return _payload_schema(properties={"status": _TEXT}, required=("status",))
+    if event_type == "step_state_changed":
+        return _payload_schema(
+            properties={
+                "step_id": _TEXT,
+                "status": _TEXT,
+                "attempts": _NONNEGATIVE_INTEGER,
+                "replans": _NONNEGATIVE_INTEGER,
+                "output_ref": _NULLABLE_TEXT,
+                "error": _NULLABLE_TEXT,
+                "metadata": _OBJECT,
+                "updated_at": _TEXT,
+            },
+            required=("step_id", "status", "attempts", "replans", "metadata", "updated_at"),
+        )
+    if event_type == "phase_recorded":
+        return _payload_schema(
+            properties={
+                "phase": {"enum": ["plan", "execute", "verify", "replan", "halt"]},
+                "step_id": _TEXT,
+                "input_refs": _ARRAY_OF_TEXT,
+                "output_refs": _ARRAY_OF_TEXT,
+                "gate_results": {"type": "array", "items": _OBJECT, "maxItems": 256},
+                "metadata": _OBJECT,
+                "occurred_at": _TEXT,
+                # Historical phase-transition payload retained during migration.
+                "from_phase": _TEXT,
+                "to_phase": _TEXT,
+            },
+            any_of=(
+                {"required": ["phase", "step_id", "gate_results", "occurred_at"]},
+                {"required": ["from_phase", "to_phase"]},
+            ),
+        )
+    if event_type == "decision_recorded":
+        return _payload_schema(
+            properties={
+                "decision_type": _TEXT,
+                "run_id": _TEXT,
+                "step_id": _NULLABLE_TEXT,
+                "target_step_id": _NULLABLE_TEXT,
+                "reason": _NULLABLE_TEXT,
+                "payload": _OBJECT,
+                "decided_by": {"const": "harness"},
+                "decided_at": _TEXT,
+            },
+            required=("decision_type", "run_id", "payload", "decided_by", "decided_at"),
+        )
+    if event_type == "worker_called":
+        return _payload_schema(
+            properties={
+                "run_id": _TEXT,
+                "step_id": _TEXT,
+                "worker_type": _TEXT,
+                "inputs": _OBJECT,
+                "metadata": _OBJECT,
+            },
+            required=("run_id", "step_id", "worker_type", "inputs", "metadata"),
+        )
+    if event_type == "worker_result_recorded":
+        return _payload_schema(
+            properties={
+                "status": _TEXT,
+                "output": _OBJECT,
+                "artifacts": _ARRAY_OF_TEXT,
+                "diagnostics": _OBJECT,
+                "metrics": _OBJECT,
+                "error": _NULLABLE_TEXT,
+            },
+            required=("status", "output", "artifacts", "diagnostics", "metrics"),
+        )
+    if event_type == "gate_evaluated":
+        return _payload_schema(
+            properties={
+                "gate": _TEXT,
+                "passed": _BOOLEAN,
+                "reason": _NULLABLE_TEXT,
+                "details": _OBJECT,
+            },
+            required=("gate", "passed", "details"),
+        )
+    if event_type == "checkpoint_created":
+        return _payload_schema(
+            properties={"checkpoint_id": _TEXT},
+            required=("checkpoint_id",),
+            additional_properties=True,
+        )
+    raise EventSchemaError(f"Harness event schema is not defined: {event_type}")
+
+
+def _workflow_sensitivity_policy(event_type: str) -> SensitivityPolicy:
+    if event_type == "agent_llm_stream_event":
+        return SensitivityPolicy(
+            field_rules={"/stream_event": FieldDisposition.REFERENCE_ONLY},
+            allow_payload_reference=True,
+        )
+    if event_type == "workflow_resumed":
+        return SensitivityPolicy(
+            field_rules={"/resume_metadata": FieldDisposition.SENSITIVE},
+            redact_sensitive=True,
+        )
+    if event_type in {"workflow_blocked", "workflow_budget_exceeded", "workflow_failed"}:
+        return SensitivityPolicy(
+            field_rules={"/error": FieldDisposition.SENSITIVE},
+            redact_sensitive=True,
+        )
+    if event_type in {"step_paused", "step_blocked", "step_failed"}:
+        return SensitivityPolicy(
+            field_rules={
+                "/outcome/error_message": FieldDisposition.SENSITIVE,
+                "/outcome/error_details": FieldDisposition.SENSITIVE,
+            },
+            redact_sensitive=True,
+        )
+    return SensitivityPolicy()
+
+
+def _harness_sensitivity_policy(event_type: str) -> SensitivityPolicy:
+    if event_type == "worker_called":
+        return SensitivityPolicy(
+            field_rules={"/inputs": FieldDisposition.REFERENCE_ONLY},
+            allow_payload_reference=True,
+        )
+    if event_type == "worker_result_recorded":
+        return SensitivityPolicy(
+            field_rules={
+                "/output": FieldDisposition.REFERENCE_ONLY,
+                "/diagnostics": FieldDisposition.REFERENCE_ONLY,
+            },
+            allow_payload_reference=True,
+        )
+    if event_type == "gate_evaluated":
+        return SensitivityPolicy(
+            field_rules={"/details": FieldDisposition.SENSITIVE},
+            redact_sensitive=True,
+        )
+    return SensitivityPolicy()
+
+
+def _validation_error(
+    registration: EventSchemaRegistration,
+    error: ValidationError,
+) -> EventSchemaValidationError:
+    return EventSchemaValidationError(
+        event_type=registration.event_type,
+        data_schema=registration.data_schema,
+        path=_json_path(error),
+        rule=str(error.validator or "schema"),
+    )
+
+
+def _json_path(error: ValidationError) -> str:
+    if not error.absolute_path:
+        return "$"
+    return "$" + "".join(
+        f"[{part}]" if isinstance(part, int) else f".{part}"
+        for part in error.absolute_path
+    )
+
+
+def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise TypeError("JSON value must be an object")
+    frozen: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise TypeError("JSON object keys must be strings")
+        frozen[key] = _freeze_value(item)
+    return MappingProxyType(frozen)
+
+
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _freeze_mapping(value)
+    if isinstance(value, list):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_value(item) for item in value)
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("JSON number must be finite")
+        return 0 if value == 0 else value
+    raise TypeError(f"unsupported JSON value: {type(value).__name__}")
+
+
+def _thaw_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {str(key): _thaw_value(item) for key, item in value.items()}
+
+
+def _thaw_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _thaw_mapping(value)
+    if isinstance(value, tuple):
+        return [_thaw_value(item) for item in value]
+    return copy.deepcopy(value)
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("optional schema text must be a string")
+    text = value.strip()
+    return text or None
+
+
+def _required_text(value: Any, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+    text = value.strip()
+    if not text:
+        raise ValueError(f"{field_name} is required")
+    return text
+
+
+_SCHEMA_VERSION_PATTERN = re.compile(r"^(?P<prefix>.*(?:/|^))v(?P<version>[1-9][0-9]*)$")
+_FORBIDDEN_UPCASTER_NAMES = frozenset(
+    {
+        "__import__",
+        "compile",
+        "connect",
+        "datetime",
+        "date",
+        "eval",
+        "exec",
+        "getenv",
+        "input",
+        "monotonic",
+        "now",
+        "open",
+        "perf_counter",
+        "print",
+        "process_time",
+        "random",
+        "read_bytes",
+        "read_text",
+        "request",
+        "secrets",
+        "sleep",
+        "socket",
+        "subprocess",
+        "system",
+        "time",
+        "today",
+        "urlopen",
+        "utc_now",
+        "uuid",
+        "write_bytes",
+        "write_text",
+    }
+)
+_FORBIDDEN_UPCASTER_MODULES = frozenset(
+    {
+        "aiohttp",
+        "datetime",
+        "http",
+        "httpx",
+        "io",
+        "os",
+        "pathlib",
+        "random",
+        "requests",
+        "secrets",
+        "socket",
+        "subprocess",
+        "time",
+        "urllib",
+        "uuid",
+    }
+)
+
+
+def _validate_adjacent_schema_versions(source: str, target: str) -> None:
+    source_match = _SCHEMA_VERSION_PATTERN.fullmatch(source)
+    target_match = _SCHEMA_VERSION_PATTERN.fullmatch(target)
+    if source_match is None or target_match is None:
+        raise EventSchemaError(
+            "upcast schemas must end in an explicit adjacent /vN version"
+        )
+    if source_match.group("prefix") != target_match.group("prefix"):
+        raise EventSchemaError("upcaster cannot change the data-schema namespace")
+    source_version = int(source_match.group("version"))
+    target_version = int(target_match.group("version"))
+    if target_version != source_version + 1:
+        raise EventSchemaError(
+            f"event upcaster must target the adjacent version: {source} -> {target}"
+        )
+
+
+def _validate_upcaster_purity(
+    upcaster: EventUpcaster | None,
+    event_type: str,
+    data_schema: str,
+) -> None:
+    if upcaster is None or not isinstance(upcaster, FunctionType):
+        raise EventSchemaError(
+            f"event upcaster must be a plain function: {event_type} ({data_schema})"
+        )
+    if inspect.iscoroutinefunction(upcaster) or inspect.isgeneratorfunction(upcaster):
+        raise EventSchemaError(
+            f"event upcaster must be synchronous: {event_type} ({data_schema})"
+        )
+    try:
+        _audit_function_purity(upcaster, seen=set())
+    except EventSchemaError:
+        raise
+    except Exception as exc:
+        raise EventSchemaError(
+            f"event upcaster purity could not be verified: {event_type} ({data_schema})"
+        ) from exc
+
+
+def _audit_function_purity(function: FunctionType, *, seen: set[int]) -> None:
+    identity = id(function)
+    if identity in seen:
+        return
+    seen.add(identity)
+    for instruction in dis.get_instructions(function):
+        if instruction.opname in {"IMPORT_NAME", "IMPORT_FROM"}:
+            raise EventSchemaError("event upcaster must not import modules")
+        if (
+            instruction.opname
+            in {"LOAD_GLOBAL", "LOAD_NAME", "LOAD_DEREF", "LOAD_ATTR", "LOAD_METHOD"}
+            and str(instruction.argval) in _FORBIDDEN_UPCASTER_NAMES
+        ):
+            raise EventSchemaError(
+                f"event upcaster uses forbidden dependency: {instruction.argval}"
+            )
+
+    closure = inspect.getclosurevars(function)
+    for name, value in {**closure.globals, **closure.nonlocals}.items():
+        if name in _FORBIDDEN_UPCASTER_NAMES or _is_forbidden_dependency(value):
+            raise EventSchemaError(f"event upcaster uses forbidden dependency: {name}")
+        if isinstance(value, (dict, list, set, bytearray)):
+            raise EventSchemaError(f"event upcaster captures mutable state: {name}")
+        if isinstance(value, FunctionType):
+            _audit_function_purity(value, seen=seen)
+    for name in closure.builtins:
+        if name in _FORBIDDEN_UPCASTER_NAMES:
+            raise EventSchemaError(f"event upcaster uses forbidden builtin: {name}")
+
+
+def _is_forbidden_dependency(value: Any) -> bool:
+    if isinstance(value, ModuleType):
+        return value.__name__.split(".", 1)[0] in _FORBIDDEN_UPCASTER_MODULES
+    module_name = str(getattr(value, "__module__", ""))
+    return bool(module_name) and module_name.split(".", 1)[0] in _FORBIDDEN_UPCASTER_MODULES
+
+
+def _run_pure_upcaster(
+    upcaster: EventUpcaster,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    outputs: list[dict[str, Any]] = []
+    for _ in range(2):
+        produced = upcaster(_freeze_mapping(_thaw_mapping(_freeze_mapping(payload))))
+        if not isinstance(produced, Mapping):
+            raise TypeError("upcaster must return a mapping")
+        outputs.append(_thaw_mapping(_freeze_mapping(produced)))
+    if outputs[0] != outputs[1]:
+        raise EventUpcastError("event upcaster is nondeterministic")
+    return outputs[0]

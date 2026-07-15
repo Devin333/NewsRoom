@@ -25,16 +25,19 @@ class InMemoryEventBus:
     def publish(self, event: Event | EventEnvelope | EventRecord) -> EventEnvelope:
         envelope = _to_envelope(event)
         self._published.append(envelope)
+        first_failure: tuple[str, Exception] | None = None
         for subscription in list(self._subscribers):
             try:
                 if subscription.legacy_callable:
-                    subscription.subscriber(event if isinstance(event, EventRecord) else envelope)
+                    subscription.subscriber(envelope)
                 else:
                     subscription.subscriber.handle(envelope)
             except Exception as exc:
-                raise EventSubscriberError(
-                    f"event subscriber failed: {subscription.subscriber_id}"
-                ) from exc
+                if first_failure is None:
+                    first_failure = (subscription.subscriber_id, exc)
+        if first_failure is not None:
+            subscriber_id, cause = first_failure
+            raise EventSubscriberError(f"event subscriber failed: {subscriber_id}") from cause
         return envelope
 
     def subscribe(self, subscriber: EventSubscriber | Any) -> None:

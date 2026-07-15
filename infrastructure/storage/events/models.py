@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
 
 from framework.shared.json import to_jsonable
 from framework.shared.time import ensure_utc, parse_datetime
+from framework.events.canonical import normalize_canonical_json
+from framework.events.errors import EventTimeError
 
 
 _VALID_SEVERITIES = {"debug", "info", "warning", "error", "critical"}
@@ -17,7 +19,7 @@ _VALID_SEVERITIES = {"debug", "info", "warning", "error", "critical"}
 class EventRecord:
     run_id: str
     event_type: str
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: Mapping[str, Any] = field(default_factory=dict)
     event_id: str = field(default_factory=lambda: uuid4().hex)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     workflow_id: str | None = None
@@ -29,13 +31,21 @@ class EventRecord:
     severity: str = "info"
     trace_id: str | None = None
     redacted: bool = True
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.severity not in _VALID_SEVERITIES:
             raise ValueError(f"invalid severity: {self.severity}")
-        object.__setattr__(self, "payload", dict(self.payload))
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(
+            self,
+            "payload",
+            _canonical_mapping(self.payload, "payload"),
+        )
+        object.__setattr__(
+            self,
+            "metadata",
+            _canonical_mapping(self.metadata, "metadata"),
+        )
         object.__setattr__(self, "timestamp", ensure_utc(self.timestamp))
 
     @property
@@ -66,11 +76,14 @@ class EventRecord:
         timestamp = payload.get("timestamp", payload.get("occurred_at"))
         if timestamp is None:
             raise KeyError("timestamp")
+        parsed_timestamp = parse_datetime(timestamp)
+        if parsed_timestamp is None:
+            raise EventTimeError("event timestamp is required")
         return cls(
             event_id=str(payload["event_id"]),
             run_id=str(payload["run_id"]),
             event_type=str(payload["event_type"]),
-            timestamp=parse_datetime(timestamp) or datetime.now(UTC),
+            timestamp=parsed_timestamp,
             workflow_id=_optional_str(payload.get("workflow_id")),
             step_id=_optional_str(payload.get("step_id")),
             task_id=_optional_str(payload.get("task_id")),
@@ -89,3 +102,10 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _canonical_mapping(value: Mapping[str, Any], field_name: str) -> Mapping[str, Any]:
+    normalized = normalize_canonical_json(to_jsonable(value), path=f"$.{field_name}")
+    if not isinstance(normalized, Mapping):
+        raise TypeError(f"event {field_name} must be an object")
+    return normalized
