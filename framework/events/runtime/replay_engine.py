@@ -18,6 +18,12 @@ from framework.events.canonical import (
 )
 from framework.events.errors import EventIntegrityError, EventQuarantineError, EventReplayError
 from framework.events.ports import EventStorePort
+from framework.events.runtime.fallback import (
+    LocalRuntimeDiagnosticFallback,
+    RuntimeDiagnosticCategory,
+    RuntimeDiagnosticComponent,
+    RuntimeDiagnosticOperation,
+)
 from framework.events.runtime.models import (
     MAX_PAGE_LIMIT,
     EventPage,
@@ -566,6 +572,7 @@ class DeterministicReplayEngine:
         schema_catalog_version: str,
         clock: ReplayClock,
         page_size: int = 100,
+        diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
     ) -> None:
         if not isinstance(catalog, EventSchemaCatalog):
             raise TypeError("catalog must be EventSchemaCatalog")
@@ -588,6 +595,15 @@ class DeterministicReplayEngine:
         )
         self._clock = clock
         self._page_size = page_size
+        self._diagnostic_fallback = (
+            diagnostic_fallback
+            if diagnostic_fallback is not None
+            else LocalRuntimeDiagnosticFallback()
+        )
+
+    @property
+    def diagnostic_fallback(self) -> LocalRuntimeDiagnosticFallback:
+        return self._diagnostic_fallback
 
     def execute(
         self,
@@ -671,9 +687,16 @@ class DeterministicReplayEngine:
         effective_request = _with_output_checkpoint_ref(request)
         pending = self._store_call(
             lambda: self._store.begin_replay(effective_request),
-            reason_class="replay_begin_failed",
+            failure_operation=RuntimeDiagnosticOperation.REPLAY_BEGIN_FAILED,
         )
-        self._verify_started_report(effective_request, pending)
+        try:
+            self._verify_started_report(effective_request, pending)
+        except Exception as error:
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.REPLAY_BEGIN_REPORT_INVALID,
+                error,
+            )
+            raise
         versions = self._versions(registration)
         if pending.status in {ReplayStatus.SUCCEEDED, ReplayStatus.FAILED}:
             raise ReplayCoreError("terminal replay reports cannot be executed again")
@@ -708,7 +731,15 @@ class DeterministicReplayEngine:
                 )
                 current_report = self._store_call(
                     lambda: self._store.update_replay_report(running_candidate),
-                    reason_class="replay_running_report_update_failed",
+                    failure_operation=(
+                        RuntimeDiagnosticOperation.REPLAY_RUNNING_REPORT_UPDATE_FAILED
+                    ),
+                    report=pending,
+                    checkpoint=initial_checkpoint,
+                )
+                current_report = self._verify_updated_report(
+                    running_candidate,
+                    current_report,
                     report=pending,
                     checkpoint=initial_checkpoint,
                 )
@@ -720,7 +751,9 @@ class DeterministicReplayEngine:
                         output_ref or "",
                         tenant_id=pending.tenant_id,
                     ),
-                    reason_class="replay_checkpoint_read_failed",
+                    failure_operation=(
+                        RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_READ_FAILED
+                    ),
                     report=pending,
                 )
                 if output_checkpoint is None:
@@ -731,10 +764,12 @@ class DeterministicReplayEngine:
                         checkpoint=None,
                     )
                     raise failure from None
-                output_checkpoint = self._validate_loaded_output_checkpoint(
-                    pending,
-                    output_checkpoint,
-                    expected_parent_id=input_checkpoint_ref,
+                output_checkpoint = self._validated_store_checkpoint(
+                    lambda: self._validate_loaded_output_checkpoint(
+                        pending,
+                        output_checkpoint,
+                        expected_parent_id=input_checkpoint_ref,
+                    )
                 )
                 if checkpoint is not None and (
                     checkpoint.checkpoint_id != output_checkpoint.checkpoint_id
@@ -752,11 +787,18 @@ class DeterministicReplayEngine:
                     after_sequence=after_sequence,
                 )
                 if pending.versions == ():
+                    running_candidate = replace(pending, versions=versions)
                     current_report = self._store_call(
-                        lambda: self._store.update_replay_report(
-                            replace(pending, versions=versions)
+                        lambda: self._store.update_replay_report(running_candidate),
+                        failure_operation=(
+                            RuntimeDiagnosticOperation.REPLAY_RUNNING_REPORT_UPDATE_FAILED
                         ),
-                        reason_class="replay_running_report_update_failed",
+                        report=pending,
+                        checkpoint=output_checkpoint,
+                    )
+                    current_report = self._verify_updated_report(
+                        running_candidate,
+                        current_report,
                         report=pending,
                         checkpoint=output_checkpoint,
                     )
@@ -803,7 +845,15 @@ class DeterministicReplayEngine:
         )
         completed = self._store_call(
             lambda: self._store.update_replay_report(success_candidate),
-            reason_class="replay_success_report_update_failed",
+            failure_operation=(
+                RuntimeDiagnosticOperation.REPLAY_SUCCESS_REPORT_UPDATE_FAILED
+            ),
+            report=current_report,
+            checkpoint=checkpoint_result,
+        )
+        completed = self._verify_updated_report(
+            success_candidate,
+            completed,
             report=current_report,
             checkpoint=checkpoint_result,
         )
@@ -825,14 +875,18 @@ class DeterministicReplayEngine:
                 report.checkpoint_ref or "",
                 tenant_id=report.tenant_id,
             ),
-            reason_class="replay_checkpoint_read_failed",
+            failure_operation=(
+                RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_READ_FAILED
+            ),
             report=report,
         )
         if output_checkpoint is not None:
-            return self._validate_loaded_output_checkpoint(
-                report,
-                output_checkpoint,
-                expected_parent_id=input_checkpoint_ref,
+            return self._validated_store_checkpoint(
+                lambda: self._validate_loaded_output_checkpoint(
+                    report,
+                    output_checkpoint,
+                    expected_parent_id=input_checkpoint_ref,
+                )
             )
         if supplied_checkpoint is not None:
             if supplied_checkpoint.checkpoint_id != input_checkpoint_ref:
@@ -849,7 +903,9 @@ class DeterministicReplayEngine:
                 input_checkpoint_ref,
                 tenant_id=report.tenant_id,
             ),
-            reason_class="replay_checkpoint_read_failed",
+            failure_operation=(
+                RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_READ_FAILED
+            ),
             report=report,
         )
         if parent_checkpoint is None:
@@ -858,10 +914,12 @@ class DeterministicReplayEngine:
                 None,
                 ReplayCheckpointError,
             )
-        return self._validate_loaded_parent_checkpoint(
-            report,
-            parent_checkpoint,
-            expected_checkpoint_id=input_checkpoint_ref,
+        return self._validated_store_checkpoint(
+            lambda: self._validate_loaded_parent_checkpoint(
+                report,
+                parent_checkpoint,
+                expected_checkpoint_id=input_checkpoint_ref,
+            )
         )
 
     @staticmethod
@@ -903,6 +961,29 @@ class DeterministicReplayEngine:
                 checkpoint=None,
             )
             raise failure from None
+        return checkpoint
+
+    def _validated_store_checkpoint(
+        self,
+        validation: Callable[[], ReplayCheckpoint],
+    ) -> ReplayCheckpoint:
+        try:
+            checkpoint = validation()
+        except Exception as error:
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_READ_INVALID,
+                error,
+            )
+            raise
+        try:
+            checkpoint.verify_integrity()
+        except EventIntegrityError as error:
+            # Preserve the existing typed checkpoint-validation path in
+            # _prepare_progress while still surfacing the invalid store response.
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_READ_INVALID,
+                error,
+            )
         return checkpoint
 
     def _prepare_progress(
@@ -1092,42 +1173,53 @@ class DeterministicReplayEngine:
                 through_sequence=report.high_watermark,
                 tenant_id=request.tenant_id,
             )
-            source_read_failed = False
+            page = self._store_call(
+                lambda: self._store.read_stream(read_request),
+                failure_operation=RuntimeDiagnosticOperation.SOURCE_READ_FAILED,
+                sequence=expected_sequence,
+                report=progress.durable_report,
+                checkpoint=progress.durable_checkpoint,
+            )
             try:
-                page = self._store.read_stream(read_request)
-            except Exception:
-                source_read_failed = True
-            if source_read_failed:
-                failure = ReplaySourceReadError(
-                    reason_class="source_read_failed",
-                    sequence=expected_sequence,
-                    report=progress.durable_report,
-                    checkpoint=progress.durable_checkpoint,
+                self._validate_page(page, read_request, expected_sequence)
+            except Exception as error:
+                self._record_store_failure(
+                    RuntimeDiagnosticOperation.SOURCE_READ_INVALID,
+                    error,
                 )
-                raise failure from None
-            self._validate_page(page, read_request, expected_sequence)
+                raise
 
             for event in page.events:
                 if (
                     event.stream_id != request.source_stream_id
                     or event.tenant_id != request.tenant_id
                 ):
-                    raise _ReplayIssue(
+                    issue = _ReplayIssue(
                         "source_scope_mismatch",
                         event.stream_sequence,
                         ReplayHistoryOrderError,
                     )
+                    self._record_store_failure(
+                        RuntimeDiagnosticOperation.SOURCE_READ_INVALID,
+                        issue,
+                    )
+                    raise issue
                 if event.stream_sequence != expected_sequence:
                     reason = (
                         "unsorted_history"
                         if event.stream_sequence < expected_sequence
                         else "history_gap"
                     )
-                    raise _ReplayIssue(
+                    issue = _ReplayIssue(
                         reason,
                         event.stream_sequence,
                         ReplayHistoryOrderError,
                     )
+                    self._record_store_failure(
+                        RuntimeDiagnosticOperation.SOURCE_READ_INVALID,
+                        issue,
+                    )
+                    raise issue
                 replay_event = self._resolve_event(event)
                 next_history_checksum = checksum_for(
                     {
@@ -1167,34 +1259,52 @@ class DeterministicReplayEngine:
                 registration=registration,
             )
             current_report = progress.durable_report
+            progress_candidate = replace(
+                current_report,
+                status=ReplayStatus.RUNNING,
+                to_sequence=progress.last_sequence,
+                applied_upcasters=tuple(progress.applied_upcasters),
+            )
             progress.durable_report = self._store_call(
-                lambda: self._store.update_replay_report(
-                    replace(
-                        current_report,
-                        status=ReplayStatus.RUNNING,
-                        to_sequence=progress.last_sequence,
-                        applied_upcasters=tuple(progress.applied_upcasters),
-                    )
+                lambda: self._store.update_replay_report(progress_candidate),
+                failure_operation=(
+                    RuntimeDiagnosticOperation.REPLAY_PROGRESS_REPORT_UPDATE_FAILED
                 ),
-                reason_class="replay_progress_report_update_failed",
+                report=current_report,
+                checkpoint=checkpoint,
+                sequence=progress.last_sequence,
+            )
+            progress.durable_report = self._verify_updated_report(
+                progress_candidate,
+                progress.durable_report,
                 report=current_report,
                 checkpoint=checkpoint,
                 sequence=progress.last_sequence,
             )
             if progress.last_sequence == report.high_watermark:
                 if page.next_cursor is not None:
-                    raise _ReplayIssue(
+                    issue = _ReplayIssue(
                         "cursor_exceeds_high_watermark",
                         progress.last_sequence,
                         ReplayHistoryOrderError,
                     )
+                    self._record_store_failure(
+                        RuntimeDiagnosticOperation.SOURCE_READ_INVALID,
+                        issue,
+                    )
+                    raise issue
                 break
             if page.next_cursor is None:
-                raise _ReplayIssue(
+                issue = _ReplayIssue(
                     "history_gap",
                     expected_sequence,
                     ReplayHistoryOrderError,
                 )
+                self._record_store_failure(
+                    RuntimeDiagnosticOperation.SOURCE_READ_INVALID,
+                    issue,
+                )
+                raise issue
             cursor = page.next_cursor
 
     def _validate_page(
@@ -1303,21 +1413,25 @@ class DeterministicReplayEngine:
         if issue.quarantine_reason is not None:
             sequence = issue.sequence or 0
             quarantine_write_failed = False
+            quarantine: QuarantineRecord | None = None
+            quarantine_candidate = QuarantineRecord(
+                quarantine_id=(
+                    f"replay:{request.replay_id}:{sequence}:"
+                    f"{issue.quarantine_reason.value}"
+                ),
+                source=f"{request.source_stream_id}:{sequence}",
+                reason=issue.quarantine_reason,
+                created_at=finished_at,
+                tenant_id=request.tenant_id,
+                redacted_diagnostic=issue.quarantine_reason.value,
+            )
             try:
-                quarantine = self._store.save_quarantine(
-                    QuarantineRecord(
-                        quarantine_id=(
-                            f"replay:{request.replay_id}:{sequence}:"
-                            f"{issue.quarantine_reason.value}"
-                        ),
-                        source=f"{request.source_stream_id}:{sequence}",
-                        reason=issue.quarantine_reason,
-                        created_at=finished_at,
-                        tenant_id=request.tenant_id,
-                        redacted_diagnostic=issue.quarantine_reason.value,
-                    )
+                quarantine = self._store.save_quarantine(quarantine_candidate)
+            except Exception as error:
+                self._record_store_failure(
+                    RuntimeDiagnosticOperation.QUARANTINE_WRITE,
+                    error,
                 )
-            except Exception:
                 quarantine_write_failed = True
             if quarantine_write_failed:
                 failure = ReplaySourceReadError(
@@ -1327,8 +1441,34 @@ class DeterministicReplayEngine:
                     checkpoint=checkpoint_result,
                 )
                 raise failure from None
-            else:
-                quarantine_refs.append(quarantine.quarantine_id)
+            if quarantine is None:  # pragma: no cover - store returns or fails
+                failure = AssertionError("quarantine store returned no record")
+                self._record_store_failure(
+                    RuntimeDiagnosticOperation.QUARANTINE_WRITE,
+                    failure,
+                )
+                raise failure
+            try:
+                quarantine_id = quarantine.quarantine_id
+            except Exception as error:
+                self._record_store_failure(
+                    RuntimeDiagnosticOperation.QUARANTINE_WRITE,
+                    error,
+                )
+                raise
+            if not isinstance(quarantine, QuarantineRecord) or quarantine != quarantine_candidate:
+                failure = ReplaySourceReadError(
+                    reason_class="quarantine_persistence_failed",
+                    sequence=issue.sequence,
+                    report=report,
+                    checkpoint=checkpoint_result,
+                )
+                self._record_store_failure(
+                    RuntimeDiagnosticOperation.QUARANTINE_WRITE,
+                    failure,
+                )
+                raise failure from None
+            quarantine_refs.append(quarantine_id)
         mismatch_sequence = issue.sequence
         if mismatch_sequence is not None and not (
             1 <= mismatch_sequence <= report.high_watermark
@@ -1354,7 +1494,16 @@ class DeterministicReplayEngine:
         )
         failed = self._store_call(
             lambda: self._store.update_replay_report(failed_candidate),
-            reason_class="replay_failure_report_update_failed",
+            failure_operation=(
+                RuntimeDiagnosticOperation.REPLAY_FAILURE_REPORT_UPDATE_FAILED
+            ),
+            report=report,
+            checkpoint=checkpoint_result,
+            sequence=issue.sequence,
+        )
+        failed = self._verify_updated_report(
+            failed_candidate,
+            failed,
             report=report,
             checkpoint=checkpoint_result,
             sequence=issue.sequence,
@@ -1381,26 +1530,36 @@ class DeterministicReplayEngine:
         )
         persisted = self._store_call(
             lambda: self._checkpoints.save_checkpoint(checkpoint),
-            reason_class="replay_checkpoint_write_failed",
+            failure_operation=(
+                RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_WRITE_FAILED
+            ),
             report=progress.durable_report,
             checkpoint=progress.durable_checkpoint,
             sequence=progress.last_sequence or None,
         )
-        checkpoint_response_invalid = False
-        try:
-            persisted.verify_integrity()
-        except (AttributeError, EventIntegrityError):
-            checkpoint_response_invalid = True
-        if not isinstance(persisted, ReplayCheckpoint):
-            checkpoint_response_invalid = True
-        elif persisted != checkpoint or persisted.tenant_id != checkpoint.tenant_id:
-            checkpoint_response_invalid = True
+        checkpoint_response_invalid = not isinstance(persisted, ReplayCheckpoint)
+        validation_error: Exception | None = None
+        if isinstance(persisted, ReplayCheckpoint):
+            try:
+                persisted.verify_integrity()
+                if (
+                    persisted != checkpoint
+                    or persisted.tenant_id != checkpoint.tenant_id
+                ):
+                    checkpoint_response_invalid = True
+            except Exception as error:
+                validation_error = error
+                checkpoint_response_invalid = True
         if checkpoint_response_invalid:
             failure = ReplaySourceReadError(
                 reason_class="replay_checkpoint_write_invalid",
                 sequence=progress.last_sequence or None,
                 report=progress.durable_report,
                 checkpoint=progress.durable_checkpoint,
+            )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_WRITE_INVALID,
+                validation_error or failure,
             )
             raise failure from None
         progress.durable_checkpoint = persisted
@@ -1438,7 +1597,7 @@ class DeterministicReplayEngine:
         self,
         operation: Callable[[], _T],
         *,
-        reason_class: str,
+        failure_operation: RuntimeDiagnosticOperation,
         report: ReplayReport | None = None,
         checkpoint: ReplayCheckpoint | None = None,
         sequence: int | None = None,
@@ -1446,9 +1605,10 @@ class DeterministicReplayEngine:
         failure: ReplaySourceReadError | None = None
         try:
             return operation()
-        except Exception:
+        except Exception as error:
+            self._record_store_failure(failure_operation, error)
             failure = ReplaySourceReadError(
-                reason_class=reason_class,
+                reason_class=failure_operation.value,
                 sequence=sequence,
                 report=report,
                 checkpoint=checkpoint,
@@ -1456,6 +1616,41 @@ class DeterministicReplayEngine:
         if failure is None:  # pragma: no cover - operation either returns or fails
             raise AssertionError("store failure wrapper lost its error")
         raise failure from None
+
+    def _verify_updated_report(
+        self,
+        candidate: ReplayReport,
+        persisted: object,
+        *,
+        report: ReplayReport,
+        checkpoint: ReplayCheckpoint | None,
+        sequence: int | None = None,
+    ) -> ReplayReport:
+        if isinstance(persisted, ReplayReport) and persisted == candidate:
+            return persisted
+        failure = ReplaySourceReadError(
+            reason_class=RuntimeDiagnosticOperation.REPLAY_REPORT_UPDATE_INVALID.value,
+            sequence=sequence,
+            report=report,
+            checkpoint=checkpoint,
+        )
+        self._record_store_failure(
+            RuntimeDiagnosticOperation.REPLAY_REPORT_UPDATE_INVALID,
+            failure,
+        )
+        raise failure from None
+
+    def _record_store_failure(
+        self,
+        operation: RuntimeDiagnosticOperation,
+        error: Exception,
+    ) -> None:
+        self._diagnostic_fallback.record(
+            category=_replay_failure_category(operation),
+            component=RuntimeDiagnosticComponent.REPLAY_ENGINE,
+            operation=operation,
+            error=error,
+        )
 
     def _versions(
         self,
@@ -1482,6 +1677,8 @@ class DeterministicReplayEngine:
         request: ReplayStartRequest,
         report: ReplayReport,
     ) -> None:
+        if not isinstance(report, ReplayReport):
+            raise ReplayCoreError("durable replay store returned an invalid report")
         identity_pairs = (
             (report.replay_id, request.replay_id),
             (report.mode, request.mode),
@@ -1744,6 +1941,31 @@ def _quarantine_reason(value: str) -> QuarantineReason:
         return QuarantineReason(value)
     except ValueError as exc:
         raise ReplayCoreError("schema catalog returned an unknown quarantine reason") from exc
+
+
+def _replay_failure_category(
+    operation: RuntimeDiagnosticOperation,
+) -> RuntimeDiagnosticCategory:
+    if operation in {
+        RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_READ_FAILED,
+        RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_WRITE_FAILED,
+        RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_READ_INVALID,
+        RuntimeDiagnosticOperation.REPLAY_CHECKPOINT_WRITE_INVALID,
+    }:
+        return RuntimeDiagnosticCategory.REPLAY_CHECKPOINT_FAILURE
+    if operation in {
+        RuntimeDiagnosticOperation.REPLAY_BEGIN_FAILED,
+        RuntimeDiagnosticOperation.REPLAY_RUNNING_REPORT_UPDATE_FAILED,
+        RuntimeDiagnosticOperation.REPLAY_SUCCESS_REPORT_UPDATE_FAILED,
+        RuntimeDiagnosticOperation.REPLAY_PROGRESS_REPORT_UPDATE_FAILED,
+        RuntimeDiagnosticOperation.REPLAY_FAILURE_REPORT_UPDATE_FAILED,
+        RuntimeDiagnosticOperation.REPLAY_BEGIN_REPORT_INVALID,
+        RuntimeDiagnosticOperation.REPLAY_REPORT_UPDATE_INVALID,
+    }:
+        return RuntimeDiagnosticCategory.REPLAY_REPORT_FAILURE
+    if operation is RuntimeDiagnosticOperation.QUARANTINE_WRITE:
+        return RuntimeDiagnosticCategory.REPLAY_QUARANTINE_FAILURE
+    return RuntimeDiagnosticCategory.REPLAY_STORE_FAILURE
 
 
 def _require_mode(request: ReplayStartRequest, expected: ReplayMode) -> None:

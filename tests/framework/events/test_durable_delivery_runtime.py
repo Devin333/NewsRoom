@@ -1063,6 +1063,10 @@ def test_dead_letter_write_failure_is_isolated_and_never_retains_raw_message() -
     assert failure.reason_class == "delivery_settlement_failed"
     assert failure.redacted_diagnostic == "RuntimeError"
     assert secret not in repr(result)
+    fallback_records = runtime.diagnostic_fallback.snapshot()
+    assert len(fallback_records) == 1
+    assert fallback_records[0].operation == "delivery_settlement"
+    assert secret not in repr(fallback_records[0].to_dict())
 
 
 def test_retry_lease_recovery_and_redelivery_all_require_effect_capability() -> None:

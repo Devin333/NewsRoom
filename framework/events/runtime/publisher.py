@@ -15,7 +15,14 @@ from framework.events.canonical import (
     assert_same_event_identity,
     normalize_canonical_json,
 )
-from framework.events.errors import EventSecurityError
+from framework.events.errors import EventContractError, EventSecurityError
+from framework.events.runtime.fallback import (
+    LocalRuntimeDiagnosticFallback,
+    RuntimeDiagnosticCategory,
+    RuntimeDiagnosticComponent,
+    RuntimeDiagnosticOperation,
+)
+from framework.events.runtime.models import AppendResult
 from framework.events.schema.catalog import EventSchemaCatalog
 from framework.events.schema.security import (
     EventSecurityProjector,
@@ -134,10 +141,20 @@ class EventRuntime:
         store: EventStorePort,
         schema_catalog: EventSchemaCatalog,
         security_projector: EventSecurityProjector | None = None,
+        diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
     ) -> None:
         self._store = store
         self._schema_catalog = schema_catalog
         self._security_projector = security_projector or EventSecurityProjector()
+        self._diagnostic_fallback = (
+            diagnostic_fallback
+            if diagnostic_fallback is not None
+            else LocalRuntimeDiagnosticFallback()
+        )
+
+    @property
+    def diagnostic_fallback(self) -> LocalRuntimeDiagnosticFallback:
+        return self._diagnostic_fallback
 
     def publish(
         self,
@@ -200,13 +217,22 @@ class EventRuntime:
             max_inline_payload_bytes=policy.max_inline_payload_bytes,
         )
 
-        if unit_of_work is not None:
-            return _append_verified(unit_of_work, candidate)
+        try:
+            if unit_of_work is not None:
+                return _append_verified(unit_of_work, candidate)
 
-        with self._store.unit_of_work() as owned_unit_of_work:
-            stored = _append_verified(owned_unit_of_work, candidate)
-            owned_unit_of_work.commit()
-        return stored
+            with self._store.unit_of_work() as owned_unit_of_work:
+                stored = _append_verified(owned_unit_of_work, candidate)
+                owned_unit_of_work.commit()
+            return stored
+        except Exception as error:
+            self._diagnostic_fallback.record(
+                category=RuntimeDiagnosticCategory.EVENT_STORE_FAILURE,
+                component=RuntimeDiagnosticComponent.EVENT_PUBLISHER,
+                operation=RuntimeDiagnosticOperation.PUBLISH,
+                error=error,
+            )
+            raise
 
 
 def _append_verified(
@@ -214,6 +240,8 @@ def _append_verified(
     candidate: EventCandidate,
 ) -> StoredEvent:
     result = unit_of_work.append_event(candidate)
+    if not isinstance(result, AppendResult):
+        raise EventContractError("durable event store returned an invalid append result")
     assert_same_event_identity(result.event, candidate)
     result.event.verify_integrity()
     return result.event

@@ -13,6 +13,12 @@ from framework.events.errors import (
     EventSubscriptionPositionError,
 )
 from framework.events.runtime.diagnostics import DeliveryDiagnosticProjector
+from framework.events.runtime.fallback import (
+    LocalRuntimeDiagnosticFallback,
+    RuntimeDiagnosticCategory,
+    RuntimeDiagnosticComponent,
+    RuntimeDiagnosticOperation,
+)
 from framework.events.runtime.idempotency import (
     AutomaticDeliveryOperation,
     IdempotencyCapabilityRegistry,
@@ -26,6 +32,7 @@ from framework.events.runtime.inbox import (
 from framework.events.runtime.models import (
     ClaimedDelivery,
     DeadLetterAction,
+    DeadLetterRecord,
     DeliveryClaimRequest,
     DeliveryRecord,
     DeliverySettlement,
@@ -300,11 +307,17 @@ class DurableConsumerRegistry:
         *,
         idempotency_capabilities: IdempotencyCapabilityRegistry | None = None,
         inbox_transaction_runner: InboxTransactionalEffectRunner | None = None,
+        diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._store = store
         self._idempotency_capabilities = idempotency_capabilities
         self._inbox_transaction_runner = inbox_transaction_runner
+        self._diagnostic_fallback = (
+            diagnostic_fallback
+            if diagnostic_fallback is not None
+            else LocalRuntimeDiagnosticFallback()
+        )
         self._clock = clock or _system_clock
         self._bindings: dict[SubscriptionKey, _ConsumerBinding] = {}
         self._lock = RLock()
@@ -316,6 +329,10 @@ class DurableConsumerRegistry:
     @property
     def inbox_transaction_runner(self) -> InboxTransactionalEffectRunner | None:
         return self._inbox_transaction_runner
+
+    @property
+    def diagnostic_fallback(self) -> LocalRuntimeDiagnosticFallback:
+        return self._diagnostic_fallback
 
     @property
     def registered_keys(self) -> tuple[SubscriptionKey, ...]:
@@ -347,7 +364,11 @@ class DurableConsumerRegistry:
         store = self._require_store()
         self._validate_activation(subscription)
 
-        persisted = _register_subscription_safely(store, subscription)
+        persisted = _register_subscription_safely(
+            store,
+            subscription,
+            diagnostic_fallback=self._diagnostic_fallback,
+        )
         self._assert_subscription_matches(subscription, persisted)
         binding = _ConsumerBinding(
             consumer=consumer,
@@ -462,7 +483,8 @@ class DurableConsumerRegistry:
             # is down or its consumer implementation is deliberately unloaded.
             subscription = self._get_subscription(key)
         changed_at = _clock_value(self._clock)
-        return _safe_store_call(
+        persisted = self._store_call(
+            RuntimeDiagnosticOperation.SUBSCRIPTION_STATUS_UPDATE,
             "subscription status update",
             lambda: self._require_store().set_subscription_status(
                 key,
@@ -471,6 +493,27 @@ class DurableConsumerRegistry:
                 reason=_required_text(reason, "reason"),
             ),
         )
+        invalid_response: EventDeliveryContractError | None = None
+        if not isinstance(persisted, DurableSubscription):
+            invalid_response = EventDeliveryContractError(
+                "durable store returned an invalid subscription value"
+            )
+        elif (
+            persisted.key != key
+            or persisted.status is not normalized_status
+            or _subscription_fingerprint(persisted)
+            != _subscription_fingerprint(subscription)
+        ):
+            invalid_response = EventDeliveryContractError(
+                "durable store returned an invalid subscription status update"
+            )
+        if invalid_response is not None:
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.SUBSCRIPTION_STATUS_UPDATE,
+                invalid_response,
+            )
+            raise invalid_response
+        return persisted
 
     def pause(self, key: SubscriptionKey, *, reason: str) -> DurableSubscription:
         return self.set_status(key, SubscriptionStatus.PAUSED, reason=reason)
@@ -484,20 +527,31 @@ class DurableConsumerRegistry:
     def _get_subscription(self, key: SubscriptionKey) -> DurableSubscription:
         if not isinstance(key, SubscriptionKey):
             raise TypeError("key must be SubscriptionKey")
-        subscription = _safe_store_call(
+        subscription = self._store_call(
+            RuntimeDiagnosticOperation.SUBSCRIPTION_LOOKUP,
             "subscription lookup",
             lambda: self._require_store().get_subscription(key),
         )
         if subscription is None:
             raise EventSubscriptionNotFoundError(key)
         if not isinstance(subscription, DurableSubscription):
-            raise EventDeliveryContractError(
+            failure = EventDeliveryContractError(
                 "durable store returned an invalid subscription value"
             )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.SUBSCRIPTION_LOOKUP,
+                failure,
+            )
+            raise failure
         if subscription.key != key:
-            raise EventDeliveryContractError(
+            failure = EventDeliveryContractError(
                 "durable store returned a different subscription version"
             )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.SUBSCRIPTION_LOOKUP,
+                failure,
+            )
+            raise failure
         return subscription
 
     def _validate_activation(self, subscription: DurableSubscription) -> None:
@@ -547,9 +601,14 @@ class DurableConsumerRegistry:
         persisted: DurableSubscription,
     ) -> None:
         if not isinstance(persisted, DurableSubscription):
-            raise EventDeliveryContractError(
+            failure = EventDeliveryContractError(
                 "durable store returned an invalid subscription value"
             )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.SUBSCRIPTION_REGISTRATION,
+                failure,
+            )
+            raise failure
         if (
             requested.key != persisted.key
             or requested.consumer_id != persisted.consumer_id
@@ -567,6 +626,36 @@ class DurableConsumerRegistry:
             )
         return self._store
 
+    def _store_call(
+        self,
+        diagnostic_operation: RuntimeDiagnosticOperation,
+        operation: str,
+        call: Callable[[], _T],
+    ) -> _T:
+        failed = False
+        try:
+            return call()
+        except Exception as error:
+            self._record_store_failure(diagnostic_operation, error)
+            failed = True
+        if failed:
+            raise EventDeliveryStoreOperationError(
+                f"durable event store {operation} failed"
+            )
+        raise AssertionError("unreachable durable store call state")
+
+    def _record_store_failure(
+        self,
+        operation: RuntimeDiagnosticOperation,
+        error: Exception,
+    ) -> None:
+        self._diagnostic_fallback.record(
+            category=RuntimeDiagnosticCategory.DELIVERY_STORE_FAILURE,
+            component=RuntimeDiagnosticComponent.DELIVERY_CONSUMER_REGISTRY,
+            operation=operation,
+            error=error,
+        )
+
 
 class DurableDeliveryRuntime:
     """Bounded, isolated orchestration over a durable delivery ledger."""
@@ -582,6 +671,7 @@ class DurableDeliveryRuntime:
         error_classifier: ConsumerErrorClassifier | None = None,
         drop_policy: DropAuthorizationPolicy | None = None,
         diagnostic_projector: DeliveryDiagnosticProjector | None = None,
+        diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
         clock: Clock | None = None,
     ) -> None:
         if consumers is not None and (
@@ -600,12 +690,31 @@ class DurableDeliveryRuntime:
             raise EventDeliveryConfigurationError(
                 "delivery runtime and consumer registry must share one event store"
             )
+        if (
+            consumers is not None
+            and diagnostic_fallback is not None
+            and consumers.diagnostic_fallback is not diagnostic_fallback
+        ):
+            raise EventDeliveryConfigurationError(
+                "delivery runtime and consumer registry must share one "
+                "diagnostic fallback"
+            )
         self._store = store
         self._clock = clock or _system_clock
+        self._diagnostic_fallback = (
+            diagnostic_fallback
+            if diagnostic_fallback is not None
+            else (
+                consumers.diagnostic_fallback
+                if consumers is not None
+                else LocalRuntimeDiagnosticFallback()
+            )
+        )
         self._consumers = consumers or DurableConsumerRegistry(
             store,
             idempotency_capabilities=idempotency_capabilities,
             inbox_transaction_runner=inbox_transaction_runner,
+            diagnostic_fallback=self._diagnostic_fallback,
             clock=self._clock,
         )
         self._inbox_transaction_runner = self._consumers.inbox_transaction_runner
@@ -619,6 +728,10 @@ class DurableDeliveryRuntime:
     @property
     def consumers(self) -> DurableConsumerRegistry:
         return self._consumers
+
+    @property
+    def diagnostic_fallback(self) -> LocalRuntimeDiagnosticFallback:
+        return self._diagnostic_fallback
 
     def register(
         self,
@@ -667,21 +780,45 @@ class DurableDeliveryRuntime:
             limit=requested_limit,
             stream_id=stream_id,
         )
-        claimed = tuple(
-            _safe_store_call(
-                "delivery claim",
-                lambda: store.claim_deliveries(request),
-            )
+        claim_response = self._store_call(
+            RuntimeDiagnosticOperation.DELIVERY_CLAIM,
+            "delivery claim",
+            lambda: store.claim_deliveries(request),
         )
+        try:
+            claimed = tuple(claim_response)
+        except Exception as error:
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DELIVERY_CLAIM,
+                error,
+            )
+            raise
         if len(claimed) > requested_limit:
-            raise EventDeliveryContractError(
+            failure = EventDeliveryContractError(
                 "durable store exceeded the bounded delivery claim limit"
             )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DELIVERY_CLAIM,
+                failure,
+            )
+            raise failure
         if any(not isinstance(item, ClaimedDelivery) for item in claimed):
-            raise EventDeliveryContractError(
+            failure = EventDeliveryContractError(
                 "durable store returned an invalid claimed delivery"
             )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DELIVERY_CLAIM,
+                failure,
+            )
+            raise failure
         duplicate_delivery_ids = _duplicate_delivery_ids(claimed)
+        if duplicate_delivery_ids:
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DELIVERY_CLAIM,
+                EventDeliveryContractError(
+                    "durable store returned a duplicate delivery claim"
+                ),
+            )
         attempts = tuple(
             (
                 _failed_attempt(
@@ -730,7 +867,8 @@ class DurableDeliveryRuntime:
             AutomaticDeliveryOperation.REQUEUE,
         )
         store = self._require_store()
-        record = _safe_store_call(
+        record = self._store_call(
+            RuntimeDiagnosticOperation.DEAD_LETTER_LOOKUP,
             "dead-letter lookup",
             lambda: store.get_dead_letter(
                 action.dead_letter_id,
@@ -741,6 +879,15 @@ class DurableDeliveryRuntime:
             raise EventDeadLetterNotFoundError(
                 "dead letter is not available in subscription scope"
             )
+        if not isinstance(record, DeadLetterRecord):
+            failure = EventDeliveryContractError(
+                "durable store returned an invalid dead-letter value"
+            )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DEAD_LETTER_LOOKUP,
+                failure,
+            )
+            raise failure
         if (
             record.subscription_id != subscription.subscription_id
             or record.subscription_version != subscription.subscription_version
@@ -751,10 +898,20 @@ class DurableDeliveryRuntime:
             raise EventConsumerMismatchError(
                 "dead letter does not belong to the selected subscription"
             )
-        delivery = _safe_store_call(
+        delivery = self._store_call(
+            RuntimeDiagnosticOperation.DEAD_LETTER_REQUEUE,
             "dead-letter requeue",
             lambda: store.requeue_dead_letter(action),
         )
+        if not isinstance(delivery, DeliveryRecord):
+            failure = EventDeliveryContractError(
+                "durable store returned an invalid requeue delivery"
+            )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DEAD_LETTER_REQUEUE,
+                failure,
+            )
+            raise failure
         if (
             delivery.event_id != record.event_id
             or delivery.subscription_id != record.subscription_id
@@ -763,9 +920,14 @@ class DurableDeliveryRuntime:
             or delivery.delivery_generation <= record.delivery_generation
             or delivery.state is not DeliveryState.PENDING
         ):
-            raise EventDeliveryContractError(
+            failure = EventDeliveryContractError(
                 "durable store returned an invalid requeue delivery"
             )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DEAD_LETTER_REQUEUE,
+                failure,
+            )
+            raise failure
         return delivery
 
     def _process_claim(
@@ -785,6 +947,10 @@ class DurableDeliveryRuntime:
                 requested_at=requested_at,
             )
         except Exception as exc:
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DELIVERY_CLAIM,
+                exc,
+            )
             return _failed_attempt(
                 claimed,
                 phase=DeliveryFailurePhase.CLAIM_VALIDATION,
@@ -972,6 +1138,10 @@ class DurableDeliveryRuntime:
             result = self._require_store().settle_delivery(settlement)
             _validate_settlement_result(claimed, settlement, result)
         except Exception as exc:
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.DELIVERY_SETTLEMENT,
+                exc,
+            )
             return _failed_attempt(
                 claimed,
                 phase=DeliveryFailurePhase.SETTLEMENT,
@@ -1086,6 +1256,36 @@ class DurableDeliveryRuntime:
                 "durable delivery requires an event store"
             )
         return self._store
+
+    def _store_call(
+        self,
+        diagnostic_operation: RuntimeDiagnosticOperation,
+        operation: str,
+        call: Callable[[], _T],
+    ) -> _T:
+        failed = False
+        try:
+            return call()
+        except Exception as error:
+            self._record_store_failure(diagnostic_operation, error)
+            failed = True
+        if failed:
+            raise EventDeliveryStoreOperationError(
+                f"durable event store {operation} failed"
+            )
+        raise AssertionError("unreachable durable store call state")
+
+    def _record_store_failure(
+        self,
+        operation: RuntimeDiagnosticOperation,
+        error: Exception,
+    ) -> None:
+        self._diagnostic_fallback.record(
+            category=RuntimeDiagnosticCategory.DELIVERY_STORE_FAILURE,
+            component=RuntimeDiagnosticComponent.DELIVERY_RUNTIME,
+            operation=operation,
+            error=error,
+        )
 
 
 def _claim_operations(
@@ -1314,6 +1514,8 @@ def _subscription_fingerprint(subscription: DurableSubscription) -> str:
 def _register_subscription_safely(
     store: EventStorePort,
     subscription: DurableSubscription,
+    *,
+    diagnostic_fallback: LocalRuntimeDiagnosticFallback,
 ) -> DurableSubscription:
     position: tuple[str, int, str, int, int] | None = None
     failed = False
@@ -1327,7 +1529,13 @@ def _register_subscription_safely(
             error.requested_sequence,
             error.maximum_sequence,
         )
-    except Exception:
+    except Exception as error:
+        diagnostic_fallback.record(
+            category=RuntimeDiagnosticCategory.DELIVERY_STORE_FAILURE,
+            component=RuntimeDiagnosticComponent.DELIVERY_CONSUMER_REGISTRY,
+            operation=RuntimeDiagnosticOperation.SUBSCRIPTION_REGISTRATION,
+            error=error,
+        )
         failed = True
     if position is not None:
         raise EventSubscriptionPositionError(
@@ -1342,20 +1550,6 @@ def _register_subscription_safely(
             "durable subscription registration failed"
         )
     raise AssertionError("unreachable subscription registration state")
-
-
-def _safe_store_call(operation: str, call: Callable[[], _T]) -> _T:
-    failed = False
-    try:
-        return call()
-    except Exception:
-        failed = True
-    if failed:
-        raise EventDeliveryStoreOperationError(
-            f"durable event store {operation} failed"
-        )
-    raise AssertionError("unreachable durable store call state")
-
 
 def _validate_consumer(consumer: object) -> str:
     validation_failed = False

@@ -32,7 +32,7 @@
 - [x] 4.5 Implement bounded exponential retry with cap and jitter, terminal dead letters, redacted failure diagnostics, and tests for success within budget, poison events, exhaustion, and dead-letter write failure.
 - [ ] 4.6 Implement leased delivery claims with generation/fencing, crash recovery, stale-ack rejection, highest-contiguous-terminal checkpoints, same-subscription-stream claim ordering, and auditable terminal gaps; implement authorized requeue as a non-frontier-moving late-repair generation with out-of-order-repair capability checks, inbox-preserving ACK redelivery, and compensation/new-version fallback tests.
 - [ ] 4.7 Implement per-consumer batch, in-flight, and concurrency limits plus pending count, lag, and oldest-age signals; test slow consumers, backlog, storage admission failure, and recovery without unbounded memory growth.
-- [ ] 4.8 Define event-runtime diagnostic fallback so failure of the event store or telemetry path writes one bounded nonrecursive local/process diagnostic and never attempts to report the failure through the same unavailable event path indefinitely.
+- [x] 4.8 Define event-runtime diagnostic fallback so failure of the event store or telemetry path writes one bounded nonrecursive local/process diagnostic and never attempts to report the failure through the same unavailable event path indefinitely.
 
 ## 5. Workflow And Harness Cutover
 
