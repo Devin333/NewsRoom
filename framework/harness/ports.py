@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from framework.harness.artifacts.ports import ArtifactRef, ArtifactWriteRequest
 from framework.harness.context.models import ContextEnvelope
@@ -22,6 +22,17 @@ from framework.harness.skills.evolution.models import (
     SkillRollbackPlan,
 )
 from framework.harness.workers.result import HarnessWorkerResult
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from framework.harness.control_plane.activity import HarnessActivity
+    from framework.harness.control_plane.durable_events import (
+        HarnessRecovery,
+        HarnessTransitionCommit,
+    )
+    from framework.harness.control_plane.state import HarnessRunSpec, HarnessState
+    from framework.harness.control_plane.transition import HarnessTransitionKind
 
 
 @runtime_checkable
@@ -70,6 +81,55 @@ class HarnessArtifactPort(Protocol):
 class HarnessEventPort(Protocol):
     def record(self, event: HarnessEvent) -> HarnessEvent:
         """Commit an event and return its authoritative post-commit projection."""
+        ...
+
+
+@runtime_checkable
+class HarnessTransitionPort(HarnessEventPort, Protocol):
+    def create_activity(
+        self,
+        *,
+        run_id: str,
+        step_id: str,
+        attempt: int,
+        activity_type: str,
+        inputs: dict[str, Any],
+    ) -> HarnessActivity:
+        """Create an activity using the port-owned authoritative identity scope."""
+        ...
+
+    def commit_transition(
+        self,
+        previous: HarnessState | None,
+        state: HarnessState,
+        *,
+        from_version: int,
+        transition_kind: HarnessTransitionKind | str,
+        occurred_at: datetime,
+        decision: Any | None = None,
+        gate_results: Any | None = None,
+        budget: Any | None = None,
+        activity: HarnessActivity | None = None,
+        activity_result_event_id: str | None = None,
+    ) -> HarnessTransitionCommit:
+        ...
+
+    def recover(self, run_spec: HarnessRunSpec) -> HarnessRecovery:
+        ...
+
+    def read_history(self, run_id: str) -> tuple[HarnessEvent, ...]:
+        ...
+
+    def require_activity_storage(self) -> None:
+        ...
+
+    def record_activity_result(
+        self,
+        activity: HarnessActivity,
+        result: HarnessWorkerResult,
+        *,
+        completed_at: datetime,
+    ) -> HarnessEvent:
         ...
 
 
@@ -157,5 +217,6 @@ __all__ = [
     "HarnessSubagentPort",
     "HarnessToolPort",
     "HarnessTracePort",
+    "HarnessTransitionPort",
     "HarnessWorkerPort",
 ]

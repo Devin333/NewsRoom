@@ -8,7 +8,7 @@ from framework.artifacts.paths import ArtifactPathError
 from framework.harness import (
     FakeArtifactPort,
     HarnessEvent,
-    HarnessEventPort,
+    HarnessTransitionPort,
     InMemoryHarnessEventPort,
 )
 
@@ -23,15 +23,34 @@ from tests.business.research.fakes import (
 )
 
 
-class _WriteOnlyHarnessEventPort:
-    """Valid HarnessEventPort implementation without a public event buffer."""
+class _WriteOnlyHarnessTransitionPort:
+    """Transition-capable test adapter without a public event buffer."""
 
     def __init__(self) -> None:
+        self._delegate = InMemoryHarnessEventPort()
         self.record_count = 0
 
     def record(self, event: HarnessEvent) -> HarnessEvent:
         self.record_count += 1
-        return event
+        return self._delegate.record(event)
+
+    def create_activity(self, **kwargs):
+        return self._delegate.create_activity(**kwargs)
+
+    def commit_transition(self, *args, **kwargs):
+        return self._delegate.commit_transition(*args, **kwargs)
+
+    def recover(self, *args, **kwargs):
+        return self._delegate.recover(*args, **kwargs)
+
+    def read_history(self, *args, **kwargs):
+        return self._delegate.read_history(*args, **kwargs)
+
+    def require_activity_storage(self) -> None:
+        self._delegate.require_activity_storage()
+
+    def record_activity_result(self, *args, **kwargs):
+        return self._delegate.record_activity_result(*args, **kwargs)
 
 
 def _use_case(
@@ -40,7 +59,7 @@ def _use_case(
     compiler: FakeResearchDocumentCompiler | None = None,
     rag: FakeResearchRAGRuntime | None = None,
     artifact_port: FakeArtifactPort | None = None,
-    event_port_factory: Callable[[str], HarnessEventPort] | None = None,
+    event_port_factory: Callable[[str], HarnessTransitionPort] | None = None,
 ) -> AnalyzePaperUseCase:
     runtime = ResearchSinglePaperRuntime(
         source_provider=FakeResearchSourceProvider(),
@@ -81,7 +100,7 @@ def test_analyze_paper_use_case_runs_single_paper_loop_successfully() -> None:
 
 
 def test_analyze_uses_committed_events_without_reading_port_storage() -> None:
-    event_port = _WriteOnlyHarnessEventPort()
+    event_port = _WriteOnlyHarnessTransitionPort()
 
     result = _use_case(event_port_factory=lambda run_id: event_port).analyze(
         AnalyzePaperRequest(
@@ -100,9 +119,9 @@ def test_analyze_uses_committed_events_without_reading_port_storage() -> None:
 def test_analyze_rejects_unsafe_run_id_before_event_port_factory() -> None:
     factory_calls: list[str] = []
 
-    def event_port_factory(run_id: str) -> HarnessEventPort:
+    def event_port_factory(run_id: str) -> HarnessTransitionPort:
         factory_calls.append(run_id)
-        return _WriteOnlyHarnessEventPort()
+        return _WriteOnlyHarnessTransitionPort()
 
     with pytest.raises(ArtifactPathError, match="single path segment"):
         _use_case(event_port_factory=event_port_factory).analyze(

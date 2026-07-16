@@ -364,7 +364,8 @@ class _InvalidAppendResultUnitOfWork:
         self.commits = 0
         self.rollbacks = 0
 
-    def append_event(self, event):
+    def append_event(self, event, *, expected_last_sequence=None):
+        del expected_last_sequence
         return SimpleNamespace(
             event=StoredEvent(
                 candidate=event,

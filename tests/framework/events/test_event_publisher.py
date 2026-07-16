@@ -40,11 +40,18 @@ class _UnitOfWork:
         self.stored = stored
         self.commit_error = commit_error
         self.appended: list[EventCandidate] = []
+        self.expected_last_sequences: list[int | None] = []
         self.commits = 0
         self.rollbacks = 0
 
-    def append_event(self, event: EventCandidate) -> AppendResult:
+    def append_event(
+        self,
+        event: EventCandidate,
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> AppendResult:
         self.appended.append(event)
+        self.expected_last_sequences.append(expected_last_sequence)
         stored = self.stored or StoredEvent(
             candidate=event,
             observed_at=OBSERVED_AT,
@@ -167,6 +174,27 @@ def test_validation_and_security_fail_before_store_or_sequence_allocation() -> N
         runtime.publish(_request(extensions={"stream_sequence": 999}))
 
     assert store.unit_of_work_calls == 0
+    assert unit_of_work.appended == []
+
+
+def test_publish_forwards_expected_stream_position_to_unit_of_work() -> None:
+    unit_of_work = _UnitOfWork()
+    runtime = EventRuntime(store=_Store(unit_of_work), schema_catalog=_catalog())
+
+    stored = runtime.publish(_request(), expected_last_sequence=2)
+
+    assert stored.stream_sequence == 3
+    assert unit_of_work.expected_last_sequences == [2]
+
+
+@pytest.mark.parametrize("value", [-1, True, 1.5])
+def test_publish_rejects_invalid_expected_stream_position_before_store(value) -> None:
+    unit_of_work = _UnitOfWork()
+    runtime = EventRuntime(store=_Store(unit_of_work), schema_catalog=_catalog())
+
+    with pytest.raises((TypeError, ValueError), match="expected_last_sequence"):
+        runtime.publish(_request(), expected_last_sequence=value)
+
     assert unit_of_work.appended == []
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -10,7 +12,7 @@ from framework.harness.control_plane.state import (
     HarnessStepState,
     HarnessStepStatus,
 )
-from framework.shared.time import utc_now
+from framework.shared.time import ensure_utc, utc_now
 
 
 RUN_TRANSITIONS: dict[HarnessRunStatus, frozenset[HarnessRunStatus]] = {
@@ -101,6 +103,7 @@ def transition_run(
     status: HarnessRunStatus | str,
     *,
     metadata: dict[str, Any] | None = None,
+    at: datetime | None = None,
 ) -> HarnessState:
     next_status = HarnessRunStatus(status)
     if next_status not in RUN_TRANSITIONS[state.status]:
@@ -108,11 +111,12 @@ def transition_run(
             "illegal Harness run transition",
             details={"from": state.status.value, "to": next_status.value},
         )
+    transition_time = utc_now() if at is None else ensure_utc(at)
     return replace(
         state,
         status=next_status,
         metadata={**state.metadata, **(metadata or {})},
-        updated_at=utc_now(),
+        updated_at=transition_time,
     )
 
 
@@ -124,12 +128,15 @@ def transition_step(
     attempts: int | None = None,
     replans: int | None = None,
     output_ref: str | None = None,
+    clear_output_ref: bool = False,
     error: str | None = None,
     metadata: dict[str, Any] | None = None,
+    metadata_remove: Iterable[str] = (),
     current_step_id: str | None = None,
     turn_increment: int = 0,
     replan_increment: int = 0,
     worker_call_increment: int = 0,
+    at: datetime | None = None,
 ) -> HarnessState:
     step_state = get_step_state(state, step_id)
     next_status = HarnessStepStatus(status)
@@ -138,15 +145,32 @@ def transition_step(
             "illegal Harness step transition",
             details={"step_id": step_id, "from": step_state.status.value, "to": next_status.value},
         )
+    if clear_output_ref and output_ref is not None:
+        raise HarnessValidationError(
+            "output_ref cannot be supplied when clear_output_ref is true"
+        )
+    transition_time = utc_now() if at is None else ensure_utc(at)
+    removed_metadata = {str(key) for key in metadata_remove}
     updated_step = replace(
         step_state,
         status=next_status,
         attempts=step_state.attempts if attempts is None else attempts,
         replans=step_state.replans if replans is None else replans,
-        output_ref=step_state.output_ref if output_ref is None else output_ref,
+        output_ref=(
+            None
+            if clear_output_ref
+            else step_state.output_ref if output_ref is None else output_ref
+        ),
         error=error,
-        metadata={**step_state.metadata, **(metadata or {})},
-        updated_at=utc_now(),
+        metadata={
+            **{
+                key: value
+                for key, value in step_state.metadata.items()
+                if key not in removed_metadata
+            },
+            **(metadata or {}),
+        },
+        updated_at=transition_time,
     )
     return replace_step_state(
         state,
@@ -155,6 +179,7 @@ def transition_step(
         turn_increment=turn_increment,
         replan_increment=replan_increment,
         worker_call_increment=worker_call_increment,
+        at=transition_time,
     )
 
 
@@ -167,6 +192,7 @@ def replace_step_state(
     replan_increment: int = 0,
     worker_call_increment: int = 0,
     metadata: dict[str, Any] | None = None,
+    at: datetime | None = None,
 ) -> HarnessState:
     if turn_increment < 0 or replan_increment < 0 or worker_call_increment < 0:
         raise HarnessValidationError("state counter increments must not be negative")
@@ -175,6 +201,7 @@ def replace_step_state(
     )
     if not any(existing.step_id == step_state.step_id for existing in state.step_states):
         raise HarnessValidationError("step state must reference a workflow step")
+    transition_time = utc_now() if at is None else ensure_utc(at)
     return replace(
         state,
         step_states=replaced,
@@ -183,7 +210,7 @@ def replace_step_state(
         replan_count=state.replan_count + replan_increment,
         worker_call_count=state.worker_call_count + worker_call_increment,
         metadata={**state.metadata, **(metadata or {})},
-        updated_at=utc_now(),
+        updated_at=transition_time,
     )
 
 

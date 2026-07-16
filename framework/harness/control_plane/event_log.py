@@ -10,7 +10,17 @@ from framework.events.canonical import (
     normalize_canonical_json,
     thaw_canonical_json,
 )
+from framework.events.errors import EventStoreCorruptionError
+from framework.harness.control_plane.activity import (
+    HARNESS_ACTIVITY_EXTENSION,
+    HarnessActivity,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.transition import (
+    HARNESS_EVENT_SOURCE,
+    HARNESS_TRANSITION_EVENT_TYPE,
+    HarnessTransitionCommitted,
+)
 from framework.shared.json import stable_json_dumps, to_jsonable
 from framework.shared.time import format_datetime, parse_datetime, utc_now
 
@@ -126,6 +136,10 @@ def event_log_entry_from_harness_event(event: Any, *, phase_index: int | None = 
     payload = event.to_dict() if hasattr(event, "to_dict") else dict(event)
     metadata = dict(payload.get("metadata", {}))
     event_payload = dict(payload.get("payload", {}))
+    transition_state = _transition_state(
+        str(payload.get("event_type")),
+        event_payload,
+    )
     metadata.update(event_payload if isinstance(event_payload, dict) else {"payload": event_payload})
     if phase_index is not None:
         metadata["phase_index"] = phase_index
@@ -135,12 +149,16 @@ def event_log_entry_from_harness_event(event: Any, *, phase_index: int | None = 
         step_id=payload.get("step_id"),
         event_type=str(payload.get("event_type")),
         status_before=metadata.get("status_before") or event_payload.get("status_before"),
-        status_after=metadata.get("status_after") or event_payload.get("status_after"),
+        status_after=(
+            metadata.get("status_after")
+            or event_payload.get("status_after")
+            or transition_state.get("status")
+        ),
         decision=event_payload if str(payload.get("event_type")) == "decision_recorded" else None,
         worker_type=event_payload.get("worker_type") if isinstance(event_payload, dict) else None,
         error=event_payload.get("error") if isinstance(event_payload, dict) else None,
         metadata=metadata,
-        timestamp=parse_datetime(payload.get("occurred_at")) or utc_now(),
+        timestamp=_required_timestamp(payload.get("occurred_at")),
     )
 
 
@@ -150,24 +168,35 @@ def event_log_entry_from_stored_event(event: StoredEvent) -> HarnessEventLogEntr
     if not isinstance(event, StoredEvent):
         raise TypeError("event must be StoredEvent")
     event.verify_integrity()
+    if event.source != HARNESS_EVENT_SOURCE:
+        raise EventStoreCorruptionError("stored Harness event source is invalid")
     run_id = event.business_context.run_id
     if run_id is None:
         raise HarnessValidationError("stored Harness event requires business_context.run_id")
     event_payload = thaw_canonical_json(event.payload or {})
     if not isinstance(event_payload, dict):
         raise HarnessValidationError("stored Harness payload must be an object")
+    if event.event_type == HARNESS_TRANSITION_EVENT_TYPE:
+        event_payload = HarnessTransitionCommitted.from_stored_event(
+            event
+        ).to_payload()
+    elif event.data_schema != "newsroom.harness-event/v1":
+        raise EventStoreCorruptionError("stored Harness event schema is invalid")
     harness_extension = thaw_canonical_json(event.extensions.get("harness", {}))
     if not isinstance(harness_extension, dict):
         raise HarnessValidationError("stored Harness extension must be an object")
     transition_metadata = harness_extension.get("metadata", {})
     if not isinstance(transition_metadata, dict):
         raise HarnessValidationError("stored Harness metadata must be an object")
+    activity_projection = _stored_activity_projection(event)
     metadata = {
         **transition_metadata,
         **event_payload,
+        **activity_projection,
         "canonical_source": event.source,
         "canonical_data_schema": event.data_schema,
     }
+    transition_state = _transition_state(event.event_type, event_payload)
     return HarnessEventLogEntry(
         event_id=event.event_id,
         run_id=run_id,
@@ -177,12 +206,21 @@ def event_log_entry_from_stored_event(event: StoredEvent) -> HarnessEventLogEntr
             transition_metadata.get("status_before", event_payload.get("status_before"))
         ),
         status_after=_optional_text(
-            transition_metadata.get("status_after", event_payload.get("status_after"))
+            transition_metadata.get(
+                "status_after",
+                event_payload.get("status_after", transition_state.get("status")),
+            )
         ),
         decision=event_payload if event.event_type == "decision_recorded" else None,
-        worker_type=_optional_text(event_payload.get("worker_type")),
-        input_ref=_optional_text(event_payload.get("input_ref")),
-        output_ref=_optional_text(event_payload.get("output_ref")),
+        worker_type=_optional_text(
+            event_payload.get("worker_type", activity_projection.get("activity_type"))
+        ),
+        input_ref=_optional_text(
+            event_payload.get("input_ref", activity_projection.get("input_ref"))
+        ),
+        output_ref=_optional_text(
+            event_payload.get("output_ref", activity_projection.get("output_ref"))
+        ),
         retry_count=_optional_int(event_payload.get("retry_count")),
         error=_optional_text(event_payload.get("error")),
         metadata=metadata,
@@ -228,6 +266,59 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _transition_state(
+    event_type: str,
+    payload: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    if event_type != HARNESS_TRANSITION_EVENT_TYPE:
+        return {}
+    state = payload.get("state")
+    if not isinstance(state, Mapping):
+        raise HarnessValidationError("Harness transition event requires a state projection")
+    return state
+
+
+def _stored_activity_projection(event: StoredEvent) -> dict[str, Any]:
+    if event.payload_ref is None:
+        return {}
+    extension = thaw_canonical_json(
+        event.extensions.get(HARNESS_ACTIVITY_EXTENSION, {})
+    )
+    if not isinstance(extension, Mapping):
+        raise HarnessValidationError(
+            "stored Harness activity extension must be an object"
+        )
+    activity_value = extension.get("activity")
+    if not isinstance(activity_value, Mapping):
+        raise HarnessValidationError(
+            "stored Harness activity descriptor is missing"
+        )
+    try:
+        activity = HarnessActivity.from_dict(activity_value)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            "stored Harness activity descriptor is invalid"
+        ) from exc
+    return {
+        "activity_id": activity.activity_id,
+        "activity_type": activity.activity_type,
+        "activity_attempt": activity.attempt,
+        "activity_status": _optional_text(extension.get("status")),
+        "input_ref": activity.input_checksum,
+        "output_ref": event.payload_ref.expected_checksum,
+    }
+
+
+def _required_timestamp(value: Any):
+    try:
+        timestamp = parse_datetime(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HarnessValidationError("Harness event requires a valid occurred_at") from exc
+    if timestamp is None:
+        raise HarnessValidationError("Harness event requires a valid occurred_at")
+    return timestamp
 
 
 __all__ = [

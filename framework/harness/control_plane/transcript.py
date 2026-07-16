@@ -4,7 +4,18 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from framework.events.canonical import StoredEvent, thaw_canonical_json
+from framework.events.errors import EventStoreCorruptionError
+from framework.harness.control_plane.activity import (
+    HARNESS_ACTIVITY_EXTENSION,
+    HarnessActivity,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.transition import (
+    HARNESS_EVENT_SOURCE,
+    HARNESS_TRANSITION_EVENT_TYPE,
+    HarnessTransitionCommitted,
+)
 from framework.shared.json import stable_json_dumps, to_jsonable
 from framework.shared.time import format_datetime, parse_datetime, utc_now
 
@@ -133,12 +144,15 @@ def transcript_entry_from_event(event: Any, *, phase_index: int | None = None) -
     payload = event.to_dict() if hasattr(event, "to_dict") else dict(event)
     event_type = str(payload.get("event_type"))
     event_payload = dict(payload.get("payload", {})) if isinstance(payload.get("payload", {}), dict) else {}
-    phase = _transcript_phase_label(event_payload.get("phase", _phase_from_event_type(event_type)))
+    phase = _transcript_phase_label(
+        event_payload.get("phase", _phase_from_event(event_type, event_payload))
+    )
     metadata = dict(payload.get("metadata", {}))
     metadata.update({"event_type": event_type, "event_payload": event_payload})
     if phase_index is not None:
         metadata["phase_index"] = phase_index
     return HarnessTranscriptEntry(
+        entry_id=_optional_text(payload.get("event_id")),
         run_id=str(payload.get("run_id")),
         step_id=payload.get("step_id"),
         phase=phase,
@@ -150,8 +164,88 @@ def transcript_entry_from_event(event: Any, *, phase_index: int | None = None) -
         worker_call_ref=event_payload.get("worker_call_ref"),
         artifact_refs=tuple(event_payload.get("artifact_refs", event_payload.get("artifacts", ()))),
         metadata=metadata,
-        timestamp=parse_datetime(payload.get("occurred_at")) or utc_now(),
+        timestamp=_required_timestamp(payload.get("occurred_at")),
     )
+
+
+def transcript_entry_from_stored_event(
+    event: StoredEvent,
+    *,
+    phase_index: int | None = None,
+) -> HarnessTranscriptEntry:
+    """Project one canonical Harness fact into the bounded transcript view."""
+
+    if not isinstance(event, StoredEvent):
+        raise TypeError("event must be StoredEvent")
+    event.verify_integrity()
+    if event.source != HARNESS_EVENT_SOURCE:
+        raise EventStoreCorruptionError("stored Harness event source is invalid")
+    run_id = event.business_context.run_id
+    if run_id is None:
+        raise HarnessValidationError(
+            "stored Harness event requires business_context.run_id"
+        )
+    payload = thaw_canonical_json(event.payload or {})
+    if not isinstance(payload, dict):
+        raise HarnessValidationError("stored Harness payload must be an object")
+    if event.event_type == HARNESS_TRANSITION_EVENT_TYPE:
+        payload = HarnessTransitionCommitted.from_stored_event(event).to_payload()
+    elif event.data_schema != "newsroom.harness-event/v1":
+        raise EventStoreCorruptionError("stored Harness event schema is invalid")
+    if event.payload_ref is not None:
+        payload = _stored_activity_payload(event)
+    return transcript_entry_from_event(
+        {
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "run_id": run_id,
+            "step_id": event.business_context.step_id,
+            "payload": payload,
+            "occurred_at": format_datetime(event.occurred_at),
+            "metadata": {
+                "stream_id": event.stream_id,
+                "stream_sequence": event.stream_sequence,
+                "content_checksum": event.content_checksum,
+                "record_checksum": event.record_checksum,
+            },
+        },
+        phase_index=phase_index,
+    )
+
+
+def _phase_from_event(event_type: str, payload: dict[str, Any]) -> str:
+    if event_type == HARNESS_TRANSITION_EVENT_TYPE:
+        return _phase_from_transition_kind(payload.get("transition_kind"))
+    return _phase_from_event_type(event_type)
+
+
+def _stored_activity_payload(event: StoredEvent) -> dict[str, Any]:
+    extension = thaw_canonical_json(
+        event.extensions.get(HARNESS_ACTIVITY_EXTENSION, {})
+    )
+    if not isinstance(extension, dict):
+        raise HarnessValidationError(
+            "stored Harness activity extension must be an object"
+        )
+    activity_value = extension.get("activity")
+    if not isinstance(activity_value, dict):
+        raise HarnessValidationError(
+            "stored Harness activity descriptor is missing"
+        )
+    try:
+        activity = HarnessActivity.from_dict(activity_value)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            "stored Harness activity descriptor is invalid"
+        ) from exc
+    assert event.payload_ref is not None
+    return {
+        "activity_id": activity.activity_id,
+        "worker_type": activity.activity_type,
+        "input_ref": activity.input_checksum,
+        "output_ref": event.payload_ref.expected_checksum,
+        "status": extension.get("status"),
+    }
 
 
 def _phase_from_event_type(event_type: str) -> str:
@@ -168,6 +262,27 @@ def _phase_from_event_type(event_type: str) -> str:
     if "decision" in event_type:
         return "decision"
     return "event"
+
+
+def _phase_from_transition_kind(value: Any) -> str:
+    transition_kind = str(value or "").strip()
+    for phase in ("plan", "execute", "verify", "replan"):
+        if transition_kind == phase or transition_kind.startswith(f"{phase}_"):
+            return phase
+    if transition_kind == "worker_result_committed":
+        return "execute"
+    if transition_kind in {"halt", "failure", "budget_exhaustion"}:
+        return "halt"
+    if transition_kind in {
+        "wait",
+        "wait_for_approval",
+        "approval_resume",
+        "approval_cancel",
+    }:
+        return "wait"
+    if transition_kind in {"retry", "route_to_repair", "route_to_step"}:
+        return "decision"
+    return transition_kind or "transition"
 
 
 def _transcript_phase_label(value: Any) -> str:
@@ -189,9 +304,27 @@ def _stable_entry_id(run_id: str, phase: str, step_id: str | None, metadata: dic
     return f"harness-transcript://{run_id}/{digest}"
 
 
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _required_timestamp(value: Any):
+    try:
+        timestamp = parse_datetime(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HarnessValidationError("Harness event requires a valid occurred_at") from exc
+    if timestamp is None:
+        raise HarnessValidationError("Harness event requires a valid occurred_at")
+    return timestamp
+
+
 __all__ = [
     "HarnessTranscript",
     "HarnessTranscriptEntry",
     "InMemoryHarnessTranscriptStore",
     "transcript_entry_from_event",
+    "transcript_entry_from_stored_event",
 ]

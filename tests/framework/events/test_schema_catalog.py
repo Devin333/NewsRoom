@@ -436,6 +436,10 @@ def test_default_catalog_accepts_harness_safe_summary_contracts() -> None:
         "worker_called": {
             "projection_schema": "harness-safe-summary/v1",
             "worker_type": "llm",
+            "activity_id": "harness-activity:" + "1" * 64,
+            "idempotency_key": "harness-activity:" + "1" * 64,
+            "activity_attempt": 1,
+            "activity_contract_version": "newsroom.harness-worker-activity/v1",
             "input_ref": "sha256:" + "3" * 64,
             "input_count": 1,
             "metadata_ref": "sha256:" + "4" * 64,
@@ -474,6 +478,29 @@ def test_default_catalog_accepts_harness_safe_summary_contracts() -> None:
             },
         )
     assert invalid_ref.value.path == "$.input_ref"
+
+    incomplete_marker = dict(summaries["worker_called"])
+    incomplete_marker.pop("activity_id")
+    with pytest.raises(EventSchemaValidationError) as incomplete_activity:
+        catalog.validate(
+            "worker_called",
+            "newsroom.harness-event/v1",
+            incomplete_marker,
+        )
+    assert incomplete_activity.value.rule == "anyOf"
+
+    legacy_marker = {
+        "run_id": "run-legacy",
+        "step_id": "collect",
+        "worker_type": "llm",
+        "inputs": {},
+        "metadata": {},
+    }
+    assert catalog.validate(
+        "worker_called",
+        "newsroom.harness-event/v1",
+        legacy_marker,
+    ) == legacy_marker
 
     with pytest.raises(EventSchemaValidationError) as nested_bypass:
         catalog.validate(

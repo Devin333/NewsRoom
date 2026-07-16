@@ -15,7 +15,7 @@ from framework.harness import (
     HarnessBudget,
     HarnessControlPlane,
     HarnessEvent,
-    HarnessEventPort,
+    HarnessTransitionPort,
     HarnessGateResult,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -127,7 +127,7 @@ class ResearchSinglePaperRuntime:
         github_repository: Any,
         rag_runtime: Any,
         artifact_port: ArtifactPort,
-        event_port_factory: Callable[[str], HarnessEventPort],
+        event_port_factory: Callable[[str], HarnessTransitionPort],
         taxonomy_registry: TaxonomyRegistry | None = None,
         context_assembler: ContextAssembler | None = None,
         quality_gate: ResearchQualityGate | None = None,
@@ -154,8 +154,8 @@ class ResearchSinglePaperRuntime:
         run_id = validate_artifact_path_segment(request.run_id, field="run_id")
         workspace = _ResearchRunWorkspace(request=request)
         event_port = self.event_port_factory(run_id)
-        if not isinstance(event_port, HarnessEventPort):
-            raise TypeError("event_port_factory must return HarnessEventPort")
+        if not isinstance(event_port, HarnessTransitionPort):
+            raise TypeError("event_port_factory must return HarnessTransitionPort")
         workflow = build_paper_analysis_workflow_spec()
         run_spec = HarnessRunSpec(
             run_id=run_id,

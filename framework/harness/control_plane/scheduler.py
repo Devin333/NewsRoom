@@ -138,7 +138,10 @@ class HarnessScheduler:
             run_id=state.run_spec.run_id,
             step_id=step_id,
             reason="plan gate failed and replan budget is exhausted",
-            payload={"gate_results": [result.to_dict() for result in gate_results]},
+            payload={
+                "gate_results": [result.to_dict() for result in gate_results],
+                "budget_exhausted": "replans",
+            },
         )
 
     def _after_execute(
@@ -243,7 +246,11 @@ class HarnessScheduler:
             run_id=state.run_spec.run_id,
             step_id=step_id,
             reason="verification failed and replan budget is exhausted",
-            payload={"gate_results": failed_results, "quality_verdict": _verdict_payload(quality_verdict)},
+            payload={
+                "gate_results": failed_results,
+                "quality_verdict": _verdict_payload(quality_verdict),
+                "budget_exhausted": "replans",
+            },
         )
 
     def _after_step_success(
@@ -288,6 +295,7 @@ class HarnessScheduler:
                 run_id=state.run_spec.run_id,
                 step_id=step_id,
                 reason="worker call budget is exhausted",
+                payload={"budget_exhausted": "worker_calls"},
             )
         return HarnessDecision(
             decision_type=HarnessDecisionType.EXECUTE_STEP,
@@ -304,7 +312,11 @@ class HarnessScheduler:
                 run_id=state.run_spec.run_id,
                 step_id=step_id,
                 reason="turn budget is exhausted",
-                payload={"turn_count": state.turn_count, "max_turns": budget.max_turns},
+                payload={
+                    "turn_count": state.turn_count,
+                    "max_turns": budget.max_turns,
+                    "budget_exhausted": "turns",
+                },
             )
         return None
 

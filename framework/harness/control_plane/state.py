@@ -153,8 +153,12 @@ class HarnessState:
     def initial(cls, run_spec: HarnessRunSpec) -> "HarnessState":
         return cls(
             run_spec=run_spec,
-            step_states=tuple(HarnessStepState(step_id=step_id) for step_id in run_spec.workflow.step_ids),
+            step_states=tuple(
+                HarnessStepState(step_id=step_id, updated_at=run_spec.created_at)
+                for step_id in run_spec.workflow.step_ids
+            ),
             current_step_id=run_spec.workflow.entry_step_id,
+            updated_at=run_spec.created_at,
         )
 
     def to_dict(self) -> dict[str, Any]:

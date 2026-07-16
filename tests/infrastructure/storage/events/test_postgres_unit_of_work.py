@@ -239,8 +239,10 @@ def test_failed_mutation_marks_unit_of_work_rollback_only(
         _connection: object,
         _event: object,
         *,
+        expected_last_sequence: int | None,
         lock_scope: object,
     ) -> object:
+        assert expected_last_sequence is None
         assert lock_scope is not None
         raise ValueError("candidate rejected after transaction work")
 

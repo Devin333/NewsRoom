@@ -24,6 +24,7 @@ from framework.events.errors import (
     EventStoreCorruptionError,
     EventStoreError,
     EventStoreUnavailableError,
+    EventStreamVersionConflictError,
     EventSubscriptionPositionError,
 )
 from framework.events.runtime.models import (
@@ -131,11 +132,19 @@ class PostgresDurableEventStore:
     def unit_of_work(self) -> PostgresEventUnitOfWork:
         return PostgresEventUnitOfWork(self)
 
-    def append_event(self, event: EventCandidate) -> AppendResult:
+    def append_event(
+        self,
+        event: EventCandidate,
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> AppendResult:
         """Append and commit one event when no wider UoW is needed."""
 
         with self.unit_of_work() as unit_of_work:
-            result = unit_of_work.append_event(event)
+            result = unit_of_work.append_event(
+                event,
+                expected_last_sequence=expected_last_sequence,
+            )
             unit_of_work.commit()
             return result
 
@@ -2527,10 +2536,12 @@ class PostgresDurableEventStore:
         connection: Any,
         event: EventCandidate,
         *,
+        expected_last_sequence: int | None = None,
         lock_scope: _PostgresTransactionLockScope | None = None,
     ) -> AppendResult:
         if not isinstance(event, EventCandidate):
             raise ValueError("event must be an already projected EventCandidate")
+        expected_last_sequence = _expected_last_sequence(expected_last_sequence)
         tenant_scope = _tenant_scope(event.tenant_id)
         with connection.cursor() as cursor:
             # Fast-path an already committed immutable identity before any
@@ -2658,6 +2669,28 @@ class PostgresDurableEventStore:
                 """,
                 (event.tenant_id, event.stream_id),
             )
+            if expected_last_sequence is not None:
+                cursor.execute(
+                    """
+                    SELECT last_sequence
+                    FROM event_stream_sequences
+                    WHERE tenant_scope = %s AND stream_id = %s
+                    FOR UPDATE
+                    """,
+                    (tenant_scope, event.stream_id),
+                )
+                current_row = cursor.fetchone()
+                if current_row is None:
+                    raise EventStoreCorruptionError(
+                        "stream sequence row disappeared before conditional append"
+                    )
+                actual_last_sequence = int(current_row[0])
+                if actual_last_sequence != expected_last_sequence:
+                    raise EventStreamVersionConflictError(
+                        stream_id=event.stream_id,
+                        expected_last_sequence=expected_last_sequence,
+                        actual_last_sequence=actual_last_sequence,
+                    )
             cursor.execute(
                 """
                 UPDATE event_stream_sequences
@@ -2863,7 +2896,12 @@ class PostgresEventUnitOfWork:
 
         return self._active_connection()
 
-    def append_event(self, event: EventCandidate) -> AppendResult:
+    def append_event(
+        self,
+        event: EventCandidate,
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> AppendResult:
         connection = self._active_connection()
         self._require_committable()
         lock_scope = self._transaction_locks.new_operation()
@@ -2871,6 +2909,7 @@ class PostgresEventUnitOfWork:
             return self._store._append_event_in_transaction(
                 connection,
                 event,
+                expected_last_sequence=expected_last_sequence,
                 lock_scope=lock_scope,
             )
         except BaseException as exc:
@@ -4093,6 +4132,16 @@ def _tenant_scope(tenant_id: str | None) -> str:
     if tenant_id is None:
         return ""
     return _required_text(tenant_id, "tenant_id")
+
+
+def _expected_last_sequence(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("expected_last_sequence must be an integer or None")
+    if value < 0:
+        raise ValueError("expected_last_sequence must not be negative")
+    return value
 
 
 def _required_text(value: Any, field_name: str) -> str:

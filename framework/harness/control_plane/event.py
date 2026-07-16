@@ -13,6 +13,7 @@ from framework.shared.time import format_datetime, utc_now
 
 
 class HarnessEventType(StrEnum):
+    TRANSITION_COMMITTED = "harness_transition_committed"
     RUN_CREATED = "run_created"
     RUN_STATE_CHANGED = "run_state_changed"
     STEP_STATE_CHANGED = "step_state_changed"

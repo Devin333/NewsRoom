@@ -160,10 +160,12 @@ class EventRuntime:
         self,
         event: EventPublishRequest,
         *,
+        expected_last_sequence: int | None = None,
         unit_of_work: EventUnitOfWorkPort | None = None,
     ) -> StoredEvent:
         if not isinstance(event, EventPublishRequest):
             raise TypeError("event must be EventPublishRequest")
+        expected_last_sequence = _expected_last_sequence(expected_last_sequence)
         registration = self._schema_catalog.get(event.event_type, event.data_schema)
         policy = registration.sensitivity_policy
 
@@ -218,10 +220,18 @@ class EventRuntime:
 
         try:
             if unit_of_work is not None:
-                return _append_verified(unit_of_work, candidate)
+                return _append_verified(
+                    unit_of_work,
+                    candidate,
+                    expected_last_sequence=expected_last_sequence,
+                )
 
             with self._store.unit_of_work() as owned_unit_of_work:
-                stored = _append_verified(owned_unit_of_work, candidate)
+                stored = _append_verified(
+                    owned_unit_of_work,
+                    candidate,
+                    expected_last_sequence=expected_last_sequence,
+                )
                 owned_unit_of_work.commit()
             return stored
         except Exception as error:
@@ -237,13 +247,28 @@ class EventRuntime:
 def _append_verified(
     unit_of_work: EventUnitOfWorkPort,
     candidate: EventCandidate,
+    *,
+    expected_last_sequence: int | None,
 ) -> StoredEvent:
-    result = unit_of_work.append_event(candidate)
+    result = unit_of_work.append_event(
+        candidate,
+        expected_last_sequence=expected_last_sequence,
+    )
     if not isinstance(result, AppendResult):
         raise EventContractError("durable event store returned an invalid append result")
     assert_same_event_identity(result.event, candidate)
     result.event.verify_integrity()
     return result.event
+
+
+def _expected_last_sequence(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("expected_last_sequence must be an integer or None")
+    if value < 0:
+        raise ValueError("expected_last_sequence must not be negative")
+    return value
 
 
 def _required_text(value: Any, field_name: str) -> str:

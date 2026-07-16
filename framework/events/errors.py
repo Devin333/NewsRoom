@@ -122,6 +122,27 @@ class EventStoreContentionError(EventStoreError):
     """Raised when a wider transaction must retry to preserve lock ordering."""
 
 
+class EventStreamVersionConflictError(EventStoreError):
+    """Raised when a conditional append observes a stale stream position."""
+
+    def __init__(
+        self,
+        *,
+        stream_id: str,
+        expected_last_sequence: int,
+        actual_last_sequence: int,
+    ) -> None:
+        self.stream_id = str(stream_id)
+        self.expected_last_sequence = int(expected_last_sequence)
+        self.actual_last_sequence = int(actual_last_sequence)
+        super().__init__(
+            "event stream version conflict: "
+            f"stream={self.stream_id}; expected_last_sequence="
+            f"{self.expected_last_sequence}, actual_last_sequence="
+            f"{self.actual_last_sequence}"
+        )
+
+
 class EventStoreCorruptionError(EventStoreError):
     """Raised when the durable store fails an integrity check."""
 

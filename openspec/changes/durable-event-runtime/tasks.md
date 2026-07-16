@@ -39,8 +39,8 @@
 - [x] 5.1 Replace workflow recorder dual `_records/_envelopes` state with a scoped durable emitter that receives immutable trace/business context per append and cannot leak step context across parallel execution.
 - [x] 5.2 Validate `run_id` as a single path-safe segment before stream derivation or any store/projection path resolution, then persist workflow events during execution, store last durable sequence in checkpoints, generate redacted `events.jsonl` from the canonical stream, and record projection watermark/checksum; test traversal, absolute, drive-relative, UNC/device, ADS, and reserved-device rejection before all writes.
 - [x] 5.3 Disable and delete post-run JSONL-to-store indexing, runner-local event model/store/factory, and duplicate workflow/inspection record definitions after compatible projections are in place.
-- [ ] 5.4 Adapt typed `HarnessEvent` and `HarnessEventLogEntry` to the canonical durable boundary and make every recoverable Harness transition commit before projection advances, including phase entry/exit, replan, retry, route-to-repair, wait, approval resume/cancel, budget exhaustion, halt, failure, and success.
-- [ ] 5.5 Prove Harness and workflow fail closed rather than downgrade to memory-only when a required durable transition cannot commit, while deterministic required work remains a direct service call instead of an observational subscriber.
+- [x] 5.4 Adapt typed `HarnessEvent` and `HarnessEventLogEntry` to the canonical durable boundary and make every recoverable Harness transition commit before projection advances, including phase entry/exit, replan, retry, route-to-repair, wait, approval resume/cancel, budget exhaustion, halt, failure, and success.
+- [x] 5.5 Prove Harness and workflow fail closed rather than downgrade to memory-only when a required durable transition cannot commit, while deterministic required work remains a direct service call instead of an observational subscriber.
 - [x] 5.6 Update checkpoint migration and recovery so 0-based legacy offsets and 1-based stream sequences are explicitly mapped without skipping or applying the boundary event twice.
 
 ## 6. Deterministic Replay

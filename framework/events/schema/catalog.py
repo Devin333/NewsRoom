@@ -504,6 +504,9 @@ HARNESS_EVENT_ALIASES = (
     "checkpoint_created",
 )
 
+HARNESS_TRANSITION_EVENT_TYPE = "harness_transition_committed"
+HARNESS_TRANSITION_DATA_SCHEMA = "newsroom.harness-transition/v1"
+
 
 def default_event_schema_catalog() -> EventSchemaCatalog:
     catalog = EventSchemaCatalog()
@@ -542,6 +545,15 @@ def default_event_schema_catalog() -> EventSchemaCatalog:
                 current=event_type not in WORKFLOW_EVENT_ALIASES,
             )
         )
+    catalog.register(
+        EventSchemaRegistration(
+            event_type=HARNESS_TRANSITION_EVENT_TYPE,
+            data_schema=HARNESS_TRANSITION_DATA_SCHEMA,
+            json_schema=_harness_transition_payload_schema(),
+            sensitivity_policy=SensitivityPolicy(),
+            current=True,
+        )
+    )
     return catalog
 
 
@@ -637,6 +649,175 @@ _HARNESS_STEP_METADATA = {
         "worker_result_ref": _CHECKSUM_TEXT,
         "metadata_ref": _CHECKSUM_TEXT,
     },
+    "additionalProperties": False,
+}
+
+_HARNESS_TRANSITION_KINDS = (
+    "initialize",
+    "run_start",
+    "plan_entry",
+    "plan_exit",
+    "execute_entry",
+    "execute_exit",
+    "verify_entry",
+    "verify_exit",
+    "replan_entry",
+    "replan_exit",
+    "retry",
+    "route_to_repair",
+    "route_to_step",
+    "wait_for_approval",
+    "approval_resume",
+    "approval_cancel",
+    "worker_result_committed",
+    "step_success",
+    "budget_exhaustion",
+    "halt",
+    "failure",
+    "success",
+    "cancel",
+    "wait",
+)
+_HARNESS_TRANSITION_STEP_METADATA = {
+    "type": "object",
+    "maxProperties": 16,
+    "properties": {
+        "approval_granted": _BOOLEAN,
+        "rerouted": _BOOLEAN,
+        "activity_attempt": _POSITIVE_INTEGER,
+        "activity_id": _TEXT,
+        "activity_type": _TEXT,
+        "activity_contract_version": _TEXT,
+        "activity_idempotency_key": _TEXT,
+        "activity_input_checksum": _CHECKSUM_TEXT,
+        "activity_identity_scope_ref": _CHECKSUM_TEXT,
+        "activity_worker_version": _TEXT,
+        "activity_result_event_id": _TEXT,
+        "worker_result_ref": _TEXT,
+        "worker_status": {
+            "enum": ["succeeded", "failed", "blocked", "waiting_approval"]
+        },
+        "omitted_metadata_ref": _CHECKSUM_TEXT,
+        "omitted_metadata_count": _NONNEGATIVE_INTEGER,
+    },
+    "additionalProperties": False,
+}
+_HARNESS_TRANSITION_STEP_STATE = {
+    "type": "object",
+    "maxProperties": 10,
+    "properties": {
+        "step_id": _TEXT,
+        "status": {
+            "enum": [
+                "pending",
+                "planning",
+                "plan_verified",
+                "running",
+                "verifying",
+                "retrying",
+                "replanning",
+                "succeeded",
+                "failed",
+                "skipped",
+                "waiting_approval",
+                "halted",
+            ]
+        },
+        "attempts": _NONNEGATIVE_INTEGER,
+        "replans": _NONNEGATIVE_INTEGER,
+        "has_output_ref": _BOOLEAN,
+        "output_ref_checksum": _CHECKSUM_TEXT,
+        "error_ref": _CHECKSUM_TEXT,
+        "metadata": _HARNESS_TRANSITION_STEP_METADATA,
+        "updated_at": _TEXT,
+    },
+    "required": [
+        "step_id",
+        "status",
+        "attempts",
+        "replans",
+        "has_output_ref",
+        "metadata",
+        "updated_at",
+    ],
+    "additionalProperties": False,
+}
+_HARNESS_TRANSITION_STATE_METADATA = {
+    "type": "object",
+    "maxProperties": 24,
+    "properties": {
+        "repair_from_step_id": _TEXT,
+        "evolution_epochs_used": _NONNEGATIVE_INTEGER,
+        "candidates_used": _NONNEGATIVE_INTEGER,
+        "patch_operations_used": _NONNEGATIVE_INTEGER,
+        "eval_cases_used": _NONNEGATIVE_INTEGER,
+        "sandbox_runs_used": _NONNEGATIVE_INTEGER,
+        "outputs_ref": _CHECKSUM_TEXT,
+        "outputs_count": _NONNEGATIVE_INTEGER,
+        "plan_keys_ref": _CHECKSUM_TEXT,
+        "plan_keys_count": _NONNEGATIVE_INTEGER,
+        "claims_ref": _CHECKSUM_TEXT,
+        "claims_count": _NONNEGATIVE_INTEGER,
+        "questions_ref": _CHECKSUM_TEXT,
+        "questions_count": _NONNEGATIVE_INTEGER,
+        "terminal_reason_ref": _CHECKSUM_TEXT,
+        "omitted_metadata_ref": _CHECKSUM_TEXT,
+        "omitted_metadata_count": _NONNEGATIVE_INTEGER,
+    },
+    "additionalProperties": False,
+}
+_HARNESS_TRANSITION_STATE = {
+    "type": "object",
+    "maxProperties": 14,
+    "properties": {
+        "schema": {"const": "newsroom.harness-state-projection/v1"},
+        "run_spec_checksum": _CHECKSUM_TEXT,
+        "workflow_id": _TEXT,
+        "workflow_checksum": _CHECKSUM_TEXT,
+        "workflow_version": _TEXT,
+        "status": {
+            "enum": [
+                "created",
+                "running",
+                "planning",
+                "executing",
+                "verifying",
+                "replanning",
+                "waiting_approval",
+                "succeeded",
+                "failed",
+                "halted",
+                "cancelled",
+                "blocked",
+            ]
+        },
+        "step_states": {
+            "type": "array",
+            "items": _HARNESS_TRANSITION_STEP_STATE,
+            "maxItems": 1024,
+        },
+        "current_step_id": _NULLABLE_TEXT,
+        "turn_count": _NONNEGATIVE_INTEGER,
+        "replan_count": _NONNEGATIVE_INTEGER,
+        "worker_call_count": _NONNEGATIVE_INTEGER,
+        "metadata": _HARNESS_TRANSITION_STATE_METADATA,
+        "updated_at": _TEXT,
+    },
+    "required": [
+        "schema",
+        "run_spec_checksum",
+        "workflow_id",
+        "workflow_checksum",
+        "workflow_version",
+        "status",
+        "step_states",
+        "current_step_id",
+        "turn_count",
+        "replan_count",
+        "worker_call_count",
+        "metadata",
+        "updated_at",
+    ],
     "additionalProperties": False,
 }
 
@@ -995,6 +1176,48 @@ def _workflow_operation_payload_schema(event_type: str) -> dict[str, Any]:
     )
 
 
+def _harness_transition_payload_schema() -> dict[str, Any]:
+    return _payload_schema(
+        properties={
+            "transition_id": _TEXT,
+            "from_version": _NONNEGATIVE_INTEGER,
+            "state_version": _POSITIVE_INTEGER,
+            "expected_last_sequence": _NONNEGATIVE_INTEGER,
+            "transition_kind": {"enum": list(_HARNESS_TRANSITION_KINDS)},
+            "state": _HARNESS_TRANSITION_STATE,
+            "before_state_checksum": _CHECKSUM_TEXT,
+            "after_state_checksum": _CHECKSUM_TEXT,
+            "decision_ref": _CHECKSUM_TEXT,
+            "gate_ref": _CHECKSUM_TEXT,
+            "budget_ref": _CHECKSUM_TEXT,
+            "activity_result_ref": _CHECKSUM_TEXT,
+            "activity_result_event_id": _TEXT,
+            "activity_id": _TEXT,
+            "idempotency_key": _TEXT,
+            "workflow_version": _TEXT,
+            "workflow_checksum": _CHECKSUM_TEXT,
+            "reducer_version": _TEXT,
+            "policy_version": _TEXT,
+            "schema_version": {"const": HARNESS_TRANSITION_DATA_SCHEMA},
+        },
+        required=(
+            "transition_id",
+            "from_version",
+            "state_version",
+            "expected_last_sequence",
+            "transition_kind",
+            "state",
+            "before_state_checksum",
+            "after_state_checksum",
+            "workflow_version",
+            "workflow_checksum",
+            "reducer_version",
+            "policy_version",
+            "schema_version",
+        ),
+    )
+
+
 def _harness_payload_schema(event_type: str) -> dict[str, Any]:
     if event_type == "run_created":
         return _payload_schema(
@@ -1153,6 +1376,10 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                         "script",
                     ]
                 },
+                "activity_id": _TEXT,
+                "idempotency_key": _TEXT,
+                "activity_attempt": _POSITIVE_INTEGER,
+                "activity_contract_version": _TEXT,
                 "inputs": _OBJECT,
                 "metadata": _OBJECT,
                 "input_ref": _CHECKSUM_TEXT,
@@ -1165,6 +1392,10 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                 {
                     "required": [
                         "projection_schema",
+                        "activity_id",
+                        "idempotency_key",
+                        "activity_attempt",
+                        "activity_contract_version",
                         "input_ref",
                         "input_count",
                         "metadata_ref",

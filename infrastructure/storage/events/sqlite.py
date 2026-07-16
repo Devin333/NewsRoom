@@ -27,6 +27,7 @@ from framework.events.errors import (
     EventStoreCorruptionError,
     EventStoreError,
     EventStoreUnavailableError,
+    EventStreamVersionConflictError,
     EventSubscriptionPositionError,
 )
 from framework.events.runtime.models import (
@@ -574,11 +575,19 @@ class SQLiteEventStore:
     def unit_of_work(self) -> SQLiteEventUnitOfWork:
         return SQLiteEventUnitOfWork(self)
 
-    def append_event(self, event: EventCandidate) -> AppendResult:
+    def append_event(
+        self,
+        event: EventCandidate,
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> AppendResult:
         unit_of_work = self.unit_of_work()
         try:
             unit_of_work.__enter__()
-            result = unit_of_work.append_event(event)
+            result = unit_of_work.append_event(
+                event,
+                expected_last_sequence=expected_last_sequence,
+            )
             unit_of_work.commit()
             return result
         finally:
@@ -1864,9 +1873,12 @@ class SQLiteEventStore:
         self,
         connection: sqlite3.Connection,
         event: EventCandidate,
+        *,
+        expected_last_sequence: int | None = None,
     ) -> AppendResult:
         if not isinstance(event, EventCandidate):
             raise TypeError("event must be EventCandidate")
+        expected_last_sequence = _expected_last_sequence(expected_last_sequence)
         existing = connection.execute(
             "SELECT * FROM durable_events WHERE event_id = ?",
             (event.event_id,),
@@ -1885,6 +1897,23 @@ class SQLiteEventStore:
             ") VALUES (?, ?, ?, 0, ?, ?) ON CONFLICT (tenant_scope, stream_id) DO NOTHING",
             (tenant_scope, event.tenant_id, event.stream_id, now_text, now_text),
         )
+        if expected_last_sequence is not None:
+            current_row = connection.execute(
+                "SELECT last_sequence FROM event_stream_sequences "
+                "WHERE tenant_scope = ? AND stream_id = ?",
+                (tenant_scope, event.stream_id),
+            ).fetchone()
+            if current_row is None:
+                raise EventStoreCorruptionError(
+                    "stream sequence row disappeared before conditional append"
+                )
+            actual_last_sequence = int(current_row[0])
+            if actual_last_sequence != expected_last_sequence:
+                raise EventStreamVersionConflictError(
+                    stream_id=event.stream_id,
+                    expected_last_sequence=expected_last_sequence,
+                    actual_last_sequence=actual_last_sequence,
+                )
         sequence_row = connection.execute(
             "UPDATE event_stream_sequences SET last_sequence = last_sequence + 1, updated_at = ? "
             "WHERE tenant_scope = ? AND stream_id = ? RETURNING last_sequence",
@@ -2145,9 +2174,18 @@ class SQLiteEventUnitOfWork:
         self._finished = False
         return self
 
-    def append_event(self, event: EventCandidate) -> AppendResult:
+    def append_event(
+        self,
+        event: EventCandidate,
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> AppendResult:
         try:
-            return self._store._append_event(self._require_connection(), event)
+            return self._store._append_event(
+                self._require_connection(),
+                event,
+                expected_last_sequence=expected_last_sequence,
+            )
         except (EventStoreError, EventContractError, ValueError, TypeError):
             raise
         except sqlite3.Error as exc:
@@ -2219,6 +2257,16 @@ SqliteEventStore = SQLiteEventStore
 
 def _tenant_scope(tenant_id: str | None) -> str:
     return tenant_id or ""
+
+
+def _expected_last_sequence(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("expected_last_sequence must be an integer or None")
+    if value < 0:
+        raise ValueError("expected_last_sequence must not be negative")
+    return value
 
 
 def _effect_scope(consumer_effect_id: str | None) -> str:

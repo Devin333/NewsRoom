@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -16,6 +18,7 @@ from framework.events.errors import (
     EventIdentityCollisionError,
     EventStaleLeaseError,
     EventStoreCapacityError,
+    EventStreamVersionConflictError,
 )
 from framework.events.ports import EventStorePort
 from framework.events.runtime.models import (
@@ -150,6 +153,63 @@ def test_append_is_atomic_idempotent_ordered_and_tenant_scoped(tmp_path: Path) -
 
     with pytest.raises(EventIdentityCollisionError):
         store.append_event(_candidate(1, event_type="workflow_failed"))
+
+
+def test_conditional_append_resolves_duplicate_before_stream_conflict(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = store.append_event(_candidate(1), expected_last_sequence=0)
+
+    duplicate = store.append_event(_candidate(1), expected_last_sequence=0)
+
+    assert duplicate.event == first.event
+    assert duplicate.created is False
+    with pytest.raises(EventStreamVersionConflictError) as failure:
+        store.append_event(_candidate(2), expected_last_sequence=0)
+    assert failure.value.stream_id == "run:one"
+    assert failure.value.expected_last_sequence == 0
+    assert failure.value.actual_last_sequence == 1
+    assert store.get_event("evt-2", tenant_id="tenant-a") is None
+    assert store.get_stream_high_watermark("run:one", tenant_id="tenant-a") == 1
+
+    second = store.append_event(_candidate(2), expected_last_sequence=1)
+    assert second.event.stream_sequence == 2
+
+
+def test_concurrent_conditional_appends_allow_one_writer_per_stream_version(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    barrier = Barrier(2)
+
+    def append(number: int):
+        barrier.wait()
+        try:
+            return store.append_event(
+                _candidate(number),
+                expected_last_sequence=0,
+            )
+        except EventStreamVersionConflictError as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(append, (1, 2)))
+
+    committed = [result for result in results if not isinstance(result, Exception)]
+    conflicts = [
+        result
+        for result in results
+        if isinstance(result, EventStreamVersionConflictError)
+    ]
+    assert len(committed) == 1
+    assert committed[0].event.stream_sequence == 1
+    assert len(conflicts) == 1
+    assert conflicts[0].expected_last_sequence == 0
+    assert conflicts[0].actual_last_sequence == 1
+    page = store.read_stream(StreamReadRequest("run:one", tenant_id="tenant-a"))
+    assert len(page.events) == 1
+    assert page.high_watermark == 1
 
 
 def test_unit_of_work_rolls_back_sequence_event_and_outbox(tmp_path: Path) -> None:

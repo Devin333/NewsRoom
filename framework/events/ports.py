@@ -62,7 +62,19 @@ class EventUnitOfWorkPort(Protocol):
     leaving the context without committing must roll back staged changes.
     """
 
-    def append_event(self, event: EventCandidate) -> AppendResult: ...
+    def append_event(
+        self,
+        event: EventCandidate,
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> AppendResult:
+        """Append when the stream is at the expected position, if supplied.
+
+        Position ``0`` means an empty stream.  An identical committed event is
+        resolved before the position condition so uncertain-commit retries can
+        return their original assignment.
+        """
+        ...
 
     def settle_delivery(
         self,
@@ -314,6 +326,7 @@ class EventRuntimePort(Protocol):
         self,
         event: EventPublishRequest,
         *,
+        expected_last_sequence: int | None = None,
         unit_of_work: EventUnitOfWorkPort | None = None,
     ) -> StoredEvent:
         """Return the accepted stored event, committing unless a UoW is supplied."""
