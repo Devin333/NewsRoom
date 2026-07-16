@@ -6,6 +6,20 @@ from interfaces.services.run_service import RunApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
+from interfaces.services.event_delivery_operations_service import (
+    EventDeliveryOperationsService,
+)
+from interfaces.services.event_projection_service import EventProjectionService
+from interfaces.services.event_quarantine_service import EventQuarantineService
+from interfaces.services.event_reader_service import (
+    EventAuthorizationContext,
+    EventAuthorizationDecision,
+    EventAuthorizationRequest,
+    EventAuthorizerPort,
+    EventReaderService,
+    EventStreamReadResult,
+)
+from interfaces.services.event_replay_service import EventReplayService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.project_service import ProjectApplicationService, ProjectsApplicationService
@@ -23,6 +37,16 @@ __all__ = [
     "AuthApplicationService",
     "DiagnosticApplicationService",
     "EntityTrackingApplicationService",
+    "EventDeliveryOperationsService",
+    "EventAuthorizationContext",
+    "EventAuthorizationDecision",
+    "EventAuthorizationRequest",
+    "EventAuthorizerPort",
+    "EventProjectionService",
+    "EventQuarantineService",
+    "EventReaderService",
+    "EventReplayService",
+    "EventStreamReadResult",
     "ArtifactInspectionService",
     "MemoryApplicationService",
     "MCPApplicationService",
