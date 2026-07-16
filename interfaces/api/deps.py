@@ -17,6 +17,7 @@ from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_factory import run_inspection_service_from_env
 from interfaces.services.run_operation_service import RunOperationApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
@@ -93,7 +94,7 @@ def build_api_services(
     entity_service_factory: EntityServiceFactory = EntityTrackingApplicationService,
     subscription_service_factory: SubscriptionServiceFactory = SubscriptionApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
-    run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
+    run_inspection_service_factory: RunInspectionServiceFactory = run_inspection_service_from_env,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,

@@ -62,8 +62,8 @@
 ## 8. Query, Export, And Operator Interfaces
 
 - [x] 8.1 Add an application-owned event reader/operations service for run queries, projection export, quarantine, replay, and dead-letter actions; keep interfaces independent of concrete stores and dispatchers.
-- [ ] 8.2 Cut `RunInspectionService` online reads to the durable reader while preserving compatible run id, event count, events, path, type/step filters, limit/offset, CLI, MCP, and HTTP response fields and adding stable sequence pagination.
-- [ ] 8.3 Define and test API/SSE/CLI/MCP behavior when the store is unavailable or a JSONL projection is stale, including explicit availability/staleness metadata rather than silent authoritative fallback.
+- [x] 8.2 Cut `RunInspectionService` online reads to the durable reader while preserving compatible run id, event count, events, path, type/step filters, limit/offset, CLI, MCP, and HTTP response fields and adding stable sequence pagination.
+- [x] 8.3 Define and test API/SSE/CLI/MCP behavior when the store is unavailable or a JSONL projection is stale, including explicit availability/staleness metadata rather than silent authoritative fallback.
 - [x] 8.4 Generate deterministic redacted `events.jsonl` projections and offline rebuild tooling from a requested durable high watermark without feeding the export back into the live store.
 - [ ] 8.5 Add authorized, tenant-scoped operator surfaces for quarantine inspection, replay reports, dead-letter list/requeue/resolve, consumer lag, and projection status through application services.
 

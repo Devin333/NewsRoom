@@ -1,5 +1,8 @@
+import base64
 import json
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +12,16 @@ from framework.artifacts import (
     ArtifactStoreMetadataError,
 )
 from framework.artifacts.paths import ArtifactPathError
+from framework.events.canonical import (
+    BusinessContext,
+    EventCandidate,
+    ProducerIdentity,
+)
+from framework.events.errors import EventStoreUnavailableError
+from framework.events.schema import default_event_schema_catalog
+from framework.workflow.runtime.event_projection import WorkflowEventProjectionExporter
+from infrastructure.storage.events.sqlite import SQLiteEventStore
+from interfaces.services.run_inspection_factory import build_run_inspection_service
 from interfaces.services.run_inspection_service import RunInspectionService
 from tests.fixtures.workflow_runs import rewrite_manifest, write_canonical_terminal_run
 
@@ -231,15 +244,19 @@ def test_run_inspection_limits_events(tmp_path) -> None:
     assert result.to_dict()["events"][0]["event_type"] == "event-1"
 
 
-def test_run_inspection_missing_events_file_raises_not_found(tmp_path) -> None:
+def test_run_inspection_missing_events_file_returns_projection_unavailable(tmp_path) -> None:
     _write_manifest(
         tmp_path,
         "run-1",
         {"run_id": "run-1", "status": "succeeded", "artifacts": {"events": "events.jsonl"}},
     )
 
-    with pytest.raises(FileNotFoundError):
-        RunInspectionService(tmp_path).get_run_events("run-1")
+    result = RunInspectionService(tmp_path).get_run_events("run-1").to_dict()
+
+    assert result["availability"] == "unavailable"
+    assert result["projection_status"] == "unavailable"
+    assert result["events"] == []
+    assert result["unavailable_reason_class"] == "EventStoreUnavailableError"
 
 
 def test_run_inspection_redacts_sensitive_event_keys(tmp_path) -> None:
@@ -260,6 +277,246 @@ def test_run_inspection_redacts_sensitive_event_keys(tmp_path) -> None:
     assert payload["events"][0]["payload"]["api_key"] == "[redacted]"
     assert payload["events"][0]["payload"]["nested"]["authorization"] == "[redacted]"
     assert "hidden-value" not in json.dumps(payload)
+
+
+def test_run_inspection_reads_authoritative_durable_events_with_stable_cursor(
+    tmp_path,
+) -> None:
+    store, service = _durable_inspection_run(tmp_path, event_count=3)
+
+    first = service.get_run_events("run-durable", limit=1)
+    first_payload = first.to_dict()
+
+    assert first_payload["availability"] == "available"
+    assert first_payload["source"] == "durable_store"
+    assert first_payload["projection_status"] == "current"
+    assert first_payload["high_watermark"] == 3
+    assert first_payload["events"][0]["stream_sequence"] == 1
+    assert first_payload["next_sequence_cursor"]
+
+    store.append_event(_durable_event(4))
+    second = service.get_run_events(
+        "run-durable",
+        limit=10,
+        sequence_cursor=first_payload["next_sequence_cursor"],
+    ).to_dict()
+
+    assert second["high_watermark"] == 3
+    assert [event["stream_sequence"] for event in second["events"]] == [2, 3]
+    assert second["next_sequence_cursor"] is None
+
+
+def test_run_inspection_legacy_offset_and_filters_do_not_skip_cursor_boundary(
+    tmp_path,
+) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=4)
+
+    page = service.get_run_events("run-durable", offset=1, limit=1).to_dict()
+
+    assert [event["stream_sequence"] for event in page["events"]] == [2]
+    resumed = service.get_run_events(
+        "run-durable",
+        sequence_cursor=page["next_sequence_cursor"],
+        limit=10,
+    ).to_dict()
+    assert [event["stream_sequence"] for event in resumed["events"]] == [3, 4]
+
+    filtered = service.get_run_events(
+        "run-durable",
+        event_type="step_started",
+        step_id="step-3",
+        limit=10,
+    ).to_dict()
+    assert [event["stream_sequence"] for event in filtered["events"]] == [3]
+
+
+def test_run_inspection_rejects_tampered_or_cross_run_sequence_cursor(tmp_path) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=2)
+    _write_manifest(
+        tmp_path,
+        "other-run",
+        {"run_id": "other-run", "status": "succeeded", "artifacts": {"events": "events.jsonl"}},
+    )
+    (tmp_path / "other-run" / "events.jsonl").write_text("", encoding="utf-8")
+    cursor = service.get_run_events("run-durable", limit=1).next_sequence_cursor
+    assert cursor is not None
+    padded = cursor + "=" * (-len(cursor) % 4)
+    tampered_payload = json.loads(
+        base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+    )
+    tampered_payload["after_sequence"] += 1
+    tampered = base64.urlsafe_b64encode(
+        json.dumps(
+            tampered_payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+    ).decode("ascii").rstrip("=")
+
+    with pytest.raises(ValueError, match="invalid|integrity"):
+        service.get_run_events("run-durable", sequence_cursor=tampered)
+    with pytest.raises(ValueError, match="scope"):
+        service.get_run_events("other-run", sequence_cursor=cursor)
+
+
+def test_run_inspection_marks_projection_fallback_unavailable_and_stale(
+    tmp_path,
+) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=2)
+    service._event_reader_service = _UnavailableEventReaderService()
+
+    result = service.get_run_events("run-durable", limit=1).to_dict()
+
+    assert result["availability"] == "unavailable"
+    assert result["source"] == "projection"
+    assert result["projection_status"] == "stale"
+    assert result["projection_high_watermark"] == 2
+    assert result["unavailable_reason_class"] == "EventStoreUnavailableError"
+    assert result["event_count"] == 1
+
+
+@pytest.mark.parametrize("mutation", ["append", "truncate"])
+def test_run_inspection_does_not_serve_corrupt_projection_fallback(
+    tmp_path,
+    mutation,
+) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=2)
+    projection_path = tmp_path / "run-durable" / "events.jsonl"
+    content = projection_path.read_bytes()
+    projection_path.write_bytes(
+        content + b"{}\n" if mutation == "append" else content[:-1]
+    )
+    service._event_reader_service = _UnavailableEventReaderService()
+
+    result = service.get_run_events("run-durable").to_dict()
+
+    assert result["availability"] == "unavailable"
+    assert result["projection_status"] == "unavailable"
+    assert result["events"] == []
+    assert result["unavailable_reason_class"] == "EventProjectionConflictError"
+
+
+def test_run_inspection_cursor_never_falls_back_to_projection(tmp_path) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=2)
+    cursor = service.get_run_events("run-durable", limit=1).next_sequence_cursor
+    service._event_reader_service = _UnavailableEventReaderService()
+
+    result = service.get_run_events(
+        "run-durable",
+        sequence_cursor=cursor,
+    ).to_dict()
+
+    assert result["availability"] == "unavailable"
+    assert result["source"] == "projection"
+    assert result["events"] == []
+    assert result["next_sequence_cursor"] is None
+
+
+def test_run_inspection_cursor_fallback_requires_existing_verified_projection(
+    tmp_path,
+) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=2)
+    cursor = service.get_run_events("run-durable", limit=1).next_sequence_cursor
+    (tmp_path / "run-durable" / "events.jsonl").unlink()
+    service._event_reader_service = _UnavailableEventReaderService()
+
+    result = service.get_run_events(
+        "run-durable",
+        sequence_cursor=cursor,
+    ).to_dict()
+
+    assert result["availability"] == "unavailable"
+    assert result["projection_status"] == "unavailable"
+    assert result["events"] == []
+    assert result["unavailable_reason_class"] == "EventProjectionConflictError"
+
+
+def test_run_inspection_store_unavailable_without_projection_is_not_not_found(
+    tmp_path,
+) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=1)
+    run_dir = tmp_path / "run-durable"
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest["artifacts"] = {}
+    manifest.pop("event_projection")
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (run_dir / "events.jsonl").unlink()
+    service._event_reader_service = _UnavailableEventReaderService()
+
+    result = service.get_run_events("run-durable").to_dict()
+
+    assert result["availability"] == "unavailable"
+    assert result["projection_status"] == "unavailable"
+    assert result["events"] == []
+    assert result["events_path"] is None
+    assert result["unavailable_reason_class"] == "EventStoreUnavailableError"
+
+
+def test_run_inspection_sse_resume_cursor_follows_live_stream_tail(tmp_path) -> None:
+    store, service = _durable_inspection_run(tmp_path, event_count=2)
+
+    first = service.get_run_events_for_sse("run-durable", limit=10).to_dict()
+    cursor = first["sse_resume_cursor"]
+    assert cursor == first["events"][-1]["sse_resume_cursor"]
+
+    empty = service.get_run_events_for_sse(
+        "run-durable",
+        last_event_id=cursor,
+    ).to_dict()
+    assert empty["events"] == []
+    assert empty["sse_resume_cursor"] == cursor
+
+    store.append_event(_durable_event(3))
+    resumed = service.get_run_events_for_sse(
+        "run-durable",
+        last_event_id=cursor,
+    ).to_dict()
+    assert [event["stream_sequence"] for event in resumed["events"]] == [3]
+    assert resumed["sse_resume_cursor"] != cursor
+
+
+def test_run_inspection_rejects_tampered_or_cross_run_sse_cursor(tmp_path) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=1)
+    cursor = service.get_run_events_for_sse("run-durable").sse_resume_cursor
+    assert cursor is not None
+
+    with pytest.raises(ValueError, match="invalid|integrity"):
+        service.get_run_events_for_sse(
+            "run-durable",
+            last_event_id=cursor[:-1] + ("A" if cursor[-1] != "A" else "B"),
+        )
+    with pytest.raises(ValueError, match="cannot be combined"):
+        service.get_run_events_for_sse(
+            "run-durable",
+            sequence_cursor="snapshot-cursor",
+            last_event_id=cursor,
+        )
+
+
+def test_run_inspection_rejects_nonzero_sse_cursor_for_empty_stream(tmp_path) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=1)
+    cursor = service.get_run_events_for_sse("run-durable").sse_resume_cursor
+    assert cursor is not None
+    service._event_reader_service = _EmptyHighWatermarkEventReaderService()
+
+    with pytest.raises(ValueError, match="does not exist"):
+        service.get_run_events_for_sse(
+            "run-durable",
+            last_event_id=cursor,
+        )
+
+
+def test_run_inspection_uses_default_page_size_of_one_hundred(tmp_path) -> None:
+    _, service = _durable_inspection_run(tmp_path, event_count=101)
+
+    page = service.get_run_events("run-durable")
+    sse_page = service.get_run_events_for_sse("run-durable")
+
+    assert len(page.events) == 100
+    assert page.next_sequence_cursor is not None
+    assert len(sse_page.events) == 100
+    assert sse_page.sse_resume_cursor == sse_page.events[-1]["sse_resume_cursor"]
 
 
 def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> None:
@@ -627,6 +884,101 @@ def _write_run_with_events(root, run_id, events) -> None:
         "\n".join(json.dumps(event) for event in events) + "\n",
         encoding="utf-8",
     )
+
+
+def _durable_inspection_run(root, *, event_count: int):
+    run_id = "run-durable"
+    run_dir = root / run_id
+    run_dir.mkdir()
+    store = SQLiteEventStore(root / "event-store.sqlite3", clock=lambda: datetime(2026, 7, 16, 4, tzinfo=UTC))
+    for sequence in range(1, event_count + 1):
+        store.append_event(_durable_event(sequence))
+    catalog = default_event_schema_catalog()
+    projection = WorkflowEventProjectionExporter(
+        reader=store,
+        schema_catalog=catalog,
+    ).export(
+        stream_id=f"run:{run_id}",
+        tenant_id="tenant-a",
+        target=run_dir / "events.jsonl",
+        through_sequence=event_count,
+    )
+    manifest = {
+        "schema_version": "newsroom.workflow_run_manifest.v1",
+        "run_id": run_id,
+        "status": "succeeded",
+        "artifacts": {"events": "events.jsonl"},
+        "event_count": event_count,
+        "event_projection": {
+            "path": "events.jsonl",
+            "stream_id": projection.stream_id,
+            "high_watermark": projection.high_watermark,
+            "event_count": projection.event_count,
+            "checksum": projection.checksum,
+        },
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    storage = SimpleNamespace(event_store=store, schema_catalog=catalog)
+    service = build_run_inspection_service(
+        artifact_root=root,
+        event_storage=storage,
+        tenant_id="tenant-a",
+    )
+    return store, service
+
+
+def _durable_event(sequence: int) -> EventCandidate:
+    first = sequence == 1
+    return EventCandidate(
+        event_id=f"evt-durable-{sequence}",
+        event_type="workflow_started" if first else "step_started",
+        data_schema="newsroom.workflow-event/v1",
+        source="io.newsroom.workflow.runtime",
+        occurred_at=datetime(2026, 7, 16, 1, tzinfo=UTC) + timedelta(seconds=sequence),
+        stream_id="run:run-durable",
+        business_context=BusinessContext(
+            run_id="run-durable",
+            workflow_id="workflow-1",
+            step_id=None if first else f"step-{sequence}",
+        ),
+        producer=ProducerIdentity(component="framework.workflow.runtime", version="1"),
+        tenant_id="tenant-a",
+        payload=(
+            {"workflow_version": "1", "profile": "test"}
+            if first
+            else {"step_type": "function", "attempt": 1, "max_attempts": 1}
+        ),
+    )
+
+
+class _UnavailableEventReaderService:
+    def read_run_events(self, run_id, *, authorization, **kwargs):
+        from interfaces.services.event_reader_service import (
+            EventServiceAvailability,
+            EventStreamReadResult,
+        )
+
+        return EventStreamReadResult(
+            availability=EventServiceAvailability.UNAVAILABLE,
+            stream_id=f"run:{run_id}",
+            tenant_id=authorization.tenant_id,
+            unavailable_reason_class=EventStoreUnavailableError.__name__,
+        )
+
+
+class _EmptyHighWatermarkEventReaderService:
+    def get_high_watermark(self, stream_id, *, authorization):
+        from interfaces.services.event_reader_service import (
+            EventHighWatermarkResult,
+            EventServiceAvailability,
+        )
+
+        return EventHighWatermarkResult(
+            availability=EventServiceAvailability.AVAILABLE,
+            stream_id=stream_id,
+            tenant_id=authorization.tenant_id,
+            high_watermark=None,
+        )
 
 
 def _write_complete_inspection_run(

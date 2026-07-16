@@ -51,6 +51,7 @@ class RunsResource:
         step_id: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        sequence_cursor: str | None = None,
     ) -> JsonDict:
         return self.transport.request(
             "GET",
@@ -60,6 +61,7 @@ class RunsResource:
                 "step_id": step_id,
                 "limit": limit,
                 "offset": offset,
+                "sequence_cursor": sequence_cursor,
             },
         )
 

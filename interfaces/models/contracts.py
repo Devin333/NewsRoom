@@ -108,6 +108,26 @@ class RunEventView(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class RunEventsData(BaseModel):
+    run_id: str
+    event_count: int = Field(ge=0)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    events_path: str | None = None
+    next_sequence_cursor: str | None = None
+    high_watermark: int | None = Field(default=None, ge=0)
+    source: Literal["durable_store", "projection"]
+    projection_status: Literal["current", "running", "stale", "unavailable"]
+    projection_checksum: str | None = None
+    projection_high_watermark: int | None = Field(default=None, ge=0)
+    availability: Literal["available", "unavailable"]
+    unavailable_reason_class: str | None = None
+    sse_resume_cursor: str | None = None
+
+
+class RunEventsApiResponse(ApiResponse):
+    data: RunEventsData | None = None
+
+
 class RunOperationRequest(BaseModel):
     reason: str | None = None
     actor_id: str | None = None

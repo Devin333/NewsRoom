@@ -59,7 +59,12 @@ def test_json_api_operations_reference_api_response_envelope() -> None:
                 continue
             content = operation["responses"]["200"].get("content", {})
             json_schema = content.get("application/json", {}).get("schema", {})
-            assert json_schema == {"$ref": "#/components/schemas/ApiResponse"}, path
+            expected = (
+                "#/components/schemas/RunEventsApiResponse"
+                if path == "/api/v1/runs/{run_id}/events"
+                else "#/components/schemas/ApiResponse"
+            )
+            assert json_schema == {"$ref": expected}, path
 
 
 def test_create_app_routes_have_operation_id_and_tags_before_schema_export() -> None:

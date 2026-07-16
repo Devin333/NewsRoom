@@ -11,9 +11,11 @@ from framework.artifacts import (
     ArtifactStoreMetadataError,
     ArtifactStoreRequiredError,
 )
+from framework.events.errors import EventStoreUnavailableError
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
 from interfaces.services.artifact_service import ArtifactInspectionService
-from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_factory import run_inspection_service_from_env
+from interfaces.services.run_event_sse import run_events_sse_frames
 from interfaces.services.run_operation_service import RunOperationApplicationService
 
 
@@ -37,6 +39,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     events_parser.add_argument("run_id", help="Run id")
     _add_artifact_root_argument(events_parser)
     events_parser.add_argument("--limit", type=int, default=None, help="Maximum events")
+    events_parser.add_argument("--offset", type=int, default=0, help="Legacy pagination position")
+    events_parser.add_argument("--event-type", default=None, help="Filter by event type")
+    events_parser.add_argument("--step-id", default=None, help="Filter by workflow step")
+    events_parser.add_argument(
+        "--sequence-cursor",
+        default=None,
+        help="Opaque durable sequence cursor returned by the previous page",
+    )
     events_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     events_parser.add_argument("--sse", action="store_true", help="Print Server-Sent Events frames")
     events_parser.set_defaults(handler=run_events)
@@ -139,12 +149,24 @@ def show_run(args: argparse.Namespace) -> int:
 
 def run_events(args: argparse.Namespace) -> int:
     try:
+        event_kwargs: dict[str, Any] = {"limit": args.limit}
+        if args.offset:
+            event_kwargs["offset"] = args.offset
+        if args.event_type is not None:
+            event_kwargs["event_type"] = args.event_type
+        if args.step_id is not None:
+            event_kwargs["step_id"] = args.step_id
+        if args.sequence_cursor is not None:
+            event_kwargs["sequence_cursor"] = args.sequence_cursor
         result = _run_inspection_service(args.artifact_root).get_run_events(
             args.run_id,
-            limit=args.limit,
+            **event_kwargs,
         )
     except _TYPED_ARTIFACT_ERRORS as exc:
         return _print_typed_artifact_error(exc)
+    except EventStoreUnavailableError as exc:
+        print(f"availability=unavailable error_type={type(exc).__name__}", file=sys.stderr)
+        return 2
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -157,39 +179,14 @@ def run_events(args: argparse.Namespace) -> int:
     else:
         print(f"run_id={payload['run_id']}")
         print(f"event_count={payload['event_count']}")
+        print(f"source={payload.get('source')}")
+        print(f"availability={payload.get('availability')}")
+        print(f"projection_status={payload.get('projection_status')}")
+        print(f"high_watermark={payload.get('high_watermark')}")
+        print(f"next_sequence_cursor={payload.get('next_sequence_cursor')}")
         for event in payload["events"]:
             print(f"- {event.get('event_type')} at {event.get('occurred_at')}")
-    return 0
-
-
-def run_events_sse_frames(payload: dict[str, Any]):
-    run_id = str(payload.get("run_id") or "")
-    for index, event in enumerate(payload.get("events") or []):
-        event_payload = event if isinstance(event, dict) else {}
-        event_type = str(event_payload.get("event_type") or "run.event")
-        yield sse_frame(
-            event_type,
-            {
-                "run_id": run_id,
-                "sequence": index,
-                "event": event_payload,
-            },
-        )
-    yield sse_frame(
-        "run.events.done",
-        {
-            "run_id": run_id,
-            "event_count": int(payload.get("event_count") or 0),
-            "events_path": payload.get("events_path"),
-        },
-    )
-
-
-def sse_frame(event_name: str, data: dict[str, Any]) -> str:
-    return (
-        f"event: {event_name}\n"
-        f"data: {json.dumps(data, ensure_ascii=False, sort_keys=True)}\n\n"
-    )
+    return 2 if payload.get("availability") == "unavailable" else 0
 
 
 def replay_run(args: argparse.Namespace) -> int:
@@ -390,7 +387,7 @@ def print_run_operation_result(payload: dict[str, Any], *, json_output: bool) ->
 
 
 def _run_inspection_service(artifact_root: str):
-    return RunInspectionService(artifact_root=artifact_root)
+    return run_inspection_service_from_env(artifact_root=artifact_root)
 
 
 def _artifact_service(artifact_root: str):
@@ -443,5 +440,4 @@ __all__ = [
     "run_events_sse_frames",
     "run_health",
     "show_run",
-    "sse_frame",
 ]

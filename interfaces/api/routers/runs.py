@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 
 from framework.artifacts import (
@@ -9,6 +9,7 @@ from framework.artifacts import (
     ArtifactStoreMetadataError,
     ArtifactStoreRequiredError,
 )
+from framework.events.errors import EventStoreUnavailableError
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.models import (
     RunMarkBlockedResolvedRequest,
@@ -91,16 +92,18 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         step_id: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        sequence_cursor: str | None = None,
     ):
         try:
             inspection_service = services.run_inspection_service_factory()
-            if event_type is not None or step_id is not None or offset:
+            if event_type is not None or step_id is not None or offset or sequence_cursor:
                 result = inspection_service.get_run_events(
                     run_id,
                     event_type=event_type,
                     step_id=step_id,
                     limit=limit,
                     offset=offset,
+                    sequence_cursor=sequence_cursor,
                 )
             else:
                 result = inspection_service.get_run_events(run_id, limit=limit)
@@ -110,6 +113,13 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 code="run_events_not_found",
                 message=str(exc),
                 user_action_required=True,
+            )
+        except EventStoreUnavailableError as exc:
+            return helpers.error(
+                status_code=503,
+                code="event_store_unavailable",
+                message=str(exc),
+                retryable=True,
             )
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_run_events_request", message=str(exc))
@@ -139,9 +149,31 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             }
         },
     )
-    def stream_run_progress(run_id: str, limit: int | None = None):
+    def stream_run_progress(
+        run_id: str,
+        limit: int | None = None,
+        sequence_cursor: str | None = None,
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ):
         try:
-            result = services.run_inspection_service_factory().get_run_events(run_id, limit=limit)
+            inspection_service = services.run_inspection_service_factory()
+            if hasattr(inspection_service, "get_run_events_for_sse"):
+                result = inspection_service.get_run_events_for_sse(
+                    run_id,
+                    limit=limit,
+                    sequence_cursor=sequence_cursor,
+                    last_event_id=last_event_id,
+                )
+            elif last_event_id is not None:
+                raise ValueError("Last-Event-ID is not supported by this inspection service")
+            elif sequence_cursor is None:
+                result = inspection_service.get_run_events(run_id, limit=limit)
+            else:
+                result = inspection_service.get_run_events(
+                    run_id,
+                    limit=limit,
+                    sequence_cursor=sequence_cursor,
+                )
         except (AttributeError, FileNotFoundError) as exc:
             return helpers.error(
                 status_code=404,
@@ -149,11 +181,19 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 message=str(exc),
                 user_action_required=True,
             )
+        except EventStoreUnavailableError as exc:
+            return helpers.error(
+                status_code=503,
+                code="event_store_unavailable",
+                message=str(exc),
+                retryable=True,
+            )
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_run_progress_request", message=str(exc))
         return StreamingResponse(
             helpers.run_progress_sse_frames(result.to_dict()),
             media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     @router.get(
@@ -165,15 +205,44 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             }
         },
     )
-    def stream_run_events(run_id: str, limit: int | None = None):
+    def stream_run_events(
+        run_id: str,
+        limit: int | None = None,
+        sequence_cursor: str | None = None,
+        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    ):
         try:
-            result = services.run_inspection_service_factory().get_run_events(run_id, limit=limit)
+            inspection_service = services.run_inspection_service_factory()
+            if hasattr(inspection_service, "get_run_events_for_sse"):
+                result = inspection_service.get_run_events_for_sse(
+                    run_id,
+                    limit=limit,
+                    sequence_cursor=sequence_cursor,
+                    last_event_id=last_event_id,
+                )
+            elif last_event_id is not None:
+                raise ValueError("Last-Event-ID is not supported by this inspection service")
+            elif sequence_cursor is None:
+                result = inspection_service.get_run_events(run_id, limit=limit)
+            else:
+                result = inspection_service.get_run_events(
+                    run_id,
+                    limit=limit,
+                    sequence_cursor=sequence_cursor,
+                )
         except FileNotFoundError as exc:
             return helpers.error(
                 status_code=404,
                 code="run_events_not_found",
                 message=str(exc),
                 user_action_required=True,
+            )
+        except EventStoreUnavailableError as exc:
+            return helpers.error(
+                status_code=503,
+                code="event_store_unavailable",
+                message=str(exc),
+                retryable=True,
             )
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_run_events_request", message=str(exc))

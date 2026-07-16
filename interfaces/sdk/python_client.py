@@ -169,10 +169,25 @@ class RunsClient:
     def manifest(self, run_id: str) -> dict[str, Any]:
         return self.client.get(f"/api/v1/runs/{_quote_path_segment(run_id)}/manifest")
 
-    def events(self, run_id: str, *, limit: int | None = None) -> dict[str, Any]:
+    def events(
+        self,
+        run_id: str,
+        *,
+        event_type: str | None = None,
+        step_id: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+        sequence_cursor: str | None = None,
+    ) -> dict[str, Any]:
         return self.client.get(
             f"/api/v1/runs/{_quote_path_segment(run_id)}/events",
-            params={"limit": limit},
+            params={
+                "event_type": event_type,
+                "step_id": step_id,
+                "limit": limit,
+                "offset": offset,
+                "sequence_cursor": sequence_cursor,
+            },
         )
 
     def replay(self, run_id: str) -> dict[str, Any]:

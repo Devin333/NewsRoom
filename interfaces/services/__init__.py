@@ -32,6 +32,10 @@ from interfaces.services.project_service import ProjectApplicationService, Proje
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_factory import (
+    build_run_inspection_service,
+    run_inspection_service_from_env,
+)
 from interfaces.services.source_service import SourceApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.storage_service import StorageApplicationService
@@ -65,6 +69,8 @@ __all__ = [
     "ResearchApplicationService",
     "ReportApplicationService",
     "RunInspectionService",
+    "build_run_inspection_service",
+    "run_inspection_service_from_env",
     "RunApplicationService",
     "ScheduleApplicationService",
     "SourceApplicationService",

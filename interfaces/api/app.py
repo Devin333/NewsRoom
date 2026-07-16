@@ -60,6 +60,8 @@ from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
+from interfaces.services.run_inspection_factory import run_inspection_service_from_env
+from interfaces.services.run_event_sse import run_events_sse_frames as _durable_run_events_sse_frames
 from interfaces.services.run_operation_service import RunOperationApplicationService
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
@@ -104,7 +106,7 @@ def create_app(
     entity_service_factory: EntityServiceFactory = EntityTrackingApplicationService,
     subscription_service_factory: SubscriptionServiceFactory = SubscriptionApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
-    run_inspection_service_factory: RunInspectionServiceFactory = RunInspectionService,
+    run_inspection_service_factory: RunInspectionServiceFactory = run_inspection_service_from_env,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
     schedule_service_factory: ScheduleServiceFactory = ScheduleApplicationService,
@@ -540,14 +542,24 @@ def _success(data: dict) -> dict:
 
 def _run_progress_sse_frames(payload: dict[str, Any]):
     run_id = str(payload.get("run_id") or "")
+    durable_source = (
+        payload.get("source") == "durable_store"
+        and payload.get("availability") == "available"
+    )
     for index, event in enumerate(payload.get("events") or []):
+        event_payload = event if isinstance(event, dict) else {}
+        sequence = event_payload.get("stream_sequence")
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            sequence = index
+        event_id = event_payload.get("sse_resume_cursor") if durable_source else None
         yield _sse_frame(
             "run.progress",
             {
                 "run_id": run_id,
-                "sequence": index,
-                "event": redact_sensitive_values(event if isinstance(event, dict) else {}),
+                "sequence": sequence,
+                "event": redact_sensitive_values(event_payload),
             },
+            event_id=(event_id if isinstance(event_id, str) else None),
         )
     yield _sse_frame(
         "run.progress.done",
@@ -555,36 +567,32 @@ def _run_progress_sse_frames(payload: dict[str, Any]):
             "run_id": run_id,
             "event_count": int(payload.get("event_count") or 0),
             "events_path": payload.get("events_path"),
+            "availability": payload.get("availability"),
+            "source": payload.get("source"),
+            "high_watermark": payload.get("high_watermark"),
+            "next_sequence_cursor": payload.get("next_sequence_cursor"),
+            "projection_status": payload.get("projection_status"),
+            "projection_checksum": payload.get("projection_checksum"),
+            "projection_high_watermark": payload.get("projection_high_watermark"),
+            "unavailable_reason_class": payload.get("unavailable_reason_class"),
+            "sse_resume_cursor": payload.get("sse_resume_cursor"),
         },
     )
 
 
 def _run_events_sse_frames(payload: dict[str, Any]):
-    run_id = str(payload.get("run_id") or "")
-    for index, event in enumerate(payload.get("events") or []):
-        event_payload = event if isinstance(event, dict) else {}
-        event_type = str(event_payload.get("event_type") or "run.event")
-        yield _sse_frame(
-            event_type,
-            {
-                "run_id": run_id,
-                "sequence": index,
-                "event": redact_sensitive_values(event_payload),
-            },
-        )
-    yield _sse_frame(
-        "run.events.done",
-        {
-            "run_id": run_id,
-            "event_count": int(payload.get("event_count") or 0),
-            "events_path": payload.get("events_path"),
-        },
-    )
+    yield from _durable_run_events_sse_frames(payload)
 
 
-def _sse_frame(event_name: str, data: dict[str, Any]) -> str:
+def _sse_frame(
+    event_name: str,
+    data: dict[str, Any],
+    *,
+    event_id: str | None = None,
+) -> str:
+    id_line = "" if event_id is None else f"id: {event_id}\n"
     return (
-        f"event: {event_name}\n"
+        f"{id_line}event: {event_name}\n"
         f"data: {json.dumps(redact_sensitive_values(data), ensure_ascii=False, sort_keys=True)}\n\n"
     )
 

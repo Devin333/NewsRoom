@@ -15,7 +15,11 @@ from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
 
 def test_news_cli_runs_list_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(
+        runs_commands,
+        "run_inspection_service_from_env",
+        _FakeRunInspectionService,
+    )
 
     exit_code = news_cli.main(["runs", "list", "--json"])
 
@@ -28,7 +32,11 @@ def test_news_cli_runs_list_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_runs_show_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(
+        runs_commands,
+        "run_inspection_service_from_env",
+        _FakeRunInspectionService,
+    )
 
     exit_code = news_cli.main(["runs", "show", "run-1", "--json"])
 
@@ -41,7 +49,11 @@ def test_news_cli_runs_show_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_runs_events_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(
+        runs_commands,
+        "run_inspection_service_from_env",
+        _FakeRunInspectionService,
+    )
 
     exit_code = news_cli.main(["runs", "events", "run-1", "--limit", "1", "--json"])
 
@@ -55,7 +67,11 @@ def test_news_cli_runs_events_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_runs_events_sse(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(
+        runs_commands,
+        "run_inspection_service_from_env",
+        _FakeRunInspectionService,
+    )
 
     exit_code = news_cli.main(["runs", "events", "run-1", "--limit", "1", "--sse"])
 
@@ -64,12 +80,12 @@ def test_news_cli_runs_events_sse(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert "event: workflow_started\n" in captured.out
     assert "event: run.events.done\n" in captured.out
-    assert '"sequence": 0' in captured.out
+    assert '"sequence": null' in captured.out
     assert '"event_count": 1' in captured.out
 
 
 def test_news_cli_runs_events_invalid_limit_returns_error(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(runs_commands, "run_inspection_service_from_env", _FakeRunInspectionService)
 
     exit_code = news_cli.main(["runs", "events", "run-1", "--limit", "0", "--json"])
 
@@ -119,7 +135,7 @@ def test_news_cli_runs_replay_text_reads_real_files(tmp_path, capsys) -> None:
 
 
 def test_news_cli_runs_diagnostics_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(runs_commands, "run_inspection_service_from_env", _FakeRunInspectionService)
 
     exit_code = news_cli.main(["runs", "diagnostics", "run-1", "--json"])
 
@@ -131,7 +147,7 @@ def test_news_cli_runs_diagnostics_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_runs_health_text(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(runs_commands, "run_inspection_service_from_env", _FakeRunInspectionService)
 
     exit_code = news_cli.main(["runs", "health", "run-1"])
 
@@ -143,7 +159,7 @@ def test_news_cli_runs_health_text(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_runs_catalog_health_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(runs_commands, "run_inspection_service_from_env", _FakeRunInspectionService)
 
     exit_code = news_cli.main(["runs", "catalog-health", "--json"])
 
@@ -155,7 +171,7 @@ def test_news_cli_runs_catalog_health_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_runs_compare_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(runs_commands, "RunInspectionService", _FakeRunInspectionService)
+    monkeypatch.setattr(runs_commands, "run_inspection_service_from_env", _FakeRunInspectionService)
 
     exit_code = news_cli.main(["runs", "compare", "run-1", "run-2", "--json"])
 
@@ -209,7 +225,7 @@ def test_news_cli_runs_inspection_path_error_uses_stderr_and_exit_one(
 ) -> None:
     monkeypatch.setattr(
         runs_commands,
-        "RunInspectionService",
+        "run_inspection_service_from_env",
         _ArtifactPathRunInspectionService,
     )
 
@@ -303,7 +319,7 @@ def test_news_cli_runs_replay_integrity_error_uses_stderr_and_exit_one(
     error = error_type("run replay integrity verification failed")
     monkeypatch.setattr(
         runs_commands,
-        "RunInspectionService",
+        "run_inspection_service_from_env",
         lambda *args, **kwargs: _ArtifactIntegrityRunInspectionService(error),
     )
 

@@ -30,7 +30,6 @@ RUN_MANIFEST_RESOURCE_TEMPLATE = "news://runs/{run_id}/manifest"
 RUN_MANIFEST_RESOURCE_PREFIX = "news://runs/"
 RUN_MANIFEST_RESOURCE_SUFFIX = "/manifest"
 RUN_EVENTS_RESOURCE_TEMPLATE = "news://runs/{run_id}/events"
-RUN_EVENTS_RESOURCE_SUFFIX = "/events"
 RUN_REPLAY_RESOURCE_TEMPLATE = "news://runs/{run_id}/replay"
 RUN_REPLAY_RESOURCE_SUFFIX = "/replay"
 RUN_LINEAGE_RESOURCE_TEMPLATE = "news://runs/{run_id}/lineage"
@@ -174,9 +173,9 @@ class MCPApplicationService:
             run_id = _run_manifest_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_manifest_resource(uri, run_id)
-            run_id = _run_events_resource_run_id(uri)
-            if run_id is not None:
-                return self._read_run_events_resource(uri, run_id)
+            run_events_resource = _run_events_resource_args(uri)
+            if run_events_resource is not None:
+                return self._read_run_events_resource(uri, run_events_resource)
             run_id = _run_replay_resource_run_id(uri)
             if run_id is not None:
                 return self._read_run_replay_resource(uri, run_id)
@@ -718,6 +717,10 @@ class MCPApplicationService:
         result = self.run_inspection_service_factory().get_run_events(
             run_id,
             limit=int(args["limit"]) if args.get("limit") is not None else None,
+            offset=int(args.get("offset") or 0),
+            event_type=_optional_arg(args, "event_type"),
+            step_id=_optional_arg(args, "step_id"),
+            sequence_cursor=_optional_arg(args, "sequence_cursor"),
         )
         return MCPToolCallResult(
             tool_name="news.run.events",
@@ -1021,8 +1024,24 @@ class MCPApplicationService:
             data=result.to_dict(),
         )
 
-    def _read_run_events_resource(self, uri: str, run_id: str) -> MCPResourceReadResult:
-        result = self.run_inspection_service_factory().get_run_events(run_id)
+    def _read_run_events_resource(
+        self,
+        uri: str,
+        args: dict[str, Any],
+    ) -> MCPResourceReadResult:
+        run_id = str(args.pop("run_id"))
+        allowed = {"limit", "offset", "event_type", "step_id", "sequence_cursor"}
+        unknown = set(args) - allowed
+        if unknown:
+            raise ValueError(f"unsupported run events resource parameter: {sorted(unknown)[0]}")
+        result = self.run_inspection_service_factory().get_run_events(
+            run_id,
+            limit=(int(args["limit"]) if args.get("limit") is not None else None),
+            offset=int(args.get("offset") or 0),
+            event_type=_optional_arg(args, "event_type"),
+            step_id=_optional_arg(args, "step_id"),
+            sequence_cursor=_optional_arg(args, "sequence_cursor"),
+        )
         return MCPResourceReadResult(
             uri=uri,
             success=True,
@@ -1551,6 +1570,10 @@ def _tools() -> list[MCPTool]:
                 "properties": {
                     "run_id": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1},
+                    "offset": {"type": "integer", "minimum": 0},
+                    "event_type": {"type": "string"},
+                    "step_id": {"type": "string"},
+                    "sequence_cursor": {"type": "string"},
                 },
             },
         ),
@@ -2348,9 +2371,9 @@ def _approval_service_factory():
 
 
 def _run_inspection_service_factory():
-    from interfaces.services.run_inspection_service import RunInspectionService
+    from interfaces.services.run_inspection_factory import run_inspection_service_from_env
 
-    return RunInspectionService()
+    return run_inspection_service_from_env()
 
 
 def _run_operation_service_factory():
@@ -2387,13 +2410,20 @@ def _run_manifest_resource_run_id(uri: str) -> str | None:
     return run_id or None
 
 
-def _run_events_resource_run_id(uri: str) -> str | None:
-    if not uri.startswith(RUN_MANIFEST_RESOURCE_PREFIX) or not uri.endswith(
-        RUN_EVENTS_RESOURCE_SUFFIX
-    ):
+def _run_events_resource_args(uri: str) -> dict[str, Any] | None:
+    parsed = urlsplit(uri)
+    if parsed.scheme != "news" or parsed.netloc != "runs":
         return None
-    run_id = uri[len(RUN_MANIFEST_RESOURCE_PREFIX) : -len(RUN_EVENTS_RESOURCE_SUFFIX)]
-    return run_id or None
+    parts = [unquote(part) for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) != 2 or parts[1] != "events":
+        return None
+    args = {
+        key: values[-1]
+        for key, values in parse_qs(parsed.query, keep_blank_values=True).items()
+        if values
+    }
+    args["run_id"] = parts[0]
+    return args
 
 
 def _run_replay_resource_run_id(uri: str) -> str | None:

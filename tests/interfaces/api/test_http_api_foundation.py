@@ -907,7 +907,7 @@ def test_run_events_stream_uses_event_types_and_done_frame() -> None:
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "event: workflow_started\n" in body
     assert "event: run.events.done\n" in body
-    assert '"sequence": 0' in body
+    assert '"sequence": null' in body
     assert '"event_count": 1' in body
     assert "[redacted]" in body
     assert "hidden-token" not in body

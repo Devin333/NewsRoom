@@ -17,6 +17,8 @@ from interfaces.models import (
     PageRequest,
     RunDetail,
     RunEventView,
+    RunEventsApiResponse,
+    RunEventsData,
     RunListItem,
     RunOperationRequest,
     RunResponse,
@@ -49,6 +51,8 @@ CONTRACT_MODELS = (
     PageRequest,
     RunDetail,
     RunEventView,
+    RunEventsApiResponse,
+    RunEventsData,
     RunListItem,
     RunOperationRequest,
     RunResponse,
@@ -237,7 +241,7 @@ def _ensure_api_response_references(schema: dict[str, Any]) -> None:
     paths = schema.get("paths")
     if not isinstance(paths, dict):
         return
-    for operations in paths.values():
+    for path, operations in paths.items():
         if not isinstance(operations, dict):
             continue
         for operation in operations.values():
@@ -250,4 +254,11 @@ def _ensure_api_response_references(schema: dict[str, Any]) -> None:
             )
             if "text/event-stream" in content:
                 continue
-            content["application/json"] = {"schema": {"$ref": "#/components/schemas/ApiResponse"}}
+            response_schema = (
+                "RunEventsApiResponse"
+                if path == "/api/v1/runs/{run_id}/events"
+                else "ApiResponse"
+            )
+            content["application/json"] = {
+                "schema": {"$ref": f"#/components/schemas/{response_schema}"}
+            }

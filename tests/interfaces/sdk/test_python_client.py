@@ -58,7 +58,7 @@ def test_news_client_reads_run_inspection_endpoints() -> None:
 
     assert client.runs.get("run/1") == {"ok": True}
     assert client.runs.manifest("run/1") == {"ok": True}
-    assert client.runs.events("run/1", limit=2) == {"ok": True}
+    assert client.runs.events("run/1", limit=2, sequence_cursor="cursor-1") == {"ok": True}
     assert client.runs.replay("run/1") == {"ok": True}
     assert client.runs.diagnostics("run/1") == {"ok": True}
     assert client.runs.health("run/1") == {"ok": True}
@@ -68,7 +68,7 @@ def test_news_client_reads_run_inspection_endpoints() -> None:
     assert [request.full_url for request in opener.requests] == [
         "https://news.example/api/v1/runs/run%2F1",
         "https://news.example/api/v1/runs/run%2F1/manifest",
-        "https://news.example/api/v1/runs/run%2F1/events?limit=2",
+        "https://news.example/api/v1/runs/run%2F1/events?limit=2&offset=0&sequence_cursor=cursor-1",
         "https://news.example/api/v1/runs/run%2F1/replay",
         "https://news.example/api/v1/runs/run%2F1/diagnostics",
         "https://news.example/api/v1/runs/run%2F1/health",
