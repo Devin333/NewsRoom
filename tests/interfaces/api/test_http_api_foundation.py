@@ -1,6 +1,7 @@
 import hashlib
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from framework.artifacts import (
@@ -8,6 +9,7 @@ from framework.artifacts import (
     ArtifactStoreMetadataError,
     ArtifactStoreRequiredError,
 )
+from framework.events.errors import EventStoreUnavailableError
 from interfaces.api import create_app
 from interfaces.api.app import _api_token_from_env
 from interfaces.events import AuditEmitter, InMemoryAuditSink
@@ -1017,6 +1019,33 @@ def test_run_health_returns_health() -> None:
     assert payload["data"]["health"]["severity"] == "ok"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/runs/run-1/replay",
+        "/api/v1/runs/run-1/diagnostics",
+        "/api/v1/runs/run-1/health",
+        "/api/v1/runs/compare?base_run_id=run-1&target_run_id=run-2",
+    ],
+)
+def test_run_derived_reads_return_explicit_store_unavailable(path) -> None:
+    client = TestClient(
+        create_app(
+            run_inspection_service_factory=_UnavailableDerivedRunInspectionService,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.get(path)
+    payload = response.json()
+
+    assert response.status_code == 503
+    assert payload["error"]["code"] == "event_store_unavailable"
+    assert payload["error"]["message"] == "event store is unavailable"
+    assert payload["error"]["retryable"] is True
+    assert "database-host" not in response.text
+
+
 def test_run_replay_api_reads_real_files_and_redacts(tmp_path) -> None:
     write_canonical_terminal_run(
         tmp_path,
@@ -1885,6 +1914,26 @@ class _FailingRunReplayService:
 
     def replay_run(self, run_id):
         raise self.error
+
+
+class _UnavailableDerivedRunInspectionService:
+    def replay_run(self, run_id):
+        self._raise()
+
+    def get_run_diagnostics(self, run_id):
+        self._raise()
+
+    def get_run_health(self, run_id):
+        self._raise()
+
+    def compare_runs(self, base_run_id, target_run_id):
+        self._raise()
+
+    @staticmethod
+    def _raise():
+        raise EventStoreUnavailableError(
+            "database-host.internal durable event store unavailable"
+        )
 
 
 class _FakeArtifactService:

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from hashlib import sha256
 
 import pytest
@@ -10,6 +11,12 @@ from framework.artifacts import (
     ArtifactStoreMetadataError,
     ArtifactStoreRequiredError,
 )
+from framework.events.canonical import (
+    BusinessContext,
+    EventCandidate,
+    ProducerIdentity,
+)
+from infrastructure.storage.events.sqlite import SQLiteEventStore
 from interfaces.cli.commands import runs as runs_commands
 from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
@@ -95,8 +102,14 @@ def test_news_cli_runs_events_invalid_limit_returns_error(monkeypatch, capsys) -
     assert "limit must be greater than zero" in captured.out
 
 
-def test_news_cli_runs_replay_json_reads_real_files(tmp_path, capsys) -> None:
+def test_news_cli_runs_replay_json_reads_real_files(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
     write_canonical_terminal_run(tmp_path)
+    monkeypatch.setenv("NEWS_TENANT_ID", "tenant-a")
+    _seed_durable_run_events(tmp_path)
 
     exit_code = news_cli.main(
         [
@@ -329,6 +342,37 @@ def test_news_cli_runs_replay_integrity_error_uses_stderr_and_exit_one(
     assert exit_code == 1
     assert captured.out == ""
     assert captured.err == "run replay integrity verification failed\n"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["runs", "replay", "run-1", "--json"],
+        ["runs", "diagnostics", "run-1", "--json"],
+        ["runs", "health", "run-1", "--json"],
+        ["runs", "compare", "run-1", "run-2", "--json"],
+    ],
+)
+def test_news_cli_runs_derived_reads_report_store_unavailable(
+    monkeypatch,
+    capsys,
+    argv,
+) -> None:
+    monkeypatch.setattr(
+        runs_commands,
+        "run_inspection_service_from_env",
+        lambda *args, **kwargs: _UnavailableDerivedRunInspectionService(),
+    )
+
+    exit_code = news_cli.main(argv)
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.out == ""
+    assert captured.err == (
+        "availability=unavailable error_type=EventStoreUnavailableError\n"
+    )
+    assert "database-host" not in captured.err
 
 
 def test_news_cli_runs_replay_real_tamper_uses_stderr_and_exit_one(
@@ -618,6 +662,28 @@ class _ArtifactIntegrityRunInspectionService:
         raise self.error
 
 
+class _UnavailableDerivedRunInspectionService:
+    def replay_run(self, run_id):
+        self._raise()
+
+    def get_run_diagnostics(self, run_id):
+        self._raise()
+
+    def get_run_health(self, run_id):
+        self._raise()
+
+    def compare_runs(self, base_run_id, target_run_id):
+        self._raise()
+
+    @staticmethod
+    def _raise():
+        from framework.events.errors import EventStoreUnavailableError
+
+        raise EventStoreUnavailableError(
+            "database-host.internal durable event store unavailable"
+        )
+
+
 class _FakeRunOperationService:
     def __init__(self, artifact_root=".newsroom/runs") -> None:
         self.artifact_root = artifact_root
@@ -663,6 +729,35 @@ class _FakeResult:
 
     def to_dict(self):
         return self.payload
+
+
+def _seed_durable_run_events(root) -> None:
+    store = SQLiteEventStore(root / "_records" / "events.sqlite3")
+    events = (
+        ("workflow_started", {"profile": "live-offline"}),
+        ("workflow_succeeded", {"path": ["write"]}),
+    )
+    for sequence, (event_type, payload) in enumerate(events, start=1):
+        store.append_event(
+            EventCandidate(
+                event_id=f"evt-run-1-{sequence}",
+                event_type=event_type,
+                data_schema="newsroom.workflow-event/v1",
+                source="io.newsroom.workflow.runtime",
+                occurred_at=datetime(2026, 5, 14, 1, 0, sequence - 1, tzinfo=UTC),
+                stream_id="run:run-1",
+                business_context=BusinessContext(
+                    run_id="run-1",
+                    workflow_id="daily",
+                ),
+                producer=ProducerIdentity(
+                    component="framework.workflow.runtime",
+                    version="1",
+                ),
+                tenant_id="tenant-a",
+                payload=payload,
+            )
+        )
 
 
 def _write_replay_run(root) -> None:

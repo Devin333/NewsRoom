@@ -864,12 +864,16 @@ class ArtifactIntegrityInspector:
         manifest: dict[str, Any],
         *,
         strict: bool,
+        ignored_artifact_keys: Iterable[str] = (),
     ) -> ArtifactIntegrityReport:
+        ignored = frozenset(str(key) for key in ignored_artifact_keys)
         missing: list[str] = []
         checksum_failures: list[str] = []
         size_mismatches: list[str] = []
         warnings: list[str] = []
         for artifact_key, relative_path in _manifest_artifact_map(manifest).items():
+            if artifact_key in ignored:
+                continue
             try:
                 path = resolve_artifact_path(run_dir, relative_path)
             except WorkflowRunInspectionError:
@@ -888,7 +892,11 @@ class ArtifactIntegrityInspector:
             if expected_checksum and _sha256_file(path) != expected_checksum:
                 checksum_failures.append(artifact_key)
         terminal_key = terminal_artifact_key(manifest)
-        if terminal_key and terminal_key not in _manifest_artifact_map(manifest):
+        if (
+            terminal_key
+            and terminal_key not in ignored
+            and terminal_key not in _manifest_artifact_map(manifest)
+        ):
             missing.append(terminal_key)
         if checksum_failures and not strict:
             warnings.extend(
@@ -1410,16 +1418,20 @@ class WorkflowRunInspector:
         *,
         verify_checksums: bool = False,
         strict: bool = False,
+        base_event_records: Iterable[WorkflowEventRecord] | None = None,
+        target_event_records: Iterable[WorkflowEventRecord] | None = None,
     ) -> WorkflowRunComparison:
         base = self.inspect_run(
             base_run_id,
             verify_checksums=verify_checksums,
             strict=strict,
+            event_records=base_event_records,
         )
         target = self.inspect_run(
             target_run_id,
             verify_checksums=verify_checksums,
             strict=strict,
+            event_records=target_event_records,
         )
         return compare_workflow_run_inspections(base, target)
 
@@ -1430,14 +1442,20 @@ class WorkflowRunInspector:
         run_dir: str | Path | None = None,
         verify_checksums: bool = False,
         strict: bool = False,
+        event_records: Iterable[WorkflowEventRecord] | None = None,
     ) -> WorkflowRunInspection:
         actual_run_dir = self._resolve_run_dir(run_id=run_id, run_dir=run_dir)
+        event_override = _normalize_event_record_override(event_records)
+        ignored_artifact_keys = (
+            frozenset({"events"}) if event_override is not None else frozenset()
+        )
         manifest = self.load_manifest(actual_run_dir)
         integrity = self.validate_run_dir(
             actual_run_dir,
             manifest=manifest,
             verify_checksums=verify_checksums,
             strict_checksums=strict,
+            ignored_artifact_keys=ignored_artifact_keys,
         )
         if strict and not integrity.valid:
             raise WorkflowRunInspectionError(
@@ -1472,13 +1490,21 @@ class WorkflowRunInspector:
             manifest=manifest,
             default={},
         )
-        events = self.read_events(actual_run_dir, manifest=manifest, missing_ok=True)
+        events = (
+            list(event_override)
+            if event_override is not None
+            else self.read_events(actual_run_dir, manifest=manifest, missing_ok=True)
+        )
         steps = summarize_steps(step_results, manifest=manifest)
         event_summary = summarize_events(events)
         timeline = build_workflow_timeline(events)
         timeline_summary = summarize_workflow_timeline(timeline)
         artifact_inventory = build_artifact_inventory(
-            artifacts,
+            [
+                artifact
+                for artifact in artifacts
+                if artifact.artifact_key not in ignored_artifact_keys
+            ],
             terminal_artifact_key=terminal_artifact_key(manifest),
         )
         data_buffer_diff_summary = summarize_data_buffer_diff(data_buffer_diff)
@@ -1517,21 +1543,32 @@ class WorkflowRunInspector:
         run_dir: str | Path | None = None,
         verify_checksums: bool = False,
         strict: bool = False,
+        event_records: Iterable[WorkflowEventRecord] | None = None,
     ) -> WorkflowReplayBundle:
         actual_run_dir = self._resolve_run_dir(run_id=run_id, run_dir=run_dir)
+        event_override = _normalize_event_record_override(event_records)
         manifest = self.load_manifest(actual_run_dir)
         integrity = self.validate_run_dir(
             actual_run_dir,
             manifest=manifest,
             verify_checksums=verify_checksums,
             strict_checksums=strict,
+            ignored_artifact_keys=(
+                frozenset({"events"})
+                if event_override is not None
+                else frozenset()
+            ),
         )
         if strict and not integrity.valid:
             raise WorkflowRunInspectionError(
                 "workflow run replay bundle is invalid: " + "; ".join(integrity.errors)
             )
         terminal_key = terminal_artifact_key(manifest)
-        events = self.read_events(actual_run_dir, manifest=manifest, missing_ok=True)
+        events = (
+            list(event_override)
+            if event_override is not None
+            else self.read_events(actual_run_dir, manifest=manifest, missing_ok=True)
+        )
         event_payloads = [event.to_dict() for event in events]
         return WorkflowReplayBundle(
             run_dir=str(actual_run_dir),
@@ -1608,8 +1645,10 @@ class WorkflowRunInspector:
         expand_source_artifacts: bool = True,
         max_artifact_bytes: int | None = None,
         strict_artifact_integrity: bool = False,
+        event_records: Iterable[WorkflowEventRecord] | None = None,
     ) -> WorkflowReplayContentBundle:
         actual_run_dir = self._resolve_run_dir(run_id=run_id, run_dir=run_dir)
+        event_override = _normalize_event_record_override(event_records)
         if strict_artifact_integrity:
             try:
                 return self._build_strict_replay_content_bundle(
@@ -1619,17 +1658,38 @@ class WorkflowRunInspector:
                     artifact_index_keys=artifact_index_keys,
                     expand_source_artifacts=expand_source_artifacts,
                     max_artifact_bytes=max_artifact_bytes,
+                    event_records=event_override,
                 )
             except ArtifactStoreMetadataError as exc:
                 _emit_strict_workflow_metadata_failure(exc)
                 raise
         manifest = self.load_manifest(actual_run_dir)
-        integrity = self.validate_run_dir(actual_run_dir, manifest=manifest)
+        integrity = self.validate_run_dir(
+            actual_run_dir,
+            manifest=manifest,
+            ignored_artifact_keys=(
+                frozenset({"events"})
+                if event_override is not None
+                else frozenset()
+            ),
+        )
         artifact_paths = _manifest_artifact_map(manifest)
         events: list[dict[str, Any]] = []
         events_path = None
         events_error = None
-        if "events" in artifact_paths:
+        if event_override is not None:
+            events = [
+                _redact_if_needed(event.to_dict(), redact=redact)
+                for event in event_override
+            ]
+            events_path_obj = self.artifact_path(
+                actual_run_dir,
+                "events",
+                manifest=manifest,
+                missing_ok=True,
+            )
+            events_path = str(events_path_obj) if events_path_obj is not None else None
+        elif "events" in artifact_paths:
             try:
                 event_records = self.read_events(actual_run_dir, manifest=manifest)
                 events = [
@@ -1645,16 +1705,28 @@ class WorkflowRunInspector:
                 events_path = str(events_path_obj) if events_path_obj is not None else None
             except WorkflowRunInspectionError as exc:
                 events_error = str(exc)
-        artifacts = [
-            read_workflow_artifact_content(
-                actual_run_dir,
-                artifact_key,
-                relative_path,
-                redact=redact,
-                max_bytes=max_artifact_bytes,
+        artifacts = []
+        for artifact_key, relative_path in sorted(artifact_paths.items()):
+            if artifact_key == "events" and event_override is not None:
+                artifacts.append(
+                    _metadata_only_artifact_content_record(
+                        actual_run_dir,
+                        manifest,
+                        artifact_key,
+                        strict_metadata=False,
+                        redact=redact,
+                    )
+                )
+                continue
+            artifacts.append(
+                read_workflow_artifact_content(
+                    actual_run_dir,
+                    artifact_key,
+                    relative_path,
+                    redact=redact,
+                    max_bytes=max_artifact_bytes,
+                )
             )
-            for artifact_key, relative_path in sorted(artifact_paths.items())
-        ]
         if expand_artifact_indexes and expand_source_artifacts:
             artifacts.extend(
                 read_artifact_index_content_records(
@@ -1695,6 +1767,7 @@ class WorkflowRunInspector:
         artifact_index_keys: Iterable[str] | None,
         expand_source_artifacts: bool,
         max_artifact_bytes: int | None,
+        event_records: tuple[WorkflowEventRecord, ...] | None,
     ) -> WorkflowReplayContentBundle:
         manifest_snapshot, manifest = _capture_and_validate_run_manifest(run_dir)
         artifact_paths = _manifest_artifact_map(manifest)
@@ -1703,6 +1776,8 @@ class WorkflowRunInspector:
         }
         for artifact_key in sorted(artifact_paths):
             if artifact_key == "manifest":
+                continue
+            if artifact_key == "events" and event_records is not None:
                 continue
             snapshots[artifact_key] = _capture_verified_artifact_snapshot(
                 run_dir,
@@ -1728,19 +1803,35 @@ class WorkflowRunInspector:
 
         # From this point onward strict replay projects only captured bytes. Paths are
         # retained for response metadata and are never reopened.
-        event_records = _event_records_from_snapshot(snapshots.get("events"))
+        selected_event_records = (
+            list(event_records)
+            if event_records is not None
+            else _event_records_from_snapshot(snapshots.get("events"))
+        )
         events = [
             _redact_if_needed(event.to_dict(), redact=redact)
-            for event in event_records
+            for event in selected_event_records
         ]
-        artifacts = [
-            _content_record_from_snapshot(
-                snapshots[artifact_key],
-                redact=redact,
-                max_bytes=max_artifact_bytes,
+        artifacts = []
+        for artifact_key in sorted(artifact_paths):
+            if artifact_key == "events" and event_records is not None:
+                artifacts.append(
+                    _metadata_only_artifact_content_record(
+                        run_dir,
+                        manifest,
+                        artifact_key,
+                        strict_metadata=True,
+                        redact=redact,
+                    )
+                )
+                continue
+            artifacts.append(
+                _content_record_from_snapshot(
+                    snapshots[artifact_key],
+                    redact=redact,
+                    max_bytes=max_artifact_bytes,
+                )
             )
-            for artifact_key in sorted(artifact_paths)
-        ]
         artifacts.extend(
             _indexed_content_record_from_snapshot(
                 snapshot,
@@ -1763,8 +1854,14 @@ class WorkflowRunInspector:
             manifest_path=str(manifest_snapshot.absolute_path),
             events=events,
             events_path=(
-                str(snapshots["events"].absolute_path)
-                if "events" in snapshots
+                str(
+                    resolve_artifact_descendant(
+                        run_dir,
+                        artifact_paths["events"],
+                        field="artifact_path[events]",
+                    )
+                )
+                if "events" in artifact_paths
                 else None
             ),
             events_error=None,
@@ -1788,14 +1885,20 @@ class WorkflowRunInspector:
         run_dir: str | Path | None = None,
         verify_checksums: bool = False,
         strict: bool = False,
+        event_records: Iterable[WorkflowEventRecord] | None = None,
     ) -> WorkflowRunDiagnostics:
+        event_override = _normalize_event_record_override(event_records)
         inspection = self.inspect_run(
             run_id,
             run_dir=run_dir,
             verify_checksums=verify_checksums,
             strict=strict,
+            event_records=event_override,
         )
-        summary_payload = _diagnostics_summary_payload(inspection)
+        summary_payload = _diagnostics_summary_payload(
+            inspection,
+            event_records=event_override,
+        )
         return WorkflowRunDiagnostics(
             inspection=inspection,
             timeline=list(inspection.timeline),
@@ -1811,11 +1914,17 @@ class WorkflowRunInspector:
         run_id: str | None = None,
         *,
         run_dir: str | Path | None = None,
+        event_records: Iterable[WorkflowEventRecord] | None = None,
     ) -> list[WorkflowTimelineItem]:
         actual_run_dir = self._resolve_run_dir(run_id=run_id, run_dir=run_dir)
+        event_override = _normalize_event_record_override(event_records)
         manifest = self.load_manifest(actual_run_dir)
         return build_workflow_timeline(
-            self.read_events(actual_run_dir, manifest=manifest, missing_ok=True)
+            (
+                event_override
+                if event_override is not None
+                else self.read_events(actual_run_dir, manifest=manifest, missing_ok=True)
+            )
         )
 
     def build_artifact_inventory(
@@ -1860,12 +1969,14 @@ class WorkflowRunInspector:
         run_dir: str | Path | None = None,
         verify_checksums: bool = False,
         strict: bool = False,
+        event_records: Iterable[WorkflowEventRecord] | None = None,
     ) -> WorkflowRunHealthReport:
         inspection = self.inspect_run(
             run_id,
             run_dir=run_dir,
             verify_checksums=verify_checksums,
             strict=strict,
+            event_records=event_records,
         )
         if inspection.health_report is None:
             return build_run_health_report(inspection)
@@ -1887,9 +1998,11 @@ class WorkflowRunInspector:
         manifest: dict[str, Any] | None = None,
         verify_checksums: bool = False,
         strict_checksums: bool = False,
+        ignored_artifact_keys: Iterable[str] = (),
     ) -> WorkflowManifestIntegrityReport:
         actual_run_dir = Path(run_dir)
         manifest_payload = manifest or self.load_manifest(actual_run_dir)
+        ignored = frozenset(str(key) for key in ignored_artifact_keys)
         errors: list[str] = []
         warnings: list[str] = []
         try:
@@ -1904,6 +2017,8 @@ class WorkflowRunInspector:
         missing_artifact_files: list[str] = []
         total_size_bytes = 0
         for artifact_key, relative_path in artifacts.items():
+            if artifact_key in ignored:
+                continue
             try:
                 path = resolve_artifact_path(actual_run_dir, relative_path)
             except WorkflowRunInspectionError as exc:
@@ -1924,6 +2039,7 @@ class WorkflowRunInspector:
             actual_run_dir,
             manifest_payload,
             strict=False,
+            ignored_artifact_keys=ignored,
         )
         warnings.extend(artifact_integrity.warnings)
         if artifact_integrity.size_mismatches:
@@ -2364,6 +2480,55 @@ def _content_record_from_snapshot(
         content=content,
         truncated=truncated,
         metadata=_redact_if_needed(dict(snapshot.metadata), redact=redact),
+    )
+
+
+def _metadata_only_artifact_content_record(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    artifact_key: str,
+    *,
+    strict_metadata: bool,
+    redact: bool,
+) -> WorkflowArtifactContentRecord:
+    """Describe an offline projection without treating its bytes as event history."""
+
+    relative_path = _manifest_artifact_map(manifest).get(artifact_key)
+    if relative_path is None:
+        raise ArtifactNotFoundError(f"artifact not found: {artifact_key}")
+    path = resolve_artifact_descendant(
+        run_dir,
+        relative_path,
+        field=f"artifact_path[{artifact_key}]",
+    )
+    metadata = (
+        _strict_artifact_metadata(manifest, artifact_key)
+        if strict_metadata
+        else _artifact_record_metadata(manifest, artifact_key)
+    )
+    content_type = content_type_for_path(relative_path)
+    declared_content_type = metadata.get("content_type")
+    if strict_metadata:
+        if (
+            declared_content_type is not None
+            and declared_content_type != content_type
+        ):
+            raise ArtifactStoreMetadataError(
+                f"artifact metadata content_type does not match path: {artifact_key}"
+            )
+        validate_sha256_checksum(
+            metadata.get("checksum"),
+            artifact_id=artifact_key,
+            field="artifact_metadata.checksum",
+        )
+    return WorkflowArtifactContentRecord(
+        artifact_key=artifact_key,
+        relative_path=_posix_artifact_path(relative_path),
+        absolute_path=str(path),
+        content_type=content_type,
+        size_bytes=_optional_int(metadata.get("size_bytes")),
+        content=None,
+        metadata=_redact_if_needed(dict(metadata), redact=redact),
     )
 
 
@@ -2891,8 +3056,16 @@ def _inspection_budget_summary(inspection: WorkflowRunInspection) -> dict[str, A
 
 def _diagnostics_summary_payload(
     inspection: WorkflowRunInspection,
+    *,
+    event_records: Iterable[WorkflowEventRecord] | None = None,
 ) -> dict[str, Any]:
-    event_payloads = [event.to_dict() for event in _inspection_events(inspection)]
+    event_override = _normalize_event_record_override(event_records)
+    selected_events = (
+        list(event_override)
+        if event_override is not None
+        else _inspection_events(inspection)
+    )
+    event_payloads = [event.to_dict() for event in selected_events]
     step_results = _step_results_from_manifest_or_summary(inspection)
     root_cause = WorkflowRootCauseAnalyzer().analyze(
         inspection.manifest,
@@ -2904,6 +3077,11 @@ def _diagnostics_summary_payload(
         Path(inspection.run_dir),
         inspection.manifest,
         strict=False,
+        ignored_artifact_keys=(
+            frozenset({"events"})
+            if event_override is not None
+            else frozenset()
+        ),
     )
     policy_violations = _policy_violation_strings(_inspection_policy_violations(inspection))
     resume_metadata = _resume_metadata_for_inspection(inspection)
@@ -2957,6 +3135,17 @@ def _inspection_events(inspection: WorkflowRunInspection) -> list[WorkflowEventR
         return list(_read_event_jsonl(events_path))
     except WorkflowRunInspectionError:
         return []
+
+
+def _normalize_event_record_override(
+    event_records: Iterable[WorkflowEventRecord] | None,
+) -> tuple[WorkflowEventRecord, ...] | None:
+    if event_records is None:
+        return None
+    records = tuple(event_records)
+    if any(not isinstance(record, WorkflowEventRecord) for record in records):
+        raise TypeError("event_records must contain WorkflowEventRecord values")
+    return records
 
 
 def _step_results_from_manifest_or_summary(

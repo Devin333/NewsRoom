@@ -15,7 +15,7 @@ from framework.artifacts.paths import (
     validate_artifact_path_segment,
 )
 from framework.shared.json import to_jsonable as to_json_safe
-from framework.events.errors import EventStoreUnavailableError
+from framework.events.errors import EventContractError, EventStoreUnavailableError
 from framework.events.canonical import checksum_for
 from framework.events.runtime.models import (
     DEFAULT_PAGE_LIMIT,
@@ -25,6 +25,7 @@ from framework.events.runtime.models import (
 from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.workflow.inspection import (
     WorkflowArtifactContentRecord,
+    WorkflowEventRecord,
     WorkflowReplayContentBundle,
     WorkflowRunInspectionError,
     WorkflowRunInspector,
@@ -875,6 +876,115 @@ class RunInspectionService:
             self._event_schema_catalog = catalog
             self._event_services_factory = None
 
+    def _read_online_event_records(
+        self,
+        run_id: str,
+    ) -> tuple[WorkflowEventRecord, ...] | None:
+        """Capture one complete durable stream prefix for derived inspection views."""
+
+        self._ensure_event_services()
+        if self._event_reader_service is None:
+            if self._durable_event_reader_expected:
+                self._raise_event_store_unavailable(
+                    self._event_store_unavailable_reason_class
+                )
+            return None
+
+        stream_id = f"run:{validate_artifact_path_segment(run_id, field='run_id')}"
+        watermark = self._event_reader_service.get_high_watermark(
+            stream_id,
+            authorization=self._event_authorization,
+        )
+        if watermark.availability is EventServiceAvailability.UNAVAILABLE:
+            self._raise_event_store_unavailable(watermark.unavailable_reason_class)
+        high_watermark = watermark.high_watermark
+        if high_watermark is None:
+            return ()
+
+        records: list[WorkflowEventRecord] = []
+        cursor: StreamSequenceCursor | None = None
+        expected_sequence = 1
+        page_count = 0
+        while expected_sequence <= high_watermark:
+            page_count += 1
+            if page_count > high_watermark:
+                raise EventContractError(
+                    "durable run event pagination exceeded the captured stream bound"
+                )
+            page = self._event_reader_service.read_run_events(
+                run_id,
+                authorization=self._event_authorization,
+                cursor=cursor,
+                limit=MAX_PAGE_LIMIT,
+                through_sequence=high_watermark,
+            )
+            if page.availability is EventServiceAvailability.UNAVAILABLE:
+                self._raise_event_store_unavailable(page.unavailable_reason_class)
+            if page.high_watermark != high_watermark:
+                raise EventContractError(
+                    "durable run event reader changed the captured high watermark"
+                )
+            if not page.events:
+                raise EventContractError(
+                    "durable run event reader returned an incomplete stream prefix"
+                )
+            for event in page.events:
+                if event.stream_sequence != expected_sequence:
+                    raise EventContractError(
+                        "durable run event reader returned a non-contiguous stream prefix"
+                    )
+                projection = project_workflow_event(
+                    event,
+                    schema_catalog=self._event_schema_catalog,
+                )
+                records.append(
+                    _workflow_event_record_from_projection(
+                        projection,
+                        run_id=run_id,
+                        stream_sequence=expected_sequence,
+                    )
+                )
+                expected_sequence += 1
+
+            if expected_sequence > high_watermark:
+                if page.next_cursor is not None:
+                    raise EventContractError(
+                        "durable run event reader continued beyond the captured high watermark"
+                    )
+                break
+            next_cursor = page.next_cursor
+            if next_cursor is None:
+                raise EventContractError(
+                    "durable run event reader truncated the captured stream prefix"
+                )
+            if (
+                next_cursor.stream_id != stream_id
+                or next_cursor.tenant_id != self._event_authorization.tenant_id
+                or next_cursor.high_watermark != high_watermark
+                or next_cursor.after_sequence != expected_sequence - 1
+                or (
+                    cursor is not None
+                    and next_cursor.after_sequence <= cursor.after_sequence
+                )
+            ):
+                raise EventContractError(
+                    "durable run event reader returned a non-advancing cursor"
+                )
+            cursor = next_cursor
+
+        if expected_sequence - 1 != high_watermark:
+            raise EventContractError(
+                "durable run event reader did not return the complete stream prefix"
+            )
+        return tuple(records)
+
+    def _raise_event_store_unavailable(self, reason_class: str | None) -> None:
+        normalized_reason = str(reason_class or EventStoreUnavailableError.__name__)
+        self._event_store_unavailable_reason_class = normalized_reason
+        raise EventStoreUnavailableError(
+            f"durable event store is unavailable ({normalized_reason})"
+        )
+
     def _projection_metadata(self, detail: RunDetail) -> dict[str, Any]:
         manifest = detail.manifest
         raw_projection = manifest.get("event_projection")
@@ -965,17 +1075,23 @@ class RunInspectionService:
         run_dir = _resolve_run_dir_for_service(self.artifact_root, run_id)
         if not _run_manifest_path(run_dir).exists():
             raise FileNotFoundError(f"run not found: {run_id}")
+        event_records = self._read_online_event_records(run_id)
         bundle = self._inspector.build_replay_content_bundle(
             run_dir=run_dir,
             redact=True,
             strict_artifact_integrity=True,
+            event_records=event_records,
         )
         return _replay_result_from_content_bundle(bundle)
 
     def get_run_diagnostics(self, run_id: str) -> RunDiagnosticsResult:
         run_dir = _existing_run_dir(self.artifact_root, run_id)
+        event_records = self._read_online_event_records(run_id)
         try:
-            diagnostics = self._inspector.build_diagnostics(run_dir=run_dir)
+            diagnostics = self._inspector.build_diagnostics(
+                run_dir=run_dir,
+                event_records=event_records,
+            )
         except WorkflowRunInspectionError as exc:
             raise ValueError(str(exc)) from exc
         return RunDiagnosticsResult(
@@ -985,8 +1101,12 @@ class RunInspectionService:
 
     def get_run_health(self, run_id: str) -> RunHealthResult:
         run_dir = _existing_run_dir(self.artifact_root, run_id)
+        event_records = self._read_online_event_records(run_id)
         try:
-            health = self._inspector.build_health_report(run_dir=run_dir)
+            health = self._inspector.build_health_report(
+                run_dir=run_dir,
+                event_records=event_records,
+            )
         except WorkflowRunInspectionError as exc:
             raise ValueError(str(exc)) from exc
         return RunHealthResult(
@@ -1000,8 +1120,15 @@ class RunInspectionService:
     def compare_runs(self, base_run_id: str, target_run_id: str) -> RunComparisonResult:
         _existing_run_dir(self.artifact_root, base_run_id)
         _existing_run_dir(self.artifact_root, target_run_id)
+        base_event_records = self._read_online_event_records(base_run_id)
+        target_event_records = self._read_online_event_records(target_run_id)
         try:
-            comparison = self._inspector.compare_runs(base_run_id, target_run_id)
+            comparison = self._inspector.compare_runs(
+                base_run_id,
+                target_run_id,
+                base_event_records=base_event_records,
+                target_event_records=target_event_records,
+            )
         except WorkflowRunInspectionError as exc:
             raise ValueError(str(exc)) from exc
         return RunComparisonResult(
@@ -1154,6 +1281,43 @@ def _event_matches(
     raw_payload = event.get("payload")
     payload: dict[str, Any] = dict(raw_payload) if isinstance(raw_payload, dict) else {}
     return event.get("step_id") == step_id or payload.get("step_id") == step_id
+
+
+def _workflow_event_record_from_projection(
+    projection: Mapping[str, Any],
+    *,
+    run_id: str,
+    stream_sequence: int,
+) -> WorkflowEventRecord:
+    if projection.get("run_id") != run_id:
+        raise EventContractError(
+            "durable run event projection crossed the requested run scope"
+        )
+    if projection.get("stream_sequence") != stream_sequence:
+        raise EventContractError(
+            "durable run event projection changed the authoritative sequence"
+        )
+    event_type = projection.get("event_type")
+    if not isinstance(event_type, str) or not event_type.strip():
+        raise EventContractError("durable run event projection is missing event_type")
+    raw_payload = projection.get("payload")
+    payload = dict(raw_payload) if isinstance(raw_payload, Mapping) else {}
+    event_id = projection.get("event_id")
+    occurred_at = projection.get("occurred_at")
+    step_id = projection.get("step_id")
+    return WorkflowEventRecord(
+        event_id=event_id if isinstance(event_id, str) and event_id else None,
+        event_type=event_type,
+        run_id=run_id,
+        occurred_at=(
+            occurred_at
+            if isinstance(occurred_at, str) and occurred_at
+            else None
+        ),
+        step_id=step_id if isinstance(step_id, str) and step_id else None,
+        payload=payload,
+        line_number=stream_sequence,
+    )
 
 
 def _read_verified_projection_events(

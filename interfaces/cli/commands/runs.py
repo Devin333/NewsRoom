@@ -194,6 +194,8 @@ def replay_run(args: argparse.Namespace) -> int:
         result = _run_inspection_service(args.artifact_root).replay_run(args.run_id)
     except _TYPED_ARTIFACT_ERRORS as exc:
         return _print_typed_artifact_error(exc)
+    except EventStoreUnavailableError:
+        return _print_event_store_unavailable()
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -225,6 +227,8 @@ def run_diagnostics(args: argparse.Namespace) -> int:
         result = _run_inspection_service(args.artifact_root).get_run_diagnostics(args.run_id)
     except _TYPED_ARTIFACT_ERRORS as exc:
         return _print_typed_artifact_error(exc)
+    except EventStoreUnavailableError:
+        return _print_event_store_unavailable()
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -250,6 +254,8 @@ def run_health(args: argparse.Namespace) -> int:
         result = _run_inspection_service(args.artifact_root).get_run_health(args.run_id)
     except _TYPED_ARTIFACT_ERRORS as exc:
         return _print_typed_artifact_error(exc)
+    except EventStoreUnavailableError:
+        return _print_event_store_unavailable()
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -294,6 +300,8 @@ def compare_runs(args: argparse.Namespace) -> int:
         )
     except _TYPED_ARTIFACT_ERRORS as exc:
         return _print_typed_artifact_error(exc)
+    except EventStoreUnavailableError:
+        return _print_event_store_unavailable()
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc))
         return 1
@@ -409,6 +417,14 @@ def _add_artifact_root_argument(parser: argparse.ArgumentParser) -> None:
 def _print_typed_artifact_error(exc: Exception) -> int:
     print(str(exc), file=sys.stderr)
     return 1
+
+
+def _print_event_store_unavailable() -> int:
+    print(
+        "availability=unavailable error_type=EventStoreUnavailableError",
+        file=sys.stderr,
+    )
+    return 2
 
 
 _TYPED_ARTIFACT_ERRORS = (

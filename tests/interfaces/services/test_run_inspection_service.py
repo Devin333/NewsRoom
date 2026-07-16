@@ -537,6 +537,72 @@ def test_run_inspection_replay_reads_real_artifacts_and_redacts(tmp_path) -> Non
     assert "hidden-key" not in json.dumps(payload)
 
 
+@pytest.mark.parametrize("projection_mutation", ["delete", "tamper"])
+def test_run_inspection_online_replay_uses_durable_events_not_projection(
+    tmp_path,
+    projection_mutation,
+) -> None:
+    run_dir = _write_replay_run(tmp_path)
+    _, service = _durable_service(
+        tmp_path,
+        [
+            _durable_run_event("run-1", 1, "workflow_started"),
+            _durable_run_event("run-1", 2, "workflow_succeeded"),
+        ],
+    )
+    projection_path = run_dir / "events.jsonl"
+    if projection_mutation == "delete":
+        projection_path.unlink()
+    else:
+        projection_path.write_text(
+            json.dumps(
+                {
+                    "event_id": "projection-only",
+                    "event_type": "workflow_failed",
+                    "run_id": "run-1",
+                    "payload": {"path": [], "error": {"error_type": "forged"}},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    payload = service.replay_run("run-1").to_dict()
+
+    assert [event["event_id"] for event in payload["events"]] == [
+        "evt-run-1-1",
+        "evt-run-1-2",
+    ]
+    assert [event["event_type"] for event in payload["events"]] == [
+        "workflow_started",
+        "workflow_succeeded",
+    ]
+    projection_artifact = next(
+        artifact
+        for artifact in payload["artifacts"]
+        if artifact["artifact_key"] == "events"
+    )
+    assert projection_artifact["content"] is None
+    assert payload["integrity"]["valid"] is True
+
+
+def test_run_inspection_online_replay_still_verifies_non_event_artifacts(
+    tmp_path,
+) -> None:
+    run_dir = _write_replay_run(tmp_path)
+    _, service = _durable_service(
+        tmp_path,
+        [_durable_run_event("run-1", 1, "workflow_started")],
+    )
+    (run_dir / "report.json").write_text(
+        json.dumps({"title": "Tampered"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ArtifactChecksumMismatchError, match="report_json"):
+        service.replay_run("run-1")
+
+
 def test_run_inspection_replay_rejects_tampered_artifact(tmp_path) -> None:
     run_dir = _write_replay_run(tmp_path)
     (run_dir / "report.json").write_text(
@@ -766,6 +832,64 @@ def test_run_inspection_diagnostics_and_health_read_real_run(tmp_path) -> None:
     assert health_payload["health"]["severity"] == "ok"
 
 
+@pytest.mark.parametrize("projection_mutation", ["delete", "tamper"])
+def test_run_inspection_online_diagnostics_and_health_use_durable_events(
+    tmp_path,
+    projection_mutation,
+) -> None:
+    _write_complete_inspection_run(tmp_path, "run-1")
+    _, service = _durable_service(
+        tmp_path,
+        [
+            _durable_run_event("run-1", 1, "workflow_started"),
+            _durable_run_event("run-1", 2, "workflow_succeeded"),
+        ],
+    )
+    projection_path = tmp_path / "run-1" / "events.jsonl"
+    if projection_mutation == "delete":
+        projection_path.unlink()
+    else:
+        projection_path.write_text("{not-json\n", encoding="utf-8")
+
+    diagnostics = service.get_run_diagnostics("run-1").to_dict()["diagnostics"]
+    health = service.get_run_health("run-1").to_dict()["health"]
+
+    assert diagnostics["timeline_summary"]["event_count"] == 2
+    assert diagnostics["timeline_summary"]["terminal_event_type"] == "workflow_succeeded"
+    assert diagnostics["checksum_failures"] == []
+    assert diagnostics["missing_artifacts"] == []
+    assert health["event_count"] == 2
+    assert health["severity"] == "ok"
+
+
+def test_run_inspection_derived_read_pages_through_fixed_high_watermark(
+    tmp_path,
+) -> None:
+    _write_complete_inspection_run(tmp_path, "run-1")
+    store, service = _durable_service(
+        tmp_path,
+        [
+            _durable_run_event("run-1", 1, "workflow_started"),
+            _durable_run_event("run-1", 2, "workflow_succeeded"),
+        ],
+    )
+    reader = _AppendingCappedEventReaderService(
+        service._event_reader_service,
+        store=store,
+        appended_event=_durable_run_event("run-1", 3, "step_started"),
+    )
+    service._event_reader_service = reader
+
+    diagnostics = service.get_run_diagnostics("run-1").to_dict()["diagnostics"]
+
+    assert diagnostics["timeline_summary"]["event_count"] == 2
+    assert reader.requested_watermarks == [2, 2]
+    assert store.get_stream_high_watermark(
+        "run:run-1",
+        tenant_id="tenant-a",
+    ) == 3
+
+
 def test_run_inspection_catalog_health_reports_failed_run(tmp_path) -> None:
     _write_complete_inspection_run(tmp_path, "run-ok")
     _write_complete_inspection_run(tmp_path, "run-failed", status="failed", terminal_key="error")
@@ -788,6 +912,53 @@ def test_run_inspection_compare_runs_reports_version_change(tmp_path) -> None:
     assert payload["base_run_id"] == "run-v1"
     assert payload["target_run_id"] == "run-v2"
     assert payload["comparison"]["workflow_version_changed"] is True
+
+
+def test_run_inspection_online_compare_reads_each_durable_stream(tmp_path) -> None:
+    _write_complete_inspection_run(tmp_path, "run-v1", workflow_version="1.0")
+    _write_complete_inspection_run(tmp_path, "run-v2", workflow_version="2.0")
+    _, service = _durable_service(
+        tmp_path,
+        [
+            _durable_run_event("run-v1", 1, "workflow_started"),
+            _durable_run_event("run-v1", 2, "workflow_succeeded"),
+            _durable_run_event("run-v2", 1, "workflow_started"),
+            _durable_run_event("run-v2", 2, "step_started"),
+            _durable_run_event("run-v2", 3, "workflow_succeeded"),
+        ],
+    )
+    (tmp_path / "run-v1" / "events.jsonl").write_text(
+        "{not-json\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "run-v2" / "events.jsonl").unlink()
+
+    comparison = service.compare_runs("run-v1", "run-v2").to_dict()["comparison"]
+
+    assert comparison["event_count_delta"] == 1
+    assert comparison["workflow_version_changed"] is True
+
+
+def test_run_inspection_online_derived_reads_fail_when_store_is_unavailable(
+    tmp_path,
+) -> None:
+    _write_replay_run(tmp_path)
+    _write_complete_inspection_run(tmp_path, "run-2")
+    _, service = _durable_service(
+        tmp_path,
+        [_durable_run_event("run-1", 1, "workflow_started")],
+    )
+    service._event_reader_service = _UnavailableEventReaderService()
+
+    operations = (
+        lambda: service.replay_run("run-1"),
+        lambda: service.get_run_diagnostics("run-1"),
+        lambda: service.get_run_health("run-1"),
+        lambda: service.compare_runs("run-1", "run-2"),
+    )
+    for operation in operations:
+        with pytest.raises(EventStoreUnavailableError, match="durable event store"):
+            operation()
 
 
 def test_run_inspection_diagnostics_rejects_missing_run(tmp_path) -> None:
@@ -927,6 +1098,60 @@ def _durable_inspection_run(root, *, event_count: int):
     return store, service
 
 
+def _durable_service(root, events):
+    store = SQLiteEventStore(
+        root / "derived-event-store.sqlite3",
+        clock=lambda: datetime(2026, 7, 17, 4, tzinfo=UTC),
+    )
+    for event in events:
+        store.append_event(event)
+    catalog = default_event_schema_catalog()
+    storage = SimpleNamespace(event_store=store, schema_catalog=catalog)
+    return store, build_run_inspection_service(
+        artifact_root=root,
+        event_storage=storage,
+        tenant_id="tenant-a",
+    )
+
+
+def _durable_run_event(
+    run_id: str,
+    sequence: int,
+    event_type: str,
+) -> EventCandidate:
+    if event_type == "workflow_started":
+        payload = {"workflow_version": "1.0", "profile": "test"}
+        step_id = None
+    elif event_type == "workflow_succeeded":
+        payload = {"path": ["step"]}
+        step_id = None
+    elif event_type == "step_started":
+        payload = {"step_type": "function", "attempt": 1, "max_attempts": 1}
+        step_id = "step"
+    else:
+        raise ValueError(f"unsupported durable test event: {event_type}")
+    return EventCandidate(
+        event_id=f"evt-{run_id}-{sequence}",
+        event_type=event_type,
+        data_schema="newsroom.workflow-event/v1",
+        source="io.newsroom.workflow.runtime",
+        occurred_at=datetime(2026, 7, 17, 1, tzinfo=UTC)
+        + timedelta(seconds=sequence),
+        stream_id=f"run:{run_id}",
+        business_context=BusinessContext(
+            run_id=run_id,
+            workflow_id="daily",
+            step_id=step_id,
+        ),
+        producer=ProducerIdentity(
+            component="framework.workflow.runtime",
+            version="1",
+        ),
+        tenant_id="tenant-a",
+        payload=payload,
+    )
+
+
 def _durable_event(sequence: int) -> EventCandidate:
     first = sequence == 1
     return EventCandidate(
@@ -952,6 +1177,19 @@ def _durable_event(sequence: int) -> EventCandidate:
 
 
 class _UnavailableEventReaderService:
+    def get_high_watermark(self, stream_id, *, authorization):
+        from interfaces.services.event_reader_service import (
+            EventHighWatermarkResult,
+            EventServiceAvailability,
+        )
+
+        return EventHighWatermarkResult(
+            availability=EventServiceAvailability.UNAVAILABLE,
+            stream_id=stream_id,
+            tenant_id=authorization.tenant_id,
+            unavailable_reason_class=EventStoreUnavailableError.__name__,
+        )
+
     def read_run_events(self, run_id, *, authorization, **kwargs):
         from interfaces.services.event_reader_service import (
             EventServiceAvailability,
@@ -978,6 +1216,34 @@ class _EmptyHighWatermarkEventReaderService:
             stream_id=stream_id,
             tenant_id=authorization.tenant_id,
             high_watermark=None,
+        )
+
+
+class _AppendingCappedEventReaderService:
+    def __init__(self, delegate, *, store, appended_event) -> None:
+        self._delegate = delegate
+        self._store = store
+        self._appended_event = appended_event
+        self._appended = False
+        self.requested_watermarks = []
+
+    def get_high_watermark(self, stream_id, *, authorization):
+        result = self._delegate.get_high_watermark(
+            stream_id,
+            authorization=authorization,
+        )
+        if not self._appended:
+            self._store.append_event(self._appended_event)
+            self._appended = True
+        return result
+
+    def read_run_events(self, run_id, *, authorization, **kwargs):
+        kwargs["limit"] = 1
+        self.requested_watermarks.append(kwargs.get("through_sequence"))
+        return self._delegate.read_run_events(
+            run_id,
+            authorization=authorization,
+            **kwargs,
         )
 
 

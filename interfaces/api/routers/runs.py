@@ -62,6 +62,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 message=str(exc),
                 user_action_required=True,
             )
+        except EventStoreUnavailableError:
+            return _event_store_unavailable_error(helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_run_compare_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -271,6 +273,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 message=str(exc),
                 user_action_required=True,
             )
+        except EventStoreUnavailableError:
+            return _event_store_unavailable_error(helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_run_replay_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -286,6 +290,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 message=str(exc),
                 user_action_required=True,
             )
+        except EventStoreUnavailableError:
+            return _event_store_unavailable_error(helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_run_diagnostics_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -301,6 +307,8 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
                 message=str(exc),
                 user_action_required=True,
             )
+        except EventStoreUnavailableError:
+            return _event_store_unavailable_error(helpers)
         except ValueError as exc:
             return helpers.error(status_code=400, code="invalid_run_health_request", message=str(exc))
         return helpers.success(result.to_dict())
@@ -460,6 +468,15 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
         return helpers.success(result.to_dict())
 
     return router
+
+
+def _event_store_unavailable_error(helpers: ApiRouteHelpers):
+    return helpers.error(
+        status_code=503,
+        code="event_store_unavailable",
+        message="event store is unavailable",
+        retryable=True,
+    )
 
 
 _ARTIFACT_INTEGRITY_HTTP_CONTRACT = {

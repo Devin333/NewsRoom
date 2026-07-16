@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
@@ -18,7 +18,14 @@ from framework.artifacts import (
 )
 from framework.artifacts.models import ArtifactRef
 from framework.events import EventBus
+from framework.events.errors import EventContractError
 from framework.events.ports import EventReaderPort, EventRuntimePort
+from framework.events.runtime.models import (
+    MAX_PAGE_LIMIT,
+    EventPage,
+    StreamReadRequest,
+    StreamSequenceCursor,
+)
 from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.llm import GlobalBudgetPolicy, GlobalBudgetTracker
 from framework.shared.hashing import hash_text
@@ -29,6 +36,7 @@ from framework.workflow.runtime.artifact_publishers import WorkflowArtifactPubli
 from framework.workflow.inspection import (
     WorkflowReplayBundle,
     WorkflowReplayContentBundle,
+    WorkflowEventRecord,
     WorkflowRunCatalog,
     WorkflowRunCatalogHealth,
     WorkflowRunComparison,
@@ -38,6 +46,7 @@ from framework.workflow.inspection import (
     WorkflowRunListItem,
     WorkflowRunInspector,
 )
+from framework.workflow.runtime.event_projection import project_workflow_event
 from framework.workflow.runtime.manifest import manifest_schema_version
 from framework.workflow.operations import (
     LocalWorkflowRunOperationService,
@@ -338,6 +347,122 @@ class WorkflowRunner:
     def _persist_storage_indexes(self, result: WorkflowResult) -> None:
         self._indexer.index(result)
 
+    def _read_inspection_event_records(
+        self,
+        run_id: str,
+    ) -> tuple[WorkflowEventRecord, ...]:
+        safe_run_id = validate_artifact_path_segment(run_id, field="run_id")
+        run_dir = resolve_artifact_descendant(
+            self._artifact_root,
+            safe_run_id,
+            field="run_id",
+        )
+        manifest = self._run_inspector.load_manifest(run_dir)
+        manifest_run_id = manifest.get("run_id")
+        if manifest_run_id is not None and manifest_run_id != safe_run_id:
+            raise EventContractError(
+                "workflow manifest run_id does not match the durable stream scope"
+            )
+        tenant_id = _optional_manifest_tenant_id(manifest)
+        stream_id = f"run:{safe_run_id}"
+        high_watermark = self._event_reader.get_stream_high_watermark(
+            stream_id,
+            tenant_id=tenant_id,
+        )
+        if high_watermark is None:
+            return ()
+        if (
+            isinstance(high_watermark, bool)
+            or not isinstance(high_watermark, int)
+            or high_watermark < 1
+        ):
+            raise EventContractError(
+                "durable run event reader returned an invalid high watermark"
+            )
+
+        records: list[WorkflowEventRecord] = []
+        cursor: StreamSequenceCursor | None = None
+        expected_sequence = 1
+        page_count = 0
+        while expected_sequence <= high_watermark:
+            page_count += 1
+            if page_count > high_watermark:
+                raise EventContractError(
+                    "durable run event pagination exceeded the captured stream bound"
+                )
+            page = self._event_reader.read_stream(
+                StreamReadRequest(
+                    stream_id=stream_id,
+                    tenant_id=tenant_id,
+                    cursor=cursor,
+                    limit=MAX_PAGE_LIMIT,
+                    through_sequence=high_watermark,
+                )
+            )
+            if not isinstance(page, EventPage):
+                raise EventContractError("durable run event reader returned an invalid page")
+            if page.stream_id != stream_id or page.tenant_id != tenant_id:
+                raise EventContractError(
+                    "durable run event reader crossed the requested stream scope"
+                )
+            if page.high_watermark != high_watermark:
+                raise EventContractError(
+                    "durable run event reader changed the captured high watermark"
+                )
+            if not page.events:
+                raise EventContractError(
+                    "durable run event reader returned an incomplete stream prefix"
+                )
+            for event in page.events:
+                if event.stream_sequence != expected_sequence:
+                    raise EventContractError(
+                        "durable run event reader returned a non-contiguous stream prefix"
+                    )
+                projection = project_workflow_event(
+                    event,
+                    schema_catalog=self._event_schema_catalog,
+                )
+                records.append(
+                    _workflow_event_record_from_durable_projection(
+                        projection,
+                        run_id=safe_run_id,
+                        stream_sequence=expected_sequence,
+                    )
+                )
+                expected_sequence += 1
+
+            if expected_sequence > high_watermark:
+                if page.next_cursor is not None:
+                    raise EventContractError(
+                        "durable run event reader continued beyond the captured high watermark"
+                    )
+                break
+            next_cursor = page.next_cursor
+            if next_cursor is None:
+                raise EventContractError(
+                    "durable run event reader truncated the captured stream prefix"
+                )
+            if (
+                next_cursor.stream_id != stream_id
+                or next_cursor.tenant_id != tenant_id
+                or next_cursor.high_watermark != high_watermark
+                or next_cursor.after_sequence != expected_sequence - 1
+                or (
+                    cursor is not None
+                    and next_cursor.after_sequence <= cursor.after_sequence
+                )
+            ):
+                raise EventContractError(
+                    "durable run event reader returned a non-advancing cursor"
+                )
+            cursor = next_cursor
+
+        if expected_sequence - 1 != high_watermark:
+            raise EventContractError(
+                "durable run event reader did not return the complete stream prefix"
+            )
+        return tuple(records)
+
     def inspect_run(
         self,
         run_id: str,
@@ -345,10 +470,12 @@ class WorkflowRunner:
         verify_checksums: bool = False,
         strict: bool = False,
     ) -> WorkflowRunInspection:
+        event_records = self._read_inspection_event_records(run_id)
         return self._run_inspector.inspect_run(
             run_id,
             verify_checksums=verify_checksums,
             strict=strict,
+            event_records=event_records,
         )
 
     def build_replay_bundle(
@@ -358,10 +485,12 @@ class WorkflowRunner:
         verify_checksums: bool = False,
         strict: bool = False,
     ) -> WorkflowReplayBundle:
+        event_records = self._read_inspection_event_records(run_id)
         return self._run_inspector.build_replay_bundle(
             run_id,
             verify_checksums=verify_checksums,
             strict=strict,
+            event_records=event_records,
         )
 
     def build_replay_content_bundle(
@@ -374,6 +503,7 @@ class WorkflowRunner:
         expand_source_artifacts: bool = True,
         max_artifact_bytes: int | None = None,
     ) -> WorkflowReplayContentBundle:
+        event_records = self._read_inspection_event_records(run_id)
         return self._run_inspector.build_replay_content_bundle(
             run_id,
             redact=redact,
@@ -381,6 +511,7 @@ class WorkflowRunner:
             artifact_index_keys=artifact_index_keys,
             expand_source_artifacts=expand_source_artifacts,
             max_artifact_bytes=max_artifact_bytes,
+            event_records=event_records,
         )
 
     def inspect_run_diagnostics(
@@ -390,10 +521,12 @@ class WorkflowRunner:
         verify_checksums: bool = False,
         strict: bool = False,
     ) -> WorkflowRunDiagnostics:
+        event_records = self._read_inspection_event_records(run_id)
         return self._run_inspector.build_diagnostics(
             run_id,
             verify_checksums=verify_checksums,
             strict=strict,
+            event_records=event_records,
         )
 
     def inspect_run_health(
@@ -403,10 +536,12 @@ class WorkflowRunner:
         verify_checksums: bool = False,
         strict: bool = False,
     ) -> WorkflowRunHealthReport:
+        event_records = self._read_inspection_event_records(run_id)
         return self._run_inspector.build_health_report(
             run_id,
             verify_checksums=verify_checksums,
             strict=strict,
+            event_records=event_records,
         )
 
     def list_runs(
@@ -470,12 +605,62 @@ class WorkflowRunner:
         verify_checksums: bool = False,
         strict: bool = False,
     ) -> WorkflowRunComparison:
+        base_event_records = self._read_inspection_event_records(base_run_id)
+        target_event_records = self._read_inspection_event_records(target_run_id)
         return self._run_inspector.compare_runs(
             base_run_id,
             target_run_id,
             verify_checksums=verify_checksums,
             strict=strict,
+            base_event_records=base_event_records,
+            target_event_records=target_event_records,
         )
+
+
+def _optional_manifest_tenant_id(manifest: Mapping[str, Any]) -> str | None:
+    tenant_id = manifest.get("tenant_id")
+    if tenant_id is None:
+        return None
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise EventContractError("workflow manifest tenant_id is invalid")
+    return tenant_id.strip()
+
+
+def _workflow_event_record_from_durable_projection(
+    projection: Mapping[str, Any],
+    *,
+    run_id: str,
+    stream_sequence: int,
+) -> WorkflowEventRecord:
+    if projection.get("run_id") != run_id:
+        raise EventContractError(
+            "durable run event projection crossed the requested run scope"
+        )
+    if projection.get("stream_sequence") != stream_sequence:
+        raise EventContractError(
+            "durable run event projection changed the authoritative sequence"
+        )
+    event_type = projection.get("event_type")
+    if not isinstance(event_type, str) or not event_type.strip():
+        raise EventContractError("durable run event projection is missing event_type")
+    raw_payload = projection.get("payload")
+    payload = dict(raw_payload) if isinstance(raw_payload, Mapping) else {}
+    event_id = projection.get("event_id")
+    occurred_at = projection.get("occurred_at")
+    step_id = projection.get("step_id")
+    return WorkflowEventRecord(
+        event_id=event_id if isinstance(event_id, str) and event_id else None,
+        event_type=event_type,
+        run_id=run_id,
+        occurred_at=(
+            occurred_at
+            if isinstance(occurred_at, str) and occurred_at
+            else None
+        ),
+        step_id=step_id if isinstance(step_id, str) and step_id else None,
+        payload=payload,
+        line_number=stream_sequence,
+    )
 
 
 class WorkflowRunIndexer:
