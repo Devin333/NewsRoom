@@ -108,6 +108,7 @@ def test_news_cli_runs_replay_json_reads_real_files(
     capsys,
 ) -> None:
     write_canonical_terminal_run(tmp_path)
+    monkeypatch.delenv("NEWS_DATABASE_DSN", raising=False)
     monkeypatch.setenv("NEWS_TENANT_ID", "tenant-a")
     _seed_durable_run_events(tmp_path)
 

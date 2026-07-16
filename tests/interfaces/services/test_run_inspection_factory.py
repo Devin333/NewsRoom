@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 
 from framework.events.canonical import BusinessContext, EventCandidate, ProducerIdentity
+from framework.events.errors import EventStoreUnavailableError
 from framework.workflow.runtime.event_projection import WorkflowEventProjectionExporter
 from infrastructure.storage.events.factory import durable_event_storage_from_env
 from interfaces.services.run_inspection_factory import (
@@ -59,6 +60,49 @@ def test_run_inspection_factory_reads_same_env_selected_durable_store(tmp_path) 
     assert result.availability == "available"
     assert result.projection_status == "current"
     assert result.events[0]["event_id"] == "evt-run-factory"
+
+
+def test_explicit_artifact_root_does_not_override_configured_postgres(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import infrastructure.storage.events.factory as storage_factory
+
+    run_dir = tmp_path / "run-factory"
+    run_dir.mkdir()
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"run_id": "run-factory", "status": "running"}),
+        encoding="utf-8",
+    )
+    selected: dict[str, object] = {}
+
+    def select_storage(*, artifact_root, env):
+        selected["artifact_root"] = artifact_root
+        selected["dsn"] = env["NEWS_DATABASE_DSN"]
+        raise EventStoreUnavailableError("configured PostgreSQL is unavailable")
+
+    monkeypatch.setattr(
+        storage_factory,
+        "durable_event_storage_from_env",
+        select_storage,
+    )
+    service = run_inspection_service_from_env(
+        artifact_root=tmp_path,
+        env={
+            "NEWS_ARTIFACT_ROOT": "ignored-artifact-root",
+            "NEWS_DATABASE_DSN": "postgresql://configured/database",
+            "NEWS_TENANT_ID": "tenant-a",
+        },
+    )
+
+    result = service.get_run_events("run-factory")
+
+    assert result.availability == "unavailable"
+    assert result.unavailable_reason_class == "EventStoreUnavailableError"
+    assert selected == {
+        "artifact_root": tmp_path,
+        "dsn": "postgresql://configured/database",
+    }
 
 
 def test_run_inspection_factory_defers_event_store_for_artifact_reads(
