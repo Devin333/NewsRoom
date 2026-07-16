@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from framework.shared.json import to_jsonable
+from framework.events.propagation import (
+    W3CSpanContext,
+    current_trace_context,
+    trace_context_scope,
+)
 from framework.events.trace import TraceContext
 from framework.governance import CompositeAndGate, GateCheckResult
 from framework.tool.governance.approval import ToolApprovalRequest
@@ -51,7 +56,7 @@ class ToolExecutor:
         run_id: str | None = None,
         approval_store: Any | None = None,
         secret_provider: SecretProvider | None = None,
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext | W3CSpanContext | None = None,
     ) -> None:
         self._registry = registry
         self._artifact_manager = artifact_manager
@@ -74,6 +79,31 @@ class ToolExecutor:
         return list(self._records)
 
     def execute(self, call: ToolCall, policy: ToolPolicy | None = None) -> ToolObservation:
+        parent_context = self._trace_context or current_trace_context()
+        if isinstance(parent_context, TraceContext):
+            execution_context: TraceContext | W3CSpanContext = (
+                parent_context
+                if parent_context.tool_call_id == call.call_id
+                else parent_context.child(tool_call_id=call.call_id)
+            )
+        elif isinstance(parent_context, W3CSpanContext):
+            execution_context = parent_context.child()
+        else:
+            execution_context = W3CSpanContext.root()
+        with trace_context_scope(execution_context):
+            return self._execute_scoped(call, policy)
+
+    def _execute_scoped(
+        self,
+        call: ToolCall,
+        policy: ToolPolicy | None = None,
+    ) -> ToolObservation:
+        scoped_context = current_trace_context()
+        event_trace_context = (
+            scoped_context
+            if isinstance(scoped_context, (TraceContext, W3CSpanContext))
+            else None
+        )
         policy = policy or ToolPolicy(require_explicit_allowlist=False)
         started_at = datetime.now(UTC)
         policy_trace = _ToolPolicyTraceBuilder(call.tool_name)
@@ -159,7 +189,7 @@ class ToolExecutor:
             self._emit("tool_started", call)
             max_attempts = _max_attempts(registered.definition, policy)
             raw_output, attempts_used = _invoke_with_retry(
-                registered.executor,
+                _trace_scoped_executor(registered.executor, scoped_context),
                 arguments,
                 _timeout_seconds(registered.definition, policy),
                 max_attempts,
@@ -249,7 +279,7 @@ class ToolExecutor:
             _with_tool_gate(_with_duration(_with_call(result, call), elapsed_ms), call),
             call=call,
             policy_trace=policy_trace,
-            trace_context=self._trace_context,
+            trace_context=event_trace_context,
             retry_count=max(0, attempts_used - 1),
         )
         observation = ToolObservation(call=call, result=result, elapsed_ms=elapsed_ms)
@@ -259,7 +289,7 @@ class ToolExecutor:
                 observation,
                 self._events,
                 started_at,
-                trace_context=self._trace_context,
+                trace_context=event_trace_context,
             )
         )
         return observation
@@ -374,12 +404,17 @@ class ToolExecutor:
         self._emit("tool_observation_created", observation.call, observation.to_dict())
 
     def _emit(self, event_type: str, call: ToolCall, payload: dict[str, Any] | None = None) -> ToolEvent:
+        scoped_context = current_trace_context()
         event = ToolEvent.from_trace(
             event_type=event_type,
             tool_name=call.tool_name,
             tool_call_id=call.call_id,
             payload=payload or {},
-            trace_context=self._trace_context,
+            trace_context=(
+                scoped_context
+                if isinstance(scoped_context, (TraceContext, W3CSpanContext))
+                else None
+            ),
         )
         self._events.append(event)
         return event
@@ -431,7 +466,7 @@ def _execution_record(
     events: list[ToolEvent],
     started_at: datetime,
     *,
-    trace_context: TraceContext | None = None,
+    trace_context: TraceContext | W3CSpanContext | None = None,
 ) -> ToolExecutionRecord:
     call_events = [
         event.event_type
@@ -449,8 +484,10 @@ def _execution_record(
         finished_at=datetime.now(UTC),
         events=call_events,
         trace_id=trace_context.trace_id if trace_context is not None else None,
-        span_id=f"tool:{observation.call.call_id}" if trace_context is not None else None,
-        parent_span_id=trace_context.span_id if trace_context is not None else None,
+        span_id=trace_context.span_id if trace_context is not None else None,
+        parent_span_id=(
+            trace_context.parent_span_id if trace_context is not None else None
+        ),
         gate_result=observation.result.gate_result,
         policy_trace=_tool_policy_trace_to_dict(observation.result.policy_trace),
         error_envelope=observation.result.error_envelope,
@@ -569,7 +606,7 @@ def _standardize_tool_result(
     *,
     call: ToolCall,
     policy_trace: "_ToolPolicyTraceBuilder",
-    trace_context: TraceContext | None,
+    trace_context: TraceContext | W3CSpanContext | None,
     retry_count: int,
 ) -> ToolResult:
     artifact_spill = result.metadata.get("artifact_spill")
@@ -590,14 +627,16 @@ def _standardize_tool_result(
         )
     else:
         policy_trace.add("tool.artifact_spill", "artifact", True, "inline output retained")
-    span_id = f"tool:{call.call_id}" if trace_context is not None else None
     return _copy_tool_result(
         result,
         policy_trace=policy_trace.to_trace(result),
         retry_count=retry_count,
         timeout=result.status == ToolStatus.TIMEOUT,
         trace_id=trace_context.trace_id if trace_context is not None else None,
-        span_id=span_id,
+        span_id=trace_context.span_id if trace_context is not None else None,
+        parent_span_id=(
+            trace_context.parent_span_id if trace_context is not None else None
+        ),
         redacted_output=redact_sensitive_values(result.output),
     )
 
@@ -627,6 +666,7 @@ def _copy_tool_result(result: ToolResult, **overrides: Any) -> ToolResult:
         "timeout": result.timeout,
         "trace_id": result.trace_id,
         "span_id": result.span_id,
+        "parent_span_id": result.parent_span_id,
         "error_envelope": result.error_envelope,
     }
     values.update(overrides)
@@ -804,6 +844,17 @@ def _invoke_with_timeout(
     if error_holder:
         raise error_holder[0]
     return result_holder[0]
+
+
+def _trace_scoped_executor(
+    executor: Any,
+    context: TraceContext | W3CSpanContext | None,
+) -> Any:
+    def execute(arguments: dict[str, Any]) -> Any:
+        with trace_context_scope(context):
+            return executor(arguments)
+
+    return execute
 
 
 def _json_size_bytes(value: Any) -> int:

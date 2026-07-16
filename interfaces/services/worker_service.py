@@ -10,6 +10,15 @@ from typing import Any, Callable
 
 from business.layers.output.worker_handlers import MemoryReindexTaskHandler
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
+from framework.events import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    TelemetrySpanLink,
+    W3CTracePropagator,
+    default_event_telemetry,
+    trace_context_scope,
+)
 from framework.workers import (
     Task,
     TaskResult,
@@ -162,6 +171,8 @@ class WorkerApplicationService:
         queue: RedisStreamTaskQueue | None = None,
         worker_registry: RedisWorkerRegistry | None = None,
         handlers: dict[str, TaskHandler] | None = None,
+        trace_propagator: W3CTracePropagator | None = None,
+        telemetry: EventTelemetry | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
         redis_client = None
@@ -172,6 +183,14 @@ class WorkerApplicationService:
         if self.worker_registry is None and queue is None:
             self.worker_registry = RedisWorkerRegistry(redis_client)
         self._handlers = handlers
+        self._trace_propagator = trace_propagator or W3CTracePropagator()
+        self._telemetry = telemetry or default_event_telemetry(
+            resource=TelemetryResource(service_name="newsroom-worker"),
+            scope=TelemetryInstrumentationScope(
+                name="interfaces.worker-service",
+                version="1",
+            ),
+        )
 
     @property
     def handlers(self) -> dict[str, TaskHandler]:
@@ -444,8 +463,30 @@ class WorkerApplicationService:
                 error_type="UnknownTaskType",
                 error_message=f"no handler for {leased.task.task_type}",
             )
+        extracted_trace = self._trace_propagator.extract_span(
+            leased.task.trace_carrier
+        )
+        consumer_trace = extracted_trace.child().context
+        attempt_bucket = _worker_attempt_bucket(leased.task.attempts)
+        trace_link = TelemetrySpanLink.from_context(
+            extracted_trace.remote_context,
+            relationship="worker_message",
+            attempt_bucket=attempt_bucket,
+        )
         try:
-            return handler.handle(leased.task)
+            with trace_context_scope(consumer_trace), self._telemetry.start_span(
+                "newsroom.worker.consume",
+                attributes={
+                    "newsroom.component": "worker",
+                    "newsroom.operation": "consume",
+                    "newsroom.transport": "worker",
+                    "newsroom.worker.task_type": leased.task.task_type,
+                    "newsroom.worker.queue": leased.task.queue_name,
+                    "newsroom.worker.attempt_bucket": attempt_bucket,
+                },
+                links=(trace_link,),
+            ):
+                return handler.handle(leased.task)
         except Exception as exc:
             return TaskResult(
                 task_id=leased.task.task_id,
@@ -521,6 +562,14 @@ def _coerce_datetime(value: datetime | None) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _worker_attempt_bucket(attempt: int) -> str:
+    if attempt <= 1:
+        return "first"
+    if attempt <= 3:
+        return "retry_low"
+    return "retry_many"
 
 
 def _unique_queue_names(queue_names: list[str]) -> list[str]:

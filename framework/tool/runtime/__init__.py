@@ -13,12 +13,17 @@ from framework.tool.runtime.errors import (
 if TYPE_CHECKING:
     from framework.tool.runtime.batch_executor import ToolBatchExecutor
     from framework.tool.runtime.executor import ToolExecutor
+    from framework.tool.runtime.http_adapter import (
+        HTTPClientProtocol,
+        TraceAwareHTTPToolTransport,
+    )
     from framework.tool.runtime.mcp_adapter import MCPServerConfig, MCPToolAdapter
     from framework.tool.runtime.retry import ToolRetryController
     from framework.tool.runtime.sandbox import ToolSandbox
     from framework.tool.runtime.timeout import ToolTimeoutRunner, run_with_timeout
 
 _LAZY_EXPORTS = {
+    "HTTPClientProtocol": "framework.tool.runtime.http_adapter",
     "MCPServerConfig": "framework.tool.runtime.mcp_adapter",
     "MCPToolAdapter": "framework.tool.runtime.mcp_adapter",
     "ToolBatchExecutor": "framework.tool.runtime.batch_executor",
@@ -26,6 +31,7 @@ _LAZY_EXPORTS = {
     "ToolRetryController": "framework.tool.runtime.retry",
     "ToolSandbox": "framework.tool.runtime.sandbox",
     "ToolTimeoutRunner": "framework.tool.runtime.timeout",
+    "TraceAwareHTTPToolTransport": "framework.tool.runtime.http_adapter",
     "run_with_timeout": "framework.tool.runtime.timeout",
 }
 
@@ -43,6 +49,7 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "HTTPClientProtocol",
     "MCPServerConfig",
     "MCPToolAdapter",
     "ToolBatchExecutor",
@@ -55,5 +62,6 @@ __all__ = [
     "ToolSecretError",
     "ToolTimeoutError",
     "ToolTimeoutRunner",
+    "TraceAwareHTTPToolTransport",
     "run_with_timeout",
 ]

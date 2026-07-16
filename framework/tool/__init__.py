@@ -95,6 +95,7 @@ from framework.tool.registry import (
     build_tool_catalog,
 )
 from framework.tool.runtime import (
+    HTTPClientProtocol,
     MCPServerConfig,
     MCPToolAdapter,
     ToolBatchExecutor,
@@ -102,6 +103,7 @@ from framework.tool.runtime import (
     ToolRetryController,
     ToolSandbox,
     ToolTimeoutRunner,
+    TraceAwareHTTPToolTransport,
     run_with_timeout,
 )
 from framework.tool.schema import (
@@ -126,6 +128,7 @@ __all__ = [
     "DuplicateToolPolicy",
     "EnvironmentSecretProvider",
     "FunctionToolIntrospector",
+    "HTTPClientProtocol",
     "MCPServerConfig",
     "MCPToolAdapter",
     "MappingSecretProvider",
@@ -191,6 +194,7 @@ __all__ = [
     "ToolTestRunner",
     "ToolTimeoutError",
     "ToolTimeoutRunner",
+    "TraceAwareHTTPToolTransport",
     "audit_agent_spec_tool_boundary",
     "audit_agent_tool_boundary",
     "build_builtin_dangerous_registry",

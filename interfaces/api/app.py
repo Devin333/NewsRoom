@@ -11,6 +11,17 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from framework.events import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    TelemetrySpanLink,
+    TracePropagationError,
+    W3CSpanContext,
+    W3CTracePropagator,
+    default_event_telemetry,
+    trace_context_scope,
+)
 from framework.tool.governance.redaction import redact_sensitive_values
 from framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from interfaces.models import (
@@ -106,11 +117,18 @@ def create_app(
     api_keys: ApiKeyRoles | None = None,
     api_rate_limit_per_minute: int | None = None,
     rate_limit_clock: Clock | None = None,
+    trace_propagator: W3CTracePropagator | None = None,
+    telemetry: EventTelemetry | None = None,
 ) -> FastAPI:
     api = FastAPI(title="NewsRoom API", version="0.1.0")
     resolved_api_keys = _build_api_key_registry(api_token=api_token, api_keys=api_keys)
     rate_limiter = _build_rate_limiter(api_rate_limit_per_minute, clock=rate_limit_clock)
     audit_emitter = audit_emitter_factory() if audit_emitter_factory else None
+    actual_trace_propagator = trace_propagator or W3CTracePropagator()
+    actual_telemetry = telemetry or default_event_telemetry(
+        resource=TelemetryResource(service_name="newsroom-api"),
+        scope=TelemetryInstrumentationScope(name="interfaces.api", version="1"),
+    )
 
     if rate_limiter is not None:
 
@@ -172,6 +190,48 @@ def create_app(
         finally:
             reset_request_id(context_token)
         response.headers[REQUEST_ID_HEADER] = request_id
+        return response
+
+    @api.middleware("http")
+    async def trace_context_middleware(request: Request, call_next):
+        try:
+            extracted = actual_trace_propagator.extract_span(
+                _http_trace_carrier(request.headers)
+            )
+            local_context = extracted.child().context
+            propagation_result = (
+                "accepted" if extracted.accepted_remote else "restarted"
+            )
+        except TracePropagationError:
+            extracted = None
+            local_context = W3CSpanContext.root()
+            propagation_result = "invalid"
+        request.state.trace_context = local_context
+        request.state.trace_diagnostics = (
+            extracted.diagnostics if extracted is not None else ("invalid_carrier",)
+        )
+        link = TelemetrySpanLink.from_context(
+            extracted.remote_context if extracted is not None else None,
+            relationship="http_request",
+        )
+        with trace_context_scope(local_context), actual_telemetry.start_span(
+            "newsroom.http.server",
+            attributes={
+                "newsroom.component": "api",
+                "newsroom.operation": "request",
+                "newsroom.transport": "http",
+                "newsroom.propagation.result": propagation_result,
+            },
+            links=(link,),
+        ):
+            response = await call_next(request)
+        injected = actual_trace_propagator.inject(local_context)
+        if "traceparent" in injected:
+            response.headers["traceparent"] = injected["traceparent"]
+        actual_telemetry.add_counter(
+            "trace_propagation_total",
+            labels={"boundary": "http", "result": propagation_result},
+        )
         return response
 
     @api.middleware("http")
@@ -555,6 +615,26 @@ def _new_request_id() -> str:
 
 def _request_id_from_header(value: str | None) -> str | None:
     return request_id_from_header(value)
+
+
+def _http_trace_carrier(headers: Any) -> dict[str, str]:
+    allowed = {"traceparent", "tracestate", "baggage"}
+    carrier: dict[str, str] = {}
+    raw_headers = getattr(headers, "raw", None)
+    if raw_headers is not None:
+        for raw_key, raw_value in raw_headers:
+            key = bytes(raw_key).decode("latin-1").casefold()
+            if key not in allowed:
+                continue
+            if key in carrier:
+                raise TracePropagationError(f"duplicate_{key}")
+            carrier[key] = bytes(raw_value).decode("latin-1")
+        return carrier
+    for key in allowed:
+        value = headers.get(key)
+        if value is not None:
+            carrier[key] = str(value)
+    return carrier
 
 
 def _normalize_api_token(api_token: str | None) -> str | None:

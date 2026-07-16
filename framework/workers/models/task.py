@@ -6,6 +6,7 @@ UTC = _tz.utc
 from typing import Any
 from uuid import uuid4
 
+from framework.events.propagation import normalize_trace_carrier
 from framework.shared.time import ensure_utc, format_datetime, parse_datetime
 from framework.workers.models.status import TaskStatus
 
@@ -26,12 +27,16 @@ class Task:
     timeout_seconds: int | None = None
     dedup_key: str | None = None
     trace_id: str | None = None
+    trace_carrier: dict[str, str] = field(default_factory=dict)
     leased_by: str | None = None
     lease_expires_at: datetime | None = None
     scheduled_for: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        self.trace_carrier = _bounded_trace_carrier(self.trace_carrier)
 
     @property
     def queue(self) -> str:
@@ -77,6 +82,7 @@ class Task:
             "timeout_seconds": self.timeout_seconds,
             "dedup_key": self.dedup_key,
             "trace_id": self.trace_id,
+            "trace_carrier": dict(self.trace_carrier),
             "leased_by": self.leased_by,
             "lease_expires_at": format_datetime(self.lease_expires_at),
             "run_at": format_datetime(self.scheduled_for),
@@ -100,6 +106,7 @@ class Task:
             timeout_seconds=_optional_int(data.get("timeout_seconds")),
             dedup_key=data.get("dedup_key"),
             trace_id=data.get("trace_id"),
+            trace_carrier=dict(data.get("trace_carrier") or {}),
             leased_by=data.get("leased_by"),
             lease_expires_at=parse_datetime(data.get("lease_expires_at")),
             scheduled_for=parse_datetime(data.get("scheduled_for") or data.get("run_at")),
@@ -282,3 +289,7 @@ def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _bounded_trace_carrier(value: Any) -> dict[str, str]:
+    return dict(normalize_trace_carrier(value))

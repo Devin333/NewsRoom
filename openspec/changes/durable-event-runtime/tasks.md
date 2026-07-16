@@ -54,10 +54,10 @@
 ## 7. OpenTelemetry And W3C Propagation
 
 - [x] 7.1 Add an optional standards-compatible trace adapter and no-op fallback; migrate new trace/span generation to valid W3C identifiers while preserving legacy identifiers as noninjectable historical correlation data.
-- [ ] 7.2 Implement shared extract/child/inject propagation at HTTP, MCP inbound, ToolRuntime outbound MCP/HTTP, worker, and message boundaries with trust validation, baggage/tracestate limits, and security tests.
-- [ ] 7.3 Map service/process identity to OpenTelemetry Resource, library/component identity to InstrumentationScope, and asynchronous fan-out/fan-in/batch/retry causality to span links.
+- [x] 7.2 Implement shared extract/child/inject propagation at HTTP, MCP inbound, ToolRuntime outbound MCP/HTTP, worker, and message boundaries with trust validation, baggage/tracestate limits, and security tests.
+- [x] 7.3 Map service/process identity to OpenTelemetry Resource, library/component identity to InstrumentationScope, and asynchronous fan-out/fan-in/batch/retry causality to span links.
 - [x] 7.4 Preserve the bounded `TraceContext.root()`, `child()`, serialization, and `trace_fields()` compatibility facade while propagating all supported Agent, Tool, Memory, and Artifact business IDs, removing shared mutable recorder context, and testing schema-aware sensitive handling without substring false positives or credential-key omissions.
-- [ ] 7.5 Verify trace sampling or missing OpenTelemetry dependencies never suppress durable events, change workflow behavior, or expose raw payloads and high-cardinality tenant/user/run/event identifiers as metric labels.
+- [x] 7.5 Verify trace sampling or missing OpenTelemetry dependencies never suppress durable events, change workflow behavior, or expose raw payloads and high-cardinality tenant/user/run/event identifiers as metric labels.
 
 ## 8. Query, Export, And Operator Interfaces
 

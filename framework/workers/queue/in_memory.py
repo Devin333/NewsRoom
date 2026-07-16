@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone as _tz
 UTC = _tz.utc
 from typing import Any
 
+from framework.events import current_trace_context, inject_current_trace
 from framework.shared.time import ensure_utc
 from framework.workers.models.dead_letter import DeadLetterRecord
 from framework.workers.models.metrics import WorkerMetrics
@@ -34,6 +35,8 @@ class InMemoryTaskQueue:
         self.now_fn = now_fn or (lambda: datetime.now(UTC))
 
     def enqueue(self, task: Task) -> TaskEnqueueResult | None:
+        if current_trace_context() is not None:
+            task.trace_carrier = inject_current_trace(task.trace_carrier)
         if task.dedup_key and self._has_unfinished_dedup_key(task.dedup_key):
             task.metadata["enqueue_rejected_reason"] = "duplicate_dedup_key"
             return TaskEnqueueResult(

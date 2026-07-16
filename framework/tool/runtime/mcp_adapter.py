@@ -3,9 +3,15 @@ from __future__ import annotations
 import re
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
+from framework.events import (
+    TraceContext,
+    W3CSpanContext,
+    W3CTracePropagator,
+    current_trace_context,
+)
 from framework.tool.models import ToolDefinition, ToolRuntimeError, ToolTimeoutError
 from framework.tool.registry import ToolRegistry
 
@@ -19,6 +25,7 @@ class MCPServerConfig:
     args: list[str] = field(default_factory=list)
     url: str | None = None
     headers_env: dict[str, str] = field(default_factory=dict)
+    trace_carrier: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
     timeout_seconds: float = 30.0
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -44,16 +51,25 @@ class MCPClientProtocol(Protocol):
 
 
 class MCPToolAdapter:
-    def __init__(self, client: MCPClientProtocol) -> None:
+    def __init__(
+        self,
+        client: MCPClientProtocol,
+        *,
+        trace_context: TraceContext | W3CSpanContext | None = None,
+        trace_propagator: W3CTracePropagator | None = None,
+    ) -> None:
         self._client = client
+        self._trace_context = trace_context
+        self._trace_propagator = trace_propagator or W3CTracePropagator()
 
     def list_tools(self, server: MCPServerConfig) -> list[ToolDefinition]:
         if not server.enabled:
             return []
+        outbound_server = self._outbound_server(server)
         return [
             self._definition_from_remote_tool(server, remote_tool)
             for remote_tool in _run_mcp_operation(
-                lambda: self._client.list_tools(server),
+                lambda: self._client.list_tools(outbound_server),
                 timeout_seconds=server.timeout_seconds,
                 operation=f"list tools from MCP server {server.server_id}",
             )
@@ -67,7 +83,7 @@ class MCPToolAdapter:
                 definition,
                 lambda args, remote_tool_name=remote_tool_name: _run_mcp_operation(
                     lambda: self._client.call_tool(
-                        server,
+                        self._outbound_server(server),
                         remote_tool_name,
                         args,
                     ),
@@ -78,6 +94,29 @@ class MCPToolAdapter:
                 ),
             )
         return definitions
+
+    def _outbound_server(self, server: MCPServerConfig) -> MCPServerConfig:
+        context = self._trace_context or current_trace_context()
+        if context is None:
+            carrier = self._trace_propagator.inject(
+                W3CSpanContext.root(),
+                server.trace_carrier,
+            )
+        else:
+            span_context = (
+                W3CSpanContext.from_trace_context(context)
+                if isinstance(context, TraceContext)
+                else context
+            )
+            carrier = (
+                self._trace_propagator.inject(
+                    span_context.child(),
+                    server.trace_carrier,
+                )
+                if span_context is not None
+                else {}
+            )
+        return replace(server, trace_carrier=carrier)
 
     def _definition_from_remote_tool(
         self,
@@ -157,4 +196,3 @@ def _run_mcp_operation(
         raise ToolRuntimeError(f"MCP transport error during {operation}: {exc}") from exc
     finally:
         pool.shutdown(wait=not timed_out, cancel_futures=True)
-

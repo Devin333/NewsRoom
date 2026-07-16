@@ -267,7 +267,6 @@ class WorkflowExecutionLoop:
         step_trace = context.step_trace_contexts.get(step_id)
         if step_trace is None:
             step_trace = context.trace_context.child(
-                span_id=f"step:{step_id}",
                 step_id=step_id,
             )
             context.step_trace_contexts[step_id] = step_trace

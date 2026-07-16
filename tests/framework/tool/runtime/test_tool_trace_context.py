@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.events import TraceContext
+from framework.events import TraceContext, is_valid_span_id, is_valid_trace_id
 from framework.tool import ToolCall, ToolDefinition, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
 
 
@@ -13,9 +13,9 @@ def test_tool_executor_events_and_records_include_trace_context() -> None:
     trace = TraceContext.root(
         run_id="run-1",
         workflow_id="wf-1",
-        trace_id="trace-1",
-        span_id="step:s1",
-    ).child(span_id="tool-parent", step_id="s1")
+        trace_id="1" * 32,
+        span_id="2" * 16,
+    )
     call = ToolCall(tool_name="sample.echo", arguments={"message": "hi"}, call_id="call-1")
 
     executor = ToolExecutor(registry, trace_context=trace)
@@ -25,8 +25,13 @@ def test_tool_executor_events_and_records_include_trace_context() -> None:
     record = executor.list_records()[0].to_dict()
 
     assert observation.status == ToolStatus.SUCCEEDED
-    assert event["trace_id"] == "trace-1"
-    assert event["span_id"] == "tool:call-1"
-    assert event["parent_span_id"] == "tool-parent"
-    assert record["trace_id"] == "trace-1"
-    assert record["span_id"] == "tool:call-1"
+    assert is_valid_trace_id(event["trace_id"])
+    assert is_valid_span_id(event["span_id"])
+    assert event["parent_span_id"] == trace.span_id
+    assert event["tool_call_id"] == "call-1"
+    assert record["trace_id"] == event["trace_id"]
+    assert record["span_id"] == event["span_id"]
+    assert record["parent_span_id"] == event["parent_span_id"]
+    assert observation.result.trace_id == event["trace_id"]
+    assert observation.result.span_id == event["span_id"]
+    assert observation.result.parent_span_id == event["parent_span_id"]

@@ -97,6 +97,7 @@ class ToolResult:
     timeout: bool = False
     trace_id: str | None = None
     span_id: str | None = None
+    parent_span_id: str | None = None
     error_envelope: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -234,6 +235,7 @@ class ToolResult:
             "timeout": self.timeout,
             "trace_id": self.trace_id,
             "span_id": self.span_id,
+            "parent_span_id": self.parent_span_id,
             "error_envelope": (
                 dict(self.error_envelope) if self.error_envelope is not None else None
             ),

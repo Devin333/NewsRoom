@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from framework.tool.governance.redaction import redact_sensitive_values
+from framework.events.propagation import W3CSpanContext
 from framework.events.trace import TraceContext, trace_fields
 from framework.tool.models.call import ToolCall
 from framework.tool.models.observation import ToolObservation
@@ -37,17 +38,23 @@ class ToolEvent:
         tool_name: str,
         tool_call_id: str,
         payload: dict[str, Any] | None = None,
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext | W3CSpanContext | None = None,
     ) -> "ToolEvent":
-        context = (
-            trace_context.child(
-                span_id=f"tool:{tool_call_id}",
-                tool_call_id=tool_call_id,
+        if isinstance(trace_context, TraceContext):
+            context = (
+                trace_context
+                if trace_context.tool_call_id == tool_call_id
+                else trace_context.child(tool_call_id=tool_call_id)
             )
-            if trace_context is not None
-            else None
-        )
-        fields = trace_fields(context)
+            fields = trace_fields(context)
+        elif isinstance(trace_context, W3CSpanContext):
+            fields = {
+                "trace_id": trace_context.trace_id,
+                "span_id": trace_context.span_id,
+                "parent_span_id": trace_context.parent_span_id,
+            }
+        else:
+            fields = {}
         return cls(
             event_type=event_type,
             tool_name=tool_name,

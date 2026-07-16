@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import Context, copy_context
 from enum import StrEnum
 from typing import Any
 
+from framework.events import (
+    TraceContext,
+    W3CSpanContext,
+    current_trace_context,
+)
 from framework.tool.models import (
     ToolCall,
     ToolDefinitionError,
@@ -45,6 +51,7 @@ class ToolBatchExecutor:
         run_id: str | None = None,
         secret_provider: Any | None = None,
         max_workers: int = 4,
+        trace_context: TraceContext | W3CSpanContext | None = None,
         compensating_actions: dict[str, Callable[[ToolObservation], None]] | None = None,
     ) -> None:
         self._registry = registry
@@ -52,6 +59,7 @@ class ToolBatchExecutor:
         self._run_id = run_id
         self._secret_provider = secret_provider
         self._max_workers = max(1, max_workers)
+        self._trace_context = trace_context
         # Fix #5: registry of rollback callables keyed by tool name
         self._compensating_actions: dict[str, Callable[[ToolObservation], None]] = (
             compensating_actions or {}
@@ -161,13 +169,27 @@ class ToolBatchExecutor:
         with ThreadPoolExecutor(
             max_workers=worker_count, thread_name_prefix="news-tool-batch"
         ) as pool:
+            parent_context = copy_context()
             future_to_index = {
-                pool.submit(self._execute_one, call, policy): idx
+                pool.submit(
+                    self._execute_one_with_context,
+                    call,
+                    policy,
+                    parent_context.copy(),
+                ): idx
                 for idx, call in enumerate(calls)
             }
             for future in as_completed(future_to_index):
                 results[future_to_index[future]] = future.result()
         return [r for r in results if r is not None]
+
+    def _execute_one_with_context(
+        self,
+        call: ToolCall,
+        policy: ToolPolicy,
+        context: Context,
+    ) -> ToolObservation:
+        return context.run(self._execute_one, call, policy)
 
     def _execute_serial(
         self, calls: list[ToolCall], policy: ToolPolicy
@@ -203,6 +225,7 @@ class ToolBatchExecutor:
             artifact_manager=self._artifact_manager,
             run_id=self._run_id,
             secret_provider=self._secret_provider,
+            trace_context=self._trace_context or current_trace_context(),
         )
         return executor.execute(call, policy)
 

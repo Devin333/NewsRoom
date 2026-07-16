@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, TypeVar
 
+from framework.events import W3CTracePropagator, trace_context_scope
 from interfaces.services.mcp_service import MCPApplicationService
+
+
+_T = TypeVar("_T")
 
 
 class NewsMCPServerAdapter:
@@ -13,8 +18,14 @@ class NewsMCPServerAdapter:
     service-sourced.
     """
 
-    def __init__(self, service: MCPApplicationService | None = None) -> None:
+    def __init__(
+        self,
+        service: MCPApplicationService | None = None,
+        *,
+        trace_propagator: W3CTracePropagator | None = None,
+    ) -> None:
         self.service = service or MCPApplicationService()
+        self._trace_propagator = trace_propagator or W3CTracePropagator()
 
     def catalog(self) -> dict[str, Any]:
         return self.service.catalog().to_dict()
@@ -29,14 +40,27 @@ class NewsMCPServerAdapter:
         self,
         name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        trace_carrier: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        return self.service.call_tool(name, arguments or {}).to_dict()
+        return self._with_trace(
+            trace_carrier,
+            lambda: self.service.call_tool(name, arguments or {}).to_dict(),
+        )
 
     def list_resources(self) -> dict[str, Any]:
         return {"resources": self.catalog()["resources"]}
 
-    def read_resource(self, uri: str) -> dict[str, Any]:
-        return self.service.read_resource(uri).to_dict()
+    def read_resource(
+        self,
+        uri: str,
+        *,
+        trace_carrier: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self._with_trace(
+            trace_carrier,
+            lambda: self.service.read_resource(uri).to_dict(),
+        )
 
     def list_prompts(self) -> dict[str, Any]:
         return {"prompts": self.catalog()["prompts"]}
@@ -45,9 +69,30 @@ class NewsMCPServerAdapter:
         self,
         name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        trace_carrier: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        return self.service.get_prompt(name, arguments or {}).to_dict()
+        return self._with_trace(
+            trace_carrier,
+            lambda: self.service.get_prompt(name, arguments or {}).to_dict(),
+        )
+
+    def _with_trace(
+        self,
+        carrier: Mapping[str, str] | None,
+        call: Callable[[], _T],
+    ) -> _T:
+        local_context = self._trace_propagator.extract_span(carrier or {}).child().context
+        with trace_context_scope(local_context):
+            return call()
 
 
-def create_mcp_server(service: MCPApplicationService | None = None) -> NewsMCPServerAdapter:
-    return NewsMCPServerAdapter(service=service)
+def create_mcp_server(
+    service: MCPApplicationService | None = None,
+    *,
+    trace_propagator: W3CTracePropagator | None = None,
+) -> NewsMCPServerAdapter:
+    return NewsMCPServerAdapter(
+        service=service,
+        trace_propagator=trace_propagator,
+    )

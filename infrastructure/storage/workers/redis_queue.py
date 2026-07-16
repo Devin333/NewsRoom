@@ -77,6 +77,10 @@ class RedisStreamTaskQueue:
         self.retry_policy = retry_policy or TaskRetryPolicy()
 
     def enqueue(self, task: Task) -> str:
+        from framework.events import current_trace_context, inject_current_trace
+
+        if current_trace_context() is not None:
+            task.trace_carrier = inject_current_trace(task.trace_carrier)
         task.status = TaskStatus.QUEUED
         task.leased_by = None
         task.lease_expires_at = None

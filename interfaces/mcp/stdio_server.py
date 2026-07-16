@@ -4,16 +4,35 @@ import json
 import sys
 from typing import Any, TextIO
 
+from framework.events import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    TelemetrySpanLink,
+    TracePropagationError,
+    W3CSpanContext,
+    W3CTracePropagator,
+    attach_trace_context,
+    default_event_telemetry,
+    reset_trace_context,
+)
 from interfaces.services.mcp_service import MCPApplicationService
 
 
 JSONRPC_VERSION = "2.0"
+_DEFAULT_MCP_PROPAGATOR = W3CTracePropagator()
+_DEFAULT_MCP_TELEMETRY = default_event_telemetry(
+    resource=TelemetryResource(service_name="newsroom-mcp"),
+    scope=TelemetryInstrumentationScope(name="interfaces.mcp", version="1"),
+)
 
 
 def handle_jsonrpc_request(
     request: dict[str, Any],
     *,
     service: MCPApplicationService | None = None,
+    trace_propagator: W3CTracePropagator | None = None,
+    telemetry: EventTelemetry | None = None,
 ) -> dict[str, Any] | None:
     request_id = request.get("id")
     if request_id is None:
@@ -21,6 +40,32 @@ def handle_jsonrpc_request(
     method = request.get("method")
     params = request.get("params") or {}
     service = service or MCPApplicationService()
+    actual_propagator = trace_propagator or _DEFAULT_MCP_PROPAGATOR
+    actual_telemetry = telemetry or _DEFAULT_MCP_TELEMETRY
+    try:
+        extracted = actual_propagator.extract_span(_mcp_trace_carrier(params))
+        local_context = extracted.child().context
+        propagation_result = "accepted" if extracted.accepted_remote else "restarted"
+    except TracePropagationError:
+        extracted = None
+        local_context = W3CSpanContext.root()
+        propagation_result = "invalid"
+    link = TelemetrySpanLink.from_context(
+        extracted.remote_context if extracted is not None else None,
+        relationship="mcp_request",
+    )
+    span_scope = actual_telemetry.start_span(
+        "newsroom.mcp.server",
+        attributes={
+            "newsroom.component": "mcp",
+            "newsroom.operation": "request",
+            "newsroom.transport": "mcp",
+            "newsroom.propagation.result": propagation_result,
+        },
+        links=(link,),
+    )
+    span_scope.__enter__()
+    trace_token = attach_trace_context(local_context)
 
     try:
         if method == "initialize":
@@ -75,6 +120,13 @@ def handle_jsonrpc_request(
         return _error(request_id, -32601, f"method not found: {method}")
     except Exception as exc:
         return _error(request_id, -32603, f"{type(exc).__name__}: {exc}")
+    finally:
+        reset_trace_context(trace_token)
+        span_scope.__exit__(None, None, None)
+        actual_telemetry.add_counter(
+            "trace_propagation_total",
+            labels={"boundary": "mcp", "result": propagation_result},
+        )
 
 
 def run_stdio(
@@ -82,6 +134,8 @@ def run_stdio(
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
     service: MCPApplicationService | None = None,
+    trace_propagator: W3CTracePropagator | None = None,
+    telemetry: EventTelemetry | None = None,
 ) -> None:
     actual_input = input_stream if input_stream is not None else sys.stdin
     actual_output = output_stream if output_stream is not None else sys.stdout
@@ -96,7 +150,12 @@ def run_stdio(
             if not isinstance(request, dict):
                 response = _error(None, -32600, "request must be a JSON object")
             else:
-                response = handle_jsonrpc_request(request, service=service)
+                response = handle_jsonrpc_request(
+                    request,
+                    service=service,
+                    trace_propagator=trace_propagator,
+                    telemetry=telemetry,
+                )
         except json.JSONDecodeError as exc:
             response = _error(None, -32700, f"parse error: {exc.msg}")
         if response is not None:
@@ -114,3 +173,17 @@ def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
         "id": request_id,
         "error": {"code": code, "message": message},
     }
+
+
+def _mcp_trace_carrier(params: Any) -> dict[str, str]:
+    if not isinstance(params, dict):
+        return {}
+    metadata = params.get("_meta")
+    if not isinstance(metadata, dict):
+        return {}
+    carrier: dict[str, str] = {}
+    for key in ("traceparent", "tracestate", "baggage"):
+        value = metadata.get(key)
+        if isinstance(value, str):
+            carrier[key] = value
+    return carrier
