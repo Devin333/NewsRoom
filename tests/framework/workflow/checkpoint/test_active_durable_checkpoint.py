@@ -308,7 +308,6 @@ def _context(
         profile="test",
         artifact_manager=ArtifactManager(tmp_path / "runs"),
         step_runner_registry=StepRunnerRegistry(),
-        event_bus=None,
         event_runtime=EventRuntime(store=event_store, schema_catalog=catalog),
         event_reader=event_store,
         event_schema_catalog=catalog,

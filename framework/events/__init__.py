@@ -1,4 +1,4 @@
-from framework.events.bus import EventBus, InMemoryEventBus
+from framework.events.bus import InMemoryEventBus
 from framework.events.canonical import (
     DEFAULT_MAX_EXTENSION_BYTES,
     DEFAULT_MAX_EXTENSION_COUNT,
@@ -70,12 +70,10 @@ from framework.events.ports import (
     RedeliveryStorePort,
     ReplayReportStorePort,
 )
-from framework.events.publisher import EventPublisher
 from framework.events.recorder import (
     EventRecorderProtocol,
     InMemoryEventRecorder,
 )
-from framework.events.replay import EventReplay
 from framework.events.runtime import (
     AppendResult,
     AutomaticDeliveryOperation,
@@ -257,7 +255,6 @@ from framework.events.subscriber import (
     DurableEventConsumer,
     EventProcessingError,
     EventSubscriber,
-    FunctionEventSubscriber,
     PermanentEventProcessingError,
     StaticDropAuthorizationPolicy,
     TransientEventProcessingError,
@@ -378,7 +375,6 @@ __all__ = [
     "EffectIdempotencyStrategy",
     "EffectIdempotencyCapability",
     "Event",
-    "EventBus",
     "EventCandidate",
     "EventCanonicalizationError",
     "EventConsumerIdempotencyError",
@@ -409,13 +405,11 @@ __all__ = [
     "EventRuntime",
     "EventPayloadTooLargeError",
     "EventPublishError",
-    "EventPublisher",
     "EventQuarantineError",
     "ReplayCheckpointCollisionError",
     "ReplayCheckpointCorruptionError",
     "EventReaderPort",
     "EventRecorderProtocol",
-    "EventReplay",
     "EventReplayError",
     "EventReplayMismatchError",
     "EventReservedFieldError",
@@ -448,7 +442,6 @@ __all__ = [
     "ExtractedTraceContext",
     "EventUpcastError",
     "FieldDisposition",
-    "FunctionEventSubscriber",
     "InMemoryEventBus",
     "InMemoryEventRecorder",
     "InboxEntry",

@@ -9,7 +9,6 @@ from infrastructure.storage.records import ReportDetailRecord, ReportSummaryReco
 if TYPE_CHECKING:
     from infrastructure.storage.postgres.artifact_index import PostgresArtifactIndexStore
     from infrastructure.storage.postgres.conversation import PostgresConversationStore
-    from infrastructure.storage.postgres.event_store import PostgresEventStore
     from infrastructure.storage.postgres.lineage import PostgresLineageStore
     from infrastructure.storage.postgres.memory_repository import (
         PostgresIntelligenceMemoryRepository,
@@ -29,10 +28,6 @@ _LAZY_ADAPTERS = {
     "PostgresConversationStore": (
         "infrastructure.storage.postgres.conversation",
         "PostgresConversationStore",
-    ),
-    "PostgresEventStore": (
-        "infrastructure.storage.postgres.event_store",
-        "PostgresEventStore",
     ),
     "PostgresLineageStore": (
         "infrastructure.storage.postgres.lineage",
@@ -73,7 +68,6 @@ __all__ = [
     "ReportSummaryRecord",
     "PostgresArtifactIndexStore",
     "PostgresConversationStore",
-    "PostgresEventStore",
     "PostgresLineageStore",
     "PostgresIntelligenceMemoryRepository",
     "PostgresReaderRepairMemoryRepository",

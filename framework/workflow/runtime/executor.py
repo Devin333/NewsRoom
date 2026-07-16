@@ -10,7 +10,6 @@ from framework.artifacts import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
 )
-from framework.events import EventBus
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.specs import (
@@ -83,7 +82,6 @@ class WorkflowExecutor:
         sleep_fn: Callable[[float], None] | None = None,
         step_runner_registry: StepRunnerRegistry | None = None,
         checkpoint_store: Any | None = None,
-        event_bus: EventBus | None = None,
         event_runtime: EventRuntimePort | None = None,
         event_reader: EventReaderPort | None = None,
         event_schema_catalog: EventSchemaCatalog | None = None,
@@ -102,7 +100,6 @@ class WorkflowExecutor:
         self._routing_engine = routing_engine or RoutingEngine()
         self._sleep_fn = sleep_fn or time.sleep
         self._checkpoint_store = checkpoint_store
-        self._event_bus = event_bus
         self._event_runtime = event_runtime
         self._event_reader = event_reader
         self._event_schema_catalog = (
@@ -143,7 +140,6 @@ class WorkflowExecutor:
             profile=profile,
             artifact_manager=self._artifact_manager,
             step_runner_registry=self._step_runner_registry,
-            event_bus=self._event_bus,
             event_runtime=self._event_runtime,
             event_reader=self._event_reader,
             event_schema_catalog=self._event_schema_catalog,

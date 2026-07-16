@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -17,23 +17,12 @@ MAX_CONSUMER_REASON_CLASS_LENGTH = 128
 
 
 class EventSubscriber(Protocol):
-    """Deprecated synchronous compatibility subscriber for legacy envelopes."""
+    """Synchronous subscriber contract for the in-memory test adapter."""
 
     subscriber_id: str
 
     def handle(self, envelope: EventEnvelope) -> None:
         ...
-
-
-@dataclass
-class FunctionEventSubscriber:
-    """Deprecated callable shim; durable consumers use ``DurableEventConsumer``."""
-
-    callback: Callable[[EventEnvelope], None]
-    subscriber_id: str = "function_subscriber"
-
-    def handle(self, envelope: EventEnvelope) -> None:
-        self.callback(envelope)
 
 
 class ConsumerDisposition(str, Enum):
@@ -377,7 +366,6 @@ __all__ = [
     "DurableEventConsumer",
     "EventProcessingError",
     "EventSubscriber",
-    "FunctionEventSubscriber",
     "MAX_CONSUMER_DIAGNOSTIC_LENGTH",
     "MAX_CONSUMER_REASON_CLASS_LENGTH",
     "PermanentEventProcessingError",

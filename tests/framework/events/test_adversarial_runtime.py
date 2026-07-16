@@ -4,13 +4,11 @@ import pytest
 
 from framework.events import (
     Event,
-    EventBus,
     EventEnvelope,
     EventQuarantineError,
-    EventReplay,
     EventRuntimeError,
     EventSubscriberError,
-    FunctionEventSubscriber,
+    InMemoryEventBus,
     TraceContext,
     TraceEvent,
     default_event_schema_catalog,
@@ -103,8 +101,17 @@ class _SubscriberFailure(RuntimeError):
     pass
 
 
+class _TestSubscriber:
+    def __init__(self, subscriber_id: str, callback) -> None:
+        self.subscriber_id = subscriber_id
+        self.callback = callback
+
+    def handle(self, envelope: EventEnvelope) -> None:
+        self.callback(envelope)
+
+
 def test_subscriber_failure_does_not_block_later_subscriber_and_keeps_cause() -> None:
-    bus = EventBus()
+    bus = InMemoryEventBus()
     calls: list[str] = []
     cause = _SubscriberFailure("second subscriber failed")
 
@@ -118,34 +125,14 @@ def test_subscriber_failure_does_not_block_later_subscriber_and_keeps_cause() ->
     def third(envelope: EventEnvelope) -> None:
         calls.append("third")
 
-    bus.subscribe(first)
-    bus.subscribe(second)
-    bus.subscribe(third)
+    bus.subscribe(_TestSubscriber("first", first))
+    bus.subscribe(_TestSubscriber("second", second))
+    bus.subscribe(_TestSubscriber("third", third))
 
     with pytest.raises(EventSubscriberError) as caught:
         bus.publish(Event("workflow_started"))
 
     assert (calls, caught.value.__cause__) == (["first", "second", "third"], cause)
-
-
-def test_compatibility_replay_deduplicates_event_id_before_effect() -> None:
-    envelope = EventEnvelope(
-        event=Event("step_finished", run_id="run-replay"),
-        event_id="evt-replayed-once",
-        run_id="run-replay",
-    )
-    duplicate_identity = EventEnvelope.from_dict(envelope.to_dict())
-    applied_event_ids: list[str] = []
-
-    EventReplay().replay(
-        [envelope, duplicate_identity],
-        FunctionEventSubscriber(
-            lambda item: applied_event_ids.append(item.event_id),
-            subscriber_id="compatibility-effect",
-        ),
-    )
-
-    assert applied_event_ids == ["evt-replayed-once"]
 
 
 @pytest.mark.parametrize(

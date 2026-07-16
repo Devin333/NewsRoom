@@ -17,7 +17,6 @@ from framework.artifacts import (
     validate_relative_artifact_path,
 )
 from framework.artifacts.models import ArtifactRef
-from framework.events import EventBus
 from framework.events.errors import EventContractError
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.runtime.models import (
@@ -98,7 +97,6 @@ class WorkflowRunner:
         event_schema_catalog: EventSchemaCatalog | None = None,
         lineage_store: Any | None = None,
         checkpoint_store: Any | None = None,
-        event_bus: EventBus | None = None,
         global_budget_policy: GlobalBudgetPolicy | None = None,
         global_budget_tracker: GlobalBudgetTracker | None = None,
         artifact_publishers: Sequence[WorkflowArtifactPublisher] | None = None,
@@ -143,7 +141,6 @@ class WorkflowRunner:
             lineage_extractors=lineage_extractors,
         )
         self._checkpoint_store = checkpoint_store
-        self._event_bus = event_bus
         self._run_inspector = WorkflowRunInspector(self._artifact_root)
         self._global_budget_policy = global_budget_policy
         self._global_budget_tracker = global_budget_tracker
@@ -171,7 +168,6 @@ class WorkflowRunner:
             step_runner_registry=self._step_runner_registry,
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
-            event_bus=self._event_bus,
             event_runtime=self._event_runtime,
             event_reader=self._event_reader,
             event_schema_catalog=self._event_schema_catalog,
@@ -195,7 +191,6 @@ class WorkflowRunner:
             step_runner_registry=self._step_runner_registry,
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
-            event_bus=self._event_bus,
             event_runtime=self._event_runtime,
             event_reader=self._event_reader,
             event_schema_catalog=self._event_schema_catalog,
@@ -237,7 +232,6 @@ class WorkflowRunner:
             step_runner_registry=self._step_runner_registry,
             artifact_manager=self._artifact_manager,
             checkpoint_store=self._checkpoint_store,
-            event_bus=self._event_bus,
             event_runtime=self._event_runtime,
             event_reader=self._event_reader,
             event_schema_catalog=self._event_schema_catalog,

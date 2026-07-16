@@ -38,7 +38,6 @@ def test_checkpoint_coordinator_records_checkpoint_reference(tmp_path) -> None:
         profile="test",
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=StepRunnerRegistry(),
-        event_bus=None,
         event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
         event_reader=event_store,
         event_schema_catalog=event_catalog,

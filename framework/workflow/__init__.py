@@ -253,7 +253,6 @@ from framework.workflow.runtime import (
     WorkflowRunner,
 )
 from framework.artifacts import ArtifactManager, ArtifactRef
-from framework.events import EventBus
 from framework.workflow.runtime.result import StepOutcome, WorkflowError, WorkflowResult
 from framework.workflow.runners.base import (
     StepExecutionError,

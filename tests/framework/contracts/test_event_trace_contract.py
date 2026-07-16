@@ -4,9 +4,9 @@ import pytest
 
 from framework.events import (
     Event,
-    EventBus,
     EventEnvelope,
     EventSubscriberError,
+    InMemoryEventBus,
     TraceContext,
     W3CTracePropagator,
     trace_fields,
@@ -32,12 +32,15 @@ def test_event_trace_contract_envelope_round_trip_and_subscriber_failure() -> No
         ),
         event_id="evt-1",
     )
-    bus = EventBus()
+    bus = InMemoryEventBus()
 
-    def _boom(envelope: EventEnvelope) -> None:
-        raise RuntimeError("subscriber failed")
+    class _FailingSubscriber:
+        subscriber_id = "failing-contract-subscriber"
 
-    bus.subscribe(_boom)
+        def handle(self, envelope: EventEnvelope) -> None:
+            raise RuntimeError("subscriber failed")
+
+    bus.subscribe(_FailingSubscriber())
     with pytest.raises(EventSubscriberError) as caught:
         bus.publish(envelope)
 

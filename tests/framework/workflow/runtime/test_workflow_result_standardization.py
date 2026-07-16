@@ -80,7 +80,6 @@ def test_outcome_finalizer_populates_standard_workflow_result_fields(tmp_path: P
         profile="test",
         artifact_manager=artifact_manager,
         step_runner_registry=registry,
-        event_bus=None,
         event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
         event_reader=event_store,
         event_schema_catalog=event_catalog,

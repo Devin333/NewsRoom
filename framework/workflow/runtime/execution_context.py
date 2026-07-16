@@ -14,7 +14,6 @@ from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.events.trace import TraceContext
 from framework.artifacts import ArtifactManager, validate_artifact_path_segment
-from framework.events import EventBus
 from framework.workflow.runtime.event_emitter import (
     ScopedDurableWorkflowEventEmitter,
     WorkflowEventRecorderFacade,
@@ -64,7 +63,6 @@ def build_execution_context(
     profile: str,
     artifact_manager: ArtifactManager,
     step_runner_registry: StepRunnerRegistry,
-    event_bus: EventBus | None,
     event_runtime: EventRuntimePort | None = None,
     event_reader: EventReaderPort | None = None,
     event_schema_catalog: EventSchemaCatalog | None = None,
@@ -84,10 +82,6 @@ def build_execution_context(
         raise ValueError("event_runtime is required for durable workflow execution")
     if event_reader is None:
         raise ValueError("event_reader is required for durable workflow execution")
-    if event_bus is not None:
-        raise ValueError(
-            "workflow event_bus dispatch is not supported after durable writer cutover"
-        )
     run_dir = artifact_manager.start_run(actual_run_id)
     schema_catalog = event_schema_catalog or default_event_schema_catalog()
     event_emitter = ScopedDurableWorkflowEventEmitter(

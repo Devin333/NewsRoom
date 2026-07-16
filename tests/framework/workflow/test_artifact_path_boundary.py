@@ -96,7 +96,6 @@ def test_execution_context_rejects_unsafe_explicit_run_id_before_manager(
             profile="default",
             artifact_manager=cast(Any, manager),
             step_runner_registry=cast(Any, object()),
-            event_bus=None,
             event_runtime=cast(Any, runtime),
             event_reader=cast(Any, _FailIfReadEventReader()),
             started_monotonic=0.0,

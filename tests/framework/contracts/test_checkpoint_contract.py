@@ -39,7 +39,6 @@ def test_checkpoint_contract_manifest_refs_and_round_trip(tmp_path) -> None:
         profile="contract",
         artifact_manager=ArtifactManager(tmp_path),
         step_runner_registry=StepRunnerRegistry(),
-        event_bus=None,
         event_runtime=EventRuntime(store=event_store, schema_catalog=event_catalog),
         event_reader=event_store,
         event_schema_catalog=event_catalog,

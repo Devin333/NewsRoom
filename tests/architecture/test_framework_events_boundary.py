@@ -90,6 +90,48 @@ def test_framework_legacy_event_recorders_are_not_public_writers() -> None:
     assert '"EventRecorder"' not in events_init
 
 
+def test_expired_event_compatibility_runtime_shims_are_removed() -> None:
+    events_init = (EVENTS_ROOT / "__init__.py").read_text(encoding="utf-8")
+    subscriber = (EVENTS_ROOT / "subscriber.py").read_text(encoding="utf-8")
+    bus = (EVENTS_ROOT / "bus.py").read_text(encoding="utf-8")
+
+    assert not (EVENTS_ROOT / "publisher.py").exists()
+    assert not (EVENTS_ROOT / "replay.py").exists()
+    for retired_name in (
+        "EventBus",
+        "EventPublisher",
+        "EventReplay",
+        "FunctionEventSubscriber",
+    ):
+        assert f'"{retired_name}"' not in events_init
+    assert "class FunctionEventSubscriber" not in subscriber
+    assert "EventBus = InMemoryEventBus" not in bus
+    assert "legacy_callable" not in bus
+
+    for relative_path in (
+        "framework/workflow/__init__.py",
+        "framework/workflow/runtime/runner.py",
+        "framework/workflow/runtime/executor.py",
+        "framework/workflow/runtime/execution_context.py",
+    ):
+        source = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+        assert "EventBus" not in source
+        assert "event_bus" not in source
+
+
+def test_legacy_postgres_event_writer_is_removed_but_migration_reader_remains() -> None:
+    postgres_root = PROJECT_ROOT / "infrastructure" / "storage" / "postgres"
+    postgres_init = (postgres_root / "__init__.py").read_text(encoding="utf-8")
+    migration_reader = (
+        PROJECT_ROOT / "infrastructure" / "storage" / "events" / "migration_readers.py"
+    ).read_text(encoding="utf-8")
+
+    assert not (postgres_root / "event_store.py").exists()
+    assert "PostgresEventStore" not in postgres_init
+    assert "class PostgresEventMigrationReader" in migration_reader
+    assert "FROM workflow_events" in migration_reader
+
+
 def _imported_modules(tree: ast.AST) -> list[str]:
     modules: list[str] = []
     for node in ast.walk(tree):
