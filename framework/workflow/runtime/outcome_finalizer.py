@@ -105,10 +105,13 @@ class WorkflowOutcomeFinalizer:
         context.manifest["event_projection"] = {
             "path": "events.jsonl",
             "stream_id": event_projection.stream_id,
+            "tenant_id": context.event_emitter.tenant_id,
             "high_watermark": event_projection.high_watermark,
             "event_count": event_projection.event_count,
             "checksum": event_projection.checksum,
         }
+        if context.event_emitter.tenant_id is not None:
+            context.manifest["tenant_id"] = context.event_emitter.tenant_id
         context.manifest["event_projection_high_watermark"] = (
             event_projection.high_watermark
         )

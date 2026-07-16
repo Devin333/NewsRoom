@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from framework.events.errors import EventContractError, EventStoreUnavailableError
@@ -13,6 +14,11 @@ from framework.events.runtime.models import (
     ReplayReportQuery,
     ReplayStartRequest,
     ReplayStatus,
+)
+from framework.shared.time import utc_now
+from interfaces.services.event_delivery_operations_service import (
+    EventOperationCapabilityUnavailableError,
+    validate_operator_reason,
 )
 from framework.events.runtime.replay_engine import (
     ReplayCheckpoint,
@@ -91,26 +97,27 @@ class EventReplayService:
     def __init__(
         self,
         *,
-        engine: EventReplayRuntimePort,
+        engine: EventReplayRuntimePort | None = None,
         report_store: ReplayReportStorePort,
         authorizer: EventAuthorizerPort,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
-        if engine is None:
-            raise ValueError("deterministic replay engine is required")
         if report_store is None:
             raise ValueError("replay report store is required")
         if authorizer is None:
             raise ValueError("event authorizer is required")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
         self._engine = engine
         self._reports = report_store
         self._authorizer = authorizer
+        self._clock = clock
 
     def rebuild_state(
         self,
         *,
         replay_id: str,
         source_stream_id: str,
-        requested_at: datetime,
         operator_reason: str,
         reducer_id: str,
         reducer_version: str,
@@ -131,7 +138,6 @@ class EventReplayService:
             replay_id=replay_id,
             mode=ReplayMode.REBUILD_STATE,
             source_stream_id=source_stream_id,
-            requested_at=requested_at,
             operator_reason=operator_reason,
             authorization=authorization,
             from_sequence=from_sequence,
@@ -141,7 +147,8 @@ class EventReplayService:
             reducer_version=reducer_version,
             checkpoint_target=checkpoint_target,
         )
-        result = self._engine.rebuild_state(
+        engine = self._require_engine()
+        result = engine.rebuild_state(
             request,
             reducer_id=reducer_id,
             reducer_version=reducer_version,
@@ -155,7 +162,6 @@ class EventReplayService:
         *,
         replay_id: str,
         source_stream_id: str,
-        requested_at: datetime,
         operator_reason: str,
         authorization: EventAuthorizationContext,
         from_sequence: int | None = None,
@@ -174,7 +180,6 @@ class EventReplayService:
             replay_id=replay_id,
             mode=ReplayMode.VERIFY_HISTORY,
             source_stream_id=source_stream_id,
-            requested_at=requested_at,
             operator_reason=operator_reason,
             authorization=authorization,
             from_sequence=from_sequence,
@@ -182,7 +187,8 @@ class EventReplayService:
             after_sequence=after_sequence,
             checkpoint_target=checkpoint_target,
         )
-        result = self._engine.verify_history(
+        engine = self._require_engine()
+        result = engine.verify_history(
             request,
             checkpoint=checkpoint,
             after_sequence=after_sequence,
@@ -294,7 +300,6 @@ class EventReplayService:
         replay_id: str,
         mode: ReplayMode,
         source_stream_id: str,
-        requested_at: datetime,
         operator_reason: str,
         authorization: EventAuthorizationContext,
         from_sequence: int | None,
@@ -308,12 +313,12 @@ class EventReplayService:
             replay_id=replay_id,
             mode=mode,
             source_stream_id=source_stream_id,
-            requested_at=requested_at,
+            requested_at=_clock_value(self._clock),
             from_sequence=from_sequence,
             checkpoint_ref=checkpoint_ref,
             tenant_id=authorization.tenant_id,
             operator_id=authorization.principal_id,
-            operator_reason=_required_text(operator_reason, "operator_reason"),
+            operator_reason=validate_operator_reason(operator_reason),
         )
         authorize_event_operation(
             self._authorizer,
@@ -334,6 +339,13 @@ class EventReplayService:
             },
         )
         return request
+
+    def _require_engine(self) -> EventReplayRuntimePort:
+        if self._engine is None:
+            raise EventOperationCapabilityUnavailableError(
+                "deterministic replay capability is unavailable"
+            )
+        return self._engine
 
 
 def _checkpoint_target(
@@ -407,6 +419,15 @@ def _required_text(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} is required")
     return value.strip()
+
+
+def _clock_value(clock: Callable[[], datetime]) -> datetime:
+    value = clock()
+    if not isinstance(value, datetime):
+        raise TypeError("clock must return datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("clock must return a timezone-aware datetime")
+    return value.astimezone(UTC)
 
 
 __all__ = [

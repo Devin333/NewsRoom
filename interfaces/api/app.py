@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
@@ -54,6 +55,8 @@ from interfaces.services.auth_service import AuthApplicationService
 from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.run_report_projection import project_run_report_for_interface
 from interfaces.services.entity_service import EntityTrackingApplicationService
+from interfaces.services.event_operator_factory import event_operator_service_from_actor
+from interfaces.services.event_operator_service import EventOperatorApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.project_service import ProjectApplicationService
@@ -82,6 +85,7 @@ SourceServiceFactory = Callable[[], SourceApplicationService]
 EntityServiceFactory = Callable[[], EntityTrackingApplicationService]
 SubscriptionServiceFactory = Callable[[], SubscriptionApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
+EventOperatorServiceFactory = Callable[[ActorContext], EventOperatorApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
@@ -106,6 +110,7 @@ def create_app(
     entity_service_factory: EntityServiceFactory = EntityTrackingApplicationService,
     subscription_service_factory: SubscriptionServiceFactory = SubscriptionApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
+    event_operator_service_factory: EventOperatorServiceFactory = event_operator_service_from_actor,
     run_inspection_service_factory: RunInspectionServiceFactory = run_inspection_service_from_env,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
@@ -281,6 +286,7 @@ def create_app(
 
     resolved_mcp_service_factory = _mcp_service_factory(
         mcp_service_factory=mcp_service_factory,
+        event_operator_service_factory=event_operator_service_factory,
         worker_service_factory=worker_service_factory,
         run_service_factory=run_service_factory,
         run_operation_service_factory=run_operation_service_factory,
@@ -307,6 +313,7 @@ def create_app(
         entity_service_factory=entity_service_factory,
         subscription_service_factory=subscription_service_factory,
         mcp_service_factory=resolved_mcp_service_factory,
+        event_operator_service_factory=event_operator_service_factory,
         run_inspection_service_factory=run_inspection_service_factory,
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,
@@ -358,6 +365,7 @@ def _run_result_response(result) -> dict[str, Any]:
 def _mcp_service_factory(
     *,
     mcp_service_factory: MCPServiceFactory,
+    event_operator_service_factory: EventOperatorServiceFactory,
     worker_service_factory: WorkerServiceFactory,
     run_service_factory: RunServiceFactory,
     run_operation_service_factory: RunOperationServiceFactory,
@@ -378,6 +386,7 @@ def _mcp_service_factory(
 
     def factory() -> MCPApplicationService:
         return MCPApplicationService(
+            event_operator_service_factory=event_operator_service_factory,
             worker_service_factory=worker_service_factory,
             run_service_factory=run_service_factory,
             run_operation_service_factory=run_operation_service_factory,
@@ -735,13 +744,8 @@ def _authorized_api_actor(
         return None
     for expected_token, roles in api_keys.items():
         if hmac.compare_digest(token, expected_token):
-            actor_id = (
-                request.headers.get("x-api-client-id")
-                or request.headers.get("x-news-actor")
-                or _api_key_actor_id(expected_token)
-            )
             return ActorContext(
-                actor_id=str(actor_id),
+                actor_id=_api_key_actor_id(expected_token),
                 actor_type="mcp_client" if "mcp_client" in roles else "service",
                 roles=list(roles),
                 request_id=_request_id(),
@@ -762,7 +766,8 @@ def _bearer_token(authorization: str | None) -> str | None:
 
 
 def _api_key_actor_id(token: str) -> str:
-    return f"api-key:{token[:6]}..."
+    fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return f"api-key:{fingerprint}"
 
 
 def _required_api_permission(method: str, path: str) -> str | None:
@@ -775,6 +780,8 @@ def _required_api_permission(method: str, path: str) -> str | None:
         return "admin:diagnose"
     if resource == "mcp":
         return "read:reports"
+    if resource == "events":
+        return "events:read" if method == "GET" else "events:operate"
     if resource == "runs":
         return "read:reports" if method == "GET" else "write:runs"
     if resource == "reports":

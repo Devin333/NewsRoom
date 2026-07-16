@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from framework.events.errors import EventContractError, EventStoreUnavailableError
@@ -13,8 +14,10 @@ from framework.events.runtime.models import (
     QuarantineReason,
     QuarantineRecord,
 )
+from framework.shared.time import utc_now
 from interfaces.services.event_delivery_operations_service import (
     EventOperationNotFoundError,
+    validate_operator_reason,
 )
 from interfaces.services.event_reader_service import (
     EventAuthorizationContext,
@@ -71,13 +74,17 @@ class EventQuarantineService:
         store: QuarantineStorePort,
         *,
         authorizer: EventAuthorizerPort,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         if store is None:
             raise ValueError("quarantine store is required")
         if authorizer is None:
             raise ValueError("event authorizer is required")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
         self._store = store
         self._authorizer = authorizer
+        self._clock = clock
 
     def get(
         self,
@@ -179,14 +186,14 @@ class EventQuarantineService:
         disposition: QuarantineDisposition,
         *,
         operator_reason: str,
-        resolved_at: datetime,
         authorization: EventAuthorizationContext,
     ) -> QuarantineRecord:
         normalized_id = _required_text(quarantine_id, "quarantine_id")
         target_disposition = QuarantineDisposition(disposition)
         if target_disposition is QuarantineDisposition.PENDING:
             raise ValueError("quarantine resolution requires a terminal disposition")
-        reason = _required_text(operator_reason, "operator_reason")
+        reason = validate_operator_reason(operator_reason)
+        resolved_at = _clock_value(self._clock)
         authorize_event_operation(
             self._authorizer,
             authorization,
@@ -230,6 +237,15 @@ def _required_text(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} is required")
     return value.strip()
+
+
+def _clock_value(clock: Callable[[], datetime]) -> datetime:
+    value = clock()
+    if not isinstance(value, datetime):
+        raise TypeError("clock must return datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("clock must return a timezone-aware datetime")
+    return value.astimezone(UTC)
 
 
 __all__ = [

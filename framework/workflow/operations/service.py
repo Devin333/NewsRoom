@@ -1193,6 +1193,7 @@ class LocalWorkflowRunOperationService:
             reader=self.event_reader,
             schema_catalog=self.event_schema_catalog,
             stream_id=f"run:{run_id}",
+            tenant_id=_manifest_tenant_scope(manifest),
             base_business_context=BusinessContext(
                 run_id=run_id,
                 workflow_id=str(manifest.get("workflow_id") or "") or None,
@@ -1266,6 +1267,7 @@ class LocalWorkflowRunOperationService:
                 "run event projection metadata is incomplete or conflicting"
             )
         stream_id = f"run:{run_id}"
+        tenant_id = _manifest_tenant_scope(manifest)
         high_watermark = metadata.get("high_watermark")
         event_count = metadata.get("event_count")
         checksum = metadata.get("checksum")
@@ -1289,6 +1291,7 @@ class LocalWorkflowRunOperationService:
                 high_watermark=high_watermark,
                 event_count=event_count,
                 checksum=checksum,
+                tenant_id=tenant_id,
             )
         except EventContractError as exc:
             raise WorkflowEventProjectionMigrationRequiredError(
@@ -1299,16 +1302,19 @@ class LocalWorkflowRunOperationService:
         if self.event_reader is None:
             raise ValueError("durable event reader is required for run operations")
         run_id = validate_artifact_path_segment(str(manifest["run_id"]), field="run_id")
+        tenant_id = _manifest_tenant_scope(manifest)
         projection = WorkflowEventProjectionExporter(
             reader=self.event_reader,
             schema_catalog=self.event_schema_catalog,
         ).export(
             stream_id=f"run:{run_id}",
             target=self._run_dir(run_id) / "events.jsonl",
+            tenant_id=tenant_id,
         )
         manifest["event_projection"] = {
             "path": "events.jsonl",
             "stream_id": projection.stream_id,
+            "tenant_id": tenant_id,
             "high_watermark": projection.high_watermark,
             "event_count": projection.event_count,
             "checksum": projection.checksum,
@@ -1316,6 +1322,8 @@ class LocalWorkflowRunOperationService:
         manifest["event_projection_high_watermark"] = projection.high_watermark
         manifest["event_projection_checksum"] = projection.checksum
         manifest["event_count"] = projection.event_count
+        if tenant_id is not None:
+            manifest["tenant_id"] = tenant_id
         save_run_manifest(self.artifact_root, run_id, manifest)
 
     def _workflow_for_manifest(self, manifest: dict[str, Any]) -> WorkflowSpec | None:
@@ -1375,6 +1383,27 @@ class LocalWorkflowRunOperationService:
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _manifest_tenant_scope(manifest: Mapping[str, Any]) -> str | None:
+    projection = manifest.get("event_projection")
+    projection_tenant = (
+        projection.get("tenant_id") if isinstance(projection, Mapping) else None
+    )
+    manifest_tenant = manifest.get("tenant_id")
+    values = [value for value in (manifest_tenant, projection_tenant) if value is not None]
+    if not values:
+        return None
+    if any(not isinstance(value, str) or not value.strip() for value in values):
+        raise WorkflowEventProjectionMigrationRequiredError(
+            "run event projection tenant scope is invalid"
+        )
+    normalized = {str(value).strip() for value in values}
+    if len(normalized) != 1:
+        raise WorkflowEventProjectionMigrationRequiredError(
+            "run event projection tenant scope is conflicting"
+        )
+    return normalized.pop()
 
 
 def _resolve_run_dir(artifact_root: str | Path, run_id: str) -> Path:

@@ -1632,6 +1632,23 @@ def test_requeue_requires_out_of_order_contract_and_matching_dead_letter() -> No
     ):
         runtime.requeue_dead_letter(unsafe.key, action)
 
+    retired = replace(
+        _subscription(
+            version=3,
+            external=True,
+            supports_repair=True,
+            tenant_id="tenant-a",
+        ),
+        status=SubscriptionStatus.RETIRED,
+    )
+    runtime.register(retired, _Consumer(retired.consumer_id))
+    with pytest.raises(
+        EventConsumerMismatchError,
+        match="retired subscription",
+    ):
+        runtime.requeue_dead_letter(retired.key, action)
+    assert store.requeued == [action]
+
 
 def test_authorized_redelivery_requires_capability_before_store_mutation() -> None:
     trace: list[str] = []

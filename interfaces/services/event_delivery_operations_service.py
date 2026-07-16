@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from framework.events.errors import EventContractError, EventStoreUnavailableError
@@ -15,11 +17,13 @@ from framework.events.runtime.models import (
     DeadLetterQuery,
     DeadLetterRecord,
     DeliveryRecord,
+    DeliveryState,
     PendingDeliveryStats,
     RedeliveryReport,
     RedeliveryRequest,
     SubscriptionKey,
 )
+from framework.shared.time import utc_now
 from interfaces.services.event_reader_service import (
     EventAuthorizationContext,
     EventAuthorizerPort,
@@ -41,6 +45,13 @@ class EventDeliveryRuntimePort(Protocol):
 
 class EventOperationNotFoundError(LookupError):
     """An operator target is not visible in the authorized tenant scope."""
+
+
+class EventOperationCapabilityUnavailableError(RuntimeError):
+    """A mutation capability was not composed for this deployment."""
+
+
+MAX_OPERATOR_REASON_LENGTH = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,18 +141,20 @@ class EventDeliveryOperationsService:
         self,
         *,
         store: EventStorePort,
-        runtime: EventDeliveryRuntimePort,
+        runtime: EventDeliveryRuntimePort | None = None,
         authorizer: EventAuthorizerPort,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         if store is None:
             raise ValueError("event store is required")
-        if runtime is None:
-            raise ValueError("durable delivery runtime is required")
         if authorizer is None:
             raise ValueError("event authorizer is required")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
         self._store = store
         self._runtime = runtime
         self._authorizer = authorizer
+        self._clock = clock
 
     def get_dead_letter(
         self,
@@ -253,14 +266,14 @@ class EventDeliveryOperationsService:
         dead_letter_id: str,
         *,
         operator_reason: str,
-        requested_at: datetime,
         idempotency_ready: bool,
         authorization: EventAuthorizationContext,
     ) -> DeliveryRecord:
+        requested_at = _clock_value(self._clock)
         action = DeadLetterAction(
             dead_letter_id=dead_letter_id,
             operator_id=authorization.principal_id,
-            reason=operator_reason,
+            reason=validate_operator_reason(operator_reason),
             requested_at=requested_at,
             idempotency_ready=idempotency_ready,
         )
@@ -276,6 +289,7 @@ class EventDeliveryOperationsService:
                 "idempotency_ready": action.idempotency_ready,
             },
         )
+        runtime = self._require_runtime("dead-letter requeue")
         definition = self._store.get_subscription(subscription)
         if not _subscription_matches(
             definition,
@@ -300,18 +314,31 @@ class EventDeliveryOperationsService:
             raise EventOperationNotFoundError(
                 "dead letter is not available in subscription scope"
             )
-        return self._runtime.requeue_dead_letter(subscription, action)
+        delivery = runtime.requeue_dead_letter(subscription, action)
+        if (
+            not isinstance(delivery, DeliveryRecord)
+            or delivery.event_id != scoped.event_id
+            or delivery.subscription_id != subscription.subscription_id
+            or delivery.subscription_version != subscription.subscription_version
+            or delivery.consumer_id != scoped.consumer_id
+            or delivery.consumer_effect_id != scoped.consumer_effect_id
+            or delivery.tenant_id != authorization.tenant_id
+            or delivery.delivery_generation <= scoped.delivery_generation
+            or delivery.state is not DeliveryState.PENDING
+        ):
+            raise EventContractError("delivery runtime returned an invalid requeue result")
+        return delivery
 
     def resolve_dead_letter(
         self,
         dead_letter_id: str,
         *,
         operator_reason: str,
-        requested_at: datetime,
         authorization: EventAuthorizationContext,
     ) -> DeadLetterRecord:
         normalized_id = _required_text(dead_letter_id, "dead_letter_id")
-        reason = _required_text(operator_reason, "operator_reason")
+        reason = validate_operator_reason(operator_reason)
+        requested_at = _clock_value(self._clock)
         authorize_event_operation(
             self._authorizer,
             authorization,
@@ -348,12 +375,12 @@ class EventDeliveryOperationsService:
         subscription: SubscriptionKey,
         source_stream_id: str,
         from_sequence: int,
-        requested_at: datetime,
         operator_reason: str,
         authorization: EventAuthorizationContext,
         through_sequence: int | None = None,
     ) -> RedeliveryReport:
-        reason = _required_text(operator_reason, "operator_reason")
+        reason = validate_operator_reason(operator_reason)
+        requested_at = _clock_value(self._clock)
         decision = authorize_event_operation(
             self._authorizer,
             authorization,
@@ -368,6 +395,7 @@ class EventDeliveryOperationsService:
                 "operator_reason": reason,
             },
         )
+        runtime = self._require_runtime("event redelivery")
         request = RedeliveryRequest(
             redelivery_id=redelivery_id,
             subscription=subscription,
@@ -389,7 +417,7 @@ class EventDeliveryOperationsService:
             raise EventOperationNotFoundError(
                 "subscription is not available in tenant scope"
             )
-        report = self._runtime.begin_redelivery(request)
+        report = runtime.begin_redelivery(request)
         if (
             not isinstance(report, RedeliveryReport)
             or report.redelivery_id != request.redelivery_id
@@ -511,6 +539,13 @@ class EventDeliveryOperationsService:
             checkpoint=checkpoint,
         )
 
+    def _require_runtime(self, capability: str) -> EventDeliveryRuntimePort:
+        if self._runtime is None:
+            raise EventOperationCapabilityUnavailableError(
+                f"{capability} capability is unavailable"
+            )
+        return self._runtime
+
     @staticmethod
     def _validate_dead_letter_scope(
         record: DeadLetterRecord | None,
@@ -524,6 +559,26 @@ def _required_text(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} is required")
     return value.strip()
+
+
+def validate_operator_reason(value: Any) -> str:
+    reason = _required_text(value, "operator_reason")
+    if len(reason) > MAX_OPERATOR_REASON_LENGTH:
+        raise ValueError(
+            f"operator_reason cannot exceed {MAX_OPERATOR_REASON_LENGTH} characters"
+        )
+    if any(unicodedata.category(character).startswith("C") for character in reason):
+        raise ValueError("operator_reason cannot contain control characters")
+    return reason
+
+
+def _clock_value(clock: Callable[[], datetime]) -> datetime:
+    value = clock()
+    if not isinstance(value, datetime):
+        raise TypeError("clock must return datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("clock must return a timezone-aware datetime")
+    return value.astimezone(UTC)
 
 
 def _subscription_target(subscription: SubscriptionKey) -> dict[str, Any]:
@@ -557,6 +612,9 @@ __all__ = [
     "DeadLetterLookupResult",
     "EventDeliveryOperationsService",
     "EventDeliveryRuntimePort",
+    "EventOperationCapabilityUnavailableError",
     "EventOperationNotFoundError",
+    "MAX_OPERATOR_REASON_LENGTH",
     "RedeliveryLookupResult",
+    "validate_operator_reason",
 ]

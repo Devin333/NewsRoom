@@ -921,6 +921,10 @@ class DurableDeliveryRuntime:
         if not isinstance(action, DeadLetterAction):
             raise TypeError("action must be DeadLetterAction")
         subscription, _consumer = self._consumers.resolve(key)
+        if subscription.status is SubscriptionStatus.RETIRED:
+            raise EventConsumerMismatchError(
+                "retired subscription cannot accept dead-letter requeue"
+            )
         if not action.idempotency_ready:
             raise EventConsumerIdempotencyError(
                 "dead-letter requeue requires an idempotency-ready consumer"

@@ -12,6 +12,7 @@ from framework.events.errors import EventContractError, EventStoreUnavailableErr
 from framework.events.runtime.models import (
     DeadLetterPage,
     DeadLetterRecord,
+    DeliveryRecord,
     QuarantineDisposition,
     QuarantinePage,
     QuarantineReason,
@@ -30,6 +31,7 @@ from framework.events.runtime.replay_engine import (
 )
 from interfaces.services.event_delivery_operations_service import (
     EventDeliveryOperationsService,
+    EventOperationCapabilityUnavailableError,
     EventOperationNotFoundError,
 )
 from interfaces.services.event_quarantine_service import EventQuarantineService
@@ -108,7 +110,20 @@ class _DeliveryRuntime:
 
     def requeue_dead_letter(self, subscription, action):
         self.requeue_calls.append((subscription, action))
-        return "delivery"
+        return DeliveryRecord(
+            delivery_id="delivery-requeue-1",
+            event_id="event-1",
+            stream_id="run:run-1",
+            stream_sequence=1,
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            consumer_id="consumer-1",
+            consumer_effect_id="effect-1",
+            tenant_id="tenant-a",
+            delivery_generation=2,
+            created_at=action.requested_at,
+            updated_at=action.requested_at,
+        )
 
     def begin_redelivery(self, request):
         self.redelivery_calls.append(request)
@@ -242,13 +257,13 @@ def test_replay_service_builds_tenant_scoped_operator_request() -> None:
         engine=engine,
         report_store=_ReportStore(),
         authorizer=_Authorizer(),
+        clock=lambda: NOW,
     )
     authorization = _authorization()
 
     result = service.rebuild_state(
         replay_id="replay-1",
         source_stream_id="run:run-1",
-        requested_at=NOW,
         operator_reason="repair verified state",
         reducer_id="run-state",
         reducer_version="1",
@@ -289,13 +304,13 @@ def test_replay_authorization_binds_complete_checkpoint_identity() -> None:
         engine=engine,
         report_store=_ReportStore(),
         authorizer=authorizer,
+        clock=lambda: NOW,
     )
     checkpoint = _input_checkpoint()
 
     service.rebuild_state(
         replay_id="replay-checkpoint",
         source_stream_id="run:run-1",
-        requested_at=NOW,
         operator_reason="resume authorized replay",
         reducer_id="run-state",
         reducer_version="1",
@@ -323,6 +338,7 @@ def test_replay_rejects_checkpoint_ref_or_scope_mismatch_before_runtime() -> Non
         engine=engine,
         report_store=_ReportStore(),
         authorizer=_Authorizer(),
+        clock=lambda: NOW,
     )
     checkpoint = _input_checkpoint()
 
@@ -330,7 +346,6 @@ def test_replay_rejects_checkpoint_ref_or_scope_mismatch_before_runtime() -> Non
         service.rebuild_state(
             replay_id="replay-checkpoint",
             source_stream_id="run:run-1",
-            requested_at=NOW,
             operator_reason="mismatched checkpoint",
             reducer_id="run-state",
             reducer_version="1",
@@ -342,7 +357,6 @@ def test_replay_rejects_checkpoint_ref_or_scope_mismatch_before_runtime() -> Non
         service.rebuild_state(
             replay_id="replay-checkpoint",
             source_stream_id="run:another-run",
-            requested_at=NOW,
             operator_reason="cross-scope checkpoint",
             reducer_id="run-state",
             reducer_version="1",
@@ -361,6 +375,7 @@ def test_delivery_mutations_receive_principal_tenant_reason_and_evidence() -> No
         store=store,
         runtime=runtime,
         authorizer=_Authorizer(),
+        clock=lambda: NOW,
     )
     subscription = SubscriptionKey("subscription-1", 1)
 
@@ -368,7 +383,6 @@ def test_delivery_mutations_receive_principal_tenant_reason_and_evidence() -> No
         subscription,
         "dead-letter-1",
         operator_reason="retry after repair",
-        requested_at=NOW,
         idempotency_ready=True,
         authorization=_authorization(),
     )
@@ -378,7 +392,6 @@ def test_delivery_mutations_receive_principal_tenant_reason_and_evidence() -> No
         source_stream_id="run:run-1",
         from_sequence=1,
         through_sequence=2,
-        requested_at=NOW,
         operator_reason="reprocess audited range",
         authorization=_authorization(),
     )
@@ -387,6 +400,7 @@ def test_delivery_mutations_receive_principal_tenant_reason_and_evidence() -> No
     redelivery = runtime.redelivery_calls[0]
     assert action.operator_id == "operator-1"
     assert action.reason == "retry after repair"
+    assert action.requested_at == NOW
     assert action.idempotency_ready is True
     assert redelivery.tenant_id == "tenant-a"
     assert redelivery.operator_id == "operator-1"
@@ -404,6 +418,7 @@ def test_dead_letter_and_quarantine_queries_are_forced_to_authorized_tenant() ->
     quarantine_service = EventQuarantineService(
         quarantine_store,
         authorizer=_Authorizer(),
+        clock=lambda: NOW,
     )
 
     dead_letters = delivery_service.list_dead_letters(
@@ -416,7 +431,6 @@ def test_dead_letter_and_quarantine_queries_are_forced_to_authorized_tenant() ->
         "quarantine-1",
         QuarantineDisposition.REJECTED,
         operator_reason="invalid legacy record",
-        resolved_at=NOW,
         authorization=_authorization(),
     )
 
@@ -434,6 +448,7 @@ def test_operator_permissions_are_checked_before_runtime_mutation() -> None:
         store=_DeliveryStore(),
         runtime=runtime,
         authorizer=_Authorizer(authorized=False),
+        clock=lambda: NOW,
     )
 
     with pytest.raises(EventAuthorizationError, match="not authorized"):
@@ -441,7 +456,6 @@ def test_operator_permissions_are_checked_before_runtime_mutation() -> None:
             SubscriptionKey("subscription-1", 1),
             "dead-letter-1",
             operator_reason="not authorized",
-            requested_at=NOW,
             idempotency_ready=True,
             authorization=_authorization(),
         )
@@ -455,6 +469,7 @@ def test_cross_tenant_requeue_is_rejected_before_runtime_mutation() -> None:
         store=_DeliveryStore(tenant_id="tenant-b"),
         runtime=runtime,
         authorizer=_Authorizer(),
+        clock=lambda: NOW,
     )
 
     with pytest.raises(EventOperationNotFoundError, match="subscription scope"):
@@ -462,7 +477,6 @@ def test_cross_tenant_requeue_is_rejected_before_runtime_mutation() -> None:
             SubscriptionKey("subscription-1", 1),
             "dead-letter-1",
             operator_reason="must not cross tenant",
-            requested_at=NOW,
             idempotency_ready=True,
             authorization=_authorization(),
         )
@@ -476,6 +490,7 @@ def test_cross_tenant_redelivery_is_rejected_before_runtime_mutation() -> None:
         store=_DeliveryStore(tenant_id="tenant-b"),
         runtime=runtime,
         authorizer=_Authorizer(),
+        clock=lambda: NOW,
     )
 
     with pytest.raises(EventOperationNotFoundError, match="tenant scope"):
@@ -484,7 +499,6 @@ def test_cross_tenant_redelivery_is_rejected_before_runtime_mutation() -> None:
             subscription=SubscriptionKey("subscription-1", 1),
             source_stream_id="run:run-1",
             from_sequence=1,
-            requested_at=NOW,
             operator_reason="must not cross tenant",
             authorization=_authorization(),
         )
@@ -529,6 +543,68 @@ def test_operator_get_results_must_match_requested_identity() -> None:
     with pytest.raises(EventContractError, match="another target"):
         delivery_service.get_dead_letter(
             "dead-letter-requested",
+            authorization=_authorization(),
+        )
+
+
+def test_read_only_operator_services_do_not_require_mutation_runtimes() -> None:
+    replay = EventReplayService(
+        report_store=_ReportStore(),
+        authorizer=_Authorizer(),
+        clock=lambda: NOW,
+    )
+    delivery = EventDeliveryOperationsService(
+        store=_DeliveryStore(),
+        authorizer=_Authorizer(),
+        clock=lambda: NOW,
+    )
+
+    assert replay.list_reports(authorization=_authorization()).page.reports == ()
+    assert (
+        delivery.list_dead_letters(authorization=_authorization()).page.records
+        == (_DeliveryStore().dead_letter,)
+    )
+    with pytest.raises(
+        EventOperationCapabilityUnavailableError,
+        match="requeue capability is unavailable",
+    ):
+        delivery.requeue_dead_letter(
+            SubscriptionKey("subscription-1", 1),
+            "dead-letter-1",
+            operator_reason="repair is verified",
+            idempotency_ready=True,
+            authorization=_authorization(),
+        )
+    with pytest.raises(
+        EventOperationCapabilityUnavailableError,
+        match="replay capability is unavailable",
+    ):
+        replay.verify_history(
+            replay_id="replay-unavailable",
+            source_stream_id="run:run-1",
+            operator_reason="verify deterministic history",
+            authorization=_authorization(),
+        )
+
+
+@pytest.mark.parametrize(
+    "operator_reason",
+    ["control\ncharacter", "x" * 513],
+)
+def test_operator_mutation_reason_is_bounded_and_control_free(
+    operator_reason: str,
+) -> None:
+    service = EventDeliveryOperationsService(
+        store=_DeliveryStore(),
+        runtime=_DeliveryRuntime(),
+        authorizer=_Authorizer(),
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(ValueError, match="operator_reason"):
+        service.resolve_dead_letter(
+            "dead-letter-1",
+            operator_reason=operator_reason,
             authorization=_authorization(),
         )
 

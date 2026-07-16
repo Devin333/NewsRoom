@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 from fastapi.testclient import TestClient
@@ -247,7 +248,7 @@ def test_api_key_role_lists_can_be_loaded_from_json_env(monkeypatch) -> None:
     assert fake_research.analyze_calls[0].run_id == "env-rbac-run"
 
 
-def test_api_key_actor_is_used_for_audit_records() -> None:
+def test_api_key_fingerprint_is_used_for_audit_records() -> None:
     sink = InMemoryAuditSink()
     client = TestClient(
         create_app(
@@ -266,7 +267,8 @@ def test_api_key_actor_is_used_for_audit_records() -> None:
     )
 
     assert response.status_code == 200
-    assert sink.records[0].actor.actor_id == "readonly-client"
+    fingerprint = hashlib.sha256(b"read-token").hexdigest()
+    assert sink.records[0].actor.actor_id == f"api-key:{fingerprint}"
     assert sink.records[0].actor.roles == ["read-only"]
 
 

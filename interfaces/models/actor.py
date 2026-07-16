@@ -13,6 +13,8 @@ WRITE_RUNS_PERMISSION = "write:runs"
 MANAGE_SCHEDULES_PERMISSION = "manage:schedules"
 MANAGE_APPROVALS_PERMISSION = "manage:approvals"
 ADMIN_STORAGE_PERMISSION = "admin:storage"
+READ_EVENTS_PERMISSION = "events:read"
+OPERATE_EVENTS_PERMISSION = "events:operate"
 
 PERMISSION_ALIASES: dict[str, set[str]] = {
     READ_REPORTS_PERMISSION: {
@@ -63,6 +65,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "entities:write",
         "subscriptions:read",
         "subscriptions:write",
+        READ_EVENTS_PERMISSION,
+        OPERATE_EVENTS_PERMISSION,
     },
     "operator": {
         READ_REPORTS_PERMISSION,
@@ -86,6 +90,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "entities:write",
         "subscriptions:read",
         "subscriptions:write",
+        READ_EVENTS_PERMISSION,
+        OPERATE_EVENTS_PERMISSION,
     },
     "developer": {
         READ_REPORTS_PERMISSION,
@@ -172,6 +178,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "entities:write",
         "subscriptions:read",
         "subscriptions:write",
+        READ_EVENTS_PERMISSION,
+        OPERATE_EVENTS_PERMISSION,
     },
 }
 

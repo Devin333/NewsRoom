@@ -17,6 +17,7 @@ from framework.events import (
 from framework.events.errors import EventStoreUnavailableError
 from interfaces.services.event_projection_service import (
     EventProjectionConflictError,
+    EventProjectionNotFoundError,
     EventProjectionService,
     EventProjectionStatus,
 )
@@ -375,6 +376,130 @@ def test_projection_status_requires_boolean_active_flag_and_authorizes_it(
 
     assert status.status is EventProjectionStatus.CURRENT
     assert authorizer.requests[-1].target["run_is_active"] is True
+
+
+def test_manifest_owned_projection_status_binds_tenant_and_server_metadata(
+    tmp_path,
+) -> None:
+    reader = _Reader([_event(1)])
+    authorizer = _Authorizer()
+    service = EventProjectionService(
+        reader=reader,
+        authorizer=authorizer,
+        artifact_root=tmp_path,
+        schema_catalog=default_event_schema_catalog(),
+    )
+    authorization = _authorization()
+    projection = service.rebuild_run_projection(
+        "run-projection-service",
+        requested_high_watermark=1,
+        authorization=authorization,
+    ).projection
+    _write_projection_manifest(tmp_path, projection, tenant_id="tenant-a")
+
+    status = service.get_run_projection_status_from_manifest(
+        "run-projection-service",
+        authorization=authorization,
+    )
+
+    assert status.status is EventProjectionStatus.CURRENT
+    assert status.projection_high_watermark == 1
+    assert status.projection_checksum == projection.checksum
+    assert authorizer.requests[-1].target["metadata_source"] == "run_manifest"
+
+
+def test_manifest_without_tenant_uses_nonempty_tenant_scoped_stream_evidence(
+    tmp_path,
+) -> None:
+    reader = _Reader([_event(1)])
+    service = EventProjectionService(
+        reader=reader,
+        authorizer=_Authorizer(),
+        artifact_root=tmp_path,
+        schema_catalog=default_event_schema_catalog(),
+    )
+    projection = service.rebuild_run_projection(
+        "run-projection-service",
+        requested_high_watermark=1,
+        authorization=_authorization(),
+    ).projection
+    _write_projection_manifest(tmp_path, projection)
+
+    status = service.get_run_projection_status_from_manifest(
+        "run-projection-service",
+        authorization=_authorization(),
+    )
+
+    assert status.status is EventProjectionStatus.CURRENT
+
+
+def test_manifest_without_tenant_fails_closed_for_empty_stream(tmp_path) -> None:
+    service = EventProjectionService(
+        reader=_Reader([]),
+        authorizer=_Authorizer(),
+        artifact_root=tmp_path,
+        schema_catalog=default_event_schema_catalog(),
+    )
+    projection = service.rebuild_run_projection(
+        "run-projection-service",
+        requested_high_watermark=None,
+        authorization=_authorization(),
+    ).projection
+    _write_projection_manifest(tmp_path, projection)
+
+    with pytest.raises(EventProjectionNotFoundError, match="not available"):
+        service.get_run_projection_status_from_manifest(
+            "run-projection-service",
+            authorization=_authorization(),
+        )
+
+
+def test_manifest_projection_cross_tenant_is_hidden_as_not_found(tmp_path) -> None:
+    reader = _Reader([_event(1)])
+    service = EventProjectionService(
+        reader=reader,
+        authorizer=_Authorizer(),
+        artifact_root=tmp_path,
+        schema_catalog=default_event_schema_catalog(),
+    )
+    projection = service.rebuild_run_projection(
+        "run-projection-service",
+        requested_high_watermark=1,
+        authorization=_authorization(),
+    ).projection
+    _write_projection_manifest(tmp_path, projection, tenant_id="tenant-b")
+
+    with pytest.raises(EventProjectionNotFoundError, match="not available"):
+        service.get_run_projection_status_from_manifest(
+            "run-projection-service",
+            authorization=_authorization(),
+        )
+
+
+def _write_projection_manifest(
+    artifact_root,
+    projection,
+    *,
+    tenant_id: str | None = None,
+) -> None:
+    payload = {
+        "run_id": "run-projection-service",
+        "status": "succeeded",
+        "event_projection": {
+            "path": "events.jsonl",
+            "stream_id": projection.stream_id,
+            "high_watermark": projection.high_watermark,
+            "event_count": projection.event_count,
+            "checksum": projection.checksum,
+        },
+        "event_projection_high_watermark": projection.high_watermark,
+        "event_projection_checksum": projection.checksum,
+        "event_count": projection.event_count,
+    }
+    if tenant_id is not None:
+        payload["tenant_id"] = tenant_id
+    manifest = artifact_root / "run-projection-service" / "manifest.json"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _authorization() -> EventAuthorizationContext:

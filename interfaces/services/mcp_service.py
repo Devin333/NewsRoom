@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone as _tz
+import os
 UTC = _tz.utc
 from typing import Any, Callable, Literal, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from framework.events.errors import (
+    EventContractError,
+    EventRuntimeError,
+    EventStoreUnavailableError,
+)
+from infrastructure.storage.lifecycle import RetentionPolicy
 from interfaces.mcp.models import (
     MCPCatalog,
     MCPCapability,
@@ -17,8 +25,13 @@ from interfaces.mcp.models import (
     MCPTool,
     MCPToolCallResult,
 )
+from interfaces.models.actor import ActorContext
+from interfaces.services.event_delivery_operations_service import (
+    EventOperationCapabilityUnavailableError,
+    EventOperationNotFoundError,
+)
+from interfaces.services.event_reader_service import EventAuthorizationError
 from interfaces.services.research_service import ResearchAnalyzeInput, ResearchAskInput
-from infrastructure.storage.lifecycle import RetentionPolicy
 
 
 DEFAULT_MEMORY_COLLECTION = "report_sections"
@@ -52,6 +65,18 @@ SOURCE_HEALTH_RESOURCE_URI = "news://sources/health"
 WORKERS_RESOURCE_TEMPLATE = "news://workers"
 WORKER_RESOURCE_TEMPLATE = "news://workers/{worker_id}"
 QUEUES_RESOURCE_URI = "news://queues"
+EVENT_QUARANTINE_RESOURCE_URI = "news://events/quarantine"
+EVENT_QUARANTINE_RESOURCE_TEMPLATE = "news://events/quarantine/{quarantine_id}"
+EVENT_REPLAY_REPORTS_RESOURCE_URI = "news://events/replay-reports"
+EVENT_REPLAY_REPORT_RESOURCE_TEMPLATE = "news://events/replay-reports/{replay_id}"
+EVENT_DEAD_LETTERS_RESOURCE_URI = "news://events/dead-letters"
+EVENT_DEAD_LETTER_RESOURCE_TEMPLATE = "news://events/dead-letters/{dead_letter_id}"
+EVENT_CONSUMER_STATUS_RESOURCE_TEMPLATE = (
+    "news://events/consumers/{subscription_id}/versions/{version}/status"
+)
+EVENT_PROJECTION_STATUS_RESOURCE_TEMPLATE = (
+    "news://events/projections/runs/{run_id}/status"
+)
 DANGEROUS_MCP_TOOLS = frozenset(
     {
         "news.report.publish",
@@ -59,6 +84,8 @@ DANGEROUS_MCP_TOOLS = frozenset(
         "news.run.rerun_from_step",
         "news.approval.approve",
         "news.approval.reject",
+        "news.event.dead_letters.resolve",
+        "news.event.dead_letters.requeue",
     }
 )
 RETENTION_POLICY_ARG_NAMES = (
@@ -90,6 +117,8 @@ class MCPApplicationService:
         artifact_service_factory: Callable[[], Any] | None = None,
         storage_service_factory: Callable[[], Any] | None = None,
         research_service_factory: Callable[[], Any] | None = None,
+        event_operator_service_factory: Callable[[ActorContext], Any] | None = None,
+        operator_actor: ActorContext | None = None,
     ) -> None:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
         self.run_service_factory = run_service_factory or _run_service_factory
@@ -111,6 +140,19 @@ class MCPApplicationService:
         self.artifact_service_factory = artifact_service_factory or _artifact_service_factory
         self.storage_service_factory = storage_service_factory or _storage_service_factory
         self.research_service_factory = research_service_factory or _research_service_factory
+        self.event_operator_service_factory = (
+            event_operator_service_factory or _event_operator_service_factory
+        )
+        self._operator_actor = operator_actor or _deployment_event_operator_actor()
+
+    def for_actor(self, actor: ActorContext) -> "MCPApplicationService":
+        """Return a request-scoped view bound to a transport-authenticated actor."""
+
+        if not isinstance(actor, ActorContext):
+            raise TypeError("actor must be ActorContext")
+        scoped = copy(self)
+        scoped._operator_actor = actor
+        return scoped
 
     def catalog(self) -> MCPCatalog:
         return MCPCatalog(tools=_tools(), resources=_resources(), prompts=_prompts())
@@ -145,15 +187,19 @@ class MCPApplicationService:
                 ],
             )
         except Exception as exc:
+            error_type, error_message = _public_mcp_error(exc)
             return MCPPromptGetResult(
                 name=name,
                 success=False,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
+                error_type=error_type,
+                error_message=error_message,
             )
 
     def read_resource(self, uri: str) -> MCPResourceReadResult:
         try:
+            event_resource = _event_operator_resource_args(uri)
+            if event_resource is not None:
+                return self._read_event_operator_resource(uri, event_resource)
             if uri == LATEST_REPORT_RESOURCE_URI:
                 return self._read_latest_report_resource()
             report_id = _report_resource_report_id(uri)
@@ -215,16 +261,19 @@ class MCPApplicationService:
                 error_message=f"unknown MCP resource: {uri}",
             )
         except Exception as exc:
+            error_type, error_message = _public_mcp_error(exc)
             return MCPResourceReadResult(
                 uri=uri,
                 success=False,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
+                error_type=error_type,
+                error_message=error_message,
             )
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> MCPToolCallResult:
         args = arguments or {}
         try:
+            if tool_name.startswith("news.event."):
+                return self._event_operator_tool(tool_name, args)
             if tool_name == "news.research.analyze_paper":
                 return self._research_analyze_paper(args)
             if tool_name == "news.research.paper_analysis":
@@ -338,12 +387,121 @@ class MCPApplicationService:
                 error_message=f"unknown MCP tool: {tool_name}",
             )
         except Exception as exc:
+            error_type, error_message = _public_mcp_error(exc)
             return MCPToolCallResult(
                 tool_name=tool_name,
                 success=False,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
+                error_type=error_type,
+                error_message=error_message,
             )
+
+    def _event_operator_service(self):
+        actor = self._operator_actor
+        if not isinstance(actor, ActorContext):
+            raise PermissionError(
+                "event operator MCP access requires an authenticated deployment actor"
+            )
+        return self.event_operator_service_factory(actor)
+
+    def _event_operator_tool(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> MCPToolCallResult:
+        _validate_event_operator_tool_args(tool_name, args)
+        service = self._event_operator_service()
+        if tool_name == "news.event.quarantine.list":
+            data = service.list_quarantine(
+                reason=_optional_arg(args, "reason"),
+                disposition=_optional_arg(args, "disposition"),
+                cursor=_optional_arg(args, "cursor"),
+                limit=_optional_int_arg(args, "limit", default=100),
+            )
+        elif tool_name == "news.event.quarantine.get":
+            data = service.get_quarantine(_required_arg(args, "quarantine_id"))
+        elif tool_name == "news.event.replay_reports.list":
+            data = service.list_replay_reports(
+                source_stream_id=_optional_arg(args, "source_stream_id"),
+                mode=_optional_arg(args, "mode"),
+                status=_optional_arg(args, "status"),
+                cursor=_optional_arg(args, "cursor"),
+                limit=_optional_int_arg(args, "limit", default=100),
+            )
+        elif tool_name == "news.event.replay_reports.get":
+            data = service.get_replay_report(_required_arg(args, "replay_id"))
+        elif tool_name == "news.event.dead_letters.list":
+            version = args.get("subscription_version")
+            data = service.list_dead_letters(
+                subscription_id=_optional_arg(args, "subscription_id"),
+                subscription_version=(None if version in {None, ""} else int(version)),
+                disposition=_optional_arg(args, "disposition"),
+                cursor=_optional_arg(args, "cursor"),
+                limit=_optional_int_arg(args, "limit", default=100),
+            )
+        elif tool_name == "news.event.dead_letters.get":
+            data = service.get_dead_letter(_required_arg(args, "dead_letter_id"))
+        elif tool_name == "news.event.dead_letters.resolve":
+            _require_event_operator_confirmation(args)
+            data = service.resolve_dead_letter(
+                _required_arg(args, "dead_letter_id"),
+                operator_reason=_required_arg(args, "operator_reason"),
+            )
+        elif tool_name == "news.event.dead_letters.requeue":
+            _require_event_operator_confirmation(args)
+            data = service.requeue_dead_letter(
+                _required_arg(args, "dead_letter_id"),
+                subscription_id=_required_arg(args, "subscription_id"),
+                subscription_version=int(args.get("subscription_version")),
+                operator_reason=_required_arg(args, "operator_reason"),
+                idempotency_acknowledged=True,
+            )
+        elif tool_name == "news.event.consumer_status":
+            data = service.get_consumer_status(
+                _required_arg(args, "subscription_id"),
+                subscription_version=int(args.get("subscription_version")),
+                stream_id=_required_arg(args, "stream_id"),
+            )
+        elif tool_name == "news.event.projection_status":
+            data = service.get_projection_status(_required_arg(args, "run_id"))
+        else:
+            return MCPToolCallResult(
+                tool_name=tool_name,
+                success=False,
+                error_type="MCPToolNotFound",
+                error_message=f"unknown MCP tool: {tool_name}",
+            )
+        return MCPToolCallResult(tool_name=tool_name, success=True, data=dict(data))
+
+    def _read_event_operator_resource(
+        self,
+        uri: str,
+        resource: tuple[str, dict[str, Any]],
+    ) -> MCPResourceReadResult:
+        kind, args = resource
+        service = self._event_operator_service()
+        if kind == "quarantine_list":
+            data = service.list_quarantine(**args)
+        elif kind == "quarantine_get":
+            data = service.get_quarantine(args["quarantine_id"])
+        elif kind == "replay_report_list":
+            data = service.list_replay_reports(**args)
+        elif kind == "replay_report_get":
+            data = service.get_replay_report(args["replay_id"])
+        elif kind == "dead_letter_list":
+            data = service.list_dead_letters(**args)
+        elif kind == "dead_letter_get":
+            data = service.get_dead_letter(args["dead_letter_id"])
+        elif kind == "consumer_status":
+            data = service.get_consumer_status(
+                args["subscription_id"],
+                subscription_version=args["subscription_version"],
+                stream_id=args["stream_id"],
+            )
+        elif kind == "projection_status":
+            data = service.get_projection_status(args["run_id"])
+        else:
+            raise ValueError("unsupported event operator resource")
+        return MCPResourceReadResult(uri=uri, success=True, data=dict(data))
 
     def _research_analyze_paper(self, args: dict[str, Any]) -> MCPToolCallResult:
         result = self.research_service_factory().analyze_paper(
@@ -1190,6 +1348,7 @@ class MCPApplicationService:
 
 def _tools() -> list[MCPTool]:
     return [
+        *_event_operator_tools(),
         MCPTool(
             name="news.research.analyze_paper",
             title="Analyze research paper",
@@ -1868,8 +2027,164 @@ def _tools() -> list[MCPTool]:
     ]
 
 
+def _event_operator_tools() -> list[MCPTool]:
+    page_properties = {
+        "cursor": {"type": "string"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+    }
+    confirm_schema = {
+        "confirm": {"type": "boolean", "const": True},
+        "operator_reason": {"type": "string", "minLength": 1, "maxLength": 512},
+    }
+    return [
+        MCPTool(
+            name="news.event.quarantine.list",
+            title="List event quarantine",
+            description="List redacted tenant-scoped event quarantine records.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "reason": {"type": "string"},
+                    "disposition": {"type": "string"},
+                    **page_properties,
+                },
+            },
+        ),
+        MCPTool(
+            name="news.event.quarantine.get",
+            title="Get event quarantine record",
+            description="Read one redacted tenant-scoped quarantine record.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["quarantine_id"],
+                "properties": {"quarantine_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.event.replay_reports.list",
+            title="List event replay reports",
+            description="List tenant-scoped deterministic replay reports.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "source_stream_id": {"type": "string"},
+                    "mode": {"type": "string"},
+                    "status": {"type": "string"},
+                    **page_properties,
+                },
+            },
+        ),
+        MCPTool(
+            name="news.event.replay_reports.get",
+            title="Get event replay report",
+            description="Read one tenant-scoped deterministic replay report.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["replay_id"],
+                "properties": {"replay_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.event.dead_letters.list",
+            title="List event dead letters",
+            description="List redacted tenant-scoped event dead letters.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "subscription_id": {"type": "string"},
+                    "subscription_version": {"type": "integer", "minimum": 1},
+                    "disposition": {"type": "string"},
+                    **page_properties,
+                },
+            },
+        ),
+        MCPTool(
+            name="news.event.dead_letters.get",
+            title="Get event dead letter",
+            description="Read one redacted tenant-scoped event dead letter.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["dead_letter_id"],
+                "properties": {"dead_letter_id": {"type": "string"}},
+            },
+        ),
+        MCPTool(
+            name="news.event.dead_letters.resolve",
+            title="Resolve event dead letter",
+            description="Terminally resolve one tenant-scoped dead letter.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["dead_letter_id", "operator_reason", "confirm"],
+                "properties": {
+                    "dead_letter_id": {"type": "string"},
+                    **confirm_schema,
+                },
+            },
+        ),
+        MCPTool(
+            name="news.event.dead_letters.requeue",
+            title="Requeue event dead letter",
+            description=(
+                "Schedule an idempotency-checked late-repair generation through "
+                "the attached durable consumer runtime."
+            ),
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "dead_letter_id",
+                    "subscription_id",
+                    "subscription_version",
+                    "operator_reason",
+                    "confirm",
+                ],
+                "properties": {
+                    "dead_letter_id": {"type": "string"},
+                    "subscription_id": {"type": "string"},
+                    "subscription_version": {"type": "integer", "minimum": 1},
+                    **confirm_schema,
+                },
+            },
+        ),
+        MCPTool(
+            name="news.event.consumer_status",
+            title="Read event consumer status",
+            description="Read tenant-scoped delivery lag and checkpoint status.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["subscription_id", "subscription_version", "stream_id"],
+                "properties": {
+                    "subscription_id": {"type": "string"},
+                    "subscription_version": {"type": "integer", "minimum": 1},
+                    "stream_id": {"type": "string"},
+                },
+            },
+        ),
+        MCPTool(
+            name="news.event.projection_status",
+            title="Read event projection status",
+            description="Verify a run projection against tenant-scoped durable history.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["run_id"],
+                "properties": {"run_id": {"type": "string"}},
+            },
+        ),
+    ]
+
+
 def _resources() -> list[MCPResource]:
     return [
+        *_event_operator_resources(),
         MCPResource(
             uri=LATEST_REPORT_RESOURCE_URI,
             name="Latest Report",
@@ -1958,6 +2273,51 @@ def _resources() -> list[MCPResource]:
     ]
 
 
+def _event_operator_resources() -> list[MCPResource]:
+    return [
+        MCPResource(
+            uri=EVENT_QUARANTINE_RESOURCE_URI,
+            name="Event Quarantine",
+            description="Redacted tenant-scoped event quarantine records.",
+        ),
+        MCPResource(
+            uri=EVENT_QUARANTINE_RESOURCE_TEMPLATE,
+            name="Event Quarantine Record",
+            description="One redacted tenant-scoped quarantine record.",
+        ),
+        MCPResource(
+            uri=EVENT_REPLAY_REPORTS_RESOURCE_URI,
+            name="Event Replay Reports",
+            description="Tenant-scoped deterministic replay reports.",
+        ),
+        MCPResource(
+            uri=EVENT_REPLAY_REPORT_RESOURCE_TEMPLATE,
+            name="Event Replay Report",
+            description="One tenant-scoped deterministic replay report.",
+        ),
+        MCPResource(
+            uri=EVENT_DEAD_LETTERS_RESOURCE_URI,
+            name="Event Dead Letters",
+            description="Redacted tenant-scoped event dead letters.",
+        ),
+        MCPResource(
+            uri=EVENT_DEAD_LETTER_RESOURCE_TEMPLATE,
+            name="Event Dead Letter",
+            description="One redacted tenant-scoped event dead letter.",
+        ),
+        MCPResource(
+            uri=EVENT_CONSUMER_STATUS_RESOURCE_TEMPLATE,
+            name="Event Consumer Status",
+            description="Tenant-scoped event consumer lag and checkpoint status.",
+        ),
+        MCPResource(
+            uri=EVENT_PROJECTION_STATUS_RESOURCE_TEMPLATE,
+            name="Event Projection Status",
+            description="Run projection status against tenant-scoped durable history.",
+        ),
+    ]
+
+
 def _capabilities_from_catalog(catalog: MCPCatalog) -> list[MCPCapability]:
     capabilities: list[MCPCapability] = []
     capabilities.extend(_tool_capability(tool) for tool in catalog.tools)
@@ -2024,7 +2384,53 @@ def tool_required_permission(tool_name: str) -> str:
     return _tool_permission(tool_name)
 
 
+def resource_required_permission(uri: str) -> str:
+    return _resource_permission(uri)
+
+
+def is_event_operator_resource_uri(uri: str) -> bool:
+    try:
+        parsed = urlsplit(uri)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.casefold() == "news"
+        and parsed.netloc.casefold() == "events"
+    )
+
+
+def _public_mcp_error(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, EventAuthorizationError):
+        return "EventAuthorizationError", "event operator action is not authorized"
+    if isinstance(exc, EventOperationNotFoundError):
+        return "EventOperationNotFoundError", "event operator resource not found"
+    if isinstance(exc, EventOperationCapabilityUnavailableError):
+        return (
+            "EventOperationCapabilityUnavailableError",
+            "event operator capability is unavailable",
+        )
+    if isinstance(exc, EventStoreUnavailableError):
+        return "EventStoreUnavailableError", "event store is unavailable"
+    if isinstance(exc, EventContractError):
+        return (
+            "EventContractError",
+            "event operator data conflicts with the durable event contract",
+        )
+    if isinstance(exc, EventRuntimeError):
+        return "EventRuntimeError", "event runtime operation failed"
+    return type(exc).__name__, str(exc)
+
+
 def _tool_permission(tool_name: str) -> str:
+    if tool_name.startswith("news.event."):
+        return (
+            "events:operate"
+            if tool_name in {
+                "news.event.dead_letters.resolve",
+                "news.event.dead_letters.requeue",
+            }
+            else "events:read"
+        )
     if tool_name.startswith("news.report.") and tool_name.endswith(".publish"):
         return "manage:approvals"
     if tool_name in {"news.report.request_review"}:
@@ -2059,6 +2465,8 @@ def _tool_permission(tool_name: str) -> str:
 
 
 def _resource_permission(uri: str) -> str:
+    if is_event_operator_resource_uri(uri):
+        return "events:read"
     if uri.startswith("news://reports/"):
         return "read:reports"
     if uri.startswith("news://runs/") or uri.startswith("news://artifacts/"):
@@ -2076,6 +2484,8 @@ def _resource_permission(uri: str) -> str:
 
 def _mcp_category(name: str) -> str:
     value = name.removeprefix("news.").removeprefix("news://")
+    if value.startswith("event.") or value.startswith("events/"):
+        return "events"
     if value.startswith("research."):
         return "research"
     if value.startswith("run.") or value.startswith("runs/") or value.startswith("artifacts/"):
@@ -2104,6 +2514,11 @@ def _mcp_category(name: str) -> str:
 
 
 def _tool_is_read_only(tool_name: str) -> bool:
+    if tool_name in {
+        "news.event.dead_letters.resolve",
+        "news.event.dead_letters.requeue",
+    }:
+        return False
     if tool_name == "news.research.analyze_paper":
         return False
     if tool_name in {"news.run.cancel", "news.run.rerun_from_step"}:
@@ -2394,6 +2809,33 @@ def _storage_service_factory():
     return StorageApplicationService()
 
 
+def _event_operator_service_factory(actor: ActorContext):
+    from interfaces.services.event_operator_factory import (
+        event_operator_service_from_actor,
+    )
+
+    return event_operator_service_from_actor(actor)
+
+
+def _deployment_event_operator_actor() -> ActorContext | None:
+    principal_id = str(
+        os.environ.get("NEWS_EVENT_OPERATOR_PRINCIPAL_ID") or ""
+    ).strip()
+    tenant_id = str(os.environ.get("NEWS_TENANT_ID") or "").strip()
+    if not principal_id or not tenant_id:
+        return None
+    role = str(os.environ.get("NEWS_EVENT_OPERATOR_ROLE") or "operator").strip()
+    if role not in {"admin", "operator", "service"}:
+        return None
+    return ActorContext(
+        actor_id=principal_id,
+        actor_type="service",
+        roles=[role],
+        request_id="mcp-stdio",
+        metadata={"tenant_scope_configured": True},
+    )
+
+
 def _report_resource_report_id(uri: str) -> str | None:
     if not uri.startswith(REPORT_RESOURCE_PREFIX):
         return None
@@ -2535,6 +2977,189 @@ def _queue_status_resource_args(uri: str) -> dict[str, Any] | None:
         return None
     query = parse_qs(parsed.query)
     return {"queue_names": [value for value in query.get("queue_name", []) if value]}
+
+
+def _event_operator_resource_args(
+    uri: str,
+) -> tuple[str, dict[str, Any]] | None:
+    parsed = urlsplit(uri)
+    if not is_event_operator_resource_uri(uri):
+        return None
+    parts = [unquote(part) for part in parsed.path.split("/") if part]
+    query = parse_qs(parsed.query, keep_blank_values=False)
+    if parts == ["quarantine"]:
+        _require_query_keys(query, {"reason", "disposition", "cursor", "limit"})
+        return (
+            "quarantine_list",
+            {
+                "reason": _query_value(query, "reason"),
+                "disposition": _query_value(query, "disposition"),
+                "cursor": _query_value(query, "cursor"),
+                "limit": _query_int(query, "limit", default=100),
+            },
+        )
+    if len(parts) == 2 and parts[0] == "quarantine":
+        _require_query_keys(query, set())
+        return "quarantine_get", {"quarantine_id": parts[1]}
+    if parts == ["replay-reports"]:
+        _require_query_keys(
+            query,
+            {"source_stream_id", "mode", "status", "cursor", "limit"},
+        )
+        return (
+            "replay_report_list",
+            {
+                "source_stream_id": _query_value(query, "source_stream_id"),
+                "mode": _query_value(query, "mode"),
+                "status": _query_value(query, "status"),
+                "cursor": _query_value(query, "cursor"),
+                "limit": _query_int(query, "limit", default=100),
+            },
+        )
+    if len(parts) == 2 and parts[0] == "replay-reports":
+        _require_query_keys(query, set())
+        return "replay_report_get", {"replay_id": parts[1]}
+    if parts == ["dead-letters"]:
+        _require_query_keys(
+            query,
+            {
+                "subscription_id",
+                "subscription_version",
+                "disposition",
+                "cursor",
+                "limit",
+            },
+        )
+        version = _query_value(query, "subscription_version")
+        return (
+            "dead_letter_list",
+            {
+                "subscription_id": _query_value(query, "subscription_id"),
+                "subscription_version": None if version is None else int(version),
+                "disposition": _query_value(query, "disposition"),
+                "cursor": _query_value(query, "cursor"),
+                "limit": _query_int(query, "limit", default=100),
+            },
+        )
+    if len(parts) == 2 and parts[0] == "dead-letters":
+        _require_query_keys(query, set())
+        return "dead_letter_get", {"dead_letter_id": parts[1]}
+    if (
+        len(parts) == 6
+        and parts[0] == "consumers"
+        and parts[2] == "versions"
+        and parts[4] == "status"
+    ):
+        # Reserved for a future URI shape with a stream path segment.
+        return None
+    if (
+        len(parts) == 5
+        and parts[0] == "consumers"
+        and parts[2] == "versions"
+        and parts[4] == "status"
+    ):
+        _require_query_keys(query, {"stream_id"})
+        stream_id = _query_value(query, "stream_id")
+        if stream_id is None:
+            raise ValueError("stream_id query parameter is required")
+        return (
+            "consumer_status",
+            {
+                "subscription_id": parts[1],
+                "subscription_version": int(parts[3]),
+                "stream_id": stream_id,
+            },
+        )
+    if (
+        len(parts) == 4
+        and parts[0] == "projections"
+        and parts[1] == "runs"
+        and parts[3] == "status"
+    ):
+        _require_query_keys(query, set())
+        return "projection_status", {"run_id": parts[2]}
+    return None
+
+
+def _query_value(query: dict[str, list[str]], name: str) -> str | None:
+    values = query.get(name, [])
+    if len(values) > 1:
+        raise ValueError(f"{name} query parameter must be singular")
+    return values[0] if values else None
+
+
+def _query_int(query: dict[str, list[str]], name: str, *, default: int) -> int:
+    value = _query_value(query, name)
+    return default if value is None else int(value)
+
+
+def _require_query_keys(
+    query: dict[str, list[str]],
+    allowed: set[str],
+) -> None:
+    unexpected = sorted(set(query).difference(allowed))
+    if unexpected:
+        raise ValueError(f"unsupported event resource query parameter: {unexpected[0]}")
+
+
+def _require_event_operator_confirmation(args: dict[str, Any]) -> None:
+    if args.get("confirm") is not True:
+        raise ValueError("event operator mutation requires confirm=true")
+
+
+def _validate_event_operator_tool_args(
+    tool_name: str,
+    args: dict[str, Any],
+) -> None:
+    allowed_by_tool = {
+        "news.event.quarantine.list": {
+            "reason",
+            "disposition",
+            "cursor",
+            "limit",
+        },
+        "news.event.quarantine.get": {"quarantine_id"},
+        "news.event.replay_reports.list": {
+            "source_stream_id",
+            "mode",
+            "status",
+            "cursor",
+            "limit",
+        },
+        "news.event.replay_reports.get": {"replay_id"},
+        "news.event.dead_letters.list": {
+            "subscription_id",
+            "subscription_version",
+            "disposition",
+            "cursor",
+            "limit",
+        },
+        "news.event.dead_letters.get": {"dead_letter_id"},
+        "news.event.dead_letters.resolve": {
+            "dead_letter_id",
+            "operator_reason",
+            "confirm",
+        },
+        "news.event.dead_letters.requeue": {
+            "dead_letter_id",
+            "subscription_id",
+            "subscription_version",
+            "operator_reason",
+            "confirm",
+        },
+        "news.event.consumer_status": {
+            "subscription_id",
+            "subscription_version",
+            "stream_id",
+        },
+        "news.event.projection_status": {"run_id"},
+    }
+    allowed = allowed_by_tool.get(tool_name)
+    if allowed is None:
+        return
+    unexpected = sorted(set(args).difference(allowed))
+    if unexpected:
+        raise ValueError(f"unsupported event operator argument: {unexpected[0]}")
 
 
 def _approval_id(args: dict[str, Any]) -> str:

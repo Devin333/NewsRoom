@@ -13,6 +13,8 @@ from interfaces.services.diagnose_service import DiagnosticApplicationService
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.services.event_operator_factory import event_operator_service_from_actor
+from interfaces.services.event_operator_service import EventOperatorApplicationService
 from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -37,6 +39,7 @@ SourceServiceFactory = Callable[[], SourceApplicationService]
 EntityServiceFactory = Callable[[], EntityTrackingApplicationService]
 SubscriptionServiceFactory = Callable[[], SubscriptionApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
+EventOperatorServiceFactory = Callable[[ActorContext], EventOperatorApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
@@ -59,6 +62,7 @@ class ApiServices:
     entity_service_factory: EntityServiceFactory
     subscription_service_factory: SubscriptionServiceFactory
     mcp_service_factory: MCPServiceFactory
+    event_operator_service_factory: EventOperatorServiceFactory
     run_inspection_service_factory: RunInspectionServiceFactory
     artifact_service_factory: ArtifactInspectionServiceFactory
     storage_service_factory: StorageServiceFactory
@@ -94,6 +98,7 @@ def build_api_services(
     entity_service_factory: EntityServiceFactory = EntityTrackingApplicationService,
     subscription_service_factory: SubscriptionServiceFactory = SubscriptionApplicationService,
     mcp_service_factory: MCPServiceFactory = MCPApplicationService,
+    event_operator_service_factory: EventOperatorServiceFactory = event_operator_service_from_actor,
     run_inspection_service_factory: RunInspectionServiceFactory = run_inspection_service_from_env,
     artifact_service_factory: ArtifactInspectionServiceFactory = ArtifactInspectionService,
     storage_service_factory: StorageServiceFactory = StorageApplicationService,
@@ -114,6 +119,7 @@ def build_api_services(
         entity_service_factory=entity_service_factory,
         subscription_service_factory=subscription_service_factory,
         mcp_service_factory=mcp_service_factory,
+        event_operator_service_factory=event_operator_service_factory,
         run_inspection_service_factory=run_inspection_service_factory,
         artifact_service_factory=artifact_service_factory,
         storage_service_factory=storage_service_factory,

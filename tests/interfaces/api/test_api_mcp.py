@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
 from interfaces.services.artifact_service import ArtifactInspectionService
+from interfaces.services.event_projection_service import EventProjectionConflictError
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.run_inspection_service import RunInspectionService
 from tests.fixtures.workflow_runs import write_canonical_terminal_run
@@ -127,6 +128,106 @@ def test_api_mcp_reserves_typed_artifact_failure_http_mapping(
         assert payload["data"] is None
         assert payload["error"]["code"] == expected_code
         assert payload["error"]["details"]["error_type"] == error_type
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_status", "expected_code", "expected_message"),
+    [
+        (
+            "EventAuthorizationError",
+            403,
+            "forbidden",
+            "event operator action is not authorized",
+        ),
+        (
+            "EventOperationNotFoundError",
+            404,
+            "event_operator_resource_not_found",
+            "event operator resource not found",
+        ),
+        (
+            "EventOperationCapabilityUnavailableError",
+            503,
+            "event_operator_capability_unavailable",
+            "event operator capability is unavailable",
+        ),
+        (
+            "EventStoreUnavailableError",
+            503,
+            "event_store_unavailable",
+            "event store is unavailable",
+        ),
+        (
+            "EventContractError",
+            409,
+            "event_operator_contract_conflict",
+            "event operator data conflicts with the durable event contract",
+        ),
+    ],
+)
+def test_api_mcp_event_failures_use_redacted_cross_transport_contract(
+    error_type,
+    expected_status,
+    expected_code,
+    expected_message,
+) -> None:
+    token = "operator-token"
+    client = TestClient(
+        create_app(
+            api_keys={token: ["operator"]},
+            mcp_service_factory=lambda: _FailedMCPService(error_type),
+            audit_emitter_factory=None,
+        )
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    responses = [
+        client.post(
+            "/api/v1/mcp/tools/news.event.quarantine.list/call",
+            json={"arguments": {}},
+            headers=headers,
+        ),
+        client.post(
+            "/api/v1/mcp/resources/read",
+            json={"uri": "news://events/quarantine"},
+            headers=headers,
+        ),
+    ]
+
+    for response in responses:
+        payload = response.json()
+        assert response.status_code == expected_status
+        assert payload["error"]["code"] == expected_code
+        assert payload["error"]["message"] == expected_message
+        assert "artifact operation failed" not in response.text
+
+
+def test_api_mcp_normalizes_event_contract_subclasses_before_http_mapping() -> None:
+    token = "operator-token"
+    service = MCPApplicationService(
+        event_operator_service_factory=lambda actor: _ProjectionConflictOperator(),
+    )
+    client = TestClient(
+        create_app(
+            api_keys={token: ["operator"]},
+            mcp_service_factory=lambda: service,
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/mcp/tools/news.event.projection_status/call",
+        json={"arguments": {"run_id": "run-1"}},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    payload = response.json()
+    assert response.status_code == 409
+    assert payload["error"]["code"] == "event_operator_contract_conflict"
+    assert payload["error"]["message"] == (
+        "event operator data conflicts with the durable event contract"
+    )
+    assert "secret-path" not in response.text
 
 
 def test_api_mcp_default_service_maps_real_filesystem_tamper_without_data(tmp_path) -> None:
@@ -324,6 +425,11 @@ class _FakeRunOperationService:
                 "status": "accepted",
             }
         )
+
+
+class _ProjectionConflictOperator:
+    def get_projection_status(self, run_id):
+        raise EventProjectionConflictError(f"secret-path-C:/private/{run_id}")
 
 
 class _FakeResult:
