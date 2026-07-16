@@ -89,7 +89,7 @@ class WorkflowEventProjectionExporter:
                         tenant_id=tenant_id,
                         high_watermark=high_watermark,
                     ):
-                        encoded = _jsonl_bytes(self._project_event(event))
+                        encoded = _jsonl_bytes(self.project_event(event))
                         handle.write(encoded)
                         digest.update(encoded)
                         event_count += 1
@@ -179,7 +179,7 @@ class WorkflowEventProjectionExporter:
                     row = json.loads(raw_line)
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise EventContractError("event projection row is invalid JSON") from exc
-                if not isinstance(row, Mapping) or dict(row) != self._project_event(event):
+                if not isinstance(row, Mapping) or dict(row) != self.project_event(event):
                     raise EventContractError(
                         "event projection row does not match the durable event"
                     )
@@ -241,44 +241,65 @@ class WorkflowEventProjectionExporter:
         if expected_sequence - 1 != high_watermark:
             raise EventContractError("event reader returned an incomplete stream prefix")
 
-    def _project_event(self, event: StoredEvent) -> dict[str, Any]:
-        event.verify_integrity()
-        registration = self._schema_catalog.get(event.event_type, event.data_schema)
-        projection = self._security_projector.project_export(
-            payload=event.payload,
-            extensions=event.extensions,
-            policy=registration.sensitivity_policy,
+    def project_event(self, event: StoredEvent) -> dict[str, Any]:
+        """Return the schema-aware compatibility row used by JSONL and online reads."""
+
+        return project_workflow_event(
+            event,
+            schema_catalog=self._schema_catalog,
+            security_projector=self._security_projector,
         )
-        row = event.to_dict()
-        row["payload"] = (
-            None
-            if projection.payload is None
-            else thaw_canonical_json(projection.payload)
-        )
-        row["extensions"] = thaw_canonical_json(projection.extensions)
-        row["source_content_checksum"] = row.pop("content_checksum")
-        row["source_record_checksum"] = row.pop("record_checksum")
-        row["projection_schema"] = "newsroom.workflow-event-projection/v1"
-        business_context = event.business_context
-        row.update(
-            {
-                "run_id": business_context.run_id,
-                "workflow_id": business_context.workflow_id,
-                "step_id": business_context.step_id,
-                "task_id": business_context.task_id,
-                "agent_id": business_context.agent_id,
-                "tool_call_id": business_context.tool_call_id,
-                "request_id": business_context.request_id,
-                "component": event.producer.component,
-                "trace_id": event.trace.trace_id if event.trace is not None else None,
-                "span_id": event.trace.span_id if event.trace is not None else None,
-                "parent_span_id": (
-                    event.trace.parent_span_id if event.trace is not None else None
-                ),
-            }
-        )
-        row["projection_checksum"] = checksum_for(row)
-        return row
+
+
+def project_workflow_event(
+    event: StoredEvent,
+    *,
+    schema_catalog: EventSchemaCatalog,
+    security_projector: EventSecurityProjector | None = None,
+) -> dict[str, Any]:
+    """Project one durable event without writing or feeding it back to a store."""
+
+    if not isinstance(event, StoredEvent):
+        raise TypeError("event must be a StoredEvent")
+    if not isinstance(schema_catalog, EventSchemaCatalog):
+        raise TypeError("schema_catalog must be EventSchemaCatalog")
+    event.verify_integrity()
+    registration = schema_catalog.get(event.event_type, event.data_schema)
+    projection = (security_projector or EventSecurityProjector()).project_export(
+        payload=event.payload,
+        extensions=event.extensions,
+        policy=registration.sensitivity_policy,
+    )
+    row = event.to_dict()
+    row["payload"] = (
+        None
+        if projection.payload is None
+        else thaw_canonical_json(projection.payload)
+    )
+    row["extensions"] = thaw_canonical_json(projection.extensions)
+    row["source_content_checksum"] = row.pop("content_checksum")
+    row["source_record_checksum"] = row.pop("record_checksum")
+    row["projection_schema"] = "newsroom.workflow-event-projection/v1"
+    business_context = event.business_context
+    row.update(
+        {
+            "run_id": business_context.run_id,
+            "workflow_id": business_context.workflow_id,
+            "step_id": business_context.step_id,
+            "task_id": business_context.task_id,
+            "agent_id": business_context.agent_id,
+            "tool_call_id": business_context.tool_call_id,
+            "request_id": business_context.request_id,
+            "component": event.producer.component,
+            "trace_id": event.trace.trace_id if event.trace is not None else None,
+            "span_id": event.trace.span_id if event.trace is not None else None,
+            "parent_span_id": (
+                event.trace.parent_span_id if event.trace is not None else None
+            ),
+        }
+    )
+    row["projection_checksum"] = checksum_for(row)
+    return row
 
 
 def _jsonl_bytes(value: dict[str, Any]) -> bytes:
@@ -338,4 +359,5 @@ def _fsync_directory(path: Path) -> None:
 __all__ = [
     "WorkflowEventProjection",
     "WorkflowEventProjectionExporter",
+    "project_workflow_event",
 ]

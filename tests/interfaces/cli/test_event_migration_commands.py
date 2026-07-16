@@ -91,6 +91,144 @@ def test_event_migration_cli_rejects_explicit_wrong_file_extension(
     assert captured.err.strip() == "invalid migration dry-run request"
 
 
+def test_event_migration_backfill_and_shadow_compare_end_to_end(
+    tmp_path,
+    capsys,
+) -> None:
+    source = tmp_path / "events.jsonl"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": "newsroom.event_record.v1",
+                "event_id": "evt-cli-backfill",
+                "event_type": "workflow_started",
+                "occurred_at": "2026-07-16T01:00:00Z",
+                "run_id": "run-cli",
+                "payload": {"run_id": "run-cli"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source_before = source.read_bytes()
+    staging_root = tmp_path / "staging"
+    backfill_report = tmp_path / "backfill.json"
+
+    backfill_exit = news_cli.main(
+        [
+            "events",
+            "migration-backfill",
+            "--legacy-run-jsonl",
+            str(source),
+            "--staging-root",
+            str(staging_root),
+            "--report",
+            str(backfill_report),
+            "--report-id",
+            "cli-backfill",
+            "--json",
+        ]
+    )
+    backfill_payload = json.loads(capsys.readouterr().out)
+
+    assert backfill_exit == 0
+    assert backfill_payload["status"] == "succeeded"
+    assert backfill_payload["counts"]["imported"] == 1
+    assert backfill_report.is_file()
+    assert source.read_bytes() == source_before
+
+    shadow_report = tmp_path / "shadow.json"
+    shadow_exit = news_cli.main(
+        [
+            "events",
+            "migration-shadow-compare",
+            "--staging-root",
+            str(staging_root),
+            "--report",
+            str(backfill_report),
+            "--report-id",
+            "cli-backfill",
+            "--shadow-report",
+            str(shadow_report),
+            "--json",
+        ]
+    )
+    shadow_payload = json.loads(capsys.readouterr().out)
+
+    assert shadow_exit == 0
+    assert shadow_payload["cutover_ready"] is True
+    assert shadow_payload["expected_event_count"] == 1
+    assert shadow_payload["actual_event_count"] == 1
+    assert shadow_report.is_file()
+    assert source.read_bytes() == source_before
+
+
+def test_event_migration_backfill_rejects_active_artifact_root(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    source = tmp_path / "events.jsonl"
+    source.write_text("{}\n", encoding="utf-8")
+    active_root = tmp_path / "active"
+    monkeypatch.setenv("NEWS_ARTIFACT_ROOT", str(active_root))
+
+    exit_code = news_cli.main(
+        [
+            "events",
+            "migration-backfill",
+            "--legacy-run-jsonl",
+            str(source),
+            "--staging-root",
+            str(active_root),
+            "--report",
+            str(tmp_path / "backfill.json"),
+            "--report-id",
+            "unsafe-staging",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert captured.err.strip() == (
+        "migration staging root must differ from the active artifact root"
+    )
+
+
+def test_event_migration_backfill_error_does_not_expose_credentials(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    secret = "backfill-secret-must-not-leak"
+
+    def failing_service(args):
+        raise RuntimeError(f"postgresql://user:{secret}@host/database")
+
+    monkeypatch.setattr(event_commands, "_backfill_service", failing_service)
+
+    exit_code = news_cli.main(
+        [
+            "events",
+            "migration-backfill",
+            "--postgres",
+            "--staging-root",
+            str(tmp_path / "staging"),
+            "--report",
+            str(tmp_path / "backfill.json"),
+            "--report-id",
+            "secret-error",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert secret not in captured.out + captured.err
+    assert "postgresql://" not in captured.out + captured.err
+    assert captured.err.strip() == "invalid migration backfill request"
+
+
 class _FakeMigrationService:
     def dry_run(self, **kwargs):
         return EventMigrationDryRun().scan(

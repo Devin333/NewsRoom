@@ -140,6 +140,150 @@ def test_factory_composes_real_canonical_postgres_store(
     assert result.event.stream_sequence == 1
 
 
+def test_real_postgres_legacy_source_backfills_read_only_staging(
+    postgres_dsn: str,
+    tmp_path: Path,
+) -> None:
+    import psycopg
+    from psycopg import sql
+    from psycopg.types.json import Jsonb
+
+    from framework.events.migration_backfill import MigrationBackfillStatus
+    from framework.events.schema import default_event_schema_catalog
+    from infrastructure.storage.events.migration_readers import (
+        PostgresEventMigrationReader,
+    )
+    from infrastructure.storage.events.migration_reports import (
+        JsonMigrationBackfillReportStore,
+    )
+    from infrastructure.storage.events.sqlite import SQLiteEventStore
+    from interfaces.services.event_migration_service import (
+        EventMigrationApplicationService,
+        EventMigrationBackfillApplicationService,
+        MigrationSourceSelection,
+    )
+
+    schema = f"migration_source_{uuid4().hex}"
+    observed_at = datetime(2026, 7, 16, 3, tzinfo=UTC)
+    create_table = """
+        CREATE TABLE workflow_events (
+            event_offset BIGINT NOT NULL,
+            event_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            timestamp TIMESTAMPTZ NOT NULL,
+            workflow_id TEXT,
+            step_id TEXT,
+            task_id TEXT,
+            agent_id TEXT,
+            tool_call_id TEXT,
+            request_id TEXT,
+            payload JSONB NOT NULL,
+            severity TEXT NOT NULL,
+            trace_id TEXT,
+            redacted BOOLEAN NOT NULL,
+            metadata JSONB NOT NULL
+        )
+    """
+    with psycopg.connect(postgres_dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            cursor.execute(
+                sql.SQL("SET search_path TO {}").format(sql.Identifier(schema))
+            )
+            cursor.execute(create_table)
+            cursor.executemany(
+                """
+                INSERT INTO workflow_events (
+                    event_offset, event_id, run_id, event_type, timestamp,
+                    payload, severity, redacted, metadata
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    (
+                        index,
+                        f"evt-pg-migration-{index}",
+                        "run-pg-migration",
+                        "workflow_started" if index == 0 else "workflow_succeeded",
+                        datetime(2026, 7, 16, index + 1, tzinfo=UTC),
+                            Jsonb(
+                                {"run_id": "run-pg-migration"}
+                                if index == 0
+                                else {"path": ["step-1"]}
+                            ),
+                        "info",
+                        True,
+                            Jsonb({}),
+                    )
+                    for index in range(2)
+                ],
+            )
+        connection.commit()
+
+    def source_connection():
+        connection = psycopg.connect(postgres_dsn)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("SET search_path TO {}").format(sql.Identifier(schema))
+            )
+        connection.commit()
+        return connection
+
+    try:
+        source_reader = PostgresEventMigrationReader(
+            postgres_dsn,
+            connection_factory=source_connection,
+        )
+        source_service = EventMigrationApplicationService(
+            postgres_reader_factory=lambda dsn: source_reader,
+            env={"NEWS_DATABASE_DSN": postgres_dsn},
+        )
+        staging = SQLiteEventStore(
+            tmp_path / "staging.sqlite3",
+            clock=lambda: observed_at,
+        )
+        report_store = JsonMigrationBackfillReportStore(tmp_path / "backfill.json")
+        service = EventMigrationBackfillApplicationService(
+            source_service=source_service,
+            staging_store=staging,
+            schema_catalog=default_event_schema_catalog(),
+            report_store=report_store,
+            clock=lambda: observed_at,
+        )
+
+        report = service.backfill(
+            MigrationSourceSelection(include_postgres=True),
+            report_id="postgres-source-backfill",
+        )
+        shadow = service.shadow_compare(report_id="postgres-source-backfill")
+
+        assert report.status is MigrationBackfillStatus.SUCCEEDED
+        assert report.counts["imported"] == 2
+        assert [entry.legacy_offset for entry in report.entries] == [0, 1]
+        assert [entry.canonical_sequence for entry in report.entries] == [1, 2]
+        assert shadow.cutover_ready is True
+        with source_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT event_offset, event_id
+                    FROM workflow_events
+                    ORDER BY event_offset ASC
+                    """
+                )
+                assert cursor.fetchall() == [
+                    (0, "evt-pg-migration-0"),
+                    (1, "evt-pg-migration-1"),
+                ]
+    finally:
+        with psycopg.connect(postgres_dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema))
+                )
+            connection.commit()
+
+
 def test_duplicate_returns_original_record_and_collision_does_not_allocate(
     postgres_dsn: str,
     scope: str,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from hmac import compare_digest
@@ -261,10 +261,48 @@ class MigrationDryRunReport:
 
 
 @dataclass(frozen=True)
-class _MappedRecord:
+class MigrationMappedRecord:
+    """Validated canonical import plan for one detached source record."""
+
     event_id: str
     content_checksum: str
     identity_namespace: str = "event"
+    candidate: EventCandidate | None = None
+    legacy_offset: int | None = None
+    source_sequence: int | None = None
+
+    def __post_init__(self) -> None:
+        event_id = _required_text(self.event_id, "event_id")
+        checksum = _required_text(self.content_checksum, "content_checksum")
+        namespace = _required_text(self.identity_namespace, "identity_namespace")
+        digest = checksum.removeprefix("sha256:")
+        if (
+            not checksum.startswith("sha256:")
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError("content_checksum must be sha256:<64 lowercase hex>")
+        if namespace == "event":
+            if not isinstance(self.candidate, EventCandidate):
+                raise ValueError("event migration mapping requires a canonical candidate")
+            if (
+                self.candidate.event_id != event_id
+                or self.candidate.content_checksum != checksum
+            ):
+                raise ValueError("migration candidate identity does not match its mapping")
+        elif self.candidate is not None:
+            raise ValueError("non-event migration mapping cannot contain a candidate")
+        for field_name, minimum in (("legacy_offset", 0), ("source_sequence", 1)):
+            value = getattr(self, field_name)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < minimum
+            ):
+                raise ValueError(f"{field_name} is outside its valid range")
+        object.__setattr__(self, "event_id", event_id)
+        object.__setattr__(self, "content_checksum", checksum)
+        object.__setattr__(self, "identity_namespace", namespace)
 
     @property
     def dedupe_key(self) -> str:
@@ -359,24 +397,40 @@ class EventMigrationDryRun:
             content_checksum=mapped.content_checksum,
         )
 
-    def _map_record(self, record: MigrationSourceRecord) -> _MappedRecord:
+    def map_record(self, record: MigrationSourceRecord) -> MigrationMappedRecord:
+        """Return the same deterministic mapping used by dry-run and backfill."""
+
+        if not isinstance(record, MigrationSourceRecord):
+            raise TypeError("record must be a MigrationSourceRecord")
+        if record.issue_reason is not None:
+            raise EventQuarantineError(record.issue_reason, source=record.location)
         assert record.value is not None
         if record.source_kind is MigrationSourceKind.CHECKPOINT:
-            return _map_checkpoint(record.value, source=record.location)
-        if record.value.get("envelope_schema") == _CANONICAL_ENVELOPE_SCHEMA:
-            return self._map_canonical(record.value, source=record.location)
-        return self._map_legacy_event(
-            record.value,
-            source_kind=record.source_kind,
-            source_location=record.location,
-        )
+            mapped = _map_checkpoint(record.value, source=record.location)
+        elif record.value.get("envelope_schema") == _CANONICAL_ENVELOPE_SCHEMA:
+            mapped = self._map_canonical(record.value, source=record.location)
+        else:
+            mapped = self._map_legacy_event(
+                record.value,
+                source_kind=record.source_kind,
+                source_location=record.location,
+            )
+        if mapped.legacy_offset is None:
+            mapped = replace(
+                mapped,
+                legacy_offset=_source_legacy_offset(record),
+            )
+        return mapped
+
+    def _map_record(self, record: MigrationSourceRecord) -> MigrationMappedRecord:
+        return self.map_record(record)
 
     def _map_canonical(
         self,
         value: Mapping[str, Any],
         *,
         source: str,
-    ) -> _MappedRecord:
+    ) -> MigrationMappedRecord:
         if not _has_value(value.get("occurred_at")):
             raise EventQuarantineError("missing_occurred_at", source=source)
         _reject_naive_time(
@@ -391,8 +445,11 @@ class EventMigrationDryRun:
                 reason="invalid_observed_at",
             )
         try:
+            source_sequence: int | None = None
             if "observed_at" in value or "stream_sequence" in value:
-                candidate = StoredEvent.from_dict(value, verify_checksum=True).candidate
+                stored = StoredEvent.from_dict(value, verify_checksum=True)
+                candidate = stored.candidate
+                source_sequence = stored.stream_sequence
             else:
                 candidate = EventCandidate.from_dict(value, verify_checksum=True)
         except (KeyError, TypeError, ValueError) as exc:
@@ -442,7 +499,12 @@ class EventMigrationDryRun:
         )
         if projected_candidate.content_checksum != candidate.content_checksum:
             raise EventQuarantineError("security_policy_violation", source=source)
-        return _MappedRecord(candidate.event_id, candidate.content_checksum)
+        return MigrationMappedRecord(
+            candidate.event_id,
+            candidate.content_checksum,
+            candidate=candidate,
+            source_sequence=source_sequence,
+        )
 
     def _map_legacy_event(
         self,
@@ -450,7 +512,7 @@ class EventMigrationDryRun:
         *,
         source_kind: MigrationSourceKind,
         source_location: str,
-    ) -> _MappedRecord:
+    ) -> MigrationMappedRecord:
         flattened, envelope_schema = _flatten_legacy_envelope(value)
         occurred_at = _first_present(flattened, "occurred_at", "timestamp", "created_at")
         _reject_naive_time(
@@ -554,7 +616,11 @@ class EventMigrationDryRun:
             payload_ref=projection.payload_ref,
             extensions=projection.extensions,
         )
-        return _MappedRecord(candidate.event_id, candidate.content_checksum)
+        return MigrationMappedRecord(
+            candidate.event_id,
+            candidate.content_checksum,
+            candidate=candidate,
+        )
 
 
 def _flatten_legacy_envelope(
@@ -608,7 +674,11 @@ def _flatten_legacy_envelope(
     return flattened, envelope_schema
 
 
-def _map_checkpoint(value: Mapping[str, Any], *, source: str) -> _MappedRecord:
+def _map_checkpoint(
+    value: Mapping[str, Any],
+    *,
+    source: str,
+) -> MigrationMappedRecord:
     flattened = _flatten_checkpoint(value)
     schema = _optional_text(flattened.get("schema_version"))
     if schema is not None and schema not in _SUPPORTED_CHECKPOINT_SCHEMAS:
@@ -649,7 +719,12 @@ def _map_checkpoint(value: Mapping[str, Any], *, source: str) -> _MappedRecord:
         "legacy_event_offset": offset,
     }
     identity = f"checkpoint:{run_id}:{checkpoint_id}"
-    return _MappedRecord(identity, checksum_for(projection), identity_namespace="checkpoint")
+    return MigrationMappedRecord(
+        identity,
+        checksum_for(projection),
+        identity_namespace="checkpoint",
+        legacy_offset=offset,
+    )
 
 
 def _flatten_checkpoint(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -899,6 +974,26 @@ def _stable_source_identity(
     return f"{source_kind.value}:{logical_location}"
 
 
+def _source_legacy_offset(record: MigrationSourceRecord) -> int | None:
+    if record.source_kind in {
+        MigrationSourceKind.LEGACY_RUN_JSONL,
+        MigrationSourceKind.LOCAL_EVENT_RECORD,
+        MigrationSourceKind.HARNESS_HISTORY,
+    }:
+        _, separator, raw_line = record.location.rpartition(":")
+        if separator and raw_line.isdecimal():
+            line_number = int(raw_line)
+            return line_number - 1 if line_number > 0 else None
+    if (
+        record.source_kind is MigrationSourceKind.POSTGRESQL_ROW
+        and record.location.startswith("postgresql:workflow_events:")
+    ):
+        raw_offset = record.location.rpartition(":")[2]
+        if raw_offset.isdecimal():
+            return int(raw_offset)
+    return None
+
+
 def _merge_authoritative_field(
     target: dict[str, Any],
     *,
@@ -1071,6 +1166,7 @@ def _required_text(value: Any, field_name: str) -> str:
 
 __all__ = [
     "EventMigrationDryRun",
+    "MigrationMappedRecord",
     "MigrationClassification",
     "MigrationDryRunReport",
     "MigrationFinding",

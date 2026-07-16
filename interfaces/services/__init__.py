@@ -9,6 +9,12 @@ from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.event_delivery_operations_service import (
     EventDeliveryOperationsService,
 )
+from interfaces.services.event_migration_service import (
+    EventMigrationApplicationService,
+    EventMigrationBackfillApplicationService,
+    MigrationSourceSelection,
+    MigrationSourceSnapshot,
+)
 from interfaces.services.event_projection_service import EventProjectionService
 from interfaces.services.event_quarantine_service import EventQuarantineService
 from interfaces.services.event_reader_service import (
@@ -38,6 +44,8 @@ __all__ = [
     "DiagnosticApplicationService",
     "EntityTrackingApplicationService",
     "EventDeliveryOperationsService",
+    "EventMigrationApplicationService",
+    "EventMigrationBackfillApplicationService",
     "EventAuthorizationContext",
     "EventAuthorizationDecision",
     "EventAuthorizationRequest",
@@ -49,6 +57,8 @@ __all__ = [
     "EventStreamReadResult",
     "ArtifactInspectionService",
     "MemoryApplicationService",
+    "MigrationSourceSelection",
+    "MigrationSourceSnapshot",
     "MCPApplicationService",
     "ProjectApplicationService",
     "ProjectsApplicationService",

@@ -69,8 +69,8 @@
 
 ## 9. Migration Cutover And Deletion
 
-- [ ] 9.1 Backfill a staging canonical store from historical JSONL/local/PostgreSQL/Harness records, verify counts, sequence mapping, checksums, and quarantine reports, and leave all source history unchanged.
-- [ ] 9.2 Add an explicit shadow-read/export comparison phase that never dispatches twice, then cut workflow and Harness writes to the durable runtime and disable old post-run indexing in the same release boundary.
+- [x] 9.1 Backfill a staging canonical store from historical JSONL/local/PostgreSQL/Harness records, verify counts, sequence mapping, checksums, and quarantine reports, and leave all source history unchanged.
+- [x] 9.2 Add an explicit shadow-read/export comparison phase that never dispatches twice, then cut workflow and Harness writes to the durable runtime and disable old post-run indexing in the same release boundary.
 - [ ] 9.3 Cut reads to the durable source, verify API/CLI/MCP/checkpoint compatibility, and retain deprecated framework imports/callable subscriber adapters for exactly one documented migration release.
 - [ ] 9.4 Remove framework legacy `EventRecord`, duplicate context storage, dual recorder lists, mixed subscriber payloads, runner-local stores/models/factory, live-bus replay, and obsolete JSONL authority after all production callers and migration fixtures pass.
 - [ ] 9.5 Execute the phase-specific rollback drill and prove rollback preserves accepted events and sequences, does not repeat external effects, does not disable schema/security checks, and can rebuild compatible projections.
