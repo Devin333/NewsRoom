@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from framework.agent.models import JudgeVerdict
+from framework.events.trace import new_span_id, new_trace_id
 from framework.llm.models import LLMRequest, LLMResponse, TokenUsage
 from framework.shared.json import to_jsonable as to_json_safe
 from framework.tool import ToolObservation
@@ -477,16 +478,16 @@ class AgentLoopTrace:
         tool_observation_count_before: int,
         tools_available: list[str],
     ) -> IterationTrace:
-        trace_id = self.trace_id or f"agent:{self.agent_id}"
+        trace_id = self.trace_id or new_trace_id()
         if self.trace_id is None:
             self.trace_id = trace_id
-        root_span_id = self.root_span_id or f"agent:{self.agent_id}"
+        root_span_id = self.root_span_id or new_span_id()
         if self.root_span_id is None:
             self.root_span_id = root_span_id
         item = IterationTrace(
             iteration=iteration,
             trace_id=trace_id,
-            span_id=f"{root_span_id}:iteration:{iteration}",
+            span_id=new_span_id(),
             parent_span_id=root_span_id,
             feedback=feedback,
             tool_observation_count_before=tool_observation_count_before,

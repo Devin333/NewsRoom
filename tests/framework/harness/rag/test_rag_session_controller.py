@@ -149,7 +149,7 @@ def test_controller_gap_report_includes_low_relevance_rejection_summary() -> Non
     assert source_event["payload"]["rejected"][0]["metadata"]["rejection_reason"] == "low_relevance"
 
 
-def test_controller_propagates_tenant_scope_to_retrieval_request_and_metrics() -> None:
+def test_controller_propagates_tenant_scope_only_to_business_retrieval_request() -> None:
     base = fake_rag_session_spec()
     scope = {
         "tenant_id": "tenant-a",
@@ -176,9 +176,14 @@ def test_controller_propagates_tenant_scope_to_retrieval_request_and_metrics() -
     assert retrieval.requests[0].metadata["user_id"] == "user-1"
     assert retrieval.requests[0].metadata["memory_namespace"] == "research:tenant:tenant-a:user:user-1"
     assert result.metrics is not None
-    assert result.metrics.tenant_id == "tenant-a"
-    assert result.metrics.user_id == "user-1"
-    assert result.metrics.memory_namespace == "research:tenant:tenant-a:user:user-1"
+    assert {
+        "tenant_id",
+        "user_id",
+        "memory_namespace",
+        "trace_id",
+        "root_span_id",
+        "context_pack_id",
+    }.isdisjoint(result.metrics.to_dict())
 
 
 class _Scorer(RelevanceScorerPort):

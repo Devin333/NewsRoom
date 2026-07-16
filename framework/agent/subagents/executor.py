@@ -6,6 +6,16 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from framework.agent.runtime.redaction import redact_sensitive_values
+from framework.events import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    TelemetrySpanLink,
+    W3CTracePropagator,
+    default_event_telemetry,
+    trace_context_scope,
+)
+from framework.events.propagation import normalize_trace_carrier
 
 if TYPE_CHECKING:
     from framework.agent.models import AgentLoopResult, AgentSpec
@@ -28,6 +38,14 @@ class SubAgentTask:
     inputs: dict[str, Any] = field(default_factory=dict)
     handoff_reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    trace_carrier: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "trace_carrier",
+            normalize_trace_carrier(self.trace_carrier),
+        )
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         inputs = dict(self.inputs)
@@ -39,6 +57,7 @@ class SubAgentTask:
             "inputs": redact_sensitive_values(inputs) if redact else inputs,
             "handoff_reason": self.handoff_reason,
             "metadata": redact_sensitive_values(metadata) if redact else metadata,
+            "trace_carrier": dict(self.trace_carrier),
         }
 
 
@@ -98,6 +117,8 @@ class LocalSubAgentExecutor:
         conversation_store: Any | None = None,
         global_budget_tracker: "GlobalBudgetTracker | None" = None,
         allow_nested_subagents: bool = False,
+        trace_propagator: W3CTracePropagator | None = None,
+        telemetry: EventTelemetry | None = None,
     ) -> None:
         self._agents = dict(agents)
         self._llm_client = llm_client
@@ -105,6 +126,14 @@ class LocalSubAgentExecutor:
         self._conversation_store = conversation_store
         self._global_budget_tracker = global_budget_tracker
         self._allow_nested_subagents = allow_nested_subagents
+        self._trace_propagator = trace_propagator or W3CTracePropagator()
+        self._telemetry = telemetry or default_event_telemetry(
+            resource=TelemetryResource(service_name="newsroom-agent-runtime"),
+            scope=TelemetryInstrumentationScope(
+                name="framework.agent.subagents",
+                version="1",
+            ),
+        )
 
     def run(self, task: SubAgentTask) -> SubAgentResult:
         agent = self._agents.get(task.child_agent_id)
@@ -123,24 +152,41 @@ class LocalSubAgentExecutor:
 
         from framework.agent.loop.runner import AgentRunner
 
-        result = AgentRunner(
-            llm_client=self._llm_client,
-            tool_registry=self._tool_registry,
-            conversation_store=self._conversation_store,
-            global_budget_tracker=self._global_budget_tracker,
-            subagent_executor=self if self._allow_nested_subagents else None,
-        ).run(
-            child_agent,
-            child_inputs,
-            conversation_id=conversation_id,
-            run_id=_optional_metadata_str(task.metadata, "run_id"),
-            step_id=_optional_metadata_str(task.metadata, "step_id"),
-            workflow_checkpoint_id=_optional_metadata_str(
-                task.metadata,
-                "workflow_checkpoint_id",
-            ),
-            resume_from_cursor=bool(task.metadata.get("resume_from_cursor", False)),
+        extracted = self._trace_propagator.extract_span(task.trace_carrier)
+        child_trace = extracted.child().context
+        trace_link = TelemetrySpanLink.from_context(
+            extracted.remote_context,
+            relationship="subagent_handoff",
         )
+        with trace_context_scope(child_trace), self._telemetry.start_span(
+            "newsroom.subagent.execute",
+            attributes={
+                "newsroom.component": "subagent",
+                "newsroom.operation": "execute",
+                "newsroom.transport": "worker",
+            },
+            links=(trace_link,),
+        ):
+            result = AgentRunner(
+                llm_client=self._llm_client,
+                tool_registry=self._tool_registry,
+                conversation_store=self._conversation_store,
+                global_budget_tracker=self._global_budget_tracker,
+                subagent_executor=self if self._allow_nested_subagents else None,
+            ).run(
+                child_agent,
+                child_inputs,
+                conversation_id=conversation_id,
+                run_id=_optional_metadata_str(task.metadata, "run_id"),
+                step_id=_optional_metadata_str(task.metadata, "step_id"),
+                workflow_checkpoint_id=_optional_metadata_str(
+                    task.metadata,
+                    "workflow_checkpoint_id",
+                ),
+                resume_from_cursor=bool(
+                    task.metadata.get("resume_from_cursor", False)
+                ),
+            )
         return _result_to_subagent_result(task, result)
 
     def execute(self, task: SubAgentTask) -> SubAgentResult:

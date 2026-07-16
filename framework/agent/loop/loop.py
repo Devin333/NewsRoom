@@ -52,6 +52,7 @@ from framework.agent.session import (
     SharedSessionContextAssembler,
 )
 from framework.agent.models.trace import AgentLoopTrace, IterationTrace
+from framework.events import TraceContext, W3CTracePropagator
 from framework.agent.runtime.llm import (
     GlobalBudgetExceededError,
     GlobalBudgetTracker,
@@ -847,6 +848,9 @@ class AgentLoop:
                         inputs=_subagent_inputs_snapshot(inputs=inputs, action=action),
                         handoff_reason=handoff_reason,
                         metadata=metadata,
+                        trace_carrier=_subagent_trace_carrier(
+                            events.trace_context
+                        ),
                     )
                 )
             except Exception as exc:
@@ -1723,6 +1727,12 @@ def _control_approval_metadata(observation: ToolObservation) -> dict[str, Any]:
     if isinstance(escalation_type, str) and escalation_type:
         payload["escalation_type"] = escalation_type
     return payload
+
+
+def _subagent_trace_carrier(context: TraceContext | None) -> dict[str, str]:
+    if context is None:
+        return {}
+    return W3CTracePropagator().inject(context)
 
 
 def _subagent_inputs_snapshot(

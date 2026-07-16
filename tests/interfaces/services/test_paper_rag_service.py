@@ -180,8 +180,8 @@ def test_rag_ask_gated_generation_returns_answered_payload(tmp_path) -> None:
     assert payload["metrics"]["accepted_evidence_count"] == 1
     assert payload["metrics"]["transcript_event_count"] == 3
     assert payload["metrics"]["answer_attempts"] == 1
-    assert payload["metrics"]["trace_id"] == "trace-1"
-    assert payload["metrics"]["root_span_id"] == "span-1"
+    assert "trace_id" not in payload["metrics"]
+    assert "root_span_id" not in payload["metrics"]
     assert payload["metrics"]["budget_snapshot"]["rounds_used"] == 1
     assert payload["transcript_artifact"]["transcript_id"] == "transcript-1"
     assert transcript_store.resolve("transcript-1").exists()
@@ -267,9 +267,9 @@ def test_rag_ask_gated_generation_carries_tenant_scope() -> None:
     assert goal.metadata["tenant_id"] == "tenant-a"
     assert goal.metadata["user_id"] == "user-1"
     assert result.metrics is not None
-    assert result.metrics.user_id == "user-1"
-    assert result.metrics.memory_namespace == namespace
-    assert payload["metrics"]["tenant_id"] == "tenant-a"
+    assert "user_id" not in result.metrics.to_dict()
+    assert "memory_namespace" not in result.metrics.to_dict()
+    assert "tenant_id" not in payload["metrics"]
     assert "user_id" not in payload["metrics"]
     assert "memory_namespace" not in payload["metrics"]
     _assert_public_metrics_scope_sanitized(payload["metrics"])
@@ -355,13 +355,7 @@ def _session_result(
                 "context_tokens_used": 0,
                 "worker_calls_used": 1,
             },
-            tenant_id=tenant_id,
-            user_id=user_id,
-            memory_namespace=memory_namespace,
-            trace_id="trace-1",
-            root_span_id="span-1",
             accepted_evidence_count=1,
-            context_pack_id="pack-1",
             answer_present=True,
             answer_abstained=answer.abstained,
             answer_attempts=1,

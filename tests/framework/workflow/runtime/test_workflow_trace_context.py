@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
 from framework.artifacts import ArtifactManager
-from framework.events import EventRuntime, default_event_schema_catalog
+from framework.events import (
+    EventRuntime,
+    default_event_schema_catalog,
+    is_valid_span_id,
+    is_valid_trace_id,
+)
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.result import StepOutcome
 from infrastructure.storage.events.sqlite import SQLiteEventStore
@@ -64,13 +70,19 @@ def test_workflow_run_manifest_and_events_include_trace_context(tmp_path) -> Non
     ).execute(workflow, {}, profile="test", run_id="run-trace")
 
     step_span = result.manifest["step_spans"]["s1"]
-    events = (tmp_path / "run-trace" / "events.jsonl").read_text(encoding="utf-8")
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "run-trace" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
 
-    assert result.manifest["trace_id"]
-    assert result.manifest["root_span_id"] == "workflow:run-trace"
+    assert is_valid_trace_id(result.manifest["trace_id"])
+    assert is_valid_span_id(result.manifest["root_span_id"])
     assert result.manifest["trace_events_ref"] == "events.jsonl"
-    assert step_span["parent_span_id"] == "workflow:run-trace"
-    assert runner.trace_context.span_id == "step:s1"
-    assert '"trace_id"' in events
-    assert '"io.newsroom.legacy"' in events
-    assert '"span_id":"step:s1"' in events
+    assert is_valid_span_id(step_span["span_id"])
+    assert step_span["parent_span_id"] == result.manifest["root_span_id"]
+    assert runner.trace_context.span_id == step_span["span_id"]
+    assert all(event["trace_id"] == result.manifest["trace_id"] for event in events)
+    assert all(event["extensions"] == {} for event in events)
+    assert all("io.newsroom.legacy" not in event["extensions"] for event in events)

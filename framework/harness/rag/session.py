@@ -280,10 +280,7 @@ class BoundedRAGSessionController(RAGSessionController):
             conflicting_evidence=tuple(state.conflicting_evidence),
             memory_context=tuple(state.memory_context),
             artifact_refs=tuple(state.artifact_refs),
-            context_pack=pack,
             answer=answer,
-            scope_metadata=_session_scope_metadata(spec),
-            trace_metadata=telemetry.trace_metadata(),
         )
         return RAGSessionResult(
             status=status,

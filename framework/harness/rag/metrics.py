@@ -14,17 +14,11 @@ class RAGSessionMetrics:
     decision_type: str
     transcript_event_count: int
     budget_snapshot: dict[str, int]
-    tenant_id: str | None = None
-    user_id: str | None = None
-    memory_namespace: str | None = None
-    trace_id: str | None = None
-    root_span_id: str | None = None
     accepted_evidence_count: int = 0
     rejected_evidence_count: int = 0
     conflicting_evidence_count: int = 0
     memory_context_count: int = 0
     artifact_ref_count: int = 0
-    context_pack_id: str | None = None
     answer_present: bool = False
     answer_abstained: bool = False
     answer_attempts: int = 0
@@ -72,17 +66,11 @@ class RAGSessionMetrics:
             "decision_type": self.decision_type,
             "transcript_event_count": self.transcript_event_count,
             "budget_snapshot": dict(self.budget_snapshot),
-            "tenant_id": self.tenant_id,
-            "user_id": self.user_id,
-            "memory_namespace": self.memory_namespace,
-            "trace_id": self.trace_id,
-            "root_span_id": self.root_span_id,
             "accepted_evidence_count": self.accepted_evidence_count,
             "rejected_evidence_count": self.rejected_evidence_count,
             "conflicting_evidence_count": self.conflicting_evidence_count,
             "memory_context_count": self.memory_context_count,
             "artifact_ref_count": self.artifact_ref_count,
-            "context_pack_id": self.context_pack_id,
             "answer_present": self.answer_present,
             "answer_abstained": self.answer_abstained,
             "answer_attempts": self.answer_attempts,
@@ -108,31 +96,20 @@ def build_rag_session_metrics(
     conflicting_evidence: tuple[Any, ...],
     memory_context: tuple[dict[str, Any], ...],
     artifact_refs: tuple[str, ...],
-    context_pack: Any | None,
     answer: Any | None,
-    scope_metadata: dict[str, str] | None = None,
-    trace_metadata: dict[str, str] | None = None,
 ) -> RAGSessionMetrics:
     event_types = [str(event.get("event_type") or "") for event in events]
     gate_failures_by_gate = _gate_failures_by_gate(events)
-    scope = dict(scope_metadata or {})
-    trace = dict(trace_metadata or {})
     return RAGSessionMetrics(
         status=status,
         decision_type=decision.decision_type.value,
         transcript_event_count=len(events),
         budget_snapshot=budget_snapshot.to_dict(),
-        tenant_id=scope.get("tenant_id") or None,
-        user_id=scope.get("user_id") or None,
-        memory_namespace=scope.get("memory_namespace") or None,
-        trace_id=trace.get("trace_id") or None,
-        root_span_id=trace.get("root_span_id") or None,
         accepted_evidence_count=len(accepted_evidence),
         rejected_evidence_count=len(rejected_evidence),
         conflicting_evidence_count=len(conflicting_evidence),
         memory_context_count=len(memory_context),
         artifact_ref_count=len(artifact_refs),
-        context_pack_id=getattr(context_pack, "pack_id", None),
         answer_present=answer is not None,
         answer_abstained=bool(getattr(answer, "abstained", False)) if answer is not None else False,
         answer_attempts=event_types.count("rag_answer_candidate_created"),

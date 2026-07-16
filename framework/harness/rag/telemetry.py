@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from hashlib import sha256
+import math
 from typing import Any
 
 from framework.harness.rag.models import RAGSessionStatus, RetrievalOperation
@@ -10,6 +11,10 @@ from framework.shared.json import to_jsonable
 
 
 TRACER_NAME = "newsroom.framework.harness.rag"
+MAX_RAG_TELEMETRY_ATTRIBUTES = 64
+MAX_RAG_TELEMETRY_KEY_LENGTH = 128
+MAX_RAG_TELEMETRY_STRING_LENGTH = 96
+MAX_RAG_TELEMETRY_SEQUENCE_LENGTH = 32
 
 try:  # pragma: no cover - exercised only when optional dependency is installed
     from opentelemetry import trace as _otel_trace
@@ -31,14 +36,14 @@ class RAGTelemetry:
         return _SpanContext(
             self._tracer,
             "newsroom.rag.session",
-            _session_attributes(spec, policy),
+            _safe_build_attributes(lambda: _session_attributes(spec, policy)),
         )
 
     def start_step(self, step: Any, spec: Any) -> AbstractContextManager["RAGTelemetrySpan"]:
         return _SpanContext(
             self._tracer,
             "newsroom.rag.step",
-            _step_attributes(step, spec),
+            _safe_build_attributes(lambda: _step_attributes(step, spec)),
         )
 
 
@@ -47,32 +52,44 @@ class RAGTelemetrySpan:
     _span: Any
 
     def add_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        safe_event_type = _bounded_string(event_type)
+        if safe_event_type is None:
+            return
         _call(
             self._span,
             "add_event",
-            event_type,
-            attributes=_event_attributes(event_type, payload),
+            safe_event_type,
+            attributes=_safe_build_attributes(
+                lambda: _event_attributes(safe_event_type, payload)
+            ),
         )
 
     def finish_session(self, *, status: RAGSessionStatus, decision: Any, metrics: Any) -> None:
-        attrs = _session_finish_attributes(status=status, decision=decision, metrics=metrics)
+        attrs = _safe_build_attributes(
+            lambda: _session_finish_attributes(
+                status=status,
+                decision=decision,
+                metrics=metrics,
+            )
+        )
         _set_attributes(self._span, attrs)
         if status in (RAGSessionStatus.FAILED, RAGSessionStatus.HALTED, RAGSessionStatus.INSUFFICIENT_EVIDENCE):
-            _mark_error(self._span, str(getattr(decision, "reason", "") or status.value))
+            _mark_error(self._span, status.value)
 
     def finish_step(self, result: Any) -> None:
-        attrs = _step_finish_attributes(result)
+        attrs = _safe_build_attributes(lambda: _step_finish_attributes(result))
         _set_attributes(self._span, attrs)
         if attrs.get("newsroom.rag.step.error_count", 0):
             _mark_error(self._span, "rag step returned errors")
 
     def record_exception(self, exc: BaseException) -> None:
-        _call(self._span, "record_exception", exc)
-        _mark_error(self._span, str(exc))
-
-    def trace_metadata(self) -> dict[str, str]:
-        return _span_context_metadata(self._span)
-
+        _call(
+            self._span,
+            "set_attribute",
+            "newsroom.rag.error_type",
+            type(exc).__name__[:96],
+        )
+        _mark_error(self._span, "exception")
 
 class _SpanContext(AbstractContextManager[RAGTelemetrySpan]):
     def __init__(self, tracer: Any, name: str, attributes: dict[str, Any]) -> None:
@@ -83,20 +100,29 @@ class _SpanContext(AbstractContextManager[RAGTelemetrySpan]):
         self._active: RAGTelemetrySpan | None = None
 
     def __enter__(self) -> RAGTelemetrySpan:
-        self._context = self._tracer.start_as_current_span(
-            self._name,
-            attributes=self._attributes,
-        )
-        span = self._context.__enter__()
+        try:
+            self._context = self._tracer.start_as_current_span(
+                self._name,
+                attributes=self._attributes,
+            )
+            if self._context is None:
+                raise TypeError("tracer returned no span context")
+            span = self._context.__enter__()
+            if span is None:
+                span = _NoopSpan()
+        except Exception:
+            _safe_exit(self._context)
+            self._context = None
+            span = _NoopSpan()
         self._active = RAGTelemetrySpan(span)
         return self._active
 
     def __exit__(self, exc_type: Any, exc: BaseException | None, traceback: Any) -> bool | None:
         if exc is not None and self._active is not None:
             self._active.record_exception(exc)
-        if self._context is None:
-            return None
-        return self._context.__exit__(exc_type, exc, traceback)
+        _safe_exit(self._context)
+        self._context = None
+        return False
 
 
 class _NoopTracer:
@@ -129,18 +155,18 @@ class _NoopSpan:
 def _default_tracer() -> Any:
     if _otel_trace is None:
         return _NoopTracer()
-    return _otel_trace.get_tracer(TRACER_NAME)
+    try:
+        return _otel_trace.get_tracer(TRACER_NAME)
+    except Exception:
+        return _NoopTracer()
 
 
 def _session_attributes(spec: Any, policy: Any) -> dict[str, Any]:
-    scope = _session_scope_metadata(spec)
+    required_evidence_types = list(
+        getattr(getattr(spec, "goal", None), "required_evidence_types", ())
+    )
     attrs = {
-        "newsroom.rag.session_id": getattr(spec, "session_id", ""),
-        "newsroom.rag.run_id": getattr(spec, "run_id", ""),
-        "newsroom.rag.workflow_id": getattr(spec, "workflow_id", ""),
-        "newsroom.rag.step_id": getattr(spec, "step_id", ""),
-        "newsroom.rag.query_hash": _hash_text(getattr(getattr(spec, "goal", None), "question", "")),
-        "newsroom.rag.required_evidence_types": list(getattr(getattr(spec, "goal", None), "required_evidence_types", ())),
+        "newsroom.rag.required_evidence_type_count": len(required_evidence_types),
         "newsroom.rag.generation_enabled": bool(getattr(policy, "generation_enabled", False)),
         "newsroom.rag.max_generation_attempts": int(getattr(policy, "max_generation_attempts", 0) or 0),
     }
@@ -156,8 +182,6 @@ def _session_attributes(spec: Any, policy: Any) -> dict[str, Any]:
         "max_worker_calls",
     ):
         attrs[f"newsroom.rag.budget.{field_name}"] = int(getattr(budget, field_name, 0) or 0)
-    if scope.get("tenant_id"):
-        attrs["newsroom.rag.tenant_id"] = scope["tenant_id"]
     return attrs
 
 
@@ -165,12 +189,8 @@ def _step_attributes(step: Any, spec: Any) -> dict[str, Any]:
     operation = getattr(step, "operation", "")
     operation_value = operation.value if isinstance(operation, RetrievalOperation) else str(operation)
     attrs = {
-        "newsroom.rag.session_id": getattr(spec, "session_id", ""),
-        "newsroom.rag.step.step_id": getattr(step, "step_id", ""),
         "newsroom.rag.step.operation": operation_value,
-        "newsroom.rag.step.scope": getattr(step, "corpus", "") or "default",
         "newsroom.rag.step.has_query": bool(str(getattr(step, "query", "") or "").strip()),
-        "newsroom.rag.step.query_hash": _hash_text(getattr(step, "query", "") or ""),
         "newsroom.rag.step.max_results": int(getattr(step, "max_results", 0) or 0),
         "newsroom.rag.step.max_source_reads": int(getattr(step, "max_source_reads", 0) or 0),
     }
@@ -238,11 +258,8 @@ def _event_attributes(event_type: str, payload: dict[str, Any]) -> dict[str, Any
             attrs[f"newsroom.rag.event.{attr_key}"] = len(payload[key])
     if isinstance(payload.get("pack"), dict):
         pack = payload["pack"]
-        attrs["newsroom.rag.event.context_pack_id"] = str(pack.get("pack_id") or "")
         if isinstance(pack.get("accepted_evidence"), list):
             attrs["newsroom.rag.event.accepted_evidence_count"] = len(pack["accepted_evidence"])
-    if payload.get("context_pack_id"):
-        attrs["newsroom.rag.event.context_pack_id"] = str(payload["context_pack_id"])
     decision_type = payload.get("decision_type")
     if decision_type:
         attrs["newsroom.rag.event.decision_type"] = str(decision_type)
@@ -252,43 +269,54 @@ def _event_attributes(event_type: str, payload: dict[str, Any]) -> dict[str, Any
     return attrs
 
 
-def _session_scope_metadata(spec: Any) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for source in (getattr(getattr(spec, "goal", None), "metadata", {}), getattr(spec, "metadata", {}), getattr(spec, "source_policy", {})):
-        if not isinstance(source, dict):
-            continue
-        for key in ("tenant_id",):
-            value = str(source.get(key) or "").strip()
-            if value and key not in values:
-                values[key] = value
-    return values
-
-
-def _safe_attributes(attrs: dict[str, Any]) -> dict[str, Any]:
+def _safe_attributes(attrs: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(attrs, Mapping):
+        return {}
     clean: dict[str, Any] = {}
     for key, value in attrs.items():
+        if len(clean) >= MAX_RAG_TELEMETRY_ATTRIBUTES:
+            break
+        if (
+            not isinstance(key, str)
+            or len(key) > MAX_RAG_TELEMETRY_KEY_LENGTH
+            or "\r" in key
+            or "\n" in key
+        ):
+            continue
         value = _attribute_value(value)
         if value is not None:
-            clean[str(key)] = value
+            clean[key] = value
     return clean
 
 
 def _attribute_value(value: Any) -> Any:
-    value = to_jsonable(value)
+    try:
+        value = to_jsonable(value)
+    except Exception:
+        return None
     if value is None:
         return None
-    if isinstance(value, (bool, int, float, str)):
+    if isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return _bounded_string(value)
     if isinstance(value, (list, tuple)):
-        values = [_attribute_value(item) for item in value]
+        values = [
+            _attribute_value(item)
+            for item in value[:MAX_RAG_TELEMETRY_SEQUENCE_LENGTH]
+        ]
         values = [item for item in values if isinstance(item, (bool, int, float, str))]
         if not values:
             return None
         first_type = type(values[0])
         if all(isinstance(item, first_type) for item in values):
             return values
-        return [str(item) for item in values]
-    return str(value)
+        return [_bounded_string(str(item)) for item in values if _bounded_string(str(item))]
+    return None
 
 
 def _set_attributes(span: Any, attrs: dict[str, Any]) -> None:
@@ -298,50 +326,55 @@ def _set_attributes(span: Any, attrs: dict[str, Any]) -> None:
 
 def _mark_error(span: Any, description: str) -> None:
     if _OtelStatus is not None and _OtelStatusCode is not None:
-        _call(span, "set_status", _OtelStatus(_OtelStatusCode.ERROR, description))
+        try:
+            status = _OtelStatus(_OtelStatusCode.ERROR, "operation failed")
+        except Exception:
+            status = None
+        if status is not None:
+            _call(span, "set_status", status)
         return
     _call(span, "set_attribute", "newsroom.rag.error", True)
     if description:
-        _call(span, "set_attribute", "newsroom.rag.error_description", description[:160])
-
-
-def _span_context_metadata(span: Any) -> dict[str, str]:
-    if not hasattr(span, "get_span_context"):
-        return {}
-    context = span.get_span_context()
-    trace_id = _format_trace_value(getattr(context, "trace_id", None), width=32)
-    span_id = _format_trace_value(getattr(context, "span_id", None), width=16)
-    out: dict[str, str] = {}
-    if trace_id:
-        out["trace_id"] = trace_id
-    if span_id:
-        out["root_span_id"] = span_id
-    return out
-
-
-def _format_trace_value(value: Any, *, width: int) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        if value <= 0:
-            return None
-        return f"{value:0{width}x}"
-    text = str(value).strip()
-    return text or None
-
-
-def _hash_text(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    return sha256(text.encode("utf-8")).hexdigest()[:16]
+        _call(span, "set_attribute", "newsroom.rag.error_class", description[:96])
 
 
 def _call(target: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
-    method = getattr(target, method_name, None)
-    if method is None:
+    try:
+        method = getattr(target, method_name, None)
+        if method is None:
+            return None
+        return method(*args, **kwargs)
+    except Exception:
         return None
-    return method(*args, **kwargs)
+
+
+def _safe_build_attributes(factory: Callable[[], Mapping[str, Any]]) -> dict[str, Any]:
+    try:
+        return _safe_attributes(factory())
+    except Exception:
+        return {}
+
+
+def _bounded_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    if (
+        not value
+        or len(value) > MAX_RAG_TELEMETRY_STRING_LENGTH
+        or "\r" in value
+        or "\n" in value
+    ):
+        return None
+    return value
+
+
+def _safe_exit(context: Any | None) -> None:
+    if context is None:
+        return
+    try:
+        context.__exit__(None, None, None)
+    except Exception:
+        return
 
 
 __all__ = ["RAGTelemetry", "RAGTelemetrySpan", "TRACER_NAME"]

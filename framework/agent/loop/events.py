@@ -31,7 +31,7 @@ class AgentLoopEventRecorder:
     def __init__(self, *, agent_id: str, trace_context: TraceContext | None = None) -> None:
         self.agent_id = agent_id
         self.trace_context = (
-            trace_context.child(span_id=f"agent:{agent_id}", agent_id=agent_id)
+            trace_context.child(agent_id=agent_id)
             if trace_context is not None
             else None
         )

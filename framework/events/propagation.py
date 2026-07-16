@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, replace
 from enum import Enum
 import re
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Any, Iterator, Protocol
 
 from framework.events.trace import (
     MAX_TRACESTATE_BYTES,
     TraceContext,
     is_valid_span_id,
+    is_valid_trace_flags,
     is_valid_trace_id,
+    new_span_id,
+    new_trace_id,
 )
 
 
@@ -28,6 +33,117 @@ _TRACESTATE_KEY_PATTERN = re.compile(
 _TRACESTATE_VALUE_PATTERN = re.compile(r"[\x20-\x2b\x2d-\x3c\x3e-\x7e]{1,256}\Z")
 _BAGGAGE_KEY_PATTERN = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}\Z")
 _BAGGAGE_VALUE_PATTERN = re.compile(r"[\x21-\x2b\x2d-\x3a\x3c-\x7e]{0,1024}\Z")
+_CURRENT_TRACE_CONTEXT: ContextVar[TraceContext | W3CSpanContext | None]
+
+
+@dataclass(frozen=True, slots=True)
+class W3CSpanContext:
+    """Transport span context with no business run or authorization identity."""
+
+    trace_id: str
+    span_id: str
+    trace_flags: str = "00"
+    tracestate: str | None = None
+    is_remote: bool = False
+    parent_span_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not is_valid_trace_id(self.trace_id):
+            raise ValueError("trace_id must be a nonzero W3C trace id")
+        if not is_valid_span_id(self.span_id):
+            raise ValueError("span_id must be a nonzero W3C span id")
+        if not is_valid_trace_flags(self.trace_flags):
+            raise ValueError("trace_flags must be two lowercase hexadecimal characters")
+        if self.parent_span_id is not None and not is_valid_span_id(self.parent_span_id):
+            raise ValueError("parent_span_id must be a nonzero W3C span id")
+        if not isinstance(self.is_remote, bool):
+            raise TypeError("is_remote must be a boolean")
+        if self.tracestate is not None:
+            if not isinstance(self.tracestate, str):
+                raise TypeError("tracestate must be a string")
+            if "\r" in self.tracestate or "\n" in self.tracestate:
+                raise ValueError("tracestate cannot contain line breaks")
+            if len(self.tracestate.encode("utf-8")) > MAX_TRACESTATE_BYTES:
+                raise ValueError("tracestate exceeds the W3C byte limit")
+
+    @property
+    def is_injectable(self) -> bool:
+        return True
+
+    @classmethod
+    def root(cls) -> "W3CSpanContext":
+        return cls(trace_id=new_trace_id(), span_id=new_span_id())
+
+    @classmethod
+    def from_trace_context(
+        cls,
+        context: TraceContext | None,
+    ) -> "W3CSpanContext | None":
+        if context is None or not context.is_injectable:
+            return None
+        return cls(
+            trace_id=context.trace_id,
+            span_id=context.span_id,
+            trace_flags=context.trace_flags,
+            tracestate=context.tracestate,
+            is_remote=context.is_remote,
+            parent_span_id=(
+                context.parent_span_id
+                if context.parent_span_id is None
+                or is_valid_span_id(context.parent_span_id)
+                else None
+            ),
+        )
+
+    @classmethod
+    def from_trace_block(cls, trace: Any) -> "W3CSpanContext | None":
+        if trace is None:
+            return None
+        try:
+            return cls(
+                trace_id=trace.trace_id,
+                span_id=trace.span_id,
+                trace_flags=trace.trace_flags,
+                tracestate=trace.tracestate,
+                is_remote=trace.is_remote,
+                parent_span_id=trace.parent_span_id,
+            )
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def child(self) -> "W3CSpanContext":
+        return W3CSpanContext(
+            trace_id=self.trace_id,
+            span_id=new_span_id(),
+            parent_span_id=self.span_id,
+            trace_flags=self.trace_flags,
+            tracestate=self.tracestate,
+            is_remote=False,
+        )
+
+    def to_trace_context(
+        self,
+        *,
+        run_id: str,
+        workflow_id: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> TraceContext:
+        return TraceContext.root(
+            run_id=run_id,
+            workflow_id=workflow_id,
+            trace_id=self.trace_id,
+            span_id=self.span_id,
+            metadata=metadata,
+            trace_flags=self.trace_flags,
+            tracestate=self.tracestate,
+            is_remote=self.is_remote,
+        )
+
+
+_CURRENT_TRACE_CONTEXT = ContextVar(
+    "newsroom_current_trace_context",
+    default=None,
+)
 
 
 class TraceParentFailureAction(str, Enum):
@@ -111,8 +227,37 @@ class TracePropagationPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class ExtractedSpanContext:
+    context: W3CSpanContext
+    remote_context: W3CSpanContext | None = None
+    baggage: Mapping[str, str] = MappingProxyType({})
+    accepted_remote: bool = False
+    restarted: bool = False
+    diagnostics: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.context, W3CSpanContext):
+            raise TypeError("context must be W3CSpanContext")
+        if self.remote_context is not None and not isinstance(
+            self.remote_context,
+            W3CSpanContext,
+        ):
+            raise TypeError("remote_context must be W3CSpanContext")
+        baggage = _immutable_baggage(self.baggage)
+        object.__setattr__(self, "baggage", baggage)
+        diagnostics = tuple(str(item) for item in self.diagnostics)
+        if len(diagnostics) > 8:
+            raise ValueError("trace extraction diagnostics must be bounded")
+        object.__setattr__(self, "diagnostics", diagnostics)
+
+    def child(self) -> "ExtractedSpanContext":
+        return replace(self, context=self.context.child())
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractedTraceContext:
     context: TraceContext
+    remote_context: TraceContext | None = None
     baggage: Mapping[str, str] = MappingProxyType({})
     accepted_remote: bool = False
     restarted: bool = False
@@ -121,12 +266,12 @@ class ExtractedTraceContext:
     def __post_init__(self) -> None:
         if not isinstance(self.context, TraceContext):
             raise TypeError("context must be TraceContext")
-        baggage: dict[str, str] = {}
-        for key, value in self.baggage.items():
-            if not isinstance(key, str) or not isinstance(value, str):
-                raise TypeError("extracted baggage keys and values must be strings")
-            baggage[key] = value
-        object.__setattr__(self, "baggage", MappingProxyType(baggage))
+        if self.remote_context is not None and not isinstance(
+            self.remote_context,
+            TraceContext,
+        ):
+            raise TypeError("remote_context must be TraceContext")
+        object.__setattr__(self, "baggage", _immutable_baggage(self.baggage))
         if not isinstance(self.accepted_remote, bool) or not isinstance(
             self.restarted,
             bool,
@@ -161,6 +306,33 @@ class W3CTracePropagator:
         workflow_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> ExtractedTraceContext:
+        extracted = self.extract_span(carrier)
+        context = extracted.context.to_trace_context(
+            run_id=run_id,
+            workflow_id=workflow_id,
+            metadata=metadata,
+        )
+        remote_context = (
+            extracted.remote_context.to_trace_context(
+                run_id=run_id,
+                workflow_id=workflow_id,
+                metadata=metadata,
+            )
+            if extracted.remote_context is not None
+            else None
+        )
+        return ExtractedTraceContext(
+            context=context,
+            remote_context=remote_context,
+            baggage=extracted.baggage,
+            accepted_remote=extracted.accepted_remote,
+            restarted=extracted.restarted,
+            diagnostics=extracted.diagnostics,
+        )
+
+    def extract_span(self, carrier: Mapping[str, Any]) -> ExtractedSpanContext:
+        """Extract transport context without inventing a business run identity."""
+
         headers = _read_bounded_headers(carrier, self._policy)
         traceparent = headers.get(TRACEPARENT_HEADER)
         if traceparent is None:
@@ -171,32 +343,22 @@ class W3CTracePropagator:
             diagnostics = baggage_diagnostics
             if TRACESTATE_HEADER in headers:
                 diagnostics = (*diagnostics, "orphan_tracestate_dropped")
-            return ExtractedTraceContext(
-                context=TraceContext.root(
-                    run_id=run_id,
-                    workflow_id=workflow_id,
-                    metadata=metadata,
-                ),
+            return ExtractedSpanContext(
+                context=W3CSpanContext.root(),
                 baggage=baggage,
                 diagnostics=diagnostics,
             )
 
         parsed = _parse_traceparent(traceparent, self._policy)
         if parsed is None:
-            return self._restart_or_reject(
+            return self._restart_or_reject_span(
                 action=self._policy.invalid_traceparent_action,
                 reason="invalid_traceparent",
-                run_id=run_id,
-                workflow_id=workflow_id,
-                metadata=metadata,
             )
         if not self._policy.accept_remote_context:
-            return self._restart_or_reject(
+            return self._restart_or_reject_span(
                 action=self._policy.untrusted_context_action,
                 reason="untrusted_remote_context",
-                run_id=run_id,
-                workflow_id=workflow_id,
-                metadata=metadata,
             )
 
         trace_id, span_id, trace_flags = parsed
@@ -208,17 +370,16 @@ class W3CTracePropagator:
             headers.get(BAGGAGE_HEADER),
             self._policy,
         )
-        return ExtractedTraceContext(
-            context=TraceContext.root(
-                run_id=run_id,
-                workflow_id=workflow_id,
-                trace_id=trace_id,
-                span_id=span_id,
-                metadata=metadata,
-                trace_flags=trace_flags,
-                tracestate=tracestate,
-                is_remote=True,
-            ),
+        remote_context = W3CSpanContext(
+            trace_id=trace_id,
+            span_id=span_id,
+            trace_flags=trace_flags,
+            tracestate=tracestate,
+            is_remote=True,
+        )
+        return ExtractedSpanContext(
+            context=remote_context,
+            remote_context=remote_context,
             baggage=baggage,
             accepted_remote=True,
             diagnostics=(*tracestate_diagnostics, *baggage_diagnostics),
@@ -226,13 +387,13 @@ class W3CTracePropagator:
 
     def inject(
         self,
-        context: TraceContext,
+        context: TraceContext | W3CSpanContext,
         carrier: Mapping[str, Any] | None = None,
         *,
         baggage: Mapping[str, str] | None = None,
     ) -> dict[str, str]:
-        if not isinstance(context, TraceContext):
-            raise TypeError("context must be TraceContext")
+        if not isinstance(context, (TraceContext, W3CSpanContext)):
+            raise TypeError("context must be TraceContext or W3CSpanContext")
         outbound = _copy_without_propagation_headers(carrier or {}, self._policy)
         if not context.is_injectable:
             return outbound
@@ -251,22 +412,15 @@ class W3CTracePropagator:
         return outbound
 
     @staticmethod
-    def _restart_or_reject(
+    def _restart_or_reject_span(
         *,
         action: TraceParentFailureAction,
         reason: str,
-        run_id: str,
-        workflow_id: str | None,
-        metadata: Mapping[str, Any] | None,
-    ) -> ExtractedTraceContext:
+    ) -> ExtractedSpanContext:
         if action is TraceParentFailureAction.REJECT:
             raise TracePropagationError(reason)
-        return ExtractedTraceContext(
-            context=TraceContext.root(
-                run_id=run_id,
-                workflow_id=workflow_id,
-                metadata=metadata,
-            ),
+        return ExtractedSpanContext(
+            context=W3CSpanContext.root(),
             restarted=True,
             diagnostics=(reason,),
         )
@@ -279,7 +433,10 @@ class TraceAdapter(Protocol):
 
     def child(self, context: TraceContext, **fields: Any) -> TraceContext: ...
 
-    def to_native_context(self, context: TraceContext) -> Any | None: ...
+    def to_native_context(
+        self,
+        context: TraceContext | W3CSpanContext,
+    ) -> Any | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,9 +451,12 @@ class NoOpTraceAdapter:
     def child(self, context: TraceContext, **fields: Any) -> TraceContext:
         return context.child(**fields)
 
-    def to_native_context(self, context: TraceContext) -> None:
-        if not isinstance(context, TraceContext):
-            raise TypeError("context must be TraceContext")
+    def to_native_context(
+        self,
+        context: TraceContext | W3CSpanContext,
+    ) -> None:
+        if not isinstance(context, (TraceContext, W3CSpanContext)):
+            raise TypeError("context must be TraceContext or W3CSpanContext")
         return None
 
 
@@ -317,9 +477,12 @@ class OpenTelemetryTraceAdapter:
     def child(self, context: TraceContext, **fields: Any) -> TraceContext:
         return context.child(**fields)
 
-    def to_native_context(self, context: TraceContext) -> Any | None:
-        if not isinstance(context, TraceContext):
-            raise TypeError("context must be TraceContext")
+    def to_native_context(
+        self,
+        context: TraceContext | W3CSpanContext,
+    ) -> Any | None:
+        if not isinstance(context, (TraceContext, W3CSpanContext)):
+            raise TypeError("context must be TraceContext or W3CSpanContext")
         if not context.is_injectable:
             return None
         trace_state = self._trace_state_type()
@@ -371,6 +534,50 @@ def default_trace_adapter() -> TraceAdapter:
         return OpenTelemetryTraceAdapter()
     except Exception:
         return NoOpTraceAdapter()
+
+
+def current_trace_context() -> TraceContext | W3CSpanContext | None:
+    """Return the immutable trace context scoped to this async/thread context."""
+
+    return _CURRENT_TRACE_CONTEXT.get()
+
+
+def attach_trace_context(
+    context: TraceContext | W3CSpanContext | None,
+) -> Token[TraceContext | W3CSpanContext | None]:
+    if context is not None and not isinstance(context, (TraceContext, W3CSpanContext)):
+        raise TypeError("context must be TraceContext or W3CSpanContext")
+    return _CURRENT_TRACE_CONTEXT.set(context)
+
+
+def reset_trace_context(
+    token: Token[TraceContext | W3CSpanContext | None],
+) -> None:
+    _CURRENT_TRACE_CONTEXT.reset(token)
+
+
+@contextmanager
+def trace_context_scope(
+    context: TraceContext | W3CSpanContext | None,
+) -> Iterator[TraceContext | W3CSpanContext | None]:
+    token = attach_trace_context(context)
+    try:
+        yield context
+    finally:
+        reset_trace_context(token)
+
+
+def inject_current_trace(
+    carrier: Mapping[str, Any] | None = None,
+    *,
+    baggage: Mapping[str, str] | None = None,
+    propagator: W3CTracePropagator | None = None,
+) -> dict[str, str]:
+    actual = propagator or W3CTracePropagator()
+    context = current_trace_context()
+    if context is None:
+        return _copy_without_propagation_headers(carrier or {}, actual.policy)
+    return actual.inject(context, carrier, baggage=baggage)
 
 
 def _read_bounded_headers(
@@ -576,6 +783,17 @@ def _validated_baggage_key(value: Any) -> str:
     return normalized
 
 
+def _immutable_baggage(value: Mapping[str, str]) -> Mapping[str, str]:
+    if not isinstance(value, Mapping):
+        raise TypeError("baggage must be a mapping")
+    baggage: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise TypeError("baggage keys and values must be strings")
+        baggage[key] = item
+    return MappingProxyType(baggage)
+
+
 def _load_otel_bindings() -> tuple[Any, Any, Any]:
     from opentelemetry.trace import SpanContext, TraceFlags, TraceState
 
@@ -585,10 +803,51 @@ def _load_otel_bindings() -> tuple[Any, Any, Any]:
 DEFAULT_TRACE_PROPAGATION_POLICY = TracePropagationPolicy()
 
 
+def normalize_trace_carrier(
+    value: Mapping[str, Any] | None,
+    *,
+    policy: TracePropagationPolicy | None = None,
+    immutable: bool = True,
+) -> Mapping[str, str]:
+    """Validate and snapshot the shared W3C transport carrier contract."""
+
+    if value is None:
+        carrier: dict[str, str] = {}
+        return MappingProxyType(carrier) if immutable else carrier
+    if not isinstance(value, Mapping):
+        raise TypeError("trace_carrier must be a mapping")
+    actual_policy = policy or DEFAULT_TRACE_PROPAGATION_POLICY
+    if len(value) > actual_policy.max_carrier_items:
+        raise ValueError("trace_carrier exceeds the item limit")
+    byte_limits = {
+        TRACEPARENT_HEADER: actual_policy.max_traceparent_bytes,
+        TRACESTATE_HEADER: actual_policy.max_tracestate_bytes,
+        BAGGAGE_HEADER: actual_policy.max_baggage_bytes,
+    }
+    carrier = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise TypeError("trace_carrier keys must be strings")
+        normalized = key.casefold()
+        if normalized not in byte_limits:
+            raise ValueError("trace_carrier contains an unsupported header")
+        if normalized in carrier:
+            raise ValueError("trace_carrier contains a duplicate header")
+        if not isinstance(item, str):
+            raise TypeError("trace_carrier values must be strings")
+        if "\r" in item or "\n" in item:
+            raise ValueError("trace_carrier values cannot contain line breaks")
+        if len(item.encode("utf-8")) > byte_limits[normalized]:
+            raise ValueError(f"trace_carrier {normalized} exceeds the byte limit")
+        carrier[normalized] = item
+    return MappingProxyType(carrier) if immutable else carrier
+
+
 __all__ = [
     "AuxiliaryFailureAction",
     "BAGGAGE_HEADER",
     "DEFAULT_TRACE_PROPAGATION_POLICY",
+    "ExtractedSpanContext",
     "ExtractedTraceContext",
     "NoOpTraceAdapter",
     "OpenTelemetryTraceAdapter",
@@ -599,5 +858,12 @@ __all__ = [
     "TracePropagationError",
     "TracePropagationPolicy",
     "W3CTracePropagator",
+    "W3CSpanContext",
+    "attach_trace_context",
+    "current_trace_context",
     "default_trace_adapter",
+    "inject_current_trace",
+    "normalize_trace_carrier",
+    "reset_trace_context",
+    "trace_context_scope",
 ]

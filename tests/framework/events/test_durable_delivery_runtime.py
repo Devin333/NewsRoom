@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import traceback
+from typing import Any
 
 import pytest
 
@@ -11,7 +13,9 @@ from framework.events.canonical import (
     EventCandidate,
     ProducerIdentity,
     StoredEvent,
+    TraceBlock,
 )
+from framework.events.propagation import W3CSpanContext, current_trace_context
 from framework.events.errors import EventConsumerIdempotencyError
 from framework.events.runtime.authorization import (
     RedeliveryAuthorizationDecision,
@@ -155,6 +159,46 @@ class _Consumer:
         if isinstance(result, BaseException):
             raise result
         return result  # type: ignore[return-value]
+
+
+class _TraceConsumer(_Consumer):
+    def __init__(self, consumer_id: str) -> None:
+        super().__init__(consumer_id)
+        self.trace_contexts: list[W3CSpanContext | None] = []
+
+    def consume(
+        self,
+        event: StoredEvent,
+        context: ConsumerDeliveryContext,
+    ) -> ConsumerOutcome:
+        active = current_trace_context()
+        self.trace_contexts.append(
+            active if isinstance(active, W3CSpanContext) else None
+        )
+        return super().consume(event, context)
+
+
+class _TelemetryScope(AbstractContextManager[None]):
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, exc_type: Any, exc: BaseException | None, traceback: Any) -> bool:
+        return False
+
+
+class _TraceTelemetry:
+    def __init__(self) -> None:
+        self.started: list[dict[str, Any]] = []
+
+    def start_span(self, name: str, *, attributes: Any, links: Any) -> _TelemetryScope:
+        self.started.append(
+            {
+                "name": name,
+                "attributes": dict(attributes),
+                "links": tuple(link for link in links if link is not None),
+            }
+        )
+        return _TelemetryScope()
 
 
 class _RedeliveryAuthorizer:
@@ -583,6 +627,7 @@ def _event(
     stream_id: str | None = None,
     tenant_id: str | None = None,
     event_type: str = "io.newsroom.test.delivery",
+    trace: TraceBlock | None = None,
 ) -> StoredEvent:
     candidate = EventCandidate(
         event_id=f"evt-delivery-{number}",
@@ -593,6 +638,7 @@ def _event(
         stream_id=stream_id or f"run:delivery-{number}",
         business_context=BusinessContext(run_id=f"delivery-{number}"),
         producer=ProducerIdentity(component="delivery-test", version="1"),
+        trace=trace,
         tenant_id=tenant_id,
         payload={"sequence": number},
     )
@@ -896,6 +942,72 @@ def test_ack_maps_to_atomic_settlement_and_bounded_claim_request() -> None:
         settlement.target_state is DeliveryState.ACKED
         for settlement in store.settlements
     )
+
+
+def test_delivery_batch_and_retry_use_origin_links_and_scoped_children() -> None:
+    first_origin = W3CSpanContext.root()
+    second_origin = W3CSpanContext.root()
+    first = _event(
+        1,
+        trace=TraceBlock(
+            trace_id=first_origin.trace_id,
+            span_id=first_origin.span_id,
+        ),
+    )
+    second = _event(
+        2,
+        trace=TraceBlock(
+            trace_id=second_origin.trace_id,
+            span_id=second_origin.span_id,
+        ),
+    )
+    subscription = _subscription()
+    store = _Store()
+    store.claims = [
+        _claim(first, subscription),
+        _claim(second, subscription, attempt_count=2),
+    ]
+    consumer = _TraceConsumer(subscription.consumer_id)
+    telemetry = _TraceTelemetry()
+    runtime = DurableDeliveryRuntime(
+        store,  # type: ignore[arg-type]
+        telemetry=telemetry,  # type: ignore[arg-type]
+        clock=_Clock(),
+    )
+    runtime.register(subscription, consumer)
+
+    result = runtime.dispatch_batch(
+        subscription.key,
+        lease_owner="worker-1",
+        limit=2,
+    )
+
+    assert result.acknowledged_count == 2
+    batch = next(
+        span
+        for span in telemetry.started
+        if span["name"] == "newsroom.event.delivery.batch"
+    )
+    assert {link.context.trace_id for link in batch["links"]} == {
+        first_origin.trace_id,
+        second_origin.trace_id,
+    }
+    consume_spans = [
+        span
+        for span in telemetry.started
+        if span["name"] == "newsroom.event.delivery.consume"
+    ]
+    assert [
+        span["links"][0].attributes["newsroom.link.relationship"]
+        for span in consume_spans
+    ] == ["event_delivery", "delivery_retry"]
+    assert [context.trace_id for context in consumer.trace_contexts if context] == [
+        first_origin.trace_id,
+        second_origin.trace_id,
+    ]
+    assert [
+        context.parent_span_id for context in consumer.trace_contexts if context
+    ] == [first_origin.span_id, second_origin.span_id]
 
 
 def test_inbox_transaction_writes_stable_entry_and_redelivery_skips_effect() -> None:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from threading import RLock
-from typing import TYPE_CHECKING, Final, TypeVar
+from typing import TYPE_CHECKING, Final, Iterator, TypeVar
 
 from framework.events.errors import (
     EventConsumerIdempotencyError,
@@ -65,6 +66,14 @@ from framework.events.subscriber import (
     failure_from_outcome,
 )
 from framework.events.runtime.retry import RetryPlanner
+from framework.events.propagation import W3CSpanContext, trace_context_scope
+from framework.events.telemetry import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    TelemetrySpanLink,
+    default_event_telemetry,
+)
 
 if TYPE_CHECKING:
     from framework.events.ports import EventStorePort
@@ -694,6 +703,7 @@ class DurableDeliveryRuntime:
         diagnostic_projector: DeliveryDiagnosticProjector | None = None,
         diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
         redelivery_authorizer: RedeliveryAuthorizerPort | None = None,
+        telemetry: EventTelemetry | None = None,
         clock: Clock | None = None,
     ) -> None:
         if consumers is not None and (
@@ -753,6 +763,13 @@ class DurableDeliveryRuntime:
         self._redelivery_authorizer = redelivery_authorizer
         self._diagnostic_projector = (
             diagnostic_projector or DeliveryDiagnosticProjector()
+        )
+        self._telemetry = telemetry or default_event_telemetry(
+            resource=TelemetryResource(service_name="newsroom-event-runtime"),
+            scope=TelemetryInstrumentationScope(
+                name="framework.events.delivery",
+                version="1",
+            ),
         )
 
     @property
@@ -849,27 +866,43 @@ class DurableDeliveryRuntime:
                     "durable store returned a duplicate delivery claim"
                 ),
             )
-        attempts = tuple(
-            (
-                _failed_attempt(
-                    item,
-                    phase=DeliveryFailurePhase.CLAIM_VALIDATION,
-                    reason_class="duplicate_delivery_claim",
-                    error=EventDeliveryContractError(
-                        "durable store returned a duplicate delivery claim"
-                    ),
-                )
-                if item.delivery.delivery_id in duplicate_delivery_ids
-                else self._process_claim(
-                    subscription=subscription,
-                    consumer=consumer,
-                    claimed=item,
-                    expected_lease_owner=request.lease_owner,
-                    requested_at=requested_at,
-                )
+        batch_links = tuple(
+            TelemetrySpanLink.from_trace_block(
+                item.event.trace,
+                relationship="batch_item",
             )
             for item in claimed
         )
+        with self._telemetry.start_span(
+            "newsroom.event.delivery.batch",
+            attributes={
+                "newsroom.batch.size": len(claimed),
+                "newsroom.component": "delivery",
+                "newsroom.operation": "dispatch_batch",
+            },
+            links=batch_links,
+        ):
+            attempts = tuple(
+                (
+                    _failed_attempt(
+                        item,
+                        phase=DeliveryFailurePhase.CLAIM_VALIDATION,
+                        reason_class="duplicate_delivery_claim",
+                        error=EventDeliveryContractError(
+                            "durable store returned a duplicate delivery claim"
+                        ),
+                    )
+                    if item.delivery.delivery_id in duplicate_delivery_ids
+                    else self._process_claim(
+                        subscription=subscription,
+                        consumer=consumer,
+                        claimed=item,
+                        expected_lease_owner=request.lease_owner,
+                        requested_at=requested_at,
+                    )
+                )
+                for item in claimed
+            )
         return DeliveryBatchResult(
             subscription_id=subscription.subscription_id,
             subscription_version=subscription.subscription_version,
@@ -1116,13 +1149,14 @@ class DurableDeliveryRuntime:
             runner = self._inbox_transaction_runner
             assert runner is not None  # activation and per-claim gates prove this
             try:
-                transaction_result = runner.execute(
-                    subscription=subscription,
-                    consumer=consumer,
-                    claimed=claimed,
-                    context=context,
-                    settled_at=settled_at,
-                )
+                with self._consumer_observation(subscription, claimed):
+                    transaction_result = runner.execute(
+                        subscription=subscription,
+                        consumer=consumer,
+                        claimed=claimed,
+                        context=context,
+                        settled_at=settled_at,
+                    )
                 if not isinstance(transaction_result, InboxTransactionResult):
                     raise EventDeliveryContractError(
                         "transactional effect runner returned an invalid result"
@@ -1165,7 +1199,8 @@ class DurableDeliveryRuntime:
                 outcome = None
         else:
             try:
-                outcome = consumer.consume(claimed.event, context)
+                with self._consumer_observation(subscription, claimed):
+                    outcome = consumer.consume(claimed.event, context)
                 if not isinstance(outcome, ConsumerOutcome):
                     failure = self._project_failure(
                         ConsumerFailure(
@@ -1239,6 +1274,43 @@ class DurableDeliveryRuntime:
             consumer_called=consumer_called,
             inbox_already_completed=inbox_already_completed,
         )
+
+    @contextmanager
+    def _consumer_observation(
+        self,
+        subscription: DurableSubscription,
+        claimed: ClaimedDelivery,
+    ) -> Iterator[None]:
+        origin = W3CSpanContext.from_trace_block(claimed.event.trace)
+        local_context = (origin or W3CSpanContext.root()).child()
+        attempt_bucket = _delivery_attempt_bucket(claimed.delivery.attempt_count)
+        relationship = (
+            "delivery_retry"
+            if claimed.delivery.attempt_count > 1
+            else "event_delivery"
+        )
+        link = TelemetrySpanLink.from_context(
+            origin,
+            relationship=relationship,
+            attempt_bucket=attempt_bucket,
+        )
+        with trace_context_scope(local_context), self._telemetry.start_span(
+            "newsroom.event.delivery.consume",
+            attributes={
+                "newsroom.component": "delivery",
+                "newsroom.operation": "consume",
+                "newsroom.event.type": claimed.event.event_type,
+                "newsroom.delivery.consumer": _consumer_metric_bucket(
+                    subscription.consumer_id
+                ),
+                "newsroom.delivery.attempt_bucket": attempt_bucket,
+                "newsroom.delivery.generation_bucket": _generation_bucket(
+                    claimed.delivery.delivery_generation
+                ),
+            },
+            links=(link,),
+        ):
+            yield
 
     def _settle(
         self,
@@ -1746,6 +1818,26 @@ def _positive_int(value: object, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"{field_name} must be a positive integer")
     return value
+
+
+def _delivery_attempt_bucket(attempt: int) -> str:
+    if attempt <= 1:
+        return "first"
+    if attempt <= 3:
+        return "retry_low"
+    return "retry_many"
+
+
+def _generation_bucket(generation: int) -> str:
+    return "initial" if generation <= 1 else "repair"
+
+
+def _consumer_metric_bucket(consumer_id: str) -> str:
+    normalized = consumer_id.casefold()
+    for bucket in ("audit", "harness", "projection", "telemetry", "workflow"):
+        if bucket in normalized:
+            return bucket
+    return "unknown"
 
 
 __all__ = [

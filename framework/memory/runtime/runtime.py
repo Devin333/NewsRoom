@@ -327,7 +327,6 @@ class MemoryRuntime:
         if self.trace_context is None:
             return None
         return self.trace_context.child(
-            span_id=f"memory:{operation_id}",
             memory_operation_id=operation_id,
         )
 
