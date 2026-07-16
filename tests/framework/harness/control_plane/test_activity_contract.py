@@ -20,6 +20,7 @@ from framework.harness.control_plane.activity import (
     HarnessActivityResultRecord,
     resolve_activity_result,
 )
+from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.shared.json import stable_json_dumps
 
@@ -134,6 +135,28 @@ def test_activity_result_takes_a_deeply_immutable_canonical_snapshot() -> None:
     assert record.to_dict()["result"]["output"]["nested"]["answer"] == "accepted"
     assert record.content_checksum == checksum
     assert record.to_worker_result().output["nested"]["answer"] == "accepted"
+
+
+def test_activity_result_records_ordered_lifecycle_times() -> None:
+    record = HarnessActivityResultRecord(
+        activity=_activity(),
+        result=HarnessWorkerResult(status="succeeded"),
+        accepted_at=NOW,
+        started_at=NOW.replace(microsecond=1),
+        completed_at=NOW.replace(microsecond=2),
+    )
+
+    assert record.to_dict()["accepted_at"].endswith("00Z")
+    assert record.accepted_at < record.started_at < record.completed_at
+
+    with pytest.raises(HarnessValidationError, match="lifecycle times"):
+        HarnessActivityResultRecord(
+            activity=_activity(),
+            result=HarnessWorkerResult(status="succeeded"),
+            accepted_at=NOW.replace(microsecond=2),
+            started_at=NOW.replace(microsecond=1),
+            completed_at=NOW,
+        )
 
 
 def test_secure_activity_reference_resolves_and_verifies_exact_identity() -> None:

@@ -15,6 +15,7 @@ import pytest
 from framework.events.canonical import (
     BusinessContext,
     EventCandidate,
+    PayloadReference,
     ProducerIdentity,
     StoredEvent,
     checksum_for,
@@ -27,8 +28,22 @@ from framework.events.runtime.models import (
     ReplayReport,
     ReplayStartRequest,
     ReplayStatus,
+    ReplayVersion,
     StreamReadRequest,
     StreamSequenceCursor,
+)
+from framework.events.runtime.history import (
+    DETERMINISTIC_HISTORY_EXTENSION,
+    DeterministicHistoryRecord,
+    DeterministicCommand,
+    ExactVersionRegistration,
+    ExactVersionRegistry,
+    HistoryEventPolicy,
+    HistoryVerifier,
+)
+from framework.events.runtime.activities import (
+    ReplayActivityDescriptor,
+    ReplayActivityKind,
 )
 from framework.events.runtime.replay_engine import (
     DeterministicReplayEngine,
@@ -38,6 +53,7 @@ from framework.events.runtime.replay_engine import (
     ReplayHistoryIntegrityError,
     ReplayHistoryOrderError,
     ReplayHistorySchemaError,
+    ReplayHistoryVerificationError,
     ReplayModeError,
     ReplayRedeliveryDelegationRequired,
     ReplayReducerRegistration,
@@ -138,6 +154,9 @@ def _event(
     data_schema: str = "io.newsroom.counter/v2",
     stream_id: str = STREAM_ID,
     tenant_id: str | None = TENANT_ID,
+    recorded_commands: tuple[DeterministicCommand, ...] = (),
+    history_policy: HistoryEventPolicy | None = None,
+    malformed_history: bool = False,
 ) -> StoredEvent:
     payload: dict[str, Any] = {"value": sequence}
     if data_schema.endswith("/v2"):
@@ -153,6 +172,16 @@ def _event(
         producer=ProducerIdentity(component="replay-tests", version="1"),
         tenant_id=tenant_id,
         payload=payload,
+        extensions={
+            DETERMINISTIC_HISTORY_EXTENSION: (
+                "not-an-object"
+                if malformed_history
+                else DeterministicHistoryRecord(
+                    policy=history_policy or _history_policy(),
+                    commands=recorded_commands,
+                ).to_dict()
+            )
+        },
     )
     return StoredEvent(
         candidate,
@@ -193,6 +222,48 @@ def _registry() -> ReplayReducerRegistry:
         )
     )
     return registry
+
+
+def _history_policy() -> HistoryEventPolicy:
+    return HistoryEventPolicy(
+        handler_id="counter-history",
+        handler_version="1",
+        workflow_id="counter-workflow",
+        workflow_version="1",
+        policy_id="counter-policy",
+        policy_version="1",
+        schema_id="counter-schema",
+        schema_version="2",
+    )
+
+
+def _history_handler_for(commands: tuple[DeterministicCommand, ...]):
+    def handler(
+        _event: Any,
+        _handler_input: Any,
+        _activity_result: Any,
+    ) -> tuple[DeterministicCommand, ...]:
+        return commands
+
+    return handler
+
+
+def _history_verifier(
+    *,
+    expected: tuple[DeterministicCommand, ...] = (),
+) -> HistoryVerifier:
+    handler = _history_handler_for(expected)
+    versions = ExactVersionRegistry()
+    for kind, component_id, version, value in (
+        ("workflow", "counter-workflow", "1", "pinned"),
+        ("policy", "counter-policy", "1", "pinned"),
+        ("schema", "counter-schema", "2", "pinned"),
+        ("reducer", "counter-history", "1", handler),
+    ):
+        versions.register(
+            ExactVersionRegistration(kind, component_id, version, value)
+        )
+    return HistoryVerifier(versions=versions)
 
 
 class _ProcessCrash(BaseException):
@@ -396,6 +467,7 @@ def _engine(
     catalog: EventSchemaCatalog | None = None,
     page_size: int = 1,
     clock: Any = None,
+    history_verifier: HistoryVerifier | None = None,
 ) -> DeterministicReplayEngine:
     return DeterministicReplayEngine(
         store,  # type: ignore[arg-type]
@@ -406,6 +478,7 @@ def _engine(
         schema_catalog_version="counter-catalog/2",
         clock=clock or (lambda: FINISHED_AT),
         page_size=page_size,
+        history_verifier=history_verifier or _history_verifier(),
     )
 
 
@@ -446,7 +519,7 @@ def test_rebuild_state_pins_versions_upcasts_and_never_mutates_source() -> None:
     assert statuses[-1] is ReplayStatus.SUCCEEDED
 
 
-def test_verify_history_is_validation_only_and_rejects_reducer_arguments() -> None:
+def test_verify_history_compares_deterministic_commands_and_rejects_reducer_arguments() -> None:
     store = _FakeReplayStore([_event(1), _event(2)])
     engine = _engine(store, page_size=2)
 
@@ -456,8 +529,18 @@ def test_verify_history_is_validation_only_and_rejects_reducer_arguments() -> No
 
     assert result.state is None
     assert result.report.mode is ReplayMode.VERIFY_HISTORY
-    assert result.report.result_checksum == result.checkpoint.history_checksum
-    assert all(not item.component.startswith("reducer:") for item in result.report.versions)
+    assert result.checkpoint.verification_state is not None
+    assert result.report.result_checksum == checksum_for(
+        {
+            "source_history_checksum": result.checkpoint.history_checksum,
+            "command_history_checksum": result.checkpoint.verification_state[
+                "history_checksum"
+            ],
+        }
+    )
+    assert ("reducer:counter-history", "1") in {
+        (item.component, item.version) for item in result.report.versions
+    }
 
     with pytest.raises(ReplayModeError, match="does not execute reducers"):
         engine.execute(
@@ -466,6 +549,106 @@ def test_verify_history_is_validation_only_and_rejects_reducer_arguments() -> No
             reducer_version="2.1.0",
         )
     assert "verify-2" not in store.reports
+
+
+def _command(*, target: str) -> DeterministicCommand:
+    return DeterministicCommand(
+        ordinal=0,
+        kind="route",
+        target=target,
+        handler_version="1",
+        workflow_version="1",
+        policy_version="1",
+        input_refs=("event://counter/1",),
+        input_checksums=(checksum_for("counter-input"),),
+    )
+
+
+def test_verify_history_command_mismatch_is_durable_and_source_is_immutable() -> None:
+    expected = (_command(target="step:expected"),)
+    recorded = (_command(target="step:recorded"),)
+    store = _FakeReplayStore([_event(1, recorded_commands=recorded)])
+    source_before = [event.to_dict() for event in store.events]
+    verifier = _history_verifier(expected=expected)
+
+    with pytest.raises(ReplayHistoryVerificationError) as caught:
+        _engine(store, history_verifier=verifier).verify_history(
+            _request("verify-command-mismatch", ReplayMode.VERIFY_HISTORY)
+        )
+
+    assert caught.value.reason_class == "command_nondeterminism"
+    assert caught.value.sequence == 1
+    assert caught.value.report is not None
+    assert caught.value.report.status is ReplayStatus.FAILED
+    assert caught.value.report.mismatch_sequence == 1
+    assert [event.to_dict() for event in store.events] == source_before
+
+
+def test_verify_history_missing_activity_and_version_fail_closed() -> None:
+    input_ref = PayloadReference(
+        uri="secure-activity://tenant-replay/input/1",
+        expected_checksum=checksum_for("accepted-input"),
+        content_type="application/json",
+        size_bytes=32,
+    )
+    activity = ReplayActivityDescriptor(
+        activity_id="activity-missing-1",
+        activity_kind=ReplayActivityKind.LLM,
+        input_ref=input_ref,
+        input_checksum=input_ref.expected_checksum,
+        idempotency_key="activity-missing-1",
+        attempt=1,
+        contract_version="newsroom.activity/v1",
+        handler_version="provider/v1",
+        accepted_at=STARTED_AT,
+        tenant_id=TENANT_ID,
+    )
+    record_ref = PayloadReference(
+        uri="secure-activity://tenant-replay/record/1",
+        expected_checksum=checksum_for("missing-record"),
+        content_type="application/vnd.newsroom.replay-activity-record+json",
+        size_bytes=64,
+    )
+
+    activity_policy = replace(
+        _history_policy(),
+        expected_activity=activity,
+        recorded_activity_ref=record_ref,
+    )
+
+    missing_store = _FakeReplayStore([_event(1, history_policy=activity_policy)])
+    with pytest.raises(ReplayHistoryVerificationError) as missing:
+        _engine(
+            missing_store,
+            history_verifier=_history_verifier(),
+        ).verify_history(
+            _request("verify-missing-activity", ReplayMode.VERIFY_HISTORY)
+        )
+    assert missing.value.reason_class == "missing_activity_result"
+    assert missing.value.report is not None
+    assert missing.value.report.status is ReplayStatus.FAILED
+
+    incompatible_store = _FakeReplayStore(
+        [
+            _event(
+                1,
+                history_policy=replace(
+                    _history_policy(),
+                    workflow_version="missing-version",
+                ),
+            )
+        ]
+    )
+    with pytest.raises(ReplayHistoryVerificationError) as incompatible:
+        _engine(
+            incompatible_store,
+            history_verifier=_history_verifier(),
+        ).verify_history(
+            _request("verify-incompatible-version", ReplayMode.VERIFY_HISTORY)
+        )
+    assert incompatible.value.reason_class == "incompatible_version"
+    assert incompatible.value.report is not None
+    assert incompatible.value.report.mismatch_sequence == 1
 
 
 def test_redeliver_is_explicitly_delegated_without_reading_or_creating_report() -> None:
@@ -620,6 +803,37 @@ def test_live_append_above_transactional_watermark_is_excluded() -> None:
     assert all(request.through_sequence == 2 for request in store.read_requests)
 
 
+def test_page_event_above_captured_watermark_fails_before_apply() -> None:
+    first = _event(1)
+    second = _event(2)
+    store = _FakeReplayStore([first, second])
+    store.forced_page = SimpleNamespace(
+        stream_id=STREAM_ID,
+        tenant_id=TENANT_ID,
+        high_watermark=2,
+        events=(first, second, _event(3)),
+        next_cursor=None,
+    )
+
+    with pytest.raises(ReplayHistoryOrderError) as caught:
+        _engine(store, page_size=3).rebuild_state(
+            _request("rebuild-page-above-watermark", ReplayMode.REBUILD_STATE),
+            reducer_id="counter",
+            reducer_version="2.1.0",
+        )
+
+    failure = caught.value
+    assert failure.reason_class == "event_exceeds_high_watermark"
+    assert failure.sequence == 3
+    assert failure.report is not None
+    assert failure.report.status is ReplayStatus.FAILED
+    assert store.reports["rebuild-page-above-watermark"].status is ReplayStatus.FAILED
+    assert failure.checkpoint is not None
+    assert failure.checkpoint.last_sequence == 0
+    assert failure.checkpoint.state == {"total": 0, "seen": ()}
+    assert store.report_history[-1].status is ReplayStatus.FAILED
+
+
 def test_new_replay_extends_parent_checkpoint_without_overwriting_input_slot() -> None:
     store = _FakeReplayStore([_event(1), _event(2)])
     first = _engine(store, page_size=2).rebuild_state(
@@ -758,6 +972,34 @@ def test_checkpoint_store_wrong_parent_and_slot_fail_before_source_read() -> Non
     assert running_store.read_requests == []
 
 
+def test_verify_history_process_death_resumes_verifier_checkpoint() -> None:
+    store = _FakeReplayStore([_event(1), _event(2)])
+    request = _request("verify-resume", ReplayMode.VERIFY_HISTORY)
+    store.crash_after_reads = 1
+
+    with pytest.raises(_ProcessCrash):
+        _engine(store, page_size=1).verify_history(request)
+
+    running = store.reports[request.replay_id]
+    assert running.checkpoint_ref is not None
+    checkpoint = store.checkpoints.records[running.checkpoint_ref]
+    assert checkpoint.last_sequence == 1
+    assert checkpoint.last_event_id == "evt-replay-1"
+    assert checkpoint.verification_state is not None
+    assert checkpoint.verification_state["next_sequence"] == 2
+
+    store.crash_after_reads = None
+    store.read_requests.clear()
+    resumed = _engine(store, page_size=1).verify_history(request)
+
+    assert resumed.report.status is ReplayStatus.SUCCEEDED
+    assert resumed.checkpoint.last_sequence == 2
+    assert resumed.checkpoint.verification_state is not None
+    assert resumed.checkpoint.verification_state["next_sequence"] == 3
+    assert store.read_requests[0].cursor is not None
+    assert store.read_requests[0].cursor.after_sequence == 1
+
+
 def test_parent_checkpoint_wrong_id_and_tenant_fail_before_source_read() -> None:
     store = _FakeReplayStore([_event(1), _event(2)])
     parent = _engine(store, page_size=2).verify_history(
@@ -850,6 +1092,13 @@ def test_missing_input_checkpoint_ref_fails_before_event_source_read() -> None:
             1,
             True,
         ),
+        (
+            "malformed_history",
+            ReplayHistoryVerificationError,
+            "corrupt_history",
+            1,
+            False,
+        ),
     ],
 )
 def test_invalid_history_fails_with_typed_durable_report(
@@ -881,6 +1130,8 @@ def test_invalid_history_fails_with_typed_durable_report(
             [_event(1, data_schema="io.newsroom.counter/v1")]
         )
         catalog = _catalog(with_upcast=False)
+    elif case == "malformed_history":
+        store = _FakeReplayStore([_event(1, malformed_history=True)])
 
     source_before = [event.to_dict() for event in store.events]
     engine = _engine(store, catalog=catalog, page_size=2)
@@ -918,7 +1169,16 @@ def test_checkpoint_mismatch_fails_before_source_read_and_tampering_is_rejected(
     with pytest.raises(EventIntegrityError, match="checkpoint checksum"):
         ReplayCheckpoint.from_dict(serialized)
 
-    incompatible = replace(checkpoint, runtime_version="different-runtime")
+    incompatible = replace(
+        checkpoint,
+        runtime_version="different-runtime",
+        versions=tuple(
+            ReplayVersion(item.component, "different-runtime")
+            if item.component == "replay_runtime"
+            else item
+            for item in checkpoint.versions
+        ),
+    )
     resume_store = _FakeReplayStore(source)
     with pytest.raises(ReplayCheckpointError) as caught:
         _engine(resume_store).rebuild_state(
@@ -936,6 +1196,47 @@ def test_checkpoint_mismatch_fails_before_source_read_and_tampering_is_rejected(
     assert resume_store.read_requests == []
     assert caught.value.report.status is ReplayStatus.FAILED
     assert caught.value.report.reason_class == "checkpoint_runtime_version_mismatch"
+
+
+def test_verify_checkpoint_rejects_conflicting_pinned_versions_on_build_and_restore() -> None:
+    source_store = _FakeReplayStore([_event(1), _event(2)])
+    checkpoint = _engine(source_store, page_size=2).verify_history(
+        _request("verify-pinned-source", ReplayMode.VERIFY_HISTORY)
+    ).checkpoint
+    conflicting_versions = tuple(
+        ReplayVersion(item.component, "conflicting-version")
+        if item.component == "workflow:counter-workflow"
+        else item
+        for item in checkpoint.versions
+    )
+
+    with pytest.raises(ValueError, match="verification pinned versions"):
+        replace(checkpoint, versions=conflicting_versions)
+
+    restored = ReplayCheckpoint.from_dict(checkpoint.to_dict())
+    object.__setattr__(restored, "versions", conflicting_versions)
+    object.__setattr__(
+        restored,
+        "checkpoint_checksum",
+        checksum_for(restored.checksum_projection()),
+    )
+    resume_store = _FakeReplayStore([_event(1), _event(2)])
+
+    with pytest.raises(ReplayCheckpointError) as caught:
+        _engine(resume_store).verify_history(
+            _request(
+                "verify-pinned-restore",
+                ReplayMode.VERIFY_HISTORY,
+                checkpoint_ref=restored.checkpoint_id,
+            ),
+            checkpoint=restored,
+            after_sequence=restored.last_sequence,
+        )
+
+    assert resume_store.read_requests == []
+    assert caught.value.reason_class == "checkpoint_verification_version_mismatch"
+    assert caught.value.report is not None
+    assert caught.value.report.status is ReplayStatus.FAILED
 
 
 def _assert_no_secret_in_exception_chain(error: BaseException, secret: str) -> None:

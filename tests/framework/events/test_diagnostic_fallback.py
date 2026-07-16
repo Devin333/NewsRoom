@@ -46,6 +46,7 @@ from tests.framework.events.test_deterministic_replay_engine import (
     _FakeReplayStore,
     _catalog as _replay_catalog,
     _event as _replay_event,
+    _history_verifier,
     _registry as _replay_registry,
     _request as _replay_request,
 )
@@ -710,6 +711,7 @@ def _replay_engine(
         clock=lambda: NOW,
         page_size=1,
         diagnostic_fallback=fallback,
+        history_verifier=_history_verifier(),
     )
 
 

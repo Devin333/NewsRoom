@@ -160,6 +160,8 @@ class HarnessActivityResultRecord:
     activity: HarnessActivity
     result: HarnessWorkerResult
     completed_at: datetime
+    accepted_at: datetime | None = None
+    started_at: datetime | None = None
     schema: str = HARNESS_ACTIVITY_RESULT_SCHEMA
     _snapshot: Mapping[str, Any] = field(init=False, repr=False, compare=False)
 
@@ -170,17 +172,48 @@ class HarnessActivityResultRecord:
             raise TypeError("result must be HarnessWorkerResult")
         if self.schema != HARNESS_ACTIVITY_RESULT_SCHEMA:
             raise HarnessValidationError("unsupported Harness activity result schema")
+        explicit_lifecycle = (
+            self.accepted_at is not None or self.started_at is not None
+        )
+        if (self.accepted_at is None) != (self.started_at is None):
+            raise HarnessValidationError(
+                "accepted_at and started_at must be supplied together"
+            )
         if not isinstance(self.completed_at, datetime):
             raise HarnessValidationError("completed_at must be a datetime")
         completed_at = ensure_utc(self.completed_at)
+        accepted_at = (
+            completed_at
+            if self.accepted_at is None
+            else ensure_utc(self.accepted_at)
+        )
+        started_at = (
+            completed_at
+            if self.started_at is None
+            else ensure_utc(self.started_at)
+        )
+        if accepted_at > started_at or started_at > completed_at:
+            raise HarnessValidationError(
+                "activity lifecycle times must satisfy accepted_at <= started_at <= completed_at"
+            )
+        object.__setattr__(self, "accepted_at", accepted_at)
+        object.__setattr__(self, "started_at", started_at)
         object.__setattr__(self, "completed_at", completed_at)
+        snapshot_value = {
+            "schema": self.schema,
+            "activity": self.activity.to_dict(),
+            "result": self.result.to_dict(),
+            "completed_at": format_datetime(completed_at),
+        }
+        if explicit_lifecycle:
+            snapshot_value.update(
+                {
+                    "accepted_at": format_datetime(accepted_at),
+                    "started_at": format_datetime(started_at),
+                }
+            )
         snapshot = normalize_canonical_json(
-            {
-                "schema": self.schema,
-                "activity": self.activity.to_dict(),
-                "result": self.result.to_dict(),
-                "completed_at": format_datetime(completed_at),
-            },
+            snapshot_value,
             path="$.harness_activity_result",
         )
         if not isinstance(snapshot, Mapping):
@@ -233,6 +266,8 @@ class HarnessActivityResultRecord:
                 activity=HarnessActivity.from_dict(activity_value),
                 result=_worker_result_from_dict(result_value),
                 completed_at=completed_at,
+                accepted_at=parse_datetime(raw.get("accepted_at")),
+                started_at=parse_datetime(raw.get("started_at")),
             )
         except EventStoreCorruptionError:
             raise

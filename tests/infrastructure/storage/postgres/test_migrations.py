@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[4]
 MIGRATIONS_DIR = ROOT / "infrastructure" / "storage" / "postgres" / "migrations"
 DURABLE_EVENT_MIGRATION = MIGRATIONS_DIR / "006_durable_event_runtime.sql"
 REPLAY_CHECKPOINT_MIGRATION = MIGRATIONS_DIR / "007_replay_checkpoints.sql"
+AUTHORIZED_REDELIVERY_MIGRATION = MIGRATIONS_DIR / "008_authorized_redelivery.sql"
+RECORDED_ACTIVITIES_MIGRATION = MIGRATIONS_DIR / "009_recorded_activities.sql"
 INITIAL_MIGRATION_SHA256 = "f224356de92f5b087b3353b38dab4d9ced0b7c0b70f3bf9228adc0b9e2f8fbd3"
 
 
@@ -222,6 +224,58 @@ def test_replay_checkpoint_migration_is_additive_and_loaded_after_event_runtime(
     assert "DROP COLUMN" not in sql
     assert loaded.index("CREATE TABLE IF NOT EXISTS event_replay_reports") < loaded.index(
         "CREATE TABLE IF NOT EXISTS event_replay_checkpoints"
+    )
+
+
+def test_authorized_redelivery_migration_is_additive_and_loaded_last() -> None:
+    sql = AUTHORIZED_REDELIVERY_MIGRATION.read_text(encoding="utf-8")
+    loaded = load_migration_sql()
+
+    assert "CREATE TABLE IF NOT EXISTS event_redelivery_reports" in sql
+    assert "CREATE TABLE IF NOT EXISTS event_redelivery_items" in sql
+    assert "PRIMARY KEY (tenant_scope, redelivery_id)" in sql
+    assert "FOREIGN KEY (tenant_scope, redelivery_id)" in sql
+    assert "captured_high_watermark >= through_sequence" in sql
+    assert "through_sequence - from_sequence < 1000" in sql
+    assert "requested_through_sequence = through_sequence" in sql
+    assert "char_length(authorization_evidence_ref) <= 512" in sql
+    assert "delivery_generation >= 2" in sql
+    assert "ALTER TABLE" not in sql
+    assert "DROP TABLE" not in sql
+    assert "DROP COLUMN" not in sql
+    assert loaded.index("CREATE TABLE IF NOT EXISTS event_replay_checkpoints") < loaded.index(
+        "CREATE TABLE IF NOT EXISTS event_redelivery_reports"
+    )
+
+
+def test_recorded_activity_migration_is_additive_encrypted_and_loaded_last() -> None:
+    sql = RECORDED_ACTIVITIES_MIGRATION.read_text(encoding="utf-8")
+    loaded = load_migration_sql()
+
+    for table in (
+        "event_activity_payloads",
+        "event_activity_records",
+        "harness_activity_results",
+        "event_activity_access_audit",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in sql
+    assert "ciphertext               BYTEA NOT NULL" in sql
+    assert sql.count("ciphertext               BYTEA NOT NULL") == 3
+    assert "payload JSON" not in sql
+    assert "payload JSONB" not in sql
+    assert "record JSON" not in sql
+    assert "record JSONB" not in sql
+    assert "PRIMARY KEY (tenant_scope, activity_id, payload_role)" in sql
+    assert "PRIMARY KEY (tenant_scope, activity_id)" in sql
+    assert sql.count("tenant_id IS NULL OR btrim(tenant_id) <> ''") == 3
+    assert "payload_role IN ('input', 'output', 'error')" in sql
+    assert "status IN ('pending', 'succeeded', 'failed')" in sql
+    assert "operation IN ('write', 'read')" in sql
+    assert "ALTER TABLE" not in sql
+    assert "DROP TABLE" not in sql
+    assert "DROP COLUMN" not in sql
+    assert loaded.index("CREATE TABLE IF NOT EXISTS event_redelivery_reports") < loaded.index(
+        "CREATE TABLE IF NOT EXISTS event_activity_payloads"
     )
 
 

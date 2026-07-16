@@ -12,6 +12,11 @@ from framework.events.errors import (
     EventDeliveryError,
     EventSubscriptionPositionError,
 )
+from framework.events.runtime.authorization import (
+    RedeliveryAuthorizationDecision,
+    RedeliveryAuthorizationRequest,
+    RedeliveryAuthorizerPort,
+)
 from framework.events.runtime.diagnostics import DeliveryDiagnosticProjector
 from framework.events.runtime.fallback import (
     LocalRuntimeDiagnosticFallback,
@@ -40,6 +45,8 @@ from framework.events.runtime.models import (
     DeliveryState,
     DurableSubscription,
     EffectIdempotencyStrategy,
+    RedeliveryReport,
+    RedeliveryRequest,
     SubscriptionKey,
     SubscriptionStatus,
 )
@@ -108,6 +115,14 @@ class EventDeliveryStoreOperationError(EventDeliveryError):
 
 class EventDeadLetterNotFoundError(EventDeliveryError, LookupError):
     """Raised when a requested dead letter does not exist in subscription scope."""
+
+
+class EventRedeliveryAuthorizationError(EventDeliveryError):
+    """An operator redelivery request was not authorized."""
+
+
+class EventRedeliveryAuthorizationContractError(EventRedeliveryAuthorizationError):
+    """The composed authorizer returned an invalid or differently scoped decision."""
 
 
 class DeliveryFailurePhase(str, Enum):
@@ -440,7 +455,11 @@ class DurableConsumerRegistry:
     ) -> None:
         operation = AutomaticDeliveryOperation(operation)
         if (
-            operation is AutomaticDeliveryOperation.REQUEUE
+            operation
+            in {
+                AutomaticDeliveryOperation.REDELIVERY,
+                AutomaticDeliveryOperation.REQUEUE,
+            }
             and not subscription.supports_out_of_order_repair
         ):
             raise EventConsumerIdempotencyError(
@@ -674,6 +693,7 @@ class DurableDeliveryRuntime:
         drop_policy: DropAuthorizationPolicy | None = None,
         diagnostic_projector: DeliveryDiagnosticProjector | None = None,
         diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
+        redelivery_authorizer: RedeliveryAuthorizerPort | None = None,
         clock: Clock | None = None,
     ) -> None:
         if consumers is not None and (
@@ -723,6 +743,14 @@ class DurableDeliveryRuntime:
         self._retry_planner = retry_planner or RetryPlanner()
         self._error_classifier = error_classifier or DefaultConsumerErrorClassifier()
         self._drop_policy = drop_policy or StaticDropAuthorizationPolicy()
+        if redelivery_authorizer is not None and not isinstance(
+            redelivery_authorizer,
+            RedeliveryAuthorizerPort,
+        ):
+            raise TypeError(
+                "redelivery_authorizer must implement RedeliveryAuthorizerPort"
+            )
+        self._redelivery_authorizer = redelivery_authorizer
         self._diagnostic_projector = (
             diagnostic_projector or DeliveryDiagnosticProjector()
         )
@@ -931,6 +959,90 @@ class DurableDeliveryRuntime:
             )
             raise failure
         return delivery
+
+    def begin_redelivery(self, request: RedeliveryRequest) -> RedeliveryReport:
+        """Authorize exact scope before capability checks or durable mutation."""
+
+        if not isinstance(request, RedeliveryRequest):
+            raise TypeError("request must be RedeliveryRequest")
+        authorizer = self._redelivery_authorizer
+        if authorizer is None:
+            raise EventDeliveryConfigurationError(
+                "authorized redelivery requires a composed authorizer"
+            )
+        authorization_request = RedeliveryAuthorizationRequest.from_redelivery(
+            request
+        )
+        try:
+            decision = authorizer.authorize(authorization_request)
+        except Exception:
+            raise EventRedeliveryAuthorizationError(
+                "redelivery authorization failed"
+            ) from None
+        if not isinstance(decision, RedeliveryAuthorizationDecision):
+            raise EventRedeliveryAuthorizationContractError(
+                "redelivery authorizer returned an invalid decision"
+            )
+        try:
+            decision.verify_integrity()
+        except Exception:
+            raise EventRedeliveryAuthorizationContractError(
+                "redelivery authorization decision failed integrity validation"
+            ) from None
+        if decision.request != authorization_request:
+            raise EventRedeliveryAuthorizationContractError(
+                "redelivery authorization decision does not match the request"
+            )
+        if not decision.authorized:
+            raise EventRedeliveryAuthorizationError("redelivery authorization denied")
+        subscription, _consumer = self._consumers.resolve(request.subscription)
+        if (
+            subscription.tenant_id != request.tenant_id
+            or subscription.status is SubscriptionStatus.RETIRED
+        ):
+            raise EventConsumerMismatchError(
+                "redelivery request does not match the selected subscription scope"
+            )
+        self._consumers.require_operation(
+            subscription,
+            AutomaticDeliveryOperation.REDELIVERY,
+        )
+        store = self._require_store()
+        report = self._store_call(
+            RuntimeDiagnosticOperation.AUTHORIZED_REDELIVERY,
+            "authorized redelivery",
+            lambda: store.begin_redelivery(request),
+        )
+        if not isinstance(report, RedeliveryReport):
+            failure = EventDeliveryContractError(
+                "durable store returned an invalid redelivery report"
+            )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.AUTHORIZED_REDELIVERY,
+                failure,
+            )
+            raise failure
+        if (
+            report.redelivery_id != request.redelivery_id
+            or report.subscription != request.subscription
+            or report.source_stream_id != request.source_stream_id
+            or report.from_sequence != request.from_sequence
+            or report.requested_through_sequence != request.through_sequence
+            or report.requested_at != request.requested_at
+            or report.operator_id != request.operator_id
+            or report.operator_reason != request.operator_reason
+            or report.authorization_evidence_ref != request.authorization_evidence_ref
+            or report.tenant_id != request.tenant_id
+        ):
+            failure = EventDeliveryContractError(
+                "durable store returned a mismatched redelivery report"
+            )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.AUTHORIZED_REDELIVERY,
+                failure,
+            )
+            raise failure
+        return report
 
     def _process_claim(
         self,
@@ -1650,5 +1762,7 @@ __all__ = [
     "EventDeliveryConfigurationError",
     "EventDeliveryContractError",
     "EventDeliveryStoreOperationError",
+    "EventRedeliveryAuthorizationContractError",
+    "EventRedeliveryAuthorizationError",
     "EventSubscriptionNotFoundError",
 ]

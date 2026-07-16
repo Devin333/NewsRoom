@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "NewsRoom" }]
 dependencies = [
+  "cryptography>=42.0",
   "jsonschema>=4.0",
   "PyMuPDF>=1.24",
   "PyYAML>=6.0.1",
@@ -46,6 +47,7 @@ ocr = [
   "nougat-ocr==0.1.17",
 ]
 dev = [
+  "cryptography>=42.0",
   "fastapi>=0.110",
   "httpx>=0.27",
   "Pillow>=10.0",
@@ -58,6 +60,7 @@ dev = [
   "uvicorn[standard]>=0.27",
 ]
 all = [
+  "cryptography>=42.0",
   "fastapi>=0.110",
   "httpx>=0.27",
   "Pillow>=10.0",

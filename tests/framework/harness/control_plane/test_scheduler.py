@@ -16,6 +16,10 @@ from framework.harness import (
     HarnessWorkerResult,
     HarnessWorkflowSpec,
 )
+from framework.events.runtime.history import (
+    DETERMINISTIC_HISTORY_EXTENSION,
+    DeterministicHistoryRecord,
+)
 
 
 def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> None:
@@ -64,6 +68,26 @@ def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> N
         ("summarize", "verify", "entry"),
         ("summarize", "verify", "exit"),
     ]
+    decision_events = [
+        event
+        for event in result.events
+        if event.event_type == HarnessEventType.DECISION_RECORDED
+    ]
+    histories = [
+        DeterministicHistoryRecord.from_dict(event.deterministic_history)
+        for event in decision_events
+    ]
+    assert [history.commands[0].ordinal for history in histories] == list(
+        range(len(histories))
+    )
+    assert all(len(history.commands) == 1 for history in histories)
+    transition_histories = [
+        DeterministicHistoryRecord.from_dict(event.deterministic_history)
+        for event in result.events
+        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
+        and event.deterministic_history is not None
+    ]
+    assert all(not history.commands for history in transition_histories)
 
 
 def test_routing_rule_jumps_to_declared_step() -> None:

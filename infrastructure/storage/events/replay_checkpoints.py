@@ -517,6 +517,20 @@ def _validate_checkpoint_replacement(
             candidate.checkpoint_id,
             reason="last_sequence cannot move backwards",
         )
+    existing_versions = {
+        version.component: version.version for version in existing.versions
+    }
+    candidate_versions = {
+        version.component: version.version for version in candidate.versions
+    }
+    if any(
+        candidate_versions.get(component) != version
+        for component, version in existing_versions.items()
+    ):
+        raise ReplayCheckpointCollisionError(
+            candidate.checkpoint_id,
+            reason="pinned checkpoint versions cannot be removed or changed",
+        )
     if candidate.last_sequence == existing.last_sequence and candidate != existing:
         raise ReplayCheckpointCollisionError(
             candidate.checkpoint_id,

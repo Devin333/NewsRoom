@@ -97,6 +97,7 @@ def test_real_postgres_concurrent_exact_retries_commit_one_checkpoint(
         source_stream_id=stream_id,
         last_sequence=2,
         source_high_watermark=2,
+        last_event_id=f"{scope}:event:2",
         runtime_version="runtime-v1",
         schema_catalog_version="catalog-v1",
         history_checksum="sha256:" + "2" * 64,

@@ -20,6 +20,8 @@ MIN_LEASE_SECONDS: Final = 5.0
 MAX_LEASE_SECONDS: Final = 300.0
 MAX_REDACTED_DIAGNOSTIC_LENGTH: Final = 2_048
 MAX_REASON_CLASS_LENGTH: Final = 128
+MAX_AUTHORIZATION_EVIDENCE_REF_LENGTH: Final = 512
+MAX_REDELIVERY_ITEMS: Final = 1_000
 _CHECKSUM_PATTERN: Final = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _T = TypeVar("_T")
 
@@ -1574,6 +1576,217 @@ class DeadLetterAction:
 
 
 @dataclass(frozen=True, slots=True)
+class RedeliveryRequest:
+    """Authorized command selecting a finite event-consumer range.
+
+    ``authorization_evidence_ref`` identifies an application-owned authorization
+    decision.  It is audit evidence, not an idempotency capability; the calling
+    runtime must verify ``AutomaticDeliveryOperation.REDELIVERY`` before this
+    command reaches a store.
+    """
+
+    redelivery_id: str
+    subscription: SubscriptionKey
+    source_stream_id: str
+    from_sequence: int
+    requested_at: datetime
+    operator_id: str
+    operator_reason: str
+    authorization_evidence_ref: str
+    through_sequence: int | None = None
+    tenant_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "redelivery_id",
+            _required_text(self.redelivery_id, "redelivery_id"),
+        )
+        if not isinstance(self.subscription, SubscriptionKey):
+            raise ValueError("subscription must be SubscriptionKey")
+        object.__setattr__(
+            self,
+            "source_stream_id",
+            _required_text(self.source_stream_id, "source_stream_id"),
+        )
+        start = _positive_int(self.from_sequence, "from_sequence")
+        end = _sequence(self.through_sequence, "through_sequence")
+        if end is not None and end < start:
+            raise ValueError("through_sequence cannot precede from_sequence")
+        if end is not None and end - start + 1 > MAX_REDELIVERY_ITEMS:
+            raise ValueError(
+                "redelivery range cannot exceed "
+                f"{MAX_REDELIVERY_ITEMS} stream positions"
+            )
+        object.__setattr__(self, "from_sequence", start)
+        object.__setattr__(self, "through_sequence", end)
+        object.__setattr__(
+            self,
+            "requested_at",
+            _required_utc(self.requested_at, "requested_at"),
+        )
+        object.__setattr__(self, "operator_id", _required_text(self.operator_id, "operator_id"))
+        object.__setattr__(
+            self,
+            "operator_reason",
+            _required_text(self.operator_reason, "operator_reason"),
+        )
+        evidence_ref = _required_text(
+            self.authorization_evidence_ref,
+            "authorization_evidence_ref",
+        )
+        if len(evidence_ref) > MAX_AUTHORIZATION_EVIDENCE_REF_LENGTH:
+            raise ValueError(
+                "authorization_evidence_ref exceeds the bounded audit reference limit"
+            )
+        object.__setattr__(self, "authorization_evidence_ref", evidence_ref)
+        object.__setattr__(self, "tenant_id", _optional_text(self.tenant_id, "tenant_id"))
+
+
+@dataclass(frozen=True, slots=True)
+class RedeliveryItem:
+    redelivery_id: str
+    event_id: str
+    stream_id: str
+    stream_sequence: int
+    subscription: SubscriptionKey
+    delivery_id: str
+    delivery_generation: int
+    created_at: datetime
+    tenant_id: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("redelivery_id", "event_id", "stream_id", "delivery_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+        if not isinstance(self.subscription, SubscriptionKey):
+            raise ValueError("subscription must be SubscriptionKey")
+        object.__setattr__(
+            self,
+            "stream_sequence",
+            _positive_int(self.stream_sequence, "stream_sequence"),
+        )
+        object.__setattr__(
+            self,
+            "delivery_generation",
+            _positive_int(self.delivery_generation, "delivery_generation"),
+        )
+        object.__setattr__(
+            self,
+            "created_at",
+            _required_utc(self.created_at, "created_at"),
+        )
+        object.__setattr__(self, "tenant_id", _optional_text(self.tenant_id, "tenant_id"))
+
+
+@dataclass(frozen=True, slots=True)
+class RedeliveryReport:
+    """Durable audit result for one atomically materialized redelivery command."""
+
+    redelivery_id: str
+    subscription: SubscriptionKey
+    source_stream_id: str
+    from_sequence: int
+    through_sequence: int
+    captured_high_watermark: int
+    requested_at: datetime
+    scheduled_at: datetime
+    operator_id: str
+    operator_reason: str
+    authorization_evidence_ref: str
+    items: tuple[RedeliveryItem, ...]
+    requested_through_sequence: int | None = None
+    tenant_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "redelivery_id",
+            _required_text(self.redelivery_id, "redelivery_id"),
+        )
+        if not isinstance(self.subscription, SubscriptionKey):
+            raise ValueError("subscription must be SubscriptionKey")
+        object.__setattr__(
+            self,
+            "source_stream_id",
+            _required_text(self.source_stream_id, "source_stream_id"),
+        )
+        start = _positive_int(self.from_sequence, "from_sequence")
+        end = _positive_int(self.through_sequence, "through_sequence")
+        requested_end = _sequence(
+            self.requested_through_sequence,
+            "requested_through_sequence",
+        )
+        high = _positive_int(
+            self.captured_high_watermark,
+            "captured_high_watermark",
+        )
+        if end < start:
+            raise ValueError("through_sequence cannot precede from_sequence")
+        if requested_end is not None and requested_end != end:
+            raise ValueError("requested through_sequence must match the scheduled range")
+        if end > high:
+            raise ValueError("redelivery range cannot exceed captured_high_watermark")
+        object.__setattr__(self, "from_sequence", start)
+        object.__setattr__(self, "through_sequence", end)
+        object.__setattr__(self, "requested_through_sequence", requested_end)
+        object.__setattr__(self, "captured_high_watermark", high)
+        requested_at = _required_utc(self.requested_at, "requested_at")
+        scheduled_at = _required_utc(self.scheduled_at, "scheduled_at")
+        if scheduled_at < requested_at:
+            raise ValueError("scheduled_at cannot precede requested_at")
+        object.__setattr__(self, "requested_at", requested_at)
+        object.__setattr__(self, "scheduled_at", scheduled_at)
+        object.__setattr__(self, "operator_id", _required_text(self.operator_id, "operator_id"))
+        object.__setattr__(
+            self,
+            "operator_reason",
+            _required_text(self.operator_reason, "operator_reason"),
+        )
+        evidence_ref = _required_text(
+            self.authorization_evidence_ref,
+            "authorization_evidence_ref",
+        )
+        if len(evidence_ref) > MAX_AUTHORIZATION_EVIDENCE_REF_LENGTH:
+            raise ValueError(
+                "authorization_evidence_ref exceeds the bounded audit reference limit"
+            )
+        object.__setattr__(self, "authorization_evidence_ref", evidence_ref)
+        tenant_id = _optional_text(self.tenant_id, "tenant_id")
+        object.__setattr__(self, "tenant_id", tenant_id)
+        items = _typed_tuple(self.items, RedeliveryItem, "items")
+        if not items:
+            raise ValueError("redelivery report requires at least one scheduled item")
+        if len(items) > MAX_REDELIVERY_ITEMS:
+            raise ValueError(
+                "redelivery report cannot exceed "
+                f"{MAX_REDELIVERY_ITEMS} scheduled items"
+            )
+        sequences = tuple(item.stream_sequence for item in items)
+        if sequences != tuple(sorted(sequences)) or len(set(sequences)) != len(sequences):
+            raise ValueError("redelivery items must be strictly ordered by stream_sequence")
+        if len({item.event_id for item in items}) != len(items):
+            raise ValueError("redelivery report cannot schedule one event pair twice")
+        for item in items:
+            if (
+                item.redelivery_id != self.redelivery_id
+                or item.subscription != self.subscription
+                or item.stream_id != self.source_stream_id
+                or item.tenant_id != tenant_id
+                or not start <= item.stream_sequence <= end
+            ):
+                raise ValueError("redelivery item falls outside its report identity")
+        object.__setattr__(self, "items", items)
+
+    @property
+    def scheduled_count(self) -> int:
+        return len(self.items)
+
+
+@dataclass(frozen=True, slots=True)
 class QuarantineRecord:
     quarantine_id: str
     source: str
@@ -1911,8 +2124,12 @@ __all__ = [
     "LegacyEventOffset",
     "MAX_LEASE_SECONDS",
     "MAX_PAGE_LIMIT",
+    "MAX_REDELIVERY_ITEMS",
     "MIN_LEASE_SECONDS",
     "PendingDeliveryStats",
+    "RedeliveryItem",
+    "RedeliveryReport",
+    "RedeliveryRequest",
     "QuarantineDisposition",
     "QuarantinePage",
     "QuarantineQuery",

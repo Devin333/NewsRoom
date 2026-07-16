@@ -7,13 +7,21 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from cryptography.fernet import Fernet
 
 from framework.events.ports import EventStorePort
+from framework.events.errors import EventStoreUnavailableError
+from framework.events.runtime.history import ExactVersionRegistry, HistoryVerifier
+from framework.events.runtime.replay_engine import (
+    DeterministicReplayEngine,
+    ReplayReducerRegistry,
+)
 from infrastructure.storage.events import (
     DurableEventStorage,
     LocalJsonEventStore,
     PostgresReplayCheckpointStore,
     SQLiteEventStore,
+    SQLiteRecordedActivityStore,
     SQLiteReplayCheckpointStore,
     durable_event_storage_from_env,
     event_store_from_env,
@@ -124,10 +132,46 @@ def test_durable_storage_factory_composes_event_and_replay_stores_on_same_sqlite
         "newsroom.workflow-event/v1"
     )
     assert isinstance(composition.replay_checkpoint_store, SQLiteReplayCheckpointStore)
+    assert composition.activity_store is None
+    assert composition.activity_recorder is None
     assert Path(composition.event_store.database) == Path(
         composition.replay_checkpoint_store.database
     )
     assert Path(composition.event_store.database).is_file()
+
+    replay_engine = composition.create_replay_engine(
+        reducers=ReplayReducerRegistry(),
+        history_verifier=HistoryVerifier(versions=ExactVersionRegistry()),
+    )
+    assert isinstance(replay_engine, DeterministicReplayEngine)
+
+
+def test_durable_storage_factory_composes_activity_store_only_with_explicit_key(
+    tmp_path: Path,
+) -> None:
+    key = Fernet.generate_key().decode("ascii")
+
+    composition = durable_event_storage_from_env(
+        artifact_root=tmp_path,
+        env={"NEWS_ACTIVITY_ENCRYPTION_KEY": key},
+    )
+
+    assert isinstance(composition.activity_store, SQLiteRecordedActivityStore)
+    assert composition.activity_recorder is not None
+    assert Path(composition.activity_store.database) == Path(
+        composition.event_store.database
+    )
+    port = composition.create_harness_transition_port(tenant_id="tenant-test")
+    assert port is not None
+
+
+def test_durable_storage_factory_refuses_harness_without_activity_key(
+    tmp_path: Path,
+) -> None:
+    composition = durable_event_storage_from_env(artifact_root=tmp_path, env={})
+
+    with pytest.raises(EventStoreUnavailableError, match="NEWS_ACTIVITY_ENCRYPTION_KEY"):
+        composition.create_harness_transition_port(tenant_id="tenant-test")
 
 
 def test_event_store_factory_uses_configured_artifact_root_from_environment(

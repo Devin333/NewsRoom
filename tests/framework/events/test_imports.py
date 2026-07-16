@@ -15,8 +15,24 @@ def test_public_imports_are_available() -> None:
         FunctionEventSubscriber,
         InMemoryEventBus,
         InMemoryEventRecorder,
+        DETERMINISTIC_HISTORY_EXTENSION,
+        DeterministicHistoryRecord,
+        HistoryCommandMismatchError,
+        HistoryVerificationError,
+        RedeliveryAuthorizationDecision,
+        RedeliveryAuthorizationRequest,
+        RedeliveryAuthorizerPort,
+        RedeliveryReport,
+        RedeliveryRequest,
+        RedeliveryStorePort,
         ReplayCheckpointCollisionError,
         ReplayCheckpointCorruptionError,
+        ReplayActivityResolverPort,
+        ReplayActivityCorruptionError,
+        ReplayActivityMissingError,
+        ReplayEvent,
+        RecordedActivityStorePort,
+        ResolvedReplayActivity,
         REQUIRED_SECURE_PAYLOAD_CAPABILITIES,
         SecurePayloadCapability,
         SecurePayloadValidation,
@@ -35,8 +51,24 @@ def test_public_imports_are_available() -> None:
     assert EventType is not None
     assert FunctionEventSubscriber is not None
     assert InMemoryEventRecorder is not None
+    assert DETERMINISTIC_HISTORY_EXTENSION == "deterministic_history"
+    assert DeterministicHistoryRecord is not None
+    assert HistoryCommandMismatchError is not None
+    assert HistoryVerificationError is not None
+    assert RedeliveryAuthorizationDecision is not None
+    assert RedeliveryAuthorizationRequest is not None
+    assert RedeliveryAuthorizerPort is not None
+    assert RedeliveryReport is not None
+    assert RedeliveryRequest is not None
+    assert RedeliveryStorePort is not None
     assert ReplayCheckpointCollisionError is not None
     assert ReplayCheckpointCorruptionError is not None
+    assert ReplayActivityResolverPort is not None
+    assert ReplayActivityCorruptionError is not None
+    assert ReplayActivityMissingError is not None
+    assert ReplayEvent is not None
+    assert RecordedActivityStorePort is not None
+    assert ResolvedReplayActivity is not None
     assert REQUIRED_SECURE_PAYLOAD_CAPABILITIES == frozenset(SecurePayloadCapability)
     assert SecurePayloadValidation is not None
     assert SecurityExportProjection is not None

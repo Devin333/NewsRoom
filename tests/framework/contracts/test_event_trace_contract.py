@@ -8,6 +8,8 @@ from framework.events import (
     EventEnvelope,
     EventSubscriberError,
     TraceContext,
+    W3CTracePropagator,
+    trace_fields,
 )
 
 
@@ -43,3 +45,34 @@ def test_event_trace_contract_envelope_round_trip_and_subscriber_failure() -> No
     assert restored_envelope.trace_id == "trace-events"
     assert restored_envelope.span_id == "step:s1"
     assert isinstance(caught.value.__cause__, RuntimeError)
+
+
+def test_trace_compatibility_facade_preserves_w3c_and_business_field_contract() -> None:
+    metadata = {"nested": {"accepted": ["value"]}}
+    context = TraceContext.root(
+        run_id="run-trace-contract",
+        workflow_id="wf-trace-contract",
+        metadata=metadata,
+    ).child(
+        step_id="step-trace-contract",
+        agent_id="agent-trace-contract",
+        tool_call_id="tool-trace-contract",
+        memory_operation_id="memory-trace-contract",
+        artifact_id="artifact-trace-contract",
+    )
+    serialized = context.to_dict(redact=False)
+    restored = TraceContext.from_dict(serialized)
+
+    metadata["nested"]["accepted"].append("late-mutation")
+    fields = trace_fields(restored)
+    carrier = W3CTracePropagator().inject(restored)
+
+    assert restored.is_injectable is True
+    assert serialized["metadata"] == {"nested": {"accepted": ["value"]}}
+    assert fields["agent_id"] == "agent-trace-contract"
+    assert fields["tool_call_id"] == "tool-trace-contract"
+    assert fields["memory_operation_id"] == "memory-trace-contract"
+    assert fields["artifact_id"] == "artifact-trace-contract"
+    assert carrier["traceparent"] == (
+        f"00-{restored.trace_id}-{restored.span_id}-{restored.trace_flags}"
+    )

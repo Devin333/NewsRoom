@@ -31,9 +31,11 @@ from framework.events.runtime.models import (
     DeliverySettlement,
     DeliveryState,
     DurableSubscription,
+    MAX_REDELIVERY_ITEMS,
     QuarantineDisposition,
     QuarantineReason,
     QuarantineRecord,
+    RedeliveryRequest,
     ReplayMode,
     ReplayReportQuery,
     ReplayStartRequest,
@@ -42,6 +44,7 @@ from framework.events.runtime.models import (
     StreamReadRequest,
     SubscriptionStart,
     SubscriptionStartPolicy,
+    SubscriptionKey,
     SubscriptionStatus,
 )
 from framework.events.schema import SecurityClassification
@@ -118,6 +121,8 @@ def test_sqlite_store_is_file_backed_wal_and_implements_port(tmp_path: Path) -> 
         "event_dead_letters",
         "event_quarantine",
         "event_replay_reports",
+        "event_redelivery_reports",
+        "event_redelivery_items",
     } <= table_names
 
     with pytest.raises(ValueError, match="file-backed"):
@@ -771,6 +776,387 @@ def test_pending_stats_order_mixed_rfc3339_precision_chronologically(
     assert stats.oldest_pending_age_seconds == 0.1
 
 
+def test_authorized_redelivery_is_finite_idempotent_and_preserves_history(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    subscription = store.register_subscription(
+        DurableSubscription(
+            "redelivery",
+            1,
+            "redelivery-consumer",
+            supports_out_of_order_repair=True,
+            tenant_id="tenant-a",
+        )
+    )
+    for number in (1, 2, 3):
+        store.append_event(_candidate(number))
+        claim = store.claim_deliveries(
+            DeliveryClaimRequest(
+                subscription.subscription_id,
+                subscription.subscription_version,
+                f"worker-{number}",
+                NOW + timedelta(seconds=number),
+                limit=1,
+            )
+        )[0]
+        store.settle_delivery(
+            DeliverySettlement(
+                claim.lease,
+                DeliveryState.ACKED,
+                NOW + timedelta(seconds=number, milliseconds=1),
+            )
+        )
+
+    original_deliveries = store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            tenant_id="tenant-a",
+        )
+    ).records
+    request = RedeliveryRequest(
+        redelivery_id="redelivery-request-1",
+        subscription=subscription.key,
+        source_stream_id="run:one",
+        from_sequence=1,
+        through_sequence=2,
+        requested_at=NOW + timedelta(seconds=10),
+        operator_id="operator-1",
+        operator_reason="rebuild projection after deterministic repair",
+        authorization_evidence_ref="authz-decision:tenant-a:redelivery-1",
+        tenant_id="tenant-a",
+    )
+
+    first = store.begin_redelivery(request)
+    store.append_event(_candidate(4))
+    duplicate = store.begin_redelivery(request)
+
+    assert duplicate == first
+    assert first.captured_high_watermark == 3
+    assert first.through_sequence == 2
+    assert [item.stream_sequence for item in first.items] == [1, 2]
+    assert [item.delivery_generation for item in first.items] == [2, 2]
+    assert store.get_redelivery_report(
+        request.redelivery_id,
+        tenant_id="tenant-a",
+    ) == first
+    assert store.get_redelivery_report(request.redelivery_id) is None
+    all_deliveries = store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            tenant_id="tenant-a",
+            limit=20,
+        )
+    ).records
+    assert len(all_deliveries) == len(original_deliveries) + 3
+    assert sorted(
+        (
+            item.event_id,
+            item.delivery_generation,
+            item.state,
+        )
+        for item in all_deliveries
+        if item.event_id in {"evt-1", "evt-2"}
+    ) == [
+        ("evt-1", 1, DeliveryState.ACKED),
+        ("evt-1", 2, DeliveryState.PENDING),
+        ("evt-2", 1, DeliveryState.ACKED),
+        ("evt-2", 2, DeliveryState.PENDING),
+    ]
+    assert store.list_dead_letters(DeadLetterQuery(tenant_id="tenant-a")).records == ()
+
+
+def test_open_ended_redelivery_rejects_an_oversized_captured_range_atomically(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    subscription = store.register_subscription(
+        DurableSubscription(
+            "bounded-redelivery",
+            1,
+            "bounded-consumer",
+            supports_out_of_order_repair=True,
+            tenant_id="tenant-a",
+        )
+    )
+    store.append_event(_candidate(1))
+    deliveries_before = store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            tenant_id="tenant-a",
+        )
+    ).records
+    with sqlite3.connect(store.database) as connection:
+        connection.execute(
+            "UPDATE event_stream_sequences SET last_sequence = ? "
+            "WHERE tenant_scope = ? AND stream_id = ?",
+            (MAX_REDELIVERY_ITEMS + 1, "tenant-a", "run:one"),
+        )
+        schema_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'event_redelivery_reports'"
+        ).fetchone()[0]
+    assert "through_sequence - from_sequence < 1000" in schema_sql
+    request = RedeliveryRequest(
+        redelivery_id="oversized-open-range",
+        subscription=subscription.key,
+        source_stream_id="run:one",
+        from_sequence=1,
+        requested_at=NOW,
+        operator_id="operator",
+        operator_reason="bounded repair",
+        authorization_evidence_ref="authz:oversized-open-range",
+        tenant_id="tenant-a",
+    )
+
+    with pytest.raises(EventStoreCapacityError, match="stream-position"):
+        store.begin_redelivery(request)
+
+    assert store.get_redelivery_report(
+        request.redelivery_id,
+        tenant_id="tenant-a",
+    ) is None
+    assert store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            tenant_id="tenant-a",
+        )
+    ).records == deliveries_before
+
+
+def test_concurrent_authorized_redelivery_materializes_one_generation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "concurrent-redelivery.sqlite3"
+    store = SQLiteEventStore(database, clock=lambda: NOW)
+    subscription = store.register_subscription(
+        DurableSubscription(
+            "concurrent-redelivery",
+            1,
+            "consumer",
+            supports_out_of_order_repair=True,
+            tenant_id="tenant-a",
+        )
+    )
+    store.append_event(_candidate(1))
+    claim = store.claim_deliveries(
+        DeliveryClaimRequest(subscription.subscription_id, 1, "worker", NOW)
+    )[0]
+    store.settle_delivery(
+        DeliverySettlement(
+            claim.lease,
+            DeliveryState.ACKED,
+            NOW + timedelta(seconds=1),
+        )
+    )
+    request = RedeliveryRequest(
+        redelivery_id="concurrent-redelivery-request",
+        subscription=SubscriptionKey(subscription.subscription_id, 1),
+        source_stream_id="run:one",
+        from_sequence=1,
+        through_sequence=1,
+        requested_at=NOW + timedelta(seconds=2),
+        operator_id="operator",
+        operator_reason="authorized exact retry",
+        authorization_evidence_ref="authz:concurrent-redelivery",
+        tenant_id="tenant-a",
+    )
+    barrier = Barrier(2)
+
+    def begin() -> object:
+        concurrent = SQLiteEventStore(database, initialize=False, clock=lambda: NOW)
+        barrier.wait()
+        return concurrent.begin_redelivery(request)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        reports = list(executor.map(lambda _index: begin(), range(2)))
+
+    assert reports[0] == reports[1]
+    deliveries = store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            tenant_id="tenant-a",
+            limit=10,
+        )
+    ).records
+    assert [(item.delivery_generation, item.state) for item in deliveries] == [
+        (1, DeliveryState.ACKED),
+        (2, DeliveryState.PENDING),
+    ]
+
+
+def test_authorized_redelivery_rejects_nonterminal_or_changed_request(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    subscription = store.register_subscription(
+        DurableSubscription(
+            "guarded-redelivery",
+            1,
+            "consumer",
+            supports_out_of_order_repair=True,
+            tenant_id="tenant-a",
+        )
+    )
+    store.append_event(_candidate(1))
+    request = RedeliveryRequest(
+        redelivery_id="guarded-redelivery-request",
+        subscription=subscription.key,
+        source_stream_id="run:one",
+        from_sequence=1,
+        through_sequence=1,
+        requested_at=NOW,
+        operator_id="operator",
+        operator_reason="repair",
+        authorization_evidence_ref="authz:guarded-redelivery",
+        tenant_id="tenant-a",
+    )
+    with pytest.raises(Exception, match="nonterminal"):
+        store.begin_redelivery(request)
+
+    claim = store.claim_deliveries(
+        DeliveryClaimRequest(subscription.subscription_id, 1, "worker", NOW)
+    )[0]
+    store.settle_delivery(
+        DeliverySettlement(
+            claim.lease,
+            DeliveryState.ACKED,
+            NOW + timedelta(seconds=1),
+        )
+    )
+    store.begin_redelivery(request)
+    with pytest.raises(Exception, match="different request"):
+        store.begin_redelivery(replace(request, operator_reason="changed"))
+
+
+def test_authorized_redelivery_identity_is_tenant_scoped(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    reports = {}
+    for index, tenant_id in enumerate(("tenant-a", "tenant-b"), start=1):
+        subscription = store.register_subscription(
+            DurableSubscription(
+                f"tenant-redelivery-{index}",
+                1,
+                f"tenant-consumer-{index}",
+                supports_out_of_order_repair=True,
+                tenant_id=tenant_id,
+            )
+        )
+        store.append_event(_candidate(10 + index, tenant_id=tenant_id))
+        claim = store.claim_deliveries(
+            DeliveryClaimRequest(
+                subscription.subscription_id,
+                1,
+                f"tenant-worker-{index}",
+                NOW,
+            )
+        )[0]
+        store.settle_delivery(
+            DeliverySettlement(
+                claim.lease,
+                DeliveryState.ACKED,
+                NOW + timedelta(seconds=1),
+            )
+        )
+        request = RedeliveryRequest(
+            redelivery_id="shared-redelivery-id",
+            subscription=subscription.key,
+            source_stream_id="run:one",
+            from_sequence=1,
+            requested_at=NOW + timedelta(seconds=2),
+            operator_id=f"operator-{index}",
+            operator_reason="tenant-scoped repair",
+            authorization_evidence_ref=f"authz:{tenant_id}:redelivery",
+            tenant_id=tenant_id,
+        )
+        reports[tenant_id] = store.begin_redelivery(request)
+
+    assert reports["tenant-a"].redelivery_id == reports["tenant-b"].redelivery_id
+    assert reports["tenant-a"].tenant_id == "tenant-a"
+    assert reports["tenant-b"].tenant_id == "tenant-b"
+    assert store.get_redelivery_report(
+        "shared-redelivery-id",
+        tenant_id="tenant-a",
+    ) == reports["tenant-a"]
+    assert store.get_redelivery_report(
+        "shared-redelivery-id",
+        tenant_id="tenant-b",
+    ) == reports["tenant-b"]
+
+
+def test_poison_event_redelivery_preserves_open_dead_letter(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    subscription = store.register_subscription(
+        DurableSubscription(
+            "poison-redelivery",
+            1,
+            "poison-consumer",
+            retry_policy=RetryPolicy(max_attempts=1),
+            supports_out_of_order_repair=True,
+            tenant_id="tenant-a",
+        )
+    )
+    original_event = store.append_event(_candidate(1)).event
+    claim = store.claim_deliveries(
+        DeliveryClaimRequest(subscription.subscription_id, 1, "poison-worker", NOW)
+    )[0]
+    settlement = store.settle_delivery(
+        DeliverySettlement(
+            claim.lease,
+            DeliveryState.RETRY_WAIT,
+            NOW + timedelta(seconds=1),
+            reason_class="poison_event",
+            retry_available_at=NOW + timedelta(seconds=2),
+        )
+    )
+    assert settlement.dead_letter_id is not None
+    dead_letter_before = store.get_dead_letter(
+        settlement.dead_letter_id,
+        tenant_id="tenant-a",
+    )
+    assert dead_letter_before is not None
+    assert dead_letter_before.disposition is DeadLetterDisposition.OPEN
+
+    report = store.begin_redelivery(
+        RedeliveryRequest(
+            redelivery_id="poison-redelivery-request",
+            subscription=subscription.key,
+            source_stream_id=original_event.stream_id,
+            from_sequence=original_event.stream_sequence,
+            through_sequence=original_event.stream_sequence,
+            requested_at=NOW + timedelta(seconds=3),
+            operator_id="operator",
+            operator_reason="retry after poison input repair",
+            authorization_evidence_ref="authz:poison-redelivery",
+            tenant_id="tenant-a",
+        )
+    )
+
+    assert report.items[0].delivery_generation == 2
+    assert store.get_dead_letter(
+        settlement.dead_letter_id,
+        tenant_id="tenant-a",
+    ) == dead_letter_before
+    deliveries = store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            tenant_id="tenant-a",
+            limit=10,
+        )
+    ).records
+    assert sorted((item.delivery_generation, item.state) for item in deliveries) == [
+        (1, DeliveryState.DEAD_LETTER),
+        (2, DeliveryState.PENDING),
+    ]
+    assert store.get_event(original_event.event_id, tenant_id="tenant-a") == original_event
+
+
 def test_quarantine_replay_backup_and_restore_are_durable(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.append_event(_candidate(1))
@@ -821,6 +1207,68 @@ def test_quarantine_replay_backup_and_restore_are_durable(tmp_path: Path) -> Non
         restored.get_replay_report("replay-1", tenant_id="tenant-a").high_watermark
         == 1
     )
+
+
+def test_replay_watermark_is_atomic_with_concurrent_live_append(tmp_path: Path) -> None:
+    database = tmp_path / "replay-watermark.sqlite3"
+    store = SQLiteEventStore(database, clock=lambda: NOW)
+    store.append_event(_candidate(1))
+    barrier = Barrier(2)
+
+    def capture() -> object:
+        concurrent = SQLiteEventStore(database, initialize=False, clock=lambda: NOW)
+        barrier.wait()
+        return concurrent.begin_replay(
+            ReplayStartRequest(
+                "atomic-watermark-replay",
+                ReplayMode.VERIFY_HISTORY,
+                "run:one",
+                NOW,
+                tenant_id="tenant-a",
+            )
+        )
+
+    def append() -> object:
+        concurrent = SQLiteEventStore(database, initialize=False, clock=lambda: NOW)
+        barrier.wait()
+        return concurrent.append_event(_candidate(2))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        capture_future = executor.submit(capture)
+        append_future = executor.submit(append)
+        report = capture_future.result()
+        appended = append_future.result()
+
+    assert report.high_watermark in {1, 2}
+    assert appended.event.stream_sequence == 2
+    page = store.read_stream(
+        StreamReadRequest(
+            stream_id="run:one",
+            through_sequence=report.high_watermark,
+            tenant_id="tenant-a",
+        )
+    )
+    assert [event.stream_sequence for event in page.events] == list(
+        range(1, report.high_watermark + 1)
+    )
+    assert store.get_stream_high_watermark("run:one", tenant_id="tenant-a") == 2
+
+
+def test_replay_identity_retry_includes_checkpoint_and_range(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.append_event(_candidate(1))
+    request = ReplayStartRequest(
+        "strict-replay-identity",
+        ReplayMode.VERIFY_HISTORY,
+        "run:one",
+        NOW,
+        from_sequence=1,
+        checkpoint_ref="checkpoint-one",
+        tenant_id="tenant-a",
+    )
+    assert store.begin_replay(request) == store.begin_replay(request)
+    with pytest.raises(EventIdentityCollisionError):
+        store.begin_replay(replace(request, checkpoint_ref="checkpoint-two"))
 
 
 def test_pending_hard_limit_fails_append_before_event_commit(tmp_path: Path) -> None:

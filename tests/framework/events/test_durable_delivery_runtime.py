@@ -13,6 +13,10 @@ from framework.events.canonical import (
     StoredEvent,
 )
 from framework.events.errors import EventConsumerIdempotencyError
+from framework.events.runtime.authorization import (
+    RedeliveryAuthorizationDecision,
+    RedeliveryAuthorizationRequest,
+)
 from framework.events.runtime.delivery import (
     DeliveryFailurePhase,
     DurableConsumerRegistry,
@@ -21,6 +25,8 @@ from framework.events.runtime.delivery import (
     EventConsumerNotRegisteredError,
     EventDeliveryConfigurationError,
     EventDeliveryStoreOperationError,
+    EventRedeliveryAuthorizationContractError,
+    EventRedeliveryAuthorizationError,
     EventSubscriptionNotFoundError,
 )
 from framework.events.runtime.idempotency import (
@@ -54,6 +60,10 @@ from framework.events.runtime.models import (
     EffectIdempotencyStrategy,
     InboxEntry,
     InboxKey,
+    MAX_REDELIVERY_ITEMS,
+    RedeliveryItem,
+    RedeliveryReport,
+    RedeliveryRequest,
     RetryPolicy,
     SubscriptionFilter,
     SubscriptionKey,
@@ -118,6 +128,7 @@ class _CapabilityGate:
         operation: AutomaticDeliveryOperation,
     ) -> object:
         operation = AutomaticDeliveryOperation(operation)
+        self.trace.append("capability")
         self.required.append(operation)
         if operation in self.fail_operations:
             raise EventConsumerIdempotencyError("operation is not covered")
@@ -144,6 +155,56 @@ class _Consumer:
         if isinstance(result, BaseException):
             raise result
         return result  # type: ignore[return-value]
+
+
+class _RedeliveryAuthorizer:
+    def __init__(
+        self,
+        *,
+        trace: list[str] | None = None,
+        authorized: bool = True,
+        error: Exception | None = None,
+        invalid_response: object | None = None,
+        bind_to: RedeliveryAuthorizationRequest | None = None,
+        tamper_request_checksum: bool = False,
+        tamper_decision_checksum: bool = False,
+    ) -> None:
+        self.trace = trace if trace is not None else []
+        self.authorized = authorized
+        self.error = error
+        self.invalid_response = invalid_response
+        self.bind_to = bind_to
+        self.tamper_request_checksum = tamper_request_checksum
+        self.tamper_decision_checksum = tamper_decision_checksum
+        self.requests: list[RedeliveryAuthorizationRequest] = []
+
+    def authorize(
+        self,
+        request: RedeliveryAuthorizationRequest,
+    ) -> RedeliveryAuthorizationDecision:
+        self.trace.append("authorize")
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        if self.invalid_response is not None:
+            return self.invalid_response  # type: ignore[return-value]
+        bound_request = self.bind_to or request
+        if self.tamper_request_checksum:
+            object.__setattr__(bound_request, "request_checksum", "sha256:" + "0" * 64)
+        decision = RedeliveryAuthorizationDecision(
+            request=bound_request,
+            authorized=self.authorized,
+            decided_at=bound_request.requested_at,
+            authorization_evidence_ref=(
+                bound_request.authorization_evidence_ref
+                if self.authorized
+                else None
+            ),
+            denial_reason_class=None if self.authorized else "operator_not_authorized",
+        )
+        if self.tamper_decision_checksum:
+            object.__setattr__(decision, "decision_checksum", "sha256:" + "0" * 64)
+        return decision
 
 
 class _IdempotentTargetConsumer(_Consumer):
@@ -227,6 +288,7 @@ class _Store:
         self.fail_settlement_ids: set[str] = set()
         self.dead_letters: dict[str, DeadLetterRecord] = {}
         self.requeued: list[DeadLetterAction] = []
+        self.redelivery_requests: list[RedeliveryRequest] = []
 
     def register_subscription(
         self,
@@ -370,6 +432,40 @@ class _Store:
             available_at=action.requested_at,
             created_at=action.requested_at,
             updated_at=action.requested_at,
+        )
+
+    def begin_redelivery(self, request: RedeliveryRequest) -> RedeliveryReport:
+        self.trace.append("store")
+        self.redelivery_requests.append(request)
+        subscription = self.subscriptions[request.subscription]
+        through_sequence = request.through_sequence or 1
+        return RedeliveryReport(
+            redelivery_id=request.redelivery_id,
+            subscription=request.subscription,
+            source_stream_id=request.source_stream_id,
+            from_sequence=request.from_sequence,
+            requested_through_sequence=request.through_sequence,
+            through_sequence=through_sequence,
+            captured_high_watermark=through_sequence,
+            requested_at=request.requested_at,
+            scheduled_at=request.requested_at,
+            operator_id=request.operator_id,
+            operator_reason=request.operator_reason,
+            authorization_evidence_ref=request.authorization_evidence_ref,
+            tenant_id=request.tenant_id,
+            items=(
+                RedeliveryItem(
+                    redelivery_id=request.redelivery_id,
+                    event_id="evt-redelivery",
+                    stream_id=request.source_stream_id,
+                    stream_sequence=request.from_sequence,
+                    subscription=request.subscription,
+                    delivery_id="delivery-redelivery-v2",
+                    delivery_generation=2,
+                    created_at=request.requested_at,
+                    tenant_id=request.tenant_id,
+                ),
+            ),
         )
 
 
@@ -598,6 +694,7 @@ def _runtime(
     clock: _Clock | _SequenceClock | None = None,
     error_classifier: ConsumerErrorClassifier | None = None,
     diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
+    authorizer: _RedeliveryAuthorizer | None = None,
 ) -> DurableDeliveryRuntime:
     runtime = DurableDeliveryRuntime(
         store,  # type: ignore[arg-type]
@@ -606,6 +703,7 @@ def _runtime(
         drop_policy=drop_policy,
         error_classifier=error_classifier,
         diagnostic_fallback=diagnostic_fallback,
+        redelivery_authorizer=authorizer,
         clock=clock or _Clock(),
     )
     runtime.register(subscription, consumer)
@@ -806,6 +904,7 @@ def test_inbox_transaction_writes_stable_entry_and_redelivery_skips_effect() -> 
     subscription = _subscription(
         external=True,
         strategy=EffectIdempotencyStrategy.INBOX_TRANSACTION,
+        supports_repair=True,
     )
     consumer = _Consumer(subscription.consumer_id)
     runner = _InboxTransactionRunner(store)
@@ -1167,7 +1266,7 @@ def test_dead_letter_write_failure_is_isolated_and_never_retains_raw_message() -
 def test_retry_lease_recovery_and_redelivery_all_require_effect_capability() -> None:
     store = _Store()
     gate = _CapabilityGate()
-    subscription = _subscription(external=True)
+    subscription = _subscription(external=True, supports_repair=True)
     consumer = _Consumer(subscription.consumer_id)
     runtime = _runtime(store, subscription, consumer, gate=gate)
 
@@ -1420,6 +1519,375 @@ def test_requeue_requires_out_of_order_contract_and_matching_dead_letter() -> No
         match="new subscription version.*compensation workflow",
     ):
         runtime.requeue_dead_letter(unsafe.key, action)
+
+
+def test_authorized_redelivery_requires_capability_before_store_mutation() -> None:
+    trace: list[str] = []
+    store = _Store(trace)
+    gate = _CapabilityGate(trace)
+    authorizer = _RedeliveryAuthorizer(trace=trace)
+    subscription = _subscription(
+        external=True,
+        supports_repair=True,
+        tenant_id="tenant-a",
+    )
+    runtime = _runtime(
+        store,
+        subscription,
+        _Consumer(subscription.consumer_id),
+        gate=gate,
+        authorizer=authorizer,
+    )
+    trace.clear()
+    request = RedeliveryRequest(
+        redelivery_id="redelivery-1",
+        subscription=subscription.key,
+        source_stream_id="run:redelivery",
+        from_sequence=1,
+        through_sequence=1,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="authorized repair",
+        authorization_evidence_ref="authz-decision:redelivery-1",
+        tenant_id="tenant-a",
+    )
+
+    report = runtime.begin_redelivery(request)
+
+    assert report.redelivery_id == request.redelivery_id
+    assert trace == ["authorize", "capability", "store"]
+    assert authorizer.requests == [
+        RedeliveryAuthorizationRequest.from_redelivery(request)
+    ]
+    assert gate.required[-1] is AutomaticDeliveryOperation.REDELIVERY
+    assert store.redelivery_requests == [request]
+
+
+def test_authorized_redelivery_poison_event_is_bounded_and_dead_letters_again() -> None:
+    store = _Store()
+    gate = _CapabilityGate()
+    subscription = _subscription(
+        external=True,
+        supports_repair=True,
+        tenant_id="tenant-a",
+    )
+    poison = _event(1, stream_id="run:redelivery", tenant_id="tenant-a")
+    consumer = _Consumer(
+        subscription.consumer_id,
+        outcomes={
+            poison.event_id: PermanentEventProcessingError("poison redelivery")
+        },
+    )
+    runtime = _runtime(
+        store,
+        subscription,
+        consumer,
+        gate=gate,
+        authorizer=_RedeliveryAuthorizer(),
+    )
+    request = RedeliveryRequest(
+        redelivery_id="poison-redelivery",
+        subscription=subscription.key,
+        source_stream_id=poison.stream_id,
+        from_sequence=poison.stream_sequence,
+        through_sequence=poison.stream_sequence,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="confirm repaired poison handling",
+        authorization_evidence_ref="authz-decision:poison-redelivery",
+        tenant_id="tenant-a",
+    )
+
+    report = runtime.begin_redelivery(request)
+    claim = _claim(poison, subscription, delivery_generation=2)
+    store.claims.append(claim)
+    result = runtime.dispatch_batch(subscription.key, lease_owner="worker-1")
+
+    assert report.items[0].delivery_generation == 2
+    assert result.dead_lettered_count == 1
+    assert result.attempts[0].state is DeliveryState.DEAD_LETTER
+    assert result.attempts[0].delivery_generation == 2
+    assert len(consumer.calls) == 1
+    assert AutomaticDeliveryOperation.REDELIVERY in gate.required
+
+    gate.fail_operations.add(AutomaticDeliveryOperation.REDELIVERY)
+    with pytest.raises(EventConsumerIdempotencyError, match="capability"):
+        runtime.begin_redelivery(replace(request, redelivery_id="redelivery-2"))
+    assert store.redelivery_requests == [request]
+
+
+def test_redelivery_fails_closed_without_an_authorizer_before_capability_or_store() -> None:
+    trace: list[str] = []
+    store = _Store(trace)
+    gate = _CapabilityGate(trace)
+    subscription = _subscription(
+        external=True,
+        supports_repair=True,
+        tenant_id="tenant-a",
+    )
+    runtime = _runtime(
+        store,
+        subscription,
+        _Consumer(subscription.consumer_id),
+        gate=gate,
+    )
+    trace.clear()
+    request = RedeliveryRequest(
+        redelivery_id="missing-authorizer",
+        subscription=subscription.key,
+        source_stream_id="run:redelivery",
+        from_sequence=1,
+        through_sequence=1,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="repair",
+        authorization_evidence_ref="authz:missing-authorizer",
+        tenant_id="tenant-a",
+    )
+
+    with pytest.raises(EventDeliveryConfigurationError, match="authorizer"):
+        runtime.begin_redelivery(request)
+
+    assert trace == []
+    assert gate.required == []
+    assert store.redelivery_requests == []
+
+
+def test_redelivery_request_rejects_an_unbounded_explicit_range() -> None:
+    with pytest.raises(ValueError, match="range cannot exceed"):
+        RedeliveryRequest(
+            redelivery_id="oversized-range",
+            subscription=SubscriptionKey("repair", 1),
+            source_stream_id="run:redelivery",
+            from_sequence=1,
+            through_sequence=MAX_REDELIVERY_ITEMS + 1,
+            requested_at=NOW,
+            operator_id="operator-1",
+            operator_reason="repair",
+            authorization_evidence_ref="authz:oversized-range",
+            tenant_id="tenant-a",
+        )
+
+
+@pytest.mark.parametrize(
+    "authorizer_case",
+    ["denied", "error", "invalid", "tampered_request", "tampered_decision"],
+)
+def test_redelivery_rejects_untrusted_authorization_decisions_before_scope_lookup(
+    authorizer_case: str,
+) -> None:
+    trace: list[str] = []
+    store = _Store(trace)
+    gate = _CapabilityGate(trace)
+    subscription = _subscription(
+        external=True,
+        supports_repair=True,
+        tenant_id="tenant-a",
+    )
+    request = RedeliveryRequest(
+        redelivery_id=f"authorization-{authorizer_case}",
+        subscription=subscription.key,
+        source_stream_id="run:redelivery",
+        from_sequence=1,
+        through_sequence=1,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="repair",
+        authorization_evidence_ref=f"authz:{authorizer_case}",
+        tenant_id="tenant-a",
+    )
+    if authorizer_case == "denied":
+        authorizer = _RedeliveryAuthorizer(trace=trace, authorized=False)
+        error_type = EventRedeliveryAuthorizationError
+    elif authorizer_case == "error":
+        authorizer = _RedeliveryAuthorizer(
+            trace=trace,
+            error=RuntimeError("secret authorization backend failure"),
+        )
+        error_type = EventRedeliveryAuthorizationError
+    elif authorizer_case == "invalid":
+        authorizer = _RedeliveryAuthorizer(
+            trace=trace,
+            invalid_response={"authorized": True},
+        )
+        error_type = EventRedeliveryAuthorizationContractError
+    elif authorizer_case == "tampered_request":
+        authorizer = _RedeliveryAuthorizer(
+            trace=trace,
+            tamper_request_checksum=True,
+        )
+        error_type = EventRedeliveryAuthorizationError
+    else:
+        authorizer = _RedeliveryAuthorizer(
+            trace=trace,
+            tamper_decision_checksum=True,
+        )
+        error_type = EventRedeliveryAuthorizationContractError
+    runtime = _runtime(
+        store,
+        subscription,
+        _Consumer(subscription.consumer_id),
+        gate=gate,
+        authorizer=authorizer,
+    )
+    trace.clear()
+
+    with pytest.raises(error_type) as caught:
+        runtime.begin_redelivery(request)
+
+    assert trace == ["authorize"]
+    assert gate.required == []
+    assert store.redelivery_requests == []
+    if authorizer_case == "error":
+        assert "secret authorization backend failure" not in str(caught.value)
+        assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "changed_fields",
+    [
+        {"redelivery_id": "different-redelivery"},
+        {"subscription": SubscriptionKey("different-subscription", 2)},
+        {"source_stream_id": "run:different"},
+        {"from_sequence": 2, "through_sequence": 2},
+        {"through_sequence": None},
+        {"requested_at": NOW + timedelta(seconds=1)},
+        {"operator_id": "different-operator"},
+        {"operator_reason": "different reason"},
+        {"authorization_evidence_ref": "authz:different"},
+        {"tenant_id": "tenant-b"},
+    ],
+)
+def test_redelivery_authorization_decision_binds_every_request_field(
+    changed_fields: dict[str, object],
+) -> None:
+    trace: list[str] = []
+    store = _Store(trace)
+    gate = _CapabilityGate(trace)
+    subscription = _subscription(
+        external=True,
+        supports_repair=True,
+        tenant_id="tenant-a",
+    )
+    request = RedeliveryRequest(
+        redelivery_id="field-binding",
+        subscription=subscription.key,
+        source_stream_id="run:redelivery",
+        from_sequence=1,
+        through_sequence=1,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="repair",
+        authorization_evidence_ref="authz:field-binding",
+        tenant_id="tenant-a",
+    )
+    mismatched = replace(
+        RedeliveryAuthorizationRequest.from_redelivery(request),
+        **changed_fields,
+    )
+    runtime = _runtime(
+        store,
+        subscription,
+        _Consumer(subscription.consumer_id),
+        gate=gate,
+        authorizer=_RedeliveryAuthorizer(trace=trace, bind_to=mismatched),
+    )
+    trace.clear()
+
+    with pytest.raises(EventRedeliveryAuthorizationContractError, match="does not match"):
+        runtime.begin_redelivery(request)
+
+    assert trace == ["authorize"]
+    assert gate.required == []
+    assert store.redelivery_requests == []
+
+
+def test_redelivery_authorization_precedes_subscription_existence_checks() -> None:
+    store = _Store()
+    gate = _CapabilityGate()
+    subscription = _subscription(
+        external=True,
+        supports_repair=True,
+        tenant_id="tenant-a",
+    )
+    request = RedeliveryRequest(
+        redelivery_id="unknown-subscription",
+        subscription=SubscriptionKey("unknown-subscription", 1),
+        source_stream_id="run:redelivery",
+        from_sequence=1,
+        through_sequence=1,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="repair",
+        authorization_evidence_ref="authz:unknown-subscription",
+        tenant_id="tenant-a",
+    )
+    denied = _runtime(
+        store,
+        subscription,
+        _Consumer(subscription.consumer_id),
+        gate=gate,
+        authorizer=_RedeliveryAuthorizer(authorized=False),
+    )
+
+    with pytest.raises(EventRedeliveryAuthorizationError, match="denied"):
+        denied.begin_redelivery(request)
+
+    approved = DurableDeliveryRuntime(
+        store,  # type: ignore[arg-type]
+        consumers=denied.consumers,
+        redelivery_authorizer=_RedeliveryAuthorizer(),
+    )
+    with pytest.raises(EventSubscriptionNotFoundError):
+        approved.begin_redelivery(request)
+
+    assert gate.required == []
+    assert store.redelivery_requests == []
+
+
+def test_redelivery_exact_retry_is_authorized_again_before_store_idempotence() -> None:
+    trace: list[str] = []
+    store = _Store(trace)
+    gate = _CapabilityGate(trace)
+    authorizer = _RedeliveryAuthorizer(trace=trace)
+    subscription = _subscription(
+        external=True,
+        supports_repair=True,
+        tenant_id="tenant-a",
+    )
+    runtime = _runtime(
+        store,
+        subscription,
+        _Consumer(subscription.consumer_id),
+        gate=gate,
+        authorizer=authorizer,
+    )
+    trace.clear()
+    request = RedeliveryRequest(
+        redelivery_id="authorized-exact-retry",
+        subscription=subscription.key,
+        source_stream_id="run:redelivery",
+        from_sequence=1,
+        through_sequence=1,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="repair",
+        authorization_evidence_ref="authz:authorized-exact-retry",
+        tenant_id="tenant-a",
+    )
+
+    runtime.begin_redelivery(request)
+    runtime.begin_redelivery(request)
+
+    assert trace == [
+        "authorize",
+        "capability",
+        "store",
+        "authorize",
+        "capability",
+        "store",
+    ]
+    assert len(authorizer.requests) == 2
 
 
 def test_naive_clock_fails_before_claim() -> None:

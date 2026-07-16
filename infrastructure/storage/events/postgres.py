@@ -52,11 +52,15 @@ from framework.events.runtime.models import (
     InboxEntry,
     InboxKey,
     LeasePolicy,
+    MAX_REDELIVERY_ITEMS,
     PendingDeliveryStats,
     QuarantineDisposition,
     QuarantinePage,
     QuarantineQuery,
     QuarantineRecord,
+    RedeliveryItem,
+    RedeliveryReport,
+    RedeliveryRequest,
     ReplayReport,
     ReplayReportPage,
     ReplayReportQuery,
@@ -65,6 +69,7 @@ from framework.events.runtime.models import (
     ReplayVersion,
     StreamReadRequest,
     StreamSequenceCursor,
+    SubscriptionKey,
     SubscriptionPage,
     SubscriptionQuery,
     SubscriptionStartPolicy,
@@ -1369,6 +1374,361 @@ class PostgresDurableEventStore:
                         )
                 connection.commit()
                 return _dead_letter_from_row(row)
+            except BaseException as exc:
+                connection.rollback()
+                _reraise_store_exception(exc)
+
+    def begin_redelivery(self, request: RedeliveryRequest) -> RedeliveryReport:
+        if not isinstance(request, RedeliveryRequest):
+            raise ValueError("request must be RedeliveryRequest")
+        tenant_scope = _tenant_scope(request.tenant_id)
+        with self._connection() as connection:
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                        (
+                            "event-redelivery:"
+                            + _json([tenant_scope, request.redelivery_id]),
+                        ),
+                    )
+                    cursor.execute(
+                        f"""
+                        SELECT {_redelivery_report_columns()}
+                        FROM event_redelivery_reports
+                        WHERE tenant_scope = %s AND redelivery_id = %s
+                        """,
+                        (tenant_scope, request.redelivery_id),
+                    )
+                    existing_row = cursor.fetchone()
+                    if existing_row is not None:
+                        existing = _redelivery_report_from_postgres(
+                            cursor,
+                            existing_row,
+                        )
+                        if _redelivery_request_identity(existing) != (
+                            _redelivery_request_identity(request)
+                        ):
+                            raise EventStoreError(
+                                "redelivery identity already has a different request"
+                            )
+                        connection.commit()
+                        return existing
+
+                    cursor.execute(
+                        f"""
+                        SELECT {_subscription_columns()}
+                        FROM event_subscriptions
+                        WHERE subscription_id = %s
+                          AND subscription_version = %s
+                          AND tenant_scope = %s
+                        FOR SHARE
+                        """,
+                        (
+                            request.subscription.subscription_id,
+                            request.subscription.subscription_version,
+                            tenant_scope,
+                        ),
+                    )
+                    subscription_row = cursor.fetchone()
+                    if subscription_row is None:
+                        raise EventStoreError(
+                            "redelivery subscription is unavailable in tenant scope"
+                        )
+                    subscription = _subscription_from_row(subscription_row)
+                    if subscription.status is SubscriptionStatus.RETIRED:
+                        raise EventStoreError(
+                            "retired subscription cannot accept redelivery work"
+                        )
+                    if not subscription.supports_out_of_order_repair:
+                        raise EventConsumerIdempotencyError(
+                            "subscription does not support idempotent out-of-order repair"
+                        )
+
+                    # Capacity is the canonical first mutable-resource fence for
+                    # append, claim, settlement, DLQ requeue, and redelivery.
+                    _lock_subscription_delivery_capacity(cursor, subscription)
+                    cursor.execute(
+                        """
+                        SELECT last_sequence
+                        FROM event_stream_sequences
+                        WHERE tenant_scope = %s AND stream_id = %s
+                        FOR SHARE
+                        """,
+                        (tenant_scope, request.source_stream_id),
+                    )
+                    stream_row = cursor.fetchone()
+                    if stream_row is None:
+                        raise EventStoreError("redelivery source stream does not exist")
+                    captured_high_watermark = int(stream_row[0])
+                    through_sequence = (
+                        request.through_sequence or captured_high_watermark
+                    )
+                    if request.from_sequence > captured_high_watermark:
+                        raise EventStoreError(
+                            "redelivery range starts above the captured watermark"
+                        )
+                    if through_sequence > captured_high_watermark:
+                        raise EventStoreError(
+                            "redelivery range exceeds the captured watermark"
+                        )
+                    if (
+                        through_sequence - request.from_sequence + 1
+                        > MAX_REDELIVERY_ITEMS
+                    ):
+                        raise EventStoreCapacityError(
+                            "redelivery range exceeds the bounded "
+                            "stream-position limit"
+                        )
+
+                    cursor.execute(
+                        """
+                        SELECT 1
+                        FROM event_deliveries
+                        WHERE tenant_scope = %s
+                          AND subscription_id = %s
+                          AND subscription_version = %s
+                          AND stream_id = %s
+                          AND stream_sequence BETWEEN %s AND %s
+                          AND state IN ('pending', 'claimed', 'retry_wait')
+                        LIMIT 1
+                        """,
+                        (
+                            tenant_scope,
+                            request.subscription.subscription_id,
+                            request.subscription.subscription_version,
+                            request.source_stream_id,
+                            request.from_sequence,
+                            through_sequence,
+                        ),
+                    )
+                    if cursor.fetchone() is not None:
+                        raise EventStoreError(
+                            "redelivery target contains nonterminal delivery work"
+                        )
+
+                    cursor.execute(
+                        """
+                        SELECT events.event_id, events.stream_id, events.stream_sequence
+                        FROM durable_events AS events
+                        JOIN event_deliveries AS deliveries
+                          ON deliveries.event_id = events.event_id
+                         AND deliveries.tenant_scope = events.tenant_scope
+                         AND deliveries.stream_id = events.stream_id
+                         AND deliveries.stream_sequence = events.stream_sequence
+                        WHERE deliveries.tenant_scope = %s
+                          AND deliveries.subscription_id = %s
+                          AND deliveries.subscription_version = %s
+                          AND deliveries.delivery_generation = 1
+                          AND deliveries.stream_id = %s
+                          AND deliveries.stream_sequence BETWEEN %s AND %s
+                        ORDER BY deliveries.stream_sequence, deliveries.event_id
+                        LIMIT %s
+                        """,
+                        (
+                            tenant_scope,
+                            request.subscription.subscription_id,
+                            request.subscription.subscription_version,
+                            request.source_stream_id,
+                            request.from_sequence,
+                            through_sequence,
+                            MAX_REDELIVERY_ITEMS + 1,
+                        ),
+                    )
+                    event_rows = tuple(cursor.fetchall())
+                    if not event_rows:
+                        raise EventStoreError(
+                            "redelivery range contains no existing event-consumer pair"
+                        )
+                    if len(event_rows) > MAX_REDELIVERY_ITEMS:
+                        raise EventStoreCapacityError(
+                            "redelivery selection exceeds the "
+                            f"{MAX_REDELIVERY_ITEMS}-item limit"
+                        )
+
+                    cursor.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM event_deliveries
+                        WHERE tenant_scope = %s
+                          AND subscription_id = %s
+                          AND subscription_version = %s
+                          AND state IN ('pending', 'claimed', 'retry_wait')
+                        """,
+                        (
+                            tenant_scope,
+                            subscription.subscription_id,
+                            subscription.subscription_version,
+                        ),
+                    )
+                    pending_row = cursor.fetchone()
+                    if pending_row is None:
+                        raise EventStoreCorruptionError(
+                            "redelivery capacity query returned no row"
+                        )
+                    if (
+                        int(pending_row[0]) + len(event_rows)
+                        > subscription.limits.pending_hard_limit
+                    ):
+                        raise EventStoreCapacityError(
+                            "redelivery exceeds the subscription durable pending hard limit"
+                        )
+
+                    scheduled_at = max(_database_now(cursor), request.requested_at)
+                    cursor.execute(
+                        """
+                        INSERT INTO event_redelivery_reports (
+                            redelivery_id, tenant_id, subscription_id,
+                            subscription_version, source_stream_id, from_sequence,
+                            requested_through_sequence, through_sequence,
+                            captured_high_watermark, requested_at, scheduled_at,
+                            operator_id, operator_reason, authorization_evidence_ref
+                        ) VALUES (
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s
+                        )
+                        """,
+                        (
+                            request.redelivery_id,
+                            request.tenant_id,
+                            subscription.subscription_id,
+                            subscription.subscription_version,
+                            request.source_stream_id,
+                            request.from_sequence,
+                            request.through_sequence,
+                            through_sequence,
+                            captured_high_watermark,
+                            request.requested_at,
+                            scheduled_at,
+                            request.operator_id,
+                            request.operator_reason,
+                            request.authorization_evidence_ref,
+                        ),
+                    )
+
+                    for event_id_value, stream_id_value, sequence_value in event_rows:
+                        event_id = str(event_id_value)
+                        cursor.execute(
+                            """
+                            SELECT COALESCE(MAX(delivery_generation), 0) + 1
+                            FROM event_deliveries
+                            WHERE event_id = %s
+                              AND subscription_id = %s
+                              AND subscription_version = %s
+                            """,
+                            (
+                                event_id,
+                                subscription.subscription_id,
+                                subscription.subscription_version,
+                            ),
+                        )
+                        generation_row = cursor.fetchone()
+                        if generation_row is None:
+                            raise EventStoreCorruptionError(
+                                "redelivery generation query returned no row"
+                            )
+                        generation = int(generation_row[0])
+                        if generation < 2:
+                            raise EventStoreCorruptionError(
+                                "redelivery target has no original delivery generation"
+                            )
+                        inserted = self._insert_delivery(
+                            cursor,
+                            subscription,
+                            event_id=event_id,
+                            stream_id=str(stream_id_value),
+                            stream_sequence=int(sequence_value),
+                            created_at=scheduled_at,
+                            delivery_generation=generation,
+                        )
+                        if not inserted:
+                            raise EventStoreCorruptionError(
+                                "redelivery delivery generation was not inserted"
+                            )
+                        delivery_id = _delivery_id(
+                            event_id,
+                            subscription.subscription_id,
+                            subscription.subscription_version,
+                            generation,
+                        )
+                        cursor.execute(
+                            """
+                            INSERT INTO event_redelivery_items (
+                                tenant_id, redelivery_id, event_id, stream_id,
+                                stream_sequence, subscription_id,
+                                subscription_version, delivery_id,
+                                delivery_generation, created_at
+                            ) VALUES (
+                                %s, %s, %s, %s,
+                                %s, %s,
+                                %s, %s,
+                                %s, %s
+                            )
+                            """,
+                            (
+                                request.tenant_id,
+                                request.redelivery_id,
+                                event_id,
+                                str(stream_id_value),
+                                int(sequence_value),
+                                subscription.subscription_id,
+                                subscription.subscription_version,
+                                delivery_id,
+                                generation,
+                                scheduled_at,
+                            ),
+                        )
+
+                    cursor.execute(
+                        f"""
+                        SELECT {_redelivery_report_columns()}
+                        FROM event_redelivery_reports
+                        WHERE tenant_scope = %s AND redelivery_id = %s
+                        """,
+                        (tenant_scope, request.redelivery_id),
+                    )
+                    report_row = cursor.fetchone()
+                    if report_row is None:
+                        raise EventStoreCorruptionError(
+                            "redelivery report disappeared before transaction commit"
+                        )
+                    report = _redelivery_report_from_postgres(cursor, report_row)
+                connection.commit()
+                return report
+            except BaseException as exc:
+                connection.rollback()
+                _reraise_store_exception(exc)
+
+    def get_redelivery_report(
+        self,
+        redelivery_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> RedeliveryReport | None:
+        normalized_id = _required_text(redelivery_id, "redelivery_id")
+        with self._connection() as connection:
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET TRANSACTION READ ONLY")
+                    cursor.execute(
+                        f"""
+                        SELECT {_redelivery_report_columns()}
+                        FROM event_redelivery_reports
+                        WHERE tenant_scope = %s AND redelivery_id = %s
+                        """,
+                        (_tenant_scope(tenant_id), normalized_id),
+                    )
+                    row = cursor.fetchone()
+                    report = (
+                        None
+                        if row is None
+                        else _redelivery_report_from_postgres(cursor, row)
+                    )
+                connection.commit()
+                return report
             except BaseException as exc:
                 connection.rollback()
                 _reraise_store_exception(exc)
@@ -3415,6 +3775,155 @@ def _quarantine_from_row(row: Sequence[Any]) -> QuarantineRecord:
         raise EventStoreCorruptionError(
             "quarantine row failed contract validation"
         ) from exc
+
+
+def _redelivery_report_columns() -> str:
+    return """
+        redelivery_id, tenant_id, subscription_id, subscription_version,
+        source_stream_id, from_sequence, requested_through_sequence,
+        through_sequence, captured_high_watermark, requested_at, scheduled_at,
+        operator_id, operator_reason, authorization_evidence_ref
+    """
+
+
+def _redelivery_report_from_postgres(
+    cursor: Any,
+    row: Sequence[Any],
+) -> RedeliveryReport:
+    if len(row) != 14:
+        raise EventStoreCorruptionError("redelivery report row has an invalid shape")
+    cursor.execute(
+        """
+        SELECT
+            items.tenant_id,
+            items.redelivery_id,
+            items.event_id,
+            items.stream_id,
+            items.stream_sequence,
+            items.subscription_id,
+            items.subscription_version,
+            items.delivery_id,
+            items.delivery_generation,
+            items.created_at,
+            deliveries.event_id,
+            deliveries.stream_id,
+            deliveries.stream_sequence,
+            deliveries.subscription_id,
+            deliveries.subscription_version,
+            deliveries.delivery_generation,
+            deliveries.tenant_scope
+        FROM event_redelivery_items AS items
+        JOIN event_deliveries AS deliveries
+          ON deliveries.delivery_id = items.delivery_id
+        WHERE items.tenant_scope = %s AND items.redelivery_id = %s
+        ORDER BY items.stream_sequence, items.event_id
+        LIMIT %s
+        """,
+        (
+            _tenant_scope(str(row[1]) if row[1] is not None else None),
+            str(row[0]),
+            MAX_REDELIVERY_ITEMS + 1,
+        ),
+    )
+    item_rows = tuple(cursor.fetchall())
+    if len(item_rows) > MAX_REDELIVERY_ITEMS:
+        raise EventStoreCorruptionError(
+            "stored redelivery report exceeds the bounded item limit"
+        )
+    try:
+        subscription = SubscriptionKey(str(row[2]), int(row[3]))
+        items: list[RedeliveryItem] = []
+        for item_row in item_rows:
+            tenant_id = str(item_row[0]) if item_row[0] is not None else None
+            indexed = (
+                str(item_row[2]),
+                str(item_row[3]),
+                int(item_row[4]),
+                str(item_row[5]),
+                int(item_row[6]),
+                int(item_row[8]),
+                _tenant_scope(tenant_id),
+            )
+            linked = (
+                str(item_row[10]),
+                str(item_row[11]),
+                int(item_row[12]),
+                str(item_row[13]),
+                int(item_row[14]),
+                int(item_row[15]),
+                str(item_row[16]),
+            )
+            if indexed != linked:
+                raise EventStoreCorruptionError(
+                    "redelivery item disagrees with its delivery generation"
+                )
+            items.append(
+                RedeliveryItem(
+                    redelivery_id=str(item_row[1]),
+                    event_id=str(item_row[2]),
+                    stream_id=str(item_row[3]),
+                    stream_sequence=int(item_row[4]),
+                    subscription=subscription,
+                    delivery_id=str(item_row[7]),
+                    delivery_generation=int(item_row[8]),
+                    created_at=_required_utc(item_row[9], "created_at"),
+                    tenant_id=tenant_id,
+                )
+            )
+        return RedeliveryReport(
+            redelivery_id=str(row[0]),
+            tenant_id=str(row[1]) if row[1] is not None else None,
+            subscription=subscription,
+            source_stream_id=str(row[4]),
+            from_sequence=int(row[5]),
+            requested_through_sequence=(
+                int(row[6]) if row[6] is not None else None
+            ),
+            through_sequence=int(row[7]),
+            captured_high_watermark=int(row[8]),
+            requested_at=_required_utc(row[9], "requested_at"),
+            scheduled_at=_required_utc(row[10], "scheduled_at"),
+            operator_id=str(row[11]),
+            operator_reason=str(row[12]),
+            authorization_evidence_ref=str(row[13]),
+            items=tuple(items),
+        )
+    except EventStoreCorruptionError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise EventStoreCorruptionError(
+            "redelivery report row failed contract validation"
+        ) from exc
+
+
+def _redelivery_request_identity(
+    value: RedeliveryRequest | RedeliveryReport,
+) -> tuple[Any, ...]:
+    if isinstance(value, RedeliveryRequest):
+        return (
+            value.redelivery_id,
+            value.subscription,
+            value.source_stream_id,
+            value.from_sequence,
+            value.through_sequence,
+            value.requested_at,
+            value.operator_id,
+            value.operator_reason,
+            value.authorization_evidence_ref,
+            value.tenant_id,
+        )
+    return (
+        value.redelivery_id,
+        value.subscription,
+        value.source_stream_id,
+        value.from_sequence,
+        value.requested_through_sequence,
+        value.requested_at,
+        value.operator_id,
+        value.operator_reason,
+        value.authorization_evidence_ref,
+        value.tenant_id,
+    )
 
 
 def _replay_columns() -> str:

@@ -31,6 +31,8 @@ from framework.events.runtime.models import (
     QuarantinePage,
     QuarantineQuery,
     QuarantineRecord,
+    RedeliveryReport,
+    RedeliveryRequest,
     ReplayReport,
     ReplayReportPage,
     ReplayReportQuery,
@@ -258,6 +260,27 @@ class DeadLetterStorePort(Protocol):
 
 
 @runtime_checkable
+class RedeliveryStorePort(Protocol):
+    """Audited late-repair work created from an authorized finite selection."""
+
+    def begin_redelivery(self, request: RedeliveryRequest) -> RedeliveryReport:
+        """Capture the source watermark and materialize each pair atomically.
+
+        The caller owns authorization and idempotency-capability validation.
+        The store owns tenant scope, immutable request identity, capacity,
+        delivery-generation fencing, and exact-retry idempotence.
+        """
+        ...
+
+    def get_redelivery_report(
+        self,
+        redelivery_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> RedeliveryReport | None: ...
+
+
+@runtime_checkable
 class QuarantineStorePort(Protocol):
     def save_quarantine(self, record: QuarantineRecord) -> QuarantineRecord: ...
 
@@ -309,6 +332,7 @@ class EventStorePort(
     EventInboxStorePort,
     ConsumerCheckpointStorePort,
     DeadLetterStorePort,
+    RedeliveryStorePort,
     QuarantineStorePort,
     ReplayReportStorePort,
     Protocol,
@@ -344,5 +368,6 @@ __all__ = [
     "EventStorePort",
     "EventUnitOfWorkPort",
     "QuarantineStorePort",
+    "RedeliveryStorePort",
     "ReplayReportStorePort",
 ]

@@ -34,17 +34,22 @@ def postgres_dsn() -> str:
     if "test" not in database_name:
         pytest.fail("NEWS_TEST_POSTGRES_DSN must select a database containing 'test'")
 
-    migration = (
+    migrations = (
         Path(__file__).resolve().parents[4]
         / "infrastructure"
         / "storage"
         / "postgres"
         / "migrations"
-        / "006_durable_event_runtime.sql"
-    ).read_text(encoding="utf-8")
+    )
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
-            cursor.execute(migration)
+            for migration_name in (
+                "006_durable_event_runtime.sql",
+                "008_authorized_redelivery.sql",
+            ):
+                cursor.execute(
+                    (migrations / migration_name).read_text(encoding="utf-8")
+                )
         connection.commit()
     return dsn
 
@@ -2630,6 +2635,104 @@ def test_quarantine_and_replay_reports_are_durable_and_tenant_scoped(
         store.update_replay_report(replace(completed, to_sequence=1))
 
 
+def test_real_postgres_concurrent_authorized_redelivery_is_exactly_materialized(
+    postgres_dsn: str,
+    scope: str,
+) -> None:
+    from framework.events.runtime import (
+        DeliveryClaimRequest,
+        DeliveryQuery,
+        DeliverySettlement,
+        DeliveryState,
+        DurableSubscription,
+        RedeliveryRequest,
+    )
+    from infrastructure.storage.events.postgres import PostgresDurableEventStore
+
+    store = PostgresDurableEventStore(postgres_dsn)
+    tenant_id = f"{scope}:tenant"
+    stream_id = f"{scope}:stream:redelivery"
+    subscription = store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{scope}:subscription:redelivery",
+            subscription_version=1,
+            consumer_id=f"{scope}:consumer:redelivery",
+            supports_out_of_order_repair=True,
+            tenant_id=tenant_id,
+        )
+    )
+    originals = tuple(
+        store.append_event(
+            _candidate(
+                scope,
+                index=20 + index,
+                stream_id=stream_id,
+                tenant_id=tenant_id,
+            )
+        ).event
+        for index in range(2)
+    )
+    for index in range(2):
+        requested_at = datetime.now(UTC)
+        claim = store.claim_deliveries(
+            DeliveryClaimRequest(
+                subscription.subscription_id,
+                subscription.subscription_version,
+                f"{scope}:worker:{index}",
+                requested_at,
+                limit=1,
+            )
+        )[0]
+        store.settle_delivery(
+            DeliverySettlement(
+                claim.lease,
+                DeliveryState.ACKED,
+                requested_at + timedelta(milliseconds=1),
+            )
+        )
+
+    request = RedeliveryRequest(
+        redelivery_id=f"{scope}:redelivery:1",
+        subscription=subscription.key,
+        source_stream_id=stream_id,
+        from_sequence=1,
+        through_sequence=2,
+        requested_at=datetime.now(UTC),
+        operator_id=f"{scope}:operator",
+        operator_reason="authorized deterministic repair",
+        authorization_evidence_ref=f"{scope}:authz:redelivery:1",
+        tenant_id=tenant_id,
+    )
+    barrier = Barrier(2)
+
+    def begin(_index: int):
+        barrier.wait()
+        return store.begin_redelivery(request)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        reports = tuple(executor.map(begin, range(2)))
+
+    assert reports[0] == reports[1]
+    assert reports[0].captured_high_watermark == 2
+    assert [item.delivery_generation for item in reports[0].items] == [2, 2]
+    assert store.get_redelivery_report(request.redelivery_id, tenant_id=tenant_id) == reports[0]
+    assert store.get_redelivery_report(request.redelivery_id) is None
+    deliveries = store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=1,
+            tenant_id=tenant_id,
+            limit=10,
+        )
+    ).records
+    assert len(deliveries) == 4
+    assert sorted(delivery.delivery_generation for delivery in deliveries) == [1, 1, 2, 2]
+    for original in originals:
+        reread = store.get_event(original.event_id, tenant_id=tenant_id)
+        assert reread is not None
+        assert reread.to_dict() == original.to_dict()
+
+
 def _candidate(
     scope: str,
     *,
@@ -2769,6 +2872,14 @@ def _cleanup(dsn: str, scope: str) -> None:
 
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM event_redelivery_items WHERE redelivery_id LIKE %s",
+                (f"{scope}:%",),
+            )
+            cursor.execute(
+                "DELETE FROM event_redelivery_reports WHERE redelivery_id LIKE %s",
+                (f"{scope}:%",),
+            )
             cursor.execute(
                 "DELETE FROM event_inbox WHERE event_id LIKE %s",
                 (f"{scope}:%",),

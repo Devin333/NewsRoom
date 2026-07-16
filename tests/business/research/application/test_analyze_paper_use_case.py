@@ -49,6 +49,12 @@ class _WriteOnlyHarnessTransitionPort:
     def require_activity_storage(self) -> None:
         self._delegate.require_activity_storage()
 
+    def accept_activity(self, *args, **kwargs):
+        return self._delegate.accept_activity(*args, **kwargs)
+
+    def resolve_replay_activity(self, *args, **kwargs):
+        return self._delegate.resolve_replay_activity(*args, **kwargs)
+
     def record_activity_result(self, *args, **kwargs):
         return self._delegate.record_activity_result(*args, **kwargs)
 

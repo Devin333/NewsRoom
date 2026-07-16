@@ -42,6 +42,12 @@ from framework.harness.control_plane.phase import (
 from framework.harness.control_plane.policy import HarnessBudget, HarnessBudgetSnapshot
 from framework.harness.control_plane.routing import HarnessRoutingEvaluator
 from framework.harness.control_plane.scheduler import HarnessScheduler
+from framework.harness.control_plane.replay_history import (
+    HarnessReplayActivityResolver,
+    build_harness_history_verifier,
+    harness_decision_input_snapshot,
+    harness_decision_kernel,
+)
 from framework.harness.control_plane.state import (
     HarnessRunSpec,
     HarnessRunStatus,
@@ -95,6 +101,7 @@ __all__ = [
     "HarnessPhaseRecord",
     "HarnessProjectedState",
     "HarnessRecovery",
+    "HarnessReplayActivityResolver",
     "HarnessRoutingEvaluator",
     "HarnessRunSpec",
     "HarnessRunResult",
@@ -121,9 +128,12 @@ __all__ = [
     "SkillEvolutionBudgetGate",
     "ToolAllowlistGate",
     "assert_step_completion_allowed",
+    "build_harness_history_verifier",
     "event_log_entry_from_harness_event",
     "event_log_entry_from_stored_event",
     "get_step_state",
+    "harness_decision_input_snapshot",
+    "harness_decision_kernel",
     "replace_step_state",
     "transition_run",
     "transition_step",

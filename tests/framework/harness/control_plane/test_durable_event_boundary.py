@@ -11,6 +11,8 @@ from framework.events.canonical import (
     PayloadReference,
     StoredEvent,
     assert_same_event_identity,
+    canonical_json_bytes,
+    thaw_canonical_json,
 )
 from framework.events.errors import (
     EventIncompleteHistoryError,
@@ -18,6 +20,18 @@ from framework.events.errors import (
     EventStoreCorruptionError,
     EventStoreUnavailableError,
     EventStreamVersionConflictError,
+)
+from framework.events.runtime.history import (
+    DETERMINISTIC_HISTORY_EXTENSION,
+    DeterministicHistoryRecord,
+)
+from framework.events.runtime.activities import (
+    REPLAY_ACTIVITY_RECORD_CONTENT_TYPE,
+    RecordedActivityPayloadWrite,
+    RecordedActivityWrite,
+    ReplayActivityRecord,
+    ReplayActivityRecordingConflictError,
+    ReplayActivityStatus,
 )
 from framework.events.runtime.models import EventPage, StreamReadRequest, StreamSequenceCursor
 from framework.events.runtime.publisher import EventPublishRequest
@@ -50,7 +64,6 @@ from framework.harness import (
     event_log_entry_from_stored_event,
     transcript_entry_from_stored_event,
 )
-from framework.harness.control_plane.activity import HarnessActivityResultRecord
 from framework.harness.control_plane.transition import HarnessStateProjection
 from framework.harness.control_plane.transitions import transition_run, transition_step
 from framework.shared.json import stable_json_dumps
@@ -198,36 +211,137 @@ class CanonicalRecordingRuntime:
 
 class SecureActivityStore:
     def __init__(self) -> None:
-        self.records: dict[str, dict] = {}
+        self.payloads: dict[str, RecordedActivityPayloadWrite] = {}
+        self.records: dict[str, RecordedActivityWrite] = {}
 
-    def put_result(self, record, *, tenant_id, classification):
-        del classification
-        uri = f"secure-activity://{tenant_id}/{record.activity.activity_id}"
-        payload = record.to_dict()
-        existing = self.records.get(uri)
-        if existing is not None and stable_json_dumps(existing) != stable_json_dumps(payload):
-            raise EventStoreCorruptionError("activity result identity collision")
-        self.records[uri] = payload
-        return PayloadReference(
-            uri=uri,
-            expected_checksum=record.content_checksum,
-            content_type="application/vnd.newsroom.harness-activity-result+json",
-            size_bytes=len(stable_json_dumps(payload).encode("utf-8")),
+    def put_payload(self, payload, *, tenant_id, classification):
+        self._validate_scope(payload, tenant_id, classification)
+        reference = PayloadReference(
+            uri=self._uri(tenant_id, payload.activity_id, payload.role.value),
+            expected_checksum=payload.content_checksum,
+            content_type=payload.content_type,
+            size_bytes=len(canonical_json_bytes(payload.content)),
         )
+        write = RecordedActivityPayloadWrite(payload, reference)
+        existing = self.payloads.get(reference.uri)
+        if existing is not None and existing != write:
+            raise ReplayActivityRecordingConflictError(
+                "activity payload identity collision"
+            )
+        self.payloads[reference.uri] = write
+        return write
 
-    def resolve_result(self, reference, *, tenant_id, classification):
-        del classification
-        if not reference.uri.startswith(f"secure-activity://{tenant_id}/"):
-            raise LookupError("not found")
-        return HarnessActivityResultRecord.from_dict(self.records[reference.uri])
+    def accept_record(self, record, *, tenant_id, classification):
+        self._validate_scope(record.activity, tenant_id, classification)
+        existing = self.records.get(record.activity.activity_id)
+        if existing is not None:
+            if (
+                existing.record.activity != record.activity
+                or existing.record.outcome.started_at != record.outcome.started_at
+            ):
+                raise ReplayActivityRecordingConflictError(
+                    "activity record identity collision"
+                )
+            return existing
+        write = self._record_write(record)
+        self.records[record.activity.activity_id] = write
+        return write
+
+    def complete_record(
+        self,
+        accepted_ref,
+        record,
+        *,
+        tenant_id,
+        classification,
+    ):
+        self._validate_scope(record.activity, tenant_id, classification)
+        existing = self.records.get(record.activity.activity_id)
+        if existing is None:
+            raise ReplayActivityRecordingConflictError("activity was not accepted")
+        if existing.record.outcome.status is not ReplayActivityStatus.PENDING:
+            if existing.record != record:
+                raise ReplayActivityRecordingConflictError(
+                    "activity terminal outcome collision"
+                )
+            return existing
+        if existing.recorded_ref != accepted_ref or existing.record.activity != record.activity:
+            raise ReplayActivityRecordingConflictError(
+                "activity completion conflicts with accepted record"
+            )
+        write = self._record_write(record)
+        self.records[record.activity.activity_id] = write
+        return write
+
+    def get_record(self, reference, *, tenant_id):
+        for write in self.records.values():
+            if (
+                write.recorded_ref == reference
+                and write.record.activity.tenant_id == tenant_id
+            ):
+                return write.record
+        return None
+
+    def get_payload(self, reference, *, tenant_id):
+        write = self.payloads.get(reference.uri)
+        if (
+            write is None
+            or write.payload_ref != reference
+            or write.payload.tenant_id != tenant_id
+        ):
+            raise LookupError("recorded activity payload is missing")
+        return thaw_canonical_json(write.payload.content)
 
     def validate_reference(self, reference, *, tenant_id, classification):
+        parsed = PayloadReference.from_dict(reference)
+        write = next(
+            (
+                item
+                for item in self.records.values()
+                if item.recorded_ref == parsed
+                and item.record.activity.tenant_id == tenant_id
+                and item.record.activity.security_classification is classification
+            ),
+            None,
+        )
+        if write is None:
+            raise LookupError("secure activity reference is missing")
         return SecurePayloadValidation.for_reference(
-            reference,
+            parsed.to_dict(),
             tenant_id=tenant_id,
             classification=classification,
             capabilities=REQUIRED_SECURE_PAYLOAD_CAPABILITIES,
         )
+
+    @staticmethod
+    def _validate_scope(value, tenant_id, classification) -> None:
+        if (
+            value.tenant_id != tenant_id
+            or value.security_classification is not classification
+        ):
+            raise ReplayActivityRecordingConflictError(
+                "activity scope conflicts with storage authority"
+            )
+
+    @classmethod
+    def _record_write(cls, record: ReplayActivityRecord) -> RecordedActivityWrite:
+        return RecordedActivityWrite(
+            record,
+            PayloadReference(
+                uri=cls._uri(
+                    record.activity.tenant_id,
+                    record.activity.activity_id,
+                    "record",
+                ),
+                expected_checksum=record.record_checksum,
+                content_type=REPLAY_ACTIVITY_RECORD_CONTENT_TYPE,
+                size_bytes=len(canonical_json_bytes(record.to_dict())),
+            ),
+        )
+
+    @staticmethod
+    def _uri(tenant_id, activity_id, role) -> str:
+        return f"secure-activity://{tenant_id}/{activity_id}/{role}"
 
 
 def _durable_port(runtime: CanonicalRecordingRuntime):
@@ -1081,7 +1195,7 @@ def test_recovery_commits_missing_replan_exit_without_reincrementing_budget() ->
     assert transition_kinds.count("replan_exit") == 1
 
 
-def test_recovery_fails_closed_when_worker_returned_before_result_event_commit() -> None:
+def test_recovery_reuses_terminal_activity_when_result_event_commit_failed() -> None:
     fail_result_commit_once = True
     worker_tasks: list[dict] = []
 
@@ -1123,12 +1237,12 @@ def test_recovery_fails_closed_when_worker_returned_before_result_event_commit()
         if event.event_type == HarnessEventType.TRANSITION_COMMITTED
         and event.payload.get("transition_kind") == "execute_entry"
     )
-    with pytest.raises(EventIncompleteHistoryError, match="re-execution is forbidden"):
-        HarnessControlPlane(
-            event_port=build_port(),
-            worker_registry={"collect": worker},
-        ).recover_and_run(run_spec)
+    recovered = HarnessControlPlane(
+        event_port=build_port(),
+        worker_registry={"collect": worker},
+    ).recover_and_run(run_spec)
 
+    assert recovered.succeeded is True
     assert len(worker_tasks) == 1
     assert worker_tasks[0]["harness_activity"] == {
         "activity_id": execute_entry.payload["activity_id"],
@@ -1139,6 +1253,10 @@ def test_recovery_fails_closed_when_worker_returned_before_result_event_commit()
     assert sum(
         event.event_type == HarnessEventType.TRANSITION_COMMITTED
         and event.payload.get("transition_kind") == "execute_entry"
+        for event in runtime.events
+    ) == 1
+    assert sum(
+        event.event_type == HarnessEventType.WORKER_RESULT_RECORDED
         for event in runtime.events
     ) == 1
 
@@ -1660,6 +1778,19 @@ def test_approval_resume_commits_before_continuation_and_does_not_repeat_worker(
     resumed_events = runtime.events[before_resume:]
     assert resumed_events[0].event_type == HarnessEventType.DECISION_RECORDED
     assert resumed_events[0].payload["decision_type"] == HarnessDecisionType.RESUME_AFTER_APPROVAL
+    history = DeterministicHistoryRecord.from_dict(
+        resumed_events[0].extensions[DETERMINISTIC_HISTORY_EXTENSION]
+    )
+    previous_decision_count = sum(
+        event.event_type == HarnessEventType.DECISION_RECORDED
+        for event in runtime.events[:before_resume]
+    )
+    assert len(history.commands) == 1
+    assert history.commands[0].ordinal == previous_decision_count
+    assert history.commands[0].kind == HarnessDecisionType.RESUME_AFTER_APPROVAL
+    assert history.handler_input["approval_outcome"] == "approved"
+    assert history.policy.expected_activity is not None
+    assert history.policy.recorded_activity_ref is not None
     transition_index = next(
         index
         for index, event in enumerate(resumed_events)
@@ -1759,6 +1890,19 @@ def test_approval_cancel_is_durable_before_cancelled_projection() -> None:
     cancel_events = runtime.events[before_cancel:]
     assert cancel_events[0].event_type == HarnessEventType.DECISION_RECORDED
     assert cancel_events[0].payload["decision_type"] == HarnessDecisionType.CANCEL_RUN
+    history = DeterministicHistoryRecord.from_dict(
+        cancel_events[0].extensions[DETERMINISTIC_HISTORY_EXTENSION]
+    )
+    previous_decision_count = sum(
+        event.event_type == HarnessEventType.DECISION_RECORDED
+        for event in runtime.events[:before_cancel]
+    )
+    assert len(history.commands) == 1
+    assert history.commands[0].ordinal == previous_decision_count
+    assert history.commands[0].kind == HarnessDecisionType.CANCEL_RUN
+    assert history.handler_input["approval_outcome"] == "cancelled"
+    assert history.policy.expected_activity is not None
+    assert history.policy.recorded_activity_ref is not None
     assert cancel_events[-1].event_type == HarnessEventType.RUN_STATE_CHANGED
     assert cancel_events[-1].payload["status"] == "cancelled"
 

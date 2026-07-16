@@ -26,6 +26,8 @@ from framework.harness.workers.result import HarnessWorkerResult
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from framework.events.canonical import PayloadReference
+    from framework.events.runtime.activities import ReplayActivityDescriptor
     from framework.harness.control_plane.activity import HarnessActivity
     from framework.harness.control_plane.durable_events import (
         HarnessRecovery,
@@ -94,6 +96,7 @@ class HarnessTransitionPort(HarnessEventPort, Protocol):
         attempt: int,
         activity_type: str,
         inputs: dict[str, Any],
+        worker_version: str = "1",
     ) -> HarnessActivity:
         """Create an activity using the port-owned authoritative identity scope."""
         ...
@@ -121,6 +124,24 @@ class HarnessTransitionPort(HarnessEventPort, Protocol):
         ...
 
     def require_activity_storage(self) -> None:
+        ...
+
+    def accept_activity(
+        self,
+        activity: HarnessActivity,
+        inputs: dict[str, Any],
+        *,
+        accepted_at: datetime,
+        started_at: datetime,
+    ) -> HarnessWorkerResult | None:
+        """Persist accepted input before live work and return an existing terminal result."""
+        ...
+
+    def resolve_replay_activity(
+        self,
+        state: HarnessState,
+    ) -> tuple[ReplayActivityDescriptor, PayloadReference] | None:
+        """Return the verified recorded activity bound to the current state."""
         ...
 
     def record_activity_result(

@@ -135,7 +135,11 @@ class IdempotencyCapabilityRegistry:
         if not subscription.effect.performs_external_effects:
             return None
         if (
-            operation is AutomaticDeliveryOperation.REQUEUE
+            operation
+            in {
+                AutomaticDeliveryOperation.REDELIVERY,
+                AutomaticDeliveryOperation.REQUEUE,
+            }
             and not subscription.supports_out_of_order_repair
         ):
             raise EventConsumerIdempotencyError(

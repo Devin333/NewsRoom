@@ -24,6 +24,27 @@ from framework.events.errors import (
 )
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.runtime.models import StreamReadRequest
+from framework.events.runtime.activities import (
+    REPLAY_ACTIVITY_RECORD_SCHEMA,
+    ActivityRecorder,
+    ActivityRecordingHandle,
+    RecordedActivityResolver,
+    RecordedActivityStorePort,
+    RecordedActivityWrite,
+    ReplayActivityCorruptionError,
+    ReplayActivityDescriptor,
+    ReplayActivityIncompleteError,
+    ReplayActivityMissingError,
+    ReplayActivityRegistry,
+    ReplayActivityOutcome,
+    ReplayActivityStatus,
+    ReplayActivityVersionError,
+    ResolvedReplayActivity,
+)
+from framework.events.runtime.history import (
+    DETERMINISTIC_HISTORY_EXTENSION,
+    DeterministicHistoryRecord,
+)
 from framework.events.runtime.publisher import EventPublishRequest
 from framework.events.schema.security import SecurityClassification
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -32,13 +53,15 @@ from framework.harness.control_plane.event_log import (
     HarnessEventLogEntry,
     event_log_entry_from_stored_event,
 )
+from framework.harness.control_plane.replay_history import (
+    harness_activity_kind,
+    harness_activity_history,
+    harness_event_history,
+    harness_transition_history,
+)
 from framework.harness.control_plane.activity import (
     HARNESS_ACTIVITY_EXTENSION,
-    HARNESS_ACTIVITY_RESULT_SCHEMA,
     HarnessActivity,
-    HarnessActivityResultRecord,
-    SecureHarnessActivityStorePort,
-    resolve_activity_result,
     validate_activity_call_marker,
 )
 from framework.harness.control_plane.state import (
@@ -56,7 +79,7 @@ from framework.harness.control_plane.transition import (
     HarnessTransitionKind,
     legacy_transition_id,
 )
-from framework.harness.workers.result import HarnessWorkerResult
+from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.shared.time import format_datetime, parse_datetime
 
 
@@ -139,6 +162,12 @@ class HarnessRecovery:
 
 
 @dataclass(frozen=True, slots=True)
+class _ResolvedHarnessActivity:
+    activity: ResolvedReplayActivity
+    worker_result: HarnessWorkerResult
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessEventCanonicalAdapter:
     """Maps typed Harness facts to and from the canonical durable boundary."""
 
@@ -193,6 +222,14 @@ class HarnessEventCanonicalAdapter:
             # A legacy trace id without a span id is correlation data only and
             # must never be injected as canonical W3C trace context.
             harness_extension["legacy_trace_id"] = _legacy_trace_id(event.trace_id)
+        history = harness_event_history(
+            event,
+            data_schema=HARNESS_DATA_SCHEMA,
+        )
+        if event.deterministic_history is not None:
+            history = DeterministicHistoryRecord.from_dict(
+                event.deterministic_history
+            )
         return EventPublishRequest(
             event_id=_scoped_harness_event_id(
                 str(event.event_id),
@@ -214,7 +251,10 @@ class HarnessEventCanonicalAdapter:
             tenant_id=self.tenant_id,
             security_classification=self.security_classification,
             payload=canonical_payload,
-            extensions={"harness": harness_extension},
+            extensions={
+                "harness": harness_extension,
+                DETERMINISTIC_HISTORY_EXTENSION: history.to_dict(),
+            },
         )
 
     def to_transition_publish_request(
@@ -246,30 +286,56 @@ class HarnessEventCanonicalAdapter:
             tenant_id=self.tenant_id,
             security_classification=self.security_classification,
             payload=transition.to_payload(),
+            extensions={
+                DETERMINISTIC_HISTORY_EXTENSION: harness_transition_history(
+                    transition
+                ).to_dict()
+            },
         )
 
     def to_activity_result_publish_request(
         self,
-        record: HarnessActivityResultRecord,
-        reference: PayloadReference,
+        activity: HarnessActivity,
+        recorded: RecordedActivityWrite,
     ) -> EventPublishRequest:
-        if not isinstance(record, HarnessActivityResultRecord):
-            raise TypeError("record must be HarnessActivityResultRecord")
-        if not isinstance(reference, PayloadReference):
-            raise TypeError("reference must be PayloadReference")
-        activity = record.activity
+        if not isinstance(activity, HarnessActivity):
+            raise TypeError("activity must be HarnessActivity")
+        if not isinstance(recorded, RecordedActivityWrite):
+            raise TypeError("recorded must be RecordedActivityWrite")
+        recorded.verify_integrity()
+        if self.tenant_id is None:
+            raise HarnessValidationError(
+                "Harness activity history requires an authoritative tenant"
+            )
         if activity.identity_scope_ref != self.identity_scope_ref:
             raise HarnessValidationError(
                 "Harness activity identity scope conflicts with adapter tenant"
             )
         run_id = validate_artifact_path_segment(activity.run_id, field="run_id")
+        descriptor = recorded.record.activity
+        outcome = recorded.record.outcome
+        _validate_harness_activity_descriptor(descriptor, activity)
+        if (
+            descriptor.tenant_id != self.tenant_id
+            or descriptor.security_classification
+            is not self.activity_security_classification
+        ):
+            raise EventStoreCorruptionError(
+                "Harness activity record security scope conflicts with adapter"
+            )
+        if outcome.status is ReplayActivityStatus.PENDING:
+            raise HarnessValidationError("Harness activity event requires a terminal record")
+        completed_at = outcome.completed_at
+        if completed_at is None:  # pragma: no cover - terminal outcome invariant
+            raise HarnessValidationError("Harness activity completion time is missing")
+        worker_status = _worker_status_from_outcome(outcome)
         return EventPublishRequest(
             event_id=activity.result_event_id,
             event_type="worker_result_recorded",
             data_schema=HARNESS_DATA_SCHEMA,
             source=HARNESS_EVENT_SOURCE,
             subject=activity.step_id,
-            occurred_at=record.completed_at,
+            occurred_at=completed_at,
             stream_id=f"run:{run_id}",
             correlation_id=run_id,
             business_context=BusinessContext(
@@ -279,16 +345,30 @@ class HarnessEventCanonicalAdapter:
             producer=self.producer,
             tenant_id=self.tenant_id,
             security_classification=self.activity_security_classification,
-            content_type=reference.content_type,
-            payload_ref=reference,
+            content_type=recorded.recorded_ref.content_type,
+            payload_ref=recorded.recorded_ref,
             extensions={
                 HARNESS_ACTIVITY_EXTENSION: {
-                    "schema": HARNESS_ACTIVITY_RESULT_SCHEMA,
+                    "schema": recorded.record.schema,
                     "activity": activity.to_dict(),
-                    "status": record.result.status.value,
-                    "result_checksum": record.content_checksum,
-                    "completed_at": format_datetime(record.completed_at),
-                }
+                    "status": worker_status,
+                    "input_ref": descriptor.input_ref.to_dict(),
+                    "output_ref": (
+                        None
+                        if outcome.output_ref is None
+                        else outcome.output_ref.to_dict()
+                    ),
+                    "error_ref": (
+                        None
+                        if outcome.error_ref is None
+                        else outcome.error_ref.to_dict()
+                    ),
+                    "error_class": outcome.error_class,
+                    "accepted_at": format_datetime(descriptor.accepted_at),
+                    "started_at": format_datetime(outcome.started_at),
+                    "completed_at": format_datetime(completed_at),
+                },
+                DETERMINISTIC_HISTORY_EXTENSION: harness_activity_history(recorded).to_dict(),
             },
         )
 
@@ -303,6 +383,7 @@ class HarnessEventCanonicalAdapter:
                 step_id=event.business_context.step_id,
                 payload=transition.to_payload(),
                 occurred_at=event.occurred_at,
+                deterministic_history=_stored_deterministic_history(event),
             )
         if event.payload_ref is not None:
             extension = thaw_canonical_json(
@@ -324,6 +405,7 @@ class HarnessEventCanonicalAdapter:
                     "activity_id": _activity_extension_id(extension),
                 },
                 occurred_at=event.occurred_at,
+                deterministic_history=_stored_deterministic_history(event),
             )
         payload = thaw_canonical_json(event.payload or {})
         if not isinstance(payload, dict):
@@ -355,6 +437,7 @@ class HarnessEventCanonicalAdapter:
             metadata=metadata,
             occurred_at=event.occurred_at,
             trace_id=str(legacy_trace_id) if legacy_trace_id is not None else None,
+            deterministic_history=_stored_deterministic_history(event),
         )
 
 
@@ -366,7 +449,8 @@ class DurableHarnessEventPort:
         runtime: EventRuntimePort,
         *,
         reader: EventReaderPort | None = None,
-        secure_activity_store: SecureHarnessActivityStorePort | None = None,
+        activity_store: RecordedActivityStorePort | None = None,
+        secure_activity_store: RecordedActivityStorePort | None = None,
         adapter: HarnessEventCanonicalAdapter | None = None,
         projector: HarnessStateProjector | None = None,
     ) -> None:
@@ -374,7 +458,21 @@ class DurableHarnessEventPort:
             raise HarnessValidationError("event runtime is required")
         self._runtime = runtime
         self._reader = reader
-        self._secure_activity_store = secure_activity_store
+        if (
+            activity_store is not None
+            and secure_activity_store is not None
+            and activity_store is not secure_activity_store
+        ):
+            raise HarnessValidationError(
+                "activity_store and secure_activity_store must identify one store"
+            )
+        self._activity_store = activity_store or secure_activity_store
+        self._activity_recorder = (
+            None
+            if self._activity_store is None
+            else ActivityRecorder(self._activity_store)
+        )
+        self._activity_handles: dict[str, ActivityRecordingHandle] = {}
         self._adapter = adapter or HarnessEventCanonicalAdapter()
         self._projector = projector or HarnessStateProjector()
         self.events: list[HarnessEvent] = []
@@ -388,6 +486,7 @@ class DurableHarnessEventPort:
         attempt: int,
         activity_type: str,
         inputs: Mapping[str, Any],
+        worker_version: str = "1",
     ) -> HarnessActivity:
         self.require_activity_storage()
         return HarnessActivity.for_worker_call(
@@ -397,6 +496,7 @@ class DurableHarnessEventPort:
             activity_type=activity_type,
             inputs=inputs,
             identity_scope_ref=self._adapter.identity_scope_ref,
+            worker_version=worker_version,
         )
 
     def record(self, event: HarnessEvent) -> HarnessEvent:
@@ -420,14 +520,126 @@ class DurableHarnessEventPort:
         return tuple(entry for entry in self.event_log_entries if entry.run_id == run_id)
 
     def require_activity_storage(self) -> None:
-        if self._secure_activity_store is None:
+        if self._activity_store is None:
             raise EventIncompleteHistoryError(
-                "durable Harness worker execution requires a secure activity result store"
+                "durable Harness worker execution requires a recorded activity store"
             )
         if self._adapter.tenant_id is None:
             raise EventIncompleteHistoryError(
                 "durable Harness worker execution requires an authoritative tenant"
             )
+
+    def accept_activity(
+        self,
+        activity: HarnessActivity,
+        inputs: Mapping[str, Any],
+        *,
+        accepted_at: datetime,
+        started_at: datetime,
+    ) -> HarnessWorkerResult | None:
+        if not isinstance(activity, HarnessActivity):
+            raise TypeError("activity must be HarnessActivity")
+        if not isinstance(inputs, Mapping):
+            raise TypeError("inputs must be a mapping")
+        self.require_activity_storage()
+        assert self._activity_recorder is not None
+        assert self._adapter.tenant_id is not None
+        if checksum_for(inputs) != activity.input_checksum:
+            raise EventReplayMismatchError(
+                sequence=activity.attempt,
+                reason="Harness accepted activity input conflicts with descriptor",
+            )
+        handle = self._activity_recorder.accept(
+            activity_id=activity.activity_id,
+            activity_kind=harness_activity_kind(activity.activity_type),
+            input_value=inputs,
+            idempotency_key=activity.idempotency_key,
+            attempt=activity.attempt,
+            contract_version=activity.contract_version,
+            handler_version=activity.worker_version,
+            accepted_at=accepted_at,
+            started_at=started_at,
+            context={
+                "run_id": activity.run_id,
+                "step_id": activity.step_id,
+                "activity_type": activity.activity_type,
+                "identity_scope_ref": activity.identity_scope_ref,
+            },
+            tenant_id=self._adapter.tenant_id,
+            security_classification=self._adapter.activity_security_classification,
+        )
+        if handle.activity.input_checksum != activity.input_checksum:
+            raise EventStoreCorruptionError(
+                "recorded Harness activity input checksum conflicts with descriptor"
+            )
+        self._activity_handles[activity.activity_id] = handle
+        if not handle.is_terminal:
+            return None
+        resolved = self._resolve_recorded_activity(
+            handle.activity,
+            handle.recorded_ref,
+        )
+        return resolved.worker_result
+
+    def resolve_replay_activity(
+        self,
+        state: HarnessState,
+    ) -> tuple[ReplayActivityDescriptor, PayloadReference] | None:
+        if not isinstance(state, HarnessState):
+            raise TypeError("state must be HarnessState")
+        step_id = state.current_step_id
+        if step_id is None:
+            return None
+        step = next(
+            item for item in state.step_states if item.step_id == step_id
+        )
+        result_event_id = step.metadata.get("activity_result_event_id")
+        if result_event_id is None:
+            return None
+        activity = _activity_from_step_metadata(state.run_spec, step)
+        if activity is None:
+            raise EventStoreCorruptionError(
+                "Harness activity result reference has no activity descriptor"
+            )
+        reader = self._require_reader()
+        event = reader.get_event(
+            str(result_event_id),
+            tenant_id=self._adapter.tenant_id,
+        )
+        if event is None:
+            raise EventIncompleteHistoryError(
+                "Harness decision is missing its committed activity result"
+            )
+        resolved = self._resolve_activity_event(event, expected=activity)
+        if event.payload_ref is None:  # pragma: no cover - resolver validates this
+            raise EventStoreCorruptionError(
+                "Harness activity result event is missing its secure reference"
+            )
+        if self._adapter.tenant_id is None:  # pragma: no cover - resolver validates this
+            raise EventStoreCorruptionError(
+                "Harness activity result event is missing tenant scope"
+            )
+        descriptor = resolved.activity.activity
+        try:
+            history_value = thaw_canonical_json(
+                event.extensions.get(DETERMINISTIC_HISTORY_EXTENSION)
+            )
+            if not isinstance(history_value, Mapping):
+                raise TypeError("activity history must be an object")
+            history = DeterministicHistoryRecord.from_dict(history_value)
+            history.verify_integrity()
+        except (TypeError, ValueError) as exc:
+            raise EventStoreCorruptionError(
+                "committed Harness activity history is corrupt"
+            ) from exc
+        if (
+            history.policy.expected_activity != descriptor
+            or history.policy.recorded_activity_ref != event.payload_ref
+        ):
+            raise EventStoreCorruptionError(
+                "committed Harness activity history conflicts with secure result"
+            )
+        return history.policy.expected_activity, history.policy.recorded_activity_ref
 
     def record_activity_result(
         self,
@@ -447,7 +659,7 @@ class DurableHarnessEventPort:
         )
         if existing is not None:
             recovered = self._resolve_activity_event(existing, expected=activity)
-            if recovered.to_worker_result().to_dict() != result.to_dict():
+            if recovered.worker_result.to_dict() != result.to_dict():
                 raise EventReplayMismatchError(
                     sequence=existing.stream_sequence,
                     reason="Harness activity retry produced a different result",
@@ -457,39 +669,20 @@ class DurableHarnessEventPort:
             return projected
 
         self.require_activity_storage()
-        assert self._secure_activity_store is not None
-        assert self._adapter.tenant_id is not None
-        classification = SecurityClassification(
-            self._adapter.activity_security_classification
-        )
-        record = HarnessActivityResultRecord(
-            activity=activity,
-            result=result,
-            completed_at=completed_at,
-        )
-        reference = self._secure_activity_store.put_result(
-            record,
-            tenant_id=self._adapter.tenant_id,
-            classification=classification,
-        )
-        if not isinstance(reference, PayloadReference):
-            raise EventStoreCorruptionError(
-                "secure Harness activity store returned an invalid reference"
+        handle = self._activity_handles.get(activity.activity_id)
+        if handle is None:
+            raise EventIncompleteHistoryError(
+                "Harness activity result has no accepted durable activity"
             )
-        validation = self._secure_activity_store.validate_reference(
-            reference.to_dict(),
-            tenant_id=self._adapter.tenant_id,
-            classification=classification,
-        )
-        if not validation.proves(
-            reference.to_dict(),
-            tenant_id=self._adapter.tenant_id,
-            classification=classification,
-        ):
-            raise EventStoreCorruptionError(
-                "secure Harness activity store returned an unverified reference"
+        if result.status.value == "succeeded":
+            recorded = handle.succeed(result.to_dict(), completed_at=completed_at)
+        else:
+            recorded = handle.fail(
+                f"harness_worker_{result.status.value}",
+                result.to_dict(),
+                completed_at=completed_at,
             )
-        request = self._adapter.to_activity_result_publish_request(record, reference)
+        request = self._adapter.to_activity_result_publish_request(activity, recorded)
         stored = self._runtime.publish(request)
         _validate_commit_result(stored, request)
         self._resolve_activity_event(stored, expected=activity)
@@ -719,12 +912,12 @@ class DurableHarnessEventPort:
         if state is None:
             return None, {}
         by_id = {event.event_id: event for event in stored_events}
-        resolved_records: dict[str, HarnessActivityResultRecord] = {}
+        resolved_records: dict[str, _ResolvedHarnessActivity] = {}
 
         def resolve_record(
             event_id: str,
             activity: HarnessActivity,
-        ) -> HarnessActivityResultRecord:
+        ) -> _ResolvedHarnessActivity:
             event = by_id.get(event_id)
             if event is None:
                 raise EventIncompleteHistoryError(
@@ -734,9 +927,10 @@ class DurableHarnessEventPort:
             if record is None:
                 record = self._resolve_activity_event(event, expected=activity)
                 resolved_records[event_id] = record
-            elif record.activity != activity:
-                raise EventStoreCorruptionError(
-                    "Harness activity result is referenced by conflicting activities"
+            else:
+                _validate_harness_activity_descriptor(
+                    record.activity.activity,
+                    activity,
                 )
             return record
 
@@ -757,7 +951,7 @@ class DurableHarnessEventPort:
                 hydrated_steps.append(step)
                 continue
             record = resolve_record(event_id, activity)
-            worker_result = record.to_worker_result()
+            worker_result = record.worker_result
             worker_results[step.step_id] = worker_result
             if committed_event_id is None:
                 hydrated_steps.append(step)
@@ -801,7 +995,7 @@ class DurableHarnessEventPort:
             result = resolve_record(
                 transition.activity_result_event_id,
                 activity,
-            ).to_worker_result()
+            ).worker_result
             step_spec = next(
                 item
                 for item in state.run_spec.workflow.steps
@@ -840,18 +1034,24 @@ class DurableHarnessEventPort:
         event: StoredEvent,
         *,
         expected: HarnessActivity,
-    ) -> HarnessActivityResultRecord:
+    ) -> _ResolvedHarnessActivity:
         self.require_activity_storage()
-        assert self._secure_activity_store is not None
+        assert self._activity_store is not None
         assert self._adapter.tenant_id is not None
         event.verify_integrity()
         if (
             event.event_id != expected.result_event_id
             or event.event_type != "worker_result_recorded"
             or event.data_schema != HARNESS_DATA_SCHEMA
+            or event.source != HARNESS_EVENT_SOURCE
+            or event.stream_id != f"run:{expected.run_id}"
             or event.business_context.run_id != expected.run_id
             or event.business_context.step_id != expected.step_id
+            or event.tenant_id != self._adapter.tenant_id
+            or event.security_classification
+            is not self._adapter.activity_security_classification
             or event.payload_ref is None
+            or event.content_type != event.payload_ref.content_type
         ):
             raise EventStoreCorruptionError(
                 "committed Harness activity event identity is invalid"
@@ -873,13 +1073,76 @@ class DurableHarnessEventPort:
             raise EventStoreCorruptionError(
                 "committed Harness activity descriptor conflicts with state"
             )
-        return resolve_activity_result(
-            self._secure_activity_store,
-            event.payload_ref,
-            expected_activity=expected,
-            tenant_id=self._adapter.tenant_id,
-            classification=SecurityClassification(event.security_classification),
+        try:
+            history_value = thaw_canonical_json(
+                event.extensions.get(DETERMINISTIC_HISTORY_EXTENSION)
+            )
+            if not isinstance(history_value, Mapping):
+                raise TypeError("activity history must be an object")
+            history = DeterministicHistoryRecord.from_dict(history_value)
+            history.verify_integrity()
+        except (TypeError, ValueError) as exc:
+            raise EventStoreCorruptionError(
+                "committed Harness activity history is corrupt"
+            ) from exc
+        descriptor = history.policy.expected_activity
+        recorded_ref = history.policy.recorded_activity_ref
+        if descriptor is None or recorded_ref is None or recorded_ref != event.payload_ref:
+            raise EventStoreCorruptionError(
+                "committed Harness activity history is missing its recorded binding"
+            )
+        _validate_harness_activity_descriptor(descriptor, expected)
+        if (
+            descriptor.tenant_id != self._adapter.tenant_id
+            or descriptor.security_classification
+            is not self._adapter.activity_security_classification
+        ):
+            raise EventStoreCorruptionError(
+                "committed Harness activity descriptor has an invalid security scope"
+            )
+        resolved = self._resolve_recorded_activity(descriptor, recorded_ref)
+        if resolved.activity.activity != descriptor:
+            raise EventStoreCorruptionError(
+                "committed Harness activity descriptor conflicts with recorded history"
+            )
+        _validate_harness_activity_extension(
+            extension,
+            expected=expected,
+            resolved=resolved.activity,
+            occurred_at=event.occurred_at,
         )
+        return resolved
+
+    def _resolve_recorded_activity(
+        self,
+        descriptor: ReplayActivityDescriptor,
+        recorded_ref: PayloadReference,
+    ) -> _ResolvedHarnessActivity:
+        assert self._activity_store is not None
+        registry = ReplayActivityRegistry()
+        registry.register(descriptor.pinned_version)
+        try:
+            resolved = RecordedActivityResolver(
+                self._activity_store,
+                registry,
+            ).resolve(descriptor, recorded_ref)
+            worker_result = _worker_result_from_recorded_activity(
+                self._activity_store,
+                resolved,
+            )
+        except ReplayActivityMissingError as exc:
+            raise EventIncompleteHistoryError(
+                "committed Harness activity result is unavailable"
+            ) from exc
+        except ReplayActivityIncompleteError as exc:
+            raise EventIncompleteHistoryError(
+                "committed Harness activity result is incomplete"
+            ) from exc
+        except (ReplayActivityCorruptionError, ReplayActivityVersionError) as exc:
+            raise EventStoreCorruptionError(
+                "committed Harness activity result is corrupt"
+            ) from exc
+        return _ResolvedHarnessActivity(resolved, worker_result)
 
     def _require_reader(self) -> EventReaderPort:
         if self._reader is None:
@@ -895,13 +1158,15 @@ class DurableHarnessTransitionPort(DurableHarnessEventPort):
         runtime: EventRuntimePort,
         reader: EventReaderPort,
         *,
-        secure_activity_store: SecureHarnessActivityStorePort | None = None,
+        activity_store: RecordedActivityStorePort | None = None,
+        secure_activity_store: RecordedActivityStorePort | None = None,
         adapter: HarnessEventCanonicalAdapter | None = None,
         projector: HarnessStateProjector | None = None,
     ) -> None:
         super().__init__(
             runtime,
             reader=reader,
+            activity_store=activity_store,
             secure_activity_store=secure_activity_store,
             adapter=adapter,
             projector=projector,
@@ -1260,6 +1525,201 @@ def _validate_transition_retry_fields(
         )
 
 
+def _validate_harness_activity_descriptor(
+    descriptor: ReplayActivityDescriptor,
+    expected: HarnessActivity,
+) -> None:
+    expected_context = {
+        "run_id": expected.run_id,
+        "step_id": expected.step_id,
+        "activity_type": expected.activity_type,
+        "identity_scope_ref": expected.identity_scope_ref,
+    }
+    if (
+        descriptor.activity_id != expected.activity_id
+        or descriptor.activity_kind
+        is not harness_activity_kind(expected.activity_type)
+        or descriptor.input_checksum != expected.input_checksum
+        or descriptor.idempotency_key != expected.idempotency_key
+        or descriptor.attempt != expected.attempt
+        or descriptor.contract_version != expected.contract_version
+        or descriptor.handler_version != expected.worker_version
+        or thaw_canonical_json(descriptor.context) != expected_context
+    ):
+        raise EventStoreCorruptionError(
+            "committed Harness activity descriptor conflicts with state"
+        )
+
+
+def _worker_status_from_outcome(outcome: ReplayActivityOutcome) -> str:
+    if outcome.status is ReplayActivityStatus.SUCCEEDED:
+        return HarnessWorkerStatus.SUCCEEDED.value
+    error_class = outcome.error_class
+    prefix = "harness_worker_"
+    if not isinstance(error_class, str) or not error_class.startswith(prefix):
+        raise EventStoreCorruptionError(
+            "recorded Harness activity has an invalid error class"
+        )
+    status = error_class.removeprefix(prefix)
+    if status not in {
+        HarnessWorkerStatus.FAILED.value,
+        HarnessWorkerStatus.BLOCKED.value,
+        HarnessWorkerStatus.WAITING_APPROVAL.value,
+    }:
+        raise EventStoreCorruptionError(
+            "recorded Harness activity has an unsupported worker status"
+        )
+    return status
+
+
+def _worker_result_from_recorded_activity(
+    store: RecordedActivityStorePort,
+    resolved: ResolvedReplayActivity,
+) -> HarnessWorkerResult:
+    status = _worker_status_from_outcome(resolved.outcome)
+    payload_ref = (
+        resolved.outcome.output_ref
+        if resolved.outcome.status is ReplayActivityStatus.SUCCEEDED
+        else resolved.outcome.error_ref
+    )
+    if payload_ref is None:
+        raise ReplayActivityIncompleteError(
+            "recorded Harness activity is missing its terminal payload"
+        )
+    try:
+        value = store.get_payload(
+            payload_ref,
+            tenant_id=resolved.activity.tenant_id,
+        )
+    except (ReplayActivityMissingError, ReplayActivityCorruptionError):
+        raise
+    except LookupError as exc:
+        raise ReplayActivityMissingError(
+            "recorded Harness activity terminal payload is missing"
+        ) from exc
+    except EventStoreCorruptionError as exc:
+        raise ReplayActivityCorruptionError(
+            "recorded Harness activity terminal payload is corrupt"
+        ) from exc
+    try:
+        actual_checksum = checksum_for(value)
+        payload = thaw_canonical_json(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ReplayActivityCorruptionError(
+            "recorded Harness activity terminal payload is not canonical"
+        ) from exc
+    if actual_checksum != payload_ref.expected_checksum:
+        raise ReplayActivityCorruptionError(
+            "recorded Harness activity terminal payload checksum does not match"
+        )
+    expected_fields = {
+        "status",
+        "output",
+        "artifacts",
+        "diagnostics",
+        "metrics",
+        "error",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != expected_fields:
+        raise ReplayActivityCorruptionError(
+            "recorded Harness worker result payload is invalid"
+        )
+    output = payload.get("output")
+    artifacts = payload.get("artifacts")
+    diagnostics = payload.get("diagnostics")
+    metrics = payload.get("metrics")
+    error = payload.get("error")
+    if (
+        not isinstance(output, Mapping)
+        or not isinstance(artifacts, list | tuple)
+        or any(not isinstance(item, str) for item in artifacts)
+        or not isinstance(diagnostics, Mapping)
+        or not isinstance(metrics, Mapping)
+        or (error is not None and not isinstance(error, str))
+    ):
+        raise ReplayActivityCorruptionError(
+            "recorded Harness worker result fields are invalid"
+        )
+    try:
+        result = HarnessWorkerResult(
+            status=payload.get("status"),
+            output=dict(output),
+            artifacts=tuple(artifacts),
+            diagnostics=dict(diagnostics),
+            metrics=dict(metrics),
+            error=error,
+        )
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise ReplayActivityCorruptionError(
+            "recorded Harness worker result cannot be restored"
+        ) from exc
+    if result.status.value != status:
+        raise ReplayActivityCorruptionError(
+            "recorded Harness worker status conflicts with activity outcome"
+        )
+    return result
+
+
+def _validate_harness_activity_extension(
+    extension: Mapping[str, Any],
+    *,
+    expected: HarnessActivity,
+    resolved: ResolvedReplayActivity,
+    occurred_at: datetime,
+) -> None:
+    expected_fields = {
+        "schema",
+        "activity",
+        "status",
+        "input_ref",
+        "output_ref",
+        "error_ref",
+        "error_class",
+        "accepted_at",
+        "started_at",
+        "completed_at",
+    }
+    if set(extension) != expected_fields:
+        raise EventStoreCorruptionError(
+            "committed Harness activity extension fields are invalid"
+        )
+    try:
+        input_ref = PayloadReference.from_dict(extension["input_ref"])
+        output_ref = _optional_payload_reference(extension.get("output_ref"))
+        error_ref = _optional_payload_reference(extension.get("error_ref"))
+        accepted_at = parse_datetime(extension.get("accepted_at"))
+        started_at = parse_datetime(extension.get("started_at"))
+        completed_at = parse_datetime(extension.get("completed_at"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EventStoreCorruptionError(
+            "committed Harness activity extension is corrupt"
+        ) from exc
+    if (
+        extension.get("schema") != REPLAY_ACTIVITY_RECORD_SCHEMA
+        or HarnessActivity.from_dict(extension["activity"]) != expected
+        or extension.get("status") != _worker_status_from_outcome(resolved.outcome)
+        or input_ref != resolved.activity.input_ref
+        or output_ref != resolved.outcome.output_ref
+        or error_ref != resolved.outcome.error_ref
+        or extension.get("error_class") != resolved.outcome.error_class
+        or accepted_at != resolved.activity.accepted_at
+        or started_at != resolved.outcome.started_at
+        or completed_at != resolved.outcome.completed_at
+        or occurred_at != resolved.outcome.completed_at
+    ):
+        raise EventStoreCorruptionError(
+            "committed Harness activity extension conflicts with recorded history"
+        )
+
+
+def _optional_payload_reference(value: Any) -> PayloadReference | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError("payload reference must be an object")
+    return PayloadReference.from_dict(value)
+
+
 def _activity_from_step_metadata(
     run_spec: HarnessRunSpec,
     step: HarnessStepState,
@@ -1315,6 +1775,22 @@ def _activity_extension_id(extension: Mapping[str, Any]) -> str:
     if not isinstance(activity_id, str) or not activity_id.strip():
         raise HarnessValidationError("stored Harness activity_id is invalid")
     return activity_id
+
+
+def _stored_deterministic_history(event: StoredEvent) -> dict[str, Any]:
+    value = thaw_canonical_json(
+        event.extensions.get(DETERMINISTIC_HISTORY_EXTENSION, {})
+    )
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError(
+            "stored Harness deterministic history must be an object"
+        )
+    try:
+        return DeterministicHistoryRecord.from_dict(value).to_dict()
+    except (TypeError, ValueError) as exc:
+        raise HarnessValidationError(
+            "stored Harness deterministic history is invalid"
+        ) from exc
 
 
 def _called_activity_ids_for_recovery(

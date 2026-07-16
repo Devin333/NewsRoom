@@ -19,7 +19,7 @@ from framework.events.errors import (
     ReplayCheckpointCollisionError,
     ReplayCheckpointCorruptionError,
 )
-from framework.events.runtime.models import ReplayMode
+from framework.events.runtime.models import ReplayMode, ReplayVersion
 from framework.events.runtime.replay_engine import (
     ReplayCheckpoint,
     ReplayCheckpointStorePort,
@@ -217,9 +217,24 @@ def test_checkpoint_store_conformance_monotonic_progress_and_collision_semantics
         first,
         replace(advanced, source_stream_id=f"{case.scope}:other-stream"),
         replace(advanced, source_high_watermark=3),
-        replace(advanced, runtime_version="runtime-v2"),
-        replace(advanced, schema_catalog_version="catalog-v2"),
-        replace(advanced, reducer_version="reducer-v2"),
+        _replace_pinned_version(
+            advanced,
+            "replay_runtime",
+            "runtime-v2",
+            runtime_version="runtime-v2",
+        ),
+        _replace_pinned_version(
+            advanced,
+            "schema_catalog",
+            "catalog-v2",
+            schema_catalog_version="catalog-v2",
+        ),
+        _replace_pinned_version(
+            advanced,
+            f"reducer:{advanced.reducer_id}",
+            "reducer-v2",
+            reducer_version="reducer-v2",
+        ),
         replace(advanced, parent_checkpoint_id=f"{case.scope}:other-parent"),
     ):
         with pytest.raises(ReplayCheckpointCollisionError):
@@ -230,6 +245,78 @@ def test_checkpoint_store_conformance_monotonic_progress_and_collision_semantics
             tenant_id=first.tenant_id,
         )
         == advanced
+    )
+
+
+def test_checkpoint_store_conformance_pinned_versions_grow_monotonically(
+    replay_checkpoint_store_case: ReplayCheckpointStoreCase,
+) -> None:
+    case = replay_checkpoint_store_case
+    initial = _checkpoint(case.scope, last_sequence=0)
+    case.store.save_checkpoint(initial)
+
+    added_version = ReplayVersion("history:decision_recorded", "handler-v1")
+    extended = replace(
+        initial,
+        last_sequence=1,
+        last_event_id=f"{case.scope}:{case.scope}:tenant:event:1",
+        history_checksum="sha256:" + "1" * 64,
+        state={"count": 1},
+        versions=(*initial.versions, added_version),
+    )
+    assert case.store.save_checkpoint(extended) == extended
+    assert (
+        case.store.get_checkpoint(
+            initial.checkpoint_id,
+            tenant_id=initial.tenant_id,
+        )
+        == extended
+    )
+
+    next_progress = {
+        "last_sequence": 2,
+        "last_event_id": f"{case.scope}:{case.scope}:tenant:event:2",
+        "history_checksum": "sha256:" + "2" * 64,
+        "state": {"count": 2},
+    }
+    removed = replace(extended, **next_progress, versions=initial.versions)
+    rewritten = _replace_pinned_version(
+        replace(extended, **next_progress),
+        added_version.component,
+        "handler-v2",
+    )
+
+    for collision in (removed, rewritten):
+        with pytest.raises(ReplayCheckpointCollisionError) as error:
+            case.store.save_checkpoint(collision)
+        assert error.value.reason == (
+            "pinned checkpoint versions cannot be removed or changed"
+        )
+
+    assert (
+        case.store.get_checkpoint(
+            initial.checkpoint_id,
+            tenant_id=initial.tenant_id,
+        )
+        == extended
+    )
+
+
+def _replace_pinned_version(
+    checkpoint: ReplayCheckpoint,
+    component: str,
+    version: str,
+    **changes: object,
+) -> ReplayCheckpoint:
+    return replace(
+        checkpoint,
+        **changes,
+        versions=tuple(
+            ReplayVersion(item.component, version)
+            if item.component == component
+            else item
+            for item in checkpoint.versions
+        ),
     )
 
 
@@ -336,6 +423,7 @@ def test_sqlite_checkpoint_process_exit_after_commit_is_durable(tmp_path: Path) 
             source_stream_id={f"{scope}:stream"!r},
             last_sequence=2,
             source_high_watermark=2,
+            last_event_id={f"{scope}:{scope}:tenant:event:2"!r},
             runtime_version="runtime-v1",
             schema_catalog_version="catalog-v1",
             history_checksum="sha256:" + "2" * 64,
@@ -373,6 +461,11 @@ def _checkpoint(scope: str, *, last_sequence: int) -> ReplayCheckpoint:
         source_stream_id=f"{scope}:stream",
         last_sequence=last_sequence,
         source_high_watermark=2,
+        last_event_id=(
+            None
+            if last_sequence == 0
+            else f"{scope}:{scope}:tenant:event:{last_sequence}"
+        ),
         runtime_version="runtime-v1",
         schema_catalog_version="catalog-v1",
         history_checksum="sha256:" + str(last_sequence) * 64,

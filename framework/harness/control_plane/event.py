@@ -35,6 +35,11 @@ class HarnessEvent:
     metadata: dict[str, Any] = field(default_factory=dict)
     occurred_at: Any = field(default_factory=utc_now)
     trace_id: str | None = None
+    deterministic_history: Mapping[str, Any] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "event_type", HarnessEventType(self.event_type))
@@ -49,6 +54,17 @@ class HarnessEvent:
             raise HarnessValidationError("metadata must be an object")
         object.__setattr__(self, "payload", payload)
         object.__setattr__(self, "metadata", metadata)
+        history = self.deterministic_history
+        if history is not None:
+            history = normalize_canonical_json(
+                history,
+                path="$.harness.deterministic_history",
+            )
+            if not isinstance(history, Mapping):
+                raise HarnessValidationError(
+                    "deterministic_history must be an object"
+                )
+        object.__setattr__(self, "deterministic_history", history)
         event_id = self.event_id or _stable_event_id(
             run_id=self.run_id,
             event_type=self.event_type.value,

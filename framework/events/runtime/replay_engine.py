@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from types import CodeType, FunctionType, ModuleType
-from typing import Any, Never, Protocol, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Never, Protocol, TypeAlias, TypeVar
 
 from framework.events.canonical import (
     CanonicalValue,
@@ -17,12 +17,18 @@ from framework.events.canonical import (
     thaw_canonical_json,
 )
 from framework.events.errors import EventIntegrityError, EventQuarantineError, EventReplayError
-from framework.events.ports import EventStorePort
 from framework.events.runtime.fallback import (
     LocalRuntimeDiagnosticFallback,
     RuntimeDiagnosticCategory,
     RuntimeDiagnosticComponent,
     RuntimeDiagnosticOperation,
+)
+from framework.events.runtime.history import (
+    DETERMINISTIC_HISTORY_EXTENSION,
+    DeterministicHistoryRecord,
+    HistoryVerificationError,
+    HistoryVerificationState,
+    HistoryVerifier,
 )
 from framework.events.runtime.models import (
     MAX_PAGE_LIMIT,
@@ -38,6 +44,9 @@ from framework.events.runtime.models import (
     StreamSequenceCursor,
 )
 from framework.events.schema.catalog import EventSchemaCatalog, HistoricalSchemaResolution
+
+if TYPE_CHECKING:
+    from framework.events.ports import EventStorePort
 
 
 ReplayReducer: TypeAlias = Callable[[CanonicalValue, "ReplayEvent"], Any]
@@ -217,6 +226,10 @@ class ReplaySourceReadError(ReplayExecutionFailure):
     """The authoritative replay source failed while reading a fixed prefix."""
 
 
+class ReplayHistoryVerificationError(ReplayExecutionFailure):
+    """Deterministic commands, activities, or handler versions did not replay."""
+
+
 @dataclass(frozen=True, slots=True)
 class ReplayEvent:
     """Schema-resolved immutable input exposed to a pure reducer."""
@@ -230,6 +243,7 @@ class ReplayEvent:
     occurred_at: str
     payload: Mapping[str, Any]
     record_checksum: str
+    history: Mapping[str, Any] | None = None
     applied_upcasters: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -260,6 +274,12 @@ class ReplayEvent:
         if not isinstance(normalized, Mapping):
             raise TypeError("replay payload must be an object")
         object.__setattr__(self, "payload", normalized)
+        history = self.history
+        if history is not None:
+            history = _normalize_replay_json(history, path="$.replay.history")
+            if not isinstance(history, Mapping):
+                raise TypeError("replay history must be an object")
+        object.__setattr__(self, "history", history)
         object.__setattr__(
             self,
             "applied_upcasters",
@@ -280,6 +300,7 @@ class ReplayEvent:
             "occurred_at": self.occurred_at,
             "payload": thaw_canonical_json(self.payload),
             "record_checksum": self.record_checksum,
+            "history": thaw_canonical_json(self.history),
             "applied_upcasters": list(self.applied_upcasters),
         }
 
@@ -351,12 +372,15 @@ class ReplayCheckpoint:
     runtime_version: str
     schema_catalog_version: str
     history_checksum: str
+    last_event_id: str | None = None
     state: Any = None
     reducer_id: str | None = None
     reducer_version: str | None = None
     parent_checkpoint_id: str | None = None
     tenant_id: str | None = None
     applied_upcasters: tuple[str, ...] = ()
+    versions: tuple[ReplayVersion, ...] = ()
+    verification_state: Mapping[str, Any] | None = None
     checkpoint_checksum: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -383,6 +407,10 @@ class ReplayCheckpoint:
             raise ValueError("last_sequence cannot exceed source_high_watermark")
         object.__setattr__(self, "last_sequence", last_sequence)
         object.__setattr__(self, "source_high_watermark", source_high_watermark)
+        last_event_id = _optional_text(self.last_event_id, "last_event_id")
+        if last_sequence == 0 and last_event_id is not None:
+            raise ValueError("sequence-zero replay checkpoint cannot reference an event")
+        object.__setattr__(self, "last_event_id", last_event_id)
         object.__setattr__(
             self,
             "runtime_version",
@@ -430,6 +458,50 @@ class ReplayCheckpoint:
                 for value in self.applied_upcasters
             ),
         )
+        versions = tuple(self.versions)
+        if any(not isinstance(value, ReplayVersion) for value in versions):
+            raise TypeError("versions must contain ReplayVersion values")
+        if not versions:
+            derived = [
+                ReplayVersion("replay_runtime", self.runtime_version),
+                ReplayVersion("schema_catalog", self.schema_catalog_version),
+            ]
+            if reducer_id is not None and reducer_version is not None:
+                derived.append(
+                    ReplayVersion(f"reducer:{reducer_id}", reducer_version)
+                )
+            versions = tuple(derived)
+        components = tuple(value.component for value in versions)
+        if len(set(components)) != len(components):
+            raise ValueError("replay checkpoint versions must have unique components")
+        required_versions = {
+            "replay_runtime": self.runtime_version,
+            "schema_catalog": self.schema_catalog_version,
+        }
+        if reducer_id is not None and reducer_version is not None:
+            required_versions[f"reducer:{reducer_id}"] = reducer_version
+        actual_versions = {value.component: value.version for value in versions}
+        if any(
+            actual_versions.get(key) != value
+            for key, value in required_versions.items()
+        ):
+            raise ValueError("replay checkpoint versions conflict with pinned handlers")
+        object.__setattr__(self, "versions", versions)
+        verification_state = self.verification_state
+        if verification_state is not None:
+            if mode is not ReplayMode.VERIFY_HISTORY:
+                raise ValueError(
+                    "verification_state is valid only for VERIFY_HISTORY checkpoints"
+                )
+            parsed_verification_state = HistoryVerificationState.from_checkpoint(
+                verification_state
+            )
+            _validate_verification_pinned_versions(
+                versions,
+                parsed_verification_state,
+            )
+            verification_state = parsed_verification_state.to_checkpoint()
+        object.__setattr__(self, "verification_state", verification_state)
         object.__setattr__(
             self,
             "checkpoint_checksum",
@@ -443,6 +515,7 @@ class ReplayCheckpoint:
             "source_stream_id": self.source_stream_id,
             "last_sequence": self.last_sequence,
             "source_high_watermark": self.source_high_watermark,
+            "last_event_id": self.last_event_id,
             "runtime_version": self.runtime_version,
             "schema_catalog_version": self.schema_catalog_version,
             "history_checksum": self.history_checksum,
@@ -452,6 +525,11 @@ class ReplayCheckpoint:
             "parent_checkpoint_id": self.parent_checkpoint_id,
             "tenant_id": self.tenant_id,
             "applied_upcasters": list(self.applied_upcasters),
+            "versions": [
+                {"component": value.component, "version": value.version}
+                for value in self.versions
+            ],
+            "verification_state": thaw_canonical_json(self.verification_state),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -472,6 +550,7 @@ class ReplayCheckpoint:
             "source_stream_id",
             "last_sequence",
             "source_high_watermark",
+            "last_event_id",
             "runtime_version",
             "schema_catalog_version",
             "history_checksum",
@@ -481,6 +560,8 @@ class ReplayCheckpoint:
             "parent_checkpoint_id",
             "tenant_id",
             "applied_upcasters",
+            "versions",
+            "verification_state",
             "checkpoint_checksum",
         }
         unknown = sorted(str(key) for key in value if key not in allowed)
@@ -494,6 +575,7 @@ class ReplayCheckpoint:
             source_stream_id=value.get("source_stream_id"),
             last_sequence=value.get("last_sequence"),
             source_high_watermark=value.get("source_high_watermark"),
+            last_event_id=value.get("last_event_id"),
             runtime_version=value.get("runtime_version"),
             schema_catalog_version=value.get("schema_catalog_version"),
             history_checksum=value.get("history_checksum"),
@@ -503,6 +585,16 @@ class ReplayCheckpoint:
             parent_checkpoint_id=value.get("parent_checkpoint_id"),
             tenant_id=value.get("tenant_id"),
             applied_upcasters=tuple(value.get("applied_upcasters") or ()),
+            versions=tuple(
+                item
+                if isinstance(item, ReplayVersion)
+                else ReplayVersion(
+                    component=item.get("component"),
+                    version=item.get("version"),
+                )
+                for item in (value.get("versions") or ())
+            ),
+            verification_state=value.get("verification_state"),
         )
         supplied = str(value.get("checkpoint_checksum") or "").lower()
         if supplied != checkpoint.checkpoint_checksum:
@@ -535,6 +627,8 @@ class _ReplayProgress:
     state: CanonicalValue
     history_checksum: str
     last_sequence: int
+    last_event_id: str | None
+    verification_state: HistoryVerificationState | None
     applied_upcasters: list[str]
     durable_report: ReplayReport
     parent_checkpoint_id: str | None = None
@@ -572,6 +666,7 @@ class DeterministicReplayEngine:
         schema_catalog_version: str,
         clock: ReplayClock,
         page_size: int = 100,
+        history_verifier: HistoryVerifier | None = None,
         diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
     ) -> None:
         if not isinstance(catalog, EventSchemaCatalog):
@@ -595,6 +690,12 @@ class DeterministicReplayEngine:
         )
         self._clock = clock
         self._page_size = page_size
+        if history_verifier is not None and not isinstance(
+            history_verifier,
+            HistoryVerifier,
+        ):
+            raise TypeError("history_verifier must be HistoryVerifier")
+        self._history_verifier = history_verifier
         self._diagnostic_fallback = (
             diagnostic_fallback
             if diagnostic_fallback is not None
@@ -662,6 +763,10 @@ class DeterministicReplayEngine:
         after_sequence: int | None = None,
     ) -> ReplayExecutionResult:
         _require_mode(request, ReplayMode.VERIFY_HISTORY)
+        if self._history_verifier is None:
+            raise ReplayModeError(
+                "VERIFY_HISTORY requires a deterministic history verifier"
+            )
         return self._execute_finite(
             request,
             registration=None,
@@ -697,11 +802,16 @@ class DeterministicReplayEngine:
                 error,
             )
             raise
-        versions = self._versions(registration)
+        base_versions = self._versions(registration)
         if pending.status in {ReplayStatus.SUCCEEDED, ReplayStatus.FAILED}:
             raise ReplayCoreError("terminal replay reports cannot be executed again")
-        if pending.status is ReplayStatus.RUNNING and pending.versions not in ((), versions):
-            raise ReplayCoreError("running replay report pins different component versions")
+        if pending.status is ReplayStatus.RUNNING and not _versions_extend(
+            base_versions,
+            pending.versions,
+        ):
+            raise ReplayCoreError(
+                "running replay report pins incompatible component versions"
+            )
 
         progress: _ReplayProgress | None = None
         current_report = pending
@@ -727,7 +837,7 @@ class DeterministicReplayEngine:
                 running_candidate = replace(
                     pending,
                     status=ReplayStatus.RUNNING,
-                    versions=versions,
+                    versions=self._progress_versions(registration, progress),
                 )
                 current_report = self._store_call(
                     lambda: self._store.update_replay_report(running_candidate),
@@ -787,7 +897,10 @@ class DeterministicReplayEngine:
                     after_sequence=after_sequence,
                 )
                 if pending.versions == ():
-                    running_candidate = replace(pending, versions=versions)
+                    running_candidate = replace(
+                        pending,
+                        versions=self._progress_versions(registration, progress),
+                    )
                     current_report = self._store_call(
                         lambda: self._store.update_replay_report(running_candidate),
                         failure_operation=(
@@ -824,11 +937,19 @@ class DeterministicReplayEngine:
             progress,
             registration=registration,
         )
-        result_checksum = (
-            checksum_for(thaw_canonical_json(progress.state))
-            if registration is not None
-            else progress.history_checksum
-        )
+        if registration is not None:
+            result_checksum = checksum_for(thaw_canonical_json(progress.state))
+        elif progress.verification_state is not None:
+            result_checksum = checksum_for(
+                {
+                    "source_history_checksum": progress.history_checksum,
+                    "command_history_checksum": (
+                        progress.verification_state.history_checksum
+                    ),
+                }
+            )
+        else:  # pragma: no cover - VERIFY_HISTORY requires a verifier
+            result_checksum = progress.history_checksum
         current_report = progress.durable_report
         finished_at = self._safe_finished_at(
             current_report.started_at,
@@ -1012,6 +1133,12 @@ class DeterministicReplayEngine:
                     request.tenant_id,
                 ),
                 last_sequence=0,
+                last_event_id=None,
+                verification_state=(
+                    self._history_verifier.start(first_sequence=1).state
+                    if registration is None and self._history_verifier is not None
+                    else None
+                ),
                 applied_upcasters=[],
                 durable_report=report,
             )
@@ -1043,6 +1170,14 @@ class DeterministicReplayEngine:
                 state=checkpoint.state,
                 history_checksum=checkpoint.history_checksum,
                 last_sequence=checkpoint.last_sequence,
+                last_event_id=checkpoint.last_event_id,
+                verification_state=(
+                    None
+                    if checkpoint.verification_state is None
+                    else HistoryVerificationState.from_checkpoint(
+                        checkpoint.verification_state
+                    )
+                ),
                 applied_upcasters=list(checkpoint.applied_upcasters),
                 durable_report=report,
                 parent_checkpoint_id=(
@@ -1119,6 +1254,13 @@ class DeterministicReplayEngine:
                 "checkpoint_schema_version_mismatch",
             ),
             (
+                _versions_extend(
+                    self._versions(registration),
+                    checkpoint.versions,
+                ),
+                "checkpoint_handler_version_mismatch",
+            ),
+            (
                 watermark_is_compatible,
                 "checkpoint_high_watermark_mismatch",
             ),
@@ -1126,6 +1268,12 @@ class DeterministicReplayEngine:
         for passed, reason in checks:
             if not passed:
                 raise _ReplayIssue(reason, None, ReplayCheckpointError)
+        if checkpoint.last_sequence > 0 and checkpoint.last_event_id is None:
+            raise _ReplayIssue(
+                "checkpoint_event_identity_missing",
+                checkpoint.last_sequence,
+                ReplayCheckpointError,
+            )
         if registration is None:
             if checkpoint.reducer_id is not None or checkpoint.reducer_version is not None:
                 raise _ReplayIssue(
@@ -1133,6 +1281,36 @@ class DeterministicReplayEngine:
                     None,
                     ReplayCheckpointError,
                 )
+            if self._history_verifier is not None:
+                if checkpoint.verification_state is None:
+                    raise _ReplayIssue(
+                        "checkpoint_verification_state_missing",
+                        checkpoint.last_sequence or None,
+                        ReplayCheckpointError,
+                    )
+                try:
+                    verification_state = HistoryVerificationState.from_checkpoint(
+                        checkpoint.verification_state
+                    )
+                    _validate_verification_pinned_versions(
+                        checkpoint.versions,
+                        verification_state,
+                    )
+                except (HistoryVerificationError, TypeError, ValueError):
+                    raise _ReplayIssue(
+                        "checkpoint_verification_version_mismatch",
+                        checkpoint.last_sequence or None,
+                        ReplayCheckpointError,
+                    ) from None
+                if (
+                    verification_state.next_sequence
+                    != checkpoint.last_sequence + 1
+                ):
+                    raise _ReplayIssue(
+                        "checkpoint_verification_sequence_mismatch",
+                        checkpoint.last_sequence or None,
+                        ReplayCheckpointError,
+                    )
         elif (
             checkpoint.reducer_id != registration.reducer_id
             or checkpoint.reducer_version != registration.version
@@ -1220,7 +1398,10 @@ class DeterministicReplayEngine:
                         issue,
                     )
                     raise issue
-                replay_event = self._resolve_event(event)
+                replay_event = self._resolve_event(
+                    event,
+                    allow_reference_only=(registration is None),
+                )
                 next_history_checksum = checksum_for(
                     {
                         "previous": progress.history_checksum,
@@ -1244,9 +1425,29 @@ class DeterministicReplayEngine:
                             event.stream_sequence,
                             ReplayReducerExecutionError,
                         ) from None
+                elif self._history_verifier is not None:
+                    if progress.verification_state is None:
+                        raise _ReplayIssue(
+                            "verification_state_missing",
+                            event.stream_sequence,
+                            ReplayHistoryVerificationError,
+                        )
+                    try:
+                        verification = self._history_verifier.verify_event(
+                            progress.verification_state,
+                            replay_event,
+                        )
+                    except HistoryVerificationError as error:
+                        raise _ReplayIssue(
+                            error.reason_class,
+                            error.sequence,
+                            ReplayHistoryVerificationError,
+                        ) from None
+                    progress.verification_state = verification.state
                 progress.state = next_state
                 progress.history_checksum = next_history_checksum
                 progress.last_sequence = event.stream_sequence
+                progress.last_event_id = event.event_id
                 progress.applied_upcasters.extend(
                     f"{event.stream_sequence}:{value}"
                     for value in replay_event.applied_upcasters
@@ -1264,6 +1465,7 @@ class DeterministicReplayEngine:
                 status=ReplayStatus.RUNNING,
                 to_sequence=progress.last_sequence,
                 applied_upcasters=tuple(progress.applied_upcasters),
+                versions=self._progress_versions(registration, progress),
             )
             progress.durable_report = self._store_call(
                 lambda: self._store.update_replay_report(progress_candidate),
@@ -1331,6 +1533,20 @@ class DeterministicReplayEngine:
                 expected_sequence,
                 ReplayHistoryOrderError,
             )
+        event_above_watermark = next(
+            (
+                event
+                for event in page.events
+                if event.stream_sequence > request.through_sequence
+            ),
+            None,
+        )
+        if event_above_watermark is not None:
+            raise _ReplayIssue(
+                "event_exceeds_high_watermark",
+                event_above_watermark.stream_sequence,
+                ReplayHistoryOrderError,
+            )
         if page.next_cursor is not None:
             if (
                 page.next_cursor.stream_id != request.stream_id
@@ -1344,7 +1560,12 @@ class DeterministicReplayEngine:
                     ReplayHistoryOrderError,
                 )
 
-    def _resolve_event(self, event: StoredEvent) -> ReplayEvent:
+    def _resolve_event(
+        self,
+        event: StoredEvent,
+        *,
+        allow_reference_only: bool = False,
+    ) -> ReplayEvent:
         integrity_failed = False
         try:
             event.verify_integrity()
@@ -1357,12 +1578,48 @@ class DeterministicReplayEngine:
                 ReplayHistoryIntegrityError,
                 QuarantineReason.CORRUPT_RECORD,
             ) from None
-        if event.payload is None:
+        history_value = thaw_canonical_json(
+            event.extensions.get(DETERMINISTIC_HISTORY_EXTENSION)
+        )
+        if allow_reference_only and not isinstance(history_value, Mapping):
+            raise _ReplayIssue(
+                "corrupt_history",
+                event.stream_sequence,
+                ReplayHistoryVerificationError,
+            ) from None
+        if event.payload is None and not allow_reference_only:
             raise _ReplayIssue(
                 "payload_unavailable",
                 event.stream_sequence,
                 ReplayHistorySchemaError,
             )
+        if event.payload is None:
+            history = event.extensions.get(DETERMINISTIC_HISTORY_EXTENSION)
+            try:
+                registration = self._catalog.get(
+                    event.event_type,
+                    event.data_schema,
+                )
+                history_record = DeterministicHistoryRecord.from_dict(history)
+            except Exception:
+                raise _ReplayIssue(
+                    "payload_unavailable",
+                    event.stream_sequence,
+                    ReplayHistorySchemaError,
+                ) from None
+            if (
+                event.payload_ref is None
+                or registration.sensitivity_policy.whole_document_reference.value
+                == "deny"
+                or history_record.policy.expected_activity is None
+                or history_record.policy.recorded_activity_ref != event.payload_ref
+            ):
+                raise _ReplayIssue(
+                    "payload_unavailable",
+                    event.stream_sequence,
+                    ReplayHistorySchemaError,
+                ) from None
+            return _replay_event_for_reference(event, history_record)
         schema_failure_reason: QuarantineReason | None = None
         resolved: HistoricalSchemaResolution | None = None
         try:
@@ -1582,6 +1839,7 @@ class DeterministicReplayEngine:
             source_stream_id=request.source_stream_id,
             last_sequence=progress.last_sequence,
             source_high_watermark=report.high_watermark,
+            last_event_id=progress.last_event_id,
             runtime_version=self._runtime_version,
             schema_catalog_version=self._schema_catalog_version,
             history_checksum=progress.history_checksum,
@@ -1591,6 +1849,12 @@ class DeterministicReplayEngine:
             parent_checkpoint_id=progress.parent_checkpoint_id,
             tenant_id=request.tenant_id,
             applied_upcasters=tuple(progress.applied_upcasters),
+            versions=self._progress_versions(registration, progress),
+            verification_state=(
+                None
+                if progress.verification_state is None
+                else progress.verification_state.to_checkpoint()
+            ),
         )
 
     def _store_call(
@@ -1672,6 +1936,30 @@ class DeterministicReplayEngine:
             )
         return tuple(versions)
 
+    def _progress_versions(
+        self,
+        registration: ReplayReducerRegistration | None,
+        progress: _ReplayProgress,
+    ) -> tuple[ReplayVersion, ...]:
+        base_versions = self._versions(registration)
+        versions = list(base_versions)
+        if progress.verification_state is not None:
+            versions.extend(progress.verification_state.pinned_versions)
+        by_component: dict[str, ReplayVersion] = {}
+        for value in versions:
+            existing = by_component.get(value.component)
+            if existing is not None and existing.version != value.version:
+                raise ReplayCoreError(
+                    "replay progress pins conflicting component versions"
+                )
+            by_component[value.component] = value
+        base_components = {value.component for value in base_versions}
+        return (*base_versions, *(
+            by_component[key]
+            for key in sorted(by_component)
+            if key not in base_components
+        ))
+
     @staticmethod
     def _verify_started_report(
         request: ReplayStartRequest,
@@ -1733,6 +2021,11 @@ class DeterministicReplayEngine:
 
 
 def _replay_event(event: StoredEvent, resolved: HistoricalSchemaResolution) -> ReplayEvent:
+    history = thaw_canonical_json(
+        event.extensions.get(DETERMINISTIC_HISTORY_EXTENSION)
+    )
+    if history is not None and not isinstance(history, Mapping):
+        history = None
     return ReplayEvent(
         event_id=event.event_id,
         event_type=event.event_type,
@@ -1743,7 +2036,26 @@ def _replay_event(event: StoredEvent, resolved: HistoricalSchemaResolution) -> R
         occurred_at=resolved.occurred_at.isoformat().replace("+00:00", "Z"),
         payload=resolved.payload,
         record_checksum=event.record_checksum,
+        history=history,
         applied_upcasters=resolved.applied_upcasters,
+    )
+
+
+def _replay_event_for_reference(
+    event: StoredEvent,
+    history: DeterministicHistoryRecord,
+) -> ReplayEvent:
+    return ReplayEvent(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        source_data_schema=event.data_schema,
+        data_schema=event.data_schema,
+        stream_id=event.stream_id,
+        stream_sequence=event.stream_sequence,
+        occurred_at=event.occurred_at.isoformat().replace("+00:00", "Z"),
+        payload={},
+        record_checksum=event.record_checksum,
+        history=history.to_dict(),
     )
 
 
@@ -2014,6 +2326,33 @@ def _required_checksum(value: Any, field_name: str) -> str:
     return normalized
 
 
+def _versions_extend(
+    required: tuple[ReplayVersion, ...],
+    actual: tuple[ReplayVersion, ...],
+) -> bool:
+    required_by_component = {value.component: value.version for value in required}
+    actual_by_component = {value.component: value.version for value in actual}
+    return len(actual_by_component) == len(actual) and all(
+        actual_by_component.get(component) == version
+        for component, version in required_by_component.items()
+    )
+
+
+def _validate_verification_pinned_versions(
+    versions: tuple[ReplayVersion, ...],
+    verification_state: HistoryVerificationState,
+) -> None:
+    checkpoint_versions = {
+        value.component: value.version
+        for value in versions
+    }
+    for pinned in verification_state.pinned_versions:
+        if checkpoint_versions.get(pinned.component) != pinned.version:
+            raise ValueError(
+                "replay checkpoint versions conflict with verification pinned versions"
+            )
+
+
 __all__ = [
     "DeterministicReplayEngine",
     "ReplayCheckpoint",
@@ -2026,6 +2365,7 @@ __all__ = [
     "ReplayHistoryIntegrityError",
     "ReplayHistoryOrderError",
     "ReplayHistorySchemaError",
+    "ReplayHistoryVerificationError",
     "ReplayModeError",
     "ReplayRedeliveryDelegationRequired",
     "ReplayReducerExecutionError",

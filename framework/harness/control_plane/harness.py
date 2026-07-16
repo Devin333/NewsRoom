@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
-from framework.events.canonical import checksum_for
+from framework.events.canonical import PayloadReference, checksum_for
 from framework.events.errors import (
     EventIncompleteHistoryError,
     EventReplayMismatchError,
     EventStoreCorruptionError,
 )
+from framework.events.runtime.activities import ReplayActivityDescriptor
 from framework.harness.control_plane.activity import (
     HarnessActivity,
     validate_activity_call_marker,
@@ -21,6 +23,10 @@ from framework.harness.control_plane.durable_events import (
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
+from framework.harness.control_plane.replay_history import (
+    harness_decision_history,
+    harness_decision_input_snapshot,
+)
 from framework.harness.control_plane.gates import (
     DeterministicGate,
     GateContext,
@@ -111,6 +117,7 @@ class InMemoryHarnessEventPort:
         attempt: int,
         activity_type: str,
         inputs: dict[str, Any],
+        worker_version: str = "1",
     ) -> HarnessActivity:
         return HarnessActivity.for_worker_call(
             run_id=run_id,
@@ -118,6 +125,7 @@ class InMemoryHarnessEventPort:
             attempt=attempt,
             activity_type=activity_type,
             inputs=inputs,
+            worker_version=worker_version,
         )
 
     def commit_transition(
@@ -228,6 +236,24 @@ class InMemoryHarnessEventPort:
     def require_activity_storage(self) -> None:
         return None
 
+    def accept_activity(
+        self,
+        activity: HarnessActivity,
+        inputs: dict[str, Any],
+        *,
+        accepted_at,
+        started_at,
+    ) -> HarnessWorkerResult | None:
+        del inputs, accepted_at, started_at
+        return self.activity_results.get(activity.activity_id)
+
+    def resolve_replay_activity(
+        self,
+        state: HarnessState,
+    ) -> tuple[ReplayActivityDescriptor, PayloadReference] | None:
+        del state
+        return None
+
     def record_activity_result(
         self,
         activity: HarnessActivity,
@@ -288,6 +314,7 @@ class HarnessControlPlane:
         self._iterable_workers: dict[str, list[HarnessWorkerResult]] = {}
         self._committed_events: list[HarnessEvent] = []
         self._state_versions: dict[str, int] = {}
+        self._decision_indexes: dict[str, int] = {}
         self._recovered_worker_results: dict[str, HarnessWorkerResult] = {}
         self._recovered_gate_results: tuple[HarnessGateResult, ...] = ()
         self._recovered_quality_verdict: HarnessQualityVerdict | None = None
@@ -378,7 +405,24 @@ class HarnessControlPlane:
                 reason=reason or "Harness approval was cancelled",
                 payload={"approval_outcome": "cancelled"},
             )
-            self._record_decision(decision)
+            replay_activity = _resolve_replay_activity_binding(
+                self.event_port,
+                state,
+            )
+            decision_input = self._decision_input(
+                state,
+                gate_results=(),
+                quality_verdict=None,
+                expected_activity=(
+                    None if replay_activity is None else replay_activity[0]
+                ),
+                approval_outcome="cancelled",
+            )
+            self._record_decision(
+                decision,
+                decision_input=decision_input,
+                replay_activity=replay_activity,
+            )
             transition_time = _next_transition_time(state)
             cancelled = transition_step(
                 state,
@@ -429,7 +473,24 @@ class HarnessControlPlane:
             reason=reason or "Harness approval granted",
             payload={"approval_outcome": "approved"},
         )
-        self._record_decision(decision)
+        replay_activity = _resolve_replay_activity_binding(
+            self.event_port,
+            state,
+        )
+        decision_input = self._decision_input(
+            state,
+            gate_results=(),
+            quality_verdict=None,
+            expected_activity=(
+                None if replay_activity is None else replay_activity[0]
+            ),
+            approval_outcome="approved",
+        )
+        self._record_decision(
+            decision,
+            decision_input=decision_input,
+            replay_activity=replay_activity,
+        )
         transition_time = _next_transition_time(state)
         resumed = transition_run(
             state,
@@ -484,13 +545,29 @@ class HarnessControlPlane:
         quality_verdict = initial_quality_verdict
 
         while state.status not in _run_loop_stop_statuses():
+            replay_activity = _resolve_replay_activity_binding(
+                self.event_port,
+                state,
+            )
+            decision_input = self._decision_input(
+                state,
+                gate_results=gate_results,
+                quality_verdict=quality_verdict,
+                expected_activity=(
+                    None if replay_activity is None else replay_activity[0]
+                ),
+            )
             decision = self.scheduler.next_decision(
                 state,
                 worker_result=worker_result,
                 quality_verdict=quality_verdict,
                 gate_results=gate_results,
             )
-            self._record_decision(decision)
+            self._record_decision(
+                decision,
+                decision_input=decision_input,
+                replay_activity=replay_activity,
+            )
             decisions.append(decision)
 
             if decision.decision_type == HarnessDecisionType.START_STEP:
@@ -691,6 +768,7 @@ class HarnessControlPlane:
             attempt=step_state.attempts + 1,
             activity_type=step_spec.worker_type.value,
             inputs=task,
+            worker_version=str(step_spec.metadata.get("worker_version", "1")),
         )
         activity_metadata = {
             "activity_id": activity.activity_id,
@@ -740,12 +818,21 @@ class HarnessControlPlane:
         self._record_step_change(previous, state, step_id, transition_kind="execute_entry")
         self._record_phase(state, HarnessPhase.EXECUTE, step_id, (), boundary=HarnessPhaseBoundary.ENTRY)
 
-        worker_result = self._call_worker(
-            step_spec,
-            state,
-            task=task,
-            activity=activity,
+        started_at = _next_transition_time(state)
+        worker_result = self.event_port.accept_activity(
+            activity,
+            task,
+            accepted_at=state.updated_at,
+            started_at=started_at,
         )
+        if worker_result is None:
+            worker_result = self._call_worker(
+                step_spec,
+                state,
+                task=task,
+                activity=activity,
+                started_at=started_at,
+            )
         activity_result_event_id = self._record_activity_result(
             state,
             step_id=step_id,
@@ -1424,10 +1511,12 @@ class HarnessControlPlane:
         *,
         task: dict[str, Any] | None = None,
         activity: HarnessActivity | None = None,
+        started_at=None,
     ) -> HarnessWorkerResult:
         worker = self.worker_registry.get(step_spec.step_id) or self.worker_registry.get(step_spec.worker_type.value)
         task = dict(task or self._worker_task(step_spec, state))
         call_payload = dict(task)
+        started_at = started_at or _next_transition_time(state)
         if activity is not None:
             call_payload.update(
                 {
@@ -1443,11 +1532,15 @@ class HarnessControlPlane:
                 run_id=state.run_spec.run_id,
                 step_id=step_spec.step_id,
                 payload=call_payload,
+                occurred_at=started_at,
             )
         )
         execution_task = _task_with_activity(task, activity)
         if worker is None:
-            return HarnessWorkerResult(status=HarnessWorkerStatus.SUCCEEDED, output={})
+            return HarnessWorkerResult(
+                status=HarnessWorkerStatus.SUCCEEDED,
+                output={},
+            )
         if callable(worker):
             return worker(execution_task)
         execute = getattr(worker, "execute", None)
@@ -1470,7 +1563,10 @@ class HarnessControlPlane:
         except TypeError as exc:
             raise HarnessValidationError("worker registry value must be callable, a Harness worker port, or result iterable") from exc
         if not queued:
-            return HarnessWorkerResult(status=HarnessWorkerStatus.FAILED, error="fake worker queue is exhausted")
+            return HarnessWorkerResult(
+                status=HarnessWorkerStatus.FAILED,
+                error="fake worker queue is exhausted",
+            )
         return queued.pop(0)
 
     def _quality_verdict(
@@ -1492,7 +1588,32 @@ class HarnessControlPlane:
             return HarnessQualityVerdict(passed=score >= float(step_spec.metadata.get("minimum_quality_score", 0)), score=score)
         return HarnessQualityVerdict(passed=True)
 
-    def _record_decision(self, decision: HarnessDecision) -> None:
+    def _record_decision(
+        self,
+        decision: HarnessDecision,
+        *,
+        decision_input: Mapping[str, Any],
+        replay_activity: tuple[
+            ReplayActivityDescriptor,
+            PayloadReference,
+        ]
+        | None = None,
+    ) -> None:
+        ordinal = self._decision_indexes.get(decision.run_id, 0)
+        history = harness_decision_history(
+            workflow_id=str(decision_input["workflow_id"]),
+            workflow_version=str(decision_input["workflow_version"]),
+            command_ordinal=ordinal,
+            decision_input=decision_input,
+            decision=decision,
+            causation_id=str(decision_input["causation_id"]),
+            expected_activity=(
+                None if replay_activity is None else replay_activity[0]
+            ),
+            recorded_activity_ref=(
+                None if replay_activity is None else replay_activity[1]
+            ),
+        )
         self._record_event(
             HarnessEvent(
                 event_type=HarnessEventType.DECISION_RECORDED,
@@ -1500,7 +1621,35 @@ class HarnessControlPlane:
                 step_id=decision.step_id,
                 payload=decision.to_dict(),
                 occurred_at=decision.decided_at,
+                deterministic_history=history.to_dict(),
             )
+        )
+        self._decision_indexes[decision.run_id] = ordinal + 1
+
+    def _decision_input(
+        self,
+        state: HarnessState,
+        *,
+        gate_results: tuple[HarnessGateResult, ...],
+        quality_verdict: HarnessQualityVerdict | None,
+        expected_activity: ReplayActivityDescriptor | None,
+        approval_outcome: str | None = None,
+    ) -> Mapping[str, Any]:
+        run_id = state.run_spec.run_id
+        ordinal = self._decision_indexes.get(run_id, 0)
+        causation_id = (
+            self._committed_events[-1].event_id
+            if self._committed_events
+            else f"harness-run:{run_id}"
+        )
+        return harness_decision_input_snapshot(
+            state=state,
+            command_ordinal=ordinal,
+            causation_id=str(causation_id),
+            gate_results=gate_results,
+            quality_verdict=quality_verdict,
+            expected_activity=expected_activity,
+            approval_outcome=approval_outcome,
         )
 
     def _record_phase(
@@ -1631,12 +1780,6 @@ class HarnessControlPlane:
                 step_spec = _get_step_spec(state, step_id)
                 worker_result = recovery.current_worker_result
                 if worker_result is None:
-                    if activity.activity_id in recovery.called_activity_ids:
-                        raise EventIncompleteHistoryError(
-                            "Harness activity was dispatched without a durable result; "
-                            "automatic worker re-execution is forbidden without "
-                            "a verified idempotency capability"
-                        )
                     task = self._worker_task(step_spec, state)
                     if checksum_for(task) != activity.input_checksum:
                         raise EventReplayMismatchError(
@@ -1647,12 +1790,27 @@ class HarnessControlPlane:
                                 "the committed activity descriptor"
                             ),
                         )
-                    worker_result = self._call_worker(
-                        step_spec,
-                        state,
-                        task=task,
-                        activity=activity,
+                    started_at = _next_transition_time(state)
+                    worker_result = self.event_port.accept_activity(
+                        activity,
+                        task,
+                        accepted_at=state.updated_at,
+                        started_at=started_at,
                     )
+                    if worker_result is None:
+                        if activity.activity_id in recovery.called_activity_ids:
+                            raise EventIncompleteHistoryError(
+                                "Harness activity was dispatched without a durable result; "
+                                "automatic worker re-execution is forbidden without "
+                                "a verified idempotency capability"
+                            )
+                        worker_result = self._call_worker(
+                            step_spec,
+                            state,
+                            task=task,
+                            activity=activity,
+                            started_at=started_at,
+                        )
                     activity_result_event_id = self._record_activity_result(
                         state,
                         step_id=step_id,
@@ -1836,6 +1994,11 @@ class HarnessControlPlane:
                 "Harness transition port returned an invalid history projection"
             )
         self._committed_events = list(history)
+        self._decision_indexes[run_spec.run_id] = sum(
+            1
+            for event in history
+            if event.event_type == HarnessEventType.DECISION_RECORDED
+        )
         return recovery
 
     def _commit_transition(
@@ -1938,9 +2101,30 @@ def _is_transition_port(value: Any) -> bool:
             "recover",
             "read_history",
             "require_activity_storage",
+            "accept_activity",
+            "resolve_replay_activity",
             "record_activity_result",
         )
     )
+
+
+def _resolve_replay_activity_binding(
+    event_port: Any,
+    state: HarnessState,
+) -> tuple[ReplayActivityDescriptor, PayloadReference] | None:
+    binding = event_port.resolve_replay_activity(state)
+    if binding is None:
+        return None
+    if (
+        not isinstance(binding, tuple)
+        or len(binding) != 2
+        or not isinstance(binding[0], ReplayActivityDescriptor)
+        or not isinstance(binding[1], PayloadReference)
+    ):
+        raise HarnessValidationError(
+            "Harness transition port returned an invalid replay activity binding"
+        )
+    return binding
 
 
 def _get_step_spec(state: HarnessState, step_id: str) -> HarnessStepSpec:

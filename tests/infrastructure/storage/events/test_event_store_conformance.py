@@ -48,6 +48,7 @@ from framework.events.runtime.models import (
     EffectIdempotencyStrategy,
     InboxEntry,
     InboxKey,
+    RedeliveryRequest,
     ReplayMode,
     ReplayStartRequest,
     ReplayStatus,
@@ -140,17 +141,22 @@ def postgres_conformance_dsn() -> str:
         pytest.fail(
             "NEWS_TEST_POSTGRES_DSN must select a database containing 'test'"
         )
-    migration = (
+    migrations = (
         Path(__file__).resolve().parents[4]
         / "infrastructure"
         / "storage"
         / "postgres"
         / "migrations"
-        / "006_durable_event_runtime.sql"
-    ).read_text(encoding="utf-8")
+    )
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
-            cursor.execute(migration)
+            for migration_name in (
+                "006_durable_event_runtime.sql",
+                "008_authorized_redelivery.sql",
+            ):
+                cursor.execute(
+                    (migrations / migration_name).read_text(encoding="utf-8")
+                )
         connection.commit()
     return dsn
 
@@ -1757,6 +1763,83 @@ def test_sqlite_and_postgres_store_identical_candidate_content_and_checksum(
         _cleanup_postgres_scope(postgres_conformance_dsn, scope)
 
 
+def test_conformance_authorized_redelivery_preserves_source_and_prior_ledgers(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:redelivery",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:redelivery-consumer",
+            supports_out_of_order_repair=True,
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    originals = tuple(
+        case.store.append_event(_candidate(case.scope, index=index)).event
+        for index in (1, 2)
+    )
+    for index in (1, 2):
+        requested_at = case.now()
+        claim = case.store.claim_deliveries(
+            DeliveryClaimRequest(
+                subscription.subscription_id,
+                subscription.subscription_version,
+                f"{case.scope}:redelivery-worker:{index}",
+                requested_at,
+                limit=1,
+            )
+        )[0]
+        case.store.settle_delivery(
+            DeliverySettlement(
+                claim.lease,
+                DeliveryState.ACKED,
+                requested_at + timedelta(seconds=index),
+            )
+        )
+
+    request = RedeliveryRequest(
+        redelivery_id=f"{case.scope}:redelivery-request",
+        subscription=subscription.key,
+        source_stream_id=_stream_id(case.scope),
+        from_sequence=1,
+        through_sequence=2,
+        requested_at=case.now() + timedelta(seconds=10),
+        operator_id=f"{case.scope}:operator",
+        operator_reason="authorized deterministic repair",
+        authorization_evidence_ref=f"{case.scope}:authz:redelivery",
+        tenant_id=_tenant_id(case.scope),
+    )
+
+    first = case.store.begin_redelivery(request)
+    duplicate = case.store.begin_redelivery(request)
+
+    assert duplicate == first
+    assert first.captured_high_watermark == 2
+    assert [item.stream_sequence for item in first.items] == [1, 2]
+    assert [item.delivery_generation for item in first.items] == [2, 2]
+    assert case.store.get_redelivery_report(
+        request.redelivery_id,
+        tenant_id=request.tenant_id,
+    ) == first
+    assert case.store.get_redelivery_report(request.redelivery_id) is None
+    deliveries = case.store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            tenant_id=subscription.tenant_id,
+            limit=10,
+        )
+    ).records
+    assert sorted(delivery.delivery_generation for delivery in deliveries) == [1, 1, 2, 2]
+    for original in originals:
+        assert case.store.get_event(
+            original.event_id,
+            tenant_id=original.tenant_id,
+        ) == original
+
+
 def _candidate(
     scope: str,
     *,
@@ -1851,6 +1934,8 @@ def _cleanup_postgres_scope(dsn: str, scope: str) -> None:
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
             for table, column in (
+                ("event_redelivery_items", "redelivery_id"),
+                ("event_redelivery_reports", "redelivery_id"),
                 ("event_inbox", "event_id"),
                 ("event_dead_letters", "event_id"),
                 ("event_deliveries", "event_id"),
