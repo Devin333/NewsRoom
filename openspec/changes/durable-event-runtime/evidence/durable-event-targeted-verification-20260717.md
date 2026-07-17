@@ -108,23 +108,23 @@ task 9.5 remains open.
 
 The committed rollback tool still keeps local evidence `INCOMPLETE`, but a real
 approval-pending staging run has now completed for the frozen runtime candidate
-`fbdec37a0afd6b08796818ccd6cb7fea2e401f93` against rollback release
+`7a5956361d49e447037c89aa7edd371a7158f06d` against rollback release
 `570f840c7df3870841c93e37480d7a53a67921dd`.
 
 Canonical local evidence:
-`.newsroom/durable-event-rollback-local-fbdec37a-final/rollback-evidence.json`
+`.newsroom/durable-event-rollback-local-7a595636-final/rollback-evidence.json`
 
 Local `evidence_checksum`:
-`sha256:aaba41c71b5527413d2079e59a1785f03443a3cea599a5b24f18f66d3319d77d`
+`sha256:6ea8eb91c9efc58c3c355fc835d89c735f350d26ffedc53fd5a88a69daba3acd`
 
 Canonical technical evidence:
-`rollback-staging-fbdec37a-awaiting-approval/technical/technical-evidence.json`
+`rollback-staging-7a595636-awaiting-approval/technical/technical-evidence.json`
 
 Technical `evidence_checksum`:
-`sha256:b73f2901d0a72a3556ed5a2ac17d0b8ba8a5d8e54ec65e83d356939c166f6eda`
+`sha256:4038576aa8b8dfeeee10cb6917a03cbfd13345b595a303ce2b50fb7aa1d09e0f`
 
 Approval request `request_checksum`:
-`sha256:e1fe45af7d9220e55de015770ba719b340c4f209792a55ce6d9bac742da6201c`
+`sha256:588f30f6377fdb1aafd23195b7916e3e634b3581333019e382516fe5ecaf3f72`
 
 The run used a newly created isolated PostgreSQL database, clean detached
 candidate and rollback worktrees, different actual worker processes, a real
@@ -138,11 +138,11 @@ recovery, durable dispatcher pause, and direct controller queries. It proved:
 | Preserved ledgers | delivery 2, inbox 1, checkpoint 1, dead letter 1; counts and checksums unchanged |
 | External effect | 2 invocations, 1 applied effect, stable result checksum |
 | Negative gates | unknown schema, forbidden payload, identity collision, and record-checksum tamper rejected without watermark advance |
-| Cross-release projection | candidate and rollback exact JSONL checksum `sha256:d53e489a40c1dd4cb5168be3b9ad9ec5b786ed9fa3283795504bd67beceec8ac` |
-| Canonical projection rows | checksum `sha256:3cf63e515b45b8b4af1e3ac21fabe635303d164d44a20fc67ec0ecdeb6390704` |
+| Cross-release projection | candidate and rollback exact JSONL checksum `sha256:8085ba1e4db06c5993d20f24fbd8b609fa70ecdb2ccff4f27aa2c43a4ec673c4` |
+| Canonical projection rows | checksum `sha256:cd3aaa6fcb10ebe489d6178f0a2ddaa5b24a905639bc4180ca46f7815768fff5` |
 
 The earlier opt-in PostgreSQL regression remains retained, and the current
-candidate staging CLI completed independently in 26.3 seconds:
+candidate staging CLI independently reached `awaiting_approval`:
 
 ```text
 NEWSROOM_RUN_ROLLBACK_STAGING_INTEGRATION=1
