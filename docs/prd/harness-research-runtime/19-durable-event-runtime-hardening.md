@@ -1237,7 +1237,7 @@ Harness memory-only durable main path
 | M3 Shadow | legacy 单写 | legacy + shadow compare | canonical export 与 legacy fixture 数量/内容差异可解释；禁止双 dispatch |
 | M4 Cutover | canonical 单写 | canonical + compatible projection | Workflow/Harness live append；同 release 禁用 post-run index |
 | M5 Delivery/Replay | canonical | canonical | consumer ledger/replay/trace/interface 验收通过 |
-| M6 Contract delete | canonical | canonical + bounded legacy import | repo callers 迁完，兼容 release 到期，删除重复模型/路径 |
+| M6 Contract delete | canonical | canonical + bounded legacy import | repo callers 迁完；冻结 deletion boundary 与 qualified source；pre-existing governance bootstrap root 签署 D activation 后，按 A observation、B owner approval、approved-build deployment、C attestation 顺序通过并完成 deletion release qualification；删除重复模型/路径 |
 
 迁移期间只能有一个 authoritative write path。Shadow phase 可以比较 projection，不能同时向两套 live subscriber 投递。
 
@@ -1265,9 +1265,14 @@ source history 不重写、不删除、不 sanitize ID。0-based line offset 与
 3. deploy new store/runtime behind explicit flag；
 4. backfill/shadow verify；
 5. cut writer/read source；
-6. observe one compatibility release；
-7. 删除 old code；
-8. destructive schema cleanup 必须另一个明确 migration/change，不在本阶段静默 drop。
+6. 由预先存在、独立且编译期 pin 的 release-security/change-control governance bootstrap root 签署 record D；D 绑定 positive trust epoch、exact active-policy checksum、mutually independent governance/observer/consumer-owner roots、content-addressed verifier build、activation deployment/environment/time/evidence 和 governance attestor；active policy/compiled constants 必须与 D 的 trust epoch、root identities/keys/fingerprints、Ed25519 policy 和 active-policy checksum 一致；
+7. 要求 activation deployed <= governance signed < A window started，D/A/B/C environment 一致，D retention 覆盖 C；pending/null/mismatch、非 bootstrap D signature 或由 evidence/CLI PEM 自选 root 必须在 A/B/C 前 fail closed；
+8. 部署 pre-deletion compatibility candidate，完成 bounded real observation，并由 D 激活的 deployment observer 签署 record A；A 显式绑定 `trust_epoch` 与 `trust_activation_record_checksum`；
+9. D 激活的 independent consumer-registry owner 核对完整 inventory，签署 record B，绑定同一 trust epoch/D checksum 并批准 exact qualified deletion source/build/environment；B 不包含未来 deployment id/time/URI；
+10. 只部署 B 批准的 qualified deletion build；deletion boundary/source 可以预先冻结，但 deletion build 不得在 B 前部署；
+11. 部署后由 D 激活的 trusted deployment observer 签署 record C，将同一 trust epoch/D checksum、A、B、actual deletion deployment 和 retention evidence 绑定；
+12. bootstrap governance root -> D -> A -> B -> deploy -> C 通过后才可完成 deletion release qualification；phase-specific rollback approval/attestation/qualification chain 仍独立必需，二者不能互相替代；
+13. destructive schema cleanup 必须另一个明确 migration/change，不在本阶段静默 drop。
 
 Feature flag 只能控制 cutover/dispatcher，不得关闭 schema validation、security projection、identity collision 或 checksum 校验。
 
@@ -1653,7 +1658,12 @@ openspec/changes/durable-event-runtime/
 - [ ] migration dry-run/backfill mapping/quarantine report 完整且 source read-only。
 - [ ] cutover 期间只有一个 authoritative writer，无双 dispatch。
 - [ ] compatibility facade 有明确一版期限和删除门槛。
+- [ ] pre-existing independent governance bootstrap root 已签署 D trust activation；D 独立绑定 content-addressed verifier build 与 activation deployment/evidence，D、active policy 和 compiled verifier constants 对 positive trust epoch、三组互异 Ed25519 roots 和 active-policy checksum 的绑定一致，CLI PEM 不能自选 trust。
+- [ ] D 的 activation time/build 由 independently auditable、non-backfillable deployment/transparency log 或 trusted timestamp evidence 证明；governance JSON 自报时间和普通 Ed25519 signature 不能单独满足该门禁。
+- [ ] `activation deployed <= governance signed < A window started`、D/A/B/C environment 一致且 D retention 覆盖 C；pending/null/mismatch 或非 bootstrap D signature 在 evidence evaluation 前 fail closed。
+- [ ] compatibility qualification 严格按 signed D activation -> signed A observation -> signed independent B owner approval -> deploy exact approved qualified deletion build -> signed C deployment attestation 执行；A/B/C 均显式绑定 D trust epoch/checksum，其他 checksum、build、environment、time、authority 和 retention 绑定全部通过。
 - [ ] rollback drill 保留所有 accepted event/sequence，不重复 effect。
+- [ ] rollback approval/attestation/qualification chain 与 compatibility D/A/B/C chain 分别通过；任何一条都不能替代另一条。
 - [ ] feature flag 不可关闭 schema/security/identity/integrity gate。
 
 ---
@@ -1717,8 +1727,14 @@ baseline tests + inventory
 -> delivery/runtime
 -> replay/trace
 -> interface reader/operator cutover
--> one compatibility release
--> legacy code deletion
+-> freeze deletion boundary + exact qualified source (not deployed)
+-> pre-existing governance bootstrap root signs D activation
+-> D activation deployment + three roots + verifier build + active policy pinning
+-> deploy compatibility candidate + signed A bounded observation bound to D
+-> signed independent B consumer-owner build approval
+-> deploy exact B-approved qualified deletion build
+-> signed C post-deployment attestation
+-> deletion release qualification（rollback chain 仍须独立通过）
 ```
 
 ### 24.2 Kill switch
@@ -1834,6 +1850,9 @@ Metric labels 不包含 tenant/user/run/event/trace id 或 raw payload。Event s
 - [ ] OTel/W3C propagation 完成，sampling/no-op 不影响 durable event。
 - [ ] API/CLI/MCP/SSE 保持兼容并明确 source/watermark/stale/unavailable。
 - [ ] backfill dry-run、staging import、cutover 和 rollback drill 全部留有 evidence。
+- [ ] pre-existing independent governance bootstrap root 已签署 D；D 独立绑定 content-addressed verifier build 与 activation deployment/evidence，D、active policy 与 compiled constants 对 positive trust epoch、governance/observer/consumer-owner roots、Ed25519 requirement 和 active policy checksum 完全一致；CLI PEM 只能匹配已 pin roots。
+- [ ] D 的 activation time/build 有 independently auditable、non-backfillable deployment/transparency log 或 trusted timestamp evidence；不能用 signer-declared JSON time 冒充 trusted timestamp。
+- [ ] activation deployment/signing 早于 A window，environment 一致且 D retention 覆盖 C；compatibility release 留有绑定同一 trust epoch/D checksum 的 signed A、signed independent B、exact approved-build deployment 和 signed C；rollback qualification chain 也独立通过，二者均不可由 repository tests 或 Markdown 声明替代。
 - [ ] SLO benchmark 达标，且 0 loss/duplicate sequence/checksum drift。
 - [ ] `events.jsonl` 是 deterministic redacted projection，不再回灌 store。
 - [ ] `_records/_envelopes` 双账、framework/storage duplicate record、runner-local store/factory、post-run index、live-bus replay 等旧路径按迁移门槛删除。

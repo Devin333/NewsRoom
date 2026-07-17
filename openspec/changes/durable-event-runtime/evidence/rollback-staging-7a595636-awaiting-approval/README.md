@@ -13,7 +13,10 @@ The bundle is intentionally **not** release qualification evidence. Its status
 is `awaiting_approval`; it contains no approval record, detached approval
 signature, external attestation, qualification signature, private key, or trust
 root. OpenSpec task 9.5 remains incomplete until independent authorities finish
-that chain and the separate compatibility-release observation is complete.
+that rollback chain and the separate pre-existing governance bootstrap root ->
+signed D activation -> A observation -> independent B consumer-owner approval
+-> exact approved-build deployment -> C post-deployment attestation chain is
+complete. Neither chain substitutes for the other.
 
 ## Directory contract
 
@@ -50,5 +53,13 @@ frozen JSON artifacts.
 4. A separate release authority must run `qualify` with a third trust root.
 5. Run strict `verify` and retain the resulting signed qualification bundle or
    an immutable external evidence URI before completing task 9.5.
-6. Complete the independently evidenced compatibility deployment observation
-   and external-consumer sign-off described in `../compatibility-release.md`.
+6. Complete the independently evidenced compatibility chain described in
+   `../compatibility-release.md`: the pre-existing governance bootstrap root
+   signs D, D activates the deployment observer and consumer-registry owner,
+   the observer signs bounded real observation A, and the owner then signs B
+   approving the exact qualified deletion build plan. Only that build is
+   deployed, after which the trusted observer signs C binding D, A, B, and the
+   actual deployment.
+7. Treat the compatibility D/A/B/C chain and this rollback
+   approval/attestation/qualification chain as separate required gates; neither
+   can qualify task 9.5 or the deletion release on its own.

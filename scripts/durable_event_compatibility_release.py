@@ -6,7 +6,10 @@ import binascii
 import hashlib
 import ipaddress
 import json
+import os
 import re
+import stat
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -22,15 +25,36 @@ from framework.events.canonical import checksum_for
 from framework.shared.json import stable_json_dumps
 
 
-OBSERVATION_SCHEMA = "newsroom.durable-event-compatibility-observation/v1"
-CONSUMER_SIGNOFF_SCHEMA = "newsroom.durable-event-compatibility-consumer-signoff/v1"
-POLICY_SCHEMA = "newsroom.durable-event-compatibility-policy/v1"
+OBSERVATION_SCHEMA = "newsroom.durable-event-compatibility-observation/v2"
+CONSUMER_SIGNOFF_SCHEMA = "newsroom.durable-event-compatibility-consumer-signoff/v2"
+DELETION_ATTESTATION_SCHEMA = (
+    "newsroom.durable-event-compatibility-deletion-deployment-attestation/v1"
+)
+TRUST_ACTIVATION_SCHEMA = "newsroom.durable-event-compatibility-trust-activation/v1"
+POLICY_SCHEMA = "newsroom.durable-event-compatibility-policy/v4"
 RELEASE_ID = "durable-event-runtime-migration-1"
 COMPATIBILITY_RELEASE = "42a8636cd72aea0c466126fc5f2d69c55db1a1d6"
 COMPATIBILITY_TREE = "d6d2c55a965e47009d7dc8cf49582cb90e300c2d"
 COMPATIBILITY_PARENT = "f6bce48f786d5b08cc77d226b8b993e6e6b974df"
-DELETION_RELEASE = "570f840c7df3870841c93e37480d7a53a67921dd"
-DELETION_TREE = "8607c510e87c7f405519f5851949f9f5b5b5203b"
+DELETION_BOUNDARY = "570f840c7df3870841c93e37480d7a53a67921dd"
+DELETION_BOUNDARY_TREE = "8607c510e87c7f405519f5851949f9f5b5b5203b"
+DELETION_BOUNDARY_PARENT = COMPATIBILITY_RELEASE
+QUALIFIED_DELETION_RELEASE = "f5ed16ccf0a2341b47337091c1052cbc68f69bf8"
+QUALIFIED_DELETION_TREE = "3ba3d1873fa8c00c0d65ac4ca16e4dc6c57657ad"
+QUALIFIED_DELETION_PARENT = "f28e27be8e14ff022c6408814df6e1b33531a9f7"
+AUTHORITY_TRUST_PENDING = "pending_external_activation"
+AUTHORITY_TRUST_ACTIVE = "active"
+ACTIVE_TRUST_EPOCH: int | None = None
+TRUSTED_GOVERNANCE_AUTHORITY_ID: str | None = None
+TRUSTED_GOVERNANCE_KEY_ID: str | None = None
+TRUSTED_GOVERNANCE_PUBLIC_KEY_FINGERPRINT: str | None = None
+TRUSTED_OBSERVER_AUTHORITY_ID: str | None = None
+TRUSTED_OBSERVER_KEY_ID: str | None = None
+TRUSTED_OBSERVER_PUBLIC_KEY_FINGERPRINT: str | None = None
+TRUSTED_CONSUMER_OWNER_AUTHORITY_ID: str | None = None
+TRUSTED_CONSUMER_OWNER_KEY_ID: str | None = None
+TRUSTED_CONSUMER_OWNER_PUBLIC_KEY_FINGERPRINT: str | None = None
+ACTIVE_AUTHORITY_POLICY_CHECKSUM: str | None = None
 REQUIRED_SURFACES = ("api", "cli", "mcp", "sdk", "sse")
 REQUIRED_QUERY_SURFACES = ("api", "cli", "mcp", "sse")
 REQUIRED_INVENTORY_SOURCES = (
@@ -41,13 +65,18 @@ MIN_OBSERVATION_WINDOW = timedelta(hours=1)
 MAX_OBSERVATION_WINDOW = timedelta(days=7)
 MAX_OBSERVATION_RECORDS = 1000
 MAX_EVIDENCE_CLOCK_SKEW = timedelta(minutes=5)
+GIT_COMMAND_TIMEOUT_SECONDS = 10
 
 _MAX_FILE_BYTES = {
     "policy": 64 * 1024,
+    "authority_activation": 1024 * 1024,
     "observation": 4 * 1024 * 1024,
     "consumer_signoff": 1024 * 1024,
+    "deletion_attestation": 1024 * 1024,
+    "authority_activation_signature": 4096,
     "observation_signature": 4096,
     "consumer_signoff_signature": 4096,
+    "deletion_attestation_signature": 4096,
     "trusted_public_key": 16 * 1024,
 }
 
@@ -66,29 +95,67 @@ class CompatibilityObservationError(RuntimeError):
 def verify_compatibility_release_evidence(
     *,
     policy_path: str | Path,
+    authority_activation_path: str | Path,
+    authority_activation_signature_path: str | Path,
+    trusted_governance_public_key: str | Path | Ed25519PublicKey,
     observation_path: str | Path,
     observation_signature_path: str | Path,
     trusted_observer_public_key: str | Path | Ed25519PublicKey,
     consumer_signoff_path: str | Path,
     consumer_signoff_signature_path: str | Path,
     trusted_consumer_owner_public_key: str | Path | Ed25519PublicKey,
+    deletion_attestation_path: str | Path,
+    deletion_attestation_signature_path: str | Path,
 ) -> dict[str, Any]:
-    policy_file = _resolve_regular_file(policy_path, "policy")
-    _policy_bytes, policy = _read_json_object(policy_file, "policy")
+    _policy_bytes, policy = _read_json_object(policy_path, "policy")
     policy_facts = _verify_policy(policy)
+    _require(
+        policy_facts["authority_trust_status"] == AUTHORITY_TRUST_ACTIVE,
+        "authority_trust_not_activated",
+    )
 
+    governance_key = _coerce_public_key(trusted_governance_public_key)
     observer_key = _coerce_public_key(trusted_observer_public_key)
     owner_key = _coerce_public_key(trusted_consumer_owner_public_key)
+    governance_fingerprint = _public_key_fingerprint(governance_key)
     observer_fingerprint = _public_key_fingerprint(observer_key)
     owner_fingerprint = _public_key_fingerprint(owner_key)
     _require(
-        observer_fingerprint != owner_fingerprint,
+        len({governance_fingerprint, observer_fingerprint, owner_fingerprint}) == 3,
         "signing_authority_separation_missing",
     )
+    _require(
+        governance_fingerprint == policy_facts["governance_public_key_fingerprint"],
+        "trusted_governance_authority_root_mismatch",
+    )
+    _require(
+        observer_fingerprint == policy_facts["observer_public_key_fingerprint"],
+        "trusted_observer_authority_root_mismatch",
+    )
+    _require(
+        owner_fingerprint == policy_facts["consumer_owner_public_key_fingerprint"],
+        "trusted_consumer_owner_authority_root_mismatch",
+    )
 
-    observation_file = _resolve_regular_file(observation_path, "observation")
+    activation_bytes, activation = _read_json_object(
+        authority_activation_path,
+        "authority_activation",
+    )
+    _verify_detached_signature(
+        key=governance_key,
+        signature_path=authority_activation_signature_path,
+        payload=activation_bytes,
+        label="authority_activation",
+    )
+    activation_facts = _verify_trust_activation_record(
+        activation,
+        governance_fingerprint=governance_fingerprint,
+        policy=policy,
+        policy_facts=policy_facts,
+    )
+
     observation_bytes, observation = _read_json_object(
-        observation_file,
+        observation_path,
         "observation",
     )
     _verify_detached_signature(
@@ -102,11 +169,12 @@ def verify_compatibility_release_evidence(
         observer_fingerprint=observer_fingerprint,
         policy=policy,
         policy_facts=policy_facts,
+        activation=activation,
+        activation_facts=activation_facts,
     )
 
-    signoff_file = _resolve_regular_file(consumer_signoff_path, "consumer_signoff")
     signoff_bytes, signoff = _read_json_object(
-        signoff_file,
+        consumer_signoff_path,
         "consumer_signoff",
     )
     _verify_detached_signature(
@@ -120,48 +188,73 @@ def verify_compatibility_release_evidence(
         owner_fingerprint=owner_fingerprint,
         observation=observation,
         observation_facts=observation_facts,
+        policy=policy,
+        policy_facts=policy_facts,
+        activation=activation,
     )
 
-    _require(
-        signoff_facts["signed_at"] >= observation_facts["window_ended_at"],
-        "consumer_signoff_predates_observation",
+    attestation_bytes, attestation = _read_json_object(
+        deletion_attestation_path,
+        "deletion_attestation",
     )
-    _require(
-        signoff_facts["signed_at"] <= observation_facts["deletion_deployed_at"],
-        "deletion_deployment_predates_consumer_signoff",
+    _verify_detached_signature(
+        key=observer_key,
+        signature_path=deletion_attestation_signature_path,
+        payload=attestation_bytes,
+        label="deletion_attestation",
     )
-    _require(
-        observation_facts["observer_signed_at"]
-        >= observation_facts["deletion_deployed_at"],
-        "observer_signature_predates_deletion_deployment",
+    attestation_facts = _verify_deletion_attestation(
+        attestation,
+        observer_fingerprint=observer_fingerprint,
+        observation=observation,
+        observation_facts=observation_facts,
+        signoff=signoff,
+        signoff_facts=signoff_facts,
+        policy=policy,
+        activation=activation,
     )
 
-    external_evidence = _mapping(
-        observation.get("external_evidence"),
-        "external_evidence",
+    observation_external_evidence = observation_facts["external_evidence"]
+    activation_evidence = activation_facts["activation_evidence"]
+    _verify_evidence_retention(
+        activation_evidence,
+        signed_at=attestation_facts["attestor_signed_at"],
+        error_prefix="activation_evidence",
     )
-    if external_evidence["retention_mode"] == "retention_locked":
-        retention_until = _parse_utc(
-            external_evidence.get("retention_until"),
-            "external_evidence.retention_until",
-        )
-        _require(
-            retention_until > observation_facts["observer_signed_at"],
-            "external_evidence_retention_expired",
-        )
+    _verify_evidence_retention(
+        observation_external_evidence,
+        signed_at=attestation_facts["attestor_signed_at"],
+        error_prefix="external_evidence",
+    )
+    deletion_deployment_evidence = attestation_facts["deployment_evidence"]
 
     return {
-        "schema": OBSERVATION_SCHEMA,
+        "schema": DELETION_ATTESTATION_SCHEMA,
         "status": "passed",
         "release_id": policy["release_id"],
         "policy_checksum": policy["policy_checksum"],
+        "trust_epoch": policy_facts["trust_epoch"],
+        "trust_activation_record_checksum": activation["record_checksum"],
+        "trust_activation_evidence_uri": activation_evidence["uri"],
+        "trust_activation_evidence_checksum": activation_evidence["checksum"],
+        "governance_authority_id": policy_facts["governance_authority_id"],
+        "governance_key_id": policy_facts["governance_key_id"],
+        "governance_public_key_fingerprint": governance_fingerprint,
         "compatibility_release_digest": policy["compatibility_source_commit"],
-        "deletion_release_digest": policy["deletion_source_commit"],
+        "deletion_boundary_digest": policy["deletion_boundary_commit"],
+        "deletion_release_digest": policy["qualified_deletion_source_commit"],
         "observation_record_checksum": observation["record_checksum"],
-        "consumer_signoff_checksum": signoff["record_checksum"],
+        "consumer_signoff_record_checksum": signoff["record_checksum"],
+        "deletion_attestation_checksum": attestation["record_checksum"],
         "observer_public_key_fingerprint": observer_fingerprint,
         "consumer_owner_public_key_fingerprint": owner_fingerprint,
-        "external_evidence_uri": external_evidence["uri"],
+        "observer_authority_id": policy_facts["observer_authority_id"],
+        "observer_key_id": policy_facts["observer_key_id"],
+        "consumer_owner_authority_id": policy_facts["consumer_owner_authority_id"],
+        "consumer_owner_key_id": policy_facts["consumer_owner_key_id"],
+        "observation_external_evidence_uri": observation_external_evidence["uri"],
+        "deletion_deployment_evidence_uri": deletion_deployment_evidence["uri"],
+        "deletion_deployment_id": attestation_facts["deployment_id"],
     }
 
 
@@ -171,7 +264,9 @@ def _verify_observation_record(
     observer_fingerprint: str,
     policy: Mapping[str, Any],
     policy_facts: Mapping[str, Any],
-) -> dict[str, datetime]:
+    activation: Mapping[str, Any],
+    activation_facts: Mapping[str, Any],
+) -> dict[str, Any]:
     _require_fields(
         evidence,
         {
@@ -179,11 +274,12 @@ def _verify_observation_record(
             "status",
             "release_id",
             "policy_checksum",
+            "trust_epoch",
+            "trust_activation_record_checksum",
             "compatibility_release",
             "observation_window",
             "observations",
             "consumer_inventory",
-            "deletion_release",
             "external_evidence",
             "deployment_observer",
             "record_checksum",
@@ -197,6 +293,16 @@ def _verify_observation_record(
         evidence.get("policy_checksum") == policy["policy_checksum"],
         "policy_checksum_mismatch",
     )
+    _require(
+        _positive_int(evidence.get("trust_epoch"), "observation.trust_epoch")
+        == policy_facts["trust_epoch"],
+        "observation_trust_epoch_mismatch",
+    )
+    _require(
+        evidence.get("trust_activation_record_checksum")
+        == activation["record_checksum"],
+        "observation_trust_activation_checksum_mismatch",
+    )
     _verify_record_checksum(evidence, "observation")
 
     compatibility = _verify_deployment(
@@ -206,26 +312,6 @@ def _verify_observation_record(
         expected_tree=policy["compatibility_source_tree"],
         expected_parent=policy["compatibility_parent_commit"],
     )
-    deletion = _verify_deployment(
-        evidence.get("deletion_release"),
-        label="deletion_release",
-        expected_release=policy["deletion_source_commit"],
-        expected_tree=policy["deletion_source_tree"],
-        expected_parent=policy["deletion_parent_commit"],
-    )
-    _require(
-        compatibility["deployment_id"] != deletion["deployment_id"],
-        "deployment_ids_not_distinct",
-    )
-    _require(
-        compatibility["build_digest"] != deletion["build_digest"],
-        "build_digests_not_distinct",
-    )
-    _require(
-        compatibility["environment"] == deletion["environment"],
-        "deployment_environment_mismatch",
-    )
-
     window = _mapping(evidence.get("observation_window"), "observation_window")
     _require_fields(
         window,
@@ -234,6 +320,8 @@ def _verify_observation_record(
     )
     started_at = _parse_utc(window.get("started_at"), "observation_window.started_at")
     ended_at = _parse_utc(window.get("ended_at"), "observation_window.ended_at")
+    _require_not_future(started_at, "observation_window.started_at")
+    _require_not_future(ended_at, "observation_window.ended_at")
     _require(ended_at > started_at, "observation_window_not_positive")
     duration = ended_at - started_at
     duration_seconds = _positive_int(
@@ -257,8 +345,40 @@ def _verify_observation_record(
         "observation_predates_compatibility_deployment",
     )
     _require(
-        deletion["deployed_at"] >= ended_at,
-        "deletion_deployment_predates_observation",
+        activation_facts["attestor_signed_at"] < started_at,
+        "authority_activation_not_before_observation_window",
+    )
+    _require(
+        activation_facts["environment"] == compatibility["environment"],
+        "activation_environment_mismatch",
+    )
+
+    observer = _mapping(evidence.get("deployment_observer"), "deployment_observer")
+    _require_fields(
+        observer,
+        {"observer_id", "public_key_fingerprint", "signed_at"},
+        "deployment_observer",
+    )
+    observer_id = _require_identifier(
+        observer.get("observer_id"),
+        "deployment_observer.observer_id",
+    )
+    _require(
+        observer_id == policy_facts["observer_authority_id"],
+        "deployment_observer_authority_mismatch",
+    )
+    _require(
+        observer.get("public_key_fingerprint") == observer_fingerprint,
+        "trusted_observer_public_key_mismatch",
+    )
+    observer_signed_at = _parse_utc(
+        observer.get("signed_at"),
+        "deployment_observer.signed_at",
+    )
+    _require_not_future(observer_signed_at, "deployment_observer.signed_at")
+    _require(
+        ended_at <= observer_signed_at,
+        "observer_signature_predates_observation",
     )
 
     _verify_observations(
@@ -271,32 +391,27 @@ def _verify_observation_record(
         evidence.get("consumer_inventory"),
         started_at=started_at,
         ended_at=ended_at,
+        evidence_signed_at=observer_signed_at,
         required_surfaces=policy_facts["required_consumer_surfaces"],
         required_sources=policy_facts["required_inventory_sources"],
     )
-    _verify_external_evidence(evidence.get("external_evidence"))
-
-    observer = _mapping(evidence.get("deployment_observer"), "deployment_observer")
-    _require_fields(
-        observer,
-        {"observer_id", "public_key_fingerprint", "signed_at"},
-        "deployment_observer",
+    external_evidence = _verify_external_evidence(evidence.get("external_evidence"))
+    _verify_evidence_retention(
+        external_evidence,
+        signed_at=observer_signed_at,
+        error_prefix="external_evidence",
     )
-    _require_identifier(observer.get("observer_id"), "deployment_observer.observer_id")
-    _require(
-        observer.get("public_key_fingerprint") == observer_fingerprint,
-        "trusted_observer_public_key_mismatch",
-    )
-    observer_signed_at = _parse_utc(
-        observer.get("signed_at"),
-        "deployment_observer.signed_at",
-    )
-    _require_not_future(observer_signed_at, "deployment_observer.signed_at")
 
     return {
+        "window_started_at": started_at,
         "window_ended_at": ended_at,
-        "deletion_deployed_at": deletion["deployed_at"],
         "observer_signed_at": observer_signed_at,
+        "observer_id": observer_id,
+        "compatibility_deployed_at": compatibility["deployed_at"],
+        "compatibility_build_digest": compatibility["build_digest"],
+        "compatibility_deployment_id": compatibility["deployment_id"],
+        "environment": compatibility["environment"],
+        "external_evidence": external_evidence,
     }
 
 
@@ -343,7 +458,7 @@ def _verify_deployment(
         deployment.get("build_digest"),
         f"{label}.build_digest",
     )
-    _require_external_uri(
+    build_uri = _require_external_uri(
         deployment.get("build_uri"),
         f"{label}.build_uri",
         content_checksum=build_digest,
@@ -358,15 +473,20 @@ def _verify_deployment(
     )
     deployed_at = _parse_utc(deployment.get("deployed_at"), f"{label}.deployed_at")
     _require_not_future(deployed_at, f"{label}.deployed_at")
-    _require_external_uri(
+    deployment_uri = _require_external_uri(
         deployment.get("deployment_uri"),
         f"{label}.deployment_uri",
     )
     return {
+        "release_digest": release_digest,
+        "source_tree": source_tree,
+        "parent_release_digest": parent_release,
         "build_digest": build_digest,
+        "build_uri": build_uri,
         "deployment_id": deployment_id,
         "environment": environment,
         "deployed_at": deployed_at,
+        "deployment_uri": deployment_uri,
     }
 
 
@@ -379,9 +499,17 @@ def _verify_policy(value: Mapping[str, Any]) -> dict[str, Any]:
             "compatibility_source_commit",
             "compatibility_source_tree",
             "compatibility_parent_commit",
-            "deletion_source_commit",
-            "deletion_source_tree",
-            "deletion_parent_commit",
+            "deletion_boundary_commit",
+            "deletion_boundary_tree",
+            "deletion_boundary_parent_commit",
+            "qualified_deletion_source_commit",
+            "qualified_deletion_source_tree",
+            "qualified_deletion_source_parent_commit",
+            "authority_trust_status",
+            "trust_epoch",
+            "trusted_governance_authority",
+            "trusted_observer_authority",
+            "trusted_consumer_owner_authority",
             "required_query_surfaces",
             "required_consumer_surfaces",
             "required_inventory_sources",
@@ -398,16 +526,24 @@ def _verify_policy(value: Mapping[str, Any]) -> dict[str, Any]:
         "compatibility_source_commit": COMPATIBILITY_RELEASE,
         "compatibility_source_tree": COMPATIBILITY_TREE,
         "compatibility_parent_commit": COMPATIBILITY_PARENT,
-        "deletion_source_commit": DELETION_RELEASE,
-        "deletion_source_tree": DELETION_TREE,
-        "deletion_parent_commit": COMPATIBILITY_RELEASE,
+        "deletion_boundary_commit": DELETION_BOUNDARY,
+        "deletion_boundary_tree": DELETION_BOUNDARY_TREE,
+        "deletion_boundary_parent_commit": DELETION_BOUNDARY_PARENT,
+        "qualified_deletion_source_commit": QUALIFIED_DELETION_RELEASE,
+        "qualified_deletion_source_tree": QUALIFIED_DELETION_TREE,
+        "qualified_deletion_source_parent_commit": QUALIFIED_DELETION_PARENT,
     }
     for field_name, expected in expected_git.items():
         actual = _require_release_digest(value.get(field_name), f"policy.{field_name}")
         _require(actual == expected, f"policy_{field_name}_mismatch")
     _require(
-        value["deletion_parent_commit"] == value["compatibility_source_commit"],
-        "policy_release_sequence_invalid",
+        value["deletion_boundary_parent_commit"]
+        == value["compatibility_source_commit"],
+        "policy_deletion_boundary_sequence_invalid",
+    )
+    _require(
+        value["qualified_deletion_source_commit"] != value["deletion_boundary_commit"],
+        "policy_qualified_deletion_ancestry_invalid",
     )
     required_query_surfaces = _strict_text_set(
         value.get("required_query_surfaces"),
@@ -458,7 +594,15 @@ def _verify_policy(value: Mapping[str, Any]) -> dict[str, Any]:
         maximum_records == MAX_OBSERVATION_RECORDS,
         "policy_maximum_observation_records_invalid",
     )
+    authority_trust = _verify_authority_trust_policy(value)
     _verify_record_checksum(value, "policy", checksum_field="policy_checksum")
+    if authority_trust["authority_trust_status"] == AUTHORITY_TRUST_ACTIVE:
+        _require(
+            ACTIVE_AUTHORITY_POLICY_CHECKSUM is not None
+            and value["policy_checksum"] == ACTIVE_AUTHORITY_POLICY_CHECKSUM,
+            "active_authority_policy_checksum_mismatch",
+        )
+    _verify_policy_git_objects(value)
     return {
         "required_query_surfaces": required_query_surfaces,
         "required_consumer_surfaces": required_consumer_surfaces,
@@ -466,7 +610,422 @@ def _verify_policy(value: Mapping[str, Any]) -> dict[str, Any]:
         "minimum_observation_seconds": minimum,
         "maximum_observation_seconds": maximum,
         "maximum_observation_records": maximum_records,
+        **authority_trust,
     }
+
+
+def _verify_authority_trust_policy(policy: Mapping[str, Any]) -> dict[str, Any]:
+    status = _required_text(
+        policy.get("authority_trust_status"),
+        "policy.authority_trust_status",
+    )
+    _require(
+        status in {AUTHORITY_TRUST_PENDING, AUTHORITY_TRUST_ACTIVE},
+        "policy_authority_trust_status_invalid",
+    )
+    epoch_value = policy.get("trust_epoch")
+    governance_value = policy.get("trusted_governance_authority")
+    observer_value = policy.get("trusted_observer_authority")
+    owner_value = policy.get("trusted_consumer_owner_authority")
+    if status == AUTHORITY_TRUST_PENDING:
+        _require(
+            epoch_value is None
+            and governance_value is None
+            and observer_value is None
+            and owner_value is None,
+            "policy_pending_authority_roots_invalid",
+        )
+        return {
+            "authority_trust_status": status,
+            "trust_epoch": None,
+            "governance_authority_id": None,
+            "governance_key_id": None,
+            "governance_public_key_fingerprint": None,
+            "observer_authority_id": None,
+            "observer_key_id": None,
+            "observer_public_key_fingerprint": None,
+            "consumer_owner_authority_id": None,
+            "consumer_owner_key_id": None,
+            "consumer_owner_public_key_fingerprint": None,
+        }
+
+    trust_epoch = _positive_int(epoch_value, "policy.trust_epoch")
+    expected_values = (
+        TRUSTED_GOVERNANCE_AUTHORITY_ID,
+        TRUSTED_GOVERNANCE_KEY_ID,
+        TRUSTED_GOVERNANCE_PUBLIC_KEY_FINGERPRINT,
+        TRUSTED_OBSERVER_AUTHORITY_ID,
+        TRUSTED_OBSERVER_KEY_ID,
+        TRUSTED_OBSERVER_PUBLIC_KEY_FINGERPRINT,
+        TRUSTED_CONSUMER_OWNER_AUTHORITY_ID,
+        TRUSTED_CONSUMER_OWNER_KEY_ID,
+        TRUSTED_CONSUMER_OWNER_PUBLIC_KEY_FINGERPRINT,
+    )
+    _require(
+        isinstance(ACTIVE_TRUST_EPOCH, int)
+        and not isinstance(ACTIVE_TRUST_EPOCH, bool)
+        and ACTIVE_TRUST_EPOCH > 0
+        and trust_epoch == ACTIVE_TRUST_EPOCH
+        and all(isinstance(value, str) and value for value in expected_values),
+        "compiled_authority_trust_not_activated",
+    )
+    governance = _verify_authority_root(
+        governance_value,
+        label="trusted_governance_authority",
+        expected_authority_id=TRUSTED_GOVERNANCE_AUTHORITY_ID,
+        expected_key_id=TRUSTED_GOVERNANCE_KEY_ID,
+        expected_fingerprint=TRUSTED_GOVERNANCE_PUBLIC_KEY_FINGERPRINT,
+    )
+    observer = _verify_authority_root(
+        observer_value,
+        label="trusted_observer_authority",
+        expected_authority_id=TRUSTED_OBSERVER_AUTHORITY_ID,
+        expected_key_id=TRUSTED_OBSERVER_KEY_ID,
+        expected_fingerprint=TRUSTED_OBSERVER_PUBLIC_KEY_FINGERPRINT,
+    )
+    owner = _verify_authority_root(
+        owner_value,
+        label="trusted_consumer_owner_authority",
+        expected_authority_id=TRUSTED_CONSUMER_OWNER_AUTHORITY_ID,
+        expected_key_id=TRUSTED_CONSUMER_OWNER_KEY_ID,
+        expected_fingerprint=TRUSTED_CONSUMER_OWNER_PUBLIC_KEY_FINGERPRINT,
+    )
+    roots = (governance, observer, owner)
+    _require(
+        len({root["authority_id"] for root in roots}) == 3
+        and len({root["key_id"] for root in roots}) == 3
+        and len({root["public_key_fingerprint"] for root in roots}) == 3,
+        "policy_authority_separation_missing",
+    )
+    return {
+        "authority_trust_status": status,
+        "trust_epoch": trust_epoch,
+        "governance_authority_id": governance["authority_id"],
+        "governance_key_id": governance["key_id"],
+        "governance_public_key_fingerprint": governance["public_key_fingerprint"],
+        "observer_authority_id": observer["authority_id"],
+        "observer_key_id": observer["key_id"],
+        "observer_public_key_fingerprint": observer["public_key_fingerprint"],
+        "consumer_owner_authority_id": owner["authority_id"],
+        "consumer_owner_key_id": owner["key_id"],
+        "consumer_owner_public_key_fingerprint": owner["public_key_fingerprint"],
+    }
+
+
+def _verify_authority_root(
+    value: Any,
+    *,
+    label: str,
+    expected_authority_id: str | None,
+    expected_key_id: str | None,
+    expected_fingerprint: str | None,
+) -> dict[str, str]:
+    root = _mapping(value, f"policy.{label}")
+    _require_fields(
+        root,
+        {"authority_id", "key_id", "algorithm", "public_key_fingerprint"},
+        f"policy.{label}",
+    )
+    authority_id = _require_identifier(
+        root.get("authority_id"),
+        f"policy.{label}.authority_id",
+    )
+    key_id = _require_identifier(root.get("key_id"), f"policy.{label}.key_id")
+    _require(root.get("algorithm") == "Ed25519", f"policy_{label}_algorithm_invalid")
+    fingerprint = _require_checksum(
+        root.get("public_key_fingerprint"),
+        f"policy.{label}.public_key_fingerprint",
+    )
+    _require(
+        authority_id == expected_authority_id
+        and key_id == expected_key_id
+        and fingerprint == expected_fingerprint,
+        f"policy_{label}_mismatch",
+    )
+    return {
+        "authority_id": authority_id,
+        "key_id": key_id,
+        "public_key_fingerprint": fingerprint,
+    }
+
+
+def _verify_trust_activation_record(
+    activation: Mapping[str, Any],
+    *,
+    governance_fingerprint: str,
+    policy: Mapping[str, Any],
+    policy_facts: Mapping[str, Any],
+) -> dict[str, Any]:
+    _require_fields(
+        activation,
+        {
+            "schema",
+            "status",
+            "release_id",
+            "trust_epoch",
+            "policy_checksum",
+            "trusted_governance_authority",
+            "trusted_observer_authority",
+            "trusted_consumer_owner_authority",
+            "activation_deployment",
+            "activation_evidence",
+            "governance_attestor",
+            "record_checksum",
+        },
+        "authority_activation",
+    )
+    _require(
+        activation.get("schema") == TRUST_ACTIVATION_SCHEMA,
+        "authority_activation_schema_invalid",
+    )
+    _require(
+        activation.get("status") == AUTHORITY_TRUST_ACTIVE,
+        "authority_activation_not_active",
+    )
+    _require(
+        activation.get("release_id") == policy["release_id"],
+        "authority_activation_release_id_mismatch",
+    )
+    _require(
+        _positive_int(
+            activation.get("trust_epoch"),
+            "authority_activation.trust_epoch",
+        )
+        == policy_facts["trust_epoch"],
+        "authority_activation_trust_epoch_mismatch",
+    )
+    _require(
+        activation.get("policy_checksum") == policy["policy_checksum"],
+        "authority_activation_policy_mismatch",
+    )
+    for field_name in (
+        "trusted_governance_authority",
+        "trusted_observer_authority",
+        "trusted_consumer_owner_authority",
+    ):
+        _verify_activation_authority_root(
+            activation.get(field_name),
+            label=field_name,
+            expected=policy[field_name],
+        )
+    _verify_record_checksum(activation, "authority_activation")
+
+    deployment = _mapping(
+        activation.get("activation_deployment"),
+        "activation_deployment",
+    )
+    _require_fields(
+        deployment,
+        {
+            "deployment_id",
+            "environment",
+            "deployed_at",
+            "verifier_build_digest",
+            "verifier_build_uri",
+            "deployment_uri",
+        },
+        "activation_deployment",
+    )
+    deployment_id = _require_identifier(
+        deployment.get("deployment_id"),
+        "activation_deployment.deployment_id",
+    )
+    environment = _require_identifier(
+        deployment.get("environment"),
+        "activation_deployment.environment",
+    )
+    deployed_at = _parse_utc(
+        deployment.get("deployed_at"),
+        "activation_deployment.deployed_at",
+    )
+    _require_not_future(deployed_at, "activation_deployment.deployed_at")
+    verifier_build_digest = _require_checksum(
+        deployment.get("verifier_build_digest"),
+        "activation_deployment.verifier_build_digest",
+    )
+    verifier_build_uri = _require_external_uri(
+        deployment.get("verifier_build_uri"),
+        "activation_deployment.verifier_build_uri",
+        content_checksum=verifier_build_digest,
+    )
+    deployment_uri = _require_external_uri(
+        deployment.get("deployment_uri"),
+        "activation_deployment.deployment_uri",
+    )
+
+    attestor = _mapping(
+        activation.get("governance_attestor"),
+        "governance_attestor",
+    )
+    _require_fields(
+        attestor,
+        {"attestor_id", "key_id", "public_key_fingerprint", "signed_at"},
+        "governance_attestor",
+    )
+    attestor_id = _require_identifier(
+        attestor.get("attestor_id"),
+        "governance_attestor.attestor_id",
+    )
+    key_id = _require_identifier(
+        attestor.get("key_id"),
+        "governance_attestor.key_id",
+    )
+    _require(
+        attestor_id == policy_facts["governance_authority_id"]
+        and key_id == policy_facts["governance_key_id"],
+        "governance_attestor_identity_mismatch",
+    )
+    _require(
+        attestor.get("public_key_fingerprint") == governance_fingerprint,
+        "trusted_governance_public_key_mismatch",
+    )
+    signed_at = _parse_utc(
+        attestor.get("signed_at"),
+        "governance_attestor.signed_at",
+    )
+    _require_not_future(signed_at, "governance_attestor.signed_at")
+    _require(
+        deployed_at <= signed_at,
+        "governance_signature_predates_activation_deployment",
+    )
+
+    activation_evidence = _verify_external_evidence(
+        activation.get("activation_evidence"),
+        label="activation_evidence",
+    )
+    _verify_evidence_retention(
+        activation_evidence,
+        signed_at=signed_at,
+        error_prefix="activation_evidence",
+    )
+    return {
+        "deployment_id": deployment_id,
+        "environment": environment,
+        "deployed_at": deployed_at,
+        "verifier_build_digest": verifier_build_digest,
+        "verifier_build_uri": verifier_build_uri,
+        "deployment_uri": deployment_uri,
+        "attestor_signed_at": signed_at,
+        "activation_evidence": activation_evidence,
+    }
+
+
+def _verify_activation_authority_root(
+    value: Any,
+    *,
+    label: str,
+    expected: Any,
+) -> None:
+    root = _mapping(value, f"authority_activation.{label}")
+    _require_fields(
+        root,
+        {"authority_id", "key_id", "algorithm", "public_key_fingerprint"},
+        f"authority_activation.{label}",
+    )
+    _require_identifier(
+        root.get("authority_id"),
+        f"authority_activation.{label}.authority_id",
+    )
+    _require_identifier(
+        root.get("key_id"),
+        f"authority_activation.{label}.key_id",
+    )
+    _require(
+        root.get("algorithm") == "Ed25519",
+        f"authority_activation_{label}_algorithm_invalid",
+    )
+    _require_checksum(
+        root.get("public_key_fingerprint"),
+        f"authority_activation.{label}.public_key_fingerprint",
+    )
+    _require(root == expected, f"authority_activation_{label}_mismatch")
+
+
+def _verify_policy_git_objects(policy: Mapping[str, Any]) -> None:
+    """Bind the tracked policy tuples to the repository's immutable Git graph."""
+    repo_root = Path(__file__).resolve().parent.parent
+    tuples = {
+        "compatibility_source": (
+            policy["compatibility_source_commit"],
+            policy["compatibility_source_tree"],
+            policy["compatibility_parent_commit"],
+        ),
+        "deletion_boundary": (
+            policy["deletion_boundary_commit"],
+            policy["deletion_boundary_tree"],
+            policy["deletion_boundary_parent_commit"],
+        ),
+        "qualified_deletion_source": (
+            policy["qualified_deletion_source_commit"],
+            policy["qualified_deletion_source_tree"],
+            policy["qualified_deletion_source_parent_commit"],
+        ),
+    }
+    for label, (commit, tree, parent) in tuples.items():
+        actual_tree = _git_rev_parse(repo_root, f"{commit}^{{tree}}", label)
+        _require(actual_tree == tree, f"policy_{label}_tree_git_mismatch")
+        actual_parent = _git_rev_parse(repo_root, f"{commit}^", label)
+        _require(actual_parent == parent, f"policy_{label}_parent_git_mismatch")
+    result = _run_git(
+        repo_root,
+        "merge-base",
+        "--is-ancestor",
+        policy["deletion_boundary_commit"],
+        policy["qualified_deletion_source_commit"],
+    )
+    _require(
+        result.returncode == 0,
+        "policy_deletion_boundary_not_ancestor",
+    )
+
+
+def _git_rev_parse(repo_root: Path, revision: str, label: str) -> str:
+    result = _run_git(repo_root, "rev-parse", revision)
+    _require(result.returncode == 0, f"policy_{label}_git_object_missing")
+    try:
+        return result.stdout.decode("ascii").strip().lower()
+    except UnicodeError as error:
+        raise CompatibilityObservationError("policy_git_output_invalid") from error
+
+
+def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.upper().startswith("GIT_")
+    }
+    environment.update(
+        {
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LC_ALL": "C",
+        }
+    )
+    try:
+        return subprocess.run(
+            [
+                "git",
+                "--no-replace-objects",
+                "--no-optional-locks",
+                "-C",
+                str(repo_root),
+                *args,
+            ],
+            check=False,
+            env=environment,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise CompatibilityObservationError("policy_git_command_timeout") from error
+    except OSError as error:
+        raise CompatibilityObservationError("policy_git_objects_unavailable") from error
 
 
 def _verify_observations(
@@ -507,8 +1066,8 @@ def _verify_observations(
         "projection_observation_limit_exceeded",
     )
 
-    query_sequences: dict[str, list[int]] = {}
-    checkpoint_sequences: dict[str, list[int]] = {}
+    query_source_watermarks: dict[str, list[int]] = {}
+    checkpoint_source_watermarks: dict[str, list[int]] = {}
     projection_watermarks: dict[str, list[int]] = {}
     query_ids: set[str] = set()
     query_surfaces: set[str] = set()
@@ -562,7 +1121,7 @@ def _verify_observations(
             item.get("response_status") == "success", "query_response_not_successful"
         )
         _require_external_uri(item.get("evidence_uri"), f"{label}.evidence_uri")
-        query_sequences.setdefault(run_id, []).append(sequence)
+        query_source_watermarks.setdefault(run_id, []).append(source_watermark)
 
     for index, raw in enumerate(checkpoints):
         label = f"observations.checkpoints[{index}]"
@@ -606,7 +1165,7 @@ def _verify_observations(
             item.get("legacy_offset_used") is False, "checkpoint_legacy_offset_used"
         )
         _require_external_uri(item.get("evidence_uri"), f"{label}.evidence_uri")
-        checkpoint_sequences.setdefault(run_id, []).append(sequence)
+        checkpoint_source_watermarks.setdefault(run_id, []).append(source_watermark)
 
     for index, raw in enumerate(projections):
         label = f"observations.projections[{index}]"
@@ -682,17 +1241,23 @@ def _verify_observations(
         "query_surface_coverage_incomplete",
     )
 
-    common_runs = (
-        set(query_sequences) & set(checkpoint_sequences) & set(projection_watermarks)
-    )
-    _require(bool(common_runs), "observation_run_correlation_missing")
+    query_runs = set(query_source_watermarks)
     _require(
-        any(
+        bool(query_runs)
+        and query_runs
+        == set(checkpoint_source_watermarks)
+        == set(projection_watermarks),
+        "observation_run_correlation_incomplete",
+    )
+    _require(
+        all(
             max(projection_watermarks[run_id])
-            >= max(query_sequences[run_id] + checkpoint_sequences[run_id])
-            for run_id in common_runs
+            >= max(
+                query_source_watermarks[run_id] + checkpoint_source_watermarks[run_id]
+            )
+            for run_id in query_runs
         ),
-        "projection_watermark_does_not_cover_observations",
+        "projection_watermark_does_not_cover_source",
     )
 
 
@@ -701,6 +1266,7 @@ def _verify_consumer_inventory(
     *,
     started_at: datetime,
     ended_at: datetime,
+    evidence_signed_at: datetime,
     required_surfaces: set[str],
     required_sources: set[str],
 ) -> None:
@@ -726,9 +1292,25 @@ def _verify_consumer_inventory(
         inventory.get("coverage_ended_at"),
         "consumer_inventory.coverage_ended_at",
     )
+    _require_not_future(
+        coverage_started_at,
+        "consumer_inventory.coverage_started_at",
+    )
+    _require_not_future(
+        coverage_ended_at,
+        "consumer_inventory.coverage_ended_at",
+    )
+    _require(
+        coverage_started_at <= coverage_ended_at,
+        "consumer_inventory_window_invalid",
+    )
     _require(
         coverage_started_at <= started_at and coverage_ended_at >= ended_at,
         "consumer_inventory_window_incomplete",
+    )
+    _require(
+        coverage_ended_at <= evidence_signed_at,
+        "consumer_inventory_postdates_observer_signature",
     )
     sources = _list(inventory.get("sources"), "consumer_inventory.sources")
     source_ids: set[str] = set()
@@ -757,9 +1339,18 @@ def _verify_consumer_inventory(
             item.get("coverage_ended_at"),
             f"{label}.coverage_ended_at",
         )
+        _require_not_future(source_started, f"{label}.coverage_started_at")
+        _require_not_future(source_ended, f"{label}.coverage_ended_at")
+        _require(
+            source_started <= source_ended, "consumer_inventory_source_window_invalid"
+        )
         _require(
             source_started <= started_at and source_ended >= ended_at,
             "consumer_inventory_source_window_incomplete",
+        )
+        _require(
+            source_ended <= evidence_signed_at,
+            "consumer_inventory_source_postdates_observer_signature",
         )
         _require_external_uri(item.get("evidence_uri"), f"{label}.evidence_uri")
     _require(source_ids == required_sources, "consumer_inventory_sources_incomplete")
@@ -842,8 +1433,12 @@ def _verify_consumer_inventory(
     )
 
 
-def _verify_external_evidence(value: Any) -> None:
-    evidence = _mapping(value, "external_evidence")
+def _verify_external_evidence(
+    value: Any,
+    *,
+    label: str = "external_evidence",
+) -> dict[str, Any]:
+    evidence = _mapping(value, label)
     _require_fields(
         evidence,
         {
@@ -853,33 +1448,113 @@ def _verify_external_evidence(value: Any) -> None:
             "retention_until",
             "retention_lock_id",
         },
-        "external_evidence",
+        label,
     )
-    checksum = _require_checksum(evidence.get("checksum"), "external_evidence.checksum")
+    checksum = _require_checksum(evidence.get("checksum"), f"{label}.checksum")
     mode = evidence.get("retention_mode")
     _require(
-        mode in {"content_addressed", "retention_locked"}, "retention_mode_invalid"
+        mode in {"content_addressed", "retention_locked"},
+        f"{label}_retention_mode_invalid",
     )
-    _require_external_uri(
+    uri = _require_external_uri(
         evidence.get("uri"),
-        "external_evidence.uri",
+        f"{label}.uri",
         content_checksum=checksum if mode == "content_addressed" else None,
     )
     if mode == "content_addressed":
         _require(
             evidence.get("retention_until") is None,
-            "content_addressed_retention_until_invalid",
+            f"{label}_content_addressed_retention_until_invalid",
         )
         _require(
             evidence.get("retention_lock_id") is None,
-            "content_addressed_lock_id_invalid",
+            f"{label}_content_addressed_lock_id_invalid",
         )
     else:
-        _parse_utc(evidence.get("retention_until"), "external_evidence.retention_until")
+        _parse_utc(evidence.get("retention_until"), f"{label}.retention_until")
         _require_identifier(
             evidence.get("retention_lock_id"),
-            "external_evidence.retention_lock_id",
+            f"{label}.retention_lock_id",
         )
+    evidence["uri"] = uri
+    evidence["checksum"] = checksum
+    evidence["retention_mode"] = mode
+    return evidence
+
+
+def _verify_evidence_retention(
+    evidence: Mapping[str, Any],
+    *,
+    signed_at: datetime,
+    error_prefix: str,
+) -> None:
+    if evidence["retention_mode"] != "retention_locked":
+        return
+    retention_until = _parse_utc(
+        evidence.get("retention_until"),
+        f"{error_prefix}.retention_until",
+    )
+    _require(
+        retention_until > signed_at,
+        f"{error_prefix}_retention_expired",
+    )
+
+
+def _verify_deletion_plan(
+    value: Any,
+    *,
+    label: str,
+    policy: Mapping[str, Any],
+) -> dict[str, str]:
+    plan = _mapping(value, label)
+    _require_fields(
+        plan,
+        {
+            "release_digest",
+            "source_tree",
+            "parent_release_digest",
+            "build_digest",
+            "build_uri",
+            "environment",
+        },
+        label,
+    )
+    release_digest = _require_release_digest(
+        plan.get("release_digest"), f"{label}.release_digest"
+    )
+    _require(
+        release_digest == policy["qualified_deletion_source_commit"],
+        f"{label}_digest_mismatch",
+    )
+    source_tree = _require_release_digest(
+        plan.get("source_tree"), f"{label}.source_tree"
+    )
+    _require(
+        source_tree == policy["qualified_deletion_source_tree"],
+        f"{label}_source_tree_mismatch",
+    )
+    parent_release = _require_release_digest(
+        plan.get("parent_release_digest"), f"{label}.parent_release_digest"
+    )
+    _require(
+        parent_release == policy["qualified_deletion_source_parent_commit"],
+        f"{label}_parent_release_mismatch",
+    )
+    build_digest = _require_checksum(plan.get("build_digest"), f"{label}.build_digest")
+    build_uri = _require_external_uri(
+        plan.get("build_uri"),
+        f"{label}.build_uri",
+        content_checksum=build_digest,
+    )
+    environment = _require_identifier(plan.get("environment"), f"{label}.environment")
+    return {
+        "release_digest": release_digest,
+        "source_tree": source_tree,
+        "parent_release_digest": parent_release,
+        "build_digest": build_digest,
+        "build_uri": build_uri,
+        "environment": environment,
+    }
 
 
 def _verify_consumer_signoff(
@@ -887,8 +1562,11 @@ def _verify_consumer_signoff(
     *,
     owner_fingerprint: str,
     observation: Mapping[str, Any],
-    observation_facts: Mapping[str, datetime],
-) -> dict[str, datetime]:
+    observation_facts: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    policy_facts: Mapping[str, Any],
+    activation: Mapping[str, Any],
+) -> dict[str, Any]:
     _require_fields(
         signoff,
         {
@@ -896,8 +1574,11 @@ def _verify_consumer_signoff(
             "decision",
             "release_id",
             "policy_checksum",
+            "trust_epoch",
+            "trust_activation_record_checksum",
             "compatibility_release_digest",
-            "deletion_release_digest",
+            "compatibility_build_digest",
+            "approved_deletion_release",
             "observation_record_checksum",
             "consumer_inventory_checksum",
             "registry_id",
@@ -919,7 +1600,6 @@ def _verify_consumer_signoff(
         observation.get("compatibility_release"),
         "compatibility_release",
     )
-    deletion = _mapping(observation.get("deletion_release"), "deletion_release")
     inventory = _mapping(observation.get("consumer_inventory"), "consumer_inventory")
     _require(
         signoff.get("release_id") == observation["release_id"],
@@ -930,12 +1610,44 @@ def _verify_consumer_signoff(
         "consumer_signoff_policy_mismatch",
     )
     _require(
-        signoff.get("compatibility_release_digest") == compatibility["release_digest"],
-        "consumer_signoff_candidate_mismatch",
+        _positive_int(signoff.get("trust_epoch"), "consumer_signoff.trust_epoch")
+        == observation["trust_epoch"]
+        == policy_facts["trust_epoch"],
+        "consumer_signoff_trust_epoch_mismatch",
     )
     _require(
-        signoff.get("deletion_release_digest") == deletion["release_digest"],
-        "consumer_signoff_deletion_mismatch",
+        signoff.get("trust_activation_record_checksum")
+        == observation["trust_activation_record_checksum"]
+        == activation["record_checksum"],
+        "consumer_signoff_trust_activation_checksum_mismatch",
+    )
+    _require(
+        signoff.get("compatibility_release_digest")
+        == compatibility["release_digest"]
+        == policy["compatibility_source_commit"],
+        "consumer_signoff_candidate_mismatch",
+    )
+    compatibility_build_digest = _require_checksum(
+        signoff.get("compatibility_build_digest"),
+        "consumer_signoff.compatibility_build_digest",
+    )
+    _require(
+        compatibility_build_digest == observation_facts["compatibility_build_digest"],
+        "consumer_signoff_compatibility_build_mismatch",
+    )
+    approved_deletion = _verify_deletion_plan(
+        signoff.get("approved_deletion_release"),
+        label="approved_deletion_release",
+        policy=policy,
+    )
+    _require(
+        approved_deletion["environment"] == observation_facts["environment"],
+        "consumer_signoff_deletion_environment_mismatch",
+    )
+    _require(
+        approved_deletion["build_digest"]
+        != observation_facts["compatibility_build_digest"],
+        "consumer_signoff_build_not_distinct",
     )
     _require(
         signoff.get("observation_record_checksum") == observation["record_checksum"],
@@ -949,8 +1661,12 @@ def _verify_consumer_signoff(
         signoff.get("registry_id") == inventory["registry_id"],
         "consumer_registry_id_mismatch",
     )
-    _require_identifier(
+    registry_owner_id = _require_identifier(
         signoff.get("registry_owner_id"), "consumer_signoff.registry_owner_id"
+    )
+    _require(
+        registry_owner_id == policy_facts["consumer_owner_authority_id"],
+        "consumer_owner_authority_mismatch",
     )
 
     signed_surfaces = _list(signoff.get("surfaces"), "consumer_signoff.surfaces")
@@ -970,7 +1686,7 @@ def _verify_consumer_signoff(
         signer.get("signer_id"), "consumer_signoff.signer.signer_id"
     )
     _require(
-        signer_id == signoff["registry_owner_id"],
+        signer_id == registry_owner_id,
         "consumer_signoff_signer_not_registry_owner",
     )
     _require(
@@ -983,7 +1699,176 @@ def _verify_consumer_signoff(
     )
     signed_at = _parse_utc(signoff.get("signed_at"), "consumer_signoff.signed_at")
     _require_not_future(signed_at, "consumer_signoff.signed_at")
-    return {"signed_at": signed_at}
+    _require(
+        observation_facts["observer_signed_at"] <= signed_at,
+        "consumer_signoff_predates_observer_signature",
+    )
+    return {
+        "signed_at": signed_at,
+        "approved_deletion_release": approved_deletion,
+        "registry_owner_id": signer_id,
+    }
+
+
+def _verify_deletion_attestation(
+    attestation: Mapping[str, Any],
+    *,
+    observer_fingerprint: str,
+    observation: Mapping[str, Any],
+    observation_facts: Mapping[str, Any],
+    signoff: Mapping[str, Any],
+    signoff_facts: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    activation: Mapping[str, Any],
+) -> dict[str, Any]:
+    _require_fields(
+        attestation,
+        {
+            "schema",
+            "status",
+            "release_id",
+            "policy_checksum",
+            "trust_epoch",
+            "trust_activation_record_checksum",
+            "observation_record_checksum",
+            "consumer_signoff_record_checksum",
+            "deletion_release",
+            "deployment_evidence",
+            "deployment_attestor",
+            "record_checksum",
+        },
+        "deletion_attestation",
+    )
+    _require(
+        attestation.get("schema") == DELETION_ATTESTATION_SCHEMA,
+        "deletion_attestation_schema_invalid",
+    )
+    _require(
+        attestation.get("status") == "passed",
+        "deletion_attestation_not_passed",
+    )
+    _require(
+        attestation.get("release_id")
+        == observation["release_id"]
+        == signoff["release_id"],
+        "deletion_attestation_release_id_mismatch",
+    )
+    _require(
+        attestation.get("policy_checksum")
+        == observation["policy_checksum"]
+        == signoff["policy_checksum"]
+        == policy["policy_checksum"],
+        "deletion_attestation_policy_mismatch",
+    )
+    _require(
+        _positive_int(
+            attestation.get("trust_epoch"),
+            "deletion_attestation.trust_epoch",
+        )
+        == observation["trust_epoch"]
+        == signoff["trust_epoch"],
+        "deletion_attestation_trust_epoch_mismatch",
+    )
+    _require(
+        attestation.get("trust_activation_record_checksum")
+        == observation["trust_activation_record_checksum"]
+        == signoff["trust_activation_record_checksum"]
+        == activation["record_checksum"],
+        "deletion_attestation_trust_activation_checksum_mismatch",
+    )
+    _require(
+        attestation.get("observation_record_checksum")
+        == observation["record_checksum"],
+        "deletion_attestation_observation_checksum_mismatch",
+    )
+    _require(
+        attestation.get("consumer_signoff_record_checksum")
+        == signoff["record_checksum"],
+        "deletion_attestation_consumer_signoff_checksum_mismatch",
+    )
+    _verify_record_checksum(attestation, "deletion_attestation")
+
+    deletion = _verify_deployment(
+        attestation.get("deletion_release"),
+        label="deletion_release",
+        expected_release=policy["qualified_deletion_source_commit"],
+        expected_tree=policy["qualified_deletion_source_tree"],
+        expected_parent=policy["qualified_deletion_source_parent_commit"],
+    )
+    approved = signoff_facts["approved_deletion_release"]
+    _require(
+        all(
+            deletion[field] == approved[field]
+            for field in (
+                "release_digest",
+                "source_tree",
+                "parent_release_digest",
+                "build_digest",
+                "build_uri",
+                "environment",
+            )
+        ),
+        "deletion_attestation_plan_mismatch",
+    )
+    _require(
+        deletion["environment"] == observation_facts["environment"],
+        "deletion_attestation_environment_mismatch",
+    )
+    _require(
+        deletion["deployment_id"] != observation_facts["compatibility_deployment_id"],
+        "deletion_deployment_id_not_distinct",
+    )
+    _require(
+        deletion["build_digest"] != observation_facts["compatibility_build_digest"],
+        "deletion_build_digest_not_distinct",
+    )
+    _require(
+        signoff_facts["signed_at"] <= deletion["deployed_at"],
+        "deletion_deployment_predates_consumer_signoff",
+    )
+
+    attestor = _mapping(
+        attestation.get("deployment_attestor"),
+        "deployment_attestor",
+    )
+    _require_fields(
+        attestor,
+        {"attestor_id", "public_key_fingerprint", "signed_at"},
+        "deployment_attestor",
+    )
+    attestor_id = _require_identifier(
+        attestor.get("attestor_id"), "deployment_attestor.attestor_id"
+    )
+    _require(
+        attestor_id == observation_facts["observer_id"],
+        "deletion_attestor_identity_mismatch",
+    )
+    _require(
+        attestor.get("public_key_fingerprint") == observer_fingerprint,
+        "trusted_deletion_attestor_public_key_mismatch",
+    )
+    signed_at = _parse_utc(attestor.get("signed_at"), "deployment_attestor.signed_at")
+    _require_not_future(signed_at, "deployment_attestor.signed_at")
+    _require(
+        deletion["deployed_at"] <= signed_at,
+        "deletion_attestor_signature_predates_deployment",
+    )
+
+    deployment_evidence = _verify_external_evidence(
+        attestation.get("deployment_evidence"),
+        label="deployment_evidence",
+    )
+    _verify_evidence_retention(
+        deployment_evidence,
+        signed_at=signed_at,
+        error_prefix="deployment_evidence",
+    )
+    return {
+        "deployment_id": deletion["deployment_id"],
+        "deployed_at": deletion["deployed_at"],
+        "attestor_signed_at": signed_at,
+        "deployment_evidence": deployment_evidence,
+    }
 
 
 def _normalize_signoff_surfaces(value: list[Any]) -> dict[str, dict[str, Any]]:
@@ -1058,21 +1943,15 @@ def _verify_detached_signature(
     payload: bytes,
     label: str,
 ) -> None:
-    signature_file = _resolve_regular_file(signature_path, f"{label}_signature")
-    signature = _read_signature(signature_file, label)
+    signature = _read_signature(signature_path, label)
     try:
         key.verify(signature, payload)
     except InvalidSignature as error:
         raise CompatibilityObservationError(f"{label}_signature_invalid") from error
 
 
-def _read_signature(path: Path, label: str) -> bytes:
-    try:
-        payload = path.read_bytes()
-    except OSError as error:
-        raise CompatibilityObservationError(
-            f"{label}_signature_not_readable"
-        ) from error
+def _read_signature(path: str | Path, label: str) -> bytes:
+    payload = _read_bounded_regular_file(path, f"{label}_signature")
     if len(payload) == 64:
         return payload
     try:
@@ -1086,10 +1965,10 @@ def _read_signature(path: Path, label: str) -> bytes:
 def _coerce_public_key(value: str | Path | Ed25519PublicKey) -> Ed25519PublicKey:
     if isinstance(value, Ed25519PublicKey):
         return value
-    path = _resolve_regular_file(value, "trusted_public_key")
+    payload = _read_bounded_regular_file(value, "trusted_public_key")
     try:
-        key = serialization.load_pem_public_key(path.read_bytes())
-    except (OSError, ValueError, TypeError) as error:
+        key = serialization.load_pem_public_key(payload)
+    except (ValueError, TypeError) as error:
         raise CompatibilityObservationError("trusted_public_key_invalid") from error
     _require(isinstance(key, Ed25519PublicKey), "trusted_public_key_not_ed25519")
     return key
@@ -1110,12 +1989,21 @@ def _require_external_uri(
     content_checksum: str | None = None,
 ) -> str:
     text = _required_text(value, field_name)
-    _require(len(text) <= 2048, f"{field_name}_invalid")
+    _require(
+        len(text) <= 2048
+        and all(0x20 <= ord(character) < 0x7F for character in text)
+        and "\\" not in text,
+        f"{field_name}_invalid",
+    )
     parsed = urlparse(text)
     scheme = parsed.scheme.lower()
     _require(scheme in _ALLOWED_EXTERNAL_SCHEMES, f"{field_name}_invalid")
     _require(
         not parsed.username and not parsed.password,
+        f"{field_name}_credentials_forbidden",
+    )
+    _require(
+        not parsed.params and not parsed.query and not parsed.fragment,
         f"{field_name}_credentials_forbidden",
     )
     if scheme == "https":
@@ -1155,37 +2043,109 @@ def _require_external_uri(
         _require(bool(parsed.netloc or parsed.path), f"{field_name}_invalid")
     if content_checksum is not None:
         digest = _require_checksum(content_checksum, f"{field_name}.content_checksum")
-        _require(
-            digest.removeprefix("sha256:") in text.lower(),
-            f"{field_name}_not_content_addressed",
-        )
+        digest_hex = digest.removeprefix("sha256:")
+        if scheme in {"oci", "docker"}:
+            is_content_addressed = parsed.path.lower().endswith(f"@sha256:{digest_hex}")
+        else:
+            final_segment = parsed.path.rstrip("/").rsplit("/", 1)[-1].lower()
+            is_content_addressed = final_segment in {
+                digest_hex,
+                f"sha256:{digest_hex}",
+            }
+        _require(is_content_addressed, f"{field_name}_not_content_addressed")
     return text
 
 
-def _resolve_regular_file(value: str | Path, label: str) -> Path:
-    unresolved = Path(value).absolute()
-    _require(not unresolved.is_symlink(), f"{label}_symlink_forbidden")
-    try:
-        path = unresolved.resolve(strict=True)
-    except (OSError, RuntimeError) as error:
-        raise CompatibilityObservationError(f"{label}_not_readable") from error
-    _require(path.is_file(), f"{label}_not_regular_file")
+def _read_bounded_regular_file(value: str | Path, label: str) -> bytes:
     maximum_size = _MAX_FILE_BYTES.get(label)
-    if maximum_size is not None:
-        size = path.stat().st_size
-        _require(0 < size <= maximum_size, f"{label}_size_invalid")
-    return path
-
-
-def _read_json_object(path: Path, label: str) -> tuple[bytes, dict[str, Any]]:
+    _require(maximum_size is not None, f"{label}_size_policy_missing")
     try:
-        payload = path.read_bytes()
+        path = Path(value).absolute()
+    except (OSError, TypeError, ValueError) as error:
+        raise CompatibilityObservationError(f"{label}_not_readable") from error
+    before = _lstat_without_links(path, label)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise CompatibilityObservationError(f"{label}_not_readable") from error
+    try:
+        opened = os.fstat(descriptor)
+        _require(stat.S_ISREG(opened.st_mode), f"{label}_not_regular_file")
+        _require(os.path.samestat(before, opened), f"{label}_changed_during_read")
+        _require(
+            0 < opened.st_size <= maximum_size,
+            f"{label}_size_invalid",
+        )
+        payload = _read_descriptor(descriptor, maximum_size, label)
+        after = os.fstat(descriptor)
+        current = _lstat_without_links(path, label)
+        _require(
+            os.path.samestat(opened, after)
+            and os.path.samestat(opened, current)
+            and opened.st_size == after.st_size == len(payload)
+            and opened.st_mtime_ns == after.st_mtime_ns,
+            f"{label}_changed_during_read",
+        )
+    except OSError as error:
+        raise CompatibilityObservationError(f"{label}_not_readable") from error
+    finally:
+        os.close(descriptor)
+    return payload
+
+
+def _lstat_without_links(path: Path, label: str) -> os.stat_result:
+    final_status: os.stat_result | None = None
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    for component in (path, *path.parents):
+        try:
+            status = os.lstat(component)
+        except OSError as error:
+            raise CompatibilityObservationError(f"{label}_not_readable") from error
+        is_reparse_point = bool(
+            reparse_flag and getattr(status, "st_file_attributes", 0) & reparse_flag
+        )
+        _require(
+            not stat.S_ISLNK(status.st_mode) and not is_reparse_point,
+            f"{label}_symlink_forbidden",
+        )
+        if component == path:
+            final_status = status
+    _require(final_status is not None, f"{label}_not_readable")
+    return final_status
+
+
+def _read_descriptor(descriptor: int, maximum_size: int, label: str) -> bytes:
+    chunks: list[bytes] = []
+    remaining = maximum_size + 1
+    while remaining > 0:
+        chunk = os.read(descriptor, min(64 * 1024, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    payload = b"".join(chunks)
+    _require(len(payload) <= maximum_size, f"{label}_size_invalid")
+    return payload
+
+
+def _read_json_object(
+    path: str | Path,
+    label: str,
+) -> tuple[bytes, dict[str, Any]]:
+    payload = _read_bounded_regular_file(path, label)
+    try:
         value = json.loads(
             payload.decode("utf-8"),
             object_pairs_hook=lambda pairs: _unique_json_object(pairs, label),
             parse_constant=lambda _value: _reject_json_constant(label),
         )
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    except (UnicodeError, json.JSONDecodeError) as error:
         raise CompatibilityObservationError(f"{label}_not_readable") from error
     _require(isinstance(value, Mapping), f"{label}_root_not_object")
     return payload, dict(value)
@@ -1293,12 +2253,17 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Verify signed compatibility-release deployment observation evidence.",
     )
     parser.add_argument("--policy", required=True)
+    parser.add_argument("--authority-activation", required=True)
+    parser.add_argument("--authority-activation-signature", required=True)
+    parser.add_argument("--trusted-governance-public-key", required=True)
     parser.add_argument("--observation", required=True)
     parser.add_argument("--observation-signature", required=True)
     parser.add_argument("--trusted-observer-public-key", required=True)
     parser.add_argument("--consumer-signoff", required=True)
     parser.add_argument("--consumer-signoff-signature", required=True)
     parser.add_argument("--trusted-consumer-owner-public-key", required=True)
+    parser.add_argument("--deletion-attestation", required=True)
+    parser.add_argument("--deletion-attestation-signature", required=True)
     return parser
 
 
@@ -1307,12 +2272,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result = verify_compatibility_release_evidence(
             policy_path=args.policy,
+            authority_activation_path=args.authority_activation,
+            authority_activation_signature_path=args.authority_activation_signature,
+            trusted_governance_public_key=args.trusted_governance_public_key,
             observation_path=args.observation,
             observation_signature_path=args.observation_signature,
             trusted_observer_public_key=args.trusted_observer_public_key,
             consumer_signoff_path=args.consumer_signoff,
             consumer_signoff_signature_path=args.consumer_signoff_signature,
             trusted_consumer_owner_public_key=args.trusted_consumer_owner_public_key,
+            deletion_attestation_path=args.deletion_attestation,
+            deletion_attestation_signature_path=args.deletion_attestation_signature,
         )
     except (CompatibilityObservationError, OSError, ValueError) as error:
         print(

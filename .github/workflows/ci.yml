@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -39,6 +41,9 @@ jobs:
 
       - name: Run PRD-aligned daily regression sweep
         run: python -m scripts.dev test-prd-daily
+
+      - name: Run durable event compatibility gate
+        run: python -m pytest tests/infrastructure/storage/events/test_durable_event_compatibility_release.py -q
 
       - name: Run fixed smoke commands
         run: python -m scripts.dev smoke
