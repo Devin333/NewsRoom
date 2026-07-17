@@ -12,6 +12,7 @@ from hashlib import sha256
 import pytest
 
 import scripts.durable_event_rollback_drill as rollback_drill
+import scripts.durable_event_rollback_staging as rollback_staging
 from framework.events.canonical import (
     BusinessContext,
     EventCandidate,
@@ -886,6 +887,142 @@ def test_unsigned_external_evidence_requires_real_approval_signature(tmp_path) -
 
     assert evidence["status"] == "passed"
     assert "attestation" not in evidence
+
+
+def test_staging_finalize_binds_signed_approval_request_to_technical_bundle(
+    tmp_path,
+) -> None:
+    source_path = _write_external_evidence(
+        tmp_path / "external-source",
+        drill_id="rollback-staging-finalize",
+        candidate="a" * 40,
+        rollback="b" * 40,
+    )
+    external = json.loads(source_path.read_text(encoding="utf-8"))
+    technical = {
+        "schema": rollback_staging.TECHNICAL_EVIDENCE_SCHEMA,
+        "status": "awaiting_approval",
+        "drill_id": external["drill_id"],
+        "drill_completed_at": external["drill_completed_at"],
+        "candidate_release_digest": external["candidate_release_digest"],
+        "rollback_release_digest": external["rollback_release_digest"],
+        "postgresql": external["postgresql"],
+        "external_effect": external["external_effect"],
+        "orchestrator": external["orchestrator"],
+        "external_gates": external["external_gates"],
+        "artifacts": [
+            item for item in external["artifacts"] if item["role"] != "approval_record"
+        ],
+    }
+    technical["evidence_checksum"] = checksum_for(technical)
+    technical_path = source_path.parent / "technical-evidence.json"
+    technical_path.write_text(json.dumps(technical), encoding="utf-8")
+    approval_request = {
+        "schema": rollback_staging.APPROVAL_REQUEST_SCHEMA,
+        "status": "awaiting_approval",
+        "drill_id": technical["drill_id"],
+        "candidate_release_digest": technical["candidate_release_digest"],
+        "rollback_release_digest": technical["rollback_release_digest"],
+        "drill_completed_at": technical["drill_completed_at"],
+        "decision_required": "approved",
+        "evidence_summary_checksum": checksum_for(
+            rollback_drill._approval_summary(
+                {**technical, "schema": EXTERNAL_EVIDENCE_SCHEMA}
+            )
+        ),
+        "artifact_checksums": {
+            item["role"]: item["checksum"] for item in technical["artifacts"]
+        },
+    }
+    approval_request["request_checksum"] = checksum_for(approval_request)
+    approval_request_path = source_path.parent / "approval-request.json"
+    approval_request_path.write_text(json.dumps(approval_request), encoding="utf-8")
+    approval_request = json.loads(approval_request_path.read_text(encoding="utf-8"))
+    request_checksum = approval_request.pop("request_checksum")
+    assert request_checksum == checksum_for(approval_request)
+    assert approval_request == {
+        "schema": rollback_staging.APPROVAL_REQUEST_SCHEMA,
+        "status": "awaiting_approval",
+        "drill_id": technical["drill_id"],
+        "candidate_release_digest": technical["candidate_release_digest"],
+        "rollback_release_digest": technical["rollback_release_digest"],
+        "drill_completed_at": technical["drill_completed_at"],
+        "decision_required": "approved",
+        "evidence_summary_checksum": checksum_for(
+            rollback_drill._approval_summary(
+                {**technical, "schema": EXTERNAL_EVIDENCE_SCHEMA}
+            )
+        ),
+        "artifact_checksums": {
+            item["role"]: item["checksum"] for item in technical["artifacts"]
+        },
+    }
+
+    approval_record_payload = {
+        "schema": rollback_drill.APPROVAL_RECORD_SCHEMA,
+        "drill_id": approval_request["drill_id"],
+        "candidate_release_digest": approval_request["candidate_release_digest"],
+        "rollback_release_digest": approval_request["rollback_release_digest"],
+        "drill_completed_at": approval_request["drill_completed_at"],
+        "operator_id": "operator-requester",
+        "approver_id": "approver-authority",
+        "approved_at": _utc_text(datetime.now(UTC)),
+        "decision": approval_request["decision_required"],
+        "evidence_summary_checksum": approval_request["evidence_summary_checksum"],
+        "artifact_checksums": approval_request["artifact_checksums"],
+    }
+    approval_record = source_path.parent / "separate-approval-record.json"
+    approval_record_bytes = json.dumps(
+        approval_record_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    approval_record.write_bytes(approval_record_bytes)
+    approval_private_key = source_path.parent / "separate-approval-private.pem"
+    approval_public_key = source_path.parent / "separate-approval-public.pem"
+    generate_signing_keypair(
+        private_key_path=approval_private_key,
+        public_key_path=approval_public_key,
+    )
+    approval_signature = source_path.parent / "separate-approval-record.sig"
+    approval_signature.write_text(
+        base64.b64encode(
+            rollback_drill._load_private_key(approval_private_key).sign(
+                approval_record_bytes
+            )
+        ).decode("ascii"),
+        encoding="ascii",
+    )
+
+    invalid_signature = source_path.parent / "invalid-approval-record.sig"
+    invalid_signature.write_bytes(b"\x00" * 64)
+    rejected_output = tmp_path / "rejected-external" / "external-evidence.json"
+    with pytest.raises(
+        rollback_staging.StagingRollbackError,
+        match="approval_signature_invalid",
+    ):
+        rollback_staging.finalize_external_evidence(
+            technical_evidence_path=technical_path,
+            approval_record_path=approval_record,
+            approval_signature_path=invalid_signature,
+            trusted_approval_public_key=approval_public_key,
+            output_path=rejected_output,
+        )
+    assert not rejected_output.parent.exists()
+
+    output = tmp_path / "unsigned-external" / "external-evidence.json"
+
+    finalized = rollback_staging.finalize_external_evidence(
+        technical_evidence_path=technical_path,
+        approval_record_path=approval_record,
+        approval_signature_path=approval_signature,
+        trusted_approval_public_key=approval_public_key,
+        output_path=output,
+    )
+
+    assert finalized["status"] == "passed"
+    assert finalized["approval"]["operator_id"] == "operator-requester"
+    assert output.is_file()
 
 
 @pytest.mark.parametrize(

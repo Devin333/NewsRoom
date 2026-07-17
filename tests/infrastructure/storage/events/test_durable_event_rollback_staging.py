@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -11,6 +12,7 @@ from uuid import uuid4
 import pytest
 
 from framework.events.canonical import checksum_for
+from scripts import durable_event_rollback_drill as rollback_drill
 from scripts import durable_event_rollback_staging as staging
 from scripts import durable_event_rollback_stage_worker as worker
 
@@ -162,17 +164,14 @@ def test_real_postgres_cross_release_rollback_staging(tmp_path) -> None:
         f"nr-rb-{uuid4().hex[:8]}"
     )
     local_root = short_root / "local"
-    local = __import__(
-        "scripts.durable_event_rollback_drill",
-        fromlist=["run_rollback_drill"],
-    ).run_rollback_drill(
-        workspace=local_root,
-        drill_id=f"rollback-staging-{tmp_path.name}",
-        candidate_release=candidate,
-        rollback_release=rollback,
-    )
     workspace = short_root / "staging"
     try:
+        local = rollback_drill.run_rollback_drill(
+            workspace=local_root,
+            drill_id=f"rollback-staging-{tmp_path.name}",
+            candidate_release=candidate,
+            rollback_release=rollback,
+        )
         evidence = staging.run_staging_rollback(
             workspace=workspace,
             local_evidence_path=local_root / "rollback-evidence.json",
@@ -187,29 +186,96 @@ def test_real_postgres_cross_release_rollback_staging(tmp_path) -> None:
         assert verified["candidate_release_digest"] == candidate
         assert verified["rollback_release_digest"] == rollback
         assert local["overall_status"] == "incomplete"
-    finally:
-        for role in ("candidate", "rollback"):
-            release_root = workspace / "releases" / role
-            if release_root.exists():
-                subprocess.run(
-                    [
-                        "git",
-                        "-C",
-                        str(repository),
-                        "worktree",
-                        "remove",
-                        "--force",
-                        str(release_root),
-                    ],
-                    check=False,
-                    capture_output=True,
+
+        approval_request = json.loads(
+            (workspace / "technical" / "approval-request.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        request_checksum = approval_request.pop("request_checksum")
+        assert request_checksum == checksum_for(approval_request)
+        assert approval_request == {
+            "schema": staging.APPROVAL_REQUEST_SCHEMA,
+            "status": "awaiting_approval",
+            "drill_id": verified["drill_id"],
+            "candidate_release_digest": verified["candidate_release_digest"],
+            "rollback_release_digest": verified["rollback_release_digest"],
+            "drill_completed_at": verified["drill_completed_at"],
+            "decision_required": "approved",
+            "evidence_summary_checksum": checksum_for(
+                rollback_drill._approval_summary(
+                    {
+                        **verified,
+                        "schema": rollback_drill.EXTERNAL_EVIDENCE_SCHEMA,
+                    }
                 )
-        if workspace.exists():
-            config_path = workspace / "staging-config.json"
-            if config_path.exists():
-                config = json.loads(config_path.read_text(encoding="utf-8"))
-                staging._drop_staging_database(admin_dsn, config["database_name"])
-        shutil.rmtree(short_root, ignore_errors=True)
+            ),
+            "artifact_checksums": {
+                item["role"]: item["checksum"] for item in verified["artifacts"]
+            },
+        }
+        approval_record = {
+            "schema": rollback_drill.APPROVAL_RECORD_SCHEMA,
+            "drill_id": approval_request["drill_id"],
+            "candidate_release_digest": approval_request[
+                "candidate_release_digest"
+            ],
+            "rollback_release_digest": approval_request[
+                "rollback_release_digest"
+            ],
+            "drill_completed_at": approval_request["drill_completed_at"],
+            "operator_id": "integration-operator",
+            "approver_id": "integration-approver",
+            "approved_at": staging._utc_text(datetime.now(UTC)),
+            "decision": approval_request["decision_required"],
+            "evidence_summary_checksum": approval_request[
+                "evidence_summary_checksum"
+            ],
+            "artifact_checksums": approval_request["artifact_checksums"],
+        }
+
+        approval_root = short_root / "approval"
+        approval_root.mkdir()
+        approval_record_path = approval_root / "approval-record.json"
+        approval_record_bytes = json.dumps(
+            approval_record,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        approval_record_path.write_bytes(approval_record_bytes)
+        approval_private_key = approval_root / "approval-private.pem"
+        approval_public_key = approval_root / "approval-public.pem"
+        rollback_drill.generate_signing_keypair(
+            private_key_path=approval_private_key,
+            public_key_path=approval_public_key,
+        )
+        approval_signature_path = approval_root / "approval-record.sig"
+        approval_signature_path.write_text(
+            base64.b64encode(
+                rollback_drill._load_private_key(approval_private_key).sign(
+                    approval_record_bytes
+                )
+            ).decode("ascii"),
+            encoding="ascii",
+        )
+        finalized = staging.finalize_external_evidence(
+            technical_evidence_path=(
+                workspace / "technical" / "technical-evidence.json"
+            ),
+            approval_record_path=approval_record_path,
+            approval_signature_path=approval_signature_path,
+            trusted_approval_public_key=approval_public_key,
+            output_path=short_root / "external" / "external-evidence.json",
+        )
+        assert finalized["status"] == "passed"
+        assert finalized["approval"]["operator_id"] == "integration-operator"
+    finally:
+        _strict_cleanup_staging_run(
+            repository=repository,
+            short_root=short_root,
+            workspace=workspace,
+            admin_dsn=admin_dsn,
+        )
 
 
 def _worker_payload(digest: str) -> dict[str, object]:
@@ -284,3 +350,66 @@ def _git(root: Path, *args: str) -> str:
         encoding="utf-8",
     )
     return completed.stdout.strip()
+
+
+def _strict_cleanup_staging_run(
+    *,
+    repository: Path,
+    short_root: Path,
+    workspace: Path,
+    admin_dsn: str,
+) -> None:
+    release_roots = tuple(
+        (workspace / "releases" / role).resolve()
+        for role in ("candidate", "rollback")
+    )
+    registered = _registered_worktree_roots(repository)
+    for release_root in release_roots:
+        if release_root in registered:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "worktree",
+                    "remove",
+                    "--force",
+                    str(release_root),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+    assert not set(release_roots) & _registered_worktree_roots(repository)
+
+    config_path = workspace / "staging-config.json"
+    if config_path.exists():
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        database_name = str(config["database_name"])
+        staging._drop_staging_database(admin_dsn, database_name)
+        assert not _postgres_database_exists(admin_dsn, database_name)
+
+    if short_root.exists():
+        shutil.rmtree(short_root)
+    assert not short_root.exists()
+
+
+def _registered_worktree_roots(repository: Path) -> set[Path]:
+    return {
+        Path(line.removeprefix("worktree ")).resolve()
+        for line in _git(repository, "worktree", "list", "--porcelain").splitlines()
+        if line.startswith("worktree ")
+    }
+
+
+def _postgres_database_exists(admin_dsn: str, database_name: str) -> bool:
+    import psycopg
+
+    with psycopg.connect(admin_dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM pg_database WHERE datname = %s",
+                (database_name,),
+            )
+            return cursor.fetchone() is not None

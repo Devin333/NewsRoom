@@ -160,6 +160,56 @@ public-key fingerprint 和 signature。`approval_record` 必须绑定 drill comp
 digest、operator、approver、approval time、完整 evidence summary checksum 及除自身外每个
 artifact checksum。rollback 工具只验证该记录，不代替真实审批系统生成或签署审批。
 
+### 3.1 运行真实技术演练
+
+controller 只从固定环境变量 `NEWSROOM_ROLLBACK_STAGING_ADMIN_DSN` 读取 PostgreSQL
+管理连接，不接受 `--dsn` 或可变环境变量名。它从 clean controller worktree 推导 candidate
+commit，并要求 local evidence 已精确绑定 candidate 与 rollback digest：
+
+```powershell
+$env:NEWSROOM_ROLLBACK_STAGING_ADMIN_DSN = "<secret-manager injection>"
+.\.venv\Scripts\python.exe -m scripts.durable_event_rollback_staging run `
+  --workspace <new-empty-parent>/rollback-staging-<candidate> `
+  --local-evidence <local>/rollback-evidence.json `
+  --rollback-release <immutable-rollback-commit>
+```
+
+`run` 创建全新的 `newsroom_rollback_staging_*` database 和两个 detached release
+worktree，以独立 worker process 执行 candidate/rollback。供审批系统交接的冻结内容仅为：
+
+```text
+technical/technical-evidence.json   status=awaiting_approval
+technical/approval-request.json
+technical/artifacts/*.json          不含 approval_record
+```
+
+workspace 还保留 `staging-config.json`、`native/`、`effect/`、`candidate-projection/`、
+`rollback-projection/` 和 `releases/`，用于审计、复核与部署方清理；它们不是审批输入，
+也不得替代 technical artifact manifest。成功运行不会提前删除 PostgreSQL staging database
+或这些 run-owned 证据。
+
+worker 只返回 process/release/runtime 事实；所有 gate 由 controller 直接查询 PostgreSQL、
+effect ledger、Git 和 projection bytes 后推导。worker 输出中的 boolean gate claim 会被拒绝。
+
+### 3.2 绑定真实审批记录
+
+审批系统读取 `approval-request.json`，由不同 operator/approver 产生精确
+`newsroom.durable-event-rollback-approval/v1` record，并用独立 approval key 签署该文件。
+runner 不生成 operator、approver、approval key 或 decision：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.durable_event_rollback_staging finalize `
+  --technical-evidence <staging>/technical/technical-evidence.json `
+  --approval-record <approval-system>/approval-record.json `
+  --approval-signature <approval-system>/approval-record.sig `
+  --trusted-approval-public-key <trusted-approval-public-key-path> `
+  --output <new-external-bundle>/external-evidence.json
+```
+
+`finalize` 重新验证 technical checksum、8 个 artifact、审批摘要、所有 artifact checksum、
+职责分离、时间链和 approval signature，再原子发布 unsigned external bundle。之后仍必须由
+独立 authority 执行下节的 `attest-external` 和 `qualify`。
+
 ## 4. 生成签名 qualification bundle
 
 首次接入发布系统时分别生成 approval、external attestation 与 release qualification

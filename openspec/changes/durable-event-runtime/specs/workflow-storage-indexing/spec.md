@@ -16,7 +16,8 @@ The system SHALL accept workflow events only for validated single-segment run id
 #### Scenario: Workflow event projection is finalized
 - **WHEN** a workflow run finalizes or explicitly refreshes its event projection
 - **THEN** `events.jsonl` contains the redacted events from the durable run stream in sequence order
-- **AND** the manifest records the projection high watermark and checksum
+- **AND** the manifest records the projection high watermark and SHA-256 checksum of the exact final `events.jsonl` bytes
+- **AND** canonical event-row integrity checksums remain distinct from that projection-file checksum
 
 #### Scenario: Post-run indexing is disabled
 - **WHEN** the durable event write path is active

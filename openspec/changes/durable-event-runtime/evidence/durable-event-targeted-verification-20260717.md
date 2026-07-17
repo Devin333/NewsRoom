@@ -2,7 +2,7 @@
 
 Date: 2026-07-17
 
-Verified commit: `b935d4fd5cd07bf7550fd955e4f0efaf72c0ab8d`
+Tasks 10.1-10.3 verified commit: `b935d4fd5cd07bf7550fd955e4f0efaf72c0ab8d`
 
 OpenSpec tasks: `10.1`, `10.2`, `10.3`
 
@@ -90,17 +90,61 @@ committed in `07841be7`.
 
 ## Rollback boundary
 
-The committed rollback tool proves local invariants and rejects fabricated or
-unbound external evidence, but no real deployment binary switch, PostgreSQL
-rollback continuity run, external provider effect audit, traffic-control run,
-or two-person production approval bundle has been supplied. Therefore local
-rollback evidence remains `INCOMPLETE`, task 9.5 is not checked, and neither PRD
-may be marked `IMPLEMENTED`.
+The committed rollback tool still keeps local evidence `INCOMPLETE`, but a real
+approval-pending staging run has now completed at candidate
+`524afab7b26bdfc5945151b192b24990ab12269f` against rollback release
+`570f840c7df3870841c93e37480d7a53a67921dd`.
+
+Canonical local evidence:
+`.newsroom/durable-event-rollback-local-524afab7/rollback-evidence.json`
+
+Local `evidence_checksum`:
+`sha256:fd9ff590d1ae1492d32ca4419b54d2040c0b64f0a9e3efc73d2ffe601e5e069e`
+
+Canonical technical evidence:
+`.newsroom/durable-event-rollback-staging-524afab7/technical/technical-evidence.json`
+
+Technical `evidence_checksum`:
+`sha256:597bd82407c82675eef4086baf07f2bfe0e40b9102e4af92884548dc1df0825d`
+
+Approval request `request_checksum`:
+`sha256:f3c4df38bdc632f50eee0d532adf02967077eeb3857913f35b53fe2d1b0d1f7c`
+
+The run used a newly created isolated PostgreSQL database, clean detached
+candidate and rollback worktrees, different actual worker processes, a real
+process exit after the external-effect transaction, a five-second lease
+recovery, durable dispatcher pause, and direct controller queries. It proved:
+
+| Boundary | Result |
+| --- | --- |
+| Accepted prefix | 20 complete canonical events preserved byte-for-byte; next accepted sequence 21 |
+| Concurrent writers | 0 duplicate sequence; contiguous stream watermark |
+| Preserved ledgers | delivery 2, inbox 1, checkpoint 1, dead letter 1; counts and checksums unchanged |
+| External effect | 2 invocations, 1 applied effect, stable result checksum |
+| Negative gates | unknown schema, forbidden payload, identity collision, and record-checksum tamper rejected without watermark advance |
+| Cross-release projection | candidate and rollback exact JSONL checksum `sha256:af3d05da78c99e20b9168618ac93e44d58eb44b87be948164a1724cc46405634` |
+| Canonical projection rows | checksum `sha256:3c877f7a6aa00831352881187f37e9b87ee1feec9a6b5a905de709f38c83d76c` |
+
+The opt-in real PostgreSQL technical runner passed independently at the recorded
+candidate before this approval-finalize regression was added:
+
+```text
+NEWSROOM_RUN_ROLLBACK_STAGING_INTEGRATION=1
+9 passed in 28.81s
+```
+
+Task 9.5 remains unchecked because the technical bundle is intentionally
+`awaiting_approval`. A real approval system must provide separated operator and
+approver identities plus an Ed25519 signature over the exact approval record.
+An independent deployment attester and release qualifier must then execute
+`attest-external`, `qualify`, and strict `verify` with three distinct trust
+roots. Until that chain exists, neither PRD may be marked `IMPLEMENTED`.
 
 ## Disposition
 
 - Task 10.1 is complete based on the 1,425-test targeted run.
 - Task 10.2 remains complete based on the independent real SQLite/PostgreSQL runs.
 - Task 10.3 is complete based on the strict fixed 600-second qualification.
-- Task 10.4 remains open because the dirty main worktree cannot qualify the final all-repository gate.
+- Task 10.4 remains open until task 9.5 is complete; the final all-repository
+  gate must then pass before task 10.5 updates the PRDs and final evidence.
 - Task 10.5 remains open until every Definition of Done item, including task 9.5, is satisfied.
