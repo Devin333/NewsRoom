@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+import textwrap
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -380,6 +383,141 @@ def test_explicit_and_implicit_rollback_leave_no_sequence_gap(
         _candidate(scope, index=4, stream_id=stream_id)
     )
     assert next_committed.event.stream_sequence == 2
+
+
+def test_process_death_before_commit_rolls_back_event_outbox_and_sequence(
+    postgres_dsn: str,
+    scope: str,
+) -> None:
+    import psycopg
+
+    from framework.events.runtime import DurableSubscription, SubscriptionFilter
+    from infrastructure.storage.events.postgres import PostgresDurableEventStore
+
+    store = PostgresDurableEventStore(postgres_dsn)
+    stream_id = f"{scope}:crash-before-commit-stream"
+    tenant_id = f"{scope}:tenant"
+    event_type = "io.newsroom.test.postgres-process-crash"
+    subscription = DurableSubscription(
+        subscription_id=f"{scope}:crash-before-commit-subscription",
+        subscription_version=1,
+        consumer_id=f"{scope}:crash-before-commit-consumer",
+        event_filter=SubscriptionFilter(event_types=frozenset({event_type})),
+        tenant_id=tenant_id,
+    )
+    store.register_subscription(subscription)
+
+    result = _run_postgres_crash_process(
+        mode="before_commit",
+        scope=scope,
+        index=1,
+        stream_id=stream_id,
+        tenant_id=tenant_id,
+        event_type=event_type,
+    )
+
+    assert result.returncode == 91, result.stderr
+    assert store.get_event(f"{scope}:event:1", tenant_id=tenant_id) is None
+    assert store.get_stream_high_watermark(stream_id, tenant_id=tenant_id) is None
+    with psycopg.connect(postgres_dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM durable_events WHERE event_id = %s",
+                (f"{scope}:event:1",),
+            )
+            event_count = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT count(*) FROM event_deliveries WHERE event_id = %s",
+                (f"{scope}:event:1",),
+            )
+            delivery_count = int(cursor.fetchone()[0])
+    assert (event_count, delivery_count) == (0, 0)
+
+    accepted = store.append_event(
+        _candidate(
+            scope,
+            index=2,
+            stream_id=stream_id,
+            tenant_id=tenant_id,
+            event_type=event_type,
+        )
+    )
+    assert accepted.created
+    assert accepted.event.stream_sequence == 1
+    assert accepted.pending_delivery_count == 1
+
+
+def test_process_death_after_commit_resolves_retry_without_duplicate_rows(
+    postgres_dsn: str,
+    scope: str,
+) -> None:
+    import psycopg
+
+    from framework.events.runtime import DurableSubscription, SubscriptionFilter
+    from infrastructure.storage.events.postgres import PostgresDurableEventStore
+
+    store = PostgresDurableEventStore(postgres_dsn)
+    stream_id = f"{scope}:crash-after-commit-stream"
+    tenant_id = f"{scope}:tenant"
+    event_type = "io.newsroom.test.postgres-process-crash"
+    subscription = DurableSubscription(
+        subscription_id=f"{scope}:crash-after-commit-subscription",
+        subscription_version=1,
+        consumer_id=f"{scope}:crash-after-commit-consumer",
+        event_filter=SubscriptionFilter(event_types=frozenset({event_type})),
+        tenant_id=tenant_id,
+    )
+    store.register_subscription(subscription)
+
+    result = _run_postgres_crash_process(
+        mode="after_commit",
+        scope=scope,
+        index=1,
+        stream_id=stream_id,
+        tenant_id=tenant_id,
+        event_type=event_type,
+    )
+
+    assert result.returncode == 92, result.stderr
+    candidate = _candidate(
+        scope,
+        index=1,
+        stream_id=stream_id,
+        tenant_id=tenant_id,
+        event_type=event_type,
+    )
+    committed = store.get_event(candidate.event_id, tenant_id=tenant_id)
+    assert committed is not None
+    assert committed.stream_sequence == 1
+
+    retry = store.append_event(candidate)
+    assert not retry.created
+    assert retry.pending_delivery_count == 0
+    assert retry.event.to_dict() == committed.to_dict()
+    with psycopg.connect(postgres_dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT count(*) FROM durable_events WHERE event_id = %s",
+                (candidate.event_id,),
+            )
+            event_count = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT count(*) FROM event_deliveries WHERE event_id = %s",
+                (candidate.event_id,),
+            )
+            delivery_count = int(cursor.fetchone()[0])
+    assert (event_count, delivery_count) == (1, 1)
+
+    next_event = store.append_event(
+        _candidate(
+            scope,
+            index=2,
+            stream_id=stream_id,
+            tenant_id=tenant_id,
+            event_type=event_type,
+        )
+    )
+    assert next_event.event.stream_sequence == 2
 
 
 def test_event_and_matching_delivery_commit_atomically_and_duplicate_adds_none(
@@ -2903,6 +3041,80 @@ def _candidate(
         producer=ProducerIdentity(component="postgres-durable-test", version="1"),
         tenant_id=tenant_id,
         payload=payload if payload is not None else {"index": index},
+    )
+
+
+def _run_postgres_crash_process(
+    *,
+    mode: str,
+    scope: str,
+    index: int,
+    stream_id: str,
+    tenant_id: str,
+    event_type: str,
+) -> subprocess.CompletedProcess[str]:
+    script = textwrap.dedent(
+        """
+        import os
+        import sys
+        from datetime import UTC, datetime
+
+        from framework.events.canonical import (
+            BusinessContext,
+            EventCandidate,
+            ProducerIdentity,
+        )
+        from infrastructure.storage.events.postgres import PostgresDurableEventStore
+
+        mode, scope, index_text, stream_id, tenant_id, event_type = sys.argv[1:]
+        index = int(index_text)
+        candidate = EventCandidate(
+            event_id=f"{scope}:event:{index}",
+            event_type=event_type,
+            data_schema="newsroom.test.postgres-durable/v1",
+            source="tests.infrastructure.storage.events",
+            occurred_at=datetime(2026, 7, 15, 3, 0, tzinfo=UTC),
+            stream_id=stream_id,
+            business_context=BusinessContext(run_id=scope),
+            producer=ProducerIdentity(component="postgres-durable-test", version="1"),
+            tenant_id=tenant_id,
+            payload={"index": index},
+        )
+        store = PostgresDurableEventStore(os.environ["NEWS_TEST_POSTGRES_DSN"])
+        if mode == "before_commit":
+            with store.unit_of_work() as unit_of_work:
+                staged = unit_of_work.append_event(candidate)
+                assert staged.created
+                assert staged.event.stream_sequence == 1
+                assert staged.pending_delivery_count == 1
+                os._exit(91)
+        if mode == "after_commit":
+            committed = store.append_event(candidate)
+            assert committed.created
+            assert committed.event.stream_sequence == 1
+            assert committed.pending_delivery_count == 1
+            os._exit(92)
+        raise ValueError(f"unsupported crash mode: {mode}")
+        """
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            mode,
+            scope,
+            str(index),
+            stream_id,
+            tenant_id,
+            event_type,
+        ],
+        cwd=Path(__file__).resolve().parents[4],
+        env=os.environ.copy(),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
 
 

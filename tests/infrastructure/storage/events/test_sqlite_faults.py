@@ -133,6 +133,106 @@ def test_tampered_canonical_row_is_detected_before_read(tmp_path: Path) -> None:
         store.get_event("evt-1")
 
 
+def test_single_host_multi_process_writers_allocate_contiguous_sequences(
+    tmp_path: Path,
+) -> None:
+    from framework.events.runtime import StreamReadRequest
+
+    database = tmp_path / "events.sqlite3"
+    start_gate = tmp_path / "start-writers"
+    store = SQLiteEventStore(database, busy_timeout_seconds=15, clock=lambda: NOW)
+    worker_count = 4
+    events_per_worker = 4
+    script = textwrap.dedent(
+        """
+        import sys
+        import time
+        from datetime import UTC, datetime
+        from pathlib import Path
+
+        from framework.events.canonical import (
+            BusinessContext,
+            EventCandidate,
+            ProducerIdentity,
+        )
+        from infrastructure.storage.events.sqlite import SQLiteEventStore
+
+        database = Path(sys.argv[1])
+        start_gate = Path(sys.argv[2])
+        worker_id = int(sys.argv[3])
+        events_per_worker = int(sys.argv[4])
+        deadline = time.monotonic() + 15
+        while not start_gate.exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("multi-process SQLite start gate timed out")
+            time.sleep(0.01)
+
+        store = SQLiteEventStore(
+            database,
+            initialize=False,
+            busy_timeout_seconds=15,
+        )
+        for event_index in range(events_per_worker):
+            store.append_event(
+                EventCandidate(
+                    event_id=f"evt-process-{worker_id}-{event_index}",
+                    event_type="workflow_started",
+                    data_schema="newsroom.workflow-event/v1",
+                    source="tests.sqlite.multi-process",
+                    occurred_at=datetime(2026, 7, 15, 1, 0, tzinfo=UTC),
+                    stream_id="run:multi-process",
+                    business_context=BusinessContext(run_id="multi-process"),
+                    producer=ProducerIdentity(component="sqlite-process-writer"),
+                    payload={"worker": worker_id, "index": event_index},
+                )
+            )
+        """
+    )
+    processes = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(database),
+                str(start_gate),
+                str(worker_id),
+                str(events_per_worker),
+            ],
+            cwd=Path(__file__).resolve().parents[4],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for worker_id in range(worker_count)
+    ]
+    try:
+        start_gate.touch()
+        results = [process.communicate(timeout=30) for process in processes]
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+
+    for process, (stdout, stderr) in zip(processes, results, strict=True):
+        assert process.returncode == 0, f"stdout={stdout!r}; stderr={stderr!r}"
+
+    expected_count = worker_count * events_per_worker
+    store.verify_integrity(full=True)
+    page = store.read_stream(
+        StreamReadRequest(stream_id="run:multi-process", limit=expected_count)
+    )
+    assert [event.stream_sequence for event in page.events] == list(
+        range(1, expected_count + 1)
+    )
+    assert {event.event_id for event in page.events} == {
+        f"evt-process-{worker_id}-{event_index}"
+        for worker_id in range(worker_count)
+        for event_index in range(events_per_worker)
+    }
+
+
 def test_process_death_before_commit_recovers_without_partial_rows(
     tmp_path: Path,
 ) -> None:
