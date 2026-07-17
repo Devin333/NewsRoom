@@ -323,17 +323,26 @@ class MemoryRuntime:
             metadata={**operation.metadata, "written_ids": list(written_ids)},
         )
 
-    def _operation_trace_context(self, operation_id: str) -> TraceContext | None:
+    def _operation_trace_context(
+        self,
+        operation_id: str,
+        *,
+        span_id: str | None = None,
+    ) -> TraceContext | None:
         if self.trace_context is None:
             return None
         return self.trace_context.child(
+            span_id=span_id,
             memory_operation_id=operation_id,
         )
 
     def _record_operation_trace(self, operation: MemoryOperationTrace) -> None:
         if self.trace_recorder is None:
             return
-        context = self._operation_trace_context(operation.operation_id)
+        context = self._operation_trace_context(
+            operation.operation_id,
+            span_id=operation.span_id,
+        )
         self.trace_recorder.record(
             MemoryTraceEvent(
                 event_type="memory_operation",
