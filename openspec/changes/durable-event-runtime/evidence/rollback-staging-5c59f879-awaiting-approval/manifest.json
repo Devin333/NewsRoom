@@ -1,0 +1,102 @@
+{
+    "schema":  "newsroom.durable-event-rollback-tracked-bundle/v1",
+    "status":  "awaiting_approval",
+    "drill_id":  "rollback-drill-9579f750c1ff4973b54d0fdc3e10b34d",
+    "drill_completed_at":  "2026-07-17T20:56:33.809567Z",
+    "candidate_release_digest":  "5c59f879b57a984e5a072952c32ac08de3b70e76",
+    "rollback_release_digest":  "570f840c7df3870841c93e37480d7a53a67921dd",
+    "technical_evidence_checksum":  "sha256:6fb3d2fd2cd51914b183675c372534e73d89c98cf8e87233a2fc93c3e1d0d3dd",
+    "approval_request_checksum":  "sha256:ecd49c670115d63830e5a672b6b68d63c0db6519d13c9c202c96df1dcd09a345",
+    "files":  [
+                  {
+                      "path":  "technical/artifacts/external_effect_audit.json",
+                      "checksum":  "sha256:76f49cd111db32959a864f01d2386da5cca2f49a66d1f9daae761ecfcf3d9469",
+                      "size_bytes":  758
+                  },
+                  {
+                      "path":  "technical/artifacts/orchestrator_run.json",
+                      "checksum":  "sha256:ab1b2cd59dac8c21e94e393659571e2b513b556ccaee018409aa94d7620b5a4a",
+                      "size_bytes":  709
+                  },
+                  {
+                      "path":  "technical/technical-evidence.json",
+                      "checksum":  "sha256:dbbb3c72f0f5542752d8c7485bf74379de2e6f3db8f700c3ed04155fde751e26",
+                      "size_bytes":  5160
+                  },
+                  {
+                      "path":  "technical/artifacts/candidate_projection.json",
+                      "checksum":  "sha256:2340b8858ce0348f47c08e33fc88c8dd983fa21836cf8f6cb321d57dd393d11c",
+                      "size_bytes":  24376
+                  },
+                  {
+                      "path":  "technical/artifacts/postgres_after_snapshot.json",
+                      "checksum":  "sha256:3346fd3dd266cce6570d19807654422ee8db18414978f707c6dc423961cee06f",
+                      "size_bytes":  26347
+                  },
+                  {
+                      "path":  "technical/artifacts/schema_security_negative_tests.json",
+                      "checksum":  "sha256:410b805a98e512128277163c33bda01ca4f646f0ed843349d60af9218abd4ea3",
+                      "size_bytes":  749
+                  },
+                  {
+                      "path":  "technical/artifacts/traffic_control.json",
+                      "checksum":  "sha256:6296b2a66f1185b50e68743009ac0b9ed209f760875650b3b06c43635f857937",
+                      "size_bytes":  404
+                  },
+                  {
+                      "path":  "technical/artifacts/postgres_before_snapshot.json",
+                      "checksum":  "sha256:14816bee7a6f81d91a45dd6b5c78c5923f1e6f568605ef6a92851b5474c1eed4",
+                      "size_bytes":  24952
+                  },
+                  {
+                      "path":  "technical/artifacts/rollback_projection.json",
+                      "checksum":  "sha256:7bb8b484a5ef46363e527093db32ea4b87d9ce1c605975eeea004ef29c91ec52",
+                      "size_bytes":  24374
+                  },
+                  {
+                      "path":  "audit/native/orchestrator-run.json",
+                      "checksum":  "sha256:ff8cb134e6f0f383f7809fdb8c5ba4a053602bb10f0bbcdf8c571fb638a49d2e",
+                      "size_bytes":  10379
+                  },
+                  {
+                      "path":  "audit/native/postgres-after.json",
+                      "checksum":  "sha256:6aaf1039bcfbc4f8b1407005edb44c159c83e5659a04657dc9ead085fe855145",
+                      "size_bytes":  29193
+                  },
+                  {
+                      "path":  "audit/native/external-effect-audit.json",
+                      "checksum":  "sha256:a65799e076ace1cbada7ee78a28c4bfafe10ca04d97472e9e9202cefa069e18d",
+                      "size_bytes":  2121
+                  },
+                  {
+                      "path":  "audit/native/negative-tests.json",
+                      "checksum":  "sha256:1e0f9e35170c49f376eea5a07497955202a6d5154d0f70279db3d543e86eb67f",
+                      "size_bytes":  378
+                  },
+                  {
+                      "path":  "audit/native/postgres-before.json",
+                      "checksum":  "sha256:13eed3203729bc83725ddb040127876aee591f9d96834eff81510b4205ba0339",
+                      "size_bytes":  28006
+                  },
+                  {
+                      "path":  "audit/projections/rollback/events.jsonl",
+                      "checksum":  "sha256:6a9dc458935ca9f893e0ccc19f1226e1c9f89d6a7c401592988cef43b5b088f5",
+                      "size_bytes":  32003
+                  },
+                  {
+                      "path":  "technical/approval-request.json",
+                      "checksum":  "sha256:0e7032e0207758ca8cdb7f551911ecf0e6b7b34f8c59c9edccc9ae7ef78edf8d",
+                      "size_bytes":  1378
+                  },
+                  {
+                      "path":  "audit/native/traffic-control.json",
+                      "checksum":  "sha256:3471a848982ec1ef52ec8c644fe4344aa467c425afefbbe82ec3ebbdb12a7fc3",
+                      "size_bytes":  414
+                  },
+                  {
+                      "path":  "audit/projections/candidate/events.jsonl",
+                      "checksum":  "sha256:6a9dc458935ca9f893e0ccc19f1226e1c9f89d6a7c401592988cef43b5b088f5",
+                      "size_bytes":  32003
+                  }
+              ]
+}

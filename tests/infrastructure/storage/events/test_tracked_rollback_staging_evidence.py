@@ -16,7 +16,7 @@ BUNDLE = (
     / "changes"
     / "durable-event-runtime"
     / "evidence"
-    / "rollback-staging-7a595636-awaiting-approval"
+    / "rollback-staging-5c59f879-awaiting-approval"
 )
 SUPERSEDED_BUNDLES = {
     BUNDLE.with_name(
@@ -25,6 +25,9 @@ SUPERSEDED_BUNDLES = {
     BUNDLE.with_name(
         "rollback-staging-fbdec37a-awaiting-approval"
     ): "fbdec37a0afd6b08796818ccd6cb7fea2e401f93",
+    BUNDLE.with_name(
+        "rollback-staging-7a595636-awaiting-approval"
+    ): "7a5956361d49e447037c89aa7edd371a7158f06d",
 }
 
 
@@ -38,7 +41,7 @@ def test_previous_pending_bundles_are_explicitly_superseded() -> None:
         )
 
     latest_readme = (
-        BUNDLE.with_name("rollback-staging-fbdec37a-awaiting-approval") / "README.md"
+        BUNDLE.with_name("rollback-staging-7a595636-awaiting-approval") / "README.md"
     ).read_text(encoding="utf-8")
     assert BUNDLE.name in latest_readme
 
@@ -48,7 +51,7 @@ def test_tracked_pending_approval_bundle_is_complete_and_byte_verified() -> None
     assert manifest["schema"] == "newsroom.durable-event-rollback-tracked-bundle/v1"
     assert manifest["status"] == "awaiting_approval"
     assert manifest["candidate_release_digest"] == (
-        "7a5956361d49e447037c89aa7edd371a7158f06d"
+        "5c59f879b57a984e5a072952c32ac08de3b70e76"
     )
     assert len(manifest["files"]) == 18
 

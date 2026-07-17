@@ -243,11 +243,51 @@ Repository tests and the approval-pending rollback bundle satisfy neither this
 compatibility D/A/B/C chain nor the independent rollback qualification chain.
 Until both chains exist, neither PRD may be marked `IMPLEMENTED`.
 
+## 2026-07-18 exact-candidate evidence refresh
+
+The qualified source was refreshed before trust activation to include the
+committed memory trace identity fix and the pending policy/verifier source
+binding. The current evidence head is
+`5c59f879b57a984e5a072952c32ac08de3b70e76`; the qualified source bound by
+policy is `0a24e52b8f084099aa5f614c7a9c64081ce79ca3`.
+
+The real PostgreSQL storage gate completed `419 passed, 9 skipped`. The real
+rollback staging gate then completed `9 passed`, including cross-release worker
+process, lease, projection, sequence, inbox, DLQ, and negative-gate checks. A
+fresh approval-pending bundle is tracked at:
+
+`rollback-staging-5c59f879-awaiting-approval/technical/technical-evidence.json`
+
+```text
+candidate_release_digest: 5c59f879b57a984e5a072952c32ac08de3b70e76
+technical_evidence_checksum: sha256:6fb3d2fd2cd51914b183675c372534e73d89c98cf8e87233a2fc93c3e1d0d3dd
+approval_request_checksum: sha256:ecd49c670115d63830e5a672b6b68d63c0db6519d13c9c202c96df1dcd09a345
+postgres_database: newsroom_rollback_staging_38c36a98bd1d4ad1
+projection_checksum: sha256:6a9dc458935ca9f893e0ccc19f1226e1c9f89d6a7c401592988cef43b5b088f5
+```
+
+The fixed benchmark was rerun from the exact source and passed strict verify;
+its canonical JSON is `durable-event-benchmark-qualification-20260718.json`
+with checksum
+`sha256:a4cfb53274e5b5dada07b3feeb6f3bc87fb13630a8a7cf760fdf8cce2dba66ae`.
+It recorded 15,000 SQLite appends and 60,000 appends in each PostgreSQL mode,
+with zero loss, duplicate sequence, gap, or checksum failure. The full
+offline suite on the runtime source completed `4442 passed, 119 skipped`;
+repository smoke completed `1014 passed, 23 skipped`.
+
+These refreshes are technical evidence only. No rollback approval, external
+attestation, qualification signature, governance activation D, compatibility
+observation A, consumer-owner approval B, or deletion deployment attestation C
+exists.
+
 ## Disposition
 
-- Task 10.1 is complete based on the 1,425-test targeted run.
-- Task 10.2 remains complete based on the independent real SQLite/PostgreSQL runs.
-- Task 10.3 is complete based on the strict fixed 600-second qualification.
+- Task 10.1 is complete based on the exact-candidate full suite and refreshed
+  event-runtime/staging gates above.
+- Task 10.2 remains complete based on the refreshed real SQLite/PostgreSQL and
+  rollback staging runs above.
+- Task 10.3 is complete based on the exact-candidate strict fixed 600-second
+  qualification JSON above.
 - Task 10.4 remains open until task 9.5, signed governance activation D, the
   complete compatibility D/A/B/C chain, and the independent rollback
   qualification chain are complete; the final all-repository gate must then

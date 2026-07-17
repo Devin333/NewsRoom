@@ -127,16 +127,17 @@ exists. At remote candidate `89594289fd3e967633c3ed22e750ed72126631df`:
   record, external attestation, or release qualification exists under tracked
   evidence.
 
-The canonical rollback technical handoff remains byte-valid: the tracked
-`rollback-staging-7a595636-awaiting-approval` suite passes all four checks, its
-technical evidence remains `awaiting_approval`, and its checksums remain
-`sha256:4038576aa8b8dfeeee10cb6917a03cbfd13345b595a303ce2b50fb7aa1d09e0f`
-and
-`sha256:588f30f6377fdb1aafd23195b7916e3e634b3581333019e382516fe5ecaf3f72`.
-The referenced PostgreSQL staging database
-`newsroom_rollback_staging_5ea3b3f6427447da` was again present during this
-audit. Database presence and technical invariants do not constitute the three
-independent rollback signatures or the separate D/A/B/C qualification chain.
+The canonical rollback technical handoff is now
+`rollback-staging-5c59f879-awaiting-approval`. Its technical evidence remains
+`awaiting_approval`, with technical checksum
+`sha256:6fb3d2fd2cd51914b183675c372534e73d89c98cf8e87233a2fc93c3e1d0d3dd`
+and approval-request checksum
+`sha256:ecd49c670115d63830e5a672b6b68d63c0db6519d13c9c202c96df1dcd09a345`.
+The new run used PostgreSQL database `newsroom_rollback_staging_38c36a98bd1d4ad1`.
+The former `rollback-staging-7a595636-awaiting-approval` bundle is retained as
+superseded history. Technical invariants and database presence do not
+constitute the three independent rollback signatures or the separate D/A/B/C
+qualification chain.
 
 ## Read cutover
 

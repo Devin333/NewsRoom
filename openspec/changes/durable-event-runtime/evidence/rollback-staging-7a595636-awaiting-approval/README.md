@@ -1,4 +1,6 @@
-# Rollback staging evidence: awaiting approval
+# Rollback staging evidence: superseded
+
+Status: SUPERSEDED by `../rollback-staging-5c59f879-awaiting-approval/`.
 
 This directory freezes the technical output of the PostgreSQL staging rollback
 drill for runtime candidate `7a5956361d49e447037c89aa7edd371a7158f06d` and
