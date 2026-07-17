@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -109,6 +111,20 @@ def test_staging_workspace_must_be_new(tmp_path) -> None:
         staging._prepare_workspace(existing)
 
 
+def test_windows_release_worktree_path_budget_fails_before_checkout(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(staging.os, "name", "nt")
+    monkeypatch.setattr(staging, "_git", lambda *_args: "x" * 220)
+
+    with pytest.raises(staging.StagingRollbackError, match="path_budget"):
+        staging._validate_release_path_budget(
+            tmp_path,
+            tmp_path / "candidate",
+        )
+
+
 def test_approval_record_binds_summary_artifacts_and_separated_identities() -> None:
     completed_at = datetime.now(UTC) - timedelta(minutes=1)
     technical = _technical_evidence(completed_at)
@@ -142,7 +158,10 @@ def test_real_postgres_cross_release_rollback_staging(tmp_path) -> None:
     repository = Path(__file__).resolve().parents[4]
     candidate = _git(repository, "rev-parse", "HEAD")
     rollback = _git(repository, "rev-parse", "570f840c^{commit}")
-    local_root = tmp_path / "local"
+    short_root = Path(os.environ.get("TEMP") or tmp_path.parent) / (
+        f"nr-rb-{uuid4().hex[:8]}"
+    )
+    local_root = short_root / "local"
     local = __import__(
         "scripts.durable_event_rollback_drill",
         fromlist=["run_rollback_drill"],
@@ -152,7 +171,7 @@ def test_real_postgres_cross_release_rollback_staging(tmp_path) -> None:
         candidate_release=candidate,
         rollback_release=rollback,
     )
-    workspace = tmp_path / "staging"
+    workspace = short_root / "staging"
     try:
         evidence = staging.run_staging_rollback(
             workspace=workspace,
@@ -190,6 +209,7 @@ def test_real_postgres_cross_release_rollback_staging(tmp_path) -> None:
             if config_path.exists():
                 config = json.loads(config_path.read_text(encoding="utf-8"))
                 staging._drop_staging_database(admin_dsn, config["database_name"])
+        shutil.rmtree(short_root, ignore_errors=True)
 
 
 def _worker_payload(digest: str) -> dict[str, object]:

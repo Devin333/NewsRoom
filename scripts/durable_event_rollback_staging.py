@@ -76,6 +76,7 @@ _NEGATIVE_CASES = {
 _DATABASE_NAME = re.compile(r"newsroom_rollback_staging_[0-9a-f]{16}\Z")
 _MAX_WORKER_OUTPUT_BYTES = 2 * 1024 * 1024
 _WORKER_TIMEOUT_SECONDS = 180
+_WINDOWS_WORKTREE_PATH_BUDGET = 240
 
 
 class StagingRollbackError(RuntimeError):
@@ -144,14 +145,18 @@ def run_staging_rollback(
     }
     config_path = root / "staging-config.json"
     _write_json_new(config_path, config)
-
-    admin_dsn = _required_secret_env(ADMIN_DSN_ENV)
-    staging_dsn: str | None = None
     candidate_root = releases_root / "candidate"
     rollback_root = releases_root / "rollback"
+    admin_dsn = _required_secret_env(ADMIN_DSN_ENV)
+    staging_dsn: str | None = None
     worker_runs: list[dict[str, Any]] = []
     database_created = False
     try:
+        _validate_release_path_budget(
+            controller_root,
+            candidate_root,
+            rollback_root,
+        )
         staging_dsn, database_observation = _create_staging_database(
             admin_dsn,
             database_name,
@@ -520,6 +525,20 @@ def _add_worktree(repository: Path, target: Path, digest: str) -> None:
     )
     if completed.returncode != 0:
         raise StagingRollbackError("release_worktree_create_failed")
+
+
+def _validate_release_path_budget(repository: Path, *targets: Path) -> None:
+    if os.name != "nt":
+        return
+    tracked = _git(repository, "ls-files").splitlines()
+    _require(bool(tracked), "release_tracked_files_missing")
+    longest = max(len(path) for path in tracked)
+    for target in targets:
+        required = len(str(target.absolute())) + 1 + longest
+        _require(
+            required <= _WINDOWS_WORKTREE_PATH_BUDGET,
+            "release_worktree_path_budget_exceeded",
+        )
 
 
 def _remove_worktree(repository: Path, target: Path) -> None:
