@@ -3,6 +3,7 @@ import json
 import interfaces.services.memory_service as memory_service_module
 from interfaces.services.memory_service import MemoryApplicationService
 from infrastructure.storage.vector import InMemoryVectorStore, VectorCollectionStatus, VectorSearchResult
+from tests.fixtures.workflow_runs import write_canonical_terminal_run
 
 
 def test_memory_application_service_searches_vector_store() -> None:
@@ -235,18 +236,24 @@ class _FakeIngestionResult:
 
 
 def _write_run_artifacts(root, run_id, *, request, report, evidence_bundle) -> None:
-    run_dir = root / run_id
-    run_dir.mkdir()
-    manifest = {
-        "run_id": run_id,
-        "status": "succeeded",
-        "artifacts": {
-            "request": "request.json",
-            "report_json": "report.json",
-            "evidence_bundle": "evidence_bundle.json",
+    write_canonical_terminal_run(
+        root,
+        run_id,
+        extra_artifacts={
+            "request": ("request.json", _json_bytes(request)),
+            "report_json": ("report.json", _json_bytes(report)),
+            "evidence_bundle": (
+                "evidence_bundle.json",
+                _json_bytes(evidence_bundle),
+            ),
         },
-    }
-    (run_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (run_dir / "request.json").write_text(json.dumps(request), encoding="utf-8")
-    (run_dir / "report.json").write_text(json.dumps(report), encoding="utf-8")
-    (run_dir / "evidence_bundle.json").write_text(json.dumps(evidence_bundle), encoding="utf-8")
+    )
+
+
+def _json_bytes(value) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
