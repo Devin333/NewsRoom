@@ -55,6 +55,7 @@ class CheckpointCoordinator:
         manifest: dict[str, Any] | None = None,
         checkpoint_ids: list[str] | None = None,
         trace_context: TraceContext | None = None,
+        emit_event: bool = True,
     ) -> str | None:
         if self._checkpoint_store is None:
             return None
@@ -96,15 +97,17 @@ class CheckpointCoordinator:
         self._checkpoint_store.save_checkpoint(checkpoint)
 
         # The checkpoint fact can only be published after its durable file exists.
-        recorder.emit(
-            "checkpoint_created",
-            {
-                "checkpoint_id": checkpoint_id,
-                "current_step_ids": current_step_ids,
-                "path": list(path),
-            },
-            trace_context=trace_context,
-        )
+        # Pause transitions defer it into their authoritative atomic event batch.
+        if emit_event:
+            recorder.emit(
+                "checkpoint_created",
+                checkpoint_created_payload(
+                    checkpoint_id=checkpoint_id,
+                    current_step_ids=current_step_ids,
+                    path=path,
+                ),
+                trace_context=trace_context,
+            )
         if checkpoint_ids is not None:
             checkpoint_ids.append(checkpoint_id)
         if manifest is not None:
@@ -164,6 +167,19 @@ def checkpoint_id_for(step_id: str, stream_sequence: int | None) -> str:
         for character in step_id
     ).strip("._-")
     return f"cp-{checkpoint_sequence:06d}-{safe_step_id or 'step'}"
+
+
+def checkpoint_created_payload(
+    *,
+    checkpoint_id: str,
+    current_step_ids: list[str],
+    path: list[str],
+) -> dict[str, Any]:
+    return {
+        "checkpoint_id": checkpoint_id,
+        "current_step_ids": list(current_step_ids),
+        "path": list(path),
+    }
 
 
 def _durable_boundary(

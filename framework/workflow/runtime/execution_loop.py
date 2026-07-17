@@ -5,7 +5,11 @@ from typing import Any, Callable
 
 from framework.events.trace import TraceContext
 from framework.specs import EdgeCondition, StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
-from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
+from framework.workflow.runtime.checkpoint_coordinator import (
+    CheckpointCoordinator,
+    checkpoint_created_payload,
+)
+from framework.workflow.runtime.event_emitter import WorkflowEventFact
 from framework.workflow.runtime.execution_context import WorkflowExecutionContext
 from framework.workflow.runtime.manifest_updater import ManifestUpdater
 from framework.workflow.runtime.result import StepOutcome, WorkflowError
@@ -410,63 +414,106 @@ class WorkflowExecutionLoop:
     ) -> None:
         context.current_step_ids = [step.step_id, *context.current_step_ids]
         step_trace = context.step_trace_contexts.get(step.step_id)
-        context.recorder.emit(
-            "step_paused",
-            {"step_id": step.step_id, "outcome": outcome},
-            trace_context=step_trace,
-        )
-        checkpoint_id = self._write_checkpoint(context)
+        checkpoint_id = self._write_checkpoint(context, emit_event=False)
         pause_checkpoint_id = checkpoint_id or f"pause-artifact:{context.run_id}:{step.step_id}"
+        compatibility_facts = [
+            WorkflowEventFact(
+                "step_paused",
+                {"step_id": step.step_id, "outcome": outcome},
+                trace_context=step_trace,
+            )
+        ]
+        if checkpoint_id is not None:
+            compatibility_facts.append(
+                WorkflowEventFact(
+                    "checkpoint_created",
+                    checkpoint_created_payload(
+                        checkpoint_id=checkpoint_id,
+                        current_step_ids=context.current_step_ids,
+                        path=context.path,
+                    ),
+                    trace_context=step_trace,
+                )
+            )
         if step.step_type == StepType.HUMAN_REVIEW:
             human_review_request_id = human_review_request_id_for(step, outcome)
-
-            def append_human_review_pause(_status: WorkflowStatus) -> None:
-                context.recorder.emit(
-                    "human_review_requested",
-                    {
-                        "step_id": step.step_id,
-                        "request_id": human_review_request_id,
-                        "checkpoint_id": pause_checkpoint_id,
-                    },
-                    trace_context=step_trace,
-                )
-                context.recorder.emit(
-                    "human_review_paused",
-                    {"step_id": step.step_id, "outcome": outcome},
-                    trace_context=step_trace,
-                )
-                context.recorder.emit(
-                    "workflow_paused",
-                    {"reason": "human_review", "step_id": step.step_id},
-                    trace_context=step_trace,
-                )
+            compatibility_facts.extend(
+                [
+                    WorkflowEventFact(
+                        "human_review_requested",
+                        {
+                            "step_id": step.step_id,
+                            "request_id": human_review_request_id,
+                            "checkpoint_id": pause_checkpoint_id,
+                        },
+                        trace_context=step_trace,
+                    ),
+                    WorkflowEventFact(
+                        "human_review_paused",
+                        {"step_id": step.step_id, "outcome": outcome},
+                        trace_context=step_trace,
+                    ),
+                    WorkflowEventFact(
+                        "workflow_paused",
+                        {"reason": "human_review", "step_id": step.step_id},
+                        trace_context=step_trace,
+                    ),
+                ]
+            )
+            transition = WorkflowRuntimeEvent(
+                event_type=WorkflowRuntimeEventType.REQUEST_HUMAN_REVIEW,
+                reason="human_review_required",
+                step_id=step.step_id,
+                checkpoint_id=pause_checkpoint_id,
+                human_review_request_id=human_review_request_id,
+            )
 
             commit_workflow_transition(
                 context=context,
                 state_machine=self._state_machine,
-                event=WorkflowRuntimeEvent(
-                    event_type=WorkflowRuntimeEventType.REQUEST_HUMAN_REVIEW,
-                    reason="human_review_required",
-                    step_id=step.step_id,
-                    checkpoint_id=pause_checkpoint_id,
-                    human_review_request_id=human_review_request_id,
+                event=transition,
+                append=lambda next_status: context.recorder.emit_batch(
+                    [
+                        *compatibility_facts,
+                        workflow_transition_fact(
+                            event=transition,
+                            previous_status=context.status,
+                            next_status=next_status,
+                            compatibility_facts=compatibility_facts,
+                            trace_context=step_trace,
+                        ),
+                    ]
                 ),
-                append=append_human_review_pause,
             )
             return
-        commit_workflow_transition(
-            context=context,
-            state_machine=self._state_machine,
-            event=WorkflowRuntimeEvent(
-                event_type=WorkflowRuntimeEventType.PAUSE,
-                reason="step_paused",
-                step_id=step.step_id,
-                checkpoint_id=pause_checkpoint_id,
-            ),
-            append=lambda _status: context.recorder.emit(
+        compatibility_facts.append(
+            WorkflowEventFact(
                 "workflow_paused",
                 {"reason": "step_paused", "step_id": step.step_id},
                 trace_context=step_trace,
+            )
+        )
+        transition = WorkflowRuntimeEvent(
+            event_type=WorkflowRuntimeEventType.PAUSE,
+            reason="step_paused",
+            step_id=step.step_id,
+            checkpoint_id=pause_checkpoint_id,
+        )
+        commit_workflow_transition(
+            context=context,
+            state_machine=self._state_machine,
+            event=transition,
+            append=lambda next_status: context.recorder.emit_batch(
+                [
+                    *compatibility_facts,
+                    workflow_transition_fact(
+                        event=transition,
+                        previous_status=context.status,
+                        next_status=next_status,
+                        compatibility_facts=compatibility_facts,
+                        trace_context=step_trace,
+                    ),
+                ]
             ),
         )
 
@@ -596,7 +643,12 @@ class WorkflowExecutionLoop:
         )
         context.current_step_ids = []
 
-    def _write_checkpoint(self, context: WorkflowExecutionContext) -> str | None:
+    def _write_checkpoint(
+        self,
+        context: WorkflowExecutionContext,
+        *,
+        emit_event: bool = True,
+    ) -> str | None:
         return self._checkpoint_coordinator.write_checkpoint(
             run_id=context.run_id,
             workflow=context.workflow,
@@ -613,6 +665,7 @@ class WorkflowExecutionLoop:
                 if context.path
                 else context.trace_context
             ),
+            emit_event=emit_event,
         )
 
 
@@ -648,6 +701,32 @@ def commit_workflow_transition(
     append(next_status)
     context.status = next_status
     return next_status
+
+
+def workflow_transition_fact(
+    *,
+    event: WorkflowRuntimeEvent,
+    previous_status: WorkflowStatus,
+    next_status: WorkflowStatus,
+    compatibility_facts: list[WorkflowEventFact],
+    trace_context: TraceContext | None,
+) -> WorkflowEventFact:
+    return WorkflowEventFact(
+        "workflow_transition_committed",
+        {
+            "transition_type": event.event_type.value,
+            "previous_status": previous_status.value,
+            "next_status": next_status.value,
+            "reason": event.reason or event.event_type.value,
+            "checkpoint_step_id": event.step_id,
+            "checkpoint_id": event.checkpoint_id,
+            "human_review_request_id": event.human_review_request_id,
+            "compatibility_event_types": [
+                fact.event_type for fact in compatibility_facts
+            ],
+        },
+        trace_context=trace_context,
+    )
 
 
 def human_review_request_id_for(step: StepSpec, outcome: StepOutcome) -> str:

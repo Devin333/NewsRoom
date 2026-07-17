@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import re
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -32,6 +32,17 @@ WORKFLOW_EVENT_SOURCE = "io.newsroom.workflow.runtime"
 _TRACE_ID_PATTERN = re.compile(r"[0-9a-f]{32}\Z")
 _SPAN_ID_PATTERN = re.compile(r"[0-9a-f]{16}\Z")
 _LEGACY_CORRELATION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowEventFact:
+    """One compatibility fact staged for an atomic workflow transition."""
+
+    event_type: str
+    payload: Mapping[str, Any] | None = None
+    trace_context: TraceContext | None = None
+    component: str | None = None
+    occurred_at: datetime | None = None
 
 
 class WorkflowEventEmitter(Protocol):
@@ -93,6 +104,11 @@ class WorkflowEventEmitter(Protocol):
         extensions: Mapping[str, Any] | None = None,
     ) -> StoredEvent: ...
 
+    def emit_batch(
+        self,
+        facts: Sequence[WorkflowEventFact],
+    ) -> tuple[StoredEvent, ...]: ...
+
 
 class WorkflowEventRecorder(Protocol):
     """Compatibility projection used by workflow components, never a ledger."""
@@ -106,6 +122,11 @@ class WorkflowEventRecorder(Protocol):
         component: str | None = None,
         occurred_at: datetime | None = None,
     ) -> EventEnvelope: ...
+
+    def emit_batch(
+        self,
+        facts: Sequence[WorkflowEventFact],
+    ) -> tuple[EventEnvelope, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,15 +197,12 @@ class ScopedDurableWorkflowEventEmitter:
 
         if not isinstance(trace_context, TraceContext):
             raise TypeError("trace_context must be TraceContext")
-        business_context = BusinessContext(
-            run_id=trace_context.run_id,
-            workflow_id=trace_context.workflow_id,
-            step_id=trace_context.step_id,
-            agent_id=trace_context.agent_id,
-            tool_call_id=trace_context.tool_call_id,
+        business_context = _business_context_from_trace_context(
+            trace_context,
+            payload,
         )
         trace, legacy_extension = _trace_from_legacy_context(trace_context)
-        return self.emit(
+        request = self._build_request(
             event_type,
             payload,
             business_context=business_context,
@@ -197,6 +215,9 @@ class ScopedDurableWorkflowEventEmitter:
             causation_id=causation_id,
             extensions=_merge_extensions(extensions, legacy_extension),
         )
+        stored = self.runtime.publish(request)
+        _validate_commit_result(stored, request)
+        return stored
 
     def emit(
         self,
@@ -213,6 +234,86 @@ class ScopedDurableWorkflowEventEmitter:
         causation_id: str | None = None,
         extensions: Mapping[str, Any] | None = None,
     ) -> StoredEvent:
+        request = self._build_request(
+            event_type,
+            payload,
+            business_context=business_context,
+            trace=trace,
+            component=component,
+            occurred_at=occurred_at,
+            event_id=event_id,
+            subject=subject,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            extensions=extensions,
+        )
+        stored = self.runtime.publish(request)
+        _validate_commit_result(stored, request)
+        return stored
+
+    def emit_batch(
+        self,
+        facts: Sequence[WorkflowEventFact],
+    ) -> tuple[StoredEvent, ...]:
+        staged = tuple(facts)
+        if not staged:
+            raise ValueError("facts must contain at least one workflow event")
+        requests: list[EventPublishRequest] = []
+        for fact in staged:
+            if not isinstance(fact, WorkflowEventFact):
+                raise TypeError("every batch item must be a WorkflowEventFact")
+            if fact.trace_context is None:
+                requests.append(
+                    self._build_request(
+                        fact.event_type,
+                        fact.payload,
+                        business_context=self.base_business_context,
+                        trace=self.base_trace,
+                        component=fact.component,
+                        occurred_at=fact.occurred_at,
+                    )
+                )
+                continue
+            trace_context = fact.trace_context
+            business_context = _business_context_from_trace_context(
+                trace_context,
+                fact.payload,
+            )
+            trace, legacy_extension = _trace_from_legacy_context(trace_context)
+            requests.append(
+                self._build_request(
+                    fact.event_type,
+                    fact.payload,
+                    business_context=business_context,
+                    trace=trace,
+                    component=fact.component,
+                    occurred_at=fact.occurred_at,
+                    extensions=legacy_extension,
+                )
+            )
+
+        stored_events = self.runtime.publish_batch(requests)
+        if len(stored_events) != len(requests):
+            raise ValueError("event runtime returned an incomplete workflow batch")
+        for stored, request in zip(stored_events, requests, strict=True):
+            _validate_commit_result(stored, request)
+        return stored_events
+
+    def _build_request(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any] | None,
+        *,
+        business_context: BusinessContext,
+        trace: TraceBlock | None = None,
+        component: str | None = None,
+        occurred_at: datetime | None = None,
+        event_id: str | None = None,
+        subject: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+        extensions: Mapping[str, Any] | None = None,
+    ) -> EventPublishRequest:
         event_type = _required_text(event_type, "event_type")
         if not isinstance(business_context, BusinessContext):
             raise TypeError("business_context must be BusinessContext")
@@ -232,7 +333,7 @@ class ScopedDurableWorkflowEventEmitter:
         producer = self.producer
         if component is not None:
             producer = replace(producer, component=_required_text(component, "component"))
-        request = EventPublishRequest(
+        return EventPublishRequest(
             event_id=event_id if event_id is not None else f"evt_{uuid4().hex}",
             event_type=event_type,
             data_schema=data_schema,
@@ -254,9 +355,6 @@ class ScopedDurableWorkflowEventEmitter:
             payload=payload_snapshot,
             extensions=dict(extensions or {}),
         )
-        stored = self.runtime.publish(request)
-        _validate_commit_result(stored, request)
-        return stored
 
     def emit_default(
         self,
@@ -432,6 +530,23 @@ class WorkflowEventRecorderFacade:
             )
         return self.emitter.to_compat_envelope(stored)
 
+    def emit_batch(
+        self,
+        facts: Sequence[WorkflowEventFact],
+    ) -> tuple[EventEnvelope, ...]:
+        normalized_facts: list[WorkflowEventFact] = []
+        for fact in facts:
+            if not isinstance(fact, WorkflowEventFact):
+                raise TypeError("every batch item must be a WorkflowEventFact")
+            normalized_payload = to_jsonable(fact.payload or {})
+            if not isinstance(normalized_payload, Mapping):
+                raise TypeError("workflow event payload must be an object")
+            normalized_facts.append(replace(fact, payload=normalized_payload))
+        stored_events = self.emitter.emit_batch(normalized_facts)
+        return tuple(
+            self.emitter.to_compat_envelope(stored) for stored in stored_events
+        )
+
     def list_events(self, filters: EventFilter | None = None) -> list[EventEnvelope]:
         events = self.emitter.list_compat_events()
         if filters is not None:
@@ -520,6 +635,22 @@ def _trace_from_legacy_context(
                 "parent_span_id": parent_span_id,
             }
         },
+    )
+
+
+def _business_context_from_trace_context(
+    context: TraceContext,
+    payload: Mapping[str, Any] | None,
+) -> BusinessContext:
+    payload = payload or {}
+    return BusinessContext(
+        run_id=context.run_id,
+        workflow_id=context.workflow_id,
+        step_id=context.step_id,
+        task_id=payload.get("task_id"),
+        agent_id=context.agent_id,
+        tool_call_id=context.tool_call_id,
+        request_id=payload.get("request_id"),
     )
 
 

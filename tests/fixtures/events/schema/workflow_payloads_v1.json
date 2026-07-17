@@ -101,6 +101,10 @@
       "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review"},
       "payload": {"reason": "human_review"}
     },
+    "workflow_transition_committed": {
+      "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "review"},
+      "payload": {"transition_type": "request_human_review", "previous_status": "running", "next_status": "waiting_for_human", "reason": "human_review_required", "checkpoint_step_id": "review", "checkpoint_id": "checkpoint-review", "human_review_request_id": "request-1", "compatibility_event_types": ["step_paused", "checkpoint_created", "human_review_requested", "human_review_paused", "workflow_paused"]}
+    },
     "step_started": {
       "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
       "payload": {"step_type": "tool_call", "attempt": 1, "max_attempts": 2}

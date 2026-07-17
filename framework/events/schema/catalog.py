@@ -550,6 +550,7 @@ WORKFLOW_EVENT_TYPES = (
     "workflow_cancelled",
     "workflow_loop_limit_exceeded",
     "workflow_paused",
+    "workflow_transition_committed",
     "step_started",
     "step_succeeded",
     "step_skipped",
@@ -1132,6 +1133,30 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
         return _payload_schema(
             properties={"reason": _TEXT, "step_id": _TEXT},
             required=("reason",),
+        )
+    if event_type == "workflow_transition_committed":
+        return _payload_schema(
+            properties={
+                "transition_type": {
+                    "enum": ["pause", "request_human_review"],
+                },
+                "previous_status": _TEXT,
+                "next_status": _TEXT,
+                "reason": _TEXT,
+                "checkpoint_step_id": _TEXT,
+                "checkpoint_id": _TEXT,
+                "human_review_request_id": _NULLABLE_TEXT,
+                "compatibility_event_types": _ARRAY_OF_TEXT,
+            },
+            required=(
+                "transition_type",
+                "previous_status",
+                "next_status",
+                "reason",
+                "checkpoint_step_id",
+                "checkpoint_id",
+                "compatibility_event_types",
+            ),
         )
     if event_type == "step_started":
         return _payload_schema(

@@ -8,8 +8,10 @@ from framework.events import (
     AppendResult,
     BusinessContext,
     EventCandidate,
+    EventContractError,
     EventContextConflictError,
     EventIdentityCollisionError,
+    MAX_ATOMIC_PUBLISH_BATCH_SIZE,
     EventPublishRequest,
     EventRuntime,
     EventSchemaCatalog,
@@ -101,6 +103,31 @@ class _Store:
     def unit_of_work(self) -> _UnitOfWork:
         self.unit_of_work_calls += 1
         return self.value
+
+
+class _SequentialUnitOfWork(_UnitOfWork):
+    def __init__(self, *, first_sequence: int = 3, commit_error: Exception | None = None):
+        super().__init__(commit_error=commit_error)
+        self.first_sequence = first_sequence
+
+    def append_event(
+        self,
+        event: EventCandidate,
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> AppendResult:
+        self.appended.append(event)
+        self.expected_last_sequences.append(expected_last_sequence)
+        stored = StoredEvent(
+            candidate=event,
+            observed_at=OBSERVED_AT,
+            stream_sequence=self.first_sequence + len(self.appended) - 1,
+        )
+        return AppendResult(
+            event=stored,
+            created=True,
+            pending_delivery_count=0,
+        )
 
 
 class _MetricBackend:
@@ -214,6 +241,76 @@ def test_publish_forwards_expected_stream_position_to_unit_of_work() -> None:
 
     assert stored.stream_sequence == 3
     assert unit_of_work.expected_last_sequences == [2]
+
+
+def test_publish_batch_commits_one_contiguous_same_stream_transaction() -> None:
+    unit_of_work = _SequentialUnitOfWork()
+    store = _Store(unit_of_work)
+    runtime = EventRuntime(store=store, schema_catalog=_catalog())
+
+    stored = runtime.publish_batch(
+        [
+            _request(event_id="evt-batch-1"),
+            _request(event_id="evt-batch-2", payload={"message": "second"}),
+        ],
+        expected_last_sequence=2,
+    )
+
+    assert [event.stream_sequence for event in stored] == [3, 4]
+    assert unit_of_work.expected_last_sequences == [2, 3]
+    assert unit_of_work.commits == 1
+    assert unit_of_work.rollbacks == 0
+    assert store.unit_of_work_calls == 1
+
+
+def test_publish_batch_rejects_cross_stream_input_before_opening_transaction() -> None:
+    unit_of_work = _SequentialUnitOfWork()
+    store = _Store(unit_of_work)
+    runtime = EventRuntime(store=store, schema_catalog=_catalog())
+
+    with pytest.raises(EventContractError, match="one tenant and stream"):
+        runtime.publish_batch(
+            [
+                _request(event_id="evt-batch-1"),
+                _request(event_id="evt-batch-2", stream_id="run:other"),
+            ]
+        )
+
+    assert store.unit_of_work_calls == 0
+
+
+def test_publish_batch_rejects_oversized_sequence_before_opening_transaction() -> None:
+    unit_of_work = _SequentialUnitOfWork()
+    store = _Store(unit_of_work)
+    runtime = EventRuntime(store=store, schema_catalog=_catalog())
+    requests = [
+        _request(event_id=f"evt-batch-{index}")
+        for index in range(MAX_ATOMIC_PUBLISH_BATCH_SIZE + 1)
+    ]
+
+    with pytest.raises(ValueError, match="MAX_ATOMIC_PUBLISH_BATCH_SIZE"):
+        runtime.publish_batch(requests)
+
+    assert store.unit_of_work_calls == 0
+    assert unit_of_work.appended == []
+
+
+def test_publish_batch_commit_failure_rolls_back_without_returning_events() -> None:
+    unit_of_work = _SequentialUnitOfWork(
+        commit_error=RuntimeError("batch commit unavailable")
+    )
+    runtime = EventRuntime(store=_Store(unit_of_work), schema_catalog=_catalog())
+
+    with pytest.raises(RuntimeError, match="batch commit unavailable"):
+        runtime.publish_batch(
+            [
+                _request(event_id="evt-batch-1"),
+                _request(event_id="evt-batch-2", payload={"message": "second"}),
+            ]
+        )
+
+    assert unit_of_work.commits == 1
+    assert unit_of_work.rollbacks == 1
 
 
 @pytest.mark.parametrize("value", [-1, True, 1.5])

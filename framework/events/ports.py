@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from types import TracebackType
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Sequence, runtime_checkable
 
 from framework.events.runtime.models import (
     AppendResult,
@@ -354,6 +354,15 @@ class EventRuntimePort(Protocol):
         unit_of_work: EventUnitOfWorkPort | None = None,
     ) -> StoredEvent:
         """Return the accepted stored event, committing unless a UoW is supplied."""
+        ...
+
+    def publish_batch(
+        self,
+        events: Sequence[EventPublishRequest],
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> tuple[StoredEvent, ...]:
+        """Atomically commit one bounded contiguous batch to the same stream."""
         ...
 
 

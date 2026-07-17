@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from math import isfinite
@@ -44,6 +44,9 @@ from framework.events.telemetry import (
 
 if TYPE_CHECKING:
     from framework.events.ports import EventStorePort, EventUnitOfWorkPort
+
+
+MAX_ATOMIC_PUBLISH_BATCH_SIZE = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,57 +196,7 @@ class EventRuntime:
         if not isinstance(event, EventPublishRequest):
             raise TypeError("event must be EventPublishRequest")
         expected_last_sequence = _expected_last_sequence(expected_last_sequence)
-        registration = self._schema_catalog.get(event.event_type, event.data_schema)
-        policy = registration.sensitivity_policy
-
-        validated_payload: Mapping[str, Any] | None
-        if event.payload_ref is None:
-            validated_payload = self._schema_catalog.prepare_publish_payload(
-                event.event_type,
-                event.data_schema,
-                event.payload or {},
-                business_context=event.business_context,
-            )
-        else:
-            # Referenced bytes are not fetched through the event runtime.  The
-            # shared projector owns the schema reference disposition and proves
-            # the ordinary or secure integrity boundary before append.
-            validated_payload = None
-
-        projection = self._security_projector.project(
-            payload=validated_payload,
-            payload_ref=event.payload_ref,
-            extensions=event.extensions,
-            policy=policy,
-            classification=event.security_classification,
-            tenant_id=event.tenant_id,
-        )
-        payload_ref = (
-            None
-            if projection.payload_ref is None
-            else PayloadReference.from_dict(projection.payload_ref)
-        )
-        candidate = EventCandidate(
-            event_id=event.event_id,
-            event_type=event.event_type,
-            data_schema=event.data_schema,
-            source=event.source,
-            occurred_at=event.occurred_at,
-            stream_id=event.stream_id,
-            business_context=event.business_context,
-            producer=event.producer,
-            subject=event.subject,
-            correlation_id=event.correlation_id,
-            causation_id=event.causation_id,
-            trace=event.trace,
-            tenant_id=projection.tenant_id,
-            security_classification=projection.classification,
-            content_type=event.content_type,
-            payload=projection.payload,
-            payload_ref=payload_ref,
-            extensions=projection.extensions,
-            max_inline_payload_bytes=policy.max_inline_payload_bytes,
-        )
+        candidate = self._candidate_from_request(event)
 
         # Only the transaction owner can observe whether an append became durable.
         owns_commit = unit_of_work is None
@@ -300,6 +253,168 @@ class EventRuntime:
                 labels={"backend": self._backend},
             )
         return result.event
+
+    def publish_batch(
+        self,
+        events: Sequence[EventPublishRequest],
+        *,
+        expected_last_sequence: int | None = None,
+    ) -> tuple[StoredEvent, ...]:
+        """Commit a same-stream batch as one authoritative visibility boundary."""
+
+        if not isinstance(events, Sequence) or isinstance(events, (str, bytes)):
+            raise TypeError("events must be a Sequence of EventPublishRequest")
+        batch_size = len(events)
+        if batch_size == 0:
+            raise ValueError("events must contain at least one publish request")
+        if batch_size > MAX_ATOMIC_PUBLISH_BATCH_SIZE:
+            raise ValueError(
+                "events exceeds MAX_ATOMIC_PUBLISH_BATCH_SIZE="
+                f"{MAX_ATOMIC_PUBLISH_BATCH_SIZE}"
+            )
+        requests = tuple(events)
+        for request in requests:
+            if not isinstance(request, EventPublishRequest):
+                raise TypeError("every batch item must be an EventPublishRequest")
+        expected_last_sequence = _expected_last_sequence(expected_last_sequence)
+        stream_scope = (requests[0].tenant_id, requests[0].stream_id)
+        if any(
+            (request.tenant_id, request.stream_id) != stream_scope
+            for request in requests[1:]
+        ):
+            raise EventContractError(
+                "atomic publish batch requires one tenant and stream scope"
+            )
+
+        # Validate, project, and freeze every candidate before opening the
+        # transaction so a schema failure cannot allocate a stream sequence.
+        candidates = tuple(self._candidate_from_request(request) for request in requests)
+        append_started = _safe_monotonic(self._monotonic)
+        results: list[AppendResult] = []
+        try:
+            with self._store.unit_of_work() as unit_of_work:
+                next_expected = expected_last_sequence
+                for candidate in candidates:
+                    result = _append_verified(
+                        unit_of_work,
+                        candidate,
+                        expected_last_sequence=next_expected,
+                    )
+                    if results and (
+                        result.event.stream_sequence
+                        != results[-1].event.stream_sequence + 1
+                    ):
+                        raise EventContractError(
+                            "atomic publish batch did not receive contiguous stream sequences"
+                        )
+                    if (
+                        not results
+                        and expected_last_sequence is not None
+                        and result.event.stream_sequence != expected_last_sequence + 1
+                    ):
+                        raise EventContractError(
+                            "atomic publish batch did not start after expected_last_sequence"
+                        )
+                    results.append(result)
+                    next_expected = result.event.stream_sequence
+                unit_of_work.commit()
+        except Exception as error:
+            self._record_append_metrics(
+                result="failed",
+                started_at=append_started,
+            )
+            self._telemetry.record_gauge(
+                "event_store_health",
+                0,
+                labels={"backend": self._backend},
+            )
+            if isinstance(error, EventIdentityCollisionError):
+                self._telemetry.add_counter(
+                    "event_identity_collision_total",
+                    labels={"source": _source_metric_bucket(requests[0].source)},
+                )
+            self._diagnostic_fallback.record(
+                category=RuntimeDiagnosticCategory.EVENT_STORE_FAILURE,
+                component=RuntimeDiagnosticComponent.EVENT_PUBLISHER,
+                operation=RuntimeDiagnosticOperation.PUBLISH,
+                error=error,
+            )
+            raise
+
+        for result in results:
+            self._telemetry.add_counter(
+                "event_append_total",
+                labels={
+                    "backend": self._backend,
+                    "result": "accepted" if result.created else "duplicate",
+                },
+            )
+        completed_at = _safe_monotonic(self._monotonic)
+        if append_started is not None and completed_at is not None:
+            self._telemetry.record_histogram(
+                "event_append_latency_seconds",
+                max(0.0, completed_at - append_started),
+                labels={"backend": self._backend},
+            )
+        self._telemetry.record_gauge(
+            "event_store_health",
+            1,
+            labels={"backend": self._backend},
+        )
+        return tuple(result.event for result in results)
+
+    def _candidate_from_request(self, event: EventPublishRequest) -> EventCandidate:
+        registration = self._schema_catalog.get(event.event_type, event.data_schema)
+        policy = registration.sensitivity_policy
+
+        validated_payload: Mapping[str, Any] | None
+        if event.payload_ref is None:
+            validated_payload = self._schema_catalog.prepare_publish_payload(
+                event.event_type,
+                event.data_schema,
+                event.payload or {},
+                business_context=event.business_context,
+            )
+        else:
+            # Referenced bytes are not fetched through the event runtime.  The
+            # shared projector owns the schema reference disposition and proves
+            # the ordinary or secure integrity boundary before append.
+            validated_payload = None
+
+        projection = self._security_projector.project(
+            payload=validated_payload,
+            payload_ref=event.payload_ref,
+            extensions=event.extensions,
+            policy=policy,
+            classification=event.security_classification,
+            tenant_id=event.tenant_id,
+        )
+        payload_ref = (
+            None
+            if projection.payload_ref is None
+            else PayloadReference.from_dict(projection.payload_ref)
+        )
+        return EventCandidate(
+            event_id=event.event_id,
+            event_type=event.event_type,
+            data_schema=event.data_schema,
+            source=event.source,
+            occurred_at=event.occurred_at,
+            stream_id=event.stream_id,
+            business_context=event.business_context,
+            producer=event.producer,
+            subject=event.subject,
+            correlation_id=event.correlation_id,
+            causation_id=event.causation_id,
+            trace=event.trace,
+            tenant_id=projection.tenant_id,
+            security_classification=projection.classification,
+            content_type=event.content_type,
+            payload=projection.payload,
+            payload_ref=payload_ref,
+            extensions=projection.extensions,
+            max_inline_payload_bytes=policy.max_inline_payload_bytes,
+        )
 
     def _record_append_metrics(
         self,

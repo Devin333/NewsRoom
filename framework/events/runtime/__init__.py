@@ -116,7 +116,11 @@ from framework.events.runtime.inbox import (
     validate_inbox_transaction_capability,
 )
 from framework.events.runtime.identity import dead_letter_id_for, delivery_id_for
-from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
+from framework.events.runtime.publisher import (
+    MAX_ATOMIC_PUBLISH_BATCH_SIZE,
+    EventPublishRequest,
+    EventRuntime,
+)
 from framework.events.runtime.retry import RetryPlan, RetryPlanner
 from framework.events.runtime.activities import (
     REPLAY_ACTIVITY_PAYLOAD_CONTENT_TYPE,
@@ -239,6 +243,7 @@ __all__ = [
     "EventRedeliveryAuthorizationError",
     "EventPublishRequest",
     "EventRuntime",
+    "MAX_ATOMIC_PUBLISH_BATCH_SIZE",
     "EventSubscriptionNotFoundError",
     "InboxEntry",
     "HistoryCommandMismatchError",

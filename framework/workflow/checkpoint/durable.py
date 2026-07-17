@@ -155,6 +155,10 @@ class WorkflowCheckpointRecoveryCursor:
     after_sequence: int | None
     last_event_id: str | None
     boundary_verified: bool = False
+    reconciled_through_sequence: int | None = None
+    reconciled_event_id: str | None = None
+    recovered_transition_type: str | None = None
+    recovered_workflow_status: str | None = None
 
     def __post_init__(self) -> None:
         sequence = _optional_positive_int(self.after_sequence, "after_sequence")
@@ -170,10 +174,46 @@ class WorkflowCheckpointRecoveryCursor:
             raise ValueError(
                 "non-empty recovery cursor requires verified boundary event identity"
             )
+        reconciled_sequence = _optional_positive_int(
+            self.reconciled_through_sequence,
+            "reconciled_through_sequence",
+        )
+        reconciled_event_id = _optional_text(self.reconciled_event_id)
+        if (reconciled_sequence is None) != (reconciled_event_id is None):
+            raise ValueError(
+                "reconciled_through_sequence and reconciled_event_id must both be set or absent"
+            )
+        if reconciled_sequence is not None and (
+            sequence is not None and reconciled_sequence <= sequence
+        ):
+            raise ValueError(
+                "reconciled transition must be after the checkpoint boundary"
+            )
+        transition_type = _optional_text(self.recovered_transition_type)
+        workflow_status = _optional_text(self.recovered_workflow_status)
+        if (transition_type is None) != (workflow_status is None):
+            raise ValueError(
+                "recovered transition type and workflow status must both be set or absent"
+            )
+        if transition_type is not None and reconciled_sequence is None:
+            raise ValueError("recovered transition requires a reconciled event boundary")
+        object.__setattr__(
+            self,
+            "reconciled_through_sequence",
+            reconciled_sequence,
+        )
+        object.__setattr__(self, "reconciled_event_id", reconciled_event_id)
+        object.__setattr__(self, "recovered_transition_type", transition_type)
+        object.__setattr__(self, "recovered_workflow_status", workflow_status)
+
+    @property
+    def effective_after_sequence(self) -> int | None:
+        return self.reconciled_through_sequence or self.after_sequence
 
     def should_apply(self, stream_sequence: int) -> bool:
         sequence = _positive_int(stream_sequence, "stream_sequence")
-        return self.after_sequence is None or sequence > self.after_sequence
+        effective_boundary = self.effective_after_sequence
+        return effective_boundary is None or sequence > effective_boundary
 
 
 def durable_envelope_from_checkpoint(

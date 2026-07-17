@@ -305,7 +305,7 @@ def test_default_catalog_registers_workflow_and_harness_aliases() -> None:
 
 
 def test_workflow_payload_fixture_covers_every_current_event_and_operation() -> None:
-    assert len(WORKFLOW_EVENT_TYPES) == 36
+    assert len(WORKFLOW_EVENT_TYPES) == 37
     assert set(_WORKFLOW_PAYLOAD_FIXTURE["workflow_events"]) == set(
         WORKFLOW_EVENT_TYPES
     )

@@ -95,6 +95,16 @@ class WorkflowResumeRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "mode", ResumeMode(self.mode))
         _validate_resume_recovery_cursor(self.checkpoint, self.recovery_cursor)
+        if (
+            self.recovery_cursor is not None
+            and self.recovery_cursor.recovered_transition_type
+            == "request_human_review"
+            and self.mode
+            not in {ResumeMode.AFTER_HUMAN_REVIEW, ResumeMode.AFTER_APPROVAL}
+        ):
+            raise ValueError(
+                "committed human review transition requires a human decision or approval"
+            )
         if self.mode == ResumeMode.EXACT and self.patch:
             raise ValueError("resume_exact does not allow patch")
         if self.mode == ResumeMode.WITH_PATCH and not self.patch:
@@ -551,6 +561,16 @@ def _base_resume_metadata(request: WorkflowResumeRequest) -> dict[str, Any]:
                 "checkpoint_after_sequence": cursor.after_sequence,
                 "checkpoint_last_event_id": cursor.last_event_id,
                 "checkpoint_boundary_verified": cursor.boundary_verified,
+                "checkpoint_reconciled_through_sequence": (
+                    cursor.reconciled_through_sequence
+                ),
+                "checkpoint_reconciled_event_id": cursor.reconciled_event_id,
+                "checkpoint_recovered_transition_type": (
+                    cursor.recovered_transition_type
+                ),
+                "checkpoint_recovered_workflow_status": (
+                    cursor.recovered_workflow_status
+                ),
             }
         )
     return metadata
