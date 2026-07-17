@@ -95,6 +95,51 @@ def test_postgres_factory_optional_dependency_fails_with_typed_store_error() -> 
     assert result.returncode == 0, result.stderr
 
 
+def test_postgres_factory_missing_pool_fails_with_typed_store_error() -> None:
+    script = textwrap.dedent(
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def without_pool(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "psycopg_pool" or name.startswith("psycopg_pool."):
+                raise ModuleNotFoundError(
+                    "blocked optional psycopg pool dependency",
+                    name="psycopg_pool",
+                )
+            return real_import(name, globals, locals, fromlist, level)
+
+        builtins.__import__ = without_pool
+
+        from framework.events import EventStoreUnavailableError
+        from infrastructure.storage.events import durable_event_storage_from_env
+
+        try:
+            durable_event_storage_from_env(
+                env={"NEWS_DATABASE_DSN": "postgresql://example/test"}
+            )
+        except EventStoreUnavailableError:
+            pass
+        else:
+            raise AssertionError(
+                "missing psycopg_pool did not fail with EventStoreUnavailableError"
+            )
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[3],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_postgres_factory_does_not_mask_unrelated_missing_dependency(
     monkeypatch,
 ) -> None:

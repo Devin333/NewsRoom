@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import atexit
 import base64
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 from types import TracebackType
 from typing import Any, Literal, NoReturn
+from weakref import finalize
 
 import psycopg
+from psycopg_pool import ConnectionPool, PoolClosed, PoolTimeout
 
 from framework.events.canonical import (
     EventCandidate,
@@ -84,6 +89,14 @@ from infrastructure.storage.postgres.dsn import normalize_dsn
 
 ConnectionFactory = Callable[[], Any]
 
+DEFAULT_POOL_MIN_SIZE = 1
+DEFAULT_POOL_MAX_SIZE = 16
+DEFAULT_POOL_TIMEOUT_SECONDS = 30.0
+
+PoolKey = tuple[str, int, int, float]
+_POOL_REGISTRY_LOCK = Lock()
+_POOL_REGISTRY: dict[PoolKey, tuple[ConnectionPool[Any], int]] = {}
+
 
 _EVENT_COLUMNS = """
     event_id,
@@ -126,13 +139,50 @@ class PostgresDurableEventStore:
         dsn: str,
         *,
         connection_factory: ConnectionFactory | None = None,
+        pool_min_size: int = DEFAULT_POOL_MIN_SIZE,
+        pool_max_size: int = DEFAULT_POOL_MAX_SIZE,
+        pool_timeout_seconds: float = DEFAULT_POOL_TIMEOUT_SECONDS,
     ) -> None:
         if not isinstance(dsn, str) or not dsn.strip():
             raise ValueError("dsn is required")
         self.dsn = normalize_dsn(dsn.strip())
-        self._connection_factory = connection_factory or (
-            lambda: psycopg.connect(self.dsn)
-        )
+        self._pool: ConnectionPool[Any] | None = None
+        self._pool_finalizer: Any | None = None
+        if connection_factory is not None:
+            self._connection_factory = connection_factory
+        else:
+            if isinstance(pool_min_size, bool) or pool_min_size < 0:
+                raise ValueError("pool_min_size must be greater than or equal to zero")
+            if isinstance(pool_max_size, bool) or pool_max_size < 1:
+                raise ValueError("pool_max_size must be greater than zero")
+            if pool_min_size > pool_max_size:
+                raise ValueError("pool_min_size must not exceed pool_max_size")
+            if (
+                isinstance(pool_timeout_seconds, bool)
+                or pool_timeout_seconds <= 0
+            ):
+                raise ValueError("pool_timeout_seconds must be greater than zero")
+            pool_key = (
+                self.dsn,
+                pool_min_size,
+                pool_max_size,
+                float(pool_timeout_seconds),
+            )
+            self._pool = _acquire_shared_pool(pool_key)
+            self._pool_finalizer = finalize(
+                self,
+                _release_shared_pool,
+                pool_key,
+                self._pool,
+            )
+            self._connection_factory = self._pool.getconn
+
+    def close(self) -> None:
+        """Close the owned connection pool; injected factories remain caller-owned."""
+
+        pool_finalizer = self._pool_finalizer
+        if pool_finalizer is not None and pool_finalizer.alive:
+            pool_finalizer()
 
     def unit_of_work(self) -> PostgresEventUnitOfWork:
         return PostgresEventUnitOfWork(self)
@@ -3221,14 +3271,28 @@ class PostgresDurableEventStore:
         except BaseException as exc:
             _reraise_store_exception(exc)
 
-    def _connection(self) -> Any:
+    @contextmanager
+    def _connection(self) -> Iterator[Any]:
+        connection = self._acquire_connection()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    def _acquire_connection(self) -> Any:
         connection: Any | None = None
         try:
             connection = self._connection_factory()
             if getattr(connection, "autocommit", False):
                 connection.autocommit = False
             return connection
-        except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+        except (
+            psycopg.OperationalError,
+            psycopg.InterfaceError,
+            PoolClosed,
+            PoolTimeout,
+        ) as exc:
             if connection is not None:
                 _close_connection_after_acquire_failure(connection)
             raise EventStoreUnavailableError(
@@ -3341,7 +3405,7 @@ class PostgresEventUnitOfWork:
             raise EventStoreError("event unit of work is already closed")
         if self._connection is not None:
             raise EventStoreError("event unit of work is already entered")
-        self._connection = self._store._connection()
+        self._connection = self._store._acquire_connection()
         return self
 
     def __exit__(
@@ -3392,6 +3456,54 @@ def _close_connection_after_acquire_failure(connection: Any) -> None:
         # Preserve the acquisition failure as the public cause.  The connection
         # has already rejected configuration and cannot be used safely.
         pass
+
+
+def _acquire_shared_pool(key: PoolKey) -> ConnectionPool[Any]:
+    with _POOL_REGISTRY_LOCK:
+        entry = _POOL_REGISTRY.get(key)
+        if entry is not None and not entry[0].closed:
+            pool, references = entry
+            _POOL_REGISTRY[key] = (pool, references + 1)
+            return pool
+        dsn, minimum, maximum, timeout = key
+        pool = ConnectionPool(
+            dsn,
+            min_size=minimum,
+            max_size=maximum,
+            timeout=timeout,
+            open=True,
+            close_returns=True,
+            name="newsroom-durable-events",
+        )
+        _POOL_REGISTRY[key] = (pool, 1)
+        return pool
+
+
+def _release_shared_pool(key: PoolKey, pool: ConnectionPool[Any]) -> None:
+    should_close = False
+    with _POOL_REGISTRY_LOCK:
+        entry = _POOL_REGISTRY.get(key)
+        if entry is None or entry[0] is not pool:
+            return
+        references = entry[1] - 1
+        if references > 0:
+            _POOL_REGISTRY[key] = (pool, references)
+        else:
+            del _POOL_REGISTRY[key]
+            should_close = True
+    if should_close:
+        pool.close()
+
+
+def _close_all_shared_pools() -> None:
+    with _POOL_REGISTRY_LOCK:
+        pools = tuple(pool for pool, _references in _POOL_REGISTRY.values())
+        _POOL_REGISTRY.clear()
+    for pool in pools:
+        pool.close()
+
+
+atexit.register(_close_all_shared_pools)
 
 
 def _stored_event_from_row(row: Sequence[Any]) -> StoredEvent:

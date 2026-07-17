@@ -213,7 +213,12 @@ def durable_event_storage_from_env(
 
 def _is_missing_psycopg(exc: ModuleNotFoundError) -> bool:
     missing = str(exc.name or "")
-    return missing == "psycopg" or missing.startswith("psycopg.")
+    return (
+        missing == "psycopg"
+        or missing.startswith("psycopg.")
+        or missing == "psycopg_pool"
+        or missing.startswith("psycopg_pool.")
+    )
 
 
 __all__ = [

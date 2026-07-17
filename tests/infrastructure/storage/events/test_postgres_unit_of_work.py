@@ -167,6 +167,87 @@ def test_unit_of_work_commit_closes_exactly_once_and_exit_is_idempotent() -> Non
         unit_of_work.commit()
 
 
+def test_store_close_does_not_close_caller_owned_connection_factory() -> None:
+    connection = _LifecycleConnection()
+    factory = _LifecycleFactory(connection)
+    store = _store(factory)
+
+    store.close()
+
+    assert factory.calls == 0
+    assert connection.closes == 0
+
+
+def test_default_stores_share_pool_until_last_reference_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from infrastructure.storage.events import postgres as postgres_module
+
+    class FakePool:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.closed = False
+            self.close_calls = 0
+
+        def getconn(self):
+            raise AssertionError("connection acquisition is not part of this test")
+
+        def close(self) -> None:
+            self.close_calls += 1
+            self.closed = True
+
+    created: list[FakePool] = []
+
+    def create_pool(*args, **kwargs):
+        pool = FakePool(*args, **kwargs)
+        created.append(pool)
+        return pool
+
+    postgres_module._close_all_shared_pools()
+    monkeypatch.setattr(postgres_module, "ConnectionPool", create_pool)
+
+    first = postgres_module.PostgresDurableEventStore(
+        "postgresql://example/shared-test"
+    )
+    second = postgres_module.PostgresDurableEventStore(
+        "postgresql://example/shared-test"
+    )
+
+    assert len(created) == 1
+    assert first._pool is second._pool
+    first.close()
+    first.close()
+    assert created[0].close_calls == 0
+    second.close()
+    assert created[0].close_calls == 1
+    assert postgres_module._POOL_REGISTRY == {}
+
+
+@pytest.mark.parametrize(
+    ("minimum", "maximum", "timeout", "message"),
+    (
+        (-1, 1, 1.0, "pool_min_size"),
+        (2, 1, 1.0, "pool_min_size"),
+        (0, 0, 1.0, "pool_max_size"),
+        (0, 1, 0.0, "pool_timeout_seconds"),
+    ),
+)
+def test_pool_configuration_is_validated_before_open(
+    minimum: int,
+    maximum: int,
+    timeout: float,
+    message: str,
+) -> None:
+    from infrastructure.storage.events.postgres import PostgresDurableEventStore
+
+    with pytest.raises(ValueError, match=message):
+        PostgresDurableEventStore(
+            "postgresql://example/test",
+            pool_min_size=minimum,
+            pool_max_size=maximum,
+            pool_timeout_seconds=timeout,
+        )
+
+
 def test_unit_of_work_rollback_and_implicit_exit_each_close_exactly_once() -> None:
     explicit_connection = _LifecycleConnection()
     explicit = _store(_LifecycleFactory(explicit_connection)).unit_of_work()
