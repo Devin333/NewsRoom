@@ -8,6 +8,53 @@ OpenSpec tasks: `10.1`, `10.2`, `10.3`
 
 Status: PASSED for tasks 10.1-10.3. Tasks 9.5, 10.4, and 10.5 remain open.
 
+## 2026-07-18 clean-candidate verification refresh
+
+This is an interim refresh, not completion evidence for task 10.4. The current
+candidate includes the Python 3.11 comprehension audit, the content-addressed
+real golden-corpus snapshot, and canonical service-test run manifests. The
+candidate was integrated as local `main` commit
+`89594289fd3e967633c3ed22e750ed72126631df` and pushed only to
+`codex/durable-event-runtime-final`.
+
+Local clean-worktree results:
+
+```text
+python -m scripts.dev test-workflow-domain
+910 passed, 23 skipped
+
+python -m scripts.dev test-services
+336 passed, 2 skipped
+
+python -m scripts.dev smoke
+1014 passed, 23 skipped, 12 warnings
+sources validate: is_valid=true, error_count=0, warning_count=0
+
+openspec validate durable-event-runtime --strict
+Change 'durable-event-runtime' is valid
+
+openspec validate --all --strict
+169 passed, 0 failed
+
+ruff check <changed Python files>
+All checks passed
+
+git diff --check
+passed
+```
+
+GitHub Actions run
+`https://github.com/Devin333/NewsRoom/actions/runs/29606063125` then verified
+the exact remote candidate on Linux with Python 3.11.15. Every configured step
+passed: compile, Workflow runtime contracts, Workflow/Harness/Research domain,
+services, RAG eval promotion, PRD daily regression, durable-event compatibility,
+and fixed smoke. The job completed successfully at `2026-07-17T19:08:13Z`.
+
+These results close the clean-checkout CI defects but do not activate authority
+trust, approve rollback, prove a real compatibility observation, or qualify a
+deletion deployment. Any later trust-policy, compiled-root, deployment, or
+evidence change must be followed by a fresh final task 10.4 run.
+
 ## 10.1 Targeted suite
 
 The suite ran from a detached clean worktree at the verified commit. It covered

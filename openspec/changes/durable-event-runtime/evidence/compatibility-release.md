@@ -88,6 +88,37 @@ signed digest/URI/retention bindings and ordering; it does not fetch that system
 or turn a signer-declared JSON time into an RFC 3161 timestamp. If external audit
 cannot prove the time anchor, D and task 9.5 remain unqualified.
 
+### 2026-07-18 external-state audit
+
+The current candidate code and CI are healthy, but no authority activation fact
+exists. At remote candidate `89594289fd3e967633c3ed22e750ed72126631df`:
+
+- GitHub Actions run `29606063125` passed every configured Linux/Python 3.11
+  gate, including compatibility tests and fixed smoke.
+- The public repository has no ruleset, protected deployment environment,
+  deployment record, Actions secret or variable, webhook, release, or tag that
+  establishes an independent release authority or immutable deployment.
+- Repository access exposes one admin collaborator, `Devin333`; no independent
+  governance, deployment-observer, or consumer-registry-owner identity is
+  configured.
+- The production verifier still has null compiled trust epoch, authority IDs,
+  key IDs, fingerprints, and active-policy checksum. The tracked policy parses
+  as `pending_external_activation` with all three roots null.
+- No D/A/B/C record, detached signature, trusted public key, rollback approval
+  record, external attestation, or release qualification exists under tracked
+  evidence.
+
+The canonical rollback technical handoff remains byte-valid: the tracked
+`rollback-staging-7a595636-awaiting-approval` suite passes all four checks, its
+technical evidence remains `awaiting_approval`, and its checksums remain
+`sha256:4038576aa8b8dfeeee10cb6917a03cbfd13345b595a303ce2b50fb7aa1d09e0f`
+and
+`sha256:588f30f6377fdb1aafd23195b7916e3e634b3581333019e382516fe5ecaf3f72`.
+The referenced PostgreSQL staging database
+`newsroom_rollback_staging_5ea3b3f6427447da` was again present during this
+audit. Database presence and technical invariants do not constitute the three
+independent rollback signatures or the separate D/A/B/C qualification chain.
+
 ## Read cutover
 
 - `RunInspectionService` and `WorkflowRunner` capture one fixed durable stream
