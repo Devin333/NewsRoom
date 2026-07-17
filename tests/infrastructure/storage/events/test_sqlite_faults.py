@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import errno
+import json
+import os
+import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
+import tempfile
 import textwrap
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -45,6 +53,163 @@ def _candidate(event_id: str = "evt-1") -> EventCandidate:
     )
 
 
+def _unprivileged_posix_identity() -> tuple[int, int] | None:
+    if os.name != "posix" or os.geteuid() != 0:
+        return None
+
+    import pwd
+
+    candidates = sorted(
+        (entry for entry in pwd.getpwall() if entry.pw_uid > 0),
+        key=lambda entry: (entry.pw_name != "nobody", entry.pw_uid),
+    )
+    if not candidates:
+        raise RuntimeError(
+            "no unprivileged POSIX identity is available for permission testing"
+        )
+    selected = candidates[0]
+    return selected.pw_uid, selected.pw_gid
+
+
+def _read_only_probe_root(tmp_path: Path) -> tuple[Path, bool]:
+    if _unprivileged_posix_identity() is None:
+        return tmp_path, False
+    # Root bypasses POSIX mode bits; use a traversable system path for the
+    # child process after it drops to an unprivileged identity.
+    system_temporary_root = Path("/tmp")
+    if not system_temporary_root.is_dir():
+        system_temporary_root = Path(tempfile.gettempdir())
+    root = Path(
+        tempfile.mkdtemp(
+            prefix="newsroom-sqlite-read-only-",
+            dir=system_temporary_root,
+        )
+    )
+    return root, True
+
+
+@contextmanager
+def _os_read_only_database(database: Path) -> Iterator[None]:
+    directory = database.parent
+    original_directory_mode = stat.S_IMODE(directory.stat().st_mode)
+    sqlite_files = [
+        path
+        for path in (
+            database,
+            Path(f"{database}-wal"),
+            Path(f"{database}-shm"),
+        )
+        if path.exists()
+    ]
+    original_file_modes = {
+        path: stat.S_IMODE(path.stat().st_mode) for path in sqlite_files
+    }
+    try:
+        # On Windows chmod sets the filesystem readonly attribute. POSIX also
+        # removes directory write permission so SQLite cannot create WAL files.
+        for path in sqlite_files:
+            os.chmod(path, stat.S_IREAD if os.name == "nt" else 0o444)
+        if os.name == "posix":
+            os.chmod(directory, 0o555)
+
+        if os.name == "nt":
+            read_only_attribute = getattr(stat, "FILE_ATTRIBUTE_READONLY", 0x1)
+            assert database.stat().st_file_attributes & read_only_attribute
+        else:
+            assert stat.S_IMODE(database.stat().st_mode) & 0o222 == 0
+            assert stat.S_IMODE(directory.stat().st_mode) & 0o222 == 0
+        yield
+    finally:
+        if os.name == "posix" and directory.exists():
+            os.chmod(directory, original_directory_mode)
+        for path, mode in original_file_modes.items():
+            if path.exists():
+                os.chmod(path, mode)
+
+
+def _run_os_read_only_probe(database: Path) -> dict[str, object]:
+    identity = _unprivileged_posix_identity()
+    uid, gid = identity if identity is not None else (-1, -1)
+    script = textwrap.dedent(
+        """
+        import json
+        import os
+        import sys
+        from datetime import UTC, datetime
+        from pathlib import Path
+
+        from framework.events.canonical import (
+            BusinessContext,
+            EventCandidate,
+            ProducerIdentity,
+        )
+        from framework.events.errors import EventStoreUnavailableError
+        from infrastructure.storage.events.sqlite import SQLiteEventStore
+
+        database = Path(sys.argv[1])
+        uid = int(sys.argv[2])
+        gid = int(sys.argv[3])
+        if uid >= 0:
+            os.setgroups([])
+            os.setgid(gid)
+            os.setuid(uid)
+
+        result = {}
+        try:
+            descriptor = os.open(database, os.O_WRONLY)
+        except OSError as error:
+            result["os_write_denied"] = True
+            result["os_write_errno"] = error.errno
+        else:
+            os.close(descriptor)
+            result["os_write_denied"] = False
+            result["os_write_errno"] = None
+
+        if result["os_write_denied"]:
+            now = datetime(2026, 7, 15, 1, 0, tzinfo=UTC)
+            store = SQLiteEventStore(database, initialize=False, clock=lambda: now)
+            result["adapter_read_only_flag"] = store.read_only
+            try:
+                store.append_event(
+                    EventCandidate(
+                        event_id="evt-os-read-only",
+                        event_type="workflow_started",
+                        data_schema="newsroom.workflow-event/v1",
+                        source="tests.sqlite.os-read-only",
+                        occurred_at=now,
+                        stream_id="run:one",
+                        business_context=BusinessContext(run_id="one"),
+                        producer=ProducerIdentity(component="sqlite-os-read-only-test"),
+                        payload={"safe": True},
+                    )
+                )
+            except EventStoreUnavailableError as error:
+                result["adapter_error_type"] = type(error).__name__
+                result["adapter_error_message"] = str(error)
+            except BaseException as error:
+                result["adapter_error_type"] = type(error).__name__
+                result["adapter_error_message"] = str(error)
+            else:
+                result["adapter_error_type"] = None
+                result["adapter_error_message"] = None
+
+        print(json.dumps(result, sort_keys=True))
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(database), str(uid), str(gid)],
+        cwd=Path(__file__).resolve().parents[4],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, (
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+    return json.loads(completed.stdout)
+
+
 def test_database_lock_timeout_is_typed_and_leaves_no_partial_append(
     tmp_path: Path,
 ) -> None:
@@ -80,6 +245,37 @@ def test_query_only_connection_maps_write_to_unavailable(tmp_path: Path) -> None
     with pytest.raises(EventStoreUnavailableError):
         readonly.append_event(_candidate())
     assert writable.get_event("evt-1") is None
+
+
+def test_os_read_only_filesystem_maps_write_to_unavailable(tmp_path: Path) -> None:
+    root, cleanup_root = _read_only_probe_root(tmp_path)
+    database = root / "events.sqlite3"
+    try:
+        writable = SQLiteEventStore(database, clock=lambda: NOW)
+        writable.checkpoint_wal(mode="TRUNCATE")
+
+        with _os_read_only_database(database):
+            result = _run_os_read_only_probe(database)
+
+        assert result["os_write_denied"] is True
+        assert result["os_write_errno"] in {
+            errno.EACCES,
+            errno.EPERM,
+            errno.EROFS,
+        }
+        assert result["adapter_read_only_flag"] is False
+        assert result["adapter_error_type"] == "EventStoreUnavailableError"
+        message = str(result["adapter_error_message"])
+        assert message.endswith("durable store is unavailable")
+        assert "readonly database" not in message.lower()
+        assert str(database) not in message
+
+        writable.verify_integrity(full=True)
+        assert writable.get_event("evt-os-read-only") is None
+        assert writable.get_stream_high_watermark("run:one") is None
+    finally:
+        if cleanup_root:
+            shutil.rmtree(root)
 
 
 def test_disk_full_error_maps_to_capacity_without_exposing_driver_message(
