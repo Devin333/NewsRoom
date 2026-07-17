@@ -1,6 +1,6 @@
 # Durable Event Benchmark Evidence
 
-Date: 2026-07-17
+Date: 2026-07-18
 
 OpenSpec task: 10.3
 

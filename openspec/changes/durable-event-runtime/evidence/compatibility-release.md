@@ -1,6 +1,6 @@
 # Durable Event Compatibility Release Evidence
 
-Date: 2026-07-17
+Date: 2026-07-18
 
 OpenSpec tasks: 9.3 and 9.5
 
