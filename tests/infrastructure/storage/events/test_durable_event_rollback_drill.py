@@ -12,7 +12,13 @@ from hashlib import sha256
 import pytest
 
 import scripts.durable_event_rollback_drill as rollback_drill
-from framework.events.canonical import checksum_for
+from framework.events.canonical import (
+    BusinessContext,
+    EventCandidate,
+    ProducerIdentity,
+    StoredEvent,
+    checksum_for,
+)
 from scripts.durable_event_rollback_drill import (
     EVIDENCE_SCHEMA,
     EXTERNAL_EVIDENCE_SCHEMA,
@@ -178,6 +184,7 @@ def test_release_qualification_requires_complete_signed_external_evidence(
         candidate=candidate,
         rollback=rollback,
     )
+    approval_public_key = _approval_public_key(external_path)
     private_key = tmp_path / "keys" / "qualification-private.pem"
     public_key = tmp_path / "keys" / "qualification-public.pem"
     external_private_key = tmp_path / "keys" / "external-private.pem"
@@ -215,6 +222,8 @@ def test_release_qualification_requires_complete_signed_external_evidence(
                 str(external_path),
                 "--private-key",
                 str(external_private_key),
+                "--trusted-approval-public-key",
+                str(approval_public_key),
                 "--output",
                 str(signed_external_path),
             ]
@@ -234,6 +243,8 @@ def test_release_qualification_requires_complete_signed_external_evidence(
                 str(private_key),
                 "--trusted-external-public-key",
                 str(external_public_key),
+                "--trusted-approval-public-key",
+                str(approval_public_key),
                 "--output",
                 str(qualification_path),
             ]
@@ -250,6 +261,8 @@ def test_release_qualification_requires_complete_signed_external_evidence(
                 str(public_key),
                 "--trusted-external-public-key",
                 str(external_public_key),
+                "--trusted-approval-public-key",
+                str(approval_public_key),
             ]
         )
         == 0
@@ -259,6 +272,7 @@ def test_release_qualification_requires_complete_signed_external_evidence(
         qualification_path,
         trusted_public_key=public_key,
         trusted_external_public_key=external_public_key,
+        trusted_approval_public_key=approval_public_key,
     )
     assert evidence["schema"] == QUALIFICATION_EVIDENCE_SCHEMA
     assert evidence["overall_status"] == "passed"
@@ -279,6 +293,7 @@ def test_release_qualification_requires_complete_signed_external_evidence(
             tampered_path,
             trusted_public_key=public_key,
             trusted_external_public_key=external_public_key,
+            trusted_approval_public_key=approval_public_key,
         )
 
     other_private = tmp_path / "keys" / "other-private.pem"
@@ -303,6 +318,7 @@ def test_release_qualification_requires_complete_signed_external_evidence(
             qualification_path,
             trusted_public_key=other_public,
             trusted_external_public_key=external_public_key,
+            trusted_approval_public_key=approval_public_key,
         )
 
     with pytest.raises(
@@ -313,6 +329,18 @@ def test_release_qualification_requires_complete_signed_external_evidence(
             qualification_path,
             trusted_public_key=public_key,
             trusted_external_public_key=other_public,
+            trusted_approval_public_key=approval_public_key,
+        )
+
+    with pytest.raises(
+        RollbackDrillInvariantError,
+        match="trusted_approval_public_key_mismatch",
+    ):
+        verify_rollback_evidence(
+            qualification_path,
+            trusted_public_key=public_key,
+            trusted_external_public_key=external_public_key,
+            trusted_approval_public_key=other_public,
         )
 
 
@@ -328,7 +356,33 @@ def test_qualification_requires_independent_attester_and_qualifier(tmp_path) -> 
             external_evidence_path=inputs["external_evidence"],
             private_key_path=inputs["external_private_key"],
             trusted_external_public_key=inputs["external_public_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
             output_path=tmp_path / "qualification" / "qualification.json",
+        )
+
+    with pytest.raises(
+        RollbackDrillInvariantError,
+        match="signing_authority_separation_missing",
+    ):
+        qualify_rollback_evidence(
+            local_evidence_path=inputs["local_evidence"],
+            external_evidence_path=inputs["external_evidence"],
+            private_key_path=inputs["approval_private_key"],
+            trusted_external_public_key=inputs["external_public_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
+            output_path=tmp_path / "approval-qualification" / "qualification.json",
+        )
+
+    unsigned = inputs["external_evidence"].with_name("external-evidence.json")
+    with pytest.raises(
+        RollbackDrillInvariantError,
+        match="signing_authority_separation_missing",
+    ):
+        attest_external_evidence(
+            evidence_path=unsigned,
+            private_key_path=inputs["approval_private_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
+            output_path=unsigned.with_name("approval-as-attester.json"),
         )
 
 
@@ -354,6 +408,7 @@ def test_private_signing_key_permissions_are_enforced(tmp_path) -> None:
         attest_external_evidence(
             evidence_path=external_path,
             private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
             output_path=external_path.with_name("external-evidence.signed.json"),
         )
 
@@ -389,6 +444,124 @@ def test_external_evidence_rejects_duplicate_artifact_paths(tmp_path) -> None:
         attest_external_evidence(
             evidence_path=external_path,
             private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
+            output_path=external_path.with_name("external-evidence.signed.json"),
+        )
+
+
+def test_external_evidence_rejects_hard_link_artifact_alias(tmp_path) -> None:
+    external_path = _write_external_evidence(
+        tmp_path / "external-source",
+        drill_id="rollback-hard-link-alias",
+        candidate="a" * 40,
+        rollback="b" * 40,
+    )
+    payload = json.loads(external_path.read_text(encoding="utf-8"))
+    first, second = payload["artifacts"][:2]
+    first_path = external_path.parent / first["path"]
+    alias_path = external_path.parent / "artifacts" / "hard-link-alias.json"
+    os.link(first_path, alias_path)
+    second.update(
+        {
+            "path": "artifacts/hard-link-alias.json",
+            "size_bytes": first["size_bytes"],
+            "checksum": first["checksum"],
+        }
+    )
+    _write_evidence_with_checksum(external_path, payload)
+    private_key = tmp_path / "external-private.pem"
+    public_key = tmp_path / "external-public.pem"
+    generate_signing_keypair(
+        private_key_path=private_key,
+        public_key_path=public_key,
+    )
+
+    with pytest.raises(
+        RollbackDrillInvariantError,
+        match="evidence_artifact_file_alias",
+    ):
+        attest_external_evidence(
+            evidence_path=external_path,
+            private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
+            output_path=external_path.with_name("external-evidence.signed.json"),
+        )
+
+
+def test_external_evidence_rejects_symlink_artifact(tmp_path, monkeypatch) -> None:
+    external_path = _write_external_evidence(
+        tmp_path / "external-source",
+        drill_id="rollback-symlink-artifact",
+        candidate="a" * 40,
+        rollback="b" * 40,
+    )
+    payload = json.loads(external_path.read_text(encoding="utf-8"))
+    manifest = payload["artifacts"][0]
+    original = external_path.parent / manifest["path"]
+    link = external_path.parent / "artifacts" / "symlink-artifact.json"
+    shutil.copy2(original, link)
+    manifest["path"] = "artifacts/symlink-artifact.json"
+    _write_evidence_with_checksum(external_path, payload)
+    private_key = tmp_path / "external-private.pem"
+    public_key = tmp_path / "external-public.pem"
+    generate_signing_keypair(
+        private_key_path=private_key,
+        public_key_path=public_key,
+    )
+
+    path_type = type(link)
+    original_is_symlink = path_type.is_symlink
+
+    def reports_artifact_as_symlink(path):
+        return path == link or original_is_symlink(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(path_type, "is_symlink", reports_artifact_as_symlink)
+        with pytest.raises(
+            RollbackDrillInvariantError,
+            match="evidence_artifact_reparse_point",
+        ):
+            attest_external_evidence(
+                evidence_path=external_path,
+                private_key_path=private_key,
+                trusted_approval_public_key=_approval_public_key(external_path),
+                output_path=external_path.with_name("external-evidence.signed.json"),
+            )
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        ("artifacts/evidence.json:payload", "artifact.path_alternate_data_stream"),
+        ("artifacts/CON.json", "artifact.path_windows_reserved_name"),
+    ],
+)
+def test_external_evidence_rejects_nonportable_artifact_path(
+    tmp_path,
+    path,
+    reason,
+) -> None:
+    external_path = _write_external_evidence(
+        tmp_path / "external-source",
+        drill_id="rollback-nonportable-path",
+        candidate="a" * 40,
+        rollback="b" * 40,
+    )
+    payload = json.loads(external_path.read_text(encoding="utf-8"))
+    payload["artifacts"][0]["path"] = path
+    _write_evidence_with_checksum(external_path, payload)
+    private_key = tmp_path / "external-private.pem"
+    public_key = tmp_path / "external-public.pem"
+    generate_signing_keypair(
+        private_key_path=private_key,
+        public_key_path=public_key,
+    )
+
+    with pytest.raises(RollbackDrillInvariantError, match=reason):
+        attest_external_evidence(
+            evidence_path=external_path,
+            private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
             output_path=external_path.with_name("external-evidence.signed.json"),
         )
 
@@ -412,6 +585,35 @@ def test_external_evidence_rejects_future_approval(tmp_path) -> None:
         attest_external_evidence(
             evidence_path=external_path,
             private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
+            output_path=external_path.with_name("external-evidence.signed.json"),
+        )
+
+
+def test_external_evidence_rejects_invalid_approval_signature(tmp_path) -> None:
+    external_path = _write_external_evidence(
+        tmp_path / "external-source",
+        drill_id="rollback-invalid-approval-signature",
+        candidate="a" * 40,
+        rollback="b" * 40,
+    )
+    payload = json.loads(external_path.read_text(encoding="utf-8"))
+    payload["approval"]["signature"] = base64.b64encode(b"invalid").decode(
+        "ascii"
+    )
+    _write_evidence_with_checksum(external_path, payload)
+    private_key = tmp_path / "external-private.pem"
+    public_key = tmp_path / "external-public.pem"
+    generate_signing_keypair(
+        private_key_path=private_key,
+        public_key_path=public_key,
+    )
+
+    with pytest.raises(RollbackDrillInvariantError, match="approval_signature_invalid"):
+        attest_external_evidence(
+            evidence_path=external_path,
+            private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
             output_path=external_path.with_name("external-evidence.signed.json"),
         )
 
@@ -437,6 +639,11 @@ def test_external_attestation_rejects_signature_and_key_tampering(tmp_path) -> N
     effect_manifest["size_bytes"] = len(effect_bytes)
     effect_manifest["checksum"] = f"sha256:{sha256(effect_bytes).hexdigest()}"
     attestation = signed.pop("attestation")
+    _resign_external_approval(
+        inputs["external_evidence"].parent,
+        signed,
+        inputs["approval_private_key"],
+    )
     _write_evidence_with_checksum(inputs["external_evidence"], signed)
     signed = json.loads(inputs["external_evidence"].read_text(encoding="utf-8"))
     signed["attestation"] = attestation
@@ -451,6 +658,7 @@ def test_external_attestation_rejects_signature_and_key_tampering(tmp_path) -> N
             external_evidence_path=inputs["external_evidence"],
             private_key_path=inputs["qualification_private_key"],
             trusted_external_public_key=inputs["external_public_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
             output_path=tmp_path / "signature-tamper" / "qualification.json",
         )
 
@@ -469,6 +677,7 @@ def test_external_attestation_rejects_signature_and_key_tampering(tmp_path) -> N
             external_evidence_path=inputs["external_evidence"],
             private_key_path=inputs["qualification_private_key"],
             trusted_external_public_key=other_public,
+            trusted_approval_public_key=inputs["approval_public_key"],
             output_path=tmp_path / "key-tamper" / "qualification.json",
         )
 
@@ -486,6 +695,7 @@ def test_attestation_and_qualification_outputs_refuse_alias_or_overwrite(
         attest_external_evidence(
             evidence_path=unsigned,
             private_key_path=inputs["external_private_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
             output_path=unsigned,
         )
 
@@ -498,6 +708,7 @@ def test_attestation_and_qualification_outputs_refuse_alias_or_overwrite(
         attest_external_evidence(
             evidence_path=unsigned,
             private_key_path=inputs["external_private_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
             output_path=existing_attestation,
         )
     assert existing_attestation.read_text(encoding="utf-8") == "sentinel"
@@ -511,6 +722,7 @@ def test_attestation_and_qualification_outputs_refuse_alias_or_overwrite(
             external_evidence_path=inputs["external_evidence"],
             private_key_path=inputs["qualification_private_key"],
             trusted_external_public_key=inputs["external_public_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
             output_path=inputs["local_evidence"],
         )
 
@@ -526,6 +738,7 @@ def test_attestation_and_qualification_outputs_refuse_alias_or_overwrite(
             external_evidence_path=inputs["external_evidence"],
             private_key_path=inputs["qualification_private_key"],
             trusted_external_public_key=inputs["external_public_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
             output_path=qualification_path,
         )
     assert qualification_path.read_text(encoding="utf-8") == "sentinel"
@@ -554,6 +767,7 @@ def test_atomic_file_publish_does_not_overwrite_racing_outputs(
             attest_external_evidence(
                 evidence_path=unsigned,
                 private_key_path=inputs["external_private_key"],
+                trusted_approval_public_key=inputs["approval_public_key"],
                 output_path=raced_attestation,
             )
     assert raced_attestation.read_text(encoding="utf-8") == "racer-owned"
@@ -604,6 +818,7 @@ def test_qualification_bundle_copy_is_atomic_and_retryable(
                 external_evidence_path=inputs["external_evidence"],
                 private_key_path=inputs["qualification_private_key"],
                 trusted_external_public_key=inputs["external_public_key"],
+                trusted_approval_public_key=inputs["approval_public_key"],
                 output_path=qualification_path,
             )
 
@@ -615,6 +830,7 @@ def test_qualification_bundle_copy_is_atomic_and_retryable(
         external_evidence_path=inputs["external_evidence"],
         private_key_path=inputs["qualification_private_key"],
         trusted_external_public_key=inputs["external_public_key"],
+        trusted_approval_public_key=inputs["approval_public_key"],
         output_path=qualification_path,
     )
     assert evidence["overall_status"] == "passed"
@@ -649,6 +865,7 @@ def test_external_evidence_rejects_semantically_unbound_artifact(tmp_path) -> No
         attest_external_evidence(
             evidence_path=external_path,
             private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
             output_path=external_path.with_name("external-evidence.signed.json"),
         )
 
@@ -694,6 +911,7 @@ def test_external_evidence_rejects_empty_or_changed_postgres_history(
         attest_external_evidence(
             evidence_path=external_path,
             private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
             output_path=external_path.with_name("external-evidence.signed.json"),
         )
 
@@ -736,6 +954,7 @@ def test_strict_verifier_rebinds_local_release_context(tmp_path) -> None:
         external_evidence_path=inputs["external_evidence"],
         private_key_path=inputs["qualification_private_key"],
         trusted_external_public_key=inputs["external_public_key"],
+        trusted_approval_public_key=inputs["approval_public_key"],
         output_path=qualification_path,
     )
     local_path = qualification_path.parent / "local" / "rollback-evidence.json"
@@ -759,6 +978,7 @@ def test_strict_verifier_rebinds_local_release_context(tmp_path) -> None:
             qualification_path,
             trusted_public_key=inputs["qualification_public_key"],
             trusted_external_public_key=inputs["external_public_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
         )
 
 
@@ -770,6 +990,7 @@ def test_qualification_binds_the_complete_external_attestation_file(tmp_path) ->
         external_evidence_path=inputs["external_evidence"],
         private_key_path=inputs["qualification_private_key"],
         trusted_external_public_key=inputs["external_public_key"],
+        trusted_approval_public_key=inputs["approval_public_key"],
         output_path=qualification_path,
     )
     replacement = inputs["external_evidence"].with_name(
@@ -778,6 +999,7 @@ def test_qualification_binds_the_complete_external_attestation_file(tmp_path) ->
     attest_external_evidence(
         evidence_path=inputs["external_evidence"].with_name("external-evidence.json"),
         private_key_path=inputs["external_private_key"],
+        trusted_approval_public_key=inputs["approval_public_key"],
         output_path=replacement,
     )
     bundled_external = (
@@ -793,6 +1015,7 @@ def test_qualification_binds_the_complete_external_attestation_file(tmp_path) ->
             qualification_path,
             trusted_public_key=inputs["qualification_public_key"],
             trusted_external_public_key=inputs["external_public_key"],
+            trusted_approval_public_key=inputs["approval_public_key"],
         )
 
 
@@ -824,6 +1047,7 @@ def test_staged_qualification_verify_failure_is_atomic_and_retryable(
                 external_evidence_path=inputs["external_evidence"],
                 private_key_path=inputs["qualification_private_key"],
                 trusted_external_public_key=inputs["external_public_key"],
+                trusted_approval_public_key=inputs["approval_public_key"],
                 output_path=qualification_path,
             )
 
@@ -834,6 +1058,7 @@ def test_staged_qualification_verify_failure_is_atomic_and_retryable(
         external_evidence_path=inputs["external_evidence"],
         private_key_path=inputs["qualification_private_key"],
         trusted_external_public_key=inputs["external_public_key"],
+        trusted_approval_public_key=inputs["approval_public_key"],
         output_path=qualification_path,
     )
     assert evidence["overall_status"] == "passed"
@@ -935,6 +1160,7 @@ def test_qualification_rejects_incomplete_external_evidence(
         attest_external_evidence(
             evidence_path=external_path,
             private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
             output_path=external_path.with_name("external-evidence.signed.json"),
         )
 
@@ -981,6 +1207,8 @@ def _prepare_qualification_inputs(tmp_path, drill_id: str):
         candidate=candidate,
         rollback=rollback,
     )
+    approval_private_key = _approval_private_key(external_path)
+    approval_public_key = _approval_public_key(external_path)
     key_root = tmp_path / "keys"
     qualification_private_key = key_root / "qualification-private.pem"
     qualification_public_key = key_root / "qualification-public.pem"
@@ -998,6 +1226,7 @@ def _prepare_qualification_inputs(tmp_path, drill_id: str):
     attest_external_evidence(
         evidence_path=external_path,
         private_key_path=external_private_key,
+        trusted_approval_public_key=approval_public_key,
         output_path=signed_external_path,
     )
     return {
@@ -1007,6 +1236,8 @@ def _prepare_qualification_inputs(tmp_path, drill_id: str):
         "qualification_public_key": qualification_public_key,
         "external_private_key": external_private_key,
         "external_public_key": external_public_key,
+        "approval_private_key": approval_private_key,
+        "approval_public_key": approval_public_key,
     }
 
 
@@ -1035,6 +1266,55 @@ def _resign_qualification(path, evidence, private_key_path) -> None:
     signature = key.sign(rollback_drill._qualification_signature_payload(evidence))
     evidence["signature"] = base64.b64encode(signature).decode("ascii")
     path.write_text(json.dumps(evidence), encoding="utf-8")
+
+
+def _resign_external_approval(root, evidence, private_key_path) -> None:
+    approval = evidence["approval"]
+    manifest = next(
+        item for item in evidence["artifacts"] if item["role"] == "approval_record"
+    )
+    artifact_checksums = {
+        item["role"]: item["checksum"]
+        for item in evidence["artifacts"]
+        if item["role"] != "approval_record"
+    }
+    record = {
+        "schema": "newsroom.durable-event-rollback-approval/v1",
+        "drill_id": evidence["drill_id"],
+        "candidate_release_digest": evidence["candidate_release_digest"],
+        "rollback_release_digest": evidence["rollback_release_digest"],
+        "drill_completed_at": evidence["drill_completed_at"],
+        "operator_id": approval["operator_id"],
+        "approver_id": approval["approver_id"],
+        "approved_at": approval["approved_at"],
+        "decision": "approved",
+        "evidence_summary_checksum": checksum_for(
+            rollback_drill._approval_summary(evidence)
+        ),
+        "artifact_checksums": artifact_checksums,
+    }
+    content = json.dumps(record, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    path = root / manifest["path"]
+    path.write_bytes(content)
+    key = rollback_drill._load_private_key(private_key_path)
+    record_checksum = f"sha256:{sha256(content).hexdigest()}"
+    approval.update(
+        {
+            "record_checksum": record_checksum,
+            "public_key_fingerprint": rollback_drill._public_key_fingerprint(
+                key.public_key()
+            ),
+            "signature": base64.b64encode(key.sign(content)).decode("ascii"),
+        }
+    )
+    manifest.update(
+        {
+            "size_bytes": len(content),
+            "checksum": record_checksum,
+        }
+    )
 
 
 def _make_private_key_insecure(path) -> None:
@@ -1085,9 +1365,24 @@ def _write_external_evidence(
     approved_at: datetime | None = None,
 ):
     root.mkdir(parents=True)
+    approval_private_key = root / "approval-private.pem"
+    approval_public_key = root / "approval-public.pem"
+    generate_signing_keypair(
+        private_key_path=approval_private_key,
+        public_key_path=approval_public_key,
+    )
     completed_at = drill_completed_at or datetime.now(UTC) - timedelta(minutes=2)
     approval_time = approved_at or datetime.now(UTC) - timedelta(minutes=1)
-    prefix_checksum = _test_checksum("accepted-prefix")
+    stream_id = "run:rollback-staging"
+    event_rows = _external_event_rows(
+        drill_id=drill_id,
+        stream_id=stream_id,
+        count=21,
+        base_time=completed_at - timedelta(minutes=5),
+    )
+    before_event_rows = event_rows[:20]
+    prefix_checksum = checksum_for(before_event_rows)
+    after_snapshot_checksum = checksum_for(event_rows)
     effect_checksum = _test_checksum("external-effect")
     ledger_counts = {
         "delivery_history": 3,
@@ -1107,7 +1402,7 @@ def _write_external_evidence(
             "artifact://rollback/postgres_before_snapshot"
         ),
         "after_snapshot_ref": "artifact://rollback/postgres_after_snapshot",
-        "stream_id": "run:rollback-staging",
+        "stream_id": stream_id,
         "preserved_event_count": 20,
         "preserved_prefix_checksum_before": prefix_checksum,
         "preserved_prefix_checksum_after": prefix_checksum,
@@ -1160,13 +1455,6 @@ def _write_external_evidence(
         "postgresql": postgresql,
         "external_effect": external_effect,
         "orchestrator": orchestrator,
-        "approval": {
-            "operator_id": "operator-1",
-            "approver_id": "approver-1",
-            "approved_at": _utc_text(approval_time),
-            "decision": "approved",
-            "record_ref": "artifact://rollback/approval_record",
-        },
         "external_gates": {
             "actual_deployment_binary_switch": True,
             "real_postgresql_rollback_and_concurrent_writer_continuity": True,
@@ -1176,6 +1464,14 @@ def _write_external_evidence(
             "schema_security_identity_integrity_gates_enabled": True,
             "compatible_projection_rebuilt": True,
         },
+    }
+
+    approval = {
+        "operator_id": "operator-1",
+        "approver_id": "approver-1",
+        "approved_at": _utc_text(approval_time),
+        "decision": "approved",
+        "record_ref": "artifact://rollback/approval_record",
     }
     def source(role: str) -> dict[str, str]:
         return {
@@ -1187,8 +1483,8 @@ def _write_external_evidence(
         for name, count in ledger_counts.items()
     }
     ledgers_after = json.loads(json.dumps(ledgers_before))
-    projection_checksum = _test_checksum("compatible-projection-bytes")
-    sequence_checksum = _test_checksum("ordered-sequences-1-through-21")
+    projection_checksum = checksum_for(before_event_rows)
+    sequence_checksum = checksum_for(list(range(1, 21)))
     artifact_payloads = {
         "orchestrator_run": {
             "schema": "newsroom.durable-event-rollback-orchestrator/v1",
@@ -1214,13 +1510,19 @@ def _write_external_evidence(
             "schema": "newsroom.durable-event-rollback-postgres-snapshot/v1",
             "drill_id": drill_id,
             "stage": "before",
-            **source("postgres-before-snapshot"),
+            "source_ref": (
+                f"https://evidence.example/{drill_id}/postgres-before-snapshot"
+            ),
+            "source_checksum": prefix_checksum,
             "backend": "postgresql",
             "database_name": postgresql["database_name"],
             "server_version": postgresql["server_version"],
             "migration_version": postgresql["migration_version"],
             "stream_id": postgresql["stream_id"],
             "ledgers": ledgers_before,
+            "release_digest": candidate,
+            "captured_at": _utc_text(completed_at - timedelta(seconds=20)),
+            "events": before_event_rows,
             "event_count": 20,
             "prefix_checksum": prefix_checksum,
             "watermark": 20,
@@ -1229,13 +1531,19 @@ def _write_external_evidence(
             "schema": "newsroom.durable-event-rollback-postgres-snapshot/v1",
             "drill_id": drill_id,
             "stage": "after",
-            **source("postgres-after-snapshot"),
+            "source_ref": (
+                f"https://evidence.example/{drill_id}/postgres-after-snapshot"
+            ),
+            "source_checksum": after_snapshot_checksum,
             "backend": "postgresql",
             "database_name": postgresql["database_name"],
             "server_version": postgresql["server_version"],
             "migration_version": postgresql["migration_version"],
             "stream_id": postgresql["stream_id"],
             "ledgers": ledgers_after,
+            "release_digest": rollback,
+            "captured_at": _utc_text(completed_at - timedelta(seconds=5)),
+            "events": event_rows,
             "event_count": 21,
             "preserved_prefix_count": 20,
             "preserved_prefix_checksum": prefix_checksum,
@@ -1273,10 +1581,11 @@ def _write_external_evidence(
             "source_checksum": projection_checksum,
             "release_digest": candidate,
             "stream_id": postgresql["stream_id"],
-            "high_watermark": 21,
-            "event_count": 21,
+            "high_watermark": 20,
+            "event_count": 20,
             "ordered_sequence_checksum": sequence_checksum,
             "projection_checksum": projection_checksum,
+            "events": before_event_rows,
         },
         "rollback_projection": {
             "schema": "newsroom.durable-event-rollback-projection/v1",
@@ -1286,10 +1595,11 @@ def _write_external_evidence(
             "source_checksum": projection_checksum,
             "release_digest": rollback,
             "stream_id": postgresql["stream_id"],
-            "high_watermark": 21,
-            "event_count": 21,
+            "high_watermark": 20,
+            "event_count": 20,
             "ordered_sequence_checksum": sequence_checksum,
             "projection_checksum": projection_checksum,
+            "events": before_event_rows,
         },
         "schema_security_negative_tests": {
             "schema": "newsroom.durable-event-rollback-negative-tests/v1",
@@ -1320,16 +1630,6 @@ def _write_external_evidence(
                 },
             ],
         },
-        "approval_record": {
-            "schema": "newsroom.durable-event-rollback-approval/v1",
-            "drill_id": drill_id,
-            "candidate_release_digest": candidate,
-            "rollback_release_digest": rollback,
-            "operator_id": "operator-1",
-            "approver_id": "approver-1",
-            "approved_at": _utc_text(approval_time),
-            "decision": "approved",
-        },
     }
     artifacts = []
     for role, artifact_payload in artifact_payloads.items():
@@ -1350,11 +1650,105 @@ def _write_external_evidence(
                 "checksum": f"sha256:{sha256(content).hexdigest()}",
             }
         )
+
     payload["artifacts"] = artifacts
+    artifact_checksums = {
+        item["role"]: item["checksum"] for item in artifacts
+    }
+    approval_record = {
+        "schema": "newsroom.durable-event-rollback-approval/v1",
+        "drill_id": drill_id,
+        "candidate_release_digest": candidate,
+        "rollback_release_digest": rollback,
+        "drill_completed_at": _utc_text(completed_at),
+        "operator_id": approval["operator_id"],
+        "approver_id": approval["approver_id"],
+        "approved_at": approval["approved_at"],
+        "decision": "approved",
+        "evidence_summary_checksum": checksum_for(
+            rollback_drill._approval_summary(payload)
+        ),
+        "artifact_checksums": artifact_checksums,
+    }
+    approval_relative = "artifacts/approval_record.json"
+    approval_path = root / approval_relative
+    approval_content = json.dumps(
+        approval_record,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    approval_path.write_bytes(approval_content)
+    approval_key = rollback_drill._load_private_key(approval_private_key)
+    approval.update(
+        {
+            "record_checksum": (
+                f"sha256:{sha256(approval_content).hexdigest()}"
+            ),
+            "public_key_fingerprint": rollback_drill._public_key_fingerprint(
+                approval_key.public_key()
+            ),
+            "signature": base64.b64encode(
+                approval_key.sign(approval_content)
+            ).decode("ascii"),
+        }
+    )
+    artifacts.append(
+        {
+            "role": "approval_record",
+            "path": approval_relative,
+            "size_bytes": len(approval_content),
+            "checksum": approval["record_checksum"],
+        }
+    )
+    payload["approval"] = approval
     payload["evidence_checksum"] = checksum_for(payload)
     path = root / "external-evidence.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def _external_event_rows(
+    *,
+    drill_id: str,
+    stream_id: str,
+    count: int,
+    base_time: datetime,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for sequence in range(1, count + 1):
+        occurred_at = base_time + timedelta(seconds=sequence)
+        candidate = EventCandidate(
+            event_id=f"{drill_id}:event:{sequence}",
+            event_type="io.newsroom.event.rollback.drill",
+            data_schema="io.newsroom.event.rollback.drill/v1",
+            source="tests.rollback.staging",
+            occurred_at=occurred_at,
+            stream_id=stream_id,
+            business_context=BusinessContext(run_id="rollback-staging"),
+            producer=ProducerIdentity(
+                component="rollback-test-fixture",
+                version="1",
+                instance_id="pytest",
+            ),
+            tenant_id="tenant-rollback-staging",
+            payload={"drill_id": drill_id, "sequence": sequence},
+        )
+        rows.append(
+            StoredEvent(
+                candidate=candidate,
+                observed_at=occurred_at + timedelta(milliseconds=1),
+                stream_sequence=sequence,
+            ).to_dict()
+        )
+    return rows
+
+
+def _approval_private_key(external_path):
+    return external_path.parent / "approval-private.pem"
+
+
+def _approval_public_key(external_path):
+    return external_path.parent / "approval-public.pem"
 
 
 def _utc_text(value: datetime) -> str:

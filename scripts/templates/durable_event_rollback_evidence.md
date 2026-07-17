@@ -27,9 +27,10 @@
 - PostgreSQL 使用隔离 staging clone 和真实 transaction；external effect 使用独立、
   可审计的 staging provider/database 或真实 provider idempotency boundary。
 - candidate 与 rollback 必须使用不同且不可变的 commit/image digest。人工标签不合格。
-- external attestation 与 release qualification 必须由两个独立 Ed25519 key 承担，
-  public-key fingerprint 必须不同；private key 由各自部署/发布系统保管，不进入仓库
-  或 evidence bundle。Windows key file 使用 protected owner-only DACL，POSIX 使用 `0600`。
+- rollback approval、external attestation 与 release qualification 必须由三个独立
+  Ed25519 trust root 承担，public-key fingerprint 必须两两不同；private key 由各自
+  审批/部署/发布系统保管，不进入仓库或 evidence bundle。Windows key file 使用
+  protected owner-only DACL，POSIX 使用 `0600`。
 
 ## 2. 本地不变量演练
 
@@ -122,9 +123,11 @@ orchestrator log、traffic-control log 或 provider audit 的非 bundle `source_
 泛化解析不同供应商的原生日志。
 
 PostgreSQL before/after artifact 必须逐字段绑定隔离数据库、server/migration version、
-stream、accepted prefix checksum、before/rejection/next/after watermark、零重复 sequence、
-零 checksum failure，以及 delivery/inbox/checkpoint/DLQ 的非零 before/after count 与
-checksum。当前无 retention/delete 阶段要求 `preserved_event_count == watermark_before > 0`，
+release digest、capture time、stream、完整 canonical event rows、accepted prefix checksum、
+before/rejection/next/after watermark、零重复 sequence、零 checksum failure，以及
+delivery/inbox/checkpoint/DLQ 的非零 before/after count 与 checksum。verifier 会重新解析每个
+`StoredEvent`、验证 content/record checksum、sequence 连续性和 before/after prefix 的逐字节
+一致性。当前无 retention/delete 阶段要求 `preserved_event_count == watermark_before > 0`，
 四类历史的 count 和 checksum 均不得变化，并发 writer continuity 与 crash recovery 必须通过。
 
 External-effect evidence 必须记录 provider kind、idempotency contract ref、稳定 key
@@ -136,24 +139,31 @@ rollback deploy 引用，证明真实 binary switch、切换时 claim 已冻结�
 candidate/rollback deployment id 与 release digest 必须不同并绑定到 `orchestrator_run`；
 `traffic_control` 必须证明 traffic frozen、claim paused 和零并发 dispatcher。
 
-candidate/rollback projection normalized artifact 必须绑定各自 release digest、同一 stream、
-同一 high watermark、event count、ordered-sequence checksum 和 projection checksum，且原生
-projection 的 source checksum 与声明 checksum 一致。negative-test artifact 必须覆盖
+candidate/rollback projection normalized artifact 必须包含并校验完整 canonical event rows，
+绑定各自 release digest、同一 stream、同一 high watermark、event count、ordered-sequence
+checksum 和 projection checksum，并与 PostgreSQL before snapshot 逐字节一致；原生 projection
+的 source checksum 必须与声明 checksum 一致。negative-test artifact 必须覆盖
 `unknown_schema`、`forbidden_payload`、`identity_collision`、`record_checksum_tamper`，全部为
 rejected，并证明 watermark 未推进。
 
 Approval evidence 必须由不同的 operator/approver 提供 UTC 时间、`approved` decision
 和可审计 record ref。`approved_at` 不得早于 `drill_completed_at`；为容忍部署节点时钟偏差，
-时间最多可领先 verifier 时钟 5 分钟；
-`approval_record` artifact 必须逐字段绑定 drill id、两个 release digest、operator、approver、
-approval time 和 decision。
+时间最多可领先 verifier 时钟 5 分钟。审批系统必须使用独立 approval private key 对
+`approval_record` 的精确 bytes 签名；top-level approval 同时记录 record checksum、trusted
+public-key fingerprint 和 signature。`approval_record` 必须绑定 drill completion、两个 release
+digest、operator、approver、approval time、完整 evidence summary checksum 及除自身外每个
+artifact checksum。rollback 工具只验证该记录，不代替真实审批系统生成或签署审批。
 
 ## 4. 生成签名 qualification bundle
 
-首次接入发布系统时分别生成 external attestation 与 release qualification keypair；
-生产中 private key 应由两个独立 KMS/secret manager authority 管理：
+首次接入发布系统时分别生成 approval、external attestation 与 release qualification
+keypair；生产中 private key 应由三个独立 KMS/secret manager authority 管理：
 
 ```powershell
+.\.venv\Scripts\python.exe -m scripts.durable_event_rollback_drill keygen `
+  --private-key <approval-private-key-path> `
+  --public-key <trusted-approval-public-key-path>
+
 .\.venv\Scripts\python.exe -m scripts.durable_event_rollback_drill keygen `
   --private-key <external-attester-private-key-path> `
   --public-key <trusted-external-public-key-path>
@@ -170,6 +180,7 @@ approval time 和 decision。
 .\.venv\Scripts\python.exe -m scripts.durable_event_rollback_drill attest-external `
   --evidence <external>/external-evidence.json `
   --private-key <external-attester-private-key-path> `
+  --trusted-approval-public-key <trusted-approval-public-key-path> `
   --output <external>/external-evidence.signed.json
 ```
 
@@ -181,6 +192,7 @@ approval time 和 decision。
   --external-evidence <external>/external-evidence.signed.json `
   --private-key <qualifier-private-key-path> `
   --trusted-external-public-key <trusted-external-public-key-path> `
+  --trusted-approval-public-key <trusted-approval-public-key-path> `
   --output <bundle>/qualification.json
 ```
 
@@ -190,11 +202,12 @@ approval time 和 decision。
 .\.venv\Scripts\python.exe -m scripts.durable_event_rollback_drill verify `
   --evidence <bundle>/qualification.json `
   --trusted-public-key <trusted-qualification-public-key-path> `
-  --trusted-external-public-key <trusted-external-public-key-path>
+  --trusted-external-public-key <trusted-external-public-key-path> `
+  --trusted-approval-public-key <trusted-approval-public-key-path>
 ```
 
 `qualify` 会把 local/external evidence 及所有 artifacts 复制到可移植 bundle，逐项校验
-内容和结构，再计算 checksum 并签名。`verify` 会重新验证签名、精确字段/phase/artifact
+内容和结构，再计算 checksum 并签名。`verify` 会重新验证三个 trust root、精确字段/phase/artifact
 集合、所有 checksum、release digest、PostgreSQL/effect/orchestrator/approval 不变量，以及
 顶层摘要与引用 external bundle 完全一致。qualification 还绑定整个 signed-external 文件
 的 SHA-256，并验证 `drill completion <= approval <= external attestation <= qualification`，

@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from framework.events.canonical import (
     BusinessContext,
     ProducerIdentity,
+    StoredEvent,
     canonical_json_bytes,
     checksum_for,
 )
@@ -1085,6 +1086,7 @@ def verify_rollback_evidence(
     allow_incomplete_local: bool = False,
     trusted_public_key: str | Path | None = None,
     trusted_external_public_key: str | Path | None = None,
+    trusted_approval_public_key: str | Path | None = None,
 ) -> dict[str, Any]:
     evidence_path = Path(path).resolve(strict=True)
     evidence = _read_json_object(evidence_path, "evidence")
@@ -1096,17 +1098,26 @@ def verify_rollback_evidence(
             trusted_external_public_key is not None,
             "trusted_external_public_key_required",
         )
+        _require(
+            trusted_approval_public_key is not None,
+            "trusted_approval_public_key_required",
+        )
         return _verify_qualification_evidence(
             evidence_path,
             evidence,
             trusted_public_key=trusted_public_key,
             trusted_external_public_key=trusted_external_public_key,
+            trusted_approval_public_key=trusted_approval_public_key,
         )
     _require(schema == EVIDENCE_SCHEMA, "evidence_schema_mismatch")
     _require(trusted_public_key is None, "local_evidence_must_not_use_trust_key")
     _require(
         trusted_external_public_key is None,
         "local_evidence_must_not_use_external_trust_key",
+    )
+    _require(
+        trusted_approval_public_key is None,
+        "local_evidence_must_not_use_approval_trust_key",
     )
     return _verify_local_evidence(
         evidence_path,
@@ -1121,15 +1132,18 @@ def qualify_rollback_evidence(
     external_evidence_path: str | Path,
     private_key_path: str | Path,
     trusted_external_public_key: str | Path,
+    trusted_approval_public_key: str | Path,
     output_path: str | Path,
 ) -> dict[str, Any]:
     local_path = Path(local_evidence_path).resolve(strict=True)
     external_path = Path(external_evidence_path).resolve(strict=True)
     local = verify_rollback_evidence(local_path, allow_incomplete_local=True)
     external_key = _load_public_key(trusted_external_public_key)
+    approval_key = _load_public_key(trusted_approval_public_key)
     external = _verify_external_evidence(
         external_path,
         trusted_public_key=external_key,
+        trusted_approval_public_key=approval_key,
     )
     _require(
         external["drill_id"] == local["drill_id"],
@@ -1148,11 +1162,7 @@ def qualify_rollback_evidence(
     )
     key = _load_private_key(private_key_path)
     public_key = key.public_key()
-    _require(
-        _public_key_fingerprint(public_key)
-        != _public_key_fingerprint(external_key),
-        "signing_authority_separation_missing",
-    )
+    _require_distinct_authorities(public_key, external_key, approval_key)
     generated_at = _utc_text(datetime.now(UTC))
     evidence: dict[str, Any] = {
         "schema": QUALIFICATION_EVIDENCE_SCHEMA,
@@ -1185,6 +1195,9 @@ def qualify_rollback_evidence(
             "external_public_key_fingerprint": _public_key_fingerprint(
                 external_key
             ),
+            "approval_public_key_fingerprint": _public_key_fingerprint(
+                approval_key
+            ),
         },
     }
     evidence["evidence_checksum"] = checksum_for(evidence)
@@ -1199,6 +1212,9 @@ def qualify_rollback_evidence(
         external_public_key_path=Path(trusted_external_public_key).resolve(
             strict=True
         ),
+        approval_public_key_path=Path(trusted_approval_public_key).resolve(
+            strict=True
+        ),
     )
     _materialize_qualification_bundle(
         target,
@@ -1208,12 +1224,14 @@ def qualify_rollback_evidence(
         evidence=evidence,
         trusted_public_key=public_key,
         trusted_external_public_key=external_key,
+        trusted_approval_public_key=approval_key,
     )
     return _verify_qualification_evidence(
         target,
         evidence,
         trusted_public_key=public_key,
         trusted_external_public_key=trusted_external_public_key,
+        trusted_approval_public_key=trusted_approval_public_key,
     )
 
 
@@ -1221,6 +1239,7 @@ def attest_external_evidence(
     *,
     evidence_path: str | Path,
     private_key_path: str | Path,
+    trusted_approval_public_key: str | Path,
     output_path: str | Path,
 ) -> dict[str, Any]:
     """Sign deployment evidence without granting the qualifier that authority."""
@@ -1228,12 +1247,18 @@ def attest_external_evidence(
     source = Path(evidence_path).resolve(strict=True)
     target = Path(output_path).resolve(strict=False)
     private_path = Path(private_key_path).resolve(strict=True)
-    _require(target not in {source, private_path}, "external_attestation_output_alias")
+    approval_public_path = Path(trusted_approval_public_key).resolve(strict=True)
+    _require(
+        target not in {source, private_path, approval_public_path},
+        "external_attestation_output_alias",
+    )
     _require(target.parent == source.parent, "external_attestation_output_must_share_bundle")
     _require(not target.exists(), "external_attestation_output_exists")
     unsigned = _read_json_object(source, "external_evidence")
     _require("attestation" not in unsigned, "external_evidence_already_attested")
     key = _load_private_key(private_path)
+    approval_key = _load_public_key(approval_public_path)
+    _require_distinct_authorities(key.public_key(), approval_key)
     attestation: dict[str, Any] = {
         "algorithm": EXTERNAL_ATTESTATION_ALGORITHM,
         "public_key_fingerprint": _public_key_fingerprint(key.public_key()),
@@ -1251,6 +1276,7 @@ def attest_external_evidence(
         verified = _verify_external_evidence(
             temporary,
             trusted_public_key=key.public_key(),
+            trusted_approval_public_key=approval_key,
         )
         _publish_new_file(
             temporary,
@@ -1321,6 +1347,7 @@ def _verify_external_evidence(
     path: Path,
     *,
     trusted_public_key: Ed25519PublicKey,
+    trusted_approval_public_key: Ed25519PublicKey,
 ) -> dict[str, Any]:
     evidence = _read_json_object(path, "external_evidence")
     attestation = evidence.pop("attestation", None)
@@ -1387,7 +1414,9 @@ def _verify_external_evidence(
     _verify_approval_artifact(
         evidence,
         artifact_paths["approval_record"],
+        trusted_public_key=trusted_approval_public_key,
     )
+    _require_distinct_authorities(trusted_public_key, trusted_approval_public_key)
     evidence["evidence_checksum"] = checksum
     _verify_external_attestation(
         evidence,
@@ -1404,6 +1433,7 @@ def _verify_qualification_evidence(
     *,
     trusted_public_key: str | Path | Ed25519PublicKey,
     trusted_external_public_key: str | Path | Ed25519PublicKey,
+    trusted_approval_public_key: str | Path | Ed25519PublicKey,
 ) -> dict[str, Any]:
     signature_text = evidence.pop("signature", None)
     checksum = evidence.pop("evidence_checksum", None)
@@ -1433,6 +1463,7 @@ def _verify_qualification_evidence(
     )
     key = _coerce_public_key(trusted_public_key)
     external_key = _coerce_public_key(trusted_external_public_key)
+    approval_key = _coerce_public_key(trusted_approval_public_key)
     signing = _required_mapping(evidence.get("signing"), "signing")
     _require(
         set(signing)
@@ -1440,6 +1471,7 @@ def _verify_qualification_evidence(
             "algorithm",
             "public_key_fingerprint",
             "external_public_key_fingerprint",
+            "approval_public_key_fingerprint",
         },
         "signing_fields_invalid",
     )
@@ -1454,9 +1486,11 @@ def _verify_qualification_evidence(
         "trusted_external_public_key_mismatch",
     )
     _require(
-        _public_key_fingerprint(key) != _public_key_fingerprint(external_key),
-        "signing_authority_separation_missing",
+        signing.get("approval_public_key_fingerprint")
+        == _public_key_fingerprint(approval_key),
+        "trusted_approval_public_key_mismatch",
     )
+    _require_distinct_authorities(key, external_key, approval_key)
     try:
         signature = base64.b64decode(
             _required_text(signature_text, "signature"),
@@ -1528,6 +1562,7 @@ def _verify_qualification_evidence(
     external = _verify_external_evidence(
         external_path,
         trusted_public_key=external_key,
+        trusted_approval_public_key=approval_key,
     )
     _require(local["evidence_checksum"] == local_ref.get("checksum"), "local_checksum_mismatch")
     _require(
@@ -1681,6 +1716,8 @@ def _verify_artifacts(
     artifacts: dict[str, Mapping[str, Any]] = {}
     artifact_paths: dict[str, Path] = {}
     resolved_paths: set[Path] = set()
+    file_identities: set[tuple[int, int]] = set()
+    _require_not_reparse_point(root, "evidence_artifact_root_reparse_point")
     resolved_root = root.resolve(strict=True)
     for item in value:
         _require(isinstance(item, Mapping), "evidence_artifact_invalid")
@@ -1696,7 +1733,13 @@ def _verify_artifacts(
             "artifact.path",
             absolute_reason="evidence_artifact_path_absolute",
         )
-        artifact = (resolved_root / relative).resolve(strict=True)
+        unresolved_artifact = resolved_root / relative
+        _require_path_components_not_reparse(
+            resolved_root,
+            unresolved_artifact,
+            "evidence_artifact_reparse_point",
+        )
+        artifact = unresolved_artifact.resolve(strict=True)
         _require(
             artifact.is_relative_to(resolved_root),
             "evidence_artifact_escaped_bundle",
@@ -1707,6 +1750,13 @@ def _verify_artifacts(
             "evidence_artifact_path_duplicate",
         )
         resolved_paths.add(artifact)
+        artifact_stat = artifact.stat()
+        file_identity = (int(artifact_stat.st_dev), int(artifact_stat.st_ino))
+        _require(
+            file_identity not in file_identities,
+            "evidence_artifact_file_alias",
+        )
+        file_identities.add(file_identity)
         artifact_paths[role] = artifact
         size = item.get("size_bytes")
         _require(
@@ -1783,24 +1833,57 @@ def _verify_external_artifact_contents(
     artifact_paths: Mapping[str, Path],
 ) -> None:
     postgresql = _required_mapping(evidence.get("postgresql"), "postgresql")
-    _verify_postgresql_snapshot_artifact(
+    _before_record, before_events = _verify_postgresql_snapshot_artifact(
         evidence,
         postgresql,
         artifact_paths["postgres_before_snapshot"],
         stage="before",
     )
-    _verify_postgresql_snapshot_artifact(
+    _after_record, after_events = _verify_postgresql_snapshot_artifact(
         evidence,
         postgresql,
         artifact_paths["postgres_after_snapshot"],
         stage="after",
+    )
+    preserved_count = _positive_int(
+        postgresql.get("preserved_event_count"),
+        "preserved_event_count",
+    )
+    _require(
+        len(before_events) == preserved_count,
+        "postgres_before_snapshot_count_mismatch",
+    )
+    _require(
+        len(after_events) == preserved_count + 1,
+        "postgres_after_snapshot_count_mismatch",
+    )
+    before_bytes = tuple(canonical_json_bytes(event.to_dict()) for event in before_events)
+    after_prefix_bytes = tuple(
+        canonical_json_bytes(event.to_dict())
+        for event in after_events[:preserved_count]
+    )
+    _require(
+        before_bytes == after_prefix_bytes,
+        "accepted_event_prefix_bytes_changed",
+    )
+    _require(
+        after_events[-1].stream_sequence
+        == _positive_int(
+            postgresql.get("next_accepted_sequence"),
+            "next_accepted_sequence",
+        ),
+        "postgres_next_event_sequence_mismatch",
     )
     _verify_external_effect_artifact(
         evidence,
         artifact_paths["external_effect_audit"],
     )
     _verify_orchestrator_artifacts(evidence, artifact_paths)
-    _verify_projection_artifacts(evidence, artifact_paths)
+    _verify_projection_artifacts(
+        evidence,
+        artifact_paths,
+        expected_events=before_events,
+    )
     _verify_negative_test_artifact(
         evidence,
         artifact_paths["schema_security_negative_tests"],
@@ -1813,7 +1896,7 @@ def _verify_postgresql_snapshot_artifact(
     path: Path,
     *,
     stage: str,
-) -> None:
+) -> tuple[dict[str, Any], tuple[StoredEvent, ...]]:
     record = _read_json_object(path, f"postgres_{stage}_snapshot")
     source_ref, source_checksum = _normalized_source_proof(
         record,
@@ -1838,8 +1921,53 @@ def _verify_postgresql_snapshot_artifact(
         "migration_version": postgresql.get("migration_version"),
         "stream_id": postgresql.get("stream_id"),
         "ledgers": ledgers,
+        "release_digest": evidence.get(
+            "candidate_release_digest"
+            if stage == "before"
+            else "rollback_release_digest"
+        ),
+        "captured_at": record.get("captured_at"),
+        "events": record.get("events"),
     }
+    captured_at = _parse_utc_text(record.get("captured_at"), "captured_at")
+    _require_not_future(captured_at, "captured_at")
+    rows = record.get("events")
+    _require(isinstance(rows, list) and rows, f"postgres_{stage}_events_empty")
+    events: list[StoredEvent] = []
+    event_ids: set[str] = set()
+    for expected_sequence, row in enumerate(rows, start=1):
+        _require(isinstance(row, Mapping), f"postgres_{stage}_event_invalid")
+        try:
+            event = StoredEvent.from_dict(row, verify_checksum=True)
+        except Exception as error:
+            raise RollbackDrillInvariantError(
+                f"postgres_{stage}_event_integrity_invalid"
+            ) from error
+        _require(
+            dict(row) == event.to_dict(),
+            f"postgres_{stage}_event_not_canonical",
+        )
+        _require(
+            event.stream_id == postgresql.get("stream_id"),
+            f"postgres_{stage}_event_stream_mismatch",
+        )
+        _require(
+            event.stream_sequence == expected_sequence,
+            f"postgres_{stage}_event_sequence_gap",
+        )
+        _require(
+            event.event_id not in event_ids,
+            f"postgres_{stage}_event_id_duplicate",
+        )
+        event_ids.add(event.event_id)
+        events.append(event)
+    computed_source_checksum = checksum_for([event.to_dict() for event in events])
+    _require(
+        source_checksum == computed_source_checksum,
+        f"postgres_{stage}_source_checksum_mismatch",
+    )
     if stage == "before":
+        prefix_checksum = checksum_for([event.to_dict() for event in events])
         expected = {
             **common,
             "event_count": postgresql.get("preserved_event_count"),
@@ -1848,7 +1976,18 @@ def _verify_postgresql_snapshot_artifact(
             ),
             "watermark": postgresql.get("watermark_before"),
         }
+        _require(
+            prefix_checksum == postgresql.get("preserved_prefix_checksum_before"),
+            "postgres_before_prefix_checksum_mismatch",
+        )
     else:
+        preserved_count = _positive_int(
+            postgresql.get("preserved_event_count"),
+            "preserved_event_count",
+        )
+        prefix_checksum = checksum_for(
+            [event.to_dict() for event in events[:preserved_count]]
+        )
         expected = {
             **common,
             "event_count": postgresql.get("watermark_after"),
@@ -1868,7 +2007,16 @@ def _verify_postgresql_snapshot_artifact(
             ),
             "crash_recovery_passed": postgresql.get("crash_recovery_passed"),
         }
+        _require(
+            prefix_checksum == postgresql.get("preserved_prefix_checksum_after"),
+            "postgres_after_prefix_checksum_mismatch",
+        )
     _require(record == expected, f"postgres_{stage}_snapshot_content_mismatch")
+    _require(
+        len(events) == _positive_int(record.get("event_count"), "event_count"),
+        f"postgres_{stage}_event_count_mismatch",
+    )
+    return record, tuple(events)
 
 
 def _verify_external_effect_artifact(
@@ -1976,15 +2124,38 @@ def _verify_orchestrator_artifacts(
 def _verify_projection_artifacts(
     evidence: Mapping[str, Any],
     artifact_paths: Mapping[str, Path],
+    *,
+    expected_events: Sequence[StoredEvent],
 ) -> None:
     postgresql = _required_mapping(evidence.get("postgresql"), "postgresql")
     records: dict[str, dict[str, Any]] = {}
+    projections: dict[str, tuple[StoredEvent, ...]] = {}
     for role, release_field in (
         ("candidate_projection", "candidate_release_digest"),
         ("rollback_projection", "rollback_release_digest"),
     ):
         record = _read_json_object(artifact_paths[role], role)
         source_ref, source_checksum = _normalized_source_proof(record, role)
+        rows = record.get("events")
+        _require(isinstance(rows, list) and rows, f"{role}_events_empty")
+        events: list[StoredEvent] = []
+        for expected_sequence, row in enumerate(rows, start=1):
+            _require(isinstance(row, Mapping), f"{role}_event_invalid")
+            try:
+                event = StoredEvent.from_dict(row, verify_checksum=True)
+            except Exception as error:
+                raise RollbackDrillInvariantError(
+                    f"{role}_event_integrity_invalid"
+                ) from error
+            _require(
+                event.stream_sequence == expected_sequence,
+                f"{role}_event_sequence_invalid",
+            )
+            events.append(event)
+        projection_checksum = checksum_for([event.to_dict() for event in events])
+        sequence_checksum = checksum_for(
+            [event.stream_sequence for event in events]
+        )
         expected = {
             "schema": PROJECTION_EVIDENCE_SCHEMA,
             "drill_id": evidence.get("drill_id"),
@@ -1993,12 +2164,11 @@ def _verify_projection_artifacts(
             "source_checksum": source_checksum,
             "release_digest": evidence.get(release_field),
             "stream_id": postgresql.get("stream_id"),
-            "high_watermark": postgresql.get("watermark_after"),
-            "event_count": postgresql.get("watermark_after"),
-            "ordered_sequence_checksum": record.get(
-                "ordered_sequence_checksum"
-            ),
-            "projection_checksum": record.get("projection_checksum"),
+            "high_watermark": postgresql.get("watermark_before"),
+            "event_count": postgresql.get("preserved_event_count"),
+            "ordered_sequence_checksum": sequence_checksum,
+            "projection_checksum": projection_checksum,
+            "events": record.get("events"),
         }
         for field in ("ordered_sequence_checksum", "projection_checksum"):
             checksum = _required_text(record.get(field), f"{role}.{field}")
@@ -2006,12 +2176,10 @@ def _verify_projection_artifacts(
                 _SHA256.fullmatch(checksum) is not None,
                 f"{role}_{field}_invalid",
             )
-        _require(
-            source_checksum == record.get("projection_checksum"),
-            f"{role}_source_checksum_mismatch",
-        )
+        _require(source_checksum == projection_checksum, f"{role}_source_checksum_mismatch")
         _require(record == expected, f"{role}_content_mismatch")
         records[role] = record
+        projections[role] = tuple(events)
     for field in (
         "high_watermark",
         "event_count",
@@ -2022,6 +2190,15 @@ def _verify_projection_artifacts(
             records["candidate_projection"].get(field)
             == records["rollback_projection"].get(field),
             f"projection_{field}_mismatch",
+        )
+    expected_bytes = tuple(
+        canonical_json_bytes(event.to_dict()) for event in expected_events
+    )
+    for role, events in projections.items():
+        _require(
+            tuple(canonical_json_bytes(event.to_dict()) for event in events)
+            == expected_bytes,
+            f"{role}_snapshot_mismatch",
         )
 
 
@@ -2085,20 +2262,71 @@ def _normalized_source_proof(
 def _verify_approval_artifact(
     evidence: Mapping[str, Any],
     path: Path,
+    *,
+    trusted_public_key: Ed25519PublicKey,
 ) -> None:
     record = _read_json_object(path, "approval_record")
     approval = _required_mapping(evidence.get("approval"), "approval")
+    artifact_checksums = {
+        _required_text(item.get("role"), "artifact.role"): _required_text(
+            item.get("checksum"),
+            "artifact.checksum",
+        )
+        for item in evidence.get("artifacts", ())
+        if isinstance(item, Mapping) and item.get("role") != "approval_record"
+    }
     expected = {
         "schema": APPROVAL_RECORD_SCHEMA,
         "drill_id": evidence.get("drill_id"),
         "candidate_release_digest": evidence.get("candidate_release_digest"),
         "rollback_release_digest": evidence.get("rollback_release_digest"),
+        "drill_completed_at": evidence.get("drill_completed_at"),
         "operator_id": approval.get("operator_id"),
         "approver_id": approval.get("approver_id"),
         "approved_at": approval.get("approved_at"),
         "decision": "approved",
+        "evidence_summary_checksum": checksum_for(_approval_summary(evidence)),
+        "artifact_checksums": artifact_checksums,
     }
     _require(record == expected, "approval_record_content_mismatch")
+    _require(
+        approval.get("record_checksum") == _sha256_file(path),
+        "approval_record_checksum_mismatch",
+    )
+    _require(
+        approval.get("public_key_fingerprint")
+        == _public_key_fingerprint(trusted_public_key),
+        "trusted_approval_public_key_mismatch",
+    )
+    try:
+        signature = base64.b64decode(
+            _required_text(approval.get("signature"), "approval.signature"),
+            validate=True,
+        )
+        trusted_public_key.verify(signature, path.read_bytes())
+    except (ValueError, InvalidSignature) as error:
+        raise RollbackDrillInvariantError("approval_signature_invalid") from error
+
+
+def _approval_summary(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    artifacts = [
+        dict(item)
+        for item in evidence.get("artifacts", ())
+        if isinstance(item, Mapping) and item.get("role") != "approval_record"
+    ]
+    artifacts.sort(key=lambda item: str(item.get("role")))
+    return {
+        "schema": evidence.get("schema"),
+        "drill_id": evidence.get("drill_id"),
+        "drill_completed_at": evidence.get("drill_completed_at"),
+        "candidate_release_digest": evidence.get("candidate_release_digest"),
+        "rollback_release_digest": evidence.get("rollback_release_digest"),
+        "postgresql": evidence.get("postgresql"),
+        "external_effect": evidence.get("external_effect"),
+        "orchestrator": evidence.get("orchestrator"),
+        "external_gates": evidence.get("external_gates"),
+        "artifacts": artifacts,
+    }
 
 
 def _verify_postgresql_evidence(value: Mapping[str, Any]) -> None:
@@ -2301,6 +2529,9 @@ def _verify_approval(
         "approved_at",
         "decision",
         "record_ref",
+        "record_checksum",
+        "public_key_fingerprint",
+        "signature",
     }
     _require(set(value) == required, "approval_fields_invalid")
     operator_id = _required_text(value.get("operator_id"), "operator_id")
@@ -2314,6 +2545,19 @@ def _verify_approval(
     _require_not_future(approved_at, "approved_at")
     _require(value.get("decision") == "approved", "rollback_not_approved")
     _require_reference(value.get("record_ref"), "approval.record_ref")
+    for field in ("record_checksum", "public_key_fingerprint"):
+        _require(
+            _SHA256.fullmatch(_required_text(value.get(field), f"approval.{field}"))
+            is not None,
+            f"approval_{field}_invalid",
+        )
+    try:
+        base64.b64decode(
+            _required_text(value.get("signature"), "approval.signature"),
+            validate=True,
+        )
+    except ValueError as error:
+        raise RollbackDrillInvariantError("approval_signature_invalid") from error
 
 
 def _validate_qualification_target(
@@ -2323,6 +2567,7 @@ def _validate_qualification_target(
     external_path: Path,
     private_key_path: Path,
     external_public_key_path: Path,
+    approval_public_key_path: Path,
 ) -> None:
     bundle_root = target.parent
     _require(
@@ -2332,6 +2577,7 @@ def _validate_qualification_target(
             external_path,
             private_key_path,
             external_public_key_path,
+            approval_public_key_path,
         },
         "qualification_output_alias",
     )
@@ -2353,6 +2599,7 @@ def _materialize_qualification_bundle(
     evidence: Mapping[str, Any],
     trusted_public_key: Ed25519PublicKey,
     trusted_external_public_key: Ed25519PublicKey,
+    trusted_approval_public_key: Ed25519PublicKey,
 ) -> None:
     root = target.parent
     root.parent.mkdir(parents=True, exist_ok=True)
@@ -2388,6 +2635,7 @@ def _materialize_qualification_bundle(
             _read_json_object(temporary_target, "qualification_evidence"),
             trusted_public_key=trusted_public_key,
             trusted_external_public_key=trusted_external_public_key,
+            trusted_approval_public_key=trusted_approval_public_key,
         )
         _publish_new_directory(
             temporary_root,
@@ -2472,10 +2720,55 @@ def _portable_relative_path(
         ".." not in posix.parts and ".." not in windows.parts,
         f"{field_name}_traversal",
     )
+    _require(":" not in text, f"{field_name}_alternate_data_stream")
+    parts = tuple(
+        part
+        for part in {*posix.parts, *windows.parts}
+        if part not in {"", ".", "\\", "/"}
+    )
+    for part in parts:
+        _require(
+            not part.endswith((" ", ".")),
+            f"{field_name}_windows_trailing_character",
+        )
+        basename = part.rstrip(" .").split(".", 1)[0].upper()
+        _require(
+            basename not in _WINDOWS_RESERVED_NAMES,
+            f"{field_name}_windows_reserved_name",
+        )
+    if field_name.endswith("artifact.path"):
+        _require(text not in {".", "./", ".\\"}, f"{field_name}_invalid")
     return Path(text)
 
 
+def _require_not_reparse_point(path: Path, reason: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise RollbackDrillInvariantError(reason) from error
+    is_reparse = path.is_symlink()
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if reparse_flag:
+        is_reparse = is_reparse or bool(attributes & reparse_flag)
+    _require(not is_reparse, reason)
+
+
+def _require_path_components_not_reparse(
+    root: Path,
+    path: Path,
+    reason: str,
+) -> None:
+    current = root
+    _require_not_reparse_point(current, reason)
+    for part in path.relative_to(root).parts:
+        current = current / part
+        _require_not_reparse_point(current, reason)
+
+
 def _read_json_object(path: Path, label: str) -> dict[str, Any]:
+    _require_not_reparse_point(path, f"{label}_reparse_point")
+    _require(path.is_file(), f"{label}_not_regular_file")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -2616,6 +2909,14 @@ def _coerce_public_key(
     if isinstance(value, Ed25519PublicKey):
         return value
     return _load_public_key(value)
+
+
+def _require_distinct_authorities(*keys: Ed25519PublicKey) -> None:
+    fingerprints = {_public_key_fingerprint(key) for key in keys}
+    _require(
+        len(fingerprints) == len(keys),
+        "signing_authority_separation_missing",
+    )
 
 
 def _public_key_fingerprint(key: Ed25519PublicKey) -> str:
@@ -3193,6 +3494,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     attest.add_argument("--evidence", required=True)
     attest.add_argument("--private-key", required=True)
+    attest.add_argument("--trusted-approval-public-key", required=True)
     attest.add_argument("--output", required=True)
     qualify = commands.add_parser(
         "qualify",
@@ -3202,6 +3504,7 @@ def _build_parser() -> argparse.ArgumentParser:
     qualify.add_argument("--external-evidence", required=True)
     qualify.add_argument("--private-key", required=True)
     qualify.add_argument("--trusted-external-public-key", required=True)
+    qualify.add_argument("--trusted-approval-public-key", required=True)
     qualify.add_argument("--output", required=True)
     verify = commands.add_parser(
         "verify",
@@ -3220,6 +3523,10 @@ def _build_parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--trusted-external-public-key",
         help="required independent deployment-attestation public key",
+    )
+    verify.add_argument(
+        "--trusted-approval-public-key",
+        help="required independent rollback-approval public key",
     )
     return parser
 
@@ -3251,6 +3558,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             evidence = attest_external_evidence(
                 evidence_path=args.evidence,
                 private_key_path=args.private_key,
+                trusted_approval_public_key=args.trusted_approval_public_key,
                 output_path=args.output,
             )
             evidence_path = Path(args.output).resolve()
@@ -3270,6 +3578,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 external_evidence_path=args.external_evidence,
                 private_key_path=args.private_key,
                 trusted_external_public_key=args.trusted_external_public_key,
+                trusted_approval_public_key=args.trusted_approval_public_key,
                 output_path=args.output,
             )
             evidence_path = Path(args.output).resolve()
@@ -3279,6 +3588,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 allow_incomplete_local=args.allow_incomplete_local,
                 trusted_public_key=args.trusted_public_key,
                 trusted_external_public_key=args.trusted_external_public_key,
+                trusted_approval_public_key=args.trusted_approval_public_key,
             )
             evidence_path = Path(args.evidence).resolve()
     except Exception as error:
