@@ -199,6 +199,24 @@ def test_extracted_baggage_is_immutable() -> None:
         extracted.baggage["safe"] = "changed"  # type: ignore[index]
 
 
+def test_extracted_context_defaults_do_not_share_baggage() -> None:
+    span_context = propagation_module.W3CSpanContext.root()
+    first_span = propagation_module.ExtractedSpanContext(span_context)
+    second_span = propagation_module.ExtractedSpanContext(span_context)
+    trace_context = TraceContext.root(run_id="run-default-baggage")
+    first_trace = propagation_module.ExtractedTraceContext(trace_context)
+    second_trace = propagation_module.ExtractedTraceContext(trace_context)
+
+    for first, second in (
+        (first_span.baggage, second_span.baggage),
+        (first_trace.baggage, second_trace.baggage),
+    ):
+        assert dict(first) == {}
+        assert first is not second
+        with pytest.raises(TypeError):
+            first["safe"] = "changed"  # type: ignore[index]
+
+
 def test_noop_adapter_preserves_trace_facade_when_otel_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

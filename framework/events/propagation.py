@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import re
 from types import MappingProxyType
@@ -230,7 +230,7 @@ class TracePropagationPolicy:
 class ExtractedSpanContext:
     context: W3CSpanContext
     remote_context: W3CSpanContext | None = None
-    baggage: Mapping[str, str] = MappingProxyType({})
+    baggage: Mapping[str, str] = field(default_factory=dict)
     accepted_remote: bool = False
     restarted: bool = False
     diagnostics: tuple[str, ...] = ()
@@ -258,7 +258,7 @@ class ExtractedSpanContext:
 class ExtractedTraceContext:
     context: TraceContext
     remote_context: TraceContext | None = None
-    baggage: Mapping[str, str] = MappingProxyType({})
+    baggage: Mapping[str, str] = field(default_factory=dict)
     accepted_remote: bool = False
     restarted: bool = False
     diagnostics: tuple[str, ...] = ()
