@@ -5,7 +5,6 @@ from hashlib import sha256
 import pytest
 
 from infrastructure.storage.artifacts import ArtifactRef, LocalJsonArtifactIndexStore
-from infrastructure.storage.events import EventRecord, LocalJsonEventStore
 from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore
 from infrastructure.storage.metrics import LocalStorageMetricsCollector, StorageMetrics
 
@@ -72,15 +71,21 @@ def test_local_storage_metrics_collector_counts_local_records(tmp_path) -> None:
             created_at=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
         )
     )
-    LocalJsonEventStore(tmp_path / "_records" / "events").append_event(
-        EventRecord(
-            event_id="event-1",
-            run_id="metrics-run",
-            workflow_id="daily",
-            step_id="draft_report",
-            event_type="workflow_step_completed",
-            timestamp=datetime(2026, 5, 11, 1, 0, tzinfo=UTC),
+    legacy_events_root = tmp_path / "_records" / "events"
+    legacy_events_root.mkdir(parents=True)
+    (legacy_events_root / "metrics-run.jsonl").write_text(
+        json.dumps(
+            {
+                "event_id": "event-1",
+                "run_id": "metrics-run",
+                "workflow_id": "daily",
+                "step_id": "draft_report",
+                "event_type": "workflow_step_completed",
+                "timestamp": "2026-05-11T01:00:00Z",
+            }
         )
+        + "\n",
+        encoding="utf-8",
     )
     LocalJsonLineageStore(tmp_path / "_records" / "lineage").record(
         LineageRef(

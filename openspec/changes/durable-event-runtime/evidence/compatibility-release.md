@@ -11,9 +11,10 @@ OpenSpec task: 9.3
 - Durable run-query cutover commit: `dc47ce50`
 - Tenant-scoped operator surfaces commit: `f6bce48f`
 - This release is the single bounded migration release allowed by the PRD.
-  Deprecated framework imports, `EventRecorder`/trace facades, and callable
-  subscriber adapters remain available only for this release and are deletion
-  targets in task 9.4 after the rollback and migration gates pass.
+  The following deletion batch removed the expired framework publisher/replay/
+  callable shims, framework `EventRecord`, the storage flat `EventRecord`, and
+  the writable `LocalJsonEventStore`. Historical JSONL remains readable only
+  through the bounded migration readers/upcasters.
 
 ## Read cutover
 
@@ -40,18 +41,22 @@ OpenSpec task: 9.3
 - Framework `EventRecord`, runner-local event stores/models/factory, post-run
   indexing, and replay-to-live-bus were removed before this release; they are
   protected by architecture/import regression tests and are not reintroduced.
-- Remaining compatibility surfaces are explicitly inventoried for task 9.4:
-  `WorkflowEventRecorderFacade`, duplicate Event/Envelope context projection,
-  callable subscriber registration, `FunctionEventSubscriber`, `EventReplay`,
-  `EventBus` alias, and bus-only `EventPublisher`.
+- Architecture guards now require the framework and storage `EventRecord`
+  definitions, public exports, writable JSONL store, `EventReplay`,
+  `EventPublisher`, `FunctionEventSubscriber`, and workflow `event_bus`
+  parameter chain to remain absent. The canonical workflow recorder facade is
+  retained under its current non-legacy contract.
 - External consumer sign-off and deployment observation are not fabricated by
-  repository tests. Task 9.4 remains gated until the rollback drill and final
-  migration audit evidence prove the PRD exit criteria.
+  repository tests. The owned-code deletion scope in task 9.4 is complete;
+  task 9.5 and the final release gate remain blocked on deployment rollback
+  evidence.
 
 ## Verification
 
 The implementation batch includes regression coverage for fixed-watermark
 pagination, stream/tenant/cursor validation, store unavailability, JSONL
 deletion/tampering, strict non-event artifact integrity, CLI durable fixtures,
-and API/CLI/MCP compatibility. Final command results are appended during task
-10.5 after repository-wide verification completes.
+API/CLI/MCP compatibility, and absence of all expired record/writer exports.
+The deletion-focused storage and architecture suites passed before task 9.4
+was marked complete. Final repository-wide command results remain part of task
+10.5.

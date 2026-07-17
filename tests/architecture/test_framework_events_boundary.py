@@ -132,6 +132,20 @@ def test_legacy_postgres_event_writer_is_removed_but_migration_reader_remains() 
     assert "FROM workflow_events" in migration_reader
 
 
+def test_legacy_storage_event_record_and_jsonl_writer_are_removed() -> None:
+    events_root = PROJECT_ROOT / "infrastructure" / "storage" / "events"
+    events_init = (events_root / "__init__.py").read_text(encoding="utf-8")
+    migration_reader = (events_root / "migration_readers.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert not (events_root / "models.py").exists()
+    assert not (events_root / "local_json.py").exists()
+    assert '"EventRecord"' not in events_init
+    assert '"LocalJsonEventStore"' not in events_init
+    assert "def iter_jsonl_records" in migration_reader
+
+
 def _imported_modules(tree: ast.AST) -> list[str]:
     modules: list[str] = []
     for node in ast.walk(tree):

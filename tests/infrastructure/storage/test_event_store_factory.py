@@ -18,7 +18,6 @@ from framework.events.runtime.replay_engine import (
 )
 from infrastructure.storage.events import (
     DurableEventStorage,
-    LocalJsonEventStore,
     PostgresReplayCheckpointStore,
     SQLiteEventStore,
     SQLiteRecordedActivityStore,
@@ -285,14 +284,3 @@ def test_durable_storage_factory_selects_postgres_without_memory_fallback(
     assert isinstance(composition.replay_checkpoint_store, FakePostgresDurableEventStore)
     assert composition.event_store.dsn == "postgresql://example/test"
     assert composition.replay_checkpoint_store.dsn == "postgresql://example/test"
-
-
-def test_jsonl_store_is_explicit_legacy_compatibility_not_factory_default(
-    tmp_path: Path,
-) -> None:
-    durable = event_store_from_env(artifact_root=tmp_path, env={})
-    legacy = LocalJsonEventStore(tmp_path / "legacy-jsonl")
-
-    assert isinstance(durable, SQLiteEventStore)
-    assert not isinstance(durable, LocalJsonEventStore)
-    assert legacy.root == tmp_path / "legacy-jsonl"
