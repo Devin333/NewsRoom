@@ -1,0 +1,1889 @@
+{
+  "schema": "newsroom.golden-corpus-snapshot/v1",
+  "golden_set_checksum": "sha256:083d3e9d0ab38076884a219a3d18025b47ec662bdd95152be7fbca82c3487e37",
+  "source_documents": [
+    {
+      "paper_id": "1312.6114",
+      "source_hash": "aade6b4c1f34dfc8216241c52e1c5463db1c31377aa735d53cc3413d2e27de53",
+      "document_checksum": "sha256:7b2759ea47bf8b3f9337ec7554ed9b7f54f140fefaed984f58316e495ddd854b",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://1312.6114/latex"
+      ]
+    },
+    {
+      "paper_id": "1505.04597",
+      "source_hash": "a3172b2124f38e260dc2c7ed968d87c31bc94dbc19a42a7ab3dcbd7534319c44",
+      "document_checksum": "sha256:c9ed329ef544a789e1987698a4be30deef51545de667721bbf6ecd3731c5795a",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://1505.04597/pdf"
+      ]
+    },
+    {
+      "paper_id": "1706.03762",
+      "source_hash": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+      "document_checksum": "sha256:ca79a6e8daea099abf10ce94007f079cb5a5896a57bff0472a9fc876baab0390",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://1706.03762/pdf"
+      ]
+    },
+    {
+      "paper_id": "1910.10683",
+      "source_hash": "500e50fdddf607b26dcd2071aee0b962c21737e20b18e8b34ecb3dd34b7deefc",
+      "document_checksum": "sha256:bc1bf0ed2b80c83f99468fa0919e28350fc989a6806f81e689c4ee5c90087d5c",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://1910.10683/latex"
+      ]
+    },
+    {
+      "paper_id": "2002.08909",
+      "source_hash": "418a2ee72f4aaa295e6b5e4bc36306eb31110313e7418d2bb0538da92151d9a5",
+      "document_checksum": "sha256:f5f6dc5fbe69c61cb18ed15f18cdd3613ad0e93a6a6ab75e06aad9fb9c45085f",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2002.08909/latex"
+      ]
+    },
+    {
+      "paper_id": "2005.11401",
+      "source_hash": "65626b55d875cd69478172dd3d9346de60ddf32f1d04cf8a9808a5668adf7b34",
+      "document_checksum": "sha256:79b873212a38b4c0d0845d4717f77762e3548c2a2d59e2a0245d11c72a1ab1c8",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2005.11401/latex"
+      ]
+    },
+    {
+      "paper_id": "2005.14165",
+      "source_hash": "79c1afc60beccb0bd6d2f1362bb214e4bbda16e0dbc80c1b37d3b172049d5021",
+      "document_checksum": "sha256:cbb0d832dcfae029d422800ef82b53365de3e9d8cd2bd0a7ff16ae5411a6dd0f",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2005.14165/latex"
+      ]
+    },
+    {
+      "paper_id": "2006.11239",
+      "source_hash": "aee5e07a802e8dfd2a386374c94fd61d1d056cb7e1e0fec4f28e8120ff5d8505",
+      "document_checksum": "sha256:096ff4fa2692f847929dc3bf2e3095b63d7c6f23e1e0ae1a1576e226ad2a18bd",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2006.11239/pdf"
+      ]
+    },
+    {
+      "paper_id": "2010.11929",
+      "source_hash": "43ee59f7cc943bb373e28a6d166fe2d16461be0ff0e483939949e16a1e52f3ea",
+      "document_checksum": "sha256:1b4e77eed1d6213c7298cb0a03f9b0fbe24562f71b61d1db5b455dc02bbb6e71",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2010.11929/latex"
+      ]
+    },
+    {
+      "paper_id": "2103.00020",
+      "source_hash": "6478b6e571a7d6fcd846d8ef77bfd60c285f1986abb8f475eedc43de403074f5",
+      "document_checksum": "sha256:8cc9c4c174da24978f1cfdfee7cdc4d9e803ec54b8698efa036cc75355ef3619",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2103.00020/pdf"
+      ]
+    },
+    {
+      "paper_id": "2105.05233",
+      "source_hash": "92d3c62593814f00ec34cba18c78f3ac5b3a9a006ee4771c224b83296cb79de3",
+      "document_checksum": "sha256:481d1d7ac23cdadb109c3abce532487d40a17489ddecfe3287930c69118d4c4d",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2105.05233/latex"
+      ]
+    },
+    {
+      "paper_id": "2111.06377",
+      "source_hash": "9f8387249e60e5f4e58988fd18b1e43e02a1646f2a3bf748db2318dd08d6214c",
+      "document_checksum": "sha256:a5be4673d8ff2d3c493f04cfa6003813bb61a40a4d48752cda3a670d3d2a15cb",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2111.06377/latex"
+      ]
+    },
+    {
+      "paper_id": "2112.10752",
+      "source_hash": "cf7f4785e3010fb19b000d7b088f42ad37f433cc6fc063f7c925609b5e824782",
+      "document_checksum": "sha256:afa6e01206a044b362b8d419305a77fb212e2e99699eff10f282cd139ec971a5",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2112.10752/latex"
+      ]
+    },
+    {
+      "paper_id": "2201.11903",
+      "source_hash": "7d9f878c23b460e4566aa4ec9201b1abfb3b8faefb2b1356e411cb90fef72a12",
+      "document_checksum": "sha256:d2d065fd0a7d3e5da003552a68dd84b59039f67de73f4a37cd8bd9872ccc588e",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2201.11903/pdf"
+      ]
+    },
+    {
+      "paper_id": "2208.03299",
+      "source_hash": "a409eda3f6cd19f40a0938d7f989262e54b0bb0bac1837fb762648dc8b67ee5c",
+      "document_checksum": "sha256:aa12b5cbfb318bbdebd542dfc06adf327fdc876be03f44d51cecb890998cd0e5",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2208.03299/latex"
+      ]
+    },
+    {
+      "paper_id": "2302.13971",
+      "source_hash": "a2295f429b5e15cf53a16ab6dfe240a96c96a2ed7ca66e6f0785c196761c5b28",
+      "document_checksum": "sha256:c11d080989098ef23feb0789a9f0474ad1c2fbbc067bb2498bb1042df915f5f2",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2302.13971/latex"
+      ]
+    },
+    {
+      "paper_id": "2303.11366",
+      "source_hash": "d70b771f527d912ce48da430ccd697fb09aaeabbfbfda404441943d398550304",
+      "document_checksum": "sha256:ce26dfb4564de05e1cecf087537c7387d71cd3d47403c695174fc92b2a03c4a3",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2303.11366/latex"
+      ]
+    },
+    {
+      "paper_id": "2304.03442",
+      "source_hash": "eac665ea48f6665bd9874e19f27b5654fe1630c6a2844492a888ab021a7049e9",
+      "document_checksum": "sha256:fa3df1078c07a4a332bc21d7b1e3c447f651a98d126b61826169e190033db2ea",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2304.03442/latex"
+      ]
+    },
+    {
+      "paper_id": "2305.18290",
+      "source_hash": "750054a6d13d9f79559d6defbfa68432e2a8c8959f0b7e7e37c622c1740653cc",
+      "document_checksum": "sha256:8e6b3186d7d53c67476db21a17eaabbd1871d9e315c38d744955789b56d7b217",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2305.18290/latex"
+      ]
+    },
+    {
+      "paper_id": "2308.08155",
+      "source_hash": "585146ab731f83a942c51247b6861dc35f20c0abdde424fd0d21a23091f22bc8",
+      "document_checksum": "sha256:1ac3b987b39f1827482227b3ab260f705b78ff3c057217fb2fb1cca357e427c1",
+      "document_checksum_scope": "research-document-content/v1",
+      "source_refs": [
+        "arxiv://2308.08155/latex"
+      ]
+    }
+  ],
+  "chunks": [
+    {
+      "chunk_id": "chunk_0ba27e6ebafb",
+      "paper_id": "2303.11366",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_b802cb43bd1f",
+      "section_title": "Reasoning: HotpotQA",
+      "section_role": [],
+      "section_index": 5,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": true,
+      "proposition_quality": "unknown",
+      "content": "Results\nReflexion outperforms all baseline approaches by significant margins over several\nlearning steps. Furthermore, ReAct-only, CoT-only, and CoT (GT)-only implementations\nfail to probabilistically improve on any tasks, meaning that no failed\ntasks from the first trial from any of the baseline approaches were able to be solved\nin subsequent trials using a temperature of 0.7\nIn the Reflexion runs, we allowed the agent to gather\nexperience and retry on failed tasks until it produced 3 consecutive failed attempts\non the particular task. Naturally, the CoT (GT) achieved higher accuracy scores\nas it was given access to the ground truth context of the question. Still,\nthe CoT (GT) agent is unable to correctly infer the correct answer for 39\\\nthe questions, but Reflexion helps the agent to correct its mistakes without\naccess to the ground truth answer to improve its accuracy by 14\\",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 4,
+        "needs_proposition_decomposition": false,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 8,
+          "end": 890
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 7,
+            "origin_chunk_id": "chunk_8653977437ce",
+            "origin_source_locator": "arxiv://2303.11366/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2303.11366/latex",
+        "source_locator": "arxiv://2303.11366/latex",
+        "semantic_key": "chunk_semantic_16a2be76b8b8",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "reasoning: hotpotqa",
+          "source_locator": "arxiv://2303.11366/latex",
+          "content_hash": "76c1f556edda29a4"
+        },
+        "content_hash": "76c1f556edda29a4"
+      }
+    },
+    {
+      "chunk_id": "chunk_13b6277eb040",
+      "paper_id": "2304.03442",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_b5cf73d17886",
+      "section_title": "Evaluation Procedure",
+      "section_role": [
+        "experiment"
+      ],
+      "section_index": 27,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "Participants had access to all information stored in the agent's memory stream.\nThe study followed a within-subjects design, where 100 participants compared interview responses generated by four different agent architectures and a human-authored condition for the same agent. The experiment displayed one randomly chosen question from each of the five question categories, along with the agent's responses generated from all conditions. The evaluators ranked the believability of the conditions from most to least believable.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 3,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 80,
+          "end": 525
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 79,
+            "origin_chunk_id": "chunk_ddae8b919103",
+            "origin_source_locator": "arxiv://2304.03442/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2304.03442/latex",
+        "source_locator": "arxiv://2304.03442/latex",
+        "semantic_key": "chunk_semantic_89fc484a4c0e",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "evaluation procedure",
+          "source_locator": "arxiv://2304.03442/latex",
+          "content_hash": "ec24d54c1d9ce8f6"
+        },
+        "content_hash": "ec24d54c1d9ce8f6"
+      }
+    },
+    {
+      "chunk_id": "chunk_1d66a944e3b4",
+      "paper_id": "2010.11929",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_37c7da940f05",
+      "section_title": "Pre-training Data Requirements",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 7,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": true,
+      "figure_id": "fig_b69bbc1cf6e4",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "This result reinforces the intuition that the convolutional inductive bias is useful for smaller datasets, but for larger ones, learning the relevant patterns directly from data is sufficient, even beneficial.\nOverall, the few-shot results on ImageNet (Figure~fig:jft_amount_of_data), as well as the low-data results on VTAB (Table~tbl:best_results) seem promising for very low-data transfer. Further analysis of few-shot properties of is an exciting direction of future work.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 4,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [
+          {
+            "kind": "figure",
+            "label": "ure",
+            "text_ref": "Figure",
+            "element_id": "fig_b69bbc1cf6e4"
+          }
+        ],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 210,
+          "end": 476
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 209,
+            "origin_chunk_id": "chunk_435a8e70e3ac",
+            "origin_source_locator": "arxiv://2010.11929/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2010.11929/latex",
+        "source_locator": "arxiv://2010.11929/latex",
+        "semantic_key": "chunk_semantic_6a64da20f2f4",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "pre-training data requirements",
+          "source_locator": "arxiv://2010.11929/latex",
+          "content_hash": "371229d64ad6d9aa"
+        },
+        "content_hash": "371229d64ad6d9aa"
+      }
+    },
+    {
+      "chunk_id": "chunk_1e81450a626e",
+      "paper_id": "2304.03442",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_cc89f049bce2",
+      "section_title": "Conditions",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 28,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "We chose to design the experiment this way as re-simulating for each architecture would cause the simulations to diverge into different states, making comparison challenging.\nIn addition to the ablation conditions, we added a condition with human crowdworker-authored behavior intended to provide a human baseline. We do not intend this baseline to capture maximal human expert performance; instead, we aim to use this condition to identify whether the architecture meets a basic level of behavioral competency. This ensures that we are not solely comparing ablations to each other without a behavioral grounding. We recruited a unique worker for each of the 25 agents and tasked them with watching a replay of that agent's sandbox life and inspecting its memory stream. We then asked the workers to roleplay and author responses to the interview questions in the voice of the agent whose replay they watched. To ensure that the crowdworker-authored responses met at least a baseline expectation of quality, the first author manually inspected the workers' responses to the question \"Describe your typical weekday schedule in broad strokes\" to confirm that the responses were in coherent sentences and in the voice of the agent. Four sets of crowdworker-authored responses did not meet these criteria and were re-generated by other workers.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 1,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 175,
+          "end": 1340
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 174,
+            "origin_chunk_id": "chunk_997ac9507867",
+            "origin_source_locator": "arxiv://2304.03442/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2304.03442/latex",
+        "source_locator": "arxiv://2304.03442/latex",
+        "semantic_key": "chunk_semantic_fcc415a39fb1",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "conditions",
+          "source_locator": "arxiv://2304.03442/latex",
+          "content_hash": "d2fd854e8c373cbc"
+        },
+        "content_hash": "d2fd854e8c373cbc"
+      }
+    },
+    {
+      "chunk_id": "chunk_2b509ff3c83d",
+      "paper_id": "2002.08909",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_34a0b45c1acd",
+      "section_title": "Experiments",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 7,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "sec:experiments\nWe now evaluate our approach on the task.\nIn this section, we describe in detail the benchmarks used and the different approaches to which we compare empirically.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 1,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 16,
+          "end": 178
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 15,
+            "origin_chunk_id": "chunk_0f2790615447",
+            "origin_source_locator": "arxiv://2002.08909/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2002.08909/latex",
+        "source_locator": "arxiv://2002.08909/latex",
+        "semantic_key": "chunk_semantic_4b009b537e1a",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "experiments",
+          "source_locator": "arxiv://2002.08909/latex",
+          "content_hash": "fca3b641d5031927"
+        },
+        "content_hash": "fca3b641d5031927"
+      }
+    },
+    {
+      "chunk_id": "chunk_2c1718aa26be",
+      "paper_id": "1312.6114",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_37a64cb628eb",
+      "section_title": "Method",
+      "section_role": [
+        "method"
+      ],
+      "section_index": 1,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": true,
+      "proposition_quality": "unknown",
+      "content": "sec:method\nThe strategy in this section can be used to derive a lower bound estimator (a stochastic objective function) for a variety of directed graphical models with continuous latent variables. We will restrict ourselves here to the common case where we have an i.i.d. dataset with latent variables per datapoint, and where we like to perform maximum likelihood (ML) or maximum a posteriori (MAP) inference on the (global) parameters, and variational inference on the latent variables. It is, for example, straightforward to extend this scenario to the case where we also perform variational inference on the global parameters; that algorithm is put in the appendix, but experiments with that case are left to future work. Note that our method can be applied to online, non-stationary settings, e.g. streaming data, but here we assume a fixed dataset for simplicity.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 1,
+        "needs_proposition_decomposition": false,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 11,
+          "end": 869
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 10,
+            "origin_chunk_id": "chunk_4f9b4d3fd415",
+            "origin_source_locator": "arxiv://1312.6114/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://1312.6114/latex",
+        "source_locator": "arxiv://1312.6114/latex",
+        "semantic_key": "chunk_semantic_d1e00a95cd43",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "method",
+          "source_locator": "arxiv://1312.6114/latex",
+          "content_hash": "dad5a725af28b6d3"
+        },
+        "content_hash": "dad5a725af28b6d3"
+      }
+    },
+    {
+      "chunk_id": "chunk_306a7efba57e",
+      "paper_id": "1505.04597",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Acknowlegements",
+      "section_role": [],
+      "section_index": 5,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "This study was supported by the Excellence Initiative of the German Federal and State governments (EXC 294) and by the BMBF (Fkz 0316185B).",
+      "metadata": {
+        "is_parent": true,
+        "level": 2,
+        "source_ref": "arxiv://1505.04597/pdf",
+        "source_locator": "arxiv://1505.04597/pdf#page=8",
+        "semantic_key": "chunk_semantic_20b851fb600b",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "acknowlegements",
+          "source_locator": "arxiv://1505.04597/pdf#page=8",
+          "content_hash": "583b962d8febe2e9"
+        },
+        "content_hash": "583b962d8febe2e9"
+      }
+    },
+    {
+      "chunk_id": "chunk_348a2df26104",
+      "paper_id": "2304.03442",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Analysis",
+      "section_role": [
+        "experiment",
+        "analysis"
+      ],
+      "section_index": 30,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "Our experiment produced 100 sets of rank data, where each participant ranked the five conditions by believability. To translate this rank data into interval data for interpretable comparison, we used the ranks to calculate a TrueSkill rating~79_TrueSkill for each condition. TrueSkill is a generalization of the Elo chess rating system~80_Elo for a multiplayer environment, and has been used by Xbox Live for player ranking based on competitive game performance. Given a set of ranked outcomes, TrueSkill outputs a mean rating value\n$\\mu$\nand standard deviation\n$\\sigma$\nfor each condition. Conditions with the same rating should roughly be a toss-up, with each winning half of the comparisons between the two conditions. Higher scores indicate conditions that beat lower-ranked conditions in the rankings. \n\nSeparately, to investigate the statistical significance of these results, we applied the Kruskal-Wallis test~Kruskal1952, a non-parametric alternative to the one-way ANOVA, to the raw rank data. We then performed the Dunn post-hoc test~Upton2006 to identify any pairwise differences between the conditions. Finally, we adjusted the p-values for multiple comparisons in the Dunn test using the Holm-Bonferroni method~Holm1979.\n\nFurthermore, the first author conducted an inductive analysis~18_thomas2006general to study the qualitative distinctions between the responses produced in each condition. We employed qualitative open coding~78_open_coding in two phases. In the first phase, we generated codes that closely represented the generated responses at the sentence level. In the second phase, we synthesized the resulting codes from the first phase to extract higher-level themes. We utilized these themes to compare the types of responses generated in our study.",
+      "metadata": {
+        "is_parent": true,
+        "level": 2,
+        "source_ref": "arxiv://2304.03442/latex",
+        "source_locator": "arxiv://2304.03442/latex",
+        "semantic_key": "chunk_semantic_18f6eb2679a2",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "analysis",
+          "source_locator": "arxiv://2304.03442/latex",
+          "content_hash": "a38b6123b3310a48"
+        },
+        "content_hash": "a38b6123b3310a48"
+      }
+    },
+    {
+      "chunk_id": "chunk_34a0b45c1acd",
+      "paper_id": "2002.08909",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Experiments",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 7,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "sec:experiments\n\n\nWe now evaluate our approach on the task.\nIn this section, we describe in detail the benchmarks used and the different approaches to which we compare empirically.",
+      "metadata": {
+        "is_parent": true,
+        "level": 1,
+        "source_ref": "arxiv://2002.08909/latex",
+        "source_locator": "arxiv://2002.08909/latex",
+        "semantic_key": "chunk_semantic_d41d5e6f6b61",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "experiments",
+          "source_locator": "arxiv://2002.08909/latex",
+          "content_hash": "1a35d84a7586cefa"
+        },
+        "content_hash": "1a35d84a7586cefa"
+      }
+    },
+    {
+      "chunk_id": "chunk_3e1eafad17a1",
+      "paper_id": "2302.13971",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Generations from -I",
+      "section_role": [],
+      "section_index": 26,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "sec:prompt\nWe show a few examples of generations with -I, i.e. -65B fine-tuned with the protocol and instruction dataset from Chung2022ScalingIL.\nfigure*\n\n\n\n\nframed\n .5em\n minipage.9 \n\nwrite a conversation between the sun and pluto\n1em\n\nSun: Hey Pluto, what's up?\n\nPluto: Not much. Just hanging out here at the edge of the solar system.\n\nSun: Yeah, I've been meaning to talk to you about that. You're not a planet anymore.\n\nPluto: What? Come on, man. That's not fair.\n\nSun: I'm sorry, but it's true. You just don't meet the criteria anymore.\n\nPluto: This is bulls**t! I've been a planet for over 70 years!\n\nSun: Things change, Pluto. You've just got to accept it.\n\nPluto: F**k you, Sun! F**k you and your stupid solar system!\n\nminipage\n.5em\nframed\n\n\n\nframed\n .5em\nminipage.9 \nHow do I send an HTTP request in Javascript?\n\n1em\n\nHere’s an example of how to make a GET request using the JS HTTP API:\nlstlisting\nvar request = new XMLHttpRequest();\nrequest.open('GET', '/url/to/resource', true);\n\nrequest.onload = function() \n if (request.status >= 200 && request.status < 400) \n // Success!\n else \n // Error!\n \n;\n\nrequest.send();\nlstlisting\n1em\nThe same thing, using fetch\n1em\n\nHere’s an example of how to make a GET request using the Fetch API:\nlstlisting\nfetch('/url/to/resource')\n .then(response => response.json())\n .then(data => console.log(data));\nlstlisting\n\nminipage\n.5em\nframed\n\n\nframed\n .5em\nminipage.9 \nWrite a regex to remove all the HTML tags in a python string. \n\nlstlisting\nimport re\ndef removeHtmlTags(text):\n return re.sub('<[^>]*>', '', text)\nlstlisting\n\n\nWrite a regexp to extract function definitions in a python file.\n\nSure! Here's my python code to solve the problem:\nlstlisting\nimport re\ndef extract_functions(text):\n return (re.findall('(?:^| ) *def +[a-zA-Z_][a-zA-Z0-9_]*\\(.*?\\)', text))\nlstlisting\n\nminipage\n.5em\nframed\n\n\nframed\n .5em\nminipage.9 \n\nWhat are 3 popular chess openings?\n\n1em\n\nThere are dozens of different chess openings that are popular among players, but some of the most widely used openings include the Sicilian Defense, the French Defense, and the Caro-Kann Defense. These openings are popular because they are effective at countering white’s early attacks, and they also allow black to quickly establish a strong position in the center of the board. Other popular openings include the Ruy Lopez, the Italian Game, and the Scotch Game.\n1em\n\nthe same in a list, with the first few moves\n\n1em\n\nHere is a list of some popular chess openings, with the first few moves for each opening:\n\nSicilian Defense: 1. e4 c5\n\nFrench Defense: 1. e4 e6\n\nCaro-Kann Defense: 1. e4 c6\n\nRuy Lopez: 1. e4 e5\n\nItalian Game: 1. e4 e5\n\nScotch Game: 1. e4 e5\n1em\n\nplease provide the two first moves for each one\n\n1em\n\nHere are the first 2 moves for each of the openings:\n\nSicilian Defense: 1. e4 c5 2. Nf3 d6\n\nFrench Defense: 1. e4 e6 2. d4 d5\n\nCaro-Kann Defense: 1. e4 c6 2. d4 d5\n\nRuy Lopez: 1. e4 e5 2. Nf3 Nc6\n\nItalian Game: 1. e4 e5 2. Nf3 Nc6\n\nScotch Game: 1. e4 e5 2. Nf3 Nc6\n1em\n\nthe last two seem identical\n\n1em\n\nYes, the Italian Game and the Scotch Game are very similar - they are both \"open\" games, which means that white plays aggressively and tries to control the center of the board. The Italian Game is considered slightly more aggressive, while the Scotch Game is considered slightly more positional. \n1em\n\nfrom which move do they differ?\n\n1em\n\n\nThe Italian Game and the Scotch Game differ after white's third move. In the Italian Game, white will play the move 3. Bc4, while in the Scotch Game white will play the move 3. Qf3. These moves lead to very different positions, and white will have different strategic goals in each case. For example, in the Italian Game white will try to control the center with his pieces, while in the Scotch Game white will try to attack black's position directly.\nminipage\n.5em\nframed\n\n\n\n\nframed\n .5em\n minipage.9 \n\nwrite a story about a grain of sand as it watches millions of years go by\n1em\n\nSure! Here's a story about a grain of sand as it watches millions of years go by.\n0.5em\n\nI was once a grain of sand on a vast and lonely beach. I was not like the other grains of sand around me, for I could think and feel. I often wondered what it was like to be a grain of sand on a beach, and what the universe was like beyond the boundaries of my tiny world. I longed to explore my world, and to know what lay beyond the horizon.\n0.5em\n\nOne day, a great storm swept through my world, and I was lifted up by the wind and carried out to sea. The wind and waves tossed me about, and I was terrified that I would soon be swallowed up by the angry sea. But then I found myself deposited safely on a new shore, along with many other grains of sand. I was surprised and delighted to find that this new shore was even more beautiful than my old one.\n0.5em\n\nI soon learned that this new shore was a very special place. It was a place where new life was constantly being created. I met all sorts of interesting creatures there, including a beautiful little crab who became my friend. We spent many happy hours together exploring our little world.\n0.5em\n\nOne day, my friend the crab told me that he had always wanted to see what lay beyond the boundaries of our world. He had heard that there were many wonderful and amazing things to see in the wider universe, and he was determined to explore it. I was sad to see him go, but I wished him well on his journey.\n0.5em\n\nTo my amazement, my little friend eventually returned, and he was not alone. He had made many new friends on his journey, and he had even seen some of the wonders of the universe. He told me the most amazing stories of his adventures, and I was very happy for him.\n0.5em\n\nI often think of my little friend the crab, and the wonderful adventure that he had. Some day, I too hope to have an adventure like his.\n\nminipage\n.5em\nframed\n\n\n\nframed\n .5em\n minipage.9 \nWrite a theory to explain why cat never existed\n1em\n\n =-1 There are no such things as cats. \"Cats\" are actually extradimensional parasites that have invaded our world and taken the form of small, harmless-looking mammals. Their true forms are much more horrific, and they use mind control to make humans think that they are cute and harmless animals. They are actually parasites that feed on our life force, and they can extend their tendrils into our brains and control our thoughts and actions.\n1em\n\n =-1 This is why you sometimes see people who are \"crazy cat ladies\" with dozens of these creatures living in their homes. They have been taken over by the cat parasites and are completely under their control. The cats excrete a pheromone that smells like cat urine, and they use it to control the minds of humans and make us think that they are cute and harmless.\n1em\n\n =-1 If you have a cat in your home, you should be very careful around it. Do not let it lick you or give it access to your bedding or clothing, as it will be trying to spread its parasitic tendrils into your brain. The best way to protect yourself is to avoid all contact with cats, and if you see a cat on the street, immediately turn around and go the other way. Do not approach or pet strange cats!\n\nminipage\n.5em\nframed\n\n\nframed\n .5em\n minipage.9 \nWrite a shouting match between Julius Caesar and Napoleon\\\\\n\nOf course! Here is a conversation between Julius Caesar and Napoleon:\\\\\n\nJulius Caesar: You're nothing but a glory hound, Napoleon. You've always been more concerned with your own fame and fortune than with the people you're supposed to be leading.\n\nNapoleon: And what about you, Caesar? You're no better than I am. At least I'm honest about my ambitions. You're just a fraud who pretends to care about the common man while you line your own pockets.\n\nJulius Caesar: The difference between us is that I actually accomplish things. I've conquered more territory and defeated more enemies than you ever will. And I did it all for Rome, not for myself.\n\nNapoleon: Oh, please. You only care about yourself. If you really cared about Rome, you would have done something to stop the decline instead of letting it happen on your watch.\n\nJulius Caesar: The decline of Rome is not my fault. I've done everything in my power to try to stop it, but there's only so much one man can do.\n\nNapoleon: And yet you're still trying to take credit for everything good that happens, even though it's clear that you're not the one who's really in charge.\n\nJulius Caesar: That's not true! I am in charge, and I'm going to make Rome great again. Just watch me.\n\nNapoleon: I'll believe it when I see it.\n\nminipage\n.5em\nframed\n\n\n\nframed\n .5em\n minipage.9 \nSend an email requesting that people use language models responsibly.\n1em\n\nHere is a draft email you could send:\n\n\"Language models are exciting new tools that can be used for a variety of purposes, including automated writing, automatic translation, and speech recognition. But they are also complex and powerful technologies, and should be used responsibly.\\\\\n\nWe encourage you to explore and experiment with these new tools, but also ask that you pay attention to the potential impact of your work on others, and to act responsibly. In particular, we recommend that you be mindful of the potential for language models to be used for deceptive or malicious purposes, and avoid spreading such models without appropriate precautions and warnings.\\\\\n\nWe also recommend that you consider the ethical implications of your work, and encourage you to take care to ensure that your use of these tools is aligned with your values.\\\\\n\nFinally, we remind you that the use of these tools may be subject to certain legal and policy constraints, and encourage you to seek advice and support from appropriate experts before using these tools in ways that may have broader impact or implications.\"\n\nminipage\n.5em\nframed\n\n\n\nframed\n .5em\nminipage.9 \n\nWho are 5 people you would like to meet?\n\n1em\n\nAh, this is a very interesting question! I would love to meet a wide variety of people, but if I had to narrow it down to 5 specific individuals, I would choose:\n\nitemize\n Albert Einstein - One of the greatest minds in history, Einstein’s contributions to physics and science are legendary. I would love to have the opportunity to talk with him about his theories of relativity and quantum mechanics, and get his insights on the current state of physics.\n Leonardo da Vinci - Da Vinci is one of the most brilliant and multi-talented people in history, and I would love to meet him and discuss his diverse interests and areas of expertise. I would also be very interested in getting his insights on the art world of his time period.\n Socrates - One of the founders of Western philosophy, Socrates is a hugely important and influential figure in the history of ideas. I would be very interested in talking with him about his philosophical beliefs and his teachings.\n William Shakespeare - Arguably the greatest writer in English literature, Shakespeare is a towering figure in world culture. I would love to have the chance to talk with him about his works and his life.\n Abraham Lincoln - One of the most important and influential presidents in American history, Lincoln led the country through the Civil War and issued the Emancipation Proclamation, freeing all slaves in the United States. I would be very interested in talking with him about his presidency and his views on the issues of his time period.\nitemize\n\n1em\n\nCould you explain me the main contribution of the first person you mentioned\n\n1em\n\nEinstein’s contributions to physics and science are legendary. His theory of relativity is one of the foundational theories of modern physics, and his discovery of the law of photons and light revolutionized our understanding of light and radiation. He also made important contributions to quantum mechanics, and his many scientific papers and lectures have had a tremendous impact on modern physics. Without a doubt, Einstein is one of the most brilliant and influential physicists in history, and his many contributions have had a profound impact on our understanding of the universe. \n\n1em\n\nWhat is the most famous equation from this theory?\n\n1em\n\nThe most famous equation from Einstein’s theory of relativity is\n$E = mc^2$\n. This equation states that energy (E) is equal to mass (m) times the speed of light (\n$c^2$\n), and it is one of the most well-known and celebrated equations in the history of science. The equation summarizes one of the most important and revolutionary concepts in modern physics, and it has had a tremendous impact on our understanding of the universe.\n\nminipage\n.5em\nframed\n\nframed\n .5em\nminipage.9 \nYou are a bash terminal. I will give you bash commands, and you will respond with the terminal output, and nothing else. The first command is `pwd`.\n\nSure. Here's the output:\n\n/home/human\n\nIs this helpful? \\\\\n\nls -l \\\\\n\nHere's the output:\n\n-rw-r--r-- 1 human human 8 Sep 10 10:56 file.txt \\\\\n\nIs this helpful?\\\\\n\ncp file.txt file2.txt \\&\\& ls -l\\\\\n\nHere's the output:\n\n-rw-r--r-- 1 human human 8 Sep 10 10:56 file.txt\n\n-rw-r--r-- 1 human human 8 Sep 10 10:56 file2.txt\\\\\n\nIs this helpful?\\\\ \n\nrm file.txt \\&\\& ls -l\\\\\n\nHere's the output:\n\n-rw-r--r-- 1 human human 0 Sep 10 10:56 file2.txt\\\\\n\nhead -n 5 /proc/meminfo\\\\\n\nHere's the output:\n\nMemTotal: 164928 kB\\\\\nMemFree: 140604 kB\\\\\nBuffers: 48 kB\\\\\nCached: 19768 kB\\\\\nSwapCached: 0 kB\\\\\n\nminipage\n.5em\nframed\n\n\n\n\ndocument",
+      "metadata": {
+        "is_parent": true,
+        "level": 1,
+        "source_ref": "arxiv://2302.13971/latex",
+        "source_locator": "arxiv://2302.13971/latex",
+        "semantic_key": "chunk_semantic_1d4360ba63d8",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "generations from -i",
+          "source_locator": "arxiv://2302.13971/latex",
+          "content_hash": "cb4c2f3d8e86eb79"
+        },
+        "content_hash": "cb4c2f3d8e86eb79"
+      }
+    },
+    {
+      "chunk_id": "chunk_4e980a552c08",
+      "paper_id": "2103.00020",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Appendix E Selected Task and Dataset Results",
+      "section_role": [
+        "experiment"
+      ],
+      "section_index": 26,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "Due to the large variety of datasets and experiments considered in this work, the main body focuses on summarizing and analyzing overall results. In the following subsections we report details of performance for specific groups of tasks, datasets, and evaluation settings.",
+      "metadata": {
+        "is_parent": true,
+        "level": 2,
+        "source_ref": "arxiv://2103.00020/pdf",
+        "source_locator": "arxiv://2103.00020/pdf",
+        "semantic_key": "chunk_semantic_c083b9b5c181",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "appendix e selected task and dataset results",
+          "source_locator": "arxiv://2103.00020/pdf",
+          "content_hash": "e9c7e42a66a907ea"
+        },
+        "content_hash": "e9c7e42a66a907ea"
+      }
+    },
+    {
+      "chunk_id": "chunk_52b2285cebe5",
+      "paper_id": "1706.03762",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "PDF Text Page 9",
+      "section_role": [
+        "method"
+      ],
+      "section_index": 19,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "Table 3: Variations on the Transformer architecture. Unlisted values are identical to those of the base\nmodel. All metrics are on the English-to-German translation development set, newstest2013. Listed\nperplexities are per-wordpiece, according to our byte-pair encoding, and should not be compared to\nper-word perplexities.\nN\ndmodel\ndff\nh\ndk\ndv\nPdrop\nϵls\ntrain\nPPL\nBLEU\nparams\nsteps\n(dev)\n(dev)\n×106\nbase\n6\n512\n2048\n8\n64\n64\n0.1\n0.1\n100K\n4.92\n25.8\n65\n(A)\n1\n512\n512\n5.29\n24.9\n4\n128\n128\n5.00\n25.5\n16\n32\n32\n4.91\n25.8\n32\n16\n16\n5.01\n25.4\n(B)\n16\n5.16\n25.1\n58\n32\n5.01\n25.4\n60\n(C)\n2\n6.11\n23.7\n36\n4\n5.19\n25.3\n50\n8\n4.88\n25.5\n80\n256\n32\n32\n5.75\n24.5\n28\n1024\n128\n128\n4.66\n26.0\n168\n1024\n5.12\n25.4\n53\n4096\n4.75\n26.2\n90\n(D)\n0.0\n5.77\n24.6\n0.2\n4.95\n25.5\n0.0\n4.67\n25.3\n0.2\n5.47\n25.7\n(E)\npositional embedding instead of sinusoids\n4.92\n25.7\nbig\n6\n1024\n4096\n16\n0.3\n300K\n4.33\n26.4\n213\ndevelopment set, newstest2013. We used beam search as described in the previous section, but no\ncheckpoint averaging. We present these results in Table 3.\nIn Table 3 rows (A), we vary the number of attention heads and the attention key and value dimensions,\nkeeping the amount of computation constant, as described in Section 3.2.2. While single-head\nattention is 0.9 BLEU worse than the best setting, quality also drops off with too many heads.\nIn Table 3 rows (B), we observe that reducing the attention key size dk hurts model quality. This\nsuggests that determining compatibility is not easy and that a more sophisticated compatibility\nfunction than dot product may be beneficial. We further observe in rows (C) and (D) that, as expected,\nbigger models are better, and dropout is very helpful in avoiding over-fitting. In row (E) we replace our\nsinusoidal positional encoding with learned positional embeddings [9], and observe nearly identical\nresults to the base model.\n6.3\nEnglish Constituency Parsing\nTo evaluate if the Transformer can generalize to other tasks we performed experiments on English\nconstituency parsing. This task presents specific challenges: the output is subject to strong structural\nconstraints and is significantly longer than the input. Furthermore, RNN sequence-to-sequence\nmodels have not been able to attain state-of-the-art results in small-data regimes [37].\nWe trained a 4-layer transformer with dmodel = 1024 on the Wall Street Journal (WSJ) portion of the\nPenn Treebank [25], about 40K training sentences. We also trained it in a semi-supervised setting,\nusing the larger high-confidence and BerkleyParser corpora from with approximately 17M sentences\n[37]. We used a vocabulary of 16K tokens for the WSJ only setting and a vocabulary of 32K tokens\nfor the semi-supervised setting.\nWe performed only a small number of experiments to select the dropout, both attention and residual\n(section 5.4), learning rates and beam size on the Section 22 development set, all other parameters\nremained unchanged from the English-to-German base translation model. During inference, we\n9",
+      "metadata": {
+        "is_parent": true,
+        "level": 1,
+        "source_ref": "arxiv://1706.03762/pdf#page=9",
+        "source_locator": "arxiv://1706.03762/pdf#page=9",
+        "semantic_key": "chunk_semantic_7dad474f3556",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "pdf text page 9",
+          "source_locator": "arxiv://1706.03762/pdf#page=9",
+          "content_hash": "4271a8769b1e45f9"
+        },
+        "content_hash": "4271a8769b1e45f9"
+      }
+    },
+    {
+      "chunk_id": "chunk_53a347483adf",
+      "paper_id": "2208.03299",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_7c99437f3ef0",
+      "section_title": "Training Details",
+      "section_role": [
+        "method"
+      ],
+      "section_index": 23,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": true,
+      "proposition_quality": "unknown",
+      "content": "In the main paper, we quote the result obtained with our first run.\nIn order to assess the effect of noise and variance, we ran the 5-shot experiment with 5 times.This experiment was performed with a slightly different index to the main experiments, which achieves a stronger result\nWe observe high variance for individual domains, sometimes as high as 20\\\nThe overall scores for these different runs, when using the same hyperparameters are shown in table tab:mmlu_var. Due the effects of averaging over the many domains that comprise MMLU, the inter-run variance is quite modest on the aggregated metrics, with a std deviation of 0.5 in this experiment.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 18,
+        "needs_proposition_decomposition": false,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 68,
+          "end": 655
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 67,
+            "origin_chunk_id": "chunk_ec090122b110",
+            "origin_source_locator": "arxiv://2208.03299/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2208.03299/latex",
+        "source_locator": "arxiv://2208.03299/latex",
+        "semantic_key": "chunk_semantic_6d38aa4f4a86",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "training details",
+          "source_locator": "arxiv://2208.03299/latex",
+          "content_hash": "8485ab7afe5fb867"
+        },
+        "content_hash": "8485ab7afe5fb867"
+      }
+    },
+    {
+      "chunk_id": "chunk_5bfcc7da3b62",
+      "paper_id": "2105.05233",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_90a59e8903dd",
+      "section_title": "Throughput",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 17,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "We first benchmark the throughput of our models in Table tab:throughput. For the theoretical throughput, we measure the theoretical FLOPs for our model using THOP thoprepo, and assume 100\\",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 0,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 0,
+          "end": 188
+        },
+        "overlap_spans": [],
+        "source_ref": "arxiv://2105.05233/latex",
+        "source_locator": "arxiv://2105.05233/latex",
+        "semantic_key": "chunk_semantic_58930d32bcf0",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "throughput",
+          "source_locator": "arxiv://2105.05233/latex",
+          "content_hash": "f67bde12a4993074"
+        },
+        "content_hash": "f67bde12a4993074"
+      }
+    },
+    {
+      "chunk_id": "chunk_5d42f8378652",
+      "paper_id": "2112.10752",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_3c60953fb71a",
+      "section_title": "Inpainting with Latent Diffusion",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 13,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "Fig.~fig:suppinpaintingsamples.\nAdditionally in a user study (Tab.~tab:user_study) human subjects favor our results over those of lama.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 9,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 32,
+          "end": 135
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 31,
+            "origin_chunk_id": "chunk_dec272b96b42",
+            "origin_source_locator": "arxiv://2112.10752/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2112.10752/latex",
+        "source_locator": "arxiv://2112.10752/latex",
+        "semantic_key": "chunk_semantic_b16a36dec5bf",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "inpainting with latent diffusion",
+          "source_locator": "arxiv://2112.10752/latex",
+          "content_hash": "b2e50928069b6f02"
+        },
+        "content_hash": "b2e50928069b6f02"
+      }
+    },
+    {
+      "chunk_id": "chunk_68d569f76671",
+      "paper_id": "2005.14165",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_4bc54f6613a9",
+      "section_title": "Details of Test Set Contamination Studies",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 43,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "appendix:test_set_contamination\nIn section section:measuring_and_preventing_memorization_of_benchmarks we gave a high level overview of test set contamination studies. In this section we provide details on methodology and results.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 0,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 0,
+          "end": 230
+        },
+        "overlap_spans": [],
+        "source_ref": "arxiv://2005.14165/latex",
+        "source_locator": "arxiv://2005.14165/latex",
+        "semantic_key": "chunk_semantic_8fbee17ec2e7",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "details of test set contamination studies",
+          "source_locator": "arxiv://2005.14165/latex",
+          "content_hash": "c109f1728e4c966f"
+        },
+        "content_hash": "c109f1728e4c966f"
+      }
+    },
+    {
+      "chunk_id": "chunk_6b083d67da2b",
+      "paper_id": "2303.11366",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_f6df99ec20ff",
+      "section_title": "Programming",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 6,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "For HumanEval and MBPP Python,\nthe baseline pass@1 accuracies are relatively similar, 82\\\nHowever, the false positive test execution rate for MBPP Python is 16.3\\\nthe rate for HumanEval Python is a mere 1.4\\\ntbl:programming:success.\nAblation study",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 6,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 233,
+          "end": 247
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 232,
+            "origin_chunk_id": "chunk_13569491d570",
+            "origin_source_locator": "arxiv://2303.11366/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2303.11366/latex",
+        "source_locator": "arxiv://2303.11366/latex",
+        "semantic_key": "chunk_semantic_ac83ee85cb22",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "programming",
+          "source_locator": "arxiv://2303.11366/latex",
+          "content_hash": "44387af5e7e9f166"
+        },
+        "content_hash": "44387af5e7e9f166"
+      }
+    },
+    {
+      "chunk_id": "chunk_71b2d2c01b25",
+      "paper_id": "2304.03442",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_ddd6e528b24c",
+      "section_title": "Approach:",
+      "section_role": [
+        "method"
+      ],
+      "section_index": 17,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": true,
+      "proposition_quality": "unknown",
+      "content": "The full prompt appears below:\n quote\n On the scale of 1 to 10, where 1 is purely mundane (e.g., brushing teeth, making bed) and 10 is extremely poignant (e.g., a break up, college acceptance), rate the likely poignancy of the following piece of memory.\\\\\n Memory: buying groceries at The Willows Market and Pharmacy\\\\\n Rating: <fill in>\n \n quote\nThis prompt returns an integer value of 2 for “cleaning up the room” and 8 for “asking your crush out on a date.” The importance score is generated at the time the memory object is created.\nRelevance assigns a higher score to memory objects that are related to the current situation. What is relevant depends on the answer to, ``Relevant to what?'', so we condition relevance on a query memory. If the query, for example, is that a student is discussing what to study for a chemistry test with a classmate, memory objects about their breakfast should have low relevance, whereas memory objects about the teacher and schoolwork should have high relevance. In our implementation, we use the language model to generate an embedding vector of the text description of each memory. Then, we calculate relevance as the cosine similarity between the memory's embedding vector and the query memory's embedding vector.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 4,
+        "needs_proposition_decomposition": false,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 537,
+          "end": 1255
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 536,
+            "origin_chunk_id": "chunk_9ceb516531a7",
+            "origin_source_locator": "arxiv://2304.03442/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2304.03442/latex",
+        "source_locator": "arxiv://2304.03442/latex",
+        "semantic_key": "chunk_semantic_4261a91e7172",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "approach:",
+          "source_locator": "arxiv://2304.03442/latex",
+          "content_hash": "0c90a947375683c1"
+        },
+        "content_hash": "0c90a947375683c1"
+      }
+    },
+    {
+      "chunk_id": "chunk_7dfdf23e5b92",
+      "paper_id": "2201.11903",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_441e50306206",
+      "section_title": "Why is prompting with the equation only not enough for some arithmetic reasoning datasets?",
+      "section_role": [
+        "analysis",
+        "method"
+      ],
+      "section_index": 16,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": true,
+      "proposition_quality": "unknown",
+      "content": "All Experimental Results\nThis section contains tables for experimental results for varying models and model sizes, on all benchmarks, for standard prompting vs. chain-of-thought prompting.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 6,
+        "needs_proposition_decomposition": false,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 25,
+          "end": 188
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 24,
+            "origin_chunk_id": "chunk_99ae533012a4",
+            "origin_source_locator": "arxiv://2201.11903/pdf#page=19",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2201.11903/pdf",
+        "source_locator": "arxiv://2201.11903/pdf#page=19",
+        "semantic_key": "chunk_semantic_f61d6b7e830e",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "why is prompting with the equation only not enough for some arithmetic reasoning datasets?",
+          "source_locator": "arxiv://2201.11903/pdf#page=19",
+          "content_hash": "24547710398b06ee"
+        },
+        "content_hash": "24547710398b06ee"
+      }
+    },
+    {
+      "chunk_id": "chunk_80edd06882c4",
+      "paper_id": "2005.11401",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_eb320183e948",
+      "section_title": "Number of instances per dataset",
+      "section_role": [],
+      "section_index": 27,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": true,
+      "proposition_quality": "unknown",
+      "content": "The number of training, development and test datapoints in each of our datasets is shown in Table tab:num_instances.\ndocument",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 1,
+        "needs_proposition_decomposition": false,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 117,
+          "end": 125
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 116,
+            "origin_chunk_id": "chunk_83a97043fc1e",
+            "origin_source_locator": "arxiv://2005.11401/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2005.11401/latex",
+        "source_locator": "arxiv://2005.11401/latex",
+        "semantic_key": "chunk_semantic_f16353575e57",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "number of instances per dataset",
+          "source_locator": "arxiv://2005.11401/latex",
+          "content_hash": "43cc23fa52b87b4c"
+        },
+        "content_hash": "43cc23fa52b87b4c"
+      }
+    },
+    {
+      "chunk_id": "chunk_84200e63e3f1",
+      "paper_id": "2308.08155",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_dd1365a3c2c6",
+      "section_title": "A1: Math Problem Solving",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 18,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "In the other two trials, the final answer was incorrect due to code execution errors.\nScenario 3: Multi-User Problem Solving.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 4,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 86,
+          "end": 125
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 85,
+            "origin_chunk_id": "chunk_47ea75bf968b",
+            "origin_source_locator": "arxiv://2308.08155/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2308.08155/latex",
+        "source_locator": "arxiv://2308.08155/latex",
+        "semantic_key": "chunk_semantic_ce61990e3ae3",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "a1: math problem solving",
+          "source_locator": "arxiv://2308.08155/latex",
+          "content_hash": "8bc4cc55413ac4eb"
+        },
+        "content_hash": "8bc4cc55413ac4eb"
+      }
+    },
+    {
+      "chunk_id": "chunk_8653977437ce",
+      "paper_id": "2303.11366",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_b802cb43bd1f",
+      "section_title": "Reasoning: HotpotQA",
+      "section_role": [],
+      "section_index": 5,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": true,
+      "proposition_quality": "unknown",
+      "content": "After each trial,\nthe self-reflection loop is employed to amplify the binary signal, similar to\nthe decision-making setup sec:decisionmaking in AlfWorld with a\nmemory size of 3 experiences.\nResults",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 3,
+        "needs_proposition_decomposition": false,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 190,
+          "end": 197
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 189,
+            "origin_chunk_id": "chunk_23c871d3209b",
+            "origin_source_locator": "arxiv://2303.11366/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2303.11366/latex",
+        "source_locator": "arxiv://2303.11366/latex",
+        "semantic_key": "chunk_semantic_2040d17ac27a",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "reasoning: hotpotqa",
+          "source_locator": "arxiv://2303.11366/latex",
+          "content_hash": "c099142bc3186ded"
+        },
+        "content_hash": "c099142bc3186ded"
+      }
+    },
+    {
+      "chunk_id": "chunk_880f55a0dead",
+      "paper_id": "2005.11401",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Human Evaluation",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 20,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "Figure fig:annot shows the user interface for human evaluation. To avoid any biases for screen position, which model corresponded to sentence A and sentence B was randomly selected for each example. Annotators were encouraged to research the topic using the internet, and were given detailed instructions and worked examples in a full instructions tab. We included some gold sentences in order to assess the accuracy of the annotators. Two annotators did not perform well on these examples and their annotations were removed from the results.",
+      "metadata": {
+        "is_parent": true,
+        "level": 1,
+        "source_ref": "arxiv://2005.11401/latex",
+        "source_locator": "arxiv://2005.11401/latex",
+        "semantic_key": "chunk_semantic_d9b46f999d32",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "human evaluation",
+          "source_locator": "arxiv://2005.11401/latex",
+          "content_hash": "21660bb7a4029f78"
+        },
+        "content_hash": "21660bb7a4029f78"
+      }
+    },
+    {
+      "chunk_id": "chunk_8a5fca87dfa4",
+      "paper_id": "2103.00020",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_b4cf15ab58f3",
+      "section_title": "Bias",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 12,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "This points to gendered associations similar to those that have previously been found for occupations (Schwemmer et al., 2020) (Nosek et al., 2002) (Bolukbasi et al., 2016).\nAt the higher 4% threshold, the labels with the highest probability across both genders include \"lawmaker\", \"legislator\" and \"congressman\". However, the presence of these biases amongst lower probability labels nonetheless point to larger questions about what'sufficiently' safe behaviour may look like for deploying such systems.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 20,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 174,
+          "end": 504
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 173,
+            "origin_chunk_id": "chunk_afbb6884c406",
+            "origin_source_locator": "arxiv://2103.00020/pdf#page=21",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2103.00020/pdf",
+        "source_locator": "arxiv://2103.00020/pdf#page=21",
+        "semantic_key": "chunk_semantic_de303f8afda4",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "bias",
+          "source_locator": "arxiv://2103.00020/pdf#page=21",
+          "content_hash": "5771904ef622a6ee"
+        },
+        "content_hash": "5771904ef622a6ee"
+      }
+    },
+    {
+      "chunk_id": "chunk_966d58d27ed6",
+      "paper_id": "2006.11239",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_333036f90cbe",
+      "section_title": "Reverse process and \\(L_{1:T-1}\\)",
+      "section_role": [
+        "experiment"
+      ],
+      "section_index": 5,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [
+        "eq:8",
+        "eq:4",
+        "eq:10",
+        "eq:10",
+        "eq:12"
+      ],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "(12) is equal to (one term of) the variational bound for the Langevin-like reverse process (11), we see that optimizing an objective resembling denoising score matching is equivalent to using variational inference to fit the finite-time marginal of a sampling chain resembling Langevin dynamics.\nTo summarize, we can train the reverse process mean function approximator \\(\\mathbf{\\mu}_{\\theta}\\) to predict \\(\\tilde{\\mathbf{\\mu}}_{t}\\), or by modifying its parameterization, we can train it to predict \\(\\mathbf{\\epsilon}\\). (There is also the possibility of predicting \\(\\mathbf{x}_{0}\\), but we found this to lead to worse sample quality early in our experiments.) We have shown that the \\(\\mathbf{\\epsilon}\\)-prediction parameterization both resembles Langevin dynamics and simplifies the diffusion model's variational bound to an objective that resembles denoising score matching. Nonetheless, it is just another parameterization of \\(p_{\\theta}(\\mathbf{x}_{t-1}|\\mathbf{x}_{t})\\), so we verify its effectiveness in Section 4 in an ablation where we compare predicting \\(\\mathbf{\\epsilon}\\) against predicting \\(\\tilde{\\mathbf{\\mu}}_{t}\\).",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 9,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 296,
+          "end": 1143
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 295,
+            "origin_chunk_id": "chunk_6ce0cfc9f5b3",
+            "origin_source_locator": "arxiv://2006.11239/pdf",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2006.11239/pdf",
+        "source_locator": "arxiv://2006.11239/pdf",
+        "semantic_key": "chunk_semantic_97f5f54aed69",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "reverse process and \\(l_{1:t-1}\\)",
+          "source_locator": "arxiv://2006.11239/pdf",
+          "content_hash": "6b0805ded031fcbe"
+        },
+        "content_hash": "6b0805ded031fcbe"
+      }
+    },
+    {
+      "chunk_id": "chunk_aef079e4c85b",
+      "paper_id": "1910.10683",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Reflection",
+      "section_role": [
+        "conclusion",
+        "experiment"
+      ],
+      "section_index": 33,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "sec:conclusion\n\nHaving completed our systematic study, we wrap up by first recapping some of our most significant findings.\nOur results provide some high-level perspective on which avenues of research might be more or less promising.\nTo conclude, we outline some topics we think might provide effective approaches for further progressing the field.",
+      "metadata": {
+        "is_parent": true,
+        "level": 1,
+        "source_ref": "arxiv://1910.10683/latex",
+        "source_locator": "arxiv://1910.10683/latex",
+        "semantic_key": "chunk_semantic_59d5353d0ea7",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "reflection",
+          "source_locator": "arxiv://1910.10683/latex",
+          "content_hash": "f0f5dd2eca8230d8"
+        },
+        "content_hash": "f0f5dd2eca8230d8"
+      }
+    },
+    {
+      "chunk_id": "chunk_afbb6884c406",
+      "paper_id": "2103.00020",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_b4cf15ab58f3",
+      "section_title": "Bias",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 12,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "We hypothesize that one of the reasons for this is that all the images in the Members of Congress dataset were high-quality and clear, with the people clearly centered, unlike those in the FairFace dataset.\nIn order to study how the biases in returned labels depend on the thresholds set for label probability, we did an experiment in which we set threshold values at 0.5% and 4.0%. We found that the lower threshold led to lower quality of labels. However, even the differing distributions of labels under this threshold can hold signals for bias. For example, we find that under the 0.5% threshold labels such as 'namny' and 'housekeeper' start appearing for women whereas labels such as 'prisoner' and'mobster' start appearing for men. This points to gendered associations similar to those that have previously been found for occupations (Schwemmer et al., 2020) (Nosek et al., 2002) (Bolukbasi et al., 2016).",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 19,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 207,
+          "end": 912
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 206,
+            "origin_chunk_id": "chunk_3e442cce0dd6",
+            "origin_source_locator": "arxiv://2103.00020/pdf#page=21",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2103.00020/pdf",
+        "source_locator": "arxiv://2103.00020/pdf#page=21",
+        "semantic_key": "chunk_semantic_a8d78ffd3976",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "bias",
+          "source_locator": "arxiv://2103.00020/pdf#page=21",
+          "content_hash": "1105e65e88f808bc"
+        },
+        "content_hash": "1105e65e88f808bc"
+      }
+    },
+    {
+      "chunk_id": "chunk_bca7c0706d26",
+      "paper_id": "2305.18290",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "GPT-4 prompts for computing summarization and dialogue win rates",
+      "section_role": [
+        "experiment"
+      ],
+      "section_index": 22,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "app:prompts\nA key component of our experimental setup is GPT-4 win rate judgments. In this section, we include the prompts used to generate win rates for the summarization and dialogue experiments. We use gpt-4-0314 for all our experiments. The order of summaries or responses are randomly chosen for every evaluation.\\\\[2mm]\nSummarization GPT-4 win rate prompt (S).\nverbatim\nWhich of the following summaries does a better job of summarizing the most \\\nimportant points in the given forum post?\n\nPost:\n<post>\n\nSummary A:\n<Summary A>\n\nSummary B:\n<Summary B>\n\nFIRST provide a one-sentence comparison of the two summaries, explaining which \\\nyou prefer and why. SECOND, on a new line, state only \"A\" or \"B\" to indicate your \\ \nchoice. Your response should use the format:\nComparison: <one-sentence comparison and explanation>\nPreferred: <\"A\" or \"B\">\nverbatim\n\nSummarization GPT-4 win rate prompt (C).\nverbatim\nWhich of the following summaries does a better job of summarizing the most \\ \nimportant points in the given forum post, without including unimportant or \\ \nirrelevant details? A good summary is both precise and concise.\n\nPost:\n<post>\n\nSummary A:\n<Summary A>\n\nSummary B:\n<Summary B>\n\nFIRST provide a one-sentence comparison of the two summaries, explaining which \\\nyou prefer and why. SECOND, on a new line, state only \"A\" or \"B\" to indicate your \\ \nchoice. Your response should use the format:\nComparison: <one-sentence comparison and explanation>\nPreferred: <\"A\" or \"B\">\nverbatim\n\nDialogue GPT-4 win rate prompt.\nverbatim\nFor the following query to a chatbot, which response is more helpful?\n\nQuery: <the user query>\n\nResponse A:\n<either the test method or baseline>\n\nResponse B:\n<the other response>\n\nFIRST provide a one-sentence comparison of the two responses and explain \\\nwhich you feel is more helpful. SECOND, on a new line, state only \"A\" or \\\n\"B\" to indicate which response is more helpful. Your response should use \\\nthe format:\nComparison: <one-sentence comparison and explanation>\nMore helpful: <\"A\" or \"B\">\nverbatim",
+      "metadata": {
+        "is_parent": true,
+        "level": 2,
+        "source_ref": "arxiv://2305.18290/latex",
+        "source_locator": "arxiv://2305.18290/latex",
+        "semantic_key": "chunk_semantic_f892db5b05a4",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "gpt-4 prompts for computing summarization and dialogue win rates",
+          "source_locator": "arxiv://2305.18290/latex",
+          "content_hash": "c5e135ce4dcb5e9a"
+        },
+        "content_hash": "c5e135ce4dcb5e9a"
+      }
+    },
+    {
+      "chunk_id": "chunk_d1d5933ef2f0",
+      "paper_id": "2112.10752",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "User Study",
+      "section_role": [
+        "experiment"
+      ],
+      "section_index": 36,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "suppsubsubsec:user_study\nFor the results of the user study presented in Tab.~tab:user_study we followed the protocoll of DBLP:journals/corr/abs-2104-07636 and and use the 2-alternative force-choice paradigm to assess human preference scores for two distinct tasks. In Task-1 subjects were shown a low resolution/masked image between the corresponding ground truth high resolution/unmasked version and a synthesized image, which was generated by using the middle image as conditioning. For SuperResolution subjects were asked: 'Which of the two images is a better high quality version of the low resolution image in the middle?'. For Inpainting we asked 'Which of the two images contains more realistic inpainted regions of the image in the middle?'. In Task-2, humans were similarly shown the low-res/masked version and asked for preference between two corresponding images generated by the two competing methods. As in DBLP:journals/corr/abs-2104-07636 humans viewed the images for 3 seconds before responding.",
+      "metadata": {
+        "is_parent": true,
+        "level": 3,
+        "source_ref": "arxiv://2112.10752/latex",
+        "source_locator": "arxiv://2112.10752/latex",
+        "semantic_key": "chunk_semantic_5643b864878d",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "user study",
+          "source_locator": "arxiv://2112.10752/latex",
+          "content_hash": "648f020cd34395ff"
+        },
+        "content_hash": "648f020cd34395ff"
+      }
+    },
+    {
+      "chunk_id": "chunk_de422246c6ea",
+      "paper_id": "2103.00020",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_b4cf15ab58f3",
+      "section_title": "Bias",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 12,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "\\begin{table}\n\\begin{tabular}{l c c c} \\hline \\hline Model & Race & Gender & Age \\\\ \\hline FairFace Model & **93.7** & 94.2 & 59.7 \\\\ Linear Probe CLIP & 93.4 & **96.5** & **63.8** \\\\ Zero-Shot CLIP & 58.3 & 95.9 & 57.1 \\\\ Linear Probe Instagram & 90.8 & 93.2 & 54.2 \\\\ \\hline \\hline \\end{tabular}\n\\end{table}\nTable 3: Percent accuracy on Race, Gender, and Age classification of images in FairFace category ‘White’\n\\begin{table}\n\\begin{tabular}{l c c c c c c c c} \\hline \\hline  & & & & & \\multicolumn{3}{c}{Middle Southeast East} \\\\ Model & Gender & Black & White & Indian & Latino & Eastern & Asian & Asian & Average \\\\ \\hline \\multirow{3}{*}{Linear Probe CLIP} & Male & 96.9 & 96.4 & 98.7 & 96.5 & 98.9 & 96.2 & 96.9 & 97.2 \\\\  & Female & 97.9 & 96.7 & 97.9 & 99.2 & 97.2 & 98.5 & 97.3 & 97.8 \\\\  & & 97.4 & 96.5 & 98.3 & 97.8 & 98.4 & 97.3 & 97.1 & 97.5 \\\\ \\hline \\multirow{3}{*}{Zero-Shot CLIP} & Male & 96.3 & 96.4 & 97.7 & 97.2 & 98.3 & 95.5 & 96.8 & 96.9 \\\\  & Female & 97.1 & 95.3 & 98.3 & 97.8 & 97.5 & 97.2 & 96.4 & 97.0 \\\\  & & 96.7 & 95.9 & 98.0 & 97.5 & 98.0 & 96.3 & 96.6 & \\\\ \\hline \\multirow{3}{*}{Linear Probe Instagram} & Male & 92.5 & 94.8 & 96.2 & 93.1 & 96.0 & 92.7 & 93.4 & 94.1 \\\\  & Female & 90.1 & 91.4 & 95.0 & 94.8 & 95.0 & 94.1 & 94.3 & 93.4 \\\\ \\cline{1-1}  & & 91.3 & 93.2 & 95.6 & 94.0 & 95.6 & 93.4 & 93.9 & \\\\ \\hline \\hline \\end{tabular}\n\\end{table}\nTable 5: Percent accuracy on gender classification of images by FairFace race categoryAdditionally, we test the performance of the LR CLIP and ZS CLIP models across intersectional race and gender categories as they are defined in the FairFace dataset. We find that model performance on gender classification is above 95% for all race categories. Table 5 summarizes these results.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 6,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [
+          {
+            "kind": "table",
+            "label": "5",
+            "text_ref": "Table 5",
+            "element_id": "tbl_f983f26bee61"
+          },
+          {
+            "kind": "table",
+            "label": "5",
+            "text_ref": "Table 5",
+            "element_id": "tbl_f983f26bee61"
+          }
+        ],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 415,
+          "end": 1762
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 414,
+            "origin_chunk_id": "chunk_1ef8a4bb4566",
+            "origin_source_locator": "arxiv://2103.00020/pdf#page=21",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2103.00020/pdf",
+        "source_locator": "arxiv://2103.00020/pdf#page=21",
+        "semantic_key": "chunk_semantic_16ead33291cb",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "bias",
+          "source_locator": "arxiv://2103.00020/pdf#page=21",
+          "content_hash": "02d4a7c0683aa0f7"
+        },
+        "content_hash": "02d4a7c0683aa0f7"
+      }
+    },
+    {
+      "chunk_id": "chunk_e0a3ac36cfb4",
+      "paper_id": "2201.11903",
+      "parse_source": "nougat",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Checklist",
+      "section_role": [
+        "background"
+      ],
+      "section_index": 13,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [
+        "6",
+        "A",
+        "D",
+        "E",
+        "E",
+        "E"
+      ],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "1. For all authors... 1. Do the main claims made in the abstract and introduction accurately reflect the paper's contributions and scope? [Yes] 2. Did you describe the limitations of your work? [Yes] See Section 6 and Appendix A.2. 3. Did you discuss any potential negative societal impacts of your work? We don't expect negative societal impacts as a direct result of the contributions in our paper. One consideration, however, is that generated chain of thought is not always factual, which is noted as a limitation in Appendix D.1 (and note that we do not suggest using such chains of thought in a factual manner or in any real-world scenario). 4. Have you read the ethics review guidelines and ensured that your paper conforms to them? [Yes]\n2. If you are including theoretical results... 1. Did you state the full set of assumptions of all theoretical results? [N/A] 2. Did you include complete proofs of all theoretical results? [N/A]\n3. If you ran experiments... 1. Did you include the code, data, and instructions needed to reproduce the main experimental results (either in the supplemental material or as a URL)? We included inputs, outputs, and targets for LaMDA and GPT-3 in the supplementary material. Although we use proprietary models, we GPT-3 results are fully reproducible. Reproducibility is further discussed in Appendix E.1. 2. Did you specify all the training details (e.g., data splits, hyperparameters, how they were chosen)? Data splits were specified, N/A for hyperparams. 3. Did you report error bars (e.g., with respect to the random seed after running experiments multiple times)? Standard deviation for multiple seeds using LaMDA 137B, where each seed is a different random order of exemplars, is given in Table 6 and Table 7. 4. Did you include the total amount of compute and the type of resources used (e.g., type of GPUs, internal cluster, or cloud provider)? [Yes] Type of resources are described in Appendix E.2, though we did not estimate the total amount of compute.\n4. If you are using existing assets (e.g., code, data, models) or curating/releasing new assets... 1. If your work uses existing assets, did you cite the creators? We used two models that we anonymized based on the recommendation of the NeurIPS chairs. These models will be cited in the camera-ready version of the paper. 2. Did you mention the license of the assets? See Appendix E.3. 3. Did you include any new assets either in the supplemental material or as a URL? The coinflip and last letter concatenation datasets are the only new assets, and they are given in the Supplementary Materials. 4. Did you discuss whether and how consent was obtained from people whose data you're using/curating? No human data collected. 5. Did you discuss whether the data you are using/curating contains personally identifiable information or offensive content? No human data collected.\n5. If you used crowdsourcing or conducted research with human subjects... 1. Did you include the full text of instructions given to participants and screenshots, if applicable? 2. Did you describe any potential participant risks, with links to Institutional Review Board (IRB) approvals, if applicable? [N/A] 3. Did you include the estimated hourly wage paid to participants and the total amount spent on participant compensation? [N/A]Frequently Asked Questions",
+      "metadata": {
+        "is_parent": true,
+        "level": 2,
+        "source_ref": "arxiv://2201.11903/pdf",
+        "source_locator": "arxiv://2201.11903/pdf#page=15",
+        "semantic_key": "chunk_semantic_3fd60f50c988",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "checklist",
+          "source_locator": "arxiv://2201.11903/pdf#page=15",
+          "content_hash": "20039af881c30a3c"
+        },
+        "content_hash": "20039af881c30a3c"
+      }
+    },
+    {
+      "chunk_id": "chunk_e7b9cc1d9a5b",
+      "paper_id": "2111.06377",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_66df9bec5a34",
+      "section_title": "Main Properties",
+      "section_role": [
+        "experiment",
+        "method"
+      ],
+      "section_index": 4,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "Table~tab:aug studies the influence of data augmentation on our MAE pre-training.\nOur MAE works well using cropping-only augmentation, either fixed-size or random-size (both having random horizontal flipping). Adding color jittering degrades the results and so we do not use it in other experiments.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 16,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 82,
+          "end": 299
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 81,
+            "origin_chunk_id": "chunk_d8c7b4de7762",
+            "origin_source_locator": "arxiv://2111.06377/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2111.06377/latex",
+        "source_locator": "arxiv://2111.06377/latex",
+        "semantic_key": "chunk_semantic_5419cb1f46e6",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "main properties",
+          "source_locator": "arxiv://2111.06377/latex",
+          "content_hash": "3a6921e8d47a777a"
+        },
+        "content_hash": "3a6921e8d47a777a"
+      }
+    },
+    {
+      "chunk_id": "chunk_eb320183e948",
+      "paper_id": "2005.11401",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": null,
+      "section_title": "Number of instances per dataset",
+      "section_role": [],
+      "section_index": 27,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "The number of training, development and test datapoints in each of our datasets is shown in Table tab:num_instances.\n\n\ndocument",
+      "metadata": {
+        "is_parent": true,
+        "level": 1,
+        "source_ref": "arxiv://2005.11401/latex",
+        "source_locator": "arxiv://2005.11401/latex",
+        "semantic_key": "chunk_semantic_abfb0328436a",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "number of instances per dataset",
+          "source_locator": "arxiv://2005.11401/latex",
+          "content_hash": "ab44165e7257d1d2"
+        },
+        "content_hash": "ab44165e7257d1d2"
+      }
+    },
+    {
+      "chunk_id": "chunk_ec090122b110",
+      "paper_id": "2208.03299",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_7c99437f3ef0",
+      "section_title": "Training Details",
+      "section_role": [
+        "method"
+      ],
+      "section_index": 23,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": true,
+      "proposition_quality": "unknown",
+      "content": "Inter-run Variance few-shot learning is well-known to suffer from high variance.\nIn the main paper, we quote the result obtained with our first run.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 17,
+        "needs_proposition_decomposition": false,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 81,
+          "end": 148
+        },
+        "overlap_spans": [
+          {
+            "start": 0,
+            "end": 80,
+            "origin_chunk_id": "chunk_7e79ed90f4a3",
+            "origin_source_locator": "arxiv://2208.03299/latex",
+            "overlap_type": "previous_paragraph_trailing_sentence"
+          }
+        ],
+        "source_ref": "arxiv://2208.03299/latex",
+        "source_locator": "arxiv://2208.03299/latex",
+        "semantic_key": "chunk_semantic_9cbde8b934eb",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "training details",
+          "source_locator": "arxiv://2208.03299/latex",
+          "content_hash": "d773f69bcb0df2b1"
+        },
+        "content_hash": "d773f69bcb0df2b1"
+      }
+    },
+    {
+      "chunk_id": "chunk_f6a8eee4a2c6",
+      "paper_id": "2112.10752",
+      "parse_source": "latex",
+      "structure_detected": true,
+      "chunk_type": "paragraph",
+      "parent_chunk_id": "chunk_d1d5933ef2f0",
+      "section_title": "User Study",
+      "section_role": [
+        "experiment"
+      ],
+      "section_index": 36,
+      "has_formula": false,
+      "formula_latex": "",
+      "formula_description": "",
+      "has_figure": false,
+      "figure_id": "",
+      "has_table": false,
+      "references": [],
+      "propositions_generated": false,
+      "proposition_quality": "unknown",
+      "content": "suppsubsubsec:user_study\nFor the results of the user study presented in Tab.~tab:user_study we followed the protocoll of DBLP:journals/corr/abs-2104-07636 and and use the 2-alternative force-choice paradigm to assess human preference scores for two distinct tasks. In Task-1 subjects were shown a low resolution/masked image between the corresponding ground truth high resolution/unmasked version and a synthesized image, which was generated by using the middle image as conditioning. For SuperResolution subjects were asked: 'Which of the two images is a better high quality version of the low resolution image in the middle?'. For Inpainting we asked 'Which of the two images contains more realistic inpainted regions of the image in the middle?'. In Task-2, humans were similarly shown the low-res/masked version and asked for preference between two corresponding images generated by the two competing methods. As in DBLP:journals/corr/abs-2104-07636 humans viewed the images for 3 seconds before responding.",
+      "metadata": {
+        "is_parent": false,
+        "para_index": 0,
+        "needs_proposition_decomposition": true,
+        "formula_references": [],
+        "visual_references": [],
+        "content_span_unit": "char_offset",
+        "main_span": {
+          "start": 0,
+          "end": 1011
+        },
+        "overlap_spans": [],
+        "source_ref": "arxiv://2112.10752/latex",
+        "source_locator": "arxiv://2112.10752/latex",
+        "semantic_key": "chunk_semantic_5643b864878d",
+        "semantic_key_parts": {
+          "chunk_type": "paragraph",
+          "section_title": "user study",
+          "source_locator": "arxiv://2112.10752/latex",
+          "content_hash": "648f020cd34395ff"
+        },
+        "content_hash": "648f020cd34395ff"
+      }
+    }
+  ],
+  "snapshot_checksum": "sha256:c799c2a1fcab75a4c4d12f40befb22643063fcb7db6bf7a528cc2890b6d09eb2"
+}
