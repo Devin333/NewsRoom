@@ -1,0 +1,31 @@
+{
+  "schema": "newsroom.durable-event-compatibility-policy/v1",
+  "release_id": "durable-event-runtime-migration-1",
+  "compatibility_source_commit": "42a8636cd72aea0c466126fc5f2d69c55db1a1d6",
+  "compatibility_source_tree": "d6d2c55a965e47009d7dc8cf49582cb90e300c2d",
+  "compatibility_parent_commit": "f6bce48f786d5b08cc77d226b8b993e6e6b974df",
+  "deletion_source_commit": "570f840c7df3870841c93e37480d7a53a67921dd",
+  "deletion_source_tree": "8607c510e87c7f405519f5851949f9f5b5b5203b",
+  "deletion_parent_commit": "42a8636cd72aea0c466126fc5f2d69c55db1a1d6",
+  "required_query_surfaces": [
+    "api",
+    "cli",
+    "mcp",
+    "sse"
+  ],
+  "required_consumer_surfaces": [
+    "api",
+    "cli",
+    "mcp",
+    "sdk",
+    "sse"
+  ],
+  "required_inventory_sources": [
+    "deployment_registry",
+    "request_consumer_telemetry"
+  ],
+  "minimum_observation_seconds": 3600,
+  "maximum_observation_seconds": 604800,
+  "maximum_observation_records": 1000,
+  "policy_checksum": "sha256:851b7dfedf6ba4e21d30832ad9d9bcdef64c6cf67183ecae662e228ca82ce00e"
+}

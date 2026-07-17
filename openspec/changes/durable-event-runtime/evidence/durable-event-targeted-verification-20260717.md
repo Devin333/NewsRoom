@@ -90,6 +90,22 @@ committed in `07841be7`.
 
 ## Rollback boundary
 
+The compatibility-release side of task 9.5 now has a deterministic verify-only
+gate instead of relying on a Markdown assertion. The tracked policy checksum is
+`sha256:851b7dfedf6ba4e21d30832ad9d9bcdef64c6cf67183ecae662e228ca82ce00e`.
+It pins the pre-deletion/deletion commit, tree and parent boundary, requires a
+one-hour to seven-day finite window, derives durable query/checkpoint/projection
+results from raw sequence, watermark, fallback, legacy-offset, secret and
+write-back facts, and verifies complete API/CLI/MCP/SDK/SSE inventory. Exact
+observation and consumer-owner record bytes require detached Ed25519 signatures
+from distinct trust roots. Focused compatibility plus rollback evidence tests
+passed `67 passed, 1 explicit PostgreSQL opt-in skip`; the compatibility-only
+suite contributed `21 passed`.
+
+This verifier creates no external fact or decision. The signed observation,
+consumer-owner sign-off and immutable external evidence URI remain absent, so
+task 9.5 remains open.
+
 The committed rollback tool still keeps local evidence `INCOMPLETE`, but a real
 approval-pending staging run has now completed for the frozen runtime candidate
 `fbdec37a0afd6b08796818ccd6cb7fea2e401f93` against rollback release

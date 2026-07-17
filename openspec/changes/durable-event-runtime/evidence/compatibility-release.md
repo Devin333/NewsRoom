@@ -86,6 +86,48 @@ The rollback approval, deployment attestation, and release qualification chain
 for task 9.5 remains separately required. Neither chain substitutes for the
 other.
 
+## Deterministic external-evidence gate
+
+The repository now provides a verify-only gate for the external inputs above:
+
+- Policy: `compatibility-observation-policy.json`
+- Policy checksum:
+  `sha256:851b7dfedf6ba4e21d30832ad9d9bcdef64c6cf67183ecae662e228ca82ce00e`
+- Verifier: `python -m scripts.durable_event_compatibility_release`
+- Record schemas:
+  `newsroom.durable-event-compatibility-observation/v1` and
+  `newsroom.durable-event-compatibility-consumer-signoff/v1`
+- Operator template:
+  `scripts/templates/durable_event_compatibility_observation.md`
+
+The tracked policy pins the exact migration/deletion commits, Git trees and
+parent boundary, requires a one-hour to seven-day finite window, covers real
+API/CLI/MCP/SSE query measurements and every API/CLI/MCP/SDK/SSE consumer
+surface, and requires complete deployment-registry plus request/consumer
+telemetry inventory. The verifier derives the gate from sequence/watermark,
+fallback, checkpoint-base, legacy-offset, projection-secret/write-back, unknown
+consumer, owner and flat-record-read facts rather than accepting an input
+`passed` boolean.
+
+The deployment observer and consumer-registry owner must provide detached
+Ed25519 signatures from different trust roots over the exact record bytes. The
+verifier does not generate keys, identities, decisions, observations or
+signatures. The gate therefore remains awaiting real external evidence; adding
+the verifier does not qualify the deletion release by itself.
+
+Focused verification at the implementation commit boundary:
+
+```text
+test_durable_event_compatibility_release.py
+21 passed
+
+compatibility + rollback/staging/tracked-evidence suites
+67 passed, 1 explicit PostgreSQL opt-in skip
+
+openspec validate durable-event-runtime --strict
+passed
+```
+
 ## Verification
 
 The implementation batch includes regression coverage for fixed-watermark

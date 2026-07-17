@@ -213,6 +213,16 @@ Adapters read existing `newsroom.event.v1`, `newsroom.event_envelope.v1`, `newsr
 
 During one migration release, public `framework.events` imports, `EventRecorder.emit()`, `write_jsonl()`, `TraceContext.root()/child()`, and callable subscriber registration remain deprecated shims. New production code uses scoped emitters and the durable runtime. After repository callers and migration fixtures are converted, the dual `_records/_envelopes` state, runner-local stores/models/factory, post-run `_index_events()`, legacy mixed subscriber payload, and live-bus replay path are deleted.
 
+Deletion release qualification also requires a signed compatibility-observation
+gate separate from rollback qualification. A tracked policy pins the exact
+pre-deletion commit/tree and deletion commit/tree/parent relationship. A real
+deployment observer records a finite release window with durable query,
+checkpoint, projection, build, deployment, and retention evidence; an
+independent consumer-registry owner signs complete API/CLI/MCP/SDK/SSE inventory
+and flat-record-read disposition. The deterministic verifier accepts only
+detached signatures from distinct Ed25519 trust roots and never generates the
+external observations, owner decision, identity, key, or signature itself.
+
 ### 13. Operational signals describe event-runtime health
 
 The runtime emits low-cardinality metrics and structured diagnostics for append latency/failure, pending delivery age/count, retry/dead-letter totals, consumer lag, lease recovery, duplicate IDs, quarantine, schema/upcast results, replay mismatches, export watermark, and storage corruption. Raw payloads and tenant/user values are not metric labels.
