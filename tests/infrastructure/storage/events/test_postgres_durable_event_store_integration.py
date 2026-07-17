@@ -49,6 +49,7 @@ def postgres_dsn() -> str:
             for migration_name in (
                 "006_durable_event_runtime.sql",
                 "008_authorized_redelivery.sql",
+                "010_retirement_cancellations.sql",
             ):
                 cursor.execute(
                     (migrations / migration_name).read_text(encoding="utf-8")
@@ -2254,6 +2255,286 @@ def test_subscription_status_change_is_monotonic_and_audited_atomically(
             ]
 
 
+def test_retirement_cancellation_is_bounded_audited_and_fences_late_ack(
+    postgres_dsn: str,
+    scope: str,
+) -> None:
+    import psycopg
+
+    from framework.events.errors import (
+        EventRetirementCancellationCollisionError,
+        EventStaleLeaseError,
+    )
+    from framework.events.runtime import (
+        CheckpointKey,
+        DeliveryClaimRequest,
+        DeliveryQuery,
+        DeliverySettlement,
+        DeliveryState,
+        DurableSubscription,
+        RetirementCancellationRequest,
+        SubscriptionFilter,
+        SubscriptionStatus,
+    )
+    from infrastructure.storage.events.postgres import PostgresDurableEventStore
+
+    store = PostgresDurableEventStore(postgres_dsn)
+    tenant_id = f"{scope}:tenant"
+    stream_id = f"{scope}:retirement-stream"
+    event_type = "io.newsroom.test.retirement-cancellation"
+    registered = store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{scope}:retirement-subscription",
+            subscription_version=1,
+            consumer_id=f"{scope}:retirement-consumer",
+            event_filter=SubscriptionFilter(event_types=frozenset({event_type})),
+            tenant_id=tenant_id,
+        )
+    )
+    events = tuple(
+        store.append_event(
+            _candidate(
+                scope,
+                index=index,
+                stream_id=stream_id,
+                tenant_id=tenant_id,
+                event_type=event_type,
+            )
+        ).event
+        for index in range(1, 4)
+    )
+    claim = store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=registered.subscription_id,
+            subscription_version=1,
+            lease_owner=f"{scope}:worker",
+            requested_at=datetime.now(UTC),
+            limit=10,
+        )
+    )[0]
+    retired_at = max(registered.updated_at, datetime.now(UTC)) + timedelta(seconds=1)
+    retired = store.set_subscription_status(
+        registered.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=retired_at,
+        reason="retire obsolete consumer",
+    )
+    request = RetirementCancellationRequest(
+        cancellation_id=f"{scope}:cancellation:1",
+        subscription=retired.key,
+        requested_at=retired_at + timedelta(seconds=1),
+        operator_id=f"{scope}:operator",
+        operator_reason="cancel bounded retired backlog",
+        authorization_evidence_ref=f"authorization:{scope}:1",
+        tenant_id=tenant_id,
+        limit=2,
+    )
+
+    first = store.cancel_retired_subscription(request)
+
+    assert [item.stream_sequence for item in first.items] == [1, 2]
+    assert [item.previous_state for item in first.items] == [
+        DeliveryState.CLAIMED,
+        DeliveryState.PENDING,
+    ]
+    assert [item.previous_attempt_count for item in first.items] == [1, 0]
+    assert first.remaining_nonterminal_count == 1
+    assert not first.completed
+    assert store.cancel_retired_subscription(request) == first
+    assert store.get_retirement_cancellation_report(
+        request.cancellation_id,
+        tenant_id=tenant_id,
+    ) == first
+    assert store.get_retirement_cancellation_report(
+        request.cancellation_id,
+        tenant_id=f"{scope}:other-tenant",
+    ) is None
+    with pytest.raises(EventRetirementCancellationCollisionError):
+        store.cancel_retired_subscription(
+            RetirementCancellationRequest(
+                cancellation_id=request.cancellation_id,
+                subscription=request.subscription,
+                requested_at=request.requested_at,
+                operator_id=request.operator_id,
+                operator_reason="different operator command",
+                authorization_evidence_ref=request.authorization_evidence_ref,
+                tenant_id=request.tenant_id,
+                limit=request.limit,
+            )
+        )
+    checkpoint = store.get_checkpoint(
+        CheckpointKey(
+            registered.subscription_id,
+            1,
+            stream_id,
+            tenant_id,
+        )
+    )
+    assert checkpoint is not None
+    assert checkpoint.highest_contiguous_terminal_sequence == 2
+    assert checkpoint.last_event_id == events[1].event_id
+    with pytest.raises(EventStaleLeaseError):
+        store.settle_delivery(
+            DeliverySettlement(
+                lease=claim.lease,
+                target_state=DeliveryState.ACKED,
+                settled_at=first.cancelled_at + timedelta(seconds=1),
+            )
+        )
+
+    second = store.cancel_retired_subscription(
+        RetirementCancellationRequest(
+            cancellation_id=f"{scope}:cancellation:2",
+            subscription=retired.key,
+            requested_at=first.cancelled_at + timedelta(seconds=1),
+            operator_id=f"{scope}:operator",
+            operator_reason="finish retired backlog cancellation",
+            authorization_evidence_ref=f"authorization:{scope}:2",
+            tenant_id=tenant_id,
+            limit=2,
+        )
+    )
+    assert [item.stream_sequence for item in second.items] == [3]
+    assert second.completed
+    deliveries = store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=registered.subscription_id,
+            subscription_version=1,
+            tenant_id=tenant_id,
+            limit=10,
+        )
+    ).records
+    assert [delivery.state for delivery in deliveries] == [
+        DeliveryState.DROPPED,
+        DeliveryState.DROPPED,
+        DeliveryState.DROPPED,
+    ]
+    assert {delivery.reason_class for delivery in deliveries} == {
+        "subscription_retired"
+    }
+    assert all(delivery.lease_owner is None for delivery in deliveries)
+    assert [delivery.attempt_count for delivery in deliveries] == [1, 1, 1]
+    final_checkpoint = store.get_checkpoint(
+        CheckpointKey(
+            registered.subscription_id,
+            1,
+            stream_id,
+            tenant_id,
+        )
+    )
+    assert final_checkpoint is not None
+    assert final_checkpoint.highest_contiguous_terminal_sequence == 3
+    assert final_checkpoint.last_event_id == events[2].event_id
+    with psycopg.connect(postgres_dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM event_retirement_cancellation_reports "
+                "WHERE cancellation_id LIKE %s",
+                (f"{scope}:%",),
+            )
+            report_count = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT COUNT(*) FROM event_retirement_cancellation_items "
+                "WHERE cancellation_id LIKE %s",
+                (f"{scope}:%",),
+            )
+            item_count = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT COUNT(*) FROM event_inbox WHERE event_id LIKE %s",
+                (f"{scope}:%",),
+            )
+            inbox_count = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT COUNT(*) FROM event_dead_letters WHERE event_id LIKE %s",
+                (f"{scope}:%",),
+            )
+            dead_letter_count = int(cursor.fetchone()[0])
+    assert (report_count, item_count, inbox_count, dead_letter_count) == (2, 3, 0, 0)
+
+
+def test_concurrent_exact_retirement_cancellation_retry_commits_one_audit(
+    postgres_dsn: str,
+    scope: str,
+) -> None:
+    import psycopg
+
+    from framework.events.runtime import (
+        DurableSubscription,
+        RetirementCancellationRequest,
+        SubscriptionFilter,
+        SubscriptionStatus,
+    )
+    from infrastructure.storage.events.postgres import PostgresDurableEventStore
+
+    store = PostgresDurableEventStore(postgres_dsn)
+    tenant_id = f"{scope}:tenant"
+    stream_id = f"{scope}:concurrent-retirement-stream"
+    event_type = "io.newsroom.test.concurrent-retirement-cancellation"
+    registered = store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{scope}:concurrent-retirement-subscription",
+            subscription_version=1,
+            consumer_id=f"{scope}:concurrent-retirement-consumer",
+            event_filter=SubscriptionFilter(event_types=frozenset({event_type})),
+            tenant_id=tenant_id,
+        )
+    )
+    for index in range(1, 9):
+        store.append_event(
+            _candidate(
+                scope,
+                index=index,
+                stream_id=stream_id,
+                tenant_id=tenant_id,
+                event_type=event_type,
+            )
+        )
+    retired_at = max(registered.updated_at, datetime.now(UTC)) + timedelta(seconds=1)
+    retired = store.set_subscription_status(
+        registered.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=retired_at,
+        reason="retire before concurrent cancellation",
+    )
+    request = RetirementCancellationRequest(
+        cancellation_id=f"{scope}:concurrent-cancellation",
+        subscription=retired.key,
+        requested_at=retired_at + timedelta(seconds=1),
+        operator_id=f"{scope}:operator",
+        operator_reason="cancel retired backlog exactly once",
+        authorization_evidence_ref=f"authorization:{scope}:concurrent",
+        tenant_id=tenant_id,
+        limit=8,
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        reports = tuple(
+            executor.map(
+                lambda _index: store.cancel_retired_subscription(request),
+                range(8),
+            )
+        )
+
+    assert all(report == reports[0] for report in reports)
+    assert reports[0].completed
+    assert reports[0].cancelled_count == 8
+    with psycopg.connect(postgres_dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM event_retirement_cancellation_reports "
+                "WHERE cancellation_id = %s",
+                (request.cancellation_id,),
+            )
+            report_count = int(cursor.fetchone()[0])
+            cursor.execute(
+                "SELECT COUNT(*) FROM event_retirement_cancellation_items "
+                "WHERE cancellation_id = %s",
+                (request.cancellation_id,),
+            )
+            item_count = int(cursor.fetchone()[0])
+    assert (report_count, item_count) == (1, 8)
+
+
 def test_reregistration_ignores_subscription_lifecycle_fields(
     postgres_dsn: str,
     scope: str,
@@ -3228,6 +3509,16 @@ def _cleanup(dsn: str, scope: str) -> None:
 
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM event_retirement_cancellation_items "
+                "WHERE cancellation_id LIKE %s",
+                (f"{scope}:%",),
+            )
+            cursor.execute(
+                "DELETE FROM event_retirement_cancellation_reports "
+                "WHERE cancellation_id LIKE %s",
+                (f"{scope}:%",),
+            )
             cursor.execute(
                 "DELETE FROM event_redelivery_items WHERE redelivery_id LIKE %s",
                 (f"{scope}:%",),

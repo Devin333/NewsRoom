@@ -22,6 +22,7 @@ MAX_REDACTED_DIAGNOSTIC_LENGTH: Final = 2_048
 MAX_REASON_CLASS_LENGTH: Final = 128
 MAX_AUTHORIZATION_EVIDENCE_REF_LENGTH: Final = 512
 MAX_REDELIVERY_ITEMS: Final = 1_000
+MAX_RETIREMENT_CANCELLATION_ITEMS: Final = 1_000
 _CHECKSUM_PATTERN: Final = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _T = TypeVar("_T")
 
@@ -1576,6 +1577,276 @@ class DeadLetterAction:
 
 
 @dataclass(frozen=True, slots=True)
+class RetirementCancellationRequest:
+    """Authorized bounded command for terminally cancelling retired work."""
+
+    cancellation_id: str
+    subscription: SubscriptionKey
+    requested_at: datetime
+    operator_id: str
+    operator_reason: str
+    authorization_evidence_ref: str
+    tenant_id: str | None = None
+    limit: int = MAX_RETIREMENT_CANCELLATION_ITEMS
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "cancellation_id",
+            _required_text(self.cancellation_id, "cancellation_id"),
+        )
+        if not isinstance(self.subscription, SubscriptionKey):
+            raise ValueError("subscription must be SubscriptionKey")
+        object.__setattr__(
+            self,
+            "requested_at",
+            _required_utc(self.requested_at, "requested_at"),
+        )
+        object.__setattr__(
+            self,
+            "operator_id",
+            _required_text(self.operator_id, "operator_id"),
+        )
+        object.__setattr__(
+            self,
+            "operator_reason",
+            _required_text(self.operator_reason, "operator_reason"),
+        )
+        evidence_ref = _required_text(
+            self.authorization_evidence_ref,
+            "authorization_evidence_ref",
+        )
+        if len(evidence_ref) > MAX_AUTHORIZATION_EVIDENCE_REF_LENGTH:
+            raise ValueError(
+                "authorization_evidence_ref exceeds the bounded audit reference limit"
+            )
+        object.__setattr__(self, "authorization_evidence_ref", evidence_ref)
+        object.__setattr__(
+            self,
+            "tenant_id",
+            _optional_text(self.tenant_id, "tenant_id"),
+        )
+        limit = _positive_int(self.limit, "limit")
+        if limit > MAX_RETIREMENT_CANCELLATION_ITEMS:
+            raise ValueError(
+                "retirement cancellation limit cannot exceed "
+                f"{MAX_RETIREMENT_CANCELLATION_ITEMS}"
+            )
+        object.__setattr__(self, "limit", limit)
+
+
+@dataclass(frozen=True, slots=True)
+class RetirementCancellationItem:
+    """Per-delivery audit disposition produced by a cancellation command."""
+
+    cancellation_id: str
+    delivery_id: str
+    event_id: str
+    stream_id: str
+    stream_sequence: int
+    subscription: SubscriptionKey
+    delivery_generation: int
+    previous_state: DeliveryState
+    previous_attempt_count: int
+    cancelled_at: datetime
+    previous_reason_class: str | None = None
+    terminal_state: DeliveryState = DeliveryState.DROPPED
+    tenant_id: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "cancellation_id",
+            "delivery_id",
+            "event_id",
+            "stream_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+        if not isinstance(self.subscription, SubscriptionKey):
+            raise ValueError("subscription must be SubscriptionKey")
+        object.__setattr__(
+            self,
+            "stream_sequence",
+            _positive_int(self.stream_sequence, "stream_sequence"),
+        )
+        object.__setattr__(
+            self,
+            "delivery_generation",
+            _positive_int(self.delivery_generation, "delivery_generation"),
+        )
+        previous_state = DeliveryState(self.previous_state)
+        if previous_state.is_terminal:
+            raise ValueError("retirement cancellation item requires a nonterminal prior state")
+        object.__setattr__(self, "previous_state", previous_state)
+        previous_attempt_count = _nonnegative_int(
+            self.previous_attempt_count,
+            "previous_attempt_count",
+        )
+        if (
+            previous_state is DeliveryState.PENDING
+            and previous_attempt_count != 0
+        ) or (
+            previous_state in {DeliveryState.CLAIMED, DeliveryState.RETRY_WAIT}
+            and previous_attempt_count < 1
+        ):
+            raise ValueError(
+                "retirement cancellation prior state and attempt count disagree"
+            )
+        object.__setattr__(
+            self,
+            "previous_attempt_count",
+            previous_attempt_count,
+        )
+        terminal_state = DeliveryState(self.terminal_state)
+        if terminal_state is not DeliveryState.DROPPED:
+            raise ValueError("retirement cancellation terminal state must be DROPPED")
+        object.__setattr__(self, "terminal_state", terminal_state)
+        object.__setattr__(
+            self,
+            "previous_reason_class",
+            _reason_class(self.previous_reason_class),
+        )
+        object.__setattr__(
+            self,
+            "cancelled_at",
+            _required_utc(self.cancelled_at, "cancelled_at"),
+        )
+        object.__setattr__(
+            self,
+            "tenant_id",
+            _optional_text(self.tenant_id, "tenant_id"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RetirementCancellationReport:
+    """Durable audit for one bounded terminal-cancellation transaction."""
+
+    cancellation_id: str
+    subscription: SubscriptionKey
+    requested_at: datetime
+    cancelled_at: datetime
+    operator_id: str
+    operator_reason: str
+    authorization_evidence_ref: str
+    item_limit: int
+    remaining_nonterminal_count: int
+    items: tuple[RetirementCancellationItem, ...]
+    remaining_nonterminal_count_truncated: bool = False
+    tenant_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "cancellation_id",
+            _required_text(self.cancellation_id, "cancellation_id"),
+        )
+        if not isinstance(self.subscription, SubscriptionKey):
+            raise ValueError("subscription must be SubscriptionKey")
+        requested_at = _required_utc(self.requested_at, "requested_at")
+        cancelled_at = _required_utc(self.cancelled_at, "cancelled_at")
+        if cancelled_at < requested_at:
+            raise ValueError("cancelled_at cannot precede requested_at")
+        object.__setattr__(self, "requested_at", requested_at)
+        object.__setattr__(self, "cancelled_at", cancelled_at)
+        object.__setattr__(
+            self,
+            "operator_id",
+            _required_text(self.operator_id, "operator_id"),
+        )
+        object.__setattr__(
+            self,
+            "operator_reason",
+            _required_text(self.operator_reason, "operator_reason"),
+        )
+        evidence_ref = _required_text(
+            self.authorization_evidence_ref,
+            "authorization_evidence_ref",
+        )
+        if len(evidence_ref) > MAX_AUTHORIZATION_EVIDENCE_REF_LENGTH:
+            raise ValueError(
+                "authorization_evidence_ref exceeds the bounded audit reference limit"
+            )
+        object.__setattr__(self, "authorization_evidence_ref", evidence_ref)
+        item_limit = _positive_int(self.item_limit, "item_limit")
+        if item_limit > MAX_RETIREMENT_CANCELLATION_ITEMS:
+            raise ValueError(
+                "retirement cancellation item_limit cannot exceed "
+                f"{MAX_RETIREMENT_CANCELLATION_ITEMS}"
+            )
+        object.__setattr__(self, "item_limit", item_limit)
+        remaining_count = _nonnegative_int(
+            self.remaining_nonterminal_count,
+            "remaining_nonterminal_count",
+        )
+        count_truncated = _boolean(
+            self.remaining_nonterminal_count_truncated,
+            "remaining_nonterminal_count_truncated",
+        )
+        if count_truncated:
+            if remaining_count != item_limit + 1:
+                raise ValueError(
+                    "truncated remaining count must be the item_limit plus one"
+                )
+        elif remaining_count > item_limit:
+            raise ValueError(
+                "exact remaining count cannot exceed the bounded item_limit"
+            )
+        object.__setattr__(self, "remaining_nonterminal_count", remaining_count)
+        object.__setattr__(
+            self,
+            "remaining_nonterminal_count_truncated",
+            count_truncated,
+        )
+        tenant_id = _optional_text(self.tenant_id, "tenant_id")
+        object.__setattr__(self, "tenant_id", tenant_id)
+        items = _typed_tuple(
+            self.items,
+            RetirementCancellationItem,
+            "items",
+        )
+        if len(items) > item_limit:
+            raise ValueError("retirement cancellation report exceeded its item_limit")
+        ordering = tuple(
+            (
+                item.stream_id,
+                item.stream_sequence,
+                item.delivery_generation,
+                item.delivery_id,
+            )
+            for item in items
+        )
+        if ordering != tuple(sorted(ordering)) or len(
+            {item.delivery_id for item in items}
+        ) != len(items):
+            raise ValueError(
+                "retirement cancellation items must be unique and deterministically ordered"
+            )
+        for item in items:
+            if (
+                item.cancellation_id != self.cancellation_id
+                or item.subscription != self.subscription
+                or item.cancelled_at != cancelled_at
+                or item.tenant_id != tenant_id
+            ):
+                raise ValueError(
+                    "retirement cancellation item falls outside its report identity"
+                )
+        object.__setattr__(self, "items", items)
+
+    @property
+    def cancelled_count(self) -> int:
+        return len(self.items)
+
+    @property
+    def completed(self) -> bool:
+        return self.remaining_nonterminal_count == 0
+
+
+@dataclass(frozen=True, slots=True)
 class RedeliveryRequest:
     """Authorized command selecting a finite event-consumer range.
 
@@ -2125,11 +2396,15 @@ __all__ = [
     "MAX_LEASE_SECONDS",
     "MAX_PAGE_LIMIT",
     "MAX_REDELIVERY_ITEMS",
+    "MAX_RETIREMENT_CANCELLATION_ITEMS",
     "MIN_LEASE_SECONDS",
     "PendingDeliveryStats",
     "RedeliveryItem",
     "RedeliveryReport",
     "RedeliveryRequest",
+    "RetirementCancellationItem",
+    "RetirementCancellationReport",
+    "RetirementCancellationRequest",
     "QuarantineDisposition",
     "QuarantinePage",
     "QuarantineQuery",

@@ -12,7 +12,10 @@ from framework.events import default_event_schema_catalog
 from framework.events.runtime.models import (
     DeadLetterPage,
     DeadLetterRecord,
+    ConsumerEffectContract,
     DeliveryRecord,
+    DurableSubscription,
+    EffectIdempotencyStrategy,
     PendingDeliveryStats,
     QuarantinePage,
     QuarantineReason,
@@ -21,7 +24,9 @@ from framework.events.runtime.models import (
     ReplayReport,
     ReplayReportPage,
     ReplayStatus,
+    RetirementCancellationReport,
     SubscriptionKey,
+    SubscriptionStatus,
 )
 from interfaces.models.actor import ActorContext
 from interfaces.services.event_operator_factory import (
@@ -66,12 +71,22 @@ class _Store:
             operator_reason="verified history",
         )
         self.dead_letter = _dead_letter()
-        self.subscription = SimpleNamespace(
+        self.retirement_cancellation = None
+        self.subscription = DurableSubscription(
             subscription_id="subscription-1",
             subscription_version=1,
-            tenant_id="tenant-a",
             consumer_id="consumer-1",
-            effect=SimpleNamespace(consumer_effect_id="effect-1"),
+            effect=ConsumerEffectContract(
+                performs_external_effects=True,
+                consumer_effect_id="effect-1",
+                idempotency_strategy=(
+                    EffectIdempotencyStrategy.TARGET_IDEMPOTENCY_KEY
+                ),
+            ),
+            status=SubscriptionStatus.RETIRED,
+            tenant_id="tenant-a",
+            created_at=NOW,
+            updated_at=NOW,
         )
 
     def get_quarantine(self, quarantine_id, *, tenant_id=None):
@@ -126,6 +141,38 @@ class _Store:
     def get_stream_high_watermark(self, stream_id, *, tenant_id=None):
         return None
 
+    def get_retirement_cancellation_report(
+        self,
+        cancellation_id,
+        *,
+        tenant_id=None,
+    ):
+        report = self.retirement_cancellation
+        if (
+            report is not None
+            and report.cancellation_id == cancellation_id
+            and report.tenant_id == tenant_id
+        ):
+            return report
+        return None
+
+    def cancel_retired_subscription(self, request):
+        report = RetirementCancellationReport(
+            cancellation_id=request.cancellation_id,
+            subscription=request.subscription,
+            requested_at=request.requested_at,
+            cancelled_at=request.requested_at,
+            operator_id=request.operator_id,
+            operator_reason=request.operator_reason,
+            authorization_evidence_ref=request.authorization_evidence_ref,
+            item_limit=request.limit,
+            remaining_nonterminal_count=0,
+            items=(),
+            tenant_id=request.tenant_id,
+        )
+        self.retirement_cancellation = report
+        return report
+
 
 class _DeliveryRuntime:
     def __init__(self, store) -> None:
@@ -151,6 +198,23 @@ class _DeliveryRuntime:
 
     def begin_redelivery(self, request):
         raise AssertionError("redelivery is outside this facade")
+
+    def cancel_retired_subscription(self, request):
+        report = RetirementCancellationReport(
+            cancellation_id=request.cancellation_id,
+            subscription=request.subscription,
+            requested_at=request.requested_at,
+            cancelled_at=request.requested_at,
+            operator_id=request.operator_id,
+            operator_reason=request.operator_reason,
+            authorization_evidence_ref=request.authorization_evidence_ref,
+            item_limit=request.limit,
+            remaining_nonterminal_count=0,
+            items=(),
+            tenant_id=request.tenant_id,
+        )
+        self.consumers.store.retirement_cancellation = report
+        return report
 
 
 def test_facade_returns_json_safe_allowlists_without_absolute_paths(tmp_path) -> None:
@@ -251,6 +315,37 @@ def test_requeue_maps_acknowledgement_but_runtime_retains_capability_authority(
     assert runtime.actions[0].idempotency_ready is True
     assert runtime.actions[0].operator_id == "operator-1"
     assert runtime.actions[0].requested_at == NOW
+
+
+def test_retirement_cancellation_facade_returns_bounded_audit_dto(tmp_path) -> None:
+    store = _Store()
+    service = build_event_operator_service(
+        _actor("events:operate", "events:read"),
+        tenant_id="tenant-a",
+        artifact_root=tmp_path,
+        event_storage=_storage(store),
+        clock=lambda: NOW,
+    )
+
+    cancelled = service.cancel_retired_subscription(
+        "retirement-cancel-facade",
+        subscription_id="subscription-1",
+        subscription_version=1,
+        operator_reason="retired worker removed from service",
+        limit=10,
+    )
+    fetched = service.get_retirement_cancellation_report(
+        "retirement-cancel-facade"
+    )
+
+    audit = cancelled["retirement_cancellation"]
+    assert audit["completed"] is True
+    assert audit["cancelled_count"] == 0
+    assert audit["item_limit"] == 10
+    assert audit["authorization_evidence_ref"].startswith("authz://")
+    assert fetched["found"] is True
+    assert fetched["retirement_cancellation"] == audit
+    assert json.loads(json.dumps(cancelled)) == cancelled
 
 
 def test_build_rejects_delivery_runtime_bound_to_another_store(tmp_path) -> None:

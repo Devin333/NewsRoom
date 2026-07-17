@@ -16,10 +16,15 @@ from framework.events.canonical import (
     TraceBlock,
 )
 from framework.events.propagation import W3CSpanContext, current_trace_context
-from framework.events.errors import EventConsumerIdempotencyError
+from framework.events.errors import (
+    EventConsumerIdempotencyError,
+    EventRetirementCancellationCollisionError,
+)
 from framework.events.runtime.authorization import (
     RedeliveryAuthorizationDecision,
     RedeliveryAuthorizationRequest,
+    RetirementCancellationAuthorizationDecision,
+    RetirementCancellationAuthorizationRequest,
 )
 from framework.events.runtime.delivery import (
     DeliveryFailurePhase,
@@ -31,6 +36,8 @@ from framework.events.runtime.delivery import (
     EventDeliveryStoreOperationError,
     EventRedeliveryAuthorizationContractError,
     EventRedeliveryAuthorizationError,
+    EventRetirementCancellationAuthorizationContractError,
+    EventRetirementCancellationAuthorizationError,
     EventSubscriptionNotFoundError,
 )
 from framework.events.runtime.idempotency import (
@@ -69,6 +76,8 @@ from framework.events.runtime.models import (
     RedeliveryItem,
     RedeliveryReport,
     RedeliveryRequest,
+    RetirementCancellationReport,
+    RetirementCancellationRequest,
     RetryPolicy,
     SubscriptionFilter,
     SubscriptionKey,
@@ -271,6 +280,54 @@ class _RedeliveryAuthorizer:
         return decision
 
 
+class _RetirementCancellationAuthorizer:
+    def __init__(
+        self,
+        *,
+        trace: list[str] | None = None,
+        authorized: bool = True,
+        invalid_response: object | None = None,
+        bind_to: RetirementCancellationAuthorizationRequest | None = None,
+        tamper_decision_checksum: bool = False,
+    ) -> None:
+        self.trace = trace if trace is not None else []
+        self.authorized = authorized
+        self.invalid_response = invalid_response
+        self.bind_to = bind_to
+        self.tamper_decision_checksum = tamper_decision_checksum
+        self.requests: list[RetirementCancellationAuthorizationRequest] = []
+
+    def authorize(
+        self,
+        request: RetirementCancellationAuthorizationRequest,
+    ) -> RetirementCancellationAuthorizationDecision:
+        self.trace.append("authorize")
+        self.requests.append(request)
+        if self.invalid_response is not None:
+            return self.invalid_response  # type: ignore[return-value]
+        bound_request = self.bind_to or request
+        decision = RetirementCancellationAuthorizationDecision(
+            request=bound_request,
+            authorized=self.authorized,
+            decided_at=bound_request.requested_at,
+            authorization_evidence_ref=(
+                bound_request.authorization_evidence_ref
+                if self.authorized
+                else None
+            ),
+            denial_reason_class=(
+                None if self.authorized else "operator_not_authorized"
+            ),
+        )
+        if self.tamper_decision_checksum:
+            object.__setattr__(
+                decision,
+                "decision_checksum",
+                "sha256:" + "0" * 64,
+            )
+        return decision
+
+
 class _IdempotentTargetConsumer(_Consumer):
     def __init__(self, consumer_id: str) -> None:
         super().__init__(consumer_id)
@@ -354,6 +411,10 @@ class _Store:
         self.requeued: list[DeadLetterAction] = []
         self.redelivery_requests: list[RedeliveryRequest] = []
         self.pending_stats = PendingDeliveryStats(pending_count=0, lag=0)
+        self.retirement_cancellation_requests: list[
+            RetirementCancellationRequest
+        ] = []
+        self.retirement_cancellation_error: Exception | None = None
 
     def register_subscription(
         self,
@@ -540,6 +601,28 @@ class _Store:
                     tenant_id=request.tenant_id,
                 ),
             ),
+        )
+
+    def cancel_retired_subscription(
+        self,
+        request: RetirementCancellationRequest,
+    ) -> RetirementCancellationReport:
+        self.trace.append("store")
+        if self.retirement_cancellation_error is not None:
+            raise self.retirement_cancellation_error
+        self.retirement_cancellation_requests.append(request)
+        return RetirementCancellationReport(
+            cancellation_id=request.cancellation_id,
+            subscription=request.subscription,
+            requested_at=request.requested_at,
+            cancelled_at=request.requested_at,
+            operator_id=request.operator_id,
+            operator_reason=request.operator_reason,
+            authorization_evidence_ref=request.authorization_evidence_ref,
+            item_limit=request.limit,
+            remaining_nonterminal_count=0,
+            items=(),
+            tenant_id=request.tenant_id,
         )
 
 
@@ -772,6 +855,7 @@ def _runtime(
     diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
     authorizer: _RedeliveryAuthorizer | None = None,
     telemetry: EventTelemetry | None = None,
+    retirement_authorizer: _RetirementCancellationAuthorizer | None = None,
 ) -> DurableDeliveryRuntime:
     runtime = DurableDeliveryRuntime(
         store,  # type: ignore[arg-type]
@@ -782,6 +866,7 @@ def _runtime(
         diagnostic_fallback=diagnostic_fallback,
         redelivery_authorizer=authorizer,
         telemetry=telemetry,
+        retirement_cancellation_authorizer=retirement_authorizer,
         clock=clock or _Clock(),
     )
     runtime.register(subscription, consumer)
@@ -2129,6 +2214,205 @@ def test_redelivery_exact_retry_is_authorized_again_before_store_idempotence() -
         "store",
     ]
     assert len(authorizer.requests) == 2
+
+
+def test_retirement_cancellation_authorizes_exact_retired_scope_before_store() -> None:
+    trace: list[str] = []
+    store = _Store(trace)
+    subscription = replace(
+        _subscription(tenant_id="tenant-a"),
+        status=SubscriptionStatus.RETIRED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    store.subscriptions[subscription.key] = subscription
+    authorizer = _RetirementCancellationAuthorizer(trace=trace)
+    runtime = DurableDeliveryRuntime(
+        store,  # type: ignore[arg-type]
+        retirement_cancellation_authorizer=authorizer,
+        clock=_Clock(),
+    )
+    request = RetirementCancellationRequest(
+        cancellation_id="retirement-cancel-runtime",
+        subscription=subscription.key,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="retired worker is decommissioned",
+        authorization_evidence_ref="authz:retirement-cancel-runtime",
+        tenant_id="tenant-a",
+        limit=25,
+    )
+
+    report = runtime.cancel_retired_subscription(request)
+
+    assert trace == ["authorize", "store"]
+    assert authorizer.requests == [
+        RetirementCancellationAuthorizationRequest.from_cancellation(request)
+    ]
+    assert store.retirement_cancellation_requests == [request]
+    assert report.completed is True
+    assert report.item_limit == 25
+
+
+@pytest.mark.parametrize(
+    "authorizer_case",
+    ("denied", "invalid", "mismatched", "tampered"),
+)
+def test_retirement_cancellation_rejects_untrusted_authorization_before_store(
+    authorizer_case: str,
+) -> None:
+    trace: list[str] = []
+    store = _Store(trace)
+    subscription = replace(
+        _subscription(tenant_id="tenant-a"),
+        status=SubscriptionStatus.RETIRED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    store.subscriptions[subscription.key] = subscription
+    request = RetirementCancellationRequest(
+        cancellation_id=f"retirement-cancel-{authorizer_case}",
+        subscription=subscription.key,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="retired worker is decommissioned",
+        authorization_evidence_ref=f"authz:retirement-cancel-{authorizer_case}",
+        tenant_id="tenant-a",
+    )
+    authorization_request = (
+        RetirementCancellationAuthorizationRequest.from_cancellation(request)
+    )
+    if authorizer_case == "denied":
+        authorizer = _RetirementCancellationAuthorizer(
+            trace=trace,
+            authorized=False,
+        )
+        expected_error = EventRetirementCancellationAuthorizationError
+    elif authorizer_case == "invalid":
+        authorizer = _RetirementCancellationAuthorizer(
+            trace=trace,
+            invalid_response={"authorized": True},
+        )
+        expected_error = EventRetirementCancellationAuthorizationContractError
+    elif authorizer_case == "mismatched":
+        authorizer = _RetirementCancellationAuthorizer(
+            trace=trace,
+            bind_to=replace(
+                authorization_request,
+                operator_reason="another operator command",
+            ),
+        )
+        expected_error = EventRetirementCancellationAuthorizationContractError
+    else:
+        authorizer = _RetirementCancellationAuthorizer(
+            trace=trace,
+            tamper_decision_checksum=True,
+        )
+        expected_error = EventRetirementCancellationAuthorizationContractError
+    runtime = DurableDeliveryRuntime(
+        store,  # type: ignore[arg-type]
+        retirement_cancellation_authorizer=authorizer,
+    )
+
+    with pytest.raises(expected_error):
+        runtime.cancel_retired_subscription(request)
+
+    assert trace == ["authorize"]
+    assert store.retirement_cancellation_requests == []
+
+
+def test_retirement_cancellation_requires_authorizer_and_retired_tenant_scope() -> None:
+    store = _Store()
+    active = replace(
+        _subscription(tenant_id="tenant-a"),
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    store.subscriptions[active.key] = active
+    request = RetirementCancellationRequest(
+        cancellation_id="retirement-cancel-active",
+        subscription=active.key,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="must be retired first",
+        authorization_evidence_ref="authz:retirement-cancel-active",
+        tenant_id="tenant-a",
+    )
+    without_authorizer = DurableDeliveryRuntime(store)  # type: ignore[arg-type]
+    with pytest.raises(EventDeliveryConfigurationError, match="authorizer"):
+        without_authorizer.cancel_retired_subscription(request)
+
+    runtime = DurableDeliveryRuntime(
+        store,  # type: ignore[arg-type]
+        retirement_cancellation_authorizer=_RetirementCancellationAuthorizer(),
+    )
+    with pytest.raises(EventConsumerMismatchError, match="exact retired"):
+        runtime.cancel_retired_subscription(request)
+    with pytest.raises(EventConsumerMismatchError, match="exact retired"):
+        runtime.cancel_retired_subscription(replace(request, tenant_id="tenant-b"))
+    assert store.retirement_cancellation_requests == []
+
+
+def test_retirement_cancellation_exact_retry_is_authorized_again() -> None:
+    trace: list[str] = []
+    store = _Store(trace)
+    subscription = replace(
+        _subscription(tenant_id="tenant-a"),
+        status=SubscriptionStatus.RETIRED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    store.subscriptions[subscription.key] = subscription
+    authorizer = _RetirementCancellationAuthorizer(trace=trace)
+    runtime = DurableDeliveryRuntime(
+        store,  # type: ignore[arg-type]
+        retirement_cancellation_authorizer=authorizer,
+    )
+    request = RetirementCancellationRequest(
+        cancellation_id="retirement-cancel-exact-retry",
+        subscription=subscription.key,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="exact retry",
+        authorization_evidence_ref="authz:retirement-cancel-exact-retry",
+        tenant_id="tenant-a",
+    )
+
+    runtime.cancel_retired_subscription(request)
+    runtime.cancel_retired_subscription(request)
+
+    assert trace == ["authorize", "store", "authorize", "store"]
+    assert len(authorizer.requests) == 2
+
+
+def test_retirement_cancellation_preserves_typed_store_collision() -> None:
+    store = _Store()
+    subscription = replace(
+        _subscription(tenant_id="tenant-a"),
+        status=SubscriptionStatus.RETIRED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    store.subscriptions[subscription.key] = subscription
+    store.retirement_cancellation_error = (
+        EventRetirementCancellationCollisionError("reused cancellation id")
+    )
+    runtime = DurableDeliveryRuntime(
+        store,  # type: ignore[arg-type]
+        retirement_cancellation_authorizer=_RetirementCancellationAuthorizer(),
+    )
+    request = RetirementCancellationRequest(
+        cancellation_id="retirement-cancel-collision",
+        subscription=subscription.key,
+        requested_at=NOW,
+        operator_id="operator-1",
+        operator_reason="exact command identity",
+        authorization_evidence_ref="authz:retirement-cancel-collision",
+        tenant_id="tenant-a",
+    )
+
+    with pytest.raises(EventRetirementCancellationCollisionError):
+        runtime.cancel_retired_subscription(request)
 
 
 def test_naive_clock_fails_before_claim() -> None:

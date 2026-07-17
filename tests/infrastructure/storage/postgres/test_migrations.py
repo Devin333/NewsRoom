@@ -14,6 +14,9 @@ DURABLE_EVENT_MIGRATION = MIGRATIONS_DIR / "006_durable_event_runtime.sql"
 REPLAY_CHECKPOINT_MIGRATION = MIGRATIONS_DIR / "007_replay_checkpoints.sql"
 AUTHORIZED_REDELIVERY_MIGRATION = MIGRATIONS_DIR / "008_authorized_redelivery.sql"
 RECORDED_ACTIVITIES_MIGRATION = MIGRATIONS_DIR / "009_recorded_activities.sql"
+RETIREMENT_CANCELLATION_MIGRATION = (
+    MIGRATIONS_DIR / "010_retirement_cancellations.sql"
+)
 INITIAL_MIGRATION_SHA256 = "f224356de92f5b087b3353b38dab4d9ced0b7c0b70f3bf9228adc0b9e2f8fbd3"
 
 
@@ -248,7 +251,7 @@ def test_authorized_redelivery_migration_is_additive_and_loaded_last() -> None:
     )
 
 
-def test_recorded_activity_migration_is_additive_encrypted_and_loaded_last() -> None:
+def test_recorded_activity_migration_is_additive_encrypted_and_loaded_in_order() -> None:
     sql = RECORDED_ACTIVITIES_MIGRATION.read_text(encoding="utf-8")
     loaded = load_migration_sql()
 
@@ -276,6 +279,33 @@ def test_recorded_activity_migration_is_additive_encrypted_and_loaded_last() -> 
     assert "DROP COLUMN" not in sql
     assert loaded.index("CREATE TABLE IF NOT EXISTS event_redelivery_reports") < loaded.index(
         "CREATE TABLE IF NOT EXISTS event_activity_payloads"
+    )
+
+
+def test_retirement_cancellation_migration_is_additive_bounded_and_loaded_last() -> None:
+    sql = RETIREMENT_CANCELLATION_MIGRATION.read_text(encoding="utf-8")
+    loaded = load_migration_sql()
+
+    assert "CREATE TABLE IF NOT EXISTS event_retirement_cancellation_reports" in sql
+    assert "CREATE TABLE IF NOT EXISTS event_retirement_cancellation_items" in sql
+    assert "PRIMARY KEY (tenant_scope, cancellation_id)" in sql
+    assert "PRIMARY KEY (tenant_scope, cancellation_id, delivery_id)" in sql
+    assert "cancelled_count BETWEEN 0 AND item_limit" in sql
+    assert "remaining_nonterminal_count_truncated" in sql
+    assert "UNIQUE (delivery_id)" in sql
+    assert "FOREIGN KEY (\n            tenant_scope,\n            cancellation_id," in sql
+    assert "FOREIGN KEY (delivery_id)" in sql
+    assert "item_limit BETWEEN 1 AND 1000" in sql
+    assert "remaining_nonterminal_count >= 0" in sql
+    assert "previous_state IN ('claimed', 'retry_wait')" in sql
+    assert "terminal_state = 'dropped'" in sql
+    assert sql.count("tenant_id IS NULL OR btrim(tenant_id) <> ''") == 2
+    assert "char_length(authorization_evidence_ref) <= 512" in sql
+    assert "ALTER TABLE" not in sql
+    assert "DROP TABLE" not in sql
+    assert "DROP COLUMN" not in sql
+    assert loaded.index("CREATE TABLE IF NOT EXISTS event_activity_payloads") < (
+        loaded.index("CREATE TABLE IF NOT EXISTS event_retirement_cancellation_reports")
     )
 
 

@@ -33,6 +33,8 @@ from framework.events.runtime.models import (
     QuarantineRecord,
     RedeliveryReport,
     RedeliveryRequest,
+    RetirementCancellationReport,
+    RetirementCancellationRequest,
     ReplayReport,
     ReplayReportPage,
     ReplayReportQuery,
@@ -164,6 +166,25 @@ class DurableSubscriptionStorePort(Protocol):
     ) -> DurableSubscription:
         """Pause/resume or transactionally fix per-stream retirement watermarks."""
         ...
+
+
+@runtime_checkable
+class RetirementCancellationStorePort(Protocol):
+    """Audited terminal dispositions for bounded retired delivery work."""
+
+    def cancel_retired_subscription(
+        self,
+        request: RetirementCancellationRequest,
+    ) -> RetirementCancellationReport:
+        """Atomically cancel a bounded batch and advance contiguous frontiers."""
+        ...
+
+    def get_retirement_cancellation_report(
+        self,
+        cancellation_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> RetirementCancellationReport | None: ...
 
 
 @runtime_checkable
@@ -332,6 +353,7 @@ class EventStorePort(
     EventInboxStorePort,
     ConsumerCheckpointStorePort,
     DeadLetterStorePort,
+    RetirementCancellationStorePort,
     RedeliveryStorePort,
     QuarantineStorePort,
     ReplayReportStorePort,
@@ -378,5 +400,6 @@ __all__ = [
     "EventUnitOfWorkPort",
     "QuarantineStorePort",
     "RedeliveryStorePort",
+    "RetirementCancellationStorePort",
     "ReplayReportStorePort",
 ]

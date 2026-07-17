@@ -18,6 +18,7 @@ from framework.events.errors import (
     EventIdentityCollisionError,
     EventStaleLeaseError,
     EventStoreCapacityError,
+    EventStoreCorruptionError,
     EventStreamVersionConflictError,
 )
 from framework.events.ports import EventStorePort
@@ -36,6 +37,7 @@ from framework.events.runtime.models import (
     QuarantineReason,
     QuarantineRecord,
     RedeliveryRequest,
+    RetirementCancellationRequest,
     ReplayMode,
     ReplayReportQuery,
     ReplayStartRequest,
@@ -123,6 +125,8 @@ def test_sqlite_store_is_file_backed_wal_and_implements_port(tmp_path: Path) -> 
         "event_replay_reports",
         "event_redelivery_reports",
         "event_redelivery_items",
+        "event_retirement_cancellation_reports",
+        "event_retirement_cancellation_items",
     } <= table_names
 
     with pytest.raises(ValueError, match="file-backed"):
@@ -1296,3 +1300,116 @@ def test_pending_hard_limit_fails_append_before_event_commit(tmp_path: Path) -> 
 
     assert store.get_event("evt-3", tenant_id="tenant-a") is None
     assert store.get_stream_high_watermark("run:one", tenant_id="tenant-a") == 2
+
+
+def test_retirement_cancellation_report_rejects_delivery_audit_drift(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    subscription = store.register_subscription(
+        DurableSubscription(
+            "retirement-audit",
+            1,
+            "retirement-audit-consumer",
+            tenant_id="tenant-a",
+        )
+    )
+    store.append_event(_candidate(1))
+    retired_at = (subscription.updated_at or NOW) + timedelta(seconds=1)
+    store.set_subscription_status(
+        subscription.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=retired_at,
+        reason="retire audit fixture",
+    )
+    request = RetirementCancellationRequest(
+        cancellation_id="retirement-audit-cancel",
+        subscription=subscription.key,
+        requested_at=retired_at,
+        operator_id="operator-1",
+        operator_reason="cancel retired audit fixture",
+        authorization_evidence_ref="authz:retirement-audit-cancel",
+        tenant_id="tenant-a",
+    )
+    report = store.cancel_retired_subscription(request)
+    assert report.completed
+
+    with sqlite3.connect(store.database) as connection:
+        connection.execute(
+            "UPDATE event_deliveries SET reason_class = 'manual_drop' "
+            "WHERE delivery_id = ?",
+            (report.items[0].delivery_id,),
+        )
+        connection.commit()
+
+    with pytest.raises(
+        EventStoreCorruptionError,
+        match="disagrees with its delivery disposition",
+    ):
+        store.get_retirement_cancellation_report(
+            request.cancellation_id,
+            tenant_id="tenant-a",
+        )
+
+
+def test_concurrent_retirement_cancellation_exact_retry_writes_one_audit(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "retirement-cancel-concurrent.sqlite3"
+    store = SQLiteEventStore(database, clock=lambda: NOW)
+    subscription = store.register_subscription(
+        DurableSubscription(
+            "retirement-cancel-concurrent",
+            1,
+            "retirement-cancel-concurrent-consumer",
+            tenant_id="tenant-a",
+        )
+    )
+    for index in range(1, 9):
+        store.append_event(_candidate(index))
+    retired_at = (subscription.updated_at or NOW) + timedelta(seconds=1)
+    store.set_subscription_status(
+        subscription.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=retired_at,
+        reason="retire before exact retry race",
+    )
+    request = RetirementCancellationRequest(
+        cancellation_id="retirement-cancel-concurrent-command",
+        subscription=subscription.key,
+        requested_at=retired_at,
+        operator_id="operator-1",
+        operator_reason="cancel retired backlog exactly once",
+        authorization_evidence_ref="authz:retirement-cancel-concurrent",
+        tenant_id="tenant-a",
+        limit=8,
+    )
+    barrier = Barrier(8)
+
+    def cancel(_index: int):
+        concurrent = SQLiteEventStore(
+            database,
+            initialize=False,
+            clock=lambda: NOW,
+        )
+        barrier.wait(timeout=15)
+        return concurrent.cancel_retired_subscription(request)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        reports = tuple(executor.map(cancel, range(8)))
+
+    assert all(report == reports[0] for report in reports)
+    assert reports[0].cancelled_count == 8
+    assert reports[0].completed
+    with sqlite3.connect(database) as connection:
+        report_count = connection.execute(
+            "SELECT COUNT(*) FROM event_retirement_cancellation_reports "
+            "WHERE cancellation_id = ?",
+            (request.cancellation_id,),
+        ).fetchone()[0]
+        item_count = connection.execute(
+            "SELECT COUNT(*) FROM event_retirement_cancellation_items "
+            "WHERE cancellation_id = ?",
+            (request.cancellation_id,),
+        ).fetchone()[0]
+    assert (report_count, item_count) == (1, 8)

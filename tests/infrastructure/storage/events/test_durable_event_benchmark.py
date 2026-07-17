@@ -100,7 +100,7 @@ def test_postgres_cleanup_uses_only_exact_generated_scope_and_verifies_zero_rows
     assert evidence["passed"]
     assert evidence["scope_count"] == 1
     assert evidence["rows_after_cleanup"] == 0
-    assert len(connection.cursor_instance.executions) == 28
+    assert len(connection.cursor_instance.executions) == 32
     for statement, params in connection.cursor_instance.executions:
         assert " LIKE " not in statement.upper()
         assert "benchmark:%" not in repr(params)

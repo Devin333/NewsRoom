@@ -39,6 +39,7 @@ class EventPermission(str, Enum):
     DEAD_LETTER_RESOLVE = "event.dead_letter.resolve"
     DELIVERY_STATUS_READ = "event.delivery_status.read"
     REDELIVER = "event.redeliver"
+    SUBSCRIPTION_RETIREMENT_CANCEL = "event.subscription_retirement.cancel"
     QUARANTINE_READ = "event.quarantine.read"
     QUARANTINE_RESOLVE = "event.quarantine.resolve"
 

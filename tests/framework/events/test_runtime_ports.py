@@ -26,6 +26,9 @@ from framework.events.runtime.models import (
     PendingDeliveryStats,
     ReplayMode,
     ReplayStartRequest,
+    RetirementCancellationItem,
+    RetirementCancellationReport,
+    RetirementCancellationRequest,
     RetryPolicy,
     StreamReadRequest,
     StreamSequenceCursor,
@@ -90,6 +93,8 @@ def test_store_port_exposes_one_backend_neutral_conformance_surface() -> None:
         "begin_replay",
         "update_replay_report",
         "list_replay_reports",
+        "cancel_retired_subscription",
+        "get_retirement_cancellation_report",
     }
 
     assert required_methods <= set(dir(ports.EventStorePort))
@@ -275,6 +280,76 @@ def test_checkpoint_frontier_accepts_none_or_a_1_based_terminal_sequence() -> No
             terminal_disposition=DeliveryState.ACKED,
             updated_at=now,
             checksum=CHECKSUM_ZERO,
+        )
+
+
+def test_retirement_cancellation_models_are_bounded_and_audit_prior_state() -> None:
+    now = datetime(2026, 7, 17, tzinfo=UTC)
+    subscription = SubscriptionKey("retired-projection", 2)
+    request = RetirementCancellationRequest(
+        cancellation_id="retirement-cancel-model",
+        subscription=subscription,
+        requested_at=now,
+        operator_id="operator-1",
+        operator_reason="retired projection is decommissioned",
+        authorization_evidence_ref="authz:model-retirement-cancel",
+        tenant_id="tenant-a",
+        limit=10,
+    )
+    item = RetirementCancellationItem(
+        cancellation_id=request.cancellation_id,
+        delivery_id="delivery-1",
+        event_id="event-1",
+        stream_id="run:one",
+        stream_sequence=1,
+        subscription=subscription,
+        delivery_generation=1,
+        previous_state=DeliveryState.CLAIMED,
+        previous_attempt_count=1,
+        cancelled_at=now,
+        tenant_id="tenant-a",
+    )
+    report = RetirementCancellationReport(
+        cancellation_id=request.cancellation_id,
+        subscription=subscription,
+        requested_at=now,
+        cancelled_at=now,
+        operator_id=request.operator_id,
+        operator_reason=request.operator_reason,
+        authorization_evidence_ref=request.authorization_evidence_ref,
+        item_limit=request.limit,
+        remaining_nonterminal_count=2,
+        items=(item,),
+        tenant_id="tenant-a",
+    )
+
+    assert report.cancelled_count == 1
+    assert report.completed is False
+    assert report.items[0].previous_state is DeliveryState.CLAIMED
+    assert report.items[0].terminal_state is DeliveryState.DROPPED
+
+    with pytest.raises(ValueError, match="cannot exceed"):
+        RetirementCancellationRequest(
+            cancellation_id="retirement-cancel-oversized",
+            subscription=subscription,
+            requested_at=now,
+            operator_id="operator-1",
+            operator_reason="oversized request",
+            authorization_evidence_ref="authz:model-retirement-cancel",
+            limit=models.MAX_RETIREMENT_CANCELLATION_ITEMS + 1,
+        )
+    with pytest.raises(ValueError, match="nonterminal prior state"):
+        RetirementCancellationItem(
+            cancellation_id=request.cancellation_id,
+            delivery_id="delivery-terminal",
+            event_id="event-terminal",
+            stream_id="run:one",
+            stream_sequence=1,
+            subscription=subscription,
+            delivery_generation=1,
+            previous_state=DeliveryState.ACKED,
+            previous_attempt_count=1,
+            cancelled_at=now,
         )
 
 

@@ -8,12 +8,18 @@ from typing import Protocol
 
 from framework.events.canonical import checksum_for
 from framework.events.ports import EventStorePort
+from framework.events.runtime.authorization import (
+    RetirementCancellationAuthorizationDecision,
+    RetirementCancellationAuthorizationRequest,
+)
+from framework.events.runtime.delivery import DurableDeliveryRuntime
 from framework.events.schema import EventSchemaCatalog
 from framework.shared.time import utc_now
 from interfaces.models.actor import ActorContext
 from interfaces.services.event_delivery_operations_service import (
     EventDeliveryOperationsService,
     EventDeliveryRuntimePort,
+    RetirementCancellationRuntimePort,
 )
 from interfaces.services.event_operator_service import EventOperatorApplicationService
 from interfaces.services.event_projection_service import EventProjectionService
@@ -47,6 +53,7 @@ _OPERATE_OPERATIONS = frozenset(
         EventPermission.DEAD_LETTER_REQUEUE,
         EventPermission.DEAD_LETTER_RESOLVE,
         EventPermission.REDELIVER,
+        EventPermission.SUBSCRIPTION_RETIREMENT_CANCEL,
         EventPermission.QUARANTINE_RESOLVE,
     }
 )
@@ -65,12 +72,12 @@ class EventOperatorEventAuthorizer:
         *,
         actor: ActorContext,
         authorization: EventAuthorizationContext,
-        decision_evidence_ref: str,
+        evidence_scope_digest: str,
     ) -> None:
         self._actor_type = actor.actor_type
         self._permissions = frozenset(actor.effective_permissions)
         self._authorization = authorization
-        self._decision_evidence_ref = decision_evidence_ref
+        self._evidence_scope_digest = evidence_scope_digest
 
     def authorize(
         self,
@@ -95,7 +102,76 @@ class EventOperatorEventAuthorizer:
             request=request,
             authorized=authorized,
             authorization_evidence_ref=(
-                self._decision_evidence_ref if authorized else None
+                _event_operator_evidence_ref(
+                    self._evidence_scope_digest,
+                    request.operation,
+                    request.request_checksum,
+                )
+                if authorized
+                else None
+            ),
+            denial_reason_class=None if authorized else "operation_not_allowed",
+        )
+
+
+class EventOperatorRetirementCancellationAuthorizer:
+    """Re-authorize the runtime command against the verified actor snapshot."""
+
+    def __init__(
+        self,
+        *,
+        actor: ActorContext,
+        authorization: EventAuthorizationContext,
+        evidence_scope_digest: str,
+    ) -> None:
+        self._actor_type = actor.actor_type
+        self._permissions = frozenset(actor.effective_permissions)
+        self._principal_id = actor.actor_id
+        self._authorization = authorization
+        self._evidence_scope_digest = evidence_scope_digest
+
+    def authorize(
+        self,
+        request: RetirementCancellationAuthorizationRequest,
+    ) -> RetirementCancellationAuthorizationDecision:
+        if not isinstance(request, RetirementCancellationAuthorizationRequest):
+            raise TypeError(
+                "request must be RetirementCancellationAuthorizationRequest"
+            )
+        request.verify_integrity()
+        application_request = EventAuthorizationRequest(
+            principal_id=self._principal_id,
+            tenant_id=self._authorization.tenant_id,
+            authentication_evidence_ref=(
+                self._authorization.authentication_evidence_ref
+            ),
+            operation=EventPermission.SUBSCRIPTION_RETIREMENT_CANCEL,
+            target={
+                "cancellation_id": request.cancellation_id,
+                "subscription_id": request.subscription.subscription_id,
+                "subscription_version": request.subscription.subscription_version,
+                "operator_reason": request.operator_reason,
+                "limit": request.limit,
+            },
+        )
+        expected_application_evidence = _event_operator_evidence_ref(
+            self._evidence_scope_digest,
+            EventPermission.SUBSCRIPTION_RETIREMENT_CANCEL,
+            application_request.request_checksum,
+        )
+        authorized = bool(
+            self._actor_type != "anonymous"
+            and EVENTS_OPERATE_PERMISSION in self._permissions
+            and request.operator_id == self._principal_id
+            and request.tenant_id == self._authorization.tenant_id
+            and request.authorization_evidence_ref == expected_application_evidence
+        )
+        return RetirementCancellationAuthorizationDecision(
+            request=request,
+            authorized=authorized,
+            decided_at=request.requested_at,
+            authorization_evidence_ref=(
+                request.authorization_evidence_ref if authorized else None
             ),
             denial_reason_class=None if authorized else "operation_not_allowed",
         )
@@ -171,7 +247,19 @@ def build_event_operator_service(
     authorizer = EventOperatorEventAuthorizer(
         actor=actor,
         authorization=authorization,
-        decision_evidence_ref=f"authz://event-operator/{digest}",
+        evidence_scope_digest=digest,
+    )
+    retirement_cancellation_runtime: RetirementCancellationRuntimePort = (
+        DurableDeliveryRuntime(
+            store,
+            retirement_cancellation_authorizer=(
+                EventOperatorRetirementCancellationAuthorizer(
+                    actor=actor,
+                    authorization=authorization,
+                    evidence_scope_digest=digest,
+                )
+            ),
+        )
     )
     return EventOperatorApplicationService(
         authorization=authorization,
@@ -188,6 +276,7 @@ def build_event_operator_service(
         delivery=EventDeliveryOperationsService(
             store=store,
             runtime=delivery_runtime,
+            retirement_cancellation_runtime=retirement_cancellation_runtime,
             authorizer=authorizer,
             clock=clock,
         ),
@@ -234,6 +323,21 @@ def _required_actor_permission(operation: EventPermission) -> str | None:
     return None
 
 
+def _event_operator_evidence_ref(
+    scope_digest: str,
+    operation: EventPermission,
+    request_checksum: str,
+) -> str:
+    checksum = checksum_for(
+        {
+            "scope_digest": scope_digest,
+            "operation": operation.value,
+            "request_checksum": request_checksum,
+        }
+    ).removeprefix("sha256:")
+    return f"authz://event-operator/{checksum}"
+
+
 def _actor_scope_digest(actor: ActorContext, *, tenant_id: str) -> str:
     checksum = checksum_for(
         {
@@ -274,6 +378,7 @@ __all__ = [
     "EVENTS_OPERATE_PERMISSION",
     "EVENTS_READ_PERMISSION",
     "EventOperatorEventAuthorizer",
+    "EventOperatorRetirementCancellationAuthorizer",
     "build_event_operator_service",
     "event_operator_service_from_actor",
     "event_operator_service_from_env",

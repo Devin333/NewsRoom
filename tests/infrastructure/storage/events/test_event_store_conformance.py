@@ -25,6 +25,8 @@ from framework.events.canonical import (
 from framework.events.errors import (
     EventConsumerIdempotencyError,
     EventIdentityCollisionError,
+    EventRetirementCancellationCollisionError,
+    EventRetirementCancellationError,
     EventSchemaValidationError,
     EventSecurityError,
     EventStaleLeaseError,
@@ -49,6 +51,7 @@ from framework.events.runtime.models import (
     InboxEntry,
     InboxKey,
     RedeliveryRequest,
+    RetirementCancellationRequest,
     ReplayMode,
     ReplayStartRequest,
     ReplayStatus,
@@ -153,6 +156,7 @@ def postgres_conformance_dsn() -> str:
             for migration_name in (
                 "006_durable_event_runtime.sql",
                 "008_authorized_redelivery.sql",
+                "010_retirement_cancellations.sql",
             ):
                 cursor.execute(
                     (migrations / migration_name).read_text(encoding="utf-8")
@@ -609,6 +613,341 @@ def test_conformance_pause_resume_and_retirement_drain_without_later_work(
                 status=SubscriptionStatus.RETIRED,
             )
         )
+
+
+def test_conformance_retirement_cancellation_is_bounded_audited_and_fenced(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:retirement-cancel",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:retirement-cancel-consumer",
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    events = tuple(
+        case.store.append_event(_candidate(case.scope, index=index)).event
+        for index in range(1, 5)
+    )
+    claim = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            lease_owner=f"{case.scope}:retirement-cancel-worker",
+            requested_at=case.now(),
+            limit=1,
+        )
+    )[0]
+    retired_at = (subscription.updated_at or case.now()) + timedelta(seconds=1)
+    retired = case.store.set_subscription_status(
+        subscription.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=retired_at,
+        reason="consumer version permanently withdrawn",
+    )
+    assert retired.status is SubscriptionStatus.RETIRED
+
+    first_request = RetirementCancellationRequest(
+        cancellation_id=f"{case.scope}:retirement-cancellation:1",
+        subscription=subscription.key,
+        requested_at=max(case.now(), retired_at),
+        operator_id=f"{case.scope}:operator",
+        operator_reason="terminally cancel bounded retired work",
+        authorization_evidence_ref=f"authz:{case.scope}:retirement-cancel",
+        tenant_id=subscription.tenant_id,
+        limit=2,
+    )
+    first = case.store.cancel_retired_subscription(first_request)
+    exact_retry = case.store.cancel_retired_subscription(first_request)
+
+    assert exact_retry == first
+    assert first.cancelled_count == 2
+    assert first.remaining_nonterminal_count == 2
+    assert first.completed is False
+    assert [item.stream_sequence for item in first.items] == [1, 2]
+    assert [item.previous_state for item in first.items] == [
+        DeliveryState.CLAIMED,
+        DeliveryState.PENDING,
+    ]
+    assert [item.previous_attempt_count for item in first.items] == [1, 0]
+    assert all(item.terminal_state is DeliveryState.DROPPED for item in first.items)
+    assert case.store.get_retirement_cancellation_report(
+        first.cancellation_id,
+        tenant_id=subscription.tenant_id,
+    ) == first
+    assert case.store.get_retirement_cancellation_report(
+        first.cancellation_id,
+        tenant_id=f"{case.scope}:another-tenant",
+    ) is None
+
+    with pytest.raises(EventRetirementCancellationCollisionError):
+        case.store.cancel_retired_subscription(
+            replace(first_request, operator_reason="different command identity")
+        )
+    with pytest.raises(EventStaleLeaseError):
+        case.store.settle_delivery(
+            DeliverySettlement(
+                lease=claim.lease,
+                target_state=DeliveryState.ACKED,
+                settled_at=first.cancelled_at + timedelta(seconds=1),
+            )
+        )
+
+    checkpoint = case.store.get_checkpoint(
+        CheckpointKey(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            stream_id=events[0].stream_id,
+            tenant_id=subscription.tenant_id,
+        ),
+        tenant_id=subscription.tenant_id,
+    )
+    assert checkpoint is not None
+    assert checkpoint.highest_contiguous_terminal_sequence == 2
+    assert checkpoint.terminal_disposition is DeliveryState.DROPPED
+
+    second_request = RetirementCancellationRequest(
+        cancellation_id=f"{case.scope}:retirement-cancellation:2",
+        subscription=subscription.key,
+        requested_at=first.cancelled_at,
+        operator_id=f"{case.scope}:operator",
+        operator_reason="finish terminal cancellation of retired work",
+        authorization_evidence_ref=f"authz:{case.scope}:retirement-cancel",
+        tenant_id=subscription.tenant_id,
+    )
+    second = case.store.cancel_retired_subscription(second_request)
+    assert second.cancelled_count == 2
+    assert second.remaining_nonterminal_count == 0
+    assert second.completed is True
+
+    final_deliveries = case.store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            tenant_id=subscription.tenant_id,
+        )
+    ).records
+    assert len(final_deliveries) == 4
+    assert all(
+        delivery.state is DeliveryState.DROPPED
+        and delivery.reason_class == "subscription_retired"
+        and delivery.lease_owner is None
+        and delivery.lease_generation is None
+        and delivery.lease_expires_at is None
+        for delivery in final_deliveries
+    )
+    assert [delivery.attempt_count for delivery in final_deliveries] == [1, 1, 1, 1]
+    final_checkpoint = case.store.get_checkpoint(
+        CheckpointKey(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            stream_id=events[0].stream_id,
+            tenant_id=subscription.tenant_id,
+        ),
+        tenant_id=subscription.tenant_id,
+    )
+    assert final_checkpoint is not None
+    assert final_checkpoint.highest_contiguous_terminal_sequence == 4
+    assert case.store.list_dead_letters(
+        DeadLetterQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            tenant_id=subscription.tenant_id,
+        )
+    ).records == ()
+    assert case.store.get_inbox_entry(
+        InboxKey(events[0].event_id, f"{case.scope}:unrelated-effect"),
+        tenant_id=subscription.tenant_id,
+    ) is None
+
+    later = case.store.append_event(_candidate(case.scope, index=5)).event
+    after_retirement = case.store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            tenant_id=subscription.tenant_id,
+        )
+    ).records
+    assert later.event_id not in {delivery.event_id for delivery in after_retirement}
+
+
+def test_conformance_retirement_cancellation_never_rewinds_for_late_repair(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:retirement-cancel-repair",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:retirement-cancel-repair-consumer",
+            supports_out_of_order_repair=True,
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    events = tuple(
+        case.store.append_event(_candidate(case.scope, index=index)).event
+        for index in range(1, 4)
+    )
+    for index in range(1, 4):
+        claim = case.store.claim_deliveries(
+            DeliveryClaimRequest(
+                subscription_id=subscription.subscription_id,
+                subscription_version=subscription.subscription_version,
+                lease_owner=f"{case.scope}:repair-frontier-worker",
+                requested_at=case.now(),
+                limit=1,
+            )
+        )[0]
+        case.store.settle_delivery(
+            DeliverySettlement(
+                lease=claim.lease,
+                target_state=DeliveryState.ACKED,
+                settled_at=case.now() + timedelta(seconds=index),
+            )
+        )
+    before = case.store.get_checkpoint(
+        CheckpointKey(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            stream_id=events[0].stream_id,
+            tenant_id=subscription.tenant_id,
+        ),
+        tenant_id=subscription.tenant_id,
+    )
+    assert before is not None
+    assert before.highest_contiguous_terminal_sequence == 3
+
+    redelivery = case.store.begin_redelivery(
+        RedeliveryRequest(
+            redelivery_id=f"{case.scope}:retirement-cancel-repair-redelivery",
+            subscription=subscription.key,
+            source_stream_id=events[0].stream_id,
+            from_sequence=1,
+            through_sequence=1,
+            requested_at=case.now() + timedelta(seconds=4),
+            operator_id=f"{case.scope}:operator",
+            operator_reason="verify repaired event again",
+            authorization_evidence_ref=f"authz:{case.scope}:repair-redelivery",
+            tenant_id=subscription.tenant_id,
+        )
+    )
+    assert redelivery.items[0].delivery_generation == 2
+    retired_at = case.now() + timedelta(seconds=5)
+    case.store.set_subscription_status(
+        subscription.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=retired_at,
+        reason="late repair subscription retired",
+    )
+    cancellation = case.store.cancel_retired_subscription(
+        RetirementCancellationRequest(
+            cancellation_id=f"{case.scope}:retirement-cancel-repair-command",
+            subscription=subscription.key,
+            requested_at=retired_at,
+            operator_id=f"{case.scope}:operator",
+            operator_reason="terminally cancel remaining late repair",
+            authorization_evidence_ref=f"authz:{case.scope}:repair-cancel",
+            tenant_id=subscription.tenant_id,
+        )
+    )
+
+    assert cancellation.cancelled_count == 1
+    assert cancellation.items[0].delivery_generation == 2
+    after = case.store.get_checkpoint(
+        CheckpointKey(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            stream_id=events[0].stream_id,
+            tenant_id=subscription.tenant_id,
+        ),
+        tenant_id=subscription.tenant_id,
+    )
+    assert after is not None
+    assert after.highest_contiguous_terminal_sequence == 3
+    assert after.checkpoint_version == before.checkpoint_version
+
+
+def test_conformance_retired_subscription_cannot_reopen_through_dlq_requeue(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:retired-dlq-requeue",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:retired-dlq-requeue-consumer",
+            supports_out_of_order_repair=True,
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    event = case.store.append_event(_candidate(case.scope, index=1)).event
+    claimed_at = case.now()
+    claim = case.store.claim_deliveries(
+        DeliveryClaimRequest(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            lease_owner=f"{case.scope}:retired-dlq-worker",
+            requested_at=claimed_at,
+            limit=1,
+        )
+    )[0]
+    dead = case.store.settle_delivery(
+        DeliverySettlement(
+            lease=claim.lease,
+            target_state=DeliveryState.DEAD_LETTER,
+            settled_at=claimed_at + timedelta(seconds=1),
+            reason_class="permanent_failure",
+        )
+    )
+    assert dead.dead_letter_id is not None
+    retired_at = claimed_at + timedelta(seconds=2)
+    case.store.set_subscription_status(
+        subscription.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=retired_at,
+        reason="retire after permanent failure",
+    )
+    cancellation = case.store.cancel_retired_subscription(
+        RetirementCancellationRequest(
+            cancellation_id=f"{case.scope}:retired-dlq-cancellation",
+            subscription=subscription.key,
+            requested_at=retired_at,
+            operator_id=f"{case.scope}:operator",
+            operator_reason="confirm retired subscription is terminal",
+            authorization_evidence_ref=f"authz:{case.scope}:retired-dlq",
+            tenant_id=subscription.tenant_id,
+        )
+    )
+    assert cancellation.completed
+    assert cancellation.cancelled_count == 0
+
+    with pytest.raises(EventRetirementCancellationError):
+        case.store.requeue_dead_letter(
+            DeadLetterAction(
+                dead_letter_id=dead.dead_letter_id,
+                operator_id=f"{case.scope}:operator",
+                reason="must not reopen retired work",
+                requested_at=retired_at + timedelta(seconds=1),
+                idempotency_ready=True,
+            )
+        )
+
+    deliveries = case.store.list_deliveries(
+        DeliveryQuery(
+            subscription_id=subscription.subscription_id,
+            subscription_version=subscription.subscription_version,
+            tenant_id=subscription.tenant_id,
+        )
+    ).records
+    assert len(deliveries) == 1
+    assert deliveries[0].event_id == event.event_id
+    assert deliveries[0].state is DeliveryState.DEAD_LETTER
+    assert case.store.get_dead_letter(
+        dead.dead_letter_id,
+        tenant_id=subscription.tenant_id,
+    ).disposition is DeadLetterDisposition.OPEN
 
 
 @pytest.mark.parametrize(
@@ -1934,6 +2273,8 @@ def _cleanup_postgres_scope(dsn: str, scope: str) -> None:
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
             for table, column in (
+                ("event_retirement_cancellation_items", "cancellation_id"),
+                ("event_retirement_cancellation_reports", "cancellation_id"),
                 ("event_redelivery_items", "redelivery_id"),
                 ("event_redelivery_reports", "redelivery_id"),
                 ("event_inbox", "event_id"),

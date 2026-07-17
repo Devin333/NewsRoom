@@ -11,12 +11,16 @@ from typing import TYPE_CHECKING, Final, Iterator, TypeVar
 from framework.events.errors import (
     EventConsumerIdempotencyError,
     EventDeliveryError,
+    EventRetirementCancellationError,
     EventSubscriptionPositionError,
 )
 from framework.events.runtime.authorization import (
     RedeliveryAuthorizationDecision,
     RedeliveryAuthorizationRequest,
     RedeliveryAuthorizerPort,
+    RetirementCancellationAuthorizationDecision,
+    RetirementCancellationAuthorizationRequest,
+    RetirementCancellationAuthorizerPort,
 )
 from framework.events.runtime.diagnostics import DeliveryDiagnosticProjector
 from framework.events.runtime.fallback import (
@@ -48,6 +52,8 @@ from framework.events.runtime.models import (
     EffectIdempotencyStrategy,
     RedeliveryReport,
     RedeliveryRequest,
+    RetirementCancellationReport,
+    RetirementCancellationRequest,
     SubscriptionKey,
     SubscriptionStatus,
 )
@@ -132,6 +138,16 @@ class EventRedeliveryAuthorizationError(EventDeliveryError):
 
 class EventRedeliveryAuthorizationContractError(EventRedeliveryAuthorizationError):
     """The composed authorizer returned an invalid or differently scoped decision."""
+
+
+class EventRetirementCancellationAuthorizationError(EventDeliveryError):
+    """A retired-subscription terminal cancellation was not authorized."""
+
+
+class EventRetirementCancellationAuthorizationContractError(
+    EventRetirementCancellationAuthorizationError
+):
+    """The cancellation authorizer returned an invalid or mismatched decision."""
 
 
 class DeliveryFailurePhase(str, Enum):
@@ -665,6 +681,8 @@ class DurableConsumerRegistry:
         failed = False
         try:
             return call()
+        except EventRetirementCancellationError:
+            raise
         except Exception as error:
             self._record_store_failure(diagnostic_operation, error)
             failed = True
@@ -703,6 +721,8 @@ class DurableDeliveryRuntime:
         diagnostic_projector: DeliveryDiagnosticProjector | None = None,
         diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
         redelivery_authorizer: RedeliveryAuthorizerPort | None = None,
+        retirement_cancellation_authorizer: RetirementCancellationAuthorizerPort
+        | None = None,
         telemetry: EventTelemetry | None = None,
         backend: str | None = None,
         clock: Clock | None = None,
@@ -762,6 +782,17 @@ class DurableDeliveryRuntime:
                 "redelivery_authorizer must implement RedeliveryAuthorizerPort"
             )
         self._redelivery_authorizer = redelivery_authorizer
+        if retirement_cancellation_authorizer is not None and not isinstance(
+            retirement_cancellation_authorizer,
+            RetirementCancellationAuthorizerPort,
+        ):
+            raise TypeError(
+                "retirement_cancellation_authorizer must implement "
+                "RetirementCancellationAuthorizerPort"
+            )
+        self._retirement_cancellation_authorizer = (
+            retirement_cancellation_authorizer
+        )
         self._diagnostic_projector = (
             diagnostic_projector or DeliveryDiagnosticProjector()
         )
@@ -1107,6 +1138,98 @@ class DurableDeliveryRuntime:
             )
             self._record_store_failure(
                 RuntimeDiagnosticOperation.AUTHORIZED_REDELIVERY,
+                failure,
+            )
+            raise failure
+        return report
+
+    def cancel_retired_subscription(
+        self,
+        request: RetirementCancellationRequest,
+    ) -> RetirementCancellationReport:
+        """Authorize and atomically record a bounded terminal cancellation."""
+
+        if not isinstance(request, RetirementCancellationRequest):
+            raise TypeError("request must be RetirementCancellationRequest")
+        authorizer = self._retirement_cancellation_authorizer
+        if authorizer is None:
+            raise EventDeliveryConfigurationError(
+                "retirement cancellation requires a composed authorizer"
+            )
+        authorization_request = (
+            RetirementCancellationAuthorizationRequest.from_cancellation(request)
+        )
+        try:
+            decision = authorizer.authorize(authorization_request)
+        except Exception:
+            raise EventRetirementCancellationAuthorizationError(
+                "retirement cancellation authorization failed"
+            ) from None
+        if not isinstance(decision, RetirementCancellationAuthorizationDecision):
+            raise EventRetirementCancellationAuthorizationContractError(
+                "retirement cancellation authorizer returned an invalid decision"
+            )
+        try:
+            decision.verify_integrity()
+        except Exception:
+            raise EventRetirementCancellationAuthorizationContractError(
+                "retirement cancellation authorization decision failed integrity validation"
+            ) from None
+        if decision.request != authorization_request:
+            raise EventRetirementCancellationAuthorizationContractError(
+                "retirement cancellation decision does not match the request"
+            )
+        if not decision.authorized:
+            raise EventRetirementCancellationAuthorizationError(
+                "retirement cancellation authorization denied"
+            )
+
+        store = self._require_store()
+        subscription = self._store_call(
+            RuntimeDiagnosticOperation.SUBSCRIPTION_LOOKUP,
+            "subscription lookup",
+            lambda: store.get_subscription(request.subscription),
+        )
+        if not isinstance(subscription, DurableSubscription):
+            raise EventSubscriptionNotFoundError(request.subscription)
+        if (
+            subscription.key != request.subscription
+            or subscription.tenant_id != request.tenant_id
+            or subscription.status is not SubscriptionStatus.RETIRED
+        ):
+            raise EventConsumerMismatchError(
+                "retirement cancellation requires the exact retired subscription scope"
+            )
+        report = self._store_call(
+            RuntimeDiagnosticOperation.RETIREMENT_CANCELLATION,
+            "retirement cancellation",
+            lambda: store.cancel_retired_subscription(request),
+        )
+        if not isinstance(report, RetirementCancellationReport):
+            failure = EventDeliveryContractError(
+                "durable store returned an invalid retirement cancellation report"
+            )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.RETIREMENT_CANCELLATION,
+                failure,
+            )
+            raise failure
+        if (
+            report.cancellation_id != request.cancellation_id
+            or report.subscription != request.subscription
+            or report.requested_at != request.requested_at
+            or report.operator_id != request.operator_id
+            or report.operator_reason != request.operator_reason
+            or report.authorization_evidence_ref
+            != request.authorization_evidence_ref
+            or report.item_limit != request.limit
+            or report.tenant_id != request.tenant_id
+        ):
+            failure = EventDeliveryContractError(
+                "durable store returned a mismatched retirement cancellation report"
+            )
+            self._record_store_failure(
+                RuntimeDiagnosticOperation.RETIREMENT_CANCELLATION,
                 failure,
             )
             raise failure
@@ -1501,6 +1624,8 @@ class DurableDeliveryRuntime:
                 labels={"backend": self._backend},
             )
             return result
+        except EventRetirementCancellationError:
+            raise
         except Exception as error:
             self._record_store_failure(diagnostic_operation, error)
             _safe_telemetry_gauge(
@@ -2062,5 +2187,7 @@ __all__ = [
     "EventDeliveryStoreOperationError",
     "EventRedeliveryAuthorizationContractError",
     "EventRedeliveryAuthorizationError",
+    "EventRetirementCancellationAuthorizationContractError",
+    "EventRetirementCancellationAuthorizationError",
     "EventSubscriptionNotFoundError",
 ]

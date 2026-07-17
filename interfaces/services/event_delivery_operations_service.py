@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from framework.events.errors import EventContractError, EventStoreUnavailableError
 from framework.events.ports import EventStorePort
 from framework.events.runtime.models import (
+    MAX_RETIREMENT_CANCELLATION_ITEMS,
     CheckpointKey,
     ConsumerCheckpoint,
     DeadLetterAction,
@@ -21,7 +22,10 @@ from framework.events.runtime.models import (
     PendingDeliveryStats,
     RedeliveryReport,
     RedeliveryRequest,
+    RetirementCancellationReport,
+    RetirementCancellationRequest,
     SubscriptionKey,
+    SubscriptionStatus,
 )
 from framework.shared.time import utc_now
 from interfaces.services.event_reader_service import (
@@ -41,6 +45,13 @@ class EventDeliveryRuntimePort(Protocol):
     ) -> DeliveryRecord: ...
 
     def begin_redelivery(self, request: RedeliveryRequest) -> RedeliveryReport: ...
+
+
+class RetirementCancellationRuntimePort(Protocol):
+    def cancel_retired_subscription(
+        self,
+        request: RetirementCancellationRequest,
+    ) -> RetirementCancellationReport: ...
 
 
 class EventOperationNotFoundError(LookupError):
@@ -111,6 +122,26 @@ class RedeliveryLookupResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RetirementCancellationLookupResult:
+    availability: EventServiceAvailability
+    tenant_id: str | None
+    report: RetirementCancellationReport | None = None
+    unavailable_reason_class: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "availability", EventServiceAvailability(self.availability))
+        if self.availability is EventServiceAvailability.AVAILABLE:
+            if self.unavailable_reason_class is not None:
+                raise ValueError("available retirement cancellation lookup has no failure reason")
+        elif self.report is not None:
+            raise ValueError("unavailable retirement cancellation lookup cannot contain a report")
+        elif self.unavailable_reason_class is None:
+            raise ValueError(
+                "unavailable retirement cancellation lookup requires a reason class"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ConsumerDeliveryStatusResult:
     availability: EventServiceAvailability
     subscription: SubscriptionKey
@@ -142,6 +173,8 @@ class EventDeliveryOperationsService:
         *,
         store: EventStorePort,
         runtime: EventDeliveryRuntimePort | None = None,
+        retirement_cancellation_runtime: RetirementCancellationRuntimePort
+        | None = None,
         authorizer: EventAuthorizerPort,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -153,6 +186,7 @@ class EventDeliveryOperationsService:
             raise TypeError("clock must be callable")
         self._store = store
         self._runtime = runtime
+        self._retirement_cancellation_runtime = retirement_cancellation_runtime
         self._authorizer = authorizer
         self._clock = clock
 
@@ -470,6 +504,132 @@ class EventDeliveryOperationsService:
             report=report,
         )
 
+    def cancel_retired_subscription(
+        self,
+        *,
+        cancellation_id: str,
+        subscription: SubscriptionKey,
+        operator_reason: str,
+        authorization: EventAuthorizationContext,
+        limit: int = MAX_RETIREMENT_CANCELLATION_ITEMS,
+    ) -> RetirementCancellationReport:
+        normalized_id = _required_text(cancellation_id, "cancellation_id")
+        reason = validate_operator_reason(operator_reason)
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError("limit must be an integer")
+        if not 1 <= limit <= MAX_RETIREMENT_CANCELLATION_ITEMS:
+            raise ValueError(
+                "limit must be between 1 and "
+                f"{MAX_RETIREMENT_CANCELLATION_ITEMS}"
+            )
+        target = {
+            "cancellation_id": normalized_id,
+            **_subscription_target(subscription),
+            "operator_reason": reason,
+            "limit": limit,
+        }
+        decision = authorize_event_operation(
+            self._authorizer,
+            authorization,
+            EventPermission.SUBSCRIPTION_RETIREMENT_CANCEL,
+            target=target,
+        )
+
+        existing = self._store.get_retirement_cancellation_report(
+            normalized_id,
+            tenant_id=authorization.tenant_id,
+        )
+        if existing is not None and (
+            not isinstance(existing, RetirementCancellationReport)
+            or existing.cancellation_id != normalized_id
+            or existing.tenant_id != authorization.tenant_id
+        ):
+            raise EventContractError(
+                "retirement cancellation store returned another target"
+            )
+        requested_at = (
+            existing.requested_at if existing is not None else _clock_value(self._clock)
+        )
+        request = RetirementCancellationRequest(
+            cancellation_id=normalized_id,
+            subscription=subscription,
+            requested_at=requested_at,
+            operator_id=authorization.principal_id,
+            operator_reason=reason,
+            authorization_evidence_ref=decision.authorization_evidence_ref,
+            tenant_id=authorization.tenant_id,
+            limit=limit,
+        )
+        runtime = self._retirement_cancellation_runtime
+        if runtime is None:
+            raise EventOperationCapabilityUnavailableError(
+                "subscription retirement cancellation capability is unavailable"
+            )
+        definition = self._store.get_subscription(subscription)
+        if not _subscription_matches(
+            definition,
+            subscription,
+            tenant_id=authorization.tenant_id,
+        ) or not _subscription_is_retired(definition):
+            raise EventOperationNotFoundError(
+                "retired subscription is not available in tenant scope"
+            )
+        report = runtime.cancel_retired_subscription(request)
+        if (
+            not isinstance(report, RetirementCancellationReport)
+            or report.cancellation_id != request.cancellation_id
+            or report.subscription != request.subscription
+            or report.requested_at != request.requested_at
+            or report.operator_id != request.operator_id
+            or report.operator_reason != request.operator_reason
+            or report.authorization_evidence_ref
+            != request.authorization_evidence_ref
+            or report.item_limit != request.limit
+            or report.tenant_id != request.tenant_id
+        ):
+            raise EventContractError(
+                "delivery runtime returned another retirement cancellation target"
+            )
+        return report
+
+    def get_retirement_cancellation_report(
+        self,
+        cancellation_id: str,
+        *,
+        authorization: EventAuthorizationContext,
+    ) -> RetirementCancellationLookupResult:
+        normalized_id = _required_text(cancellation_id, "cancellation_id")
+        authorize_event_operation(
+            self._authorizer,
+            authorization,
+            EventPermission.DELIVERY_STATUS_READ,
+            target={"cancellation_id": normalized_id},
+        )
+        try:
+            report = self._store.get_retirement_cancellation_report(
+                normalized_id,
+                tenant_id=authorization.tenant_id,
+            )
+        except EventStoreUnavailableError as error:
+            return RetirementCancellationLookupResult(
+                availability=EventServiceAvailability.UNAVAILABLE,
+                tenant_id=authorization.tenant_id,
+                unavailable_reason_class=type(error).__name__,
+            )
+        if report is not None and (
+            not isinstance(report, RetirementCancellationReport)
+            or report.cancellation_id != normalized_id
+            or report.tenant_id != authorization.tenant_id
+        ):
+            raise EventContractError(
+                "retirement cancellation store returned another target"
+            )
+        return RetirementCancellationLookupResult(
+            availability=EventServiceAvailability.AVAILABLE,
+            tenant_id=authorization.tenant_id,
+            report=report,
+        )
+
     def get_consumer_status(
         self,
         subscription: SubscriptionKey,
@@ -606,6 +766,15 @@ def _subscription_matches(
     )
 
 
+def _subscription_is_retired(definition: Any) -> bool:
+    if definition is None:
+        return False
+    try:
+        return SubscriptionStatus(getattr(definition, "status", None)) is SubscriptionStatus.RETIRED
+    except (TypeError, ValueError):
+        return False
+
+
 __all__ = [
     "ConsumerDeliveryStatusResult",
     "DeadLetterListResult",
@@ -616,5 +785,7 @@ __all__ = [
     "EventOperationNotFoundError",
     "MAX_OPERATOR_REASON_LENGTH",
     "RedeliveryLookupResult",
+    "RetirementCancellationLookupResult",
+    "RetirementCancellationRuntimePort",
     "validate_operator_reason",
 ]

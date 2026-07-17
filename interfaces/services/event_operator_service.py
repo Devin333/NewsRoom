@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from framework.events.runtime.models import (
+    MAX_RETIREMENT_CANCELLATION_ITEMS,
     ConsumerCheckpoint,
     DeadLetterDisposition,
     DeadLetterRecord,
@@ -17,6 +18,8 @@ from framework.events.runtime.models import (
     ReplayMode,
     ReplayReport,
     ReplayStatus,
+    RetirementCancellationItem,
+    RetirementCancellationReport,
     SubscriptionKey,
 )
 from interfaces.services.event_delivery_operations_service import (
@@ -230,6 +233,45 @@ class EventOperatorApplicationService:
             "delivery": _delivery_record(delivery),
         }
 
+    def cancel_retired_subscription(
+        self,
+        cancellation_id: str,
+        *,
+        subscription_id: str,
+        subscription_version: int,
+        operator_reason: str,
+        limit: int = MAX_RETIREMENT_CANCELLATION_ITEMS,
+    ) -> dict[str, Any]:
+        report = self._delivery.cancel_retired_subscription(
+            cancellation_id=cancellation_id,
+            subscription=SubscriptionKey(subscription_id, subscription_version),
+            operator_reason=operator_reason,
+            authorization=self._authorization,
+            limit=limit,
+        )
+        return {
+            "availability": EventServiceAvailability.AVAILABLE.value,
+            "tenant_id": self._authorization.tenant_id,
+            "retirement_cancellation": _retirement_cancellation_report(report),
+        }
+
+    def get_retirement_cancellation_report(
+        self,
+        cancellation_id: str,
+    ) -> dict[str, Any]:
+        result = self._delivery.get_retirement_cancellation_report(
+            cancellation_id,
+            authorization=self._authorization,
+        )
+        return _lookup_response(
+            availability=result.availability,
+            tenant_id=result.tenant_id,
+            key="retirement_cancellation",
+            value=result.report,
+            serializer=_retirement_cancellation_report,
+            unavailable_reason_class=result.unavailable_reason_class,
+        )
+
     def get_consumer_status(
         self,
         subscription_id: str,
@@ -380,6 +422,50 @@ def _delivery_record(record: DeliveryRecord) -> dict[str, Any]:
         "redacted_diagnostic": record.redacted_diagnostic,
         "created_at": _utc_z(record.created_at),
         "updated_at": _utc_z(record.updated_at),
+    }
+
+
+def _retirement_cancellation_report(
+    report: RetirementCancellationReport,
+) -> dict[str, Any]:
+    return {
+        "cancellation_id": report.cancellation_id,
+        "subscription": {
+            "subscription_id": report.subscription.subscription_id,
+            "subscription_version": report.subscription.subscription_version,
+        },
+        "requested_at": _utc_z(report.requested_at),
+        "cancelled_at": _utc_z(report.cancelled_at),
+        "operator_id": report.operator_id,
+        "operator_reason": report.operator_reason,
+        "authorization_evidence_ref": _public_reference(
+            report.authorization_evidence_ref
+        ),
+        "item_limit": report.item_limit,
+        "cancelled_count": report.cancelled_count,
+        "remaining_nonterminal_count": report.remaining_nonterminal_count,
+        "remaining_nonterminal_count_truncated": (
+            report.remaining_nonterminal_count_truncated
+        ),
+        "completed": report.completed,
+        "items": [_retirement_cancellation_item(item) for item in report.items],
+    }
+
+
+def _retirement_cancellation_item(
+    item: RetirementCancellationItem,
+) -> dict[str, Any]:
+    return {
+        "delivery_id": item.delivery_id,
+        "event_id": item.event_id,
+        "stream_id": item.stream_id,
+        "stream_sequence": item.stream_sequence,
+        "delivery_generation": item.delivery_generation,
+        "previous_state": item.previous_state.value,
+        "previous_attempt_count": item.previous_attempt_count,
+        "previous_reason_class": item.previous_reason_class,
+        "terminal_state": item.terminal_state.value,
+        "cancelled_at": _utc_z(item.cancelled_at),
     }
 
 

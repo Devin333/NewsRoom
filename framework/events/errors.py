@@ -198,6 +198,14 @@ class EventStaleLeaseError(EventDeliveryError):
     """Raised when a stale claim generation tries to mutate delivery state."""
 
 
+class EventRetirementCancellationError(EventDeliveryError):
+    """Raised when retired delivery work cannot be terminally cancelled safely."""
+
+
+class EventRetirementCancellationCollisionError(EventRetirementCancellationError):
+    """Raised when one cancellation id is reused for another operator command."""
+
+
 class EventQuarantineError(EventRuntimeError):
     """Raised when a quarantined record is requested as a normal event."""
 

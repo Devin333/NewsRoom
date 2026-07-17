@@ -52,6 +52,7 @@ class RuntimeDiagnosticOperation(str, Enum):
     DEAD_LETTER_LOOKUP = "dead_letter_lookup"
     DEAD_LETTER_REQUEUE = "dead_letter_requeue"
     AUTHORIZED_REDELIVERY = "authorized_redelivery"
+    RETIREMENT_CANCELLATION = "retirement_cancellation"
     DELIVERY_SETTLEMENT = "delivery_settlement"
     CONSUMER_ERROR_CLASSIFICATION = "consumer_error_classification"
     REPLAY_BEGIN_FAILED = "replay_begin_failed"

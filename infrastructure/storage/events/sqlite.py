@@ -22,6 +22,8 @@ from framework.events.errors import (
     EventConsumerIdempotencyError,
     EventContractError,
     EventIdentityCollisionError,
+    EventRetirementCancellationCollisionError,
+    EventRetirementCancellationError,
     EventStaleLeaseError,
     EventStoreCapacityError,
     EventStoreCorruptionError,
@@ -58,6 +60,7 @@ from framework.events.runtime.models import (
     InboxKey,
     LeasePolicy,
     MAX_REDELIVERY_ITEMS,
+    MAX_RETIREMENT_CANCELLATION_ITEMS,
     PendingDeliveryStats,
     QuarantineDisposition,
     QuarantinePage,
@@ -67,6 +70,9 @@ from framework.events.runtime.models import (
     RedeliveryItem,
     RedeliveryReport,
     RedeliveryRequest,
+    RetirementCancellationItem,
+    RetirementCancellationReport,
+    RetirementCancellationRequest,
     ReplayMode,
     ReplayReport,
     ReplayReportPage,
@@ -591,6 +597,101 @@ CREATE TABLE IF NOT EXISTS event_subscription_status_audit (
         ON DELETE RESTRICT,
     CHECK (trim(reason) <> '')
 );
+
+CREATE TABLE IF NOT EXISTS event_retirement_cancellation_reports (
+    tenant_scope TEXT NOT NULL,
+    tenant_id TEXT,
+    cancellation_id TEXT NOT NULL,
+    subscription_id TEXT NOT NULL,
+    subscription_version INTEGER NOT NULL,
+    requested_at TEXT NOT NULL,
+    cancelled_at TEXT NOT NULL,
+    operator_id TEXT NOT NULL,
+    operator_reason TEXT NOT NULL,
+    authorization_evidence_ref TEXT NOT NULL,
+    item_limit INTEGER NOT NULL,
+    cancelled_count INTEGER NOT NULL,
+    remaining_nonterminal_count INTEGER NOT NULL,
+    remaining_nonterminal_count_truncated INTEGER NOT NULL,
+    PRIMARY KEY (tenant_scope, cancellation_id),
+    UNIQUE (
+        tenant_scope, cancellation_id, subscription_id, subscription_version
+    ),
+    FOREIGN KEY (subscription_id, subscription_version, tenant_scope)
+        REFERENCES event_subscriptions (
+            subscription_id, subscription_version, tenant_scope
+        ) ON DELETE RESTRICT,
+    CHECK (tenant_scope = COALESCE(tenant_id, '')),
+    CHECK (trim(cancellation_id) <> ''),
+    CHECK (subscription_version >= 1),
+    CHECK (cancelled_at >= requested_at),
+    CHECK (trim(operator_id) <> '' AND trim(operator_reason) <> ''),
+    CHECK (
+        trim(authorization_evidence_ref) <> ''
+        AND length(authorization_evidence_ref) <= 512
+    ),
+    CHECK (item_limit BETWEEN 1 AND 1000),
+    CHECK (cancelled_count BETWEEN 0 AND item_limit),
+    CHECK (remaining_nonterminal_count >= 0),
+    CHECK (remaining_nonterminal_count_truncated IN (0, 1)),
+    CHECK (
+        (remaining_nonterminal_count_truncated = 0
+            AND remaining_nonterminal_count <= item_limit)
+        OR (remaining_nonterminal_count_truncated = 1
+            AND remaining_nonterminal_count = item_limit + 1)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_retirement_cancellation_reports_subscription
+    ON event_retirement_cancellation_reports (
+        tenant_scope, subscription_id, subscription_version,
+        requested_at, cancellation_id
+    );
+
+CREATE TABLE IF NOT EXISTS event_retirement_cancellation_items (
+    tenant_scope TEXT NOT NULL,
+    tenant_id TEXT,
+    cancellation_id TEXT NOT NULL,
+    delivery_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    stream_id TEXT NOT NULL,
+    stream_sequence INTEGER NOT NULL,
+    subscription_id TEXT NOT NULL,
+    subscription_version INTEGER NOT NULL,
+    delivery_generation INTEGER NOT NULL,
+    previous_state TEXT NOT NULL,
+    previous_attempt_count INTEGER NOT NULL,
+    previous_reason_class TEXT,
+    terminal_state TEXT NOT NULL,
+    cancelled_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_scope, cancellation_id, delivery_id),
+    UNIQUE (delivery_id),
+    FOREIGN KEY (
+        tenant_scope, cancellation_id, subscription_id, subscription_version
+    )
+        REFERENCES event_retirement_cancellation_reports (
+            tenant_scope, cancellation_id, subscription_id, subscription_version
+        ) ON DELETE RESTRICT,
+    FOREIGN KEY (delivery_id)
+        REFERENCES event_deliveries (delivery_id)
+        ON DELETE RESTRICT,
+    CHECK (tenant_scope = COALESCE(tenant_id, '')),
+    CHECK (trim(delivery_id) <> '' AND trim(event_id) <> '' AND trim(stream_id) <> ''),
+    CHECK (stream_sequence >= 1 AND subscription_version >= 1),
+    CHECK (delivery_generation >= 1 AND previous_attempt_count >= 0),
+    CHECK (
+        (previous_state = 'pending' AND previous_attempt_count = 0)
+        OR (previous_state IN ('claimed', 'retry_wait')
+            AND previous_attempt_count >= 1)
+    ),
+    CHECK (terminal_state = 'dropped')
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_retirement_cancellation_items_report
+    ON event_retirement_cancellation_items (
+        tenant_scope, cancellation_id, stream_id, stream_sequence,
+        delivery_generation, delivery_id
+    );
 """
 
 
@@ -1172,6 +1273,206 @@ class SQLiteEventStore:
             )
             return updated
 
+    def get_retirement_cancellation_report(
+        self,
+        cancellation_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> RetirementCancellationReport | None:
+        normalized_id = _required_text(cancellation_id, "cancellation_id")
+        tenant_scope = _tenant_scope(tenant_id)
+        with self._read() as connection:
+            return _select_retirement_cancellation_report(
+                connection,
+                normalized_id,
+                tenant_scope=tenant_scope,
+            )
+
+    def cancel_retired_subscription(
+        self,
+        request: RetirementCancellationRequest,
+    ) -> RetirementCancellationReport:
+        if not isinstance(request, RetirementCancellationRequest):
+            raise TypeError("request must be RetirementCancellationRequest")
+        tenant_scope = _tenant_scope(request.tenant_id)
+        with self._write() as connection:
+            existing = _select_retirement_cancellation_report(
+                connection,
+                request.cancellation_id,
+                tenant_scope=tenant_scope,
+            )
+            if existing is not None:
+                _assert_retirement_cancellation_retry(existing, request)
+                return existing
+
+            subscription = _select_subscription(connection, request.subscription)
+            if subscription is None or subscription.tenant_id != request.tenant_id:
+                raise EventRetirementCancellationError(
+                    "retirement cancellation subscription is not available in scope"
+                )
+            if subscription.status is not SubscriptionStatus.RETIRED:
+                raise EventRetirementCancellationError(
+                    "retirement cancellation requires a retired subscription"
+                )
+            invalid = connection.execute(
+                "SELECT 1 FROM event_deliveries AS delivery "
+                "LEFT JOIN event_subscription_stream_states AS state "
+                "ON state.tenant_scope = delivery.tenant_scope "
+                "AND state.subscription_id = delivery.subscription_id "
+                "AND state.subscription_version = delivery.subscription_version "
+                "AND state.stream_id = delivery.stream_id "
+                "WHERE delivery.tenant_scope = ? "
+                "AND delivery.subscription_id = ? "
+                "AND delivery.subscription_version = ? "
+                "AND delivery.state IN ('pending', 'claimed', 'retry_wait') "
+                "AND (state.retirement_watermark IS NULL "
+                "OR delivery.stream_sequence > state.retirement_watermark) LIMIT 1",
+                (
+                    tenant_scope,
+                    request.subscription.subscription_id,
+                    request.subscription.subscription_version,
+                ),
+            ).fetchone()
+            if invalid is not None:
+                raise EventStoreCorruptionError(
+                    "retired subscription has work outside its retirement watermark"
+                )
+            rows = connection.execute(
+                "SELECT delivery.* FROM event_deliveries AS delivery "
+                "JOIN event_subscription_stream_states AS state "
+                "ON state.tenant_scope = delivery.tenant_scope "
+                "AND state.subscription_id = delivery.subscription_id "
+                "AND state.subscription_version = delivery.subscription_version "
+                "AND state.stream_id = delivery.stream_id "
+                "WHERE delivery.tenant_scope = ? "
+                "AND delivery.subscription_id = ? "
+                "AND delivery.subscription_version = ? "
+                "AND delivery.state IN ('pending', 'claimed', 'retry_wait') "
+                "AND state.retirement_watermark IS NOT NULL "
+                "AND delivery.stream_sequence <= state.retirement_watermark "
+                "ORDER BY delivery.stream_id, delivery.stream_sequence, "
+                "delivery.delivery_generation, delivery.delivery_id LIMIT ?",
+                (
+                    tenant_scope,
+                    request.subscription.subscription_id,
+                    request.subscription.subscription_version,
+                    request.limit,
+                ),
+            ).fetchall()
+            time_floor = [self._clock(), request.requested_at]
+            if subscription.updated_at is not None:
+                time_floor.append(subscription.updated_at)
+            time_floor.extend(_time_value(row["updated_at"]) for row in rows)
+            cancelled_at = max(time_floor)
+            cancelled_text = _time_text(cancelled_at)
+            connection.execute(
+                "INSERT INTO event_retirement_cancellation_reports ("
+                "tenant_scope, tenant_id, cancellation_id, subscription_id, "
+                "subscription_version, requested_at, cancelled_at, operator_id, "
+                "operator_reason, authorization_evidence_ref, item_limit, "
+                "cancelled_count, remaining_nonterminal_count, "
+                "remaining_nonterminal_count_truncated"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)",
+                (
+                    tenant_scope,
+                    request.tenant_id,
+                    request.cancellation_id,
+                    request.subscription.subscription_id,
+                    request.subscription.subscription_version,
+                    _time_text(request.requested_at),
+                    cancelled_text,
+                    request.operator_id,
+                    request.operator_reason,
+                    request.authorization_evidence_ref,
+                    request.limit,
+                    len(rows),
+                ),
+            )
+            affected_streams: set[str] = set()
+            for row in rows:
+                previous = _delivery_from_row(row)
+                connection.execute(
+                    "INSERT INTO event_retirement_cancellation_items ("
+                    "tenant_scope, tenant_id, cancellation_id, delivery_id, event_id, "
+                    "stream_id, stream_sequence, subscription_id, subscription_version, "
+                    "delivery_generation, previous_state, previous_attempt_count, "
+                    "previous_reason_class, terminal_state, cancelled_at"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dropped', ?)",
+                    (
+                        tenant_scope,
+                        request.tenant_id,
+                        request.cancellation_id,
+                        previous.delivery_id,
+                        previous.event_id,
+                        previous.stream_id,
+                        previous.stream_sequence,
+                        previous.subscription_id,
+                        previous.subscription_version,
+                        previous.delivery_generation,
+                        previous.state.value,
+                        previous.attempt_count,
+                        previous.reason_class,
+                        cancelled_text,
+                    ),
+                )
+                updated = connection.execute(
+                    "UPDATE event_deliveries SET state = 'dropped', "
+                    "attempt_count = CASE WHEN attempt_count < 1 THEN 1 ELSE attempt_count END, "
+                    "available_at = NULL, lease_owner = NULL, lease_generation = NULL, "
+                    "lease_expires_at = NULL, reason_class = 'subscription_retired', "
+                    "redacted_diagnostic = NULL, updated_at = ? "
+                    "WHERE delivery_id = ? AND state = ?",
+                    (cancelled_text, previous.delivery_id, previous.state.value),
+                )
+                if updated.rowcount != 1:
+                    raise EventRetirementCancellationError(
+                        "retirement cancellation delivery changed concurrently"
+                    )
+                if previous.delivery_generation == 1:
+                    affected_streams.add(previous.stream_id)
+            for stream_id in sorted(affected_streams):
+                _advance_checkpoint(
+                    connection,
+                    subscription,
+                    stream_id,
+                    settled_at=cancelled_at,
+                )
+            remaining_rows = connection.execute(
+                "SELECT 1 FROM event_deliveries WHERE tenant_scope = ? "
+                "AND subscription_id = ? AND subscription_version = ? "
+                "AND state IN ('pending', 'claimed', 'retry_wait') LIMIT ?",
+                (
+                    tenant_scope,
+                    request.subscription.subscription_id,
+                    request.subscription.subscription_version,
+                    request.limit + 1,
+                ),
+            ).fetchall()
+            remaining = len(remaining_rows)
+            remaining_truncated = remaining > request.limit
+            connection.execute(
+                "UPDATE event_retirement_cancellation_reports "
+                "SET remaining_nonterminal_count = ?, "
+                "remaining_nonterminal_count_truncated = ? "
+                "WHERE tenant_scope = ? AND cancellation_id = ?",
+                (
+                    remaining,
+                    int(remaining_truncated),
+                    tenant_scope,
+                    request.cancellation_id,
+                ),
+            )
+            report = _select_retirement_cancellation_report(
+                connection,
+                request.cancellation_id,
+                tenant_scope=tenant_scope,
+            )
+            if report is None:
+                raise EventStoreCorruptionError(
+                    "retirement cancellation report disappeared during commit"
+                )
+            return report
+
     def get_delivery(
         self,
         delivery_id: str,
@@ -1613,6 +1914,10 @@ class SQLiteEventStore:
             )
             if subscription is None:
                 raise EventStoreCorruptionError("dead letter references a missing subscription")
+            if subscription.status is SubscriptionStatus.RETIRED:
+                raise EventRetirementCancellationError(
+                    "retired subscription cannot accept dead-letter requeue"
+                )
             if not subscription.supports_out_of_order_repair:
                 raise EventConsumerIdempotencyError(
                     "subscription does not support idempotent out-of-order repair"
@@ -2585,6 +2890,12 @@ def _tenant_scope(tenant_id: str | None) -> str:
     return tenant_id or ""
 
 
+def _required_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} is required")
+    return value.strip()
+
+
 def _expected_last_sequence(value: int | None) -> int | None:
     if value is None:
         return None
@@ -3438,6 +3749,201 @@ def _quarantine_from_row(row: sqlite3.Row) -> QuarantineRecord:
         )
     except (TypeError, ValueError) as exc:
         raise EventStoreCorruptionError("stored quarantine record cannot be decoded") from exc
+
+
+def _select_retirement_cancellation_report(
+    connection: sqlite3.Connection,
+    cancellation_id: str,
+    *,
+    tenant_scope: str,
+) -> RetirementCancellationReport | None:
+    row = connection.execute(
+        "SELECT * FROM event_retirement_cancellation_reports "
+        "WHERE tenant_scope = ? AND cancellation_id = ?",
+        (tenant_scope, cancellation_id),
+    ).fetchone()
+    if row is None:
+        return None
+    item_limit = int(row["item_limit"])
+    if not 1 <= item_limit <= MAX_RETIREMENT_CANCELLATION_ITEMS:
+        raise EventStoreCorruptionError(
+            "stored retirement cancellation item limit is invalid"
+        )
+    cancelled_count = int(row["cancelled_count"])
+    if not 0 <= cancelled_count <= item_limit:
+        raise EventStoreCorruptionError(
+            "stored retirement cancellation item count is invalid"
+        )
+    item_rows = connection.execute(
+        "SELECT item.*, delivery.event_id AS linked_event_id, "
+        "delivery.stream_id AS linked_stream_id, "
+        "delivery.stream_sequence AS linked_stream_sequence, "
+        "delivery.subscription_id AS linked_subscription_id, "
+        "delivery.subscription_version AS linked_subscription_version, "
+        "delivery.delivery_generation AS linked_delivery_generation, "
+        "delivery.state AS linked_state, "
+        "delivery.attempt_count AS linked_attempt_count, "
+        "delivery.tenant_scope AS linked_tenant_scope, "
+        "delivery.reason_class AS linked_reason_class, "
+        "delivery.lease_owner AS linked_lease_owner, "
+        "delivery.lease_generation AS linked_lease_generation, "
+        "delivery.lease_expires_at AS linked_lease_expires_at, "
+        "delivery.updated_at AS linked_updated_at "
+        "FROM event_retirement_cancellation_items AS item "
+        "JOIN event_deliveries AS delivery ON delivery.delivery_id = item.delivery_id "
+        "WHERE item.tenant_scope = ? AND item.cancellation_id = ? "
+        "ORDER BY item.stream_id, item.stream_sequence, item.delivery_generation, "
+        "item.delivery_id LIMIT ?",
+        (tenant_scope, cancellation_id, item_limit + 1),
+    ).fetchall()
+    if len(item_rows) > item_limit:
+        raise EventStoreCorruptionError(
+            "stored retirement cancellation report exceeds its item limit"
+        )
+    if len(item_rows) != cancelled_count:
+        raise EventStoreCorruptionError(
+            "stored retirement cancellation report is missing audit items"
+        )
+    try:
+        subscription = SubscriptionKey(
+            str(row["subscription_id"]),
+            int(row["subscription_version"]),
+        )
+        cancelled_at = _time_value(row["cancelled_at"])
+        items: list[RetirementCancellationItem] = []
+        for item_row in item_rows:
+            item_subscription = SubscriptionKey(
+                str(item_row["subscription_id"]),
+                int(item_row["subscription_version"]),
+            )
+            if item_subscription != subscription:
+                raise EventStoreCorruptionError(
+                    "retirement cancellation item crossed subscription scope"
+                )
+            indexed = (
+                str(item_row["event_id"]),
+                str(item_row["stream_id"]),
+                int(item_row["stream_sequence"]),
+                str(item_row["subscription_id"]),
+                int(item_row["subscription_version"]),
+                int(item_row["delivery_generation"]),
+                str(item_row["terminal_state"]),
+                str(item_row["tenant_scope"]),
+            )
+            linked = (
+                str(item_row["linked_event_id"]),
+                str(item_row["linked_stream_id"]),
+                int(item_row["linked_stream_sequence"]),
+                str(item_row["linked_subscription_id"]),
+                int(item_row["linked_subscription_version"]),
+                int(item_row["linked_delivery_generation"]),
+                str(item_row["linked_state"]),
+                str(item_row["linked_tenant_scope"]),
+            )
+            expected_attempt_count = max(
+                1,
+                int(item_row["previous_attempt_count"]),
+            )
+            if (
+                indexed != linked
+                or int(item_row["linked_attempt_count"])
+                != expected_attempt_count
+                or str(item_row["linked_reason_class"])
+                != "subscription_retired"
+                or item_row["linked_lease_owner"] is not None
+                or item_row["linked_lease_generation"] is not None
+                or item_row["linked_lease_expires_at"] is not None
+                or _time_value(item_row["linked_updated_at"])
+                != _time_value(item_row["cancelled_at"])
+            ):
+                raise EventStoreCorruptionError(
+                    "retirement cancellation item disagrees with its delivery disposition"
+                )
+            items.append(
+                RetirementCancellationItem(
+                    cancellation_id=str(item_row["cancellation_id"]),
+                    delivery_id=str(item_row["delivery_id"]),
+                    event_id=str(item_row["event_id"]),
+                    stream_id=str(item_row["stream_id"]),
+                    stream_sequence=int(item_row["stream_sequence"]),
+                    subscription=subscription,
+                    delivery_generation=int(item_row["delivery_generation"]),
+                    previous_state=DeliveryState(str(item_row["previous_state"])),
+                    previous_attempt_count=int(item_row["previous_attempt_count"]),
+                    previous_reason_class=item_row["previous_reason_class"],
+                    terminal_state=DeliveryState(str(item_row["terminal_state"])),
+                    cancelled_at=_time_value(item_row["cancelled_at"]),
+                    tenant_id=item_row["tenant_id"],
+                )
+            )
+        truncated_raw = int(row["remaining_nonterminal_count_truncated"])
+        if truncated_raw not in (0, 1):
+            raise EventStoreCorruptionError(
+                "stored retirement cancellation remaining-count bound is invalid"
+            )
+        report = RetirementCancellationReport(
+            cancellation_id=str(row["cancellation_id"]),
+            subscription=subscription,
+            requested_at=_time_value(row["requested_at"]),
+            cancelled_at=cancelled_at,
+            operator_id=str(row["operator_id"]),
+            operator_reason=str(row["operator_reason"]),
+            authorization_evidence_ref=str(row["authorization_evidence_ref"]),
+            item_limit=item_limit,
+            remaining_nonterminal_count=int(row["remaining_nonterminal_count"]),
+            remaining_nonterminal_count_truncated=bool(truncated_raw),
+            items=tuple(items),
+            tenant_id=row["tenant_id"],
+        )
+    except EventStoreCorruptionError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise EventStoreCorruptionError(
+            "stored retirement cancellation report cannot be decoded"
+        ) from exc
+    if _tenant_scope(report.tenant_id) != str(row["tenant_scope"]):
+        raise EventStoreCorruptionError(
+            "retirement cancellation tenant index is corrupt"
+        )
+    return report
+
+
+def _retirement_cancellation_identity(
+    value: RetirementCancellationRequest | RetirementCancellationReport,
+) -> tuple[Any, ...]:
+    if isinstance(value, RetirementCancellationRequest):
+        return (
+            value.cancellation_id,
+            value.subscription,
+            value.requested_at,
+            value.operator_id,
+            value.operator_reason,
+            value.authorization_evidence_ref,
+            value.tenant_id,
+            value.limit,
+        )
+    return (
+        value.cancellation_id,
+        value.subscription,
+        value.requested_at,
+        value.operator_id,
+        value.operator_reason,
+        value.authorization_evidence_ref,
+        value.tenant_id,
+        value.item_limit,
+    )
+
+
+def _assert_retirement_cancellation_retry(
+    report: RetirementCancellationReport,
+    request: RetirementCancellationRequest,
+) -> None:
+    if _retirement_cancellation_identity(report) != _retirement_cancellation_identity(
+        request
+    ):
+        raise EventRetirementCancellationCollisionError(
+            "retirement cancellation id was reused for another operator command"
+        )
 
 
 def _redelivery_report_from_sqlite(

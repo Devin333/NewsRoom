@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,7 +23,9 @@ from framework.events.runtime.models import (
     ReplayStatus,
     RedeliveryItem,
     RedeliveryReport,
+    RetirementCancellationReport,
     SubscriptionKey,
+    SubscriptionStatus,
 )
 from framework.events.runtime.replay_engine import (
     ReplayCheckpoint,
@@ -107,6 +109,7 @@ class _DeliveryRuntime:
     def __init__(self) -> None:
         self.requeue_calls = []
         self.redelivery_calls = []
+        self.retirement_cancellation_calls = []
 
     def requeue_dead_letter(self, subscription, action):
         self.requeue_calls.append((subscription, action))
@@ -159,17 +162,35 @@ class _DeliveryRuntime:
             tenant_id=request.tenant_id,
         )
 
+    def cancel_retired_subscription(self, request):
+        self.retirement_cancellation_calls.append(request)
+        return RetirementCancellationReport(
+            cancellation_id=request.cancellation_id,
+            subscription=request.subscription,
+            requested_at=request.requested_at,
+            cancelled_at=request.requested_at,
+            operator_id=request.operator_id,
+            operator_reason=request.operator_reason,
+            authorization_evidence_ref=request.authorization_evidence_ref,
+            item_limit=request.limit,
+            remaining_nonterminal_count=0,
+            items=(),
+            tenant_id=request.tenant_id,
+        )
+
 
 class _DeliveryStore:
     def __init__(self, *, tenant_id: str = "tenant-a") -> None:
         self.dead_letter = _dead_letter(tenant_id=tenant_id)
         self.dead_letter_queries = []
+        self.retirement_cancellation = None
         self.subscription = SimpleNamespace(
             subscription_id="subscription-1",
             subscription_version=1,
             tenant_id=tenant_id,
             consumer_id="consumer-1",
             effect=SimpleNamespace(consumer_effect_id="effect-1"),
+            status=SubscriptionStatus.ACTIVE,
         )
 
     def get_subscription(self, key):
@@ -204,6 +225,21 @@ class _DeliveryStore:
         )
 
     def get_redelivery_report(self, redelivery_id, *, tenant_id=None):
+        return None
+
+    def get_retirement_cancellation_report(
+        self,
+        cancellation_id,
+        *,
+        tenant_id=None,
+    ):
+        report = self.retirement_cancellation
+        if (
+            report is not None
+            and report.cancellation_id == cancellation_id
+            and report.tenant_id == tenant_id
+        ):
+            return report
         return None
 
 
@@ -374,6 +410,7 @@ def test_delivery_mutations_receive_principal_tenant_reason_and_evidence() -> No
     service = EventDeliveryOperationsService(
         store=store,
         runtime=runtime,
+        retirement_cancellation_runtime=runtime,
         authorizer=_Authorizer(),
         clock=lambda: NOW,
     )
@@ -461,6 +498,111 @@ def test_operator_permissions_are_checked_before_runtime_mutation() -> None:
         )
 
     assert runtime.requeue_calls == []
+
+
+def test_retirement_cancellation_uses_authorizer_evidence_before_runtime_mutation() -> None:
+    store = _DeliveryStore()
+    store.subscription.status = SubscriptionStatus.RETIRED
+    runtime = _DeliveryRuntime()
+    authorizer = _Authorizer()
+    service = EventDeliveryOperationsService(
+        store=store,
+        runtime=runtime,
+        retirement_cancellation_runtime=runtime,
+        authorizer=authorizer,
+        clock=lambda: NOW,
+    )
+
+    report = service.cancel_retired_subscription(
+        cancellation_id="retirement-cancel-1",
+        subscription=SubscriptionKey("subscription-1", 1),
+        operator_reason="retired consumer is being decommissioned",
+        limit=25,
+        authorization=_authorization(),
+    )
+
+    request = runtime.retirement_cancellation_calls[0]
+    assert authorizer.requests[0].operation.value == (
+        "event.subscription_retirement.cancel"
+    )
+    assert request.authorization_evidence_ref == "authz://decision/operator-1"
+    assert request.operator_id == "operator-1"
+    assert request.tenant_id == "tenant-a"
+    assert request.limit == 25
+    assert report.cancellation_id == request.cancellation_id
+
+
+def test_retirement_cancellation_denial_and_scope_fail_before_runtime_mutation() -> None:
+    denied_runtime = _DeliveryRuntime()
+    denied = EventDeliveryOperationsService(
+        store=_DeliveryStore(),
+        runtime=denied_runtime,
+        retirement_cancellation_runtime=denied_runtime,
+        authorizer=_Authorizer(authorized=False),
+        clock=lambda: NOW,
+    )
+    with pytest.raises(EventAuthorizationError, match="not authorized"):
+        denied.cancel_retired_subscription(
+            cancellation_id="retirement-cancel-denied",
+            subscription=SubscriptionKey("subscription-1", 1),
+            operator_reason="denied request",
+            authorization=_authorization(),
+        )
+    assert denied_runtime.retirement_cancellation_calls == []
+
+    wrong_scope_store = _DeliveryStore(tenant_id="tenant-b")
+    wrong_scope_store.subscription.status = SubscriptionStatus.RETIRED
+    wrong_scope_runtime = _DeliveryRuntime()
+    scoped = EventDeliveryOperationsService(
+        store=wrong_scope_store,
+        runtime=wrong_scope_runtime,
+        retirement_cancellation_runtime=wrong_scope_runtime,
+        authorizer=_Authorizer(),
+        clock=lambda: NOW,
+    )
+    with pytest.raises(EventOperationNotFoundError, match="tenant scope"):
+        scoped.cancel_retired_subscription(
+            cancellation_id="retirement-cancel-cross-tenant",
+            subscription=SubscriptionKey("subscription-1", 1),
+            operator_reason="must not cross tenant",
+            authorization=_authorization(),
+        )
+    assert wrong_scope_runtime.retirement_cancellation_calls == []
+
+
+def test_retirement_cancellation_retry_reuses_durable_request_time() -> None:
+    store = _DeliveryStore()
+    store.subscription.status = SubscriptionStatus.RETIRED
+    runtime = _DeliveryRuntime()
+    service = EventDeliveryOperationsService(
+        store=store,
+        runtime=runtime,
+        retirement_cancellation_runtime=runtime,
+        authorizer=_Authorizer(),
+        clock=lambda: NOW + timedelta(days=1),
+    )
+    store.retirement_cancellation = RetirementCancellationReport(
+        cancellation_id="retirement-cancel-retry",
+        subscription=SubscriptionKey("subscription-1", 1),
+        requested_at=NOW,
+        cancelled_at=NOW,
+        operator_id="operator-1",
+        operator_reason="retry exact command",
+        authorization_evidence_ref="authz://decision/operator-1",
+        item_limit=1000,
+        remaining_nonterminal_count=0,
+        items=(),
+        tenant_id="tenant-a",
+    )
+
+    service.cancel_retired_subscription(
+        cancellation_id="retirement-cancel-retry",
+        subscription=SubscriptionKey("subscription-1", 1),
+        operator_reason="retry exact command",
+        authorization=_authorization(),
+    )
+
+    assert runtime.retirement_cancellation_calls[0].requested_at == NOW
 
 
 def test_cross_tenant_requeue_is_rejected_before_runtime_mutation() -> None:

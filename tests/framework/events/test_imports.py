@@ -21,6 +21,12 @@ def test_public_imports_are_available() -> None:
         RedeliveryReport,
         RedeliveryRequest,
         RedeliveryStorePort,
+        RetirementCancellationAuthorizationDecision,
+        RetirementCancellationAuthorizationRequest,
+        RetirementCancellationAuthorizerPort,
+        RetirementCancellationReport,
+        RetirementCancellationRequest,
+        RetirementCancellationStorePort,
         ReplayCheckpointCollisionError,
         ReplayCheckpointCorruptionError,
         ReplayActivityResolverPort,
@@ -61,6 +67,12 @@ def test_public_imports_are_available() -> None:
     assert RedeliveryReport is not None
     assert RedeliveryRequest is not None
     assert RedeliveryStorePort is not None
+    assert RetirementCancellationAuthorizationDecision is not None
+    assert RetirementCancellationAuthorizationRequest is not None
+    assert RetirementCancellationAuthorizerPort is not None
+    assert RetirementCancellationReport is not None
+    assert RetirementCancellationRequest is not None
+    assert RetirementCancellationStorePort is not None
     assert ReplayCheckpointCollisionError is not None
     assert ReplayCheckpointCorruptionError is not None
     assert ReplayActivityResolverPort is not None

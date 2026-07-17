@@ -1901,6 +1901,16 @@ def _postgres_cleanup_statements(
     tenant = scope.tenant_id
     return (
         (
+            "event_retirement_cancellation_items",
+            "tenant_id = %s AND subscription_id = ANY(%s)",
+            (tenant, subscriptions),
+        ),
+        (
+            "event_retirement_cancellation_reports",
+            "tenant_id = %s AND subscription_id = ANY(%s)",
+            (tenant, subscriptions),
+        ),
+        (
             "event_redelivery_items",
             "tenant_id = %s AND subscription_id = ANY(%s)",
             (tenant, subscriptions),
