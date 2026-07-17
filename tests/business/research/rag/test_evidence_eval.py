@@ -7,7 +7,9 @@ import pytest
 
 from business.research.document.citation_spans import build_paragraph_span_metadata
 from business.research.document.models import PaperChunk
-from business.research.rag.evaluation.evidence_eval_runner import _load_chunks_from_papers_dir
+from business.research.rag.evaluation.golden_corpus_snapshot import (
+    load_golden_corpus_snapshot,
+)
 from business.research.rag.evaluation.paper_evidence_eval import (
     EvidenceGoldenSetBuilder,
     EvidenceQAPair,
@@ -119,11 +121,17 @@ def test_repository_golden_set_has_answer_and_abstain_behavior_samples() -> None
 
 
 def test_repository_golden_set_hydrates_against_current_real_corpus() -> None:
-    pairs = load_evidence_golden_set(Path("data/eval/golden_set.json"))
-    chunks = _load_chunks_from_papers_dir(Path(".newsroom/papers"))
+    golden_set = Path("data/eval/golden_set.json")
+    pairs = load_evidence_golden_set(golden_set)
+    snapshot = load_golden_corpus_snapshot(
+        Path("data/eval/golden_corpus_snapshot.json"),
+        golden_set_path=golden_set,
+    )
 
-    hydrated, summary = hydrate_evidence_pairs_from_chunks(pairs, chunks)
+    hydrated, summary = hydrate_evidence_pairs_from_chunks(pairs, snapshot.chunks)
 
+    assert len(snapshot.source_documents) == 20
+    assert len(snapshot.chunks) == 35
     assert summary["total_pairs"] == 79
     assert summary["answer_pairs"] == 67
     assert summary["missing_gold_chunk_pairs"] == 0
