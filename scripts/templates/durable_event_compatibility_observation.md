@@ -40,7 +40,7 @@ trust_epoch=null
 trusted_governance_authority=null
 trusted_observer_authority=null
 trusted_consumer_owner_authority=null
-policy_checksum=sha256:17568d14e4a8514081a75f64fdb80fd5da6b47203b2d91a9efec1baeb0263767
+policy_checksum=sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f
 ```
 
 Production verification fails with `authority_trust_not_activated` while this
@@ -77,7 +77,7 @@ The policy pins:
 - deletion boundary commit `570f840c7df3870841c93e37480d7a53a67921dd`
   and its Git tree and parent;
 - qualified deletion source commit
-  `f5ed16ccf0a2341b47337091c1052cbc68f69bf8`, its Git tree and parent;
+  `0a24e52b8f084099aa5f614c7a9c64081ce79ca3`, its Git tree and parent;
 - that the qualified deletion source is a descendant of the deletion boundary;
 - a one-hour minimum and seven-day maximum observation window;
 - at most 1,000 records per query/checkpoint/projection evidence family;

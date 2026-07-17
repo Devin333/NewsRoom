@@ -6,6 +6,25 @@ OpenSpec tasks: 9.3 and 9.5
 
 Status: AWAITING_EXTERNAL_AUTHORITY_ACTIVATION
 
+## 2026-07-18 qualified-source refresh
+
+Before any external authority activation, the qualified deletion source was
+refrozen to the latest verified clean runtime candidate so the release chain
+cannot approve the superseded `f5ed16cc` snapshot. The pending policy now binds:
+
+```text
+qualified_source_commit: 0a24e52b8f084099aa5f614c7a9c64081ce79ca3
+qualified_source_tree:   9ef7b8720e6392845299849dbe1598f60e3d77f5
+qualified_source_parent: 06b0b19eb7c0cd23a33cc98c9defaa449f3df68c
+policy_checksum:         sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f
+```
+
+This is a source-identity refresh only. `authority_trust_status` remains
+`pending_external_activation`, all three authority roots and `trust_epoch`
+remain null, and no D/A/B/C or rollback approval/attestation/qualification
+record has been accepted. Any future trust activation must bind this exact
+policy checksum and content-addressed verifier/source combination.
+
 ## Release candidate identity
 
 - Compatibility release candidate: `durable-event-runtime-migration-1`
@@ -22,11 +41,11 @@ Status: AWAITING_EXTERNAL_AUTHORITY_ACTIVATION
 - Deletion boundary parent:
   `42a8636cd72aea0c466126fc5f2d69c55db1a1d6`
 - Qualified deletion source commit:
-  `f5ed16ccf0a2341b47337091c1052cbc68f69bf8`
+  `0a24e52b8f084099aa5f614c7a9c64081ce79ca3`
 - Qualified deletion source tree:
-  `3ba3d1873fa8c00c0d65ac4ca16e4dc6c57657ad`
+  `9ef7b8720e6392845299849dbe1598f60e3d77f5`
 - Qualified deletion source parent:
-  `f28e27be8e14ff022c6408814df6e1b33531a9f7`
+  `06b0b19eb7c0cd23a33cc98c9defaa449f3df68c`
 - Canonical writer cutover commit: `1e3d0183`
 - Durable run-query cutover commit: `dc47ce50`
 - Tenant-scoped operator surfaces commit: `f6bce48f`
@@ -38,7 +57,7 @@ framework `EventRecord`, storage flat `EventRecord`, and writable
 `LocalJsonEventStore`.
 
 The deletion boundary is not the deployable qualified source. Commit
-`f5ed16cc...` is a verified descendant 32 commits after the boundary and
+`0a24e52b...` is a verified descendant 39 commits after the boundary and
 includes the completed deletion plus subsequent runtime and Python 3.11
 hardening. The tracked policy freezes all three Git identities for the
 compatibility source, deletion boundary, and qualified deletion source.
@@ -58,7 +77,7 @@ The tracked policy is deliberately fail closed:
 - `trusted_observer_authority`: `null`
 - `trusted_consumer_owner_authority`: `null`
 - Pending-policy checksum:
-  `sha256:17568d14e4a8514081a75f64fdb80fd5da6b47203b2d91a9efec1baeb0263767`
+  `sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f`
 
 This pending policy cannot qualify D, A, B, or C. A pre-existing independent
 release-security/change-control governance bootstrap root must already be pinned
@@ -208,7 +227,7 @@ exact record checksum and inventory checksum, copies A's
 `compatibility_release_digest` and `compatibility_build_digest`, copies every
 required surface disposition, binds D's exact `trust_epoch` and
 `trust_activation_record_checksum`, and approves a known immutable build plan
-from qualified deletion source `f5ed16cc...` for the same activation and target
+from qualified deletion source `0a24e52b...` for the same activation and target
 environment.
 
 The approved plan includes source commit/tree/parent, build digest, and
@@ -258,7 +277,7 @@ The repository provides a verify-only gate for these external inputs:
 - Current policy state: `pending_external_activation`
 - Current trust epoch and governance/observer/consumer-owner roots: `null`
 - Current pending-policy checksum:
-  `sha256:17568d14e4a8514081a75f64fdb80fd5da6b47203b2d91a9efec1baeb0263767`
+  `sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f`
 - Verifier: `python -m scripts.durable_event_compatibility_release`
 - Record schemas:
   `newsroom.durable-event-compatibility-trust-activation/v1`,

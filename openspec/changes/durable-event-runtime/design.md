@@ -225,7 +225,7 @@ qualified source mutable.
 Authority trust is a separate fail-closed activation boundary. The tracked
 policy currently has `authority_trust_status=pending_external_activation`, null
 `trust_epoch`, null governance/observer/consumer-owner roots, and checksum
-`sha256:17568d14e4a8514081a75f64fdb80fd5da6b47203b2d91a9efec1baeb0263767`;
+`sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f`;
 it cannot qualify evidence. A release-security/change-control governance
 bootstrap root must already exist in compiled production trust before any
 evidence bundle or activation input is accepted. It is independent from the

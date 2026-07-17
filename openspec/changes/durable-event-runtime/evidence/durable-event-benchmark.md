@@ -6,6 +6,50 @@ OpenSpec task: 10.3
 
 Status: PASSED - OpenSpec task 10.3 qualification is complete.
 
+## 2026-07-18 Exact-Candidate Refresh
+
+The prior qualification record below is retained as historical evidence. The
+following run was executed from the clean candidate that includes the memory
+trace identity fix and PRD index synchronization:
+
+```text
+candidate_commit: 0a24e52b8f084099aa5f614c7a9c64081ce79ca3
+candidate_tree:   9ef7b8720e6392845299849dbe1598f60e3d77f5
+candidate_parent: 06b0b19eb7c0cd23a33cc98c9defaa449f3df68c
+started_at:  2026-07-17T20:09:09.196284Z
+finished_at: 2026-07-17T20:44:34.879743Z
+```
+
+Evidence:
+`durable-event-benchmark-qualification-20260718.json`
+
+Canonical evidence checksum:
+`sha256:a4cfb53274e5b5dada07b3feeb6f3bc87fb13630a8a7cf760fdf8cce2dba66ae`
+
+Strict verification:
+
+```powershell
+python -m scripts.durable_event_benchmark verify `
+  --evidence openspec/changes/durable-event-runtime/evidence/durable-event-benchmark-qualification-20260718.json
+```
+
+The fixed 600-second workloads completed with zero errors:
+
+| Workload | Committed | Rate | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| SQLite, 1 writer / 1 stream | 15,000/15,000 | 25.001/s | 11.996 ms | 14.402 ms | 25.685 ms |
+| PostgreSQL, 8 writers / same stream | 60,000/60,000 | 100.001/s | 2.803 ms | 3.423 ms | 3.754 ms |
+| PostgreSQL, 8 writers / 8 streams | 60,000/60,000 | 100.001/s | 2.665 ms | 3.266 ms | 3.556 ms |
+
+Read/replay processed 10,000 events with zero loss, duplicate, or checksum
+failure (ordered read 4.580 s; deterministic replay 5.755 s). Committed
+process recovery read every committed event. SQLite and PostgreSQL dispatcher
+worker-death recovery completed in 5.859 s and 5.830 s respectively, below the
+10-second two-lease bound. PostgreSQL cleanup removed 120,525 generated rows
+across five exact scopes and left zero rows in all scoped tables.
+
+All correctness (8/8), qualification (12/12), and SLO (12/12) gates passed.
+
 ## Benchmark boundary
 
 - All workload publication enters `EventRuntime.publish(EventPublishRequest)`.

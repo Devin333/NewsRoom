@@ -142,7 +142,7 @@ gate instead of relying on a Markdown assertion. The original two-record policy
 was superseded because it made the consumer-owner decision depend on deletion
 deployment facts that could exist only after that decision. Tracked policy v4
 checksum
-`sha256:17568d14e4a8514081a75f64fdb80fd5da6b47203b2d91a9efec1baeb0263767`
+`sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f`
 pins the compatibility source, deletion boundary, and exact qualified descendant
 source with their Git trees and parents, but intentionally remains
 `pending_external_activation` with a null trust epoch and null governance,
