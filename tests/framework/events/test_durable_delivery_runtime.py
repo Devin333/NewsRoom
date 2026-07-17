@@ -405,9 +405,9 @@ class _Store:
         self,
         key: SubscriptionKey,
         *,
-        now: datetime,
+        stream_id: str | None = None,
     ) -> PendingDeliveryStats:
-        del key, now
+        del key, stream_id
         return self.pending_stats
 
     def get_inbox_entry(

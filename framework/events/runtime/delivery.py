@@ -812,7 +812,7 @@ class DurableDeliveryRuntime:
                 completed_at=_clock_value_or_floor(self._clock, requested_at),
                 attempts=(),
             )
-            self._observe_backlog(subscription, observed_at=requested_at)
+            self._observe_backlog(subscription)
             return result
         # The concrete capability registry proves the entire automatic-delivery
         # operation set here before the store changes a pending row to CLAIMED.
@@ -922,7 +922,7 @@ class DurableDeliveryRuntime:
             completed_at=_clock_value_or_floor(self._clock, requested_at),
             attempts=attempts,
         )
-        self._observe_backlog(subscription, observed_at=result.completed_at)
+        self._observe_backlog(subscription)
         return result
 
     def requeue_dead_letter(
@@ -1566,8 +1566,6 @@ class DurableDeliveryRuntime:
     def _observe_backlog(
         self,
         subscription: DurableSubscription,
-        *,
-        observed_at: datetime,
     ) -> None:
         store = self._store
         if store is None:
@@ -1576,7 +1574,7 @@ class DurableDeliveryRuntime:
         if not callable(stats_reader):
             return
         try:
-            stats = stats_reader(subscription.key, now=observed_at)
+            stats = stats_reader(subscription.key)
         except Exception as error:
             self._record_store_failure(RuntimeDiagnosticOperation.DELIVERY_STATS, error)
             _safe_telemetry_gauge(
