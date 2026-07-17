@@ -1,24 +1,23 @@
 # Rollback staging evidence: awaiting approval
 
-> Status: SUPERSEDED by
-> `../rollback-staging-fbdec37a-awaiting-approval/`. This historical bundle
-> remains byte-verifiable but MUST NOT be approved or used to qualify the final
-> runtime candidate.
-
 This directory freezes the technical output of the PostgreSQL staging rollback
-drill for candidate `524afab7b26bdfc5945151b192b24990ab12269f` and rollback
-release `570f840c7df3870841c93e37480d7a53a67921dd`.
+drill for runtime candidate `fbdec37a0afd6b08796818ccd6cb7fea2e401f93` and
+rollback release `570f840c7df3870841c93e37480d7a53a67921dd`.
+
+This bundle supersedes `rollback-staging-524afab7-awaiting-approval` as the
+canonical approval handoff because the earlier candidate predates the final
+runtime metrics, workflow transition, and retirement-cancellation commits.
 
 The bundle is intentionally **not** release qualification evidence. Its status
 is `awaiting_approval`; it contains no approval record, detached approval
 signature, external attestation, qualification signature, private key, or trust
 root. OpenSpec task 9.5 remains incomplete until independent authorities finish
-that chain.
+that chain and the separate compatibility-release observation is complete.
 
 ## Directory contract
 
-- `technical/` is the exact frozen input for the approval handoff. The existing
-  staging verifier validates `technical-evidence.json` and all eight referenced
+- `technical/` is the exact frozen input for the approval handoff. The staging
+  verifier validates `technical-evidence.json` and all eight referenced
   artifacts.
 - `audit/native/` contains controller/worker output retained for technical
   review. It is not an approval input and cannot replace the technical manifest.
@@ -50,3 +49,5 @@ frozen JSON artifacts.
 4. A separate release authority must run `qualify` with a third trust root.
 5. Run strict `verify` and retain the resulting signed qualification bundle or
    an immutable external evidence URI before completing task 9.5.
+6. Complete the independently evidenced compatibility deployment observation
+   and external-consumer sign-off described in `../compatibility-release.md`.

@@ -15,8 +15,20 @@ BUNDLE = (
     / "changes"
     / "durable-event-runtime"
     / "evidence"
-    / "rollback-staging-524afab7-awaiting-approval"
+    / "rollback-staging-fbdec37a-awaiting-approval"
 )
+SUPERSEDED_BUNDLE = BUNDLE.with_name(
+    "rollback-staging-524afab7-awaiting-approval"
+)
+
+
+def test_previous_pending_bundle_is_explicitly_superseded() -> None:
+    readme = (SUPERSEDED_BUNDLE / "README.md").read_text(encoding="utf-8")
+    assert "Status: SUPERSEDED" in readme
+    assert BUNDLE.name in readme
+    assert _read_json(SUPERSEDED_BUNDLE / "manifest.json")[
+        "candidate_release_digest"
+    ] == "524afab7b26bdfc5945151b192b24990ab12269f"
 
 
 def test_tracked_pending_approval_bundle_is_complete_and_byte_verified() -> None:

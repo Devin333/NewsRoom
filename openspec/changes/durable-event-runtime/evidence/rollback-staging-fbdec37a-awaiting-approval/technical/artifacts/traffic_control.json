@@ -1,0 +1,1 @@
+{"concurrent_dispatchers_observed":0,"dispatcher_claims_paused":true,"drill_id":"durable-event-runtime-fbdec37a","schema":"newsroom.durable-event-rollback-traffic-control/v1","source_checksum":"sha256:9f7c89943cbb994095e7abc1eae482d37f620dcc7141f6b005e747fd428b01e9","source_ref":"newsroom-source://durable-event-runtime-fbdec37a/traffic_control","traffic_frozen":true}
