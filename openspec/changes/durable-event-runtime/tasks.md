@@ -72,13 +72,13 @@
 - [x] 9.1 Backfill a staging canonical store from historical JSONL/local/PostgreSQL/Harness records, verify counts, sequence mapping, checksums, and quarantine reports, and leave all source history unchanged.
 - [x] 9.2 Add an explicit shadow-read/export comparison phase that never dispatches twice, then cut workflow and Harness writes to the durable runtime and disable old post-run indexing in the same release boundary.
 - [x] 9.3 Cut reads to the durable source, verify API/CLI/MCP/checkpoint compatibility, and retain deprecated framework imports/callable subscriber adapters for exactly one documented migration release.
-- [ ] 9.4 Remove framework legacy `EventRecord`, duplicate context storage, dual recorder lists, mixed subscriber payloads, runner-local stores/models/factory, live-bus replay, and obsolete JSONL authority after all production callers and migration fixtures pass.
+- [x] 9.4 Remove framework legacy `EventRecord`, duplicate context storage, dual recorder lists, mixed subscriber payloads, runner-local stores/models/factory, live-bus replay, and obsolete JSONL authority after all production callers and migration fixtures pass.
 - [ ] 9.5 Execute the phase-specific rollback drill and prove rollback preserves accepted events and sequences, does not repeat external effects, does not disable schema/security checks, and can rebuild compatible projections.
 
 ## 10. Verification And Delivery Gates
 
-- [ ] 10.1 Run all `tests/framework/events`, event/trace contracts, Workflow/Harness runtime, checkpoint, manifest, inspection, storage event, and API/CLI/MCP targeted suites including every new adversarial and fault-injection case.
-- [ ] 10.2 Run real SQLite multi-process/single-host fault tests and real PostgreSQL concurrent-writer/transaction/crash integration tests; FakeConnection-only tests do not satisfy this gate.
-- [ ] 10.3 Measure and record the PRD append/delivery/recovery SLO benchmark under the fixed workload, verify size/backlog limits, and attach machine/configuration evidence.
+- [x] 10.1 Run all `tests/framework/events`, event/trace contracts, Workflow/Harness runtime, checkpoint, manifest, inspection, storage event, and API/CLI/MCP targeted suites including every new adversarial and fault-injection case.
+- [x] 10.2 Run real SQLite multi-process/single-host fault tests and real PostgreSQL concurrent-writer/transaction/crash integration tests; FakeConnection-only tests do not satisfy this gate.
+- [x] 10.3 Measure and record the PRD append/delivery/recovery SLO benchmark under the fixed workload, verify size/backlog limits, and attach machine/configuration evidence.
 - [ ] 10.4 Run `openspec validate durable-event-runtime --strict`, `python -m scripts.dev compile`, `python -m scripts.dev smoke`, `openspec validate --all --strict`, and `git diff --check`; fix root causes for every failure.
 - [ ] 10.5 Update PRD implementation status, completed task evidence, migrations, commits, benchmark results, and rollback drill only after every Definition of Done item is satisfied, then commit each implementation batch without unrelated worktree changes.
