@@ -1351,6 +1351,46 @@ def _verify_external_evidence(
 ) -> dict[str, Any]:
     evidence = _read_json_object(path, "external_evidence")
     attestation = evidence.pop("attestation", None)
+    evidence = _verify_unsigned_external_payload(
+        path,
+        evidence,
+        trusted_approval_public_key=trusted_approval_public_key,
+    )
+    _require_distinct_authorities(trusted_public_key, trusted_approval_public_key)
+    _verify_external_attestation(
+        evidence,
+        attestation,
+        trusted_public_key=trusted_public_key,
+    )
+    evidence["attestation"] = attestation
+    return evidence
+
+
+def verify_unsigned_external_evidence(
+    path: str | Path,
+    *,
+    trusted_approval_public_key: str | Path | Ed25519PublicKey,
+) -> dict[str, Any]:
+    """Verify a complete approval-bound bundle before external attestation."""
+
+    evidence_path = Path(path).resolve(strict=True)
+    evidence = _read_json_object(evidence_path, "external_evidence")
+    _require("attestation" not in evidence, "external_evidence_already_attested")
+    return _verify_unsigned_external_payload(
+        evidence_path,
+        evidence,
+        trusted_approval_public_key=_coerce_public_key(
+            trusted_approval_public_key
+        ),
+    )
+
+
+def _verify_unsigned_external_payload(
+    path: Path,
+    evidence: dict[str, Any],
+    *,
+    trusted_approval_public_key: Ed25519PublicKey,
+) -> dict[str, Any]:
     checksum = evidence.pop("evidence_checksum", None)
     _require(checksum == checksum_for(evidence), "external_evidence_checksum_mismatch")
     _require(
@@ -1416,14 +1456,7 @@ def _verify_external_evidence(
         artifact_paths["approval_record"],
         trusted_public_key=trusted_approval_public_key,
     )
-    _require_distinct_authorities(trusted_public_key, trusted_approval_public_key)
     evidence["evidence_checksum"] = checksum
-    _verify_external_attestation(
-        evidence,
-        attestation,
-        trusted_public_key=trusted_public_key,
-    )
-    evidence["attestation"] = attestation
     return evidence
 
 

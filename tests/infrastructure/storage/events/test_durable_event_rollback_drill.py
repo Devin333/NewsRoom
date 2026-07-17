@@ -28,6 +28,7 @@ from scripts.durable_event_rollback_drill import (
     generate_signing_keypair,
     main,
     qualify_rollback_evidence,
+    verify_unsigned_external_evidence,
     verify_rollback_evidence,
 )
 
@@ -868,6 +869,23 @@ def test_external_evidence_rejects_semantically_unbound_artifact(tmp_path) -> No
             trusted_approval_public_key=_approval_public_key(external_path),
             output_path=external_path.with_name("external-evidence.signed.json"),
         )
+
+
+def test_unsigned_external_evidence_requires_real_approval_signature(tmp_path) -> None:
+    external_path = _write_external_evidence(
+        tmp_path / "external-source",
+        drill_id="rollback-unsigned-external",
+        candidate="a" * 40,
+        rollback="b" * 40,
+    )
+
+    evidence = verify_unsigned_external_evidence(
+        external_path,
+        trusted_approval_public_key=_approval_public_key(external_path),
+    )
+
+    assert evidence["status"] == "passed"
+    assert "attestation" not in evidence
 
 
 @pytest.mark.parametrize(
