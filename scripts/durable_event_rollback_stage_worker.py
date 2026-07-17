@@ -190,7 +190,12 @@ def _load_config(path: str | Path) -> dict[str, Any]:
     return config
 
 
-def _bootstrap_release(release_root: str | Path, expected_digest: str) -> Path:
+def _bootstrap_release(
+    release_root: str | Path,
+    expected_digest: str,
+    *,
+    diagnostic_root: Path | None = None,
+) -> Path:
     unresolved = Path(release_root)
     _require_path_without_reparse(unresolved, must_exist=True)
     root = unresolved.resolve(strict=True)
@@ -199,7 +204,14 @@ def _bootstrap_release(release_root: str | Path, expected_digest: str) -> Path:
     digest = _git(root, "rev-parse", "HEAD")
     if digest != expected_digest:
         raise StagingWorkerError("release_digest_mismatch")
-    if _git(root, "status", "--porcelain"):
+    dirty_status = _git(root, "status", "--porcelain", "--untracked-files=all")
+    if dirty_status:
+        if diagnostic_root is not None:
+            _write_dirty_release_diagnostic(
+                diagnostic_root,
+                release_digest=digest,
+                status_lines=dirty_status.splitlines(),
+            )
         raise StagingWorkerError("release_worktree_not_clean")
     if any(
         name == prefix or name.startswith(f"{prefix}.")
@@ -224,6 +236,26 @@ def _git(root: Path, *args: str) -> str:
     if completed.returncode != 0:
         raise StagingWorkerError("release_git_command_failed")
     return completed.stdout.strip()
+
+
+def _write_dirty_release_diagnostic(
+    root: Path,
+    *,
+    release_digest: str,
+    status_lines: Sequence[str],
+) -> None:
+    target = root / f"worker-release-dirty-{os.getpid()}.json"
+    payload = {
+        "schema": "newsroom.durable-event-rollback-release-diagnostic/v1",
+        "release_digest": release_digest,
+        "status_lines": list(status_lines),
+    }
+    try:
+        with target.open("x", encoding="utf-8", newline="\n") as handle:
+            json.dump(payload, handle, ensure_ascii=True, sort_keys=True)
+            handle.write("\n")
+    except OSError:
+        return
 
 
 def _release_observation(root: Path) -> dict[str, Any]:
@@ -1104,8 +1136,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     started_at = datetime.now(UTC)
     try:
-        root = _bootstrap_release(args.release_root, args.expected_release)
         config = _load_config(args.config)
+        root = _bootstrap_release(
+            args.release_root,
+            args.expected_release,
+            diagnostic_root=Path(str(config["workspace"])),
+        )
         commands = {
             "initialize": _initialize,
             "project-candidate": lambda value: _project(value, role="candidate"),
