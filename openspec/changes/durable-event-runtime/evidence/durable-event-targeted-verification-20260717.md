@@ -138,13 +138,19 @@ Task 9.5 remains unchecked because the technical bundle is intentionally
 approver identities plus an Ed25519 signature over the exact approval record.
 An independent deployment attester and release qualifier must then execute
 `attest-external`, `qualify`, and strict `verify` with three distinct trust
-roots. Until that chain exists, neither PRD may be marked `IMPLEMENTED`.
+roots. PRD 19A also requires a real bounded deployment observation of the
+pre-deletion compatibility candidate `42a8636cd72aea0c466126fc5f2d69c55db1a1d6`
+and external-consumer sign-off before the deletion release can be qualified.
+Repository tests and the approval-pending rollback bundle satisfy neither
+external requirement. Until both chains exist, neither PRD may be marked
+`IMPLEMENTED`.
 
 ## Disposition
 
 - Task 10.1 is complete based on the 1,425-test targeted run.
 - Task 10.2 remains complete based on the independent real SQLite/PostgreSQL runs.
 - Task 10.3 is complete based on the strict fixed 600-second qualification.
-- Task 10.4 remains open until task 9.5 is complete; the final all-repository
-  gate must then pass before task 10.5 updates the PRDs and final evidence.
+- Task 10.4 remains open until task 9.5 and the compatibility observation are
+  complete; the final all-repository gate must then pass before task 10.5
+  updates the PRDs and final evidence.
 - Task 10.5 remains open until every Definition of Done item, including task 9.5, is satisfied.

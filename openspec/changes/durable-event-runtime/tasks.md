@@ -73,7 +73,7 @@
 - [x] 9.2 Add an explicit shadow-read/export comparison phase that never dispatches twice, then cut workflow and Harness writes to the durable runtime and disable old post-run indexing in the same release boundary.
 - [x] 9.3 Cut reads to the durable source, verify API/CLI/MCP/checkpoint compatibility, and retain deprecated framework imports/callable subscriber adapters for exactly one documented migration release.
 - [x] 9.4 Remove framework legacy `EventRecord`, duplicate context storage, dual recorder lists, mixed subscriber payloads, runner-local stores/models/factory, live-bus replay, and obsolete JSONL authority after all production callers and migration fixtures pass.
-- [ ] 9.5 Execute the phase-specific rollback drill and prove rollback preserves accepted events and sequences, does not repeat external effects, does not disable schema/security checks, and can rebuild compatible projections.
+- [ ] 9.5 Execute the phase-specific rollback drill and prove rollback preserves accepted events and sequences, does not repeat external effects, does not disable schema/security checks, and can rebuild compatible projections; also retain a real bounded compatibility-release deployment observation and external-consumer sign-off before qualifying the deletion release.
 
 ## 10. Verification And Delivery Gates
 
