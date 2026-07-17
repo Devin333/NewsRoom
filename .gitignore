@@ -211,6 +211,14 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Private signing keys
+*.private.pem
+*-private.pem
+private.pem
+*.key
+*.p8
+*.pk8
+
 # NewsRoom local/generated files
 .newsroom/
 .tmp/

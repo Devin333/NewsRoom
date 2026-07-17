@@ -16,6 +16,7 @@ dependencies = [
   "PyMuPDF>=1.24",
   "PyYAML>=6.0.1",
   "pydantic>=2.6",
+  "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
