@@ -436,17 +436,22 @@ def publish(event: Event | EventEnvelope) -> EventEnvelope:
 
 - 保留历史 read/upcast；不保留 legacy write。
 - 运行 shadow read/export compare，但不得双写或双 dispatch。
-- 观察一个明确记录的 migration release，验证 query、checkpoint、projection 和 external consumer。
+- 由预先存在、独立且编译期 pin 的 release-security/change-control governance bootstrap root 签署 D trust activation；D 绑定 positive trust epoch、exact active-policy checksum、mutually independent governance/observer/consumer-owner Ed25519 roots、content-addressed verifier build、activation deployment/environment/time/evidence 和 governance attestor；active policy/compiled constants 与 D 的 trust epoch、root identities/keys/fingerprints、Ed25519 policy 和 active-policy checksum 一致。
+- 要求 activation deployed <= governance signed < A window started，D/A/B/C environment 一致，D retention 覆盖 C；pending/null/mismatch、非 bootstrap D signature 或 evidence/CLI PEM 自选 root 必须 fail closed。
+- 部署 pre-deletion compatibility candidate，观察一个明确、有界的 migration release，验证 query、checkpoint、projection 和完整 external-consumer inventory，并由 D 激活的 deployment observer 签署 record A；A 绑定 `trust_epoch` 与 `trust_activation_record_checksum`。
+- A 签署后，由 D 激活的独立 consumer-registry owner 签署 record B，绑定同一 trust epoch/D checksum、A 与 inventory checksum，并批准 exact qualified deletion source/build/environment；B 不得包含未来 deployment id/time/URI。
 
-退出门槛：migration report 无未处置 P1 conflict；owned callers 为零；rollback drill 通过。
+退出门槛：migration report 无未处置 P1 conflict；owned callers 为零；bootstrap governance root -> signed D -> signed A -> signed independent B 均通过 deterministic verifier；rollback qualification chain 仍作为独立门禁继续完成。
 
 ### M6：删除
 
-- 删除 framework `EventRecord`、mixed branch、dual ledger 和 legacy-only tests。
+- deletion boundary 与 exact qualified source 可以在 D/A/B 外部取证前预先冻结，但不得在 B owner approval 前部署 deletion build。
+- 只部署 B 批准的 exact qualified deletion build；部署后由 D 激活的 trusted deployment observer 签署 record C，将同一 trust epoch/D checksum、A、B、actual deployment 与 retention evidence 绑定。
+- 删除 framework `EventRecord`、mixed branch、dual ledger 和 legacy-only tests；源码删除提交的准备不得被误当作 deletion release 已获部署资格。
 - 删除到期 callable/EventRecorder shim，或将类名重新定义为无 legacy 行为的正式 scoped facade；不得保留隐藏 compatibility branch。
 - 保留 bounded historical importer，直到父 change 的历史数据支持期限结束。
 
-退出门槛：静态搜索、targeted/full tests、strict OpenSpec、compile 和 smoke 全部通过。
+退出门槛：bootstrap governance root -> signed D -> signed A -> signed B -> deploy exact approved build -> signed C 顺序通过；静态搜索、targeted/full tests、strict OpenSpec、compile 和 smoke 全部通过；独立 rollback approval/attestation/qualification chain 也已通过。
 
 ---
 
@@ -456,7 +461,7 @@ def publish(event: Event | EventEnvelope) -> EventEnvelope:
 
 compatibility facade 只允许存在 **一个明确记录的 migration release**。期限从 canonical writer cutover 的 release 开始，不从 PRD 合并或测试代码落地开始计算。
 
-### 8.2 删除前必须满足
+### 8.2 删除部署与资格门禁
 
 - [ ] production code 对 `framework.events.EventRecord` 的 imports/constructors/type checks 为零；
 - [ ] `EventRecorder._records` 为零；
@@ -468,7 +473,15 @@ compatibility facade 只允许存在 **一个明确记录的 migration release**
 - [ ] 历史 fixture import/quarantine 报告通过；
 - [ ] API/CLI/MCP/inspection response compatibility 通过；
 - [ ] migration release 期间无未知 consumer 仍依赖 flat record；
+- [ ] pre-existing independent governance bootstrap root 已签署 D；D 独立绑定 content-addressed verifier build 与 activation deployment/evidence，D、active policy 与 compiled constants 对 positive trust epoch、三组互异 Ed25519 roots 和 exact active-policy checksum 的绑定一致；
+- [ ] D 的 activation time/build 由 independently auditable、non-backfillable deployment/transparency log 或 trusted timestamp evidence 证明；governance JSON 自报时间和普通 Ed25519 signature 不能单独满足该门禁；
+- [ ] `activation deployed <= governance signed < A window started`、D/A/B/C environment 一致且 D retention 覆盖 C；pending/null/mismatch 或非 bootstrap D signature fail closed；
+- [ ] governance/observer/owner CLI PEM 只匹配已 pin roots，不能由 evidence bundle 或 CLI caller 建立或切换 trust；
+- [ ] D 激活的 deployment observer 已对 bounded real compatibility observation 签署 A，且 A 绑定 D trust epoch/checksum；
+- [ ] D 激活的 independent consumer-registry owner 已在 A 后签署 B，绑定同一 trust epoch/D checksum、完整 inventory 并批准 exact qualified deletion build plan；
+- [ ] deletion deployment 只使用 B 批准的 build/environment，且 post-deployment C 已绑定同一 trust epoch/D checksum、A、B、actual deployment、trusted observer identity 和 retention evidence；
 - [ ] rollback drill 不删除 accepted event、不复用 sequence、不重复外部副作用。
+- [ ] rollback approval/attestation/qualification chain 与 compatibility D/A/B/C chain 分别通过，且互不替代。
 
 ### 8.3 不允许以兼容为理由保留
 
@@ -672,7 +685,7 @@ tests/interfaces/mcp/*run events tests*
 
 ### 13.4 删除 release
 
-完成一版 compatibility observation 和 migration audit 后，删除 framework `EventRecord` 及到期 shim。删除不是可选 cleanup，而是本 PRD 的 Definition of Done。
+framework `EventRecord` 及到期 shim 的 deletion boundary/source 可以预先准备并冻结，但这不构成部署授权。A window 前必须先由 pre-existing independent release-security/change-control governance bootstrap root 签署 D，绑定 positive trust epoch、三组互异 roots、active policy checksum、content-addressed verifier build 和 activation deployment/evidence；D、active policy 与 compiled constants 必须在 trust epoch、roots 和 active-policy checksum 上一致，且 activation deployed <= governance signed < A window started、environment 一致、D retention 覆盖 C。之后由 D 激活的 deployment observer 签署 A，再由 D 激活的 independent consumer-registry owner 签署 B 批准 exact qualified deletion build plan；只能部署 B 批准的 build，并在部署后由 D 激活的 observer 签署 C。A/B/C 均绑定 D trust epoch/checksum。bootstrap governance root -> D -> A -> B -> deploy -> C 全部通过后才能完成 deletion release qualification。phase-specific rollback approval/attestation/qualification chain 仍独立必需，不能用 compatibility chain 替代。删除不是可选 cleanup，而是本 PRD 的 Definition of Done。
 
 ---
 
@@ -701,7 +714,7 @@ tests/interfaces/mcp/*run events tests*
 3. `events.jsonl` 来自 canonical store projection，历史记录可 deterministic read/upcast/quarantine；
 4. EventBus 不接受或特殊投递 framework `EventRecord`；
 5. framework `EventRecord`、public export、production imports 和 legacy-only branches 已删除；
-6. compatibility release 和 deletion gate 有实际 evidence，不是仅在文档中声明；
+6. pre-existing independent governance bootstrap root 已签署 D，D 独立绑定 content-addressed verifier build 与 activation deployment/evidence，D/active policy/compiled constants 绑定同一 positive trust epoch、三组 roots 和 active-policy checksum，activation 时序/environment/retention 通过且 CLI PEM 不能自选 trust；compatibility release 留有绑定 D 的真实 signed A、signed independent B、exact approved-build deployment 和 signed C；独立 rollback qualification chain 也已通过，二者都不是仅在文档中声明；
 7. targeted tests、strict OpenSpec、compile、smoke 和 migration/rollback evidence 全部通过；
 8. 变更按清晰 commit 边界提交，未混入现有无关 dirty-worktree 修改。
 

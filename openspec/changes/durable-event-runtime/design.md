@@ -213,15 +213,103 @@ Adapters read existing `newsroom.event.v1`, `newsroom.event_envelope.v1`, `newsr
 
 During one migration release, public `framework.events` imports, `EventRecorder.emit()`, `write_jsonl()`, `TraceContext.root()/child()`, and callable subscriber registration remain deprecated shims. New production code uses scoped emitters and the durable runtime. After repository callers and migration fixtures are converted, the dual `_records/_envelopes` state, runner-local stores/models/factory, post-run `_index_events()`, legacy mixed subscriber payload, and live-bus replay path are deleted.
 
-Deletion release qualification also requires a signed compatibility-observation
-gate separate from rollback qualification. A tracked policy pins the exact
-pre-deletion commit/tree and deletion commit/tree/parent relationship. A real
-deployment observer records a finite release window with durable query,
-checkpoint, projection, build, deployment, and retention evidence; an
-independent consumer-registry owner signs complete API/CLI/MCP/SDK/SSE inventory
-and flat-record-read disposition. The deterministic verifier accepts only
-detached signatures from distinct Ed25519 trust roots and never generates the
-external observations, owner decision, identity, key, or signature itself.
+Deletion release qualification also requires a signed compatibility gate
+separate from rollback qualification. The tracked v4 policy pins three distinct
+Git identities: the exact pre-deletion compatibility commit/tree/parent, the
+commit/tree/parent at which compatibility code was deleted, and the exact
+qualified descendant commit/tree/parent from which the deletion build must be
+produced. Treating the deletion boundary as the only eligible later build would
+exclude required hardening; allowing an arbitrary descendant would leave the
+qualified source mutable.
+
+Authority trust is a separate fail-closed activation boundary. The tracked
+policy currently has `authority_trust_status=pending_external_activation`, null
+`trust_epoch`, null governance/observer/consumer-owner roots, and checksum
+`sha256:17568d14e4a8514081a75f64fdb80fd5da6b47203b2d91a9efec1baeb0263767`;
+it cannot qualify evidence. A release-security/change-control governance
+bootstrap root must already exist in compiled production trust before any
+evidence bundle or activation input is accepted. It is independent from the
+observer and consumer-owner roots and cannot be selected by policy content,
+record D, or a CLI PEM path.
+
+That bootstrap root signs exact bytes of
+`newsroom.durable-event-compatibility-trust-activation/v1` record D. D binds the
+active policy checksum, a positive `trust_epoch`, mutually independent
+governance/observer/consumer-owner roots, a content-addressed verifier build,
+its activation deployment ID/environment/time/URI, retained activation
+evidence, and governance attestor identity/key/fingerprint/signing time. The
+active policy and compiled verifier constants must contain the same
+`trust_epoch`, three authority IDs, key IDs, `algorithm=Ed25519` requirements,
+fingerprints, and active policy checksum. Pending/null/mismatched trust, a D
+signature from any non-bootstrap key, or a verifier build/policy/compiled
+mismatch fails before A, B, or C is evaluated.
+
+The activation deployment must precede governance signing, governance signing
+must precede A's `observation_window.started_at`, and D's environment must equal
+the compatibility and deletion deployment environment. Evidence from a window
+that began before D was signed cannot be blessed retroactively. D's activation
+evidence retention must extend through C's attestor signing time.
+
+The governance Ed25519 signature authenticates record D but does not itself
+provide trusted time. D's retained activation evidence must be anchored in an
+independently auditable, non-backfillable deployment or transparency log, or a
+trusted timestamp service, binding the verifier build, deployment identity, and
+activation time. The offline verifier checks signed digest, URI, retention, and
+ordering bindings; external release governance must verify the retained time
+anchor before qualification.
+
+The compatibility evidence protocol is a one-way activation plus three-record
+release chain so no authority self-selects its own trust root and an owner never
+has to approve a deployment that must already exist inside the record being
+approved:
+
+```text
+pre-existing governance bootstrap root
+  -> D newsroom.durable-event-compatibility-trust-activation/v1
+    -> A newsroom.durable-event-compatibility-observation/v2
+      -> B newsroom.durable-event-compatibility-consumer-signoff/v2
+        -> deploy exact B-approved deletion build
+          -> C newsroom.durable-event-compatibility-deletion-deployment-attestation/v1
+```
+
+D is signed by the bootstrap governance root after the activation deployment.
+A is then signed by the activated deployment observer after the bounded
+migration-release
+window. It binds the compatibility build and deployment, durable query,
+checkpoint and projection facts, complete API/CLI/MCP/SDK/SSE inventory, and
+content-addressed or retention-locked external evidence; it contains no
+deletion deployment. If A uses a retention lock, it must remain valid through
+D's `trust_epoch` and record checksum are bound by A, B, and C. B is then signed by an independent
+consumer-registry owner and binds A's exact record and inventory checksums plus its
+`compatibility_release_digest` and `compatibility_build_digest`. B approves a
+known qualified deletion source/build/environment but contains no future
+deployment identifier, time, or URI. Only after B exists may that build be
+deployed. C is signed after deployment by the trusted deployment observer,
+binds A through `observation_record_checksum`, binds B through
+`consumer_signoff_record_checksum`, stores the content-addressed or
+retention-locked evidence reference in `deployment_evidence`, and proves the
+actual deployment fields in `deletion_release` equal B's approved build and
+environment plan. A retention lock on `deployment_evidence` must remain valid
+beyond C's signing time.
+
+The deterministic verifier requires
+`activation.deployed_at <= governance.signed_at < observation.started_at`,
+matching activation/compatibility/deletion environments, and
+`candidate.deployed_at <= observation.started_at < observation.ended_at <=
+observer.signed_at <= consumer_owner.signed_at <= deletion.deployed_at <=
+deletion_attestor.signed_at`. It verifies A and C with the observer Ed25519 key,
+B with a distinct consumer-owner key, exact-byte detached signatures, canonical
+record checksums, authority separation, finite timestamps, exact field sets,
+bounded regular files, and content-addressed or retention-locked evidence. Its
+CLI accepts D through `--authority-activation` and
+`--authority-activation-signature`, the bootstrap public key through
+`--trusted-governance-public-key`, and C through `--deletion-attestation` and
+`--deletion-attestation-signature`. Governance, observer, and consumer-owner PEM
+arguments supply key material only for roots already pinned by compiled
+bootstrap trust or the active policy/compiled constants; fingerprints must
+match, and neither an evidence bundle nor a CLI caller may select a new trust
+root. The verifier never generates trust activation, external observations,
+owner decisions, deployment attestations, identities, keys, or signatures.
 
 ### 13. Operational signals describe event-runtime health
 

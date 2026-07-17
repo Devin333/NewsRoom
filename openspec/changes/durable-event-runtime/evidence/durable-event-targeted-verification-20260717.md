@@ -91,20 +91,45 @@ committed in `07841be7`.
 ## Rollback boundary
 
 The compatibility-release side of task 9.5 now has a deterministic verify-only
-gate instead of relying on a Markdown assertion. The tracked policy checksum is
-`sha256:851b7dfedf6ba4e21d30832ad9d9bcdef64c6cf67183ecae662e228ca82ce00e`.
-It pins the pre-deletion/deletion commit, tree and parent boundary, requires a
-one-hour to seven-day finite window, derives durable query/checkpoint/projection
-results from raw sequence, watermark, fallback, legacy-offset, secret and
-write-back facts, and verifies complete API/CLI/MCP/SDK/SSE inventory. Exact
-observation and consumer-owner record bytes require detached Ed25519 signatures
-from distinct trust roots. Focused compatibility plus rollback evidence tests
-passed `67 passed, 1 explicit PostgreSQL opt-in skip`; the compatibility-only
-suite contributed `21 passed`.
+gate instead of relying on a Markdown assertion. The original two-record policy
+was superseded because it made the consumer-owner decision depend on deletion
+deployment facts that could exist only after that decision. Tracked policy v4
+checksum
+`sha256:17568d14e4a8514081a75f64fdb80fd5da6b47203b2d91a9efec1baeb0263767`
+pins the compatibility source, deletion boundary, and exact qualified descendant
+source with their Git trees and parents, but intentionally remains
+`pending_external_activation` with a null trust epoch and null governance,
+observer, and consumer-owner roots. The production verifier fails closed before
+evidence evaluation until a pre-existing release-security/change-control
+governance bootstrap root signs trust-activation record D. D binds the positive
+trust epoch, three mutually independent Ed25519 roots, exact active-policy
+checksum, content-addressed verifier build, activation deployment and external
+evidence. The verifier requires `activation deployed <= governance signed < A
+window started`; A, B, and C each bind D's epoch and exact record checksum. The
+one-way chain is therefore bootstrap governance root, signed D, signed
+observation A, independent consumer-owner approval B, approved-build deployment,
+and deletion deployment attestation C. The verifier still derives
+query/checkpoint/projection and API/CLI/MCP/SDK/SSE inventory results from raw
+facts, and also verifies all cross-record checksums, exact build plans, time
+ordering, retention-through-C, distinct Ed25519 authorities,
+PEM-to-pinned-root matching, and Git ancestry. The focused v4 activation and
+authority-pinning suite passed `166 passed, 8 skipped`; all eight skips were
+Windows symlink/reparse-point cases that require a token with link-creation
+privilege and execute on capable/Linux CI hosts.
 
-This verifier creates no external fact or decision. The signed observation,
-consumer-owner sign-off and immutable external evidence URI remain absent, so
-task 9.5 remains open.
+This verifier creates no external fact or decision. The three production roots,
+including the bootstrap governance root, are not activated, and signed records
+D/A/B/C plus their immutable external evidence URIs remain absent, so task 9.5
+remains open. CLI PEM inputs cannot activate or select a trust root; they must
+match the compiled bootstrap trust or the already active policy and compiled
+constants.
+
+The focused tests treat governance-signed UTC fields as trusted protocol input;
+Ed25519 does not independently prove when signing occurred. Final qualification
+also requires the retained activation evidence to prove the verifier build,
+deployment, and activation time through a non-backfillable deployment or
+transparency log, or trusted timestamp service. Repository tests and a
+signer-declared JSON timestamp do not satisfy that external time anchor.
 
 The committed rollback tool still keeps local evidence `INCOMPLETE`, but a real
 approval-pending staging run has now completed for the frozen runtime candidate
@@ -159,17 +184,25 @@ An independent deployment attester and release qualifier must then execute
 `attest-external`, `qualify`, and strict `verify` with three distinct trust
 roots. PRD 19A also requires a real bounded deployment observation of the
 pre-deletion compatibility candidate `42a8636cd72aea0c466126fc5f2d69c55db1a1d6`
-and external-consumer sign-off before the deletion release can be qualified.
-Repository tests and the approval-pending rollback bundle satisfy neither
-external requirement. Until both chains exist, neither PRD may be marked
-`IMPLEMENTED`.
+but only after a pre-existing independent governance bootstrap root signs D and
+D, the active policy, and compiled constants bind the same positive trust epoch,
+three mutually independent roots, verifier build, and active-policy checksum.
+D's deployment and governance signature must precede the A observation window.
+The D-activated observer then signs record A, followed by independent
+consumer-owner record B approving the exact qualified deletion build plan.
+Only that approved build may then be deployed, after which the trusted
+deployment observer must sign record C binding A, B, and the actual deployment.
+Repository tests and the approval-pending rollback bundle satisfy neither this
+compatibility D/A/B/C chain nor the independent rollback qualification chain.
+Until both chains exist, neither PRD may be marked `IMPLEMENTED`.
 
 ## Disposition
 
 - Task 10.1 is complete based on the 1,425-test targeted run.
 - Task 10.2 remains complete based on the independent real SQLite/PostgreSQL runs.
 - Task 10.3 is complete based on the strict fixed 600-second qualification.
-- Task 10.4 remains open until task 9.5 and the compatibility observation are
-  complete; the final all-repository gate must then pass before task 10.5
-  updates the PRDs and final evidence.
+- Task 10.4 remains open until task 9.5, signed governance activation D, the
+  complete compatibility D/A/B/C chain, and the independent rollback
+  qualification chain are complete; the final all-repository gate must then
+  pass before task 10.5 updates the PRDs and final evidence.
 - Task 10.5 remains open until every Definition of Done item, including task 9.5, is satisfied.
