@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
@@ -556,6 +557,76 @@ def test_history_registration_rejects_live_provider_capability_without_calling_i
         )
 
     assert provider.calls == 0
+
+
+def test_history_registration_allows_audited_comprehensions() -> None:
+    def comprehension_handler(
+        _event: ReplayEvent,
+        handler_input: Mapping[str, Any],
+        _activity_result: ResolvedReplayActivity | None,
+    ) -> tuple[CanonicalDeterministicCommand, ...]:
+        values = [str(item) for item in handler_input.get("values", ())]
+        return tuple(_command(index) for index, _item in enumerate(values))
+
+    registration = ExactVersionRegistration(
+        "reducer",
+        "comprehension-handler",
+        "v1",
+        comprehension_handler,
+    )
+
+    assert registration.handler is comprehension_handler
+
+
+def test_history_registration_rejects_forbidden_builtin_inside_comprehension() -> None:
+    def unsafe_comprehension_handler(
+        _event: ReplayEvent,
+        handler_input: Mapping[str, Any],
+        _activity_result: ResolvedReplayActivity | None,
+    ) -> tuple[CanonicalDeterministicCommand, ...]:
+        return tuple(open(str(item)) for item in handler_input.get("values", ()))  # type: ignore[arg-type,return-value]
+
+    with pytest.raises(ValueError, match="forbidden builtin: open"):
+        ExactVersionRegistration(
+            "reducer",
+            "unsafe-comprehension-handler",
+            "v1",
+            unsafe_comprehension_handler,
+        )
+
+
+def test_history_registration_rejects_module_used_only_inside_comprehension() -> None:
+    def unsafe_comprehension_handler(
+        _event: ReplayEvent,
+        handler_input: Mapping[str, Any],
+        _activity_result: ResolvedReplayActivity | None,
+    ) -> tuple[CanonicalDeterministicCommand, ...]:
+        return tuple(os.getcwd() for _item in handler_input.get("values", ()))  # type: ignore[return-value]
+
+    with pytest.raises(ValueError, match="forbidden dependency os: module"):
+        ExactVersionRegistration(
+            "reducer",
+            "module-comprehension-handler",
+            "v1",
+            unsafe_comprehension_handler,
+        )
+
+
+def test_history_registration_still_rejects_explicit_nested_functions() -> None:
+    def nested_function_handler(
+        _event: ReplayEvent,
+        _handler_input: Mapping[str, Any],
+        _activity_result: ResolvedReplayActivity | None,
+    ) -> tuple[CanonicalDeterministicCommand, ...]:
+        return ((lambda: _command(0))(),)
+
+    with pytest.raises(ValueError, match="forbidden operation: MAKE_FUNCTION"):
+        ExactVersionRegistration(
+            "reducer",
+            "nested-function-handler",
+            "v1",
+            nested_function_handler,
+        )
 
 
 def test_history_verifier_applies_registered_version_migration_end_to_end() -> None:
