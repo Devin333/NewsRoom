@@ -183,6 +183,14 @@ class RuntimeEventBridge:
                 trace_context=trace_context,
             )
 
+    @staticmethod
+    def terminal_workflow_event_type(status: WorkflowStatus) -> str | None:
+        return terminal_workflow_event_type(status)
+
+    @staticmethod
+    def terminal_workflow_event_types() -> frozenset[str]:
+        return terminal_workflow_event_types()
+
 
 def public_metadata_from_resume(resume_metadata: dict[str, Any]) -> dict[str, Any]:
     public_metadata = resume_metadata.get("_public_resume_metadata")
@@ -197,3 +205,28 @@ def terminal_error_event_type(status: WorkflowStatus) -> str:
     if status == WorkflowStatus.BUDGET_EXCEEDED:
         return "workflow_budget_exceeded"
     return "workflow_failed"
+
+
+def terminal_workflow_event_type(status: WorkflowStatus) -> str | None:
+    status = WorkflowStatus(status)
+    if status == WorkflowStatus.SUCCEEDED:
+        return "workflow_succeeded"
+    if status in {WorkflowStatus.PAUSED, WorkflowStatus.WAITING_FOR_HUMAN}:
+        return "workflow_paused"
+    if status == WorkflowStatus.CANCELLED:
+        return "workflow_cancelled"
+    if status in {
+        WorkflowStatus.FAILED,
+        WorkflowStatus.BLOCKED,
+        WorkflowStatus.BUDGET_EXCEEDED,
+    }:
+        return terminal_error_event_type(status)
+    return None
+
+
+def terminal_workflow_event_types() -> frozenset[str]:
+    return frozenset(
+        event_type
+        for status in WorkflowStatus
+        if (event_type := terminal_workflow_event_type(status)) is not None
+    )

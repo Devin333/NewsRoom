@@ -139,7 +139,7 @@ def build_execution_context(
         started_at=started_at,
         started_monotonic=started_monotonic,
         manifest=manifest,
-        status=WorkflowStatus.RUNNING,
+        status=WorkflowStatus.CREATED,
         path=list(initial_path or []),
         step_results=step_results,
         current_step_ids=list(current_step_ids or [workflow.start_step_id]),

@@ -93,17 +93,7 @@ class WorkflowExecutionLoop:
             details["step_id"] = step_id
         if pending_step_id is not None:
             details["pending_step_id"] = pending_step_id
-        context.status = workflow_transition(
-            self._state_machine,
-            context.status,
-            WorkflowRuntimeEvent(
-                event_type=WorkflowRuntimeEventType.FAIL,
-                reason="workflow_timeout_exceeded",
-                step_id=step_id,
-                metadata=details,
-            ),
-        )
-        context.error = WorkflowError(
+        error = WorkflowError(
             error_type="WorkflowTimeoutExceeded",
             message=(
                 "workflow exceeded timeout of "
@@ -112,50 +102,58 @@ class WorkflowExecutionLoop:
             step_id=step_id,
             details=details,
         )
-        context.current_step_ids = []
-        context.manifest["runtime_timeout"] = {
-            "exceeded": True,
-            **details,
-        }
-        context.recorder.emit(
-            "workflow_timeout_exceeded",
-            {
-                "run_id": context.run_id,
-                "workflow_id": context.workflow.workflow_id,
-                "timeout_seconds": details["timeout_seconds"],
-                "elapsed_seconds": details["elapsed_seconds"],
-                "policy_source": details["policy_source"],
-                **(
-                    {"step_id": step_id}
-                    if step_id is not None
-                    else {}
-                ),
-                **(
-                    {"pending_step_id": pending_step_id}
-                    if pending_step_id is not None
-                    else {}
-                ),
-            },
-            trace_context=(
-                context.step_trace_contexts.get(step_id)
-                if step_id is not None
-                else context.trace_context
+        trace_context = (
+            context.step_trace_contexts.get(step_id)
+            if step_id is not None
+            else context.trace_context
+        )
+        self._commit_terminal_transition(
+            context,
+            WorkflowRuntimeEvent(
+                event_type=WorkflowRuntimeEventType.FAIL,
+                reason="workflow_timeout_exceeded",
+                step_id=step_id,
+                metadata=details,
+            ),
+            error=error,
+            trace_context=trace_context,
+            before_terminal_event=lambda: context.recorder.emit(
+                "workflow_timeout_exceeded",
+                {
+                    "run_id": context.run_id,
+                    "workflow_id": context.workflow.workflow_id,
+                    "timeout_seconds": details["timeout_seconds"],
+                    "elapsed_seconds": details["elapsed_seconds"],
+                    "policy_source": details["policy_source"],
+                    **({"step_id": step_id} if step_id is not None else {}),
+                    **(
+                        {"pending_step_id": pending_step_id}
+                        if pending_step_id is not None
+                        else {}
+                    ),
+                },
+                trace_context=trace_context,
             ),
         )
+        context.current_step_ids = []
+        context.manifest["runtime_timeout"] = {"exceeded": True, **details}
         return True
 
     def _cancel_if_requested(self, context: WorkflowExecutionContext) -> bool:
         if not self._is_run_cancelled(context.run_id):
             return False
-        context.status = workflow_transition(
-            self._state_machine,
-            context.status,
-            WorkflowRuntimeEvent(
+        commit_workflow_transition(
+            context=context,
+            state_machine=self._state_machine,
+            event=WorkflowRuntimeEvent(
                 event_type=WorkflowRuntimeEventType.CANCEL,
                 reason="cancel marker found",
             ),
+            append=lambda _status: context.recorder.emit(
+                "workflow_cancelled",
+                {"run_id": context.run_id},
+            ),
         )
-        context.recorder.emit("workflow_cancelled", {"run_id": context.run_id})
         context.current_step_ids = []
         return True
 
@@ -165,23 +163,10 @@ class WorkflowExecutionLoop:
         current_step_id: str,
     ) -> bool:
         visit_count = context.step_visit_counts.get(current_step_id, 0) + 1
-        context.step_visit_counts[current_step_id] = visit_count
         if visit_count <= context.workflow.max_step_visits:
+            context.step_visit_counts[current_step_id] = visit_count
             return False
-        context.status = workflow_transition(
-            self._state_machine,
-            context.status,
-            WorkflowRuntimeEvent(
-                event_type=WorkflowRuntimeEventType.FAIL,
-                reason="workflow_loop_limit_exceeded",
-                step_id=current_step_id,
-                metadata={
-                    "max_step_visits": context.workflow.max_step_visits,
-                    "visit_count": visit_count,
-                },
-            ),
-        )
-        context.error = WorkflowError(
+        error = WorkflowError(
             error_type="WorkflowLoopLimitExceeded",
             message=(
                 f"step visit limit exceeded for {current_step_id}: "
@@ -193,15 +178,31 @@ class WorkflowExecutionLoop:
                 "visit_count": visit_count,
             },
         )
-        context.recorder.emit(
-            "workflow_loop_limit_exceeded",
-            {
-                "step_id": current_step_id,
-                "max_step_visits": context.workflow.max_step_visits,
-                "visit_count": visit_count,
-            },
-            trace_context=self._step_trace_context(context, current_step_id),
+        trace_context = self._step_trace_context(context, current_step_id)
+        self._commit_terminal_transition(
+            context,
+            WorkflowRuntimeEvent(
+                event_type=WorkflowRuntimeEventType.FAIL,
+                reason="workflow_loop_limit_exceeded",
+                step_id=current_step_id,
+                metadata={
+                    "max_step_visits": context.workflow.max_step_visits,
+                    "visit_count": visit_count,
+                },
+            ),
+            error=error,
+            trace_context=trace_context,
+            before_terminal_event=lambda: context.recorder.emit(
+                "workflow_loop_limit_exceeded",
+                {
+                    "step_id": current_step_id,
+                    "max_step_visits": context.workflow.max_step_visits,
+                    "visit_count": visit_count,
+                },
+                trace_context=trace_context,
+            ),
         )
+        context.step_visit_counts[current_step_id] = visit_count
         context.current_step_ids = []
         return True
 
@@ -272,6 +273,35 @@ class WorkflowExecutionLoop:
             context.step_trace_contexts[step_id] = step_trace
         return step_trace
 
+    def _commit_terminal_transition(
+        self,
+        context: WorkflowExecutionContext,
+        event: WorkflowRuntimeEvent,
+        *,
+        error: WorkflowError,
+        trace_context: TraceContext | None,
+        before_terminal_event: Callable[[], Any] | None = None,
+    ) -> WorkflowStatus:
+        def append(next_status: WorkflowStatus) -> None:
+            if before_terminal_event is not None:
+                before_terminal_event()
+            self._event_bridge.emit_terminal_workflow_event(
+                context.recorder,
+                status=next_status,
+                path=context.path,
+                error=error,
+                trace_context=trace_context,
+            )
+
+        next_status = commit_workflow_transition(
+            context=context,
+            state_machine=self._state_machine,
+            event=event,
+            append=append,
+        )
+        context.error = error
+        return next_status
+
     def _handle_step_outcome(
         self,
         context: WorkflowExecutionContext,
@@ -307,7 +337,7 @@ class WorkflowExecutionLoop:
             {"step_id": step.step_id, "outputs": sorted(outcome.outputs.keys())},
             trace_context=context.step_trace_contexts.get(step.step_id),
         )
-        self._route_after_step(context, step, outcome, terminal_reason="terminal_step_completed")
+        self._route_after_step(context, step, outcome)
 
     def _handle_skipped(
         self,
@@ -320,15 +350,13 @@ class WorkflowExecutionLoop:
             {"step_id": step.step_id, "outputs": sorted(outcome.outputs.keys())},
             trace_context=context.step_trace_contexts.get(step.step_id),
         )
-        self._route_after_step(context, step, outcome, terminal_reason="terminal_step_skipped")
+        self._route_after_step(context, step, outcome)
 
     def _route_after_step(
         self,
         context: WorkflowExecutionContext,
         step: StepSpec,
         outcome: StepOutcome,
-        *,
-        terminal_reason: str,
     ) -> None:
         """Shared routing logic for succeeded and skipped steps."""
         try:
@@ -340,9 +368,14 @@ class WorkflowExecutionLoop:
                 fan_out=True,
             )
         except Exception as exc:
-            context.status = workflow_transition(
-                self._state_machine,
-                context.status,
+            error = WorkflowError(
+                error_type=type(exc).__name__,
+                message=str(exc),
+                step_id=step.step_id,
+                details={"phase": "routing"},
+            )
+            self._commit_terminal_transition(
+                context,
                 WorkflowRuntimeEvent(
                     event_type=WorkflowRuntimeEventType.FAIL,
                     reason=str(exc),
@@ -352,12 +385,8 @@ class WorkflowExecutionLoop:
                         "exception": repr(exc),
                     },
                 ),
-            )
-            context.error = WorkflowError(
-                error_type=type(exc).__name__,
-                message=str(exc),
-                step_id=step.step_id,
-                details={"phase": "routing"},
+                error=error,
+                trace_context=context.step_trace_contexts.get(step.step_id),
             )
             context.current_step_ids = []
             return
@@ -372,16 +401,6 @@ class WorkflowExecutionLoop:
             existing_step_ids=context.current_step_ids,
             step_results=context.step_results,
         )
-        if not context.current_step_ids:
-            context.status = workflow_transition(
-                self._state_machine,
-                context.status,
-                WorkflowRuntimeEvent(
-                    event_type=WorkflowRuntimeEventType.SUCCEED,
-                    reason=terminal_reason,
-                    step_id=step.step_id,
-                ),
-            )
 
     def _handle_pause(
         self,
@@ -400,51 +419,55 @@ class WorkflowExecutionLoop:
         pause_checkpoint_id = checkpoint_id or f"pause-artifact:{context.run_id}:{step.step_id}"
         if step.step_type == StepType.HUMAN_REVIEW:
             human_review_request_id = human_review_request_id_for(step, outcome)
-            context.status = workflow_transition(
-                self._state_machine,
-                context.status,
-                WorkflowRuntimeEvent(
+
+            def append_human_review_pause(_status: WorkflowStatus) -> None:
+                context.recorder.emit(
+                    "human_review_requested",
+                    {
+                        "step_id": step.step_id,
+                        "request_id": human_review_request_id,
+                        "checkpoint_id": pause_checkpoint_id,
+                    },
+                    trace_context=step_trace,
+                )
+                context.recorder.emit(
+                    "human_review_paused",
+                    {"step_id": step.step_id, "outcome": outcome},
+                    trace_context=step_trace,
+                )
+                context.recorder.emit(
+                    "workflow_paused",
+                    {"reason": "human_review", "step_id": step.step_id},
+                    trace_context=step_trace,
+                )
+
+            commit_workflow_transition(
+                context=context,
+                state_machine=self._state_machine,
+                event=WorkflowRuntimeEvent(
                     event_type=WorkflowRuntimeEventType.REQUEST_HUMAN_REVIEW,
                     reason="human_review_required",
                     step_id=step.step_id,
                     checkpoint_id=pause_checkpoint_id,
                     human_review_request_id=human_review_request_id,
                 ),
-            )
-            context.recorder.emit(
-                "human_review_requested",
-                {
-                    "step_id": step.step_id,
-                    "request_id": human_review_request_id,
-                    "checkpoint_id": pause_checkpoint_id,
-                },
-                trace_context=step_trace,
-            )
-            context.recorder.emit(
-                "human_review_paused",
-                {"step_id": step.step_id, "outcome": outcome},
-                trace_context=step_trace,
-            )
-            context.recorder.emit(
-                "workflow_paused",
-                {"reason": "human_review", "step_id": step.step_id},
-                trace_context=step_trace,
+                append=append_human_review_pause,
             )
             return
-        context.status = workflow_transition(
-            self._state_machine,
-            context.status,
-            WorkflowRuntimeEvent(
+        commit_workflow_transition(
+            context=context,
+            state_machine=self._state_machine,
+            event=WorkflowRuntimeEvent(
                 event_type=WorkflowRuntimeEventType.PAUSE,
                 reason="step_paused",
                 step_id=step.step_id,
                 checkpoint_id=pause_checkpoint_id,
             ),
-        )
-        context.recorder.emit(
-            "workflow_paused",
-            {"reason": "step_paused", "step_id": step.step_id},
-            trace_context=step_trace,
+            append=lambda _status: context.recorder.emit(
+                "workflow_paused",
+                {"reason": "step_paused", "step_id": step.step_id},
+                trace_context=step_trace,
+            ),
         )
 
     def _handle_budget_exceeded(
@@ -453,26 +476,33 @@ class WorkflowExecutionLoop:
         step: StepSpec,
         outcome: StepOutcome,
     ) -> None:
-        context.recorder.emit(
-            "step_blocked" if outcome.status == StepStatus.BLOCKED else "step_failed",
-            {"step_id": step.step_id, "outcome": outcome},
-            trace_context=context.step_trace_contexts.get(step.step_id),
+        error = WorkflowError(
+            error_type=outcome.error_type or "WorkflowBudgetExceeded",
+            message=(
+                outcome.error_message
+                or f"workflow budget exceeded at step: {step.step_id}"
+            ),
+            step_id=step.step_id,
+            details=outcome.error_details,
         )
-        context.status = workflow_transition(
-            self._state_machine,
-            context.status,
+        trace_context = context.step_trace_contexts.get(step.step_id)
+        self._commit_terminal_transition(
+            context,
             WorkflowRuntimeEvent(
                 event_type=WorkflowRuntimeEventType.BUDGET_EXCEEDED,
                 reason=outcome.error_message or "workflow_budget_exceeded",
                 step_id=step.step_id,
                 metadata=outcome.error_details,
             ),
-        )
-        context.error = WorkflowError(
-            error_type=outcome.error_type or "WorkflowBudgetExceeded",
-            message=outcome.error_message or f"workflow budget exceeded at step: {step.step_id}",
-            step_id=step.step_id,
-            details=outcome.error_details,
+            error=error,
+            trace_context=trace_context,
+            before_terminal_event=lambda: context.recorder.emit(
+                "step_blocked"
+                if outcome.status == StepStatus.BLOCKED
+                else "step_failed",
+                {"step_id": step.step_id, "outcome": outcome},
+                trace_context=trace_context,
+            ),
         )
         context.current_step_ids = []
 
@@ -482,28 +512,30 @@ class WorkflowExecutionLoop:
         step: StepSpec,
         outcome: StepOutcome,
     ) -> None:
-        context.recorder.emit(
-            "step_blocked",
-            {"step_id": step.step_id, "outcome": outcome},
-            trace_context=context.step_trace_contexts.get(step.step_id),
+        error = WorkflowError(
+            error_type=outcome.error_type or "StepBlocked",
+            message=outcome.error_message or f"step blocked: {step.step_id}",
+            step_id=step.step_id,
+            details=outcome.error_details,
         )
-        self._manifest_updater.record_policy_violation(outcome)
-        context.status = workflow_transition(
-            self._state_machine,
-            context.status,
+        trace_context = context.step_trace_contexts.get(step.step_id)
+        self._commit_terminal_transition(
+            context,
             WorkflowRuntimeEvent(
                 event_type=WorkflowRuntimeEventType.BLOCK,
                 reason=outcome.error_message or "step_blocked",
                 step_id=step.step_id,
                 metadata=outcome.error_details,
             ),
+            error=error,
+            trace_context=trace_context,
+            before_terminal_event=lambda: context.recorder.emit(
+                "step_blocked",
+                {"step_id": step.step_id, "outcome": outcome},
+                trace_context=trace_context,
+            ),
         )
-        context.error = WorkflowError(
-            error_type=outcome.error_type or "StepBlocked",
-            message=outcome.error_message or f"step blocked: {step.step_id}",
-            step_id=step.step_id,
-            details=outcome.error_details,
-        )
+        self._manifest_updater.record_policy_violation(outcome)
         context.current_step_ids = []
 
     def _handle_failure(
@@ -524,23 +556,24 @@ class WorkflowExecutionLoop:
             details=outcome.error_details,
         )
         if blocks_on_failure(step):
-            context.recorder.emit(
-                "step_blocked",
-                {"step_id": step.step_id, "outcome": outcome},
-                trace_context=context.step_trace_contexts.get(step.step_id),
-            )
-            self._manifest_updater.record_policy_violation(outcome)
-            context.status = workflow_transition(
-                self._state_machine,
-                context.status,
+            trace_context = context.step_trace_contexts.get(step.step_id)
+            self._commit_terminal_transition(
+                context,
                 WorkflowRuntimeEvent(
                     event_type=WorkflowRuntimeEventType.BLOCK,
                     reason=step_error.message,
                     step_id=step.step_id,
                     metadata=step_error.details,
                 ),
+                error=step_error,
+                trace_context=trace_context,
+                before_terminal_event=lambda: context.recorder.emit(
+                    "step_blocked",
+                    {"step_id": step.step_id, "outcome": outcome},
+                    trace_context=trace_context,
+                ),
             )
-            context.error = step_error
+            self._manifest_updater.record_policy_violation(outcome)
             context.current_step_ids = []
             return
         fallback_step_id = failure_fallback_step_id(context.workflow, step)
@@ -550,17 +583,17 @@ class WorkflowExecutionLoop:
                 context.current_step_ids,
             )
             return
-        context.status = workflow_transition(
-            self._state_machine,
-            context.status,
+        self._commit_terminal_transition(
+            context,
             WorkflowRuntimeEvent(
                 event_type=WorkflowRuntimeEventType.FAIL,
                 reason=step_error.message,
                 step_id=step.step_id,
                 metadata=step_error.details,
             ),
+            error=step_error,
+            trace_context=context.step_trace_contexts.get(step.step_id),
         )
-        context.error = step_error
         context.current_step_ids = []
 
     def _write_checkpoint(self, context: WorkflowExecutionContext) -> str | None:
@@ -602,14 +635,19 @@ def failure_fallback_step_id(workflow: WorkflowSpec, step: StepSpec) -> str | No
     return edges[0].target_step_id
 
 
-def workflow_transition(
+def commit_workflow_transition(
+    *,
+    context: WorkflowExecutionContext,
     state_machine: WorkflowStateMachine,
-    current: WorkflowStatus,
     event: WorkflowRuntimeEvent,
+    append: Callable[[WorkflowStatus], Any],
 ) -> WorkflowStatus:
-    if current == WorkflowStatus.RUNNING:
-        return state_machine.transition(current, event)
-    return current
+    """Commit the durable transition fact before advancing local workflow state."""
+
+    next_status = state_machine.transition(context.status, event)
+    append(next_status)
+    context.status = next_status
+    return next_status
 
 
 def human_review_request_id_for(step: StepSpec, outcome: StepOutcome) -> str:

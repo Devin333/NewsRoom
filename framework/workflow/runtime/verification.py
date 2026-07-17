@@ -5,9 +5,8 @@ from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 from framework.shared.json import to_jsonable
-from framework.specs import StepSpec, WorkflowStatus
+from framework.specs import StepSpec
 from framework.workflow.runtime.execution_context import WorkflowExecutionContext
-from framework.workflow.runtime.result import WorkflowError
 from framework.workflow.runtime.runtime_quality import effective_runtime_quality_policy
 
 
@@ -94,14 +93,6 @@ class WorkflowRuntimeVerifier:
                     f"runtime_verification:{issue.severity}:{issue.message}"
                     for issue in report.issues
                 )
-        if self.mode == "strict" and report.failed:
-            context.status = WorkflowStatus.FAILED
-            context.error = WorkflowError(
-                error_type="RuntimeVerificationFailed",
-                message="runtime verification failed",
-                details=report.to_dict(),
-            )
-            context.current_step_ids = []
         return report
 
 

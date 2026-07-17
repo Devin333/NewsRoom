@@ -65,13 +65,22 @@ class WorkflowOutcomeFinalizer:
             context.manifest["workflow_gate_result"] = workflow_gate
         self._write_agent_loop_artifacts(context.run_id, context.manifest, output)
 
-        self._event_bridge.emit_terminal_workflow_event(
-            context.recorder,
-            status=context.status,
-            path=context.path,
-            error=context.error,
-            trace_context=context.trace_context,
+        expected_terminal_event_type = self._event_bridge.terminal_workflow_event_type(
+            context.status
         )
+        terminal_events = context.event_emitter.list_events(
+            event_types=self._event_bridge.terminal_workflow_event_types()
+        )
+        latest_terminal_event = terminal_events[-1] if terminal_events else None
+        if expected_terminal_event_type is None:
+            raise RuntimeError("workflow finalization requires a terminal status")
+        if (
+            latest_terminal_event is None
+            or latest_terminal_event.event_type != expected_terminal_event_type
+        ):
+            raise RuntimeError(
+                "workflow terminal status requires a matching committed terminal event"
+            )
 
         durable_event_count = context.event_emitter.last_accepted_sequence or 0
         context.manifest["event_count"] = durable_event_count

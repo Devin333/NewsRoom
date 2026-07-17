@@ -20,7 +20,10 @@ from framework.workflow.checkpoint.durable import WorkflowCheckpointV2Envelope
 from framework.workflow.checkpoint.store import StoredWorkflowCheckpoint
 from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
 from framework.workflow.runtime.execution_context import build_execution_context
-from framework.workflow.runtime.execution_loop import WorkflowExecutionLoop
+from framework.workflow.runtime.execution_loop import (
+    WorkflowExecutionLoop,
+    commit_workflow_transition,
+)
 from framework.workflow.runtime.artifact_publishers import (
     ArtifactPublishContext,
     ArtifactPublishPhase,
@@ -41,7 +44,7 @@ from framework.workflow.checkpoint.resume import (
 )
 from framework.workflow.runtime.manifest_updater import ManifestUpdater, public_resume_metadata
 from framework.workflow.runtime.outcome_finalizer import WorkflowOutcomeFinalizer
-from framework.workflow.runtime.result import StepOutcome, WorkflowResult
+from framework.workflow.runtime.result import StepOutcome, WorkflowError, WorkflowResult
 from framework.workflow.routing import RoutingEngine
 from framework.workflow.runtime.runtime_event_bridge import RuntimeEventBridge
 from framework.workflow.runtime.state_machine import (
@@ -185,17 +188,44 @@ class WorkflowExecutor:
             global_budget_tracker=self._global_budget_tracker,
         )
 
-        context.status = self._workflow_state_machine.transition(
-            WorkflowStatus.CREATED,
-            WorkflowRuntimeEvent(
-                event_type=WorkflowRuntimeEventType.START,
-                reason=(
-                    "workflow_resumed"
-                    if _resumed_checkpoint_id is not None
-                    else "workflow_execution_started"
-                ),
-                checkpoint_id=_resumed_checkpoint_id,
+        start_transition = WorkflowRuntimeEvent(
+            event_type=WorkflowRuntimeEventType.START,
+            reason=(
+                "workflow_resumed"
+                if _resumed_checkpoint_id is not None
+                else "workflow_execution_started"
             ),
+            checkpoint_id=_resumed_checkpoint_id,
+        )
+
+        def append_start_event(_status: WorkflowStatus) -> None:
+            if _resumed_checkpoint_id is None:
+                event_bridge.emit_workflow_started(
+                    context.recorder,
+                    workflow=workflow,
+                    profile=profile,
+                    trace_context=context.trace_context,
+                )
+                return
+            event_bridge.emit_workflow_resumed(
+                context.recorder,
+                workflow=workflow,
+                profile=profile,
+                checkpoint_id=_resumed_checkpoint_id,
+                resume_metadata=_resume_metadata,
+                public_resume_metadata=(
+                    public_resume_metadata(_resume_metadata)
+                    if _resume_metadata
+                    else None
+                ),
+                trace_context=context.trace_context,
+            )
+
+        commit_workflow_transition(
+            context=context,
+            state_machine=self._workflow_state_machine,
+            event=start_transition,
+            append=append_start_event,
         )
 
         self._artifact_publishers.publish_all(
@@ -215,28 +245,6 @@ class WorkflowExecutor:
             )
         )
 
-        if _resumed_checkpoint_id is None:
-            event_bridge.emit_workflow_started(
-                context.recorder,
-                workflow=workflow,
-                profile=profile,
-                trace_context=context.trace_context,
-            )
-        else:
-            event_bridge.emit_workflow_resumed(
-                context.recorder,
-                workflow=workflow,
-                profile=profile,
-                checkpoint_id=_resumed_checkpoint_id,
-                resume_metadata=_resume_metadata,
-                public_resume_metadata=(
-                    public_resume_metadata(_resume_metadata)
-                    if _resume_metadata
-                    else None
-                ),
-                trace_context=context.trace_context,
-            )
-
         WorkflowExecutionLoop(
             state_machine=self._workflow_state_machine,
             routing_engine=self._routing_engine,
@@ -246,7 +254,53 @@ class WorkflowExecutor:
             manifest_updater=manifest_updater,
             is_run_cancelled=self._is_run_cancelled,
         ).run(context)
-        self._runtime_verifier.apply(context)
+        verification_report = self._runtime_verifier.apply(context)
+        if context.status == WorkflowStatus.RUNNING:
+            if context.current_step_ids:
+                raise RuntimeError(
+                    "workflow execution stopped with schedulable steps still pending"
+                )
+            verification_error = (
+                WorkflowError(
+                    error_type="RuntimeVerificationFailed",
+                    message="runtime verification failed",
+                    details=verification_report.to_dict(),
+                )
+                if (
+                    verification_report is not None
+                    and self._runtime_verifier.mode == "strict"
+                    and verification_report.failed
+                )
+                else None
+            )
+            if verification_error is None:
+                terminal_transition = WorkflowRuntimeEvent(
+                    event_type=WorkflowRuntimeEventType.SUCCEED,
+                    reason="workflow_execution_completed",
+                )
+            else:
+                assert verification_report is not None
+                terminal_transition = WorkflowRuntimeEvent(
+                    event_type=WorkflowRuntimeEventType.FAIL,
+                    reason="runtime_verification_failed",
+                    metadata=verification_report.to_dict(),
+                )
+
+            commit_workflow_transition(
+                context=context,
+                state_machine=self._workflow_state_machine,
+                event=terminal_transition,
+                append=lambda status: event_bridge.emit_terminal_workflow_event(
+                    context.recorder,
+                    status=status,
+                    path=context.path,
+                    error=verification_error,
+                    trace_context=context.trace_context,
+                ),
+            )
+            if verification_error is not None:
+                context.error = verification_error
+                context.current_step_ids = []
         return finalizer.finalize(context)
 
     def resume_from_checkpoint(

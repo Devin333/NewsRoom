@@ -13,12 +13,19 @@ from framework.artifacts import ArtifactManager
 from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
 from framework.workflow.runtime.execution_context import build_execution_context
-from framework.workflow.runtime.execution_loop import WorkflowExecutionLoop
+from framework.workflow.runtime.execution_loop import (
+    WorkflowExecutionLoop,
+    commit_workflow_transition,
+)
 from framework.workflow.runtime.manifest_updater import ManifestUpdater
 from framework.workflow.runtime.outcome_finalizer import WorkflowOutcomeFinalizer
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runtime.runtime_event_bridge import RuntimeEventBridge
-from framework.workflow.runtime.state_machine import WorkflowStateMachine
+from framework.workflow.runtime.state_machine import (
+    WorkflowRuntimeEvent,
+    WorkflowRuntimeEventType,
+    WorkflowStateMachine,
+)
 from framework.workflow.runtime.step_invoker import StepInvoker
 from framework.workflow.runtime.timeout import workflow_timeout_budget
 from framework.workflow.routing import RoutingEngine
@@ -209,6 +216,7 @@ def test_execution_loop_stops_when_workflow_timeout_exceeds_after_step(tmp_path:
         started_monotonic=0.0,
         run_id="run-workflow-timeout",
     )
+    context.status = WorkflowStatus.RUNNING
 
     WorkflowExecutionLoop(
         state_machine=WorkflowStateMachine(),
@@ -272,6 +280,7 @@ def test_execution_loop_persists_loop_limit_with_step_context(tmp_path: Path) ->
         started_monotonic=0.0,
         run_id="run-loop-limit",
     )
+    context.status = WorkflowStatus.RUNNING
 
     WorkflowExecutionLoop(
         state_machine=WorkflowStateMachine(),
@@ -371,13 +380,38 @@ def test_outcome_finalizer_returns_workflow_result_and_terminal_manifest(tmp_pat
         path=["s1"],
         step_results=context.step_results,
     )
-    context.status = WorkflowStatus.SUCCEEDED
     context.path = ["s1"]
+    context.status = WorkflowStatus.RUNNING
+    event_bridge = RuntimeEventBridge()
+    commit_workflow_transition(
+        context=context,
+        state_machine=WorkflowStateMachine(),
+        event=WorkflowRuntimeEvent(
+            event_type=WorkflowRuntimeEventType.SUCCEED,
+            reason="test_finalization",
+        ),
+        append=lambda status: event_bridge.emit_terminal_workflow_event(
+            context.recorder,
+            status=status,
+            path=context.path,
+            error=None,
+            trace_context=context.trace_context,
+        ),
+    )
+    context.recorder.emit(
+        "checkpoint_created",
+        {
+            "checkpoint_id": "cp-after-terminal",
+            "current_step_ids": [],
+            "path": context.path,
+        },
+        trace_context=context.trace_context,
+    )
 
     result = WorkflowOutcomeFinalizer(
         artifact_manager=artifact_manager,
         artifact_publishers=WorkflowArtifactPublisherRegistry([]),
-        event_bridge=RuntimeEventBridge(),
+        event_bridge=event_bridge,
     ).finalize(context)
 
     assert result.status == WorkflowStatus.SUCCEEDED
