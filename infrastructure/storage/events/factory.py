@@ -21,6 +21,12 @@ from framework.events.schema import (
     EventSecurityProjector,
     default_event_schema_catalog,
 )
+from framework.events.telemetry import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    default_event_telemetry,
+)
 from framework.shared.time import utc_now
 from infrastructure.storage.events.replay_checkpoints import (
     PostgresReplayCheckpointStore,
@@ -46,6 +52,7 @@ class DurableEventStorage:
     event_runtime: EventRuntime
     schema_catalog: EventSchemaCatalog
     activity_store: RecordedActivityStorePort | None = None
+    telemetry: EventTelemetry | None = None
 
     @property
     def activity_recorder(self) -> ActivityRecorder | None:
@@ -104,6 +111,7 @@ class DurableEventStorage:
             clock=clock,
             page_size=page_size,
             history_verifier=history_verifier,
+            telemetry=self.telemetry,
         )
 
 
@@ -147,7 +155,8 @@ def durable_event_storage_from_env(
             ) from exc
 
         event_store = PostgresDurableEventStore(dsn)
-        schema_catalog = default_event_schema_catalog()
+        telemetry = _event_runtime_telemetry()
+        schema_catalog = default_event_schema_catalog(telemetry=telemetry)
         activity_store = None
         activity_key = str(values.get(ACTIVITY_ENCRYPTION_KEY_ENV) or "").strip()
         if activity_key:
@@ -167,6 +176,8 @@ def durable_event_storage_from_env(
                 if activity_store is None
                 else EventSecurityProjector(secure_payload_store=activity_store)
             ),
+            telemetry=telemetry,
+            backend="postgresql",
         )
         return DurableEventStorage(
             event_store=event_store,
@@ -174,6 +185,7 @@ def durable_event_storage_from_env(
             event_runtime=event_runtime,
             schema_catalog=schema_catalog,
             activity_store=activity_store,
+            telemetry=telemetry,
         )
 
     configured_root_value = str(values.get("NEWS_ARTIFACT_ROOT") or "").strip()
@@ -184,7 +196,8 @@ def durable_event_storage_from_env(
     )
     database = configured_root / LOCAL_EVENT_DATABASE
     event_store = SQLiteEventStore(database)
-    schema_catalog = default_event_schema_catalog()
+    telemetry = _event_runtime_telemetry()
+    schema_catalog = default_event_schema_catalog(telemetry=telemetry)
     activity_key = str(values.get(ACTIVITY_ENCRYPTION_KEY_ENV) or "").strip()
     activity_store = (
         None
@@ -205,9 +218,22 @@ def durable_event_storage_from_env(
                 if activity_store is None
                 else EventSecurityProjector(secure_payload_store=activity_store)
             ),
+            telemetry=telemetry,
+            backend="sqlite",
         ),
         schema_catalog=schema_catalog,
         activity_store=activity_store,
+        telemetry=telemetry,
+    )
+
+
+def _event_runtime_telemetry() -> EventTelemetry:
+    return default_event_telemetry(
+        resource=TelemetryResource(service_name="newsroom-event-runtime"),
+        scope=TelemetryInstrumentationScope(
+            name="framework.events.runtime",
+            version="1",
+        ),
     )
 
 

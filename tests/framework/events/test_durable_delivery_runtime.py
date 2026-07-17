@@ -65,6 +65,7 @@ from framework.events.runtime.models import (
     InboxEntry,
     InboxKey,
     MAX_REDELIVERY_ITEMS,
+    PendingDeliveryStats,
     RedeliveryItem,
     RedeliveryReport,
     RedeliveryRequest,
@@ -75,6 +76,7 @@ from framework.events.runtime.models import (
     SubscriptionStartPolicy,
     SubscriptionStatus,
 )
+from framework.events.telemetry import EventTelemetry
 from framework.events.subscriber import (
     ConsumerDeliveryContext,
     ConsumerDisposition,
@@ -198,6 +200,24 @@ class _TraceTelemetry:
                 "links": tuple(link for link in links if link is not None),
             }
         )
+        return _TelemetryScope()
+
+
+class _MetricBackend:
+    def __init__(self) -> None:
+        self.counters: list[tuple[str, int, dict[str, str]]] = []
+        self.gauges: list[tuple[str, float, dict[str, str]]] = []
+
+    def add_counter(self, name, value, *, attributes) -> None:
+        self.counters.append((name, value, dict(attributes)))
+
+    def record_histogram(self, name, value, *, attributes) -> None:
+        return None
+
+    def record_gauge(self, name, value, *, attributes) -> None:
+        self.gauges.append((name, value, dict(attributes)))
+
+    def start_span(self, name, *, attributes, links) -> _TelemetryScope:
         return _TelemetryScope()
 
 
@@ -333,6 +353,7 @@ class _Store:
         self.dead_letters: dict[str, DeadLetterRecord] = {}
         self.requeued: list[DeadLetterAction] = []
         self.redelivery_requests: list[RedeliveryRequest] = []
+        self.pending_stats = PendingDeliveryStats(pending_count=0, lag=0)
 
     def register_subscription(
         self,
@@ -379,6 +400,15 @@ class _Store:
         selected = tuple(self.claims[: request.limit])
         del self.claims[: request.limit]
         return selected
+
+    def pending_delivery_stats(
+        self,
+        key: SubscriptionKey,
+        *,
+        now: datetime,
+    ) -> PendingDeliveryStats:
+        del key, now
+        return self.pending_stats
 
     def get_inbox_entry(
         self,
@@ -741,6 +771,7 @@ def _runtime(
     error_classifier: ConsumerErrorClassifier | None = None,
     diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
     authorizer: _RedeliveryAuthorizer | None = None,
+    telemetry: EventTelemetry | None = None,
 ) -> DurableDeliveryRuntime:
     runtime = DurableDeliveryRuntime(
         store,  # type: ignore[arg-type]
@@ -750,6 +781,7 @@ def _runtime(
         error_classifier=error_classifier,
         diagnostic_fallback=diagnostic_fallback,
         redelivery_authorizer=authorizer,
+        telemetry=telemetry,
         clock=clock or _Clock(),
     )
     runtime.register(subscription, consumer)
@@ -1008,6 +1040,86 @@ def test_delivery_batch_and_retry_use_origin_links_and_scoped_children() -> None
     assert [
         context.parent_span_id for context in consumer.trace_contexts if context
     ] == [first_origin.span_id, second_origin.span_id]
+
+
+def test_delivery_records_attempt_dead_letter_lease_and_backlog_metrics() -> None:
+    subscription = replace(
+        _subscription(),
+        consumer_id="workflow-consumer",
+    )
+    first = _claim(_event(1), subscription, attempt_count=2)
+    first = replace(
+        first,
+        delivery=replace(
+            first.delivery,
+            first_failure_at=NOW - timedelta(seconds=30),
+            last_failure_at=NOW - timedelta(seconds=30),
+            reason_class="lease_expired",
+        ),
+    )
+    second = _claim(_event(2), subscription)
+    store = _Store()
+    store.claims = [first, second]
+    store.pending_stats = PendingDeliveryStats(
+        pending_count=3,
+        lag=3,
+        oldest_pending_at=NOW - timedelta(seconds=15),
+        oldest_pending_age_seconds=15,
+    )
+    consumer = _Consumer(
+        subscription.consumer_id,
+        outcomes={
+            second.event.event_id: PermanentEventProcessingError("permanent failure")
+        },
+    )
+    backend = _MetricBackend()
+    runtime = _runtime(
+        store,
+        subscription,
+        consumer,
+        telemetry=EventTelemetry(backend),
+    )
+
+    result = runtime.dispatch_batch(
+        subscription.key,
+        lease_owner="worker-1",
+        limit=2,
+    )
+
+    assert result.acknowledged_count == 1
+    assert result.dead_lettered_count == 1
+    assert backend.counters == [
+        (
+            "event_delivery_attempt_total",
+            1,
+            {"consumer": "workflow", "outcome": "ack"},
+        ),
+        ("event_lease_recovery_total", 1, {"consumer": "workflow"}),
+        (
+            "event_delivery_attempt_total",
+            1,
+            {"consumer": "workflow", "outcome": "dead_letter"},
+        ),
+        (
+            "event_dead_letter_total",
+            1,
+            {"consumer": "workflow", "reason_class": "permanent"},
+        ),
+    ]
+    backlog = [
+        item
+        for item in backend.gauges
+        if item[0].startswith("event_delivery_")
+    ]
+    assert backlog == [
+        ("event_delivery_pending", 3.0, {"consumer": "workflow"}),
+        ("event_delivery_lag", 3.0, {"consumer": "workflow"}),
+        (
+            "event_delivery_oldest_age_seconds",
+            15.0,
+            {"consumer": "workflow"},
+        ),
+    ]
 
 
 def test_inbox_transaction_writes_stable_entry_and_redelivery_skips_effect() -> None:

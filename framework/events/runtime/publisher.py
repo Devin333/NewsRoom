@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from math import isfinite
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from framework.events.canonical import (
@@ -15,7 +17,7 @@ from framework.events.canonical import (
     assert_same_event_identity,
     normalize_canonical_json,
 )
-from framework.events.errors import EventContractError
+from framework.events.errors import EventContractError, EventIdentityCollisionError
 from framework.events.runtime.fallback import (
     LocalRuntimeDiagnosticFallback,
     RuntimeDiagnosticCategory,
@@ -27,6 +29,12 @@ from framework.events.schema.catalog import EventSchemaCatalog
 from framework.events.schema.security import (
     EventSecurityProjector,
     SecurityClassification,
+)
+from framework.events.telemetry import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    default_event_telemetry,
 )
 
 if TYPE_CHECKING:
@@ -142,7 +150,12 @@ class EventRuntime:
         schema_catalog: EventSchemaCatalog,
         security_projector: EventSecurityProjector | None = None,
         diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
+        telemetry: EventTelemetry | None = None,
+        backend: str = "unknown",
+        monotonic: Callable[[], float] = perf_counter,
     ) -> None:
+        if not callable(monotonic):
+            raise TypeError("monotonic must be callable")
         self._store = store
         self._schema_catalog = schema_catalog
         self._security_projector = security_projector or EventSecurityProjector()
@@ -151,6 +164,15 @@ class EventRuntime:
             if diagnostic_fallback is not None
             else LocalRuntimeDiagnosticFallback()
         )
+        self._telemetry = telemetry or default_event_telemetry(
+            resource=TelemetryResource(service_name="newsroom-event-runtime"),
+            scope=TelemetryInstrumentationScope(
+                name="framework.events.publisher",
+                version="1",
+            ),
+        )
+        self._backend = _backend_metric_bucket(backend)
+        self._monotonic = monotonic
 
     @property
     def diagnostic_fallback(self) -> LocalRuntimeDiagnosticFallback:
@@ -218,23 +240,37 @@ class EventRuntime:
             max_inline_payload_bytes=policy.max_inline_payload_bytes,
         )
 
+        append_started = _safe_monotonic(self._monotonic)
         try:
             if unit_of_work is not None:
-                return _append_verified(
+                result = _append_verified(
                     unit_of_work,
                     candidate,
                     expected_last_sequence=expected_last_sequence,
                 )
-
-            with self._store.unit_of_work() as owned_unit_of_work:
-                stored = _append_verified(
-                    owned_unit_of_work,
-                    candidate,
-                    expected_last_sequence=expected_last_sequence,
-                )
-                owned_unit_of_work.commit()
-            return stored
+            else:
+                with self._store.unit_of_work() as owned_unit_of_work:
+                    result = _append_verified(
+                        owned_unit_of_work,
+                        candidate,
+                        expected_last_sequence=expected_last_sequence,
+                    )
+                    owned_unit_of_work.commit()
         except Exception as error:
+            self._record_append_metrics(
+                result="failed",
+                started_at=append_started,
+            )
+            self._telemetry.record_gauge(
+                "event_store_health",
+                0,
+                labels={"backend": self._backend},
+            )
+            if isinstance(error, EventIdentityCollisionError):
+                self._telemetry.add_counter(
+                    "event_identity_collision_total",
+                    labels={"source": _source_metric_bucket(event.source)},
+                )
             self._diagnostic_fallback.record(
                 category=RuntimeDiagnosticCategory.EVENT_STORE_FAILURE,
                 component=RuntimeDiagnosticComponent.EVENT_PUBLISHER,
@@ -242,6 +278,34 @@ class EventRuntime:
                 error=error,
             )
             raise
+        self._record_append_metrics(
+            result="accepted" if result.created else "duplicate",
+            started_at=append_started,
+        )
+        self._telemetry.record_gauge(
+            "event_store_health",
+            1,
+            labels={"backend": self._backend},
+        )
+        return result.event
+
+    def _record_append_metrics(
+        self,
+        *,
+        result: str,
+        started_at: float | None,
+    ) -> None:
+        self._telemetry.add_counter(
+            "event_append_total",
+            labels={"backend": self._backend, "result": result},
+        )
+        completed_at = _safe_monotonic(self._monotonic)
+        if started_at is not None and completed_at is not None:
+            self._telemetry.record_histogram(
+                "event_append_latency_seconds",
+                max(0.0, completed_at - started_at),
+                labels={"backend": self._backend},
+            )
 
 
 def _append_verified(
@@ -249,7 +313,7 @@ def _append_verified(
     candidate: EventCandidate,
     *,
     expected_last_sequence: int | None,
-) -> StoredEvent:
+) -> AppendResult:
     result = unit_of_work.append_event(
         candidate,
         expected_last_sequence=expected_last_sequence,
@@ -258,7 +322,7 @@ def _append_verified(
         raise EventContractError("durable event store returned an invalid append result")
     assert_same_event_identity(result.event, candidate)
     result.event.verify_integrity()
-    return result.event
+    return result
 
 
 def _expected_last_sequence(value: int | None) -> int | None:
@@ -292,6 +356,32 @@ def _required_utc(value: Any) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("occurred_at must be timezone-aware")
     return value.astimezone(UTC)
+
+
+def _backend_metric_bucket(value: Any) -> str:
+    normalized = str(value).strip().lower() if isinstance(value, str) else "unknown"
+    aliases = {"postgres": "postgresql", "postgresql": "postgresql", "sqlite": "sqlite"}
+    return aliases.get(normalized, normalized if normalized in {"memory", "unknown"} else "unknown")
+
+
+def _source_metric_bucket(value: Any) -> str:
+    normalized = str(value).strip().lower() if isinstance(value, str) else ""
+    for bucket in ("workflow", "harness", "migration", "tool", "api"):
+        if normalized == bucket or normalized.startswith(f"{bucket}.") or normalized.startswith(
+            f"{bucket}:"
+        ):
+            return bucket
+    if normalized.startswith("interfaces.api"):
+        return "api"
+    return "unknown"
+
+
+def _safe_monotonic(clock: Callable[[], float]) -> float | None:
+    try:
+        value = float(clock())
+    except Exception:
+        return None
+    return value if isfinite(value) else None
 
 
 __all__ = ["EventPublishRequest", "EventRuntime"]

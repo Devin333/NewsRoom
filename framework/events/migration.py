@@ -33,6 +33,12 @@ from framework.events.schema import (
     SecurityClassification,
     default_event_schema_catalog,
 )
+from framework.events.telemetry import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    default_event_telemetry,
+)
 from framework.shared.json import stable_json_dumps
 
 
@@ -317,8 +323,18 @@ class EventMigrationDryRun:
         *,
         schema_catalog: EventSchemaCatalog | None = None,
         security_projector: EventSecurityProjector | None = None,
+        telemetry: EventTelemetry | None = None,
     ) -> None:
-        self._catalog = schema_catalog or default_event_schema_catalog()
+        self._telemetry = telemetry or default_event_telemetry(
+            resource=TelemetryResource(service_name="newsroom-event-runtime"),
+            scope=TelemetryInstrumentationScope(
+                name="framework.events.migration",
+                version="1",
+            ),
+        )
+        self._catalog = schema_catalog or default_event_schema_catalog(
+            telemetry=self._telemetry
+        )
         self._security = security_projector or EventSecurityProjector()
 
     def scan(
@@ -335,6 +351,11 @@ class EventMigrationDryRun:
             for record in iterator:
                 finding = self._classify(record, seen=seen)
                 findings.append(finding)
+                if finding.quarantined:
+                    self._telemetry.add_counter(
+                        "event_quarantine_total",
+                        labels={"reason": _quarantine_reason_metric_bucket(finding.reason)},
+                    )
                 if fail_fast and finding.quarantined:
                     halted = True
                     break
@@ -1067,6 +1088,25 @@ def _quarantine_finding(
         reason=normalized_reason,
         event_id=event_id,
     )
+
+
+def _quarantine_reason_metric_bucket(reason: str) -> str:
+    normalized = reason.casefold()
+    if "time" in normalized or "occurred_at" in normalized or "occurrence" in normalized:
+        return "missing_time"
+    if (
+        "conflict" in normalized
+        or "collision" in normalized
+        or "same_event_id" in normalized
+    ):
+        return "conflict"
+    if "schema" in normalized:
+        return "schema"
+    if "security" in normalized or "secret" in normalized:
+        return "security"
+    if "integrity" in normalized or "checksum" in normalized or "corrupt" in normalized:
+        return "integrity"
+    return "unknown"
 
 
 def _normalize_reason(value: str) -> str:

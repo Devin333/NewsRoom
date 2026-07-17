@@ -9,6 +9,7 @@ from framework.events import (
     BusinessContext,
     EventCandidate,
     EventContextConflictError,
+    EventIdentityCollisionError,
     EventPublishRequest,
     EventRuntime,
     EventSchemaCatalog,
@@ -23,6 +24,7 @@ from framework.events import (
     StoredEvent,
 )
 from framework.events.schema import WholeDocumentReferenceDisposition
+from framework.events.telemetry import EventTelemetry
 
 
 CHECKSUM = "sha256:" + "a" * 64
@@ -36,9 +38,11 @@ class _UnitOfWork:
         *,
         stored: StoredEvent | None = None,
         commit_error: Exception | None = None,
+        append_error: Exception | None = None,
     ) -> None:
         self.stored = stored
         self.commit_error = commit_error
+        self.append_error = append_error
         self.appended: list[EventCandidate] = []
         self.expected_last_sequences: list[int | None] = []
         self.commits = 0
@@ -50,6 +54,8 @@ class _UnitOfWork:
         *,
         expected_last_sequence: int | None = None,
     ) -> AppendResult:
+        if self.append_error is not None:
+            raise self.append_error
         self.appended.append(event)
         self.expected_last_sequences.append(expected_last_sequence)
         stored = self.stored or StoredEvent(
@@ -91,6 +97,25 @@ class _Store:
     def unit_of_work(self) -> _UnitOfWork:
         self.unit_of_work_calls += 1
         return self.value
+
+
+class _MetricBackend:
+    def __init__(self) -> None:
+        self.counters: list[tuple[str, int, dict[str, str]]] = []
+        self.histograms: list[tuple[str, float, dict[str, str]]] = []
+        self.gauges: list[tuple[str, float, dict[str, str]]] = []
+
+    def add_counter(self, name, value, *, attributes) -> None:
+        self.counters.append((name, value, dict(attributes)))
+
+    def record_histogram(self, name, value, *, attributes) -> None:
+        self.histograms.append((name, value, dict(attributes)))
+
+    def record_gauge(self, name, value, *, attributes) -> None:
+        self.gauges.append((name, value, dict(attributes)))
+
+    def start_span(self, name, *, attributes, links):  # pragma: no cover
+        raise AssertionError("publisher metrics do not start spans")
 
 
 def _catalog(
@@ -292,6 +317,47 @@ def test_identical_duplicate_returns_original_store_assignment() -> None:
     assert duplicate == existing
     assert duplicate.stream_sequence == 17
     assert unit_of_work.commits == 1
+
+
+def test_publish_records_append_latency_result_health_and_identity_collision() -> None:
+    backend = _MetricBackend()
+    telemetry = EventTelemetry(backend)
+    ticks = iter((10.0, 10.125, 20.0, 20.25))
+    accepted = EventRuntime(
+        store=_Store(_UnitOfWork()),
+        schema_catalog=_catalog(),
+        telemetry=telemetry,
+        backend="sqlite",
+        monotonic=lambda: next(ticks),
+    )
+
+    accepted.publish(_request(source="workflow.runtime"))
+
+    collision = EventRuntime(
+        store=_Store(
+            _UnitOfWork(append_error=EventIdentityCollisionError("evt-publish-1"))
+        ),
+        schema_catalog=_catalog(),
+        telemetry=telemetry,
+        backend="sqlite",
+        monotonic=lambda: next(ticks),
+    )
+    with pytest.raises(EventIdentityCollisionError):
+        collision.publish(_request(source="workflow.runtime"))
+
+    assert backend.counters == [
+        ("event_append_total", 1, {"backend": "sqlite", "result": "accepted"}),
+        ("event_append_total", 1, {"backend": "sqlite", "result": "failed"}),
+        ("event_identity_collision_total", 1, {"source": "workflow"}),
+    ]
+    assert backend.histograms == [
+        ("event_append_latency_seconds", 0.125, {"backend": "sqlite"}),
+        ("event_append_latency_seconds", 0.25, {"backend": "sqlite"}),
+    ]
+    assert backend.gauges == [
+        ("event_store_health", 1.0, {"backend": "sqlite"}),
+        ("event_store_health", 0.0, {"backend": "sqlite"}),
+    ]
 
 
 def test_payload_reference_requires_schema_opt_in_and_matching_content_type() -> None:

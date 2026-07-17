@@ -29,6 +29,7 @@ from framework.events.schema import (
     default_event_schema_catalog,
 )
 from framework.events.schema.catalog import _run_pure_validator
+from framework.events.telemetry import EventTelemetry
 
 
 _LEGACY_FIXTURES = Path(__file__).parents[2] / "fixtures" / "events" / "legacy"
@@ -44,6 +45,23 @@ _WORKFLOW_EVENT_CASES = tuple(
 _WORKFLOW_OPERATION_CASES = tuple(
     sorted(_WORKFLOW_PAYLOAD_FIXTURE["workflow_operations"].items())
 )
+
+
+class _MetricBackend:
+    def __init__(self) -> None:
+        self.counters: list[tuple[str, int, dict[str, str]]] = []
+
+    def add_counter(self, name, value, *, attributes) -> None:
+        self.counters.append((name, value, dict(attributes)))
+
+    def record_histogram(self, name, value, *, attributes) -> None:
+        return None
+
+    def record_gauge(self, name, value, *, attributes) -> None:
+        return None
+
+    def start_span(self, name, *, attributes, links):  # pragma: no cover
+        raise AssertionError("schema metrics do not start spans")
 
 
 def test_catalog_validates_without_exposing_instance_values() -> None:
@@ -193,6 +211,65 @@ def test_catalog_fails_closed_when_upcast_step_is_missing() -> None:
 
     with pytest.raises(EventUpcastError):
         catalog.upcast("io.newsroom.test", "v1", {})
+
+
+def test_catalog_records_validation_and_upcast_outcomes_without_schema_labels() -> None:
+    backend = _MetricBackend()
+    catalog = EventSchemaCatalog(telemetry=EventTelemetry(backend))
+    catalog.register(
+        EventSchemaRegistration(
+            event_type="io.newsroom.metric",
+            data_schema="io.newsroom.metric/v1",
+            json_schema={
+                "type": "object",
+                "required": ["value"],
+                "properties": {"value": {"type": "integer"}},
+            },
+            upcast_to="io.newsroom.metric/v2",
+            upcaster=lambda payload: {**payload, "ready": True},
+        )
+    )
+    catalog.register(
+        EventSchemaRegistration(
+            event_type="io.newsroom.metric",
+            data_schema="io.newsroom.metric/v2",
+            json_schema={
+                "type": "object",
+                "required": ["value", "ready"],
+                "properties": {
+                    "value": {"type": "integer"},
+                    "ready": {"type": "boolean"},
+                },
+            },
+            current=True,
+        )
+    )
+
+    catalog.upcast("io.newsroom.metric", "io.newsroom.metric/v1", {"value": 1})
+    with pytest.raises(EventSchemaValidationError):
+        catalog.validate(
+            "io.newsroom.metric",
+            "io.newsroom.metric/v2",
+            {"value": "secret-invalid-value", "ready": True},
+        )
+
+    assert (
+        "event_upcast_total",
+        1,
+        {
+            "event_type": "registered",
+            "from": "v1",
+            "to": "v2",
+            "result": "success",
+        },
+    ) in backend.counters
+    assert (
+        "event_schema_validation_total",
+        1,
+        {"event_type": "registered", "result": "invalid"},
+    ) in backend.counters
+    assert "io.newsroom.metric" not in repr(backend.counters)
+    assert "secret-invalid-value" not in repr(backend.counters)
 
 
 def test_registration_rejects_upcaster_mutation_method_before_execution() -> None:

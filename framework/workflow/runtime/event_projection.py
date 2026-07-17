@@ -15,6 +15,12 @@ from framework.events.ports import EventReaderPort
 from framework.events.runtime.models import MAX_PAGE_LIMIT, StreamReadRequest
 from framework.events.schema.catalog import EventSchemaCatalog
 from framework.events.schema.security import EventSecurityProjector
+from framework.events.telemetry import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    default_event_telemetry,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +42,7 @@ class WorkflowEventProjectionExporter:
         schema_catalog: EventSchemaCatalog,
         security_projector: EventSecurityProjector | None = None,
         page_size: int = 1_000,
+        telemetry: EventTelemetry | None = None,
     ) -> None:
         if reader is None:
             raise ValueError("event reader is required")
@@ -51,6 +58,13 @@ class WorkflowEventProjectionExporter:
         self._schema_catalog = schema_catalog
         self._security_projector = security_projector or EventSecurityProjector()
         self._page_size = page_size
+        self._telemetry = telemetry or default_event_telemetry(
+            resource=TelemetryResource(service_name="newsroom-event-runtime"),
+            scope=TelemetryInstrumentationScope(
+                name="framework.workflow.event_projection",
+                version="1",
+            ),
+        )
 
     def export(
         self,
@@ -103,13 +117,15 @@ class WorkflowEventProjectionExporter:
             except OSError:
                 pass
             raise
-        return WorkflowEventProjection(
+        projection = WorkflowEventProjection(
             path=target_path,
             stream_id=normalized_stream_id,
             high_watermark=high_watermark,
             event_count=event_count,
             checksum=f"sha256:{digest.hexdigest()}",
         )
+        self._record_projection_metrics(high_watermark=high_watermark, staleness=0)
+        return projection
 
     def verify_existing(
         self,
@@ -194,12 +210,38 @@ class WorkflowEventProjectionExporter:
             raise EventContractError("event projection count does not match its manifest")
         if actual_checksum != expected_checksum:
             raise EventContractError("event projection checksum does not match its manifest")
-        return WorkflowEventProjection(
+        projection = WorkflowEventProjection(
             path=target_path,
             stream_id=normalized_stream_id,
             high_watermark=expected_high_watermark,
             event_count=verified_count,
             checksum=actual_checksum,
+        )
+        self._record_projection_metrics(
+            high_watermark=expected_high_watermark,
+            staleness=max(
+                0,
+                (current_high_watermark or 0) - (expected_high_watermark or 0),
+            ),
+        )
+        return projection
+
+    def _record_projection_metrics(
+        self,
+        *,
+        high_watermark: int | None,
+        staleness: int,
+    ) -> None:
+        labels = {"projection": "workflow"}
+        self._telemetry.record_gauge(
+            "event_projection_high_watermark",
+            high_watermark or 0,
+            labels=labels,
+        )
+        self._telemetry.record_gauge(
+            "event_projection_staleness",
+            staleness,
+            labels=labels,
         )
 
     def _read_prefix(

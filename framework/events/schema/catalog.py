@@ -32,6 +32,7 @@ from framework.shared.time import ensure_utc
 
 if TYPE_CHECKING:
     from framework.events.canonical import BusinessContext
+    from framework.events.telemetry import EventTelemetry
 
 
 PayloadValidator = Callable[[Mapping[str, Any]], None]
@@ -166,9 +167,10 @@ class EventSchemaRegistration:
 class EventSchemaCatalog:
     """Deterministic registry for event payload schemas and adjacent upcasters."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, telemetry: EventTelemetry | None = None) -> None:
         self._registrations: dict[tuple[str, str], EventSchemaRegistration] = {}
         self._current: dict[str, str] = {}
+        self._telemetry = telemetry or _default_schema_telemetry()
 
     def register(self, registration: EventSchemaRegistration) -> None:
         key = (registration.event_type, registration.data_schema)
@@ -211,6 +213,25 @@ class EventSchemaCatalog:
         )
 
     def validate(
+        self,
+        event_type: str,
+        data_schema: str,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        registered = (
+            isinstance(event_type, str)
+            and isinstance(data_schema, str)
+            and (event_type, data_schema) in self._registrations
+        )
+        try:
+            validated = self._validate_payload(event_type, data_schema, payload)
+        except Exception:
+            self._record_schema_validation(registered=registered, result="invalid")
+            raise
+        self._record_schema_validation(registered=True, result="success")
+        return validated
+
+    def _validate_payload(
         self,
         event_type: str,
         data_schema: str,
@@ -316,6 +337,50 @@ class EventSchemaCatalog:
         *,
         target_schema: str | None = None,
     ) -> tuple[str, dict[str, Any], tuple[str, ...]]:
+        source_schema = data_schema if isinstance(data_schema, str) else "unknown"
+        desired_schema = target_schema if isinstance(target_schema, str) else None
+        if desired_schema is None:
+            try:
+                desired_schema = self.current_schema(event_type)
+            except Exception:
+                desired_schema = "unknown"
+        registered = (
+            isinstance(event_type, str)
+            and (event_type, source_schema) in self._registrations
+        )
+        try:
+            result = self._upcast(
+                event_type,
+                data_schema,
+                payload,
+                target_schema=target_schema,
+            )
+        except Exception:
+            self._record_upcast(
+                registered=registered,
+                source_schema=source_schema,
+                target_schema=desired_schema,
+                result="failed",
+            )
+            raise
+        for transition in result[2]:
+            source, separator, target = transition.partition("->")
+            self._record_upcast(
+                registered=True,
+                source_schema=source,
+                target_schema=target if separator else result[0],
+                result="success",
+            )
+        return result
+
+    def _upcast(
+        self,
+        event_type: str,
+        data_schema: str,
+        payload: Mapping[str, Any],
+        *,
+        target_schema: str | None = None,
+    ) -> tuple[str, dict[str, Any], tuple[str, ...]]:
         desired = target_schema or self.current_schema(event_type)
         current_schema = str(data_schema)
         current_payload = self.validate(event_type, current_schema, payload)
@@ -359,6 +424,33 @@ class EventSchemaCatalog:
             current_schema = next_schema
 
         return current_schema, current_payload, tuple(applied)
+
+    def _record_schema_validation(self, *, registered: bool, result: str) -> None:
+        self._telemetry.add_counter(
+            "event_schema_validation_total",
+            labels={
+                "event_type": "registered" if registered else "unknown",
+                "result": result,
+            },
+        )
+
+    def _record_upcast(
+        self,
+        *,
+        registered: bool,
+        source_schema: str,
+        target_schema: str,
+        result: str,
+    ) -> None:
+        self._telemetry.add_counter(
+            "event_upcast_total",
+            labels={
+                "event_type": "registered" if registered else "unknown",
+                "from": _schema_version_metric_bucket(source_schema),
+                "to": _schema_version_metric_bucket(target_schema),
+                "result": result,
+            },
+        )
 
     def resolve_historical(
         self,
@@ -508,8 +600,11 @@ HARNESS_TRANSITION_EVENT_TYPE = "harness_transition_committed"
 HARNESS_TRANSITION_DATA_SCHEMA = "newsroom.harness-transition/v1"
 
 
-def default_event_schema_catalog() -> EventSchemaCatalog:
-    catalog = EventSchemaCatalog()
+def default_event_schema_catalog(
+    *,
+    telemetry: EventTelemetry | None = None,
+) -> EventSchemaCatalog:
+    catalog = EventSchemaCatalog(telemetry=telemetry)
     for event_type in WORKFLOW_EVENT_ALIASES:
         catalog.register(
             EventSchemaRegistration(
@@ -1722,6 +1817,20 @@ def _required_text(value: Any, field_name: str) -> str:
 
 
 _SCHEMA_VERSION_PATTERN = re.compile(r"^(?P<prefix>.*(?:/|^))v(?P<version>[1-9][0-9]*)$")
+
+
+def _schema_version_metric_bucket(value: str) -> str:
+    match = _SCHEMA_VERSION_PATTERN.fullmatch(str(value))
+    if match is None:
+        return "unknown" if value == "unknown" else "other"
+    version = int(match.group("version"))
+    return f"v{version}" if version <= 10 else "other"
+
+
+def _default_schema_telemetry() -> EventTelemetry:
+    from framework.events.telemetry import default_event_telemetry
+
+    return default_event_telemetry()
 _PURE_CALLABLE_FORBIDDEN_OPCODES = frozenset(
     {
         "BUILD_SET",

@@ -62,12 +62,30 @@ from framework.events.runtime.replay_engine import (
     ReplaySourceReadError,
 )
 from framework.events.schema import EventSchemaCatalog, EventSchemaRegistration
+from framework.events.telemetry import EventTelemetry
 
 
 ROOT = Path(__file__).resolve().parents[3]
 STARTED_AT = datetime(2026, 7, 15, 2, 0, tzinfo=UTC)
 FINISHED_AT = STARTED_AT + timedelta(seconds=5)
 STREAM_ID = "run:replay-1"
+
+
+class _MetricBackend:
+    def __init__(self) -> None:
+        self.counters: list[tuple[str, int, dict[str, str]]] = []
+
+    def add_counter(self, name, value, *, attributes) -> None:
+        self.counters.append((name, value, dict(attributes)))
+
+    def record_histogram(self, name, value, *, attributes) -> None:
+        return None
+
+    def record_gauge(self, name, value, *, attributes) -> None:
+        return None
+
+    def start_span(self, name, *, attributes, links):  # pragma: no cover
+        raise AssertionError("replay metrics do not start spans")
 TENANT_ID = "tenant-replay"
 
 
@@ -468,6 +486,7 @@ def _engine(
     page_size: int = 1,
     clock: Any = None,
     history_verifier: HistoryVerifier | None = None,
+    telemetry: EventTelemetry | None = None,
 ) -> DeterministicReplayEngine:
     return DeterministicReplayEngine(
         store,  # type: ignore[arg-type]
@@ -479,6 +498,7 @@ def _engine(
         clock=clock or (lambda: FINISHED_AT),
         page_size=page_size,
         history_verifier=history_verifier or _history_verifier(),
+        telemetry=telemetry,
     )
 
 
@@ -582,6 +602,44 @@ def test_verify_history_command_mismatch_is_durable_and_source_is_immutable() ->
     assert caught.value.report.status is ReplayStatus.FAILED
     assert caught.value.report.mismatch_sequence == 1
     assert [event.to_dict() for event in store.events] == source_before
+
+
+def test_replay_records_success_and_bounded_mismatch_metrics() -> None:
+    backend = _MetricBackend()
+    telemetry = EventTelemetry(backend)
+    _engine(
+        _FakeReplayStore([_event(1)]),
+        telemetry=telemetry,
+    ).rebuild_state(
+        _request("rebuild-metric", ReplayMode.REBUILD_STATE),
+        reducer_id="counter",
+        reducer_version="2.1.0",
+    )
+    expected = (_command(target="step:expected"),)
+    recorded = (_command(target="step:recorded"),)
+    with pytest.raises(ReplayHistoryVerificationError):
+        _engine(
+            _FakeReplayStore([_event(1, recorded_commands=recorded)]),
+            history_verifier=_history_verifier(expected=expected),
+            telemetry=telemetry,
+        ).verify_history(
+            _request("verify-metric", ReplayMode.VERIFY_HISTORY)
+        )
+
+    assert backend.counters == [
+        (
+            "event_replay_total",
+            1,
+            {"mode": "rebuild_state", "result": "success"},
+        ),
+        (
+            "event_replay_total",
+            1,
+            {"mode": "verify_history", "result": "failed"},
+        ),
+        ("event_replay_mismatch_total", 1, {"reason": "command"}),
+    ]
+    assert "verify-metric" not in repr(backend.counters)
 
 
 def test_verify_history_missing_activity_and_version_fail_closed() -> None:

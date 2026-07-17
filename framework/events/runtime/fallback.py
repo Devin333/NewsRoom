@@ -48,6 +48,7 @@ class RuntimeDiagnosticOperation(str, Enum):
     SUBSCRIPTION_STATUS_UPDATE = "subscription_status_update"
     SUBSCRIPTION_LOOKUP = "subscription_lookup"
     DELIVERY_CLAIM = "delivery_claim"
+    DELIVERY_STATS = "delivery_stats"
     DEAD_LETTER_LOOKUP = "dead_letter_lookup"
     DEAD_LETTER_REQUEUE = "dead_letter_requeue"
     AUTHORIZED_REDELIVERY = "authorized_redelivery"

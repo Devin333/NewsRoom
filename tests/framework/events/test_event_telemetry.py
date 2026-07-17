@@ -65,6 +65,8 @@ class _CapturedBackend:
         self.scopes: list[_CapturedScope] = []
         self.started: list[dict[str, Any]] = []
         self.counters: list[tuple[str, int, dict[str, Any]]] = []
+        self.histograms: list[tuple[str, float, dict[str, Any]]] = []
+        self.gauges: list[tuple[str, float, dict[str, Any]]] = []
 
     def start_span(self, name: str, *, attributes: Any, links: Any):
         if self.fail_start:
@@ -78,6 +80,12 @@ class _CapturedBackend:
 
     def add_counter(self, name: str, value: int, *, attributes: Any) -> None:
         self.counters.append((name, value, dict(attributes)))
+
+    def record_histogram(self, name: str, value: float, *, attributes: Any) -> None:
+        self.histograms.append((name, value, dict(attributes)))
+
+    def record_gauge(self, name: str, value: float, *, attributes: Any) -> None:
+        self.gauges.append((name, value, dict(attributes)))
 
 
 def test_resource_and_instrumentation_scope_have_distinct_ownership() -> None:
@@ -240,6 +248,83 @@ def test_metric_contract_rejects_high_cardinality_or_unknown_labels() -> None:
     ]
 
 
+def test_operational_metric_contract_supports_histograms_and_current_gauges() -> None:
+    backend = _CapturedBackend()
+    telemetry = EventTelemetry(backend)
+
+    telemetry.record_histogram(
+        "event_append_latency_seconds",
+        0.125,
+        labels={"backend": "sqlite"},
+    )
+    telemetry.record_gauge(
+        "event_delivery_pending",
+        12,
+        labels={"consumer": "workflow"},
+    )
+    telemetry.record_gauge(
+        "event_store_health",
+        1,
+        labels={"backend": "postgresql"},
+    )
+    telemetry.record_gauge(
+        "event_delivery_pending",
+        99,
+        labels={"consumer": "workflow", "run_id": "run-secret"},
+    )
+    telemetry.record_histogram(
+        "event_append_latency_seconds",
+        float("nan"),
+        labels={"backend": "sqlite"},
+    )
+
+    assert backend.histograms == [
+        ("event_append_latency_seconds", 0.125, {"backend": "sqlite"})
+    ]
+    assert backend.gauges == [
+        ("event_delivery_pending", 12.0, {"consumer": "workflow"}),
+        ("event_store_health", 1.0, {"backend": "postgresql"}),
+    ]
+
+
+def test_all_required_operational_metric_names_have_low_cardinality_contracts() -> None:
+    backend = _CapturedBackend()
+    telemetry = EventTelemetry(backend)
+
+    counters = (
+        ("event_append_total", {"backend": "sqlite", "result": "accepted"}),
+        ("event_delivery_attempt_total", {"consumer": "workflow", "outcome": "ack"}),
+        ("event_dead_letter_total", {"consumer": "workflow", "reason_class": "permanent"}),
+        ("event_lease_recovery_total", {"consumer": "workflow"}),
+        ("event_schema_validation_total", {"event_type": "registered", "result": "success"}),
+        (
+            "event_upcast_total",
+            {"event_type": "registered", "from": "v1", "to": "v2", "result": "success"},
+        ),
+        ("event_quarantine_total", {"reason": "schema"}),
+        ("event_identity_collision_total", {"source": "workflow"}),
+        ("event_replay_total", {"mode": "rebuild_state", "result": "success"}),
+        ("event_replay_mismatch_total", {"reason": "command"}),
+    )
+    for name, labels in counters:
+        telemetry.add_counter(name, labels=labels)
+    for name, labels in (
+        ("event_delivery_lag", {"consumer": "workflow"}),
+        ("event_delivery_oldest_age_seconds", {"consumer": "workflow"}),
+        ("event_projection_high_watermark", {"projection": "workflow"}),
+        ("event_projection_staleness", {"projection": "workflow"}),
+    ):
+        telemetry.record_gauge(name, 1, labels=labels)
+
+    assert [item[0] for item in backend.counters] == [item[0] for item in counters]
+    assert [item[0] for item in backend.gauges] == [
+        "event_delivery_lag",
+        "event_delivery_oldest_age_seconds",
+        "event_projection_high_watermark",
+        "event_projection_staleness",
+    ]
+
+
 def test_native_span_never_receives_raw_exception_or_traceback() -> None:
     backend = _CapturedBackend()
     telemetry = EventTelemetry(backend)
@@ -300,6 +385,71 @@ def test_otel_provider_resource_must_match_composed_resource(
     assert matching_meter.requested == [("interfaces.api", "1", None)]
 
 
+def test_otel_backend_caches_instruments_and_exposes_latest_observable_gauge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resource = TelemetryResource(service_name="newsroom-api")
+    scope = TelemetryInstrumentationScope(name="interfaces.api", version="1")
+    trace_provider = _Provider(dict(resource.to_attributes()))
+    meter_provider = _MetricProvider(dict(resource.to_attributes()))
+    metrics_api = SimpleNamespace(Observation=_Observation)
+    monkeypatch.setattr(
+        telemetry_module,
+        "_load_otel_api",
+        lambda: (trace_provider, metrics_api, object),
+    )
+    monkeypatch.setattr(
+        telemetry_module,
+        "_build_otel_resource",
+        lambda value: value.to_attributes(),
+    )
+    monkeypatch.setattr(
+        telemetry_module,
+        "OpenTelemetryTraceAdapter",
+        lambda: object(),
+    )
+    backend = OpenTelemetryBackend(
+        resource=resource,
+        scope=scope,
+        tracer_provider=trace_provider,
+        meter_provider=meter_provider,
+    )
+
+    backend.add_counter(
+        "event_append_total",
+        1,
+        attributes={"backend": "sqlite", "result": "accepted"},
+    )
+    backend.record_histogram(
+        "event_append_latency_seconds",
+        0.25,
+        attributes={"backend": "sqlite"},
+    )
+    backend.record_gauge(
+        "event_store_health",
+        0,
+        attributes={"backend": "sqlite"},
+    )
+    backend.record_gauge(
+        "event_store_health",
+        1,
+        attributes={"backend": "sqlite"},
+    )
+
+    assert meter_provider.meter.counters["event_append_total"].values == [
+        (1, {"backend": "sqlite", "result": "accepted"})
+    ]
+    assert meter_provider.meter.histograms[
+        "event_append_latency_seconds"
+    ].values == [(0.25, {"backend": "sqlite"})]
+    observations = meter_provider.meter.gauge_callbacks[
+        "event_store_health"
+    ](None)
+    assert observations == (
+        _Observation(1, {"backend": "sqlite"}),
+    )
+
+
 def test_missing_otel_dependency_selects_noop_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -337,6 +487,62 @@ class _Provider:
     ) -> object:
         self.requested.append((name, version, schema_url))
         return object()
+
+
+class _RecordedInstrument:
+    def __init__(self) -> None:
+        self.values: list[tuple[float, dict[str, str]]] = []
+
+    def add(self, value: int, *, attributes: dict[str, str]) -> None:
+        self.values.append((value, dict(attributes)))
+
+    def record(self, value: float, *, attributes: dict[str, str]) -> None:
+        self.values.append((value, dict(attributes)))
+
+
+class _MetricMeter:
+    def __init__(self) -> None:
+        self.counters: dict[str, _RecordedInstrument] = {}
+        self.histograms: dict[str, _RecordedInstrument] = {}
+        self.gauge_callbacks: dict[str, Any] = {}
+
+    def create_counter(self, name: str) -> _RecordedInstrument:
+        return self.counters.setdefault(name, _RecordedInstrument())
+
+    def create_histogram(self, name: str) -> _RecordedInstrument:
+        return self.histograms.setdefault(name, _RecordedInstrument())
+
+    def create_observable_gauge(self, name: str, *, callbacks: tuple[Any, ...]):
+        self.gauge_callbacks[name] = callbacks[0]
+        return object()
+
+
+class _MetricProvider(_Provider):
+    def __init__(self, attributes: dict[str, str]) -> None:
+        super().__init__(attributes)
+        self.meter = _MetricMeter()
+
+    def get_meter(
+        self,
+        name: str,
+        version: str | None,
+        schema_url: str | None,
+    ) -> _MetricMeter:
+        self.requested.append((name, version, schema_url))
+        return self.meter
+
+
+class _Observation:
+    def __init__(self, value: float, attributes: dict[str, str]) -> None:
+        self.value = value
+        self.attributes = dict(attributes)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, _Observation)
+            and self.value == other.value
+            and self.attributes == other.attributes
+        )
 
 
 class _ProtocolOnlyBackend:

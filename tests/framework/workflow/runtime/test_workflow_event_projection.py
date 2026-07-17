@@ -18,6 +18,7 @@ from framework.events import (
     default_event_schema_catalog,
 )
 from framework.events.errors import EventContractError
+from framework.events.telemetry import EventTelemetry
 from framework.workflow.runtime.event_projection import (
     WorkflowEventProjectionExporter,
 )
@@ -69,6 +70,23 @@ class _Reader:
             high_watermark=high_watermark,
             next_cursor=next_cursor,
         )
+
+
+class _MetricBackend:
+    def __init__(self) -> None:
+        self.gauges: list[tuple[str, float, dict[str, str]]] = []
+
+    def add_counter(self, name, value, *, attributes) -> None:
+        return None
+
+    def record_histogram(self, name, value, *, attributes) -> None:
+        return None
+
+    def record_gauge(self, name, value, *, attributes) -> None:
+        self.gauges.append((name, value, dict(attributes)))
+
+    def start_span(self, name, *, attributes, links):  # pragma: no cover
+        raise AssertionError("projection metrics do not start spans")
 
 
 def test_projection_is_ordered_deterministic_and_bound_to_fixed_watermark(tmp_path) -> None:
@@ -147,6 +165,38 @@ def test_existing_projection_verifies_against_the_recorded_durable_prefix(
     )
 
     assert verified == projection
+
+
+def test_projection_records_high_watermark_and_current_staleness(tmp_path) -> None:
+    backend = _MetricBackend()
+    reader = _Reader([_stored_event(index) for index in range(1, 4)])
+    exporter = WorkflowEventProjectionExporter(
+        reader=reader,
+        schema_catalog=default_event_schema_catalog(),
+        telemetry=EventTelemetry(backend),
+    )
+    projection = exporter.export(
+        stream_id="run:run-projection",
+        target=tmp_path / "events.jsonl",
+    )
+    reader.events.append(_stored_event(4))
+
+    exporter.verify_existing(
+        stream_id=projection.stream_id,
+        target=projection.path,
+        high_watermark=projection.high_watermark,
+        event_count=projection.event_count,
+        checksum=projection.checksum,
+    )
+
+    assert backend.gauges[-2:] == [
+        (
+            "event_projection_high_watermark",
+            3.0,
+            {"projection": "workflow"},
+        ),
+        ("event_projection_staleness", 1.0, {"projection": "workflow"}),
+    ]
 
 
 def test_existing_projection_rejects_rows_not_backed_by_durable_history(

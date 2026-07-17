@@ -17,12 +17,30 @@ from framework.events.canonical import (
     ProducerIdentity,
     StoredEvent,
 )
+from framework.events.telemetry import EventTelemetry
 from framework.shared.json import stable_json_dumps
 from framework.workflow.checkpoint.checksum import attach_checkpoint_checksum
 from framework.workflow.checkpoint.envelope import (
     WorkflowCheckpointEnvelope,
     envelope_to_payload,
 )
+
+
+class _MetricBackend:
+    def __init__(self) -> None:
+        self.counters: list[tuple[str, int, dict[str, str]]] = []
+
+    def add_counter(self, name, value, *, attributes) -> None:
+        self.counters.append((name, value, dict(attributes)))
+
+    def record_histogram(self, name, value, *, attributes) -> None:
+        return None
+
+    def record_gauge(self, name, value, *, attributes) -> None:
+        return None
+
+    def start_span(self, name, *, attributes, links):  # pragma: no cover
+        raise AssertionError("migration metrics do not start spans")
 
 
 def _record(
@@ -96,6 +114,30 @@ def test_migration_reports_unknown_schema_missing_time_and_general_quarantine() 
     assert report.counts["missing_time"] == 1
     assert report.counts["quarantined"] == 1
     assert report.counts["quarantine_total"] == 3
+
+
+def test_migration_records_bounded_quarantine_reason_metrics() -> None:
+    backend = _MetricBackend()
+    migration = EventMigrationDryRun(telemetry=EventTelemetry(backend))
+
+    migration.scan(
+        [
+            _record(schema_version="newsroom.event_record.v999"),
+            _record(event_id="evt-2", occurred_at=None),
+            _record(event_id="evt-conflict", payload={"run_id": "run-1", "attempt": 1}),
+            _record(event_id="evt-conflict", payload={"run_id": "run-1", "attempt": 2}),
+        ]
+    )
+
+    quarantine_metrics = [
+        item for item in backend.counters if item[0] == "event_quarantine_total"
+    ]
+    assert quarantine_metrics == [
+        ("event_quarantine_total", 1, {"reason": "schema"}),
+        ("event_quarantine_total", 1, {"reason": "missing_time"}),
+        ("event_quarantine_total", 1, {"reason": "conflict"}),
+    ]
+    assert "evt-conflict" not in repr(quarantine_metrics)
 
 
 def test_migration_fail_fast_stops_after_quarantine() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -704,6 +704,7 @@ class DurableDeliveryRuntime:
         diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
         redelivery_authorizer: RedeliveryAuthorizerPort | None = None,
         telemetry: EventTelemetry | None = None,
+        backend: str | None = None,
         clock: Clock | None = None,
     ) -> None:
         if consumers is not None and (
@@ -771,6 +772,7 @@ class DurableDeliveryRuntime:
                 version="1",
             ),
         )
+        self._backend = _event_backend_metric_bucket(store, explicit=backend)
 
     @property
     def consumers(self) -> DurableConsumerRegistry:
@@ -801,7 +803,7 @@ class DurableDeliveryRuntime:
         requested_limit = _bounded_claim_limit(subscription, limit)
         normalized_lease_owner = _required_text(lease_owner, "lease_owner")
         if subscription.status is SubscriptionStatus.PAUSED:
-            return DeliveryBatchResult(
+            result = DeliveryBatchResult(
                 subscription_id=subscription.subscription_id,
                 subscription_version=subscription.subscription_version,
                 lease_owner=normalized_lease_owner,
@@ -810,6 +812,8 @@ class DurableDeliveryRuntime:
                 completed_at=_clock_value_or_floor(self._clock, requested_at),
                 attempts=(),
             )
+            self._observe_backlog(subscription, observed_at=requested_at)
+            return result
         # The concrete capability registry proves the entire automatic-delivery
         # operation set here before the store changes a pending row to CLAIMED.
         # Each returned claim is checked again using its actual generation and
@@ -903,7 +907,13 @@ class DurableDeliveryRuntime:
                 )
                 for item in claimed
             )
-        return DeliveryBatchResult(
+        for claimed_delivery, attempt in zip(claimed, attempts, strict=True):
+            self._record_attempt_metrics(
+                subscription,
+                claimed=claimed_delivery,
+                attempt=attempt,
+            )
+        result = DeliveryBatchResult(
             subscription_id=subscription.subscription_id,
             subscription_version=subscription.subscription_version,
             lease_owner=request.lease_owner,
@@ -912,6 +922,8 @@ class DurableDeliveryRuntime:
             completed_at=_clock_value_or_floor(self._clock, requested_at),
             attempts=attempts,
         )
+        self._observe_backlog(subscription, observed_at=result.completed_at)
+        return result
 
     def requeue_dead_letter(
         self,
@@ -999,6 +1011,25 @@ class DurableDeliveryRuntime:
 
     def begin_redelivery(self, request: RedeliveryRequest) -> RedeliveryReport:
         """Authorize exact scope before capability checks or durable mutation."""
+
+        try:
+            report = self._begin_redelivery(request)
+        except Exception:
+            _safe_telemetry_counter(
+                self._telemetry,
+                "event_replay_total",
+                labels={"mode": "redeliver", "result": "failed"},
+            )
+            raise
+        _safe_telemetry_counter(
+            self._telemetry,
+            "event_replay_total",
+            labels={"mode": "redeliver", "result": "success"},
+        )
+        return report
+
+    def _begin_redelivery(self, request: RedeliveryRequest) -> RedeliveryReport:
+        """Perform a prevalidated redelivery request through the durable ledger."""
 
         if not isinstance(request, RedeliveryRequest):
             raise TypeError("request must be RedeliveryRequest")
@@ -1462,9 +1493,22 @@ class DurableDeliveryRuntime:
     ) -> _T:
         failed = False
         try:
-            return call()
+            result = call()
+            _safe_telemetry_gauge(
+                self._telemetry,
+                "event_store_health",
+                1,
+                labels={"backend": self._backend},
+            )
+            return result
         except Exception as error:
             self._record_store_failure(diagnostic_operation, error)
+            _safe_telemetry_gauge(
+                self._telemetry,
+                "event_store_health",
+                0,
+                labels={"backend": self._backend},
+            )
             failed = True
         if failed:
             raise EventDeliveryStoreOperationError(
@@ -1482,6 +1526,90 @@ class DurableDeliveryRuntime:
             component=RuntimeDiagnosticComponent.DELIVERY_RUNTIME,
             operation=operation,
             error=error,
+        )
+
+    def _record_attempt_metrics(
+        self,
+        subscription: DurableSubscription,
+        *,
+        claimed: ClaimedDelivery,
+        attempt: DeliveryAttemptResult,
+    ) -> None:
+        consumer = _consumer_metric_bucket(subscription.consumer_id)
+        outcome = _delivery_metric_outcome(attempt)
+        _safe_telemetry_counter(
+            self._telemetry,
+            "event_delivery_attempt_total",
+            labels={"consumer": consumer, "outcome": outcome},
+        )
+        if claimed.delivery.reason_class == "lease_expired":
+            _safe_telemetry_counter(
+                self._telemetry,
+                "event_lease_recovery_total",
+                labels={"consumer": consumer},
+            )
+        if attempt.state is DeliveryState.DEAD_LETTER:
+            reason_class = (
+                attempt.settlement.delivery.reason_class
+                if attempt.settlement is not None
+                else None
+            )
+            _safe_telemetry_counter(
+                self._telemetry,
+                "event_dead_letter_total",
+                labels={
+                    "consumer": consumer,
+                    "reason_class": _dead_letter_reason_metric_bucket(reason_class),
+                },
+            )
+
+    def _observe_backlog(
+        self,
+        subscription: DurableSubscription,
+        *,
+        observed_at: datetime,
+    ) -> None:
+        store = self._store
+        if store is None:
+            return
+        stats_reader = getattr(store, "pending_delivery_stats", None)
+        if not callable(stats_reader):
+            return
+        try:
+            stats = stats_reader(subscription.key, now=observed_at)
+        except Exception as error:
+            self._record_store_failure(RuntimeDiagnosticOperation.DELIVERY_STATS, error)
+            _safe_telemetry_gauge(
+                self._telemetry,
+                "event_store_health",
+                0,
+                labels={"backend": self._backend},
+            )
+            return
+        consumer = _consumer_metric_bucket(subscription.consumer_id)
+        _safe_telemetry_gauge(
+            self._telemetry,
+            "event_delivery_pending",
+            stats.pending_count,
+            labels={"consumer": consumer},
+        )
+        _safe_telemetry_gauge(
+            self._telemetry,
+            "event_delivery_lag",
+            stats.lag,
+            labels={"consumer": consumer},
+        )
+        _safe_telemetry_gauge(
+            self._telemetry,
+            "event_delivery_oldest_age_seconds",
+            stats.oldest_pending_age_seconds or 0,
+            labels={"consumer": consumer},
+        )
+        _safe_telemetry_gauge(
+            self._telemetry,
+            "event_store_health",
+            1,
+            labels={"backend": self._backend},
         )
 
 
@@ -1842,6 +1970,82 @@ def _consumer_metric_bucket(consumer_id: str) -> str:
         if bucket in normalized:
             return bucket
     return "unknown"
+
+
+def _event_backend_metric_bucket(
+    store: EventStorePort | None,
+    *,
+    explicit: str | None,
+) -> str:
+    normalized = explicit.strip().lower() if isinstance(explicit, str) else ""
+    if normalized == "postgres":
+        normalized = "postgresql"
+    if normalized in {"memory", "postgresql", "sqlite", "unknown"}:
+        return normalized
+    if store is None:
+        return "unknown"
+    identity = f"{type(store).__module__}.{type(store).__name__}".casefold()
+    if "postgres" in identity:
+        return "postgresql"
+    if "sqlite" in identity:
+        return "sqlite"
+    if "memory" in identity or "fake" in identity:
+        return "memory"
+    return "unknown"
+
+
+def _delivery_metric_outcome(attempt: DeliveryAttemptResult) -> str:
+    if attempt.failure is not None:
+        return "failed"
+    return {
+        DeliveryState.ACKED: "ack",
+        DeliveryState.RETRY_WAIT: "retry",
+        DeliveryState.DROPPED: "drop",
+        DeliveryState.DEAD_LETTER: "dead_letter",
+    }.get(attempt.state, "unknown")
+
+
+def _dead_letter_reason_metric_bucket(reason_class: str | None) -> str:
+    normalized = (reason_class or "").casefold()
+    if "exhaust" in normalized or "lease_expired" in normalized:
+        return "retry_exhausted"
+    if "permanent" in normalized:
+        return "permanent"
+    if any(value in normalized for value in ("contract", "invalid", "unapproved")):
+        return "contract"
+    return "unknown"
+
+
+def _safe_telemetry_counter(
+    telemetry: object,
+    name: str,
+    value: int = 1,
+    *,
+    labels: Mapping[str, str],
+) -> None:
+    recorder = getattr(telemetry, "add_counter", None)
+    if not callable(recorder):
+        return
+    try:
+        recorder(name, value, labels=labels)
+    except Exception:
+        return
+
+
+def _safe_telemetry_gauge(
+    telemetry: object,
+    name: str,
+    value: int | float,
+    *,
+    labels: Mapping[str, str],
+) -> None:
+    recorder = getattr(telemetry, "record_gauge", None)
+    if not callable(recorder):
+        return
+    try:
+        recorder(name, value, labels=labels)
+    except Exception:
+        return
 
 
 __all__ = [

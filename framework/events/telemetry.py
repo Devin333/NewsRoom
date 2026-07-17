@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
+from math import isfinite
 import re
+from threading import RLock
 from types import MappingProxyType
 from typing import Any, Protocol
 
@@ -46,12 +48,49 @@ _LINK_ATTRIBUTES = frozenset(
 _METRIC_LABELS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "event_append_total": frozenset({"backend", "result"}),
+        "event_append_latency_seconds": frozenset({"backend"}),
+        "event_delivery_pending": frozenset({"consumer"}),
+        "event_delivery_lag": frozenset({"consumer"}),
+        "event_delivery_oldest_age_seconds": frozenset({"consumer"}),
         "event_delivery_attempt_total": frozenset({"consumer", "outcome"}),
         "event_dead_letter_total": frozenset({"consumer", "reason_class"}),
+        "event_lease_recovery_total": frozenset({"consumer"}),
         "event_quarantine_total": frozenset({"reason"}),
         "event_replay_total": frozenset({"mode", "result"}),
+        "event_replay_mismatch_total": frozenset({"reason"}),
         "event_schema_validation_total": frozenset({"event_type", "result"}),
+        "event_upcast_total": frozenset({"event_type", "from", "to", "result"}),
+        "event_identity_collision_total": frozenset({"source"}),
+        "event_projection_high_watermark": frozenset({"projection"}),
+        "event_projection_staleness": frozenset({"projection"}),
+        "event_store_health": frozenset({"backend"}),
         "trace_propagation_total": frozenset({"boundary", "result"}),
+    }
+)
+_COUNTER_METRICS = frozenset(
+    {
+        "event_append_total",
+        "event_delivery_attempt_total",
+        "event_dead_letter_total",
+        "event_lease_recovery_total",
+        "event_quarantine_total",
+        "event_replay_total",
+        "event_replay_mismatch_total",
+        "event_schema_validation_total",
+        "event_upcast_total",
+        "event_identity_collision_total",
+        "trace_propagation_total",
+    }
+)
+_HISTOGRAM_METRICS = frozenset({"event_append_latency_seconds"})
+_GAUGE_METRICS = frozenset(
+    {
+        "event_delivery_pending",
+        "event_delivery_lag",
+        "event_delivery_oldest_age_seconds",
+        "event_projection_high_watermark",
+        "event_projection_staleness",
+        "event_store_health",
     }
 )
 _METRIC_LABEL_VALUE_DOMAINS: Mapping[str, frozenset[str]] = MappingProxyType(
@@ -72,12 +111,25 @@ _METRIC_LABEL_VALUE_DOMAINS: Mapping[str, frozenset[str]] = MappingProxyType(
             {"audit", "harness", "projection", "telemetry", "unknown", "workflow"}
         ),
         "event_type": frozenset({"registered", "unknown"}),
+        "from": frozenset(
+            {"unknown", "other", *(f"v{index}" for index in range(1, 11))}
+        ),
         "mode": frozenset({"rebuild_state", "redeliver", "verify_history"}),
         "outcome": frozenset(
             {"ack", "dead_letter", "drop", "failed", "retry", "unknown"}
         ),
         "reason": frozenset(
-            {"conflict", "integrity", "missing_time", "schema", "unknown"}
+            {
+                "activity",
+                "command",
+                "conflict",
+                "integrity",
+                "missing_time",
+                "schema",
+                "security",
+                "version",
+                "unknown",
+            }
         ),
         "reason_class": frozenset(
             {"contract", "permanent", "retry_exhausted", "unknown"}
@@ -92,6 +144,13 @@ _METRIC_LABEL_VALUE_DOMAINS: Mapping[str, frozenset[str]] = MappingProxyType(
                 "success",
                 "unknown",
             }
+        ),
+        "projection": frozenset({"harness", "unknown", "workflow"}),
+        "source": frozenset(
+            {"api", "harness", "migration", "tool", "unknown", "workflow"}
+        ),
+        "to": frozenset(
+            {"unknown", "other", *(f"v{index}" for index in range(1, 11))}
         ),
     }
 )
@@ -271,6 +330,22 @@ class TelemetryBackend(Protocol):
         attributes: Mapping[str, Any],
     ) -> None: ...
 
+    def record_histogram(
+        self,
+        name: str,
+        value: float,
+        *,
+        attributes: Mapping[str, Any],
+    ) -> None: ...
+
+    def record_gauge(
+        self,
+        name: str,
+        value: float,
+        *,
+        attributes: Mapping[str, Any],
+    ) -> None: ...
+
 
 class _NoOpNativeSpan:
     def set_attribute(self, _key: str, _value: Any) -> None:
@@ -316,6 +391,24 @@ class NoOpTelemetryBackend:
     ) -> None:
         return None
 
+    def record_histogram(
+        self,
+        name: str,
+        value: float,
+        *,
+        attributes: Mapping[str, Any],
+    ) -> None:
+        return None
+
+    def record_gauge(
+        self,
+        name: str,
+        value: float,
+        *,
+        attributes: Mapping[str, Any],
+    ) -> None:
+        return None
+
 
 class OpenTelemetryBackend:
     """Optional OTel API adapter; provider/exporter composition remains external."""
@@ -333,6 +426,7 @@ class OpenTelemetryBackend:
         self.scope = scope
         self.otel_resource = _build_otel_resource(resource)
         self._link_type = link_type
+        self._observation_type = getattr(metrics_api, "Observation", None)
         self._trace_adapter = OpenTelemetryTraceAdapter()
         trace_owner = tracer_provider or trace_api
         meter_owner = meter_provider or metrics_api
@@ -351,6 +445,13 @@ class OpenTelemetryBackend:
             scope.schema_url,
         )
         self._counters: dict[str, Any] = {}
+        self._histograms: dict[str, Any] = {}
+        self._gauges: dict[str, Any] = {}
+        self._gauge_values: dict[
+            str,
+            dict[tuple[tuple[str, str], ...], float],
+        ] = {}
+        self._gauge_lock = RLock()
 
     def start_span(
         self,
@@ -386,6 +487,53 @@ class OpenTelemetryBackend:
             counter = self._meter.create_counter(name)
             self._counters[name] = counter
         counter.add(value, attributes=dict(attributes))
+
+    def record_histogram(
+        self,
+        name: str,
+        value: float,
+        *,
+        attributes: Mapping[str, Any],
+    ) -> None:
+        histogram = self._histograms.get(name)
+        if histogram is None:
+            histogram = self._meter.create_histogram(name)
+            self._histograms[name] = histogram
+        histogram.record(value, attributes=dict(attributes))
+
+    def record_gauge(
+        self,
+        name: str,
+        value: float,
+        *,
+        attributes: Mapping[str, Any],
+    ) -> None:
+        label_key = tuple(sorted((str(key), str(item)) for key, item in attributes.items()))
+        with self._gauge_lock:
+            values = self._gauge_values.setdefault(name, {})
+            values[label_key] = value
+            if name in self._gauges:
+                return
+            if self._observation_type is None:
+                raise RuntimeError("OpenTelemetry Observation API is unavailable")
+            self._gauges[name] = self._meter.create_observable_gauge(
+                name,
+                callbacks=(self._gauge_callback(name),),
+            )
+
+    def _gauge_callback(self, name: str) -> Callable[[Any], tuple[Any, ...]]:
+        def observe(_options: Any) -> tuple[Any, ...]:
+            with self._gauge_lock:
+                values = tuple(self._gauge_values.get(name, {}).items())
+            observation_type = self._observation_type
+            if observation_type is None:
+                return ()
+            return tuple(
+                observation_type(value, attributes=dict(label_key))
+                for label_key, value in values
+            )
+
+        return observe
 
 
 class TelemetrySpan:
@@ -535,22 +683,61 @@ class EventTelemetry:
         *,
         labels: Mapping[str, Any] | None = None,
     ) -> None:
-        allowed = _METRIC_LABELS.get(name)
-        if allowed is None or isinstance(value, bool) or not isinstance(value, int):
+        if name not in _COUNTER_METRICS or isinstance(value, bool) or not isinstance(value, int):
             return
-        raw_labels = labels if isinstance(labels, Mapping) else {}
-        if any(key not in allowed for key in raw_labels):
+        if value <= 0:
             return
-        projected: dict[str, Any] = {}
-        for key, label_value in raw_labels.items():
-            safe = _metric_label_value(str(key), label_value)
-            if safe is None:
-                return
-            projected[str(key)] = safe
+        projected = _metric_labels(name, labels)
+        if projected is None:
+            return
         try:
             self._backend.add_counter(
                 name,
                 value,
+                attributes=MappingProxyType(projected),
+            )
+        except Exception:
+            return
+
+    def record_histogram(
+        self,
+        name: str,
+        value: float,
+        *,
+        labels: Mapping[str, Any] | None = None,
+    ) -> None:
+        if name not in _HISTOGRAM_METRICS:
+            return
+        measurement = _nonnegative_measurement(value)
+        projected = _metric_labels(name, labels)
+        if measurement is None or projected is None:
+            return
+        try:
+            self._backend.record_histogram(
+                name,
+                measurement,
+                attributes=MappingProxyType(projected),
+            )
+        except Exception:
+            return
+
+    def record_gauge(
+        self,
+        name: str,
+        value: float,
+        *,
+        labels: Mapping[str, Any] | None = None,
+    ) -> None:
+        if name not in _GAUGE_METRICS:
+            return
+        measurement = _nonnegative_measurement(value)
+        projected = _metric_labels(name, labels)
+        if measurement is None or projected is None:
+            return
+        try:
+            self._backend.record_gauge(
+                name,
+                measurement,
                 attributes=MappingProxyType(projected),
             )
         except Exception:
@@ -614,6 +801,35 @@ def _metric_label_value(key: str, value: Any) -> str | None:
     if allowed is None or value not in allowed:
         return None
     return value
+
+
+def _metric_labels(
+    name: str,
+    labels: Mapping[str, Any] | None,
+) -> dict[str, str] | None:
+    allowed = _METRIC_LABELS.get(name)
+    if allowed is None:
+        return None
+    raw_labels = labels if isinstance(labels, Mapping) else {}
+    if frozenset(str(key) for key in raw_labels) != allowed:
+        return None
+    projected: dict[str, str] = {}
+    for key, label_value in raw_labels.items():
+        normalized_key = str(key)
+        safe = _metric_label_value(normalized_key, label_value)
+        if safe is None:
+            return None
+        projected[normalized_key] = safe
+    return projected
+
+
+def _nonnegative_measurement(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    measurement = float(value)
+    if not isfinite(measurement) or measurement < 0:
+        return None
+    return measurement
 
 
 def _backend_identity(

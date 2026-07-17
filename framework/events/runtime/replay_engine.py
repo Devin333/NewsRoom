@@ -44,6 +44,12 @@ from framework.events.runtime.models import (
     StreamSequenceCursor,
 )
 from framework.events.schema.catalog import EventSchemaCatalog, HistoricalSchemaResolution
+from framework.events.telemetry import (
+    EventTelemetry,
+    TelemetryInstrumentationScope,
+    TelemetryResource,
+    default_event_telemetry,
+)
 
 if TYPE_CHECKING:
     from framework.events.ports import EventStorePort
@@ -668,6 +674,7 @@ class DeterministicReplayEngine:
         page_size: int = 100,
         history_verifier: HistoryVerifier | None = None,
         diagnostic_fallback: LocalRuntimeDiagnosticFallback | None = None,
+        telemetry: EventTelemetry | None = None,
     ) -> None:
         if not isinstance(catalog, EventSchemaCatalog):
             raise TypeError("catalog must be EventSchemaCatalog")
@@ -700,6 +707,13 @@ class DeterministicReplayEngine:
             diagnostic_fallback
             if diagnostic_fallback is not None
             else LocalRuntimeDiagnosticFallback()
+        )
+        self._telemetry = telemetry or default_event_telemetry(
+            resource=TelemetryResource(service_name="newsroom-event-runtime"),
+            scope=TelemetryInstrumentationScope(
+                name="framework.events.replay",
+                version="1",
+            ),
         )
 
     @property
@@ -781,6 +795,27 @@ class DeterministicReplayEngine:
         )
 
     def _execute_finite(
+        self,
+        request: ReplayStartRequest,
+        *,
+        registration: ReplayReducerRegistration | None,
+        checkpoint: ReplayCheckpoint | None,
+        after_sequence: int | None,
+    ) -> ReplayExecutionResult:
+        try:
+            result = self._execute_finite_impl(
+                request,
+                registration=registration,
+                checkpoint=checkpoint,
+                after_sequence=after_sequence,
+            )
+        except Exception as error:
+            self._record_replay_metrics(request.mode, result="failed", error=error)
+            raise
+        self._record_replay_metrics(request.mode, result="success")
+        return result
+
+    def _execute_finite_impl(
         self,
         request: ReplayStartRequest,
         *,
@@ -983,6 +1018,36 @@ class DeterministicReplayEngine:
             checkpoint=checkpoint_result,
             state=progress.state if registration is not None else None,
         )
+
+    def _record_replay_metrics(
+        self,
+        mode: ReplayMode,
+        *,
+        result: str,
+        error: Exception | None = None,
+    ) -> None:
+        self._telemetry.add_counter(
+            "event_replay_total",
+            labels={"mode": mode.value, "result": result},
+        )
+        if error is None:
+            return
+        reason = getattr(error, "reason_class", type(error).__name__)
+        self._telemetry.add_counter(
+            "event_replay_mismatch_total",
+            labels={"reason": _replay_reason_metric_bucket(str(reason))},
+        )
+        if isinstance(error, (ReplayHistoryIntegrityError, ReplayHistorySchemaError)):
+            self._telemetry.add_counter(
+                "event_quarantine_total",
+                labels={
+                    "reason": (
+                        "integrity"
+                        if isinstance(error, ReplayHistoryIntegrityError)
+                        else "schema"
+                    )
+                },
+            )
 
     def _resolve_pending_checkpoint(
         self,
@@ -2278,6 +2343,21 @@ def _replay_failure_category(
     if operation is RuntimeDiagnosticOperation.QUARANTINE_WRITE:
         return RuntimeDiagnosticCategory.REPLAY_QUARANTINE_FAILURE
     return RuntimeDiagnosticCategory.REPLAY_STORE_FAILURE
+
+
+def _replay_reason_metric_bucket(reason: str) -> str:
+    normalized = reason.casefold()
+    if "activity" in normalized:
+        return "activity"
+    if "command" in normalized or "nondetermin" in normalized:
+        return "command"
+    if "schema" in normalized or "upcast" in normalized:
+        return "schema"
+    if "version" in normalized:
+        return "version"
+    if any(value in normalized for value in ("checksum", "corrupt", "integrity")):
+        return "integrity"
+    return "unknown"
 
 
 def _require_mode(request: ReplayStartRequest, expected: ReplayMode) -> None:
