@@ -871,6 +871,97 @@ def test_external_evidence_rejects_semantically_unbound_artifact(tmp_path) -> No
 
 
 @pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        (
+            "postgres_canonical_checksum",
+            "postgres_before_canonical_events_checksum_mismatch",
+        ),
+        (
+            "projection_canonical_checksum",
+            "candidate_projection_content_mismatch",
+        ),
+        (
+            "projection_native_checksum",
+            "projection_source_checksum_mismatch",
+        ),
+        (
+            "projection_source_alias",
+            "projection_source_refs_not_distinct",
+        ),
+    ],
+)
+def test_external_evidence_separates_native_and_canonical_checksums(
+    tmp_path,
+    mutation,
+    reason,
+) -> None:
+    external_path = _write_external_evidence(
+        tmp_path / "external-source",
+        drill_id=f"rollback-checksum-{mutation}",
+        candidate="a" * 40,
+        rollback="b" * 40,
+    )
+    payload = json.loads(external_path.read_text(encoding="utf-8"))
+    artifacts = {
+        item["role"]: json.loads(
+            (external_path.parent / item["path"]).read_text(encoding="utf-8")
+        )
+        for item in payload["artifacts"]
+        if item["role"] != "approval_record"
+    }
+    candidate = artifacts["candidate_projection"]
+    assert candidate["source_checksum"] == candidate["projection_checksum"]
+    assert candidate["source_checksum"] != candidate["canonical_events_checksum"]
+
+    role = "candidate_projection"
+    artifact = candidate
+    if mutation == "postgres_canonical_checksum":
+        role = "postgres_before_snapshot"
+        artifact = artifacts[role]
+        artifact["canonical_events_checksum"] = _test_checksum("changed-canonical")
+    elif mutation == "projection_canonical_checksum":
+        artifact["canonical_events_checksum"] = _test_checksum("changed-canonical")
+    elif mutation == "projection_native_checksum":
+        role = "rollback_projection"
+        artifact = artifacts[role]
+        changed = _test_checksum("changed-native-projection")
+        artifact["source_checksum"] = changed
+        artifact["projection_checksum"] = changed
+    else:
+        role = "rollback_projection"
+        artifact = artifacts[role]
+        artifact["source_ref"] = candidate["source_ref"]
+
+    _replace_artifact(
+        external_path.parent,
+        payload,
+        role=role,
+        content=artifact,
+    )
+    _resign_external_approval(
+        external_path.parent,
+        payload,
+        _approval_private_key(external_path),
+    )
+    _write_evidence_with_checksum(external_path, payload)
+    private_key = tmp_path / "external-private.pem"
+    public_key = tmp_path / "external-public.pem"
+    generate_signing_keypair(
+        private_key_path=private_key,
+        public_key_path=public_key,
+    )
+
+    with pytest.raises(RollbackDrillInvariantError, match=reason):
+        attest_external_evidence(
+            evidence_path=external_path,
+            private_key_path=private_key,
+            trusted_approval_public_key=_approval_public_key(external_path),
+            output_path=external_path.with_name("external-evidence.signed.json"),
+        )
+
+
+@pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
         (
@@ -1483,7 +1574,8 @@ def _write_external_evidence(
         for name, count in ledger_counts.items()
     }
     ledgers_after = json.loads(json.dumps(ledgers_before))
-    projection_checksum = checksum_for(before_event_rows)
+    canonical_projection_checksum = checksum_for(before_event_rows)
+    native_projection_checksum = _test_checksum("native-projection")
     sequence_checksum = checksum_for(list(range(1, 21)))
     artifact_payloads = {
         "orchestrator_run": {
@@ -1507,13 +1599,13 @@ def _write_external_evidence(
             "concurrent_dispatchers_observed": 0,
         },
         "postgres_before_snapshot": {
-            "schema": "newsroom.durable-event-rollback-postgres-snapshot/v1",
+            "schema": "newsroom.durable-event-rollback-postgres-snapshot/v2",
             "drill_id": drill_id,
             "stage": "before",
             "source_ref": (
                 f"https://evidence.example/{drill_id}/postgres-before-snapshot"
             ),
-            "source_checksum": prefix_checksum,
+            "source_checksum": _test_checksum("raw-postgres-before-snapshot"),
             "backend": "postgresql",
             "database_name": postgresql["database_name"],
             "server_version": postgresql["server_version"],
@@ -1522,19 +1614,20 @@ def _write_external_evidence(
             "ledgers": ledgers_before,
             "release_digest": candidate,
             "captured_at": _utc_text(completed_at - timedelta(seconds=20)),
+            "canonical_events_checksum": prefix_checksum,
             "events": before_event_rows,
             "event_count": 20,
             "prefix_checksum": prefix_checksum,
             "watermark": 20,
         },
         "postgres_after_snapshot": {
-            "schema": "newsroom.durable-event-rollback-postgres-snapshot/v1",
+            "schema": "newsroom.durable-event-rollback-postgres-snapshot/v2",
             "drill_id": drill_id,
             "stage": "after",
             "source_ref": (
                 f"https://evidence.example/{drill_id}/postgres-after-snapshot"
             ),
-            "source_checksum": after_snapshot_checksum,
+            "source_checksum": _test_checksum("raw-postgres-after-snapshot"),
             "backend": "postgresql",
             "database_name": postgresql["database_name"],
             "server_version": postgresql["server_version"],
@@ -1543,6 +1636,7 @@ def _write_external_evidence(
             "ledgers": ledgers_after,
             "release_digest": rollback,
             "captured_at": _utc_text(completed_at - timedelta(seconds=5)),
+            "canonical_events_checksum": after_snapshot_checksum,
             "events": event_rows,
             "event_count": 21,
             "preserved_prefix_count": 20,
@@ -1574,31 +1668,33 @@ def _write_external_evidence(
             },
         },
         "candidate_projection": {
-            "schema": "newsroom.durable-event-rollback-projection/v1",
+            "schema": "newsroom.durable-event-rollback-projection/v2",
             "drill_id": drill_id,
             "role": "candidate",
             "source_ref": f"https://evidence.example/{drill_id}/candidate.jsonl",
-            "source_checksum": projection_checksum,
+            "source_checksum": native_projection_checksum,
             "release_digest": candidate,
             "stream_id": postgresql["stream_id"],
             "high_watermark": 20,
             "event_count": 20,
             "ordered_sequence_checksum": sequence_checksum,
-            "projection_checksum": projection_checksum,
+            "canonical_events_checksum": canonical_projection_checksum,
+            "projection_checksum": native_projection_checksum,
             "events": before_event_rows,
         },
         "rollback_projection": {
-            "schema": "newsroom.durable-event-rollback-projection/v1",
+            "schema": "newsroom.durable-event-rollback-projection/v2",
             "drill_id": drill_id,
             "role": "rollback",
             "source_ref": f"https://evidence.example/{drill_id}/rollback.jsonl",
-            "source_checksum": projection_checksum,
+            "source_checksum": native_projection_checksum,
             "release_digest": rollback,
             "stream_id": postgresql["stream_id"],
             "high_watermark": 20,
             "event_count": 20,
             "ordered_sequence_checksum": sequence_checksum,
-            "projection_checksum": projection_checksum,
+            "canonical_events_checksum": canonical_projection_checksum,
+            "projection_checksum": native_projection_checksum,
             "events": before_event_rows,
         },
         "schema_security_negative_tests": {

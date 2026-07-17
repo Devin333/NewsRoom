@@ -8,9 +8,9 @@
 >
 > Local schema: `newsroom.durable-event-rollback-drill/v1`
 >
-> External schema: `newsroom.durable-event-rollback-external/v1`
+> External schema: `newsroom.durable-event-rollback-external/v2`
 >
-> Qualification schema: `newsroom.durable-event-rollback-qualification/v1`
+> Qualification schema: `newsroom.durable-event-rollback-qualification/v2`
 
 本模板将本地不变量检查与发布级 rollback qualification 明确分开。本地 SQLite
 演练永远是 `INCOMPLETE`，不能通过修改 JSON 状态或重算 checksum 晋升为发布证据。
@@ -68,11 +68,11 @@ PostgreSQL continuity、部署流量冻结或外部 provider 幂等。因此严�
 ## 3. 外部 evidence bundle
 
 部署流程必须生成 `external-evidence.json`，schema 为
-`newsroom.durable-event-rollback-external/v1`，并包含以下固定顶层字段：
+`newsroom.durable-event-rollback-external/v2`，并包含以下固定顶层字段：
 
 ```json
 {
-  "schema": "newsroom.durable-event-rollback-external/v1",
+  "schema": "newsroom.durable-event-rollback-external/v2",
   "status": "passed",
   "drill_id": "<same-drill-id>",
   "drill_completed_at": "<UTC timestamp before approval>",
@@ -118,11 +118,14 @@ approval.record_ref                             -> artifact://rollback/approval_
 
 manifest SHA 只证明文件未变化，不证明文件支持顶层断言。除 `approval_record` 外，每个
 portable artifact 都是固定 schema 的 normalized JSON，并包含原生 PostgreSQL snapshot、
-orchestrator log、traffic-control log 或 provider audit 的非 bundle `source_ref` 与
-`source_checksum`。external attester 对 normalized 内容和原生来源哈希共同签名；工具不尝试
-泛化解析不同供应商的原生日志。
+orchestrator log、traffic-control log、provider audit 或 projection 文件的非 bundle
+`source_ref` 与精确 bytes `source_checksum`。normalized PostgreSQL/projection artifact 另用
+`canonical_events_checksum` 绑定完整 canonical `StoredEvent` rows；artifact manifest checksum
+只绑定 normalized JSON 文件本身。这三种 checksum 不得互相冒充。external attester 对
+normalized 内容和原生来源哈希共同签名；工具不尝试泛化解析不同供应商的原生日志。
 
-PostgreSQL before/after artifact 必须逐字段绑定隔离数据库、server/migration version、
+PostgreSQL before/after artifact 使用
+`newsroom.durable-event-rollback-postgres-snapshot/v2`，必须逐字段绑定隔离数据库、server/migration version、
 release digest、capture time、stream、完整 canonical event rows、accepted prefix checksum、
 before/rejection/next/after watermark、零重复 sequence、零 checksum failure，以及
 delivery/inbox/checkpoint/DLQ 的非零 before/after count 与 checksum。verifier 会重新解析每个
@@ -139,10 +142,13 @@ rollback deploy 引用，证明真实 binary switch、切换时 claim 已冻结�
 candidate/rollback deployment id 与 release digest 必须不同并绑定到 `orchestrator_run`；
 `traffic_control` 必须证明 traffic frozen、claim paused 和零并发 dispatcher。
 
-candidate/rollback projection normalized artifact 必须包含并校验完整 canonical event rows，
+candidate/rollback projection normalized artifact 使用
+`newsroom.durable-event-rollback-projection/v2`，必须包含并校验完整 canonical event rows，
 绑定各自 release digest、同一 stream、同一 high watermark、event count、ordered-sequence
-checksum 和 projection checksum，并与 PostgreSQL before snapshot 逐字节一致；原生 projection
-的 source checksum 必须与声明 checksum 一致。negative-test artifact 必须覆盖
+checksum、`canonical_events_checksum` 和 projection checksum，并与 PostgreSQL before snapshot
+逐字节一致；`projection_checksum` 必须等于原生 `events.jsonl` 精确 bytes 的
+`source_checksum`，candidate/rollback 两份原生 projection checksum 必须相同且 source ref
+必须不同。negative-test artifact 必须覆盖
 `unknown_schema`、`forbidden_payload`、`identity_collision`、`record_checksum_tamper`，全部为
 rejected，并证明 watermark 未推进。
 

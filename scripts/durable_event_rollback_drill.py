@@ -89,15 +89,15 @@ from interfaces.services.event_reader_service import (
 
 
 EVIDENCE_SCHEMA = "newsroom.durable-event-rollback-drill/v1"
-EXTERNAL_EVIDENCE_SCHEMA = "newsroom.durable-event-rollback-external/v1"
-QUALIFICATION_EVIDENCE_SCHEMA = "newsroom.durable-event-rollback-qualification/v1"
+EXTERNAL_EVIDENCE_SCHEMA = "newsroom.durable-event-rollback-external/v2"
+QUALIFICATION_EVIDENCE_SCHEMA = "newsroom.durable-event-rollback-qualification/v2"
 APPROVAL_RECORD_SCHEMA = "newsroom.durable-event-rollback-approval/v1"
-POSTGRES_SNAPSHOT_SCHEMA = "newsroom.durable-event-rollback-postgres-snapshot/v1"
+POSTGRES_SNAPSHOT_SCHEMA = "newsroom.durable-event-rollback-postgres-snapshot/v2"
 EXTERNAL_EFFECT_AUDIT_SCHEMA = "newsroom.durable-event-rollback-effect-audit/v1"
 ORCHESTRATOR_RUN_SCHEMA = "newsroom.durable-event-rollback-orchestrator/v1"
 TRAFFIC_CONTROL_SCHEMA = "newsroom.durable-event-rollback-traffic-control/v1"
 NEGATIVE_TESTS_SCHEMA = "newsroom.durable-event-rollback-negative-tests/v1"
-PROJECTION_EVIDENCE_SCHEMA = "newsroom.durable-event-rollback-projection/v1"
+PROJECTION_EVIDENCE_SCHEMA = "newsroom.durable-event-rollback-projection/v2"
 EXTERNAL_ATTESTATION_ALGORITHM = "Ed25519"
 DRILL_EVENT_TYPE = "io.newsroom.event.rollback.drill"
 DRILL_DATA_SCHEMA = "io.newsroom.event.rollback.drill/v1"
@@ -1961,11 +1961,14 @@ def _verify_postgresql_snapshot_artifact(
         )
         event_ids.add(event.event_id)
         events.append(event)
-    computed_source_checksum = checksum_for([event.to_dict() for event in events])
-    _require(
-        source_checksum == computed_source_checksum,
-        f"postgres_{stage}_source_checksum_mismatch",
+    canonical_events_checksum = checksum_for(
+        [event.to_dict() for event in events]
     )
+    _require(
+        record.get("canonical_events_checksum") == canonical_events_checksum,
+        f"postgres_{stage}_canonical_events_checksum_mismatch",
+    )
+    common["canonical_events_checksum"] = canonical_events_checksum
     if stage == "before":
         prefix_checksum = checksum_for([event.to_dict() for event in events])
         expected = {
@@ -2152,9 +2155,15 @@ def _verify_projection_artifacts(
                 f"{role}_event_sequence_invalid",
             )
             events.append(event)
-        projection_checksum = checksum_for([event.to_dict() for event in events])
+        canonical_events_checksum = checksum_for(
+            [event.to_dict() for event in events]
+        )
         sequence_checksum = checksum_for(
             [event.stream_sequence for event in events]
+        )
+        projection_checksum = _required_text(
+            record.get("projection_checksum"),
+            f"{role}.projection_checksum",
         )
         expected = {
             "schema": PROJECTION_EVIDENCE_SCHEMA,
@@ -2167,23 +2176,33 @@ def _verify_projection_artifacts(
             "high_watermark": postgresql.get("watermark_before"),
             "event_count": postgresql.get("preserved_event_count"),
             "ordered_sequence_checksum": sequence_checksum,
+            "canonical_events_checksum": canonical_events_checksum,
             "projection_checksum": projection_checksum,
             "events": record.get("events"),
         }
-        for field in ("ordered_sequence_checksum", "projection_checksum"):
+        for field in (
+            "ordered_sequence_checksum",
+            "canonical_events_checksum",
+            "projection_checksum",
+        ):
             checksum = _required_text(record.get(field), f"{role}.{field}")
             _require(
                 _SHA256.fullmatch(checksum) is not None,
                 f"{role}_{field}_invalid",
             )
-        _require(source_checksum == projection_checksum, f"{role}_source_checksum_mismatch")
+        _require(
+            source_checksum == projection_checksum,
+            f"{role}_source_checksum_mismatch",
+        )
         _require(record == expected, f"{role}_content_mismatch")
         records[role] = record
         projections[role] = tuple(events)
     for field in (
         "high_watermark",
         "event_count",
+        "source_checksum",
         "ordered_sequence_checksum",
+        "canonical_events_checksum",
         "projection_checksum",
     ):
         _require(
@@ -2191,6 +2210,11 @@ def _verify_projection_artifacts(
             == records["rollback_projection"].get(field),
             f"projection_{field}_mismatch",
         )
+    _require(
+        records["candidate_projection"].get("source_ref")
+        != records["rollback_projection"].get("source_ref"),
+        "projection_source_refs_not_distinct",
+    )
     expected_bytes = tuple(
         canonical_json_bytes(event.to_dict()) for event in expected_events
     )
