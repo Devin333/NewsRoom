@@ -1,0 +1,102 @@
+{
+  "schema": "newsroom.durable-event-rollback-tracked-bundle/v1",
+  "status": "awaiting_approval",
+  "drill_id": "durable-event-runtime-524afab7",
+  "drill_completed_at": "2026-07-17T06:13:03.111484Z",
+  "candidate_release_digest": "524afab7b26bdfc5945151b192b24990ab12269f",
+  "rollback_release_digest": "570f840c7df3870841c93e37480d7a53a67921dd",
+  "technical_evidence_checksum": "sha256:597bd82407c82675eef4086baf07f2bfe0e40b9102e4af92884548dc1df0825d",
+  "approval_request_checksum": "sha256:f3c4df38bdc632f50eee0d532adf02967077eeb3857913f35b53fe2d1b0d1f7c",
+  "files": [
+    {
+      "path": "audit/native/external-effect-audit.json",
+      "checksum": "sha256:f02a98ca82d0895c5a3bc350626b0535d860dddbb6c8f230986bb0bc5978e584",
+      "size_bytes": 2019
+    },
+    {
+      "path": "audit/native/negative-tests.json",
+      "checksum": "sha256:4e717e038acbe2e83517ff6e79203586c2ef7bfd920c259e4b14fb01bfed727d",
+      "size_bytes": 361
+    },
+    {
+      "path": "audit/native/orchestrator-run.json",
+      "checksum": "sha256:2053d07cb1ebb670e95fc1e95c6876db092c0a99ff6f656be5ce96bbc5cd6a23",
+      "size_bytes": 10276
+    },
+    {
+      "path": "audit/native/postgres-after.json",
+      "checksum": "sha256:77ca3cb3ec96e5f34e356fae079781c4d77e6b06d0cff8f01fd99c409bfa4ac3",
+      "size_bytes": 28753
+    },
+    {
+      "path": "audit/native/postgres-before.json",
+      "checksum": "sha256:d92f9c6291d740a71bdac39ae9e52558124d870260d471ff6467b4af6c5a768e",
+      "size_bytes": 27583
+    },
+    {
+      "path": "audit/native/traffic-control.json",
+      "checksum": "sha256:2f314e7a8eeed85f97573e48cb4ff158f1512036eef547dee01af49c732cdfd7",
+      "size_bytes": 398
+    },
+    {
+      "path": "audit/projections/candidate/events.jsonl",
+      "checksum": "sha256:af3d05da78c99e20b9168618ac93e44d58eb44b87be948164a1724cc46405634",
+      "size_bytes": 31663
+    },
+    {
+      "path": "audit/projections/rollback/events.jsonl",
+      "checksum": "sha256:af3d05da78c99e20b9168618ac93e44d58eb44b87be948164a1724cc46405634",
+      "size_bytes": 31663
+    },
+    {
+      "path": "technical/approval-request.json",
+      "checksum": "sha256:9a1511cc881701b19126e679bcf0430fad6219b2ed9416c04f05ff2b5bf1ebc9",
+      "size_bytes": 1361
+    },
+    {
+      "path": "technical/artifacts/candidate_projection.json",
+      "checksum": "sha256:9e1b67b9fb2afe87cd5d6e604aa42970c860c6ed7dae64081a183629f28cf59b",
+      "size_bytes": 24002
+    },
+    {
+      "path": "technical/artifacts/external_effect_audit.json",
+      "checksum": "sha256:98ddb7cc2b3deedd24752f49628c3b8bf6e2c382aa1fdc023accd9a5c72eab6f",
+      "size_bytes": 724
+    },
+    {
+      "path": "technical/artifacts/orchestrator_run.json",
+      "checksum": "sha256:af5cb281e5c3bff75439dc6fb1022585af67f898147466817172195a6aaec8fa",
+      "size_bytes": 659
+    },
+    {
+      "path": "technical/artifacts/postgres_after_snapshot.json",
+      "checksum": "sha256:056257f3b4220a2f8a235f99f54b0d9f0120ea22fe479a0104fc106a7ab050f5",
+      "size_bytes": 25956
+    },
+    {
+      "path": "technical/artifacts/postgres_before_snapshot.json",
+      "checksum": "sha256:456f920222e7ffa28b371221af65167d92f56c5a348180284ab7cb7f4f0499b6",
+      "size_bytes": 24578
+    },
+    {
+      "path": "technical/artifacts/rollback_projection.json",
+      "checksum": "sha256:279c62c29a4f9e1d3fb078d38de0227c5f7bf98b9de09a941c6525a567704a9e",
+      "size_bytes": 24000
+    },
+    {
+      "path": "technical/artifacts/schema_security_negative_tests.json",
+      "checksum": "sha256:a1e3aa33e3bf42a24672387bd1e5e8b0b419a09cdb3a396d49558f43a98264ea",
+      "size_bytes": 715
+    },
+    {
+      "path": "technical/artifacts/traffic_control.json",
+      "checksum": "sha256:0c60753b354e07b3db65f2197210d1eaca48b7dd6c3531d2ef57fcd3f5003526",
+      "size_bytes": 370
+    },
+    {
+      "path": "technical/technical-evidence.json",
+      "checksum": "sha256:88d791c4cd0528b9c137e8c1749aa5be2c22e2e382129e5bccd754c3f1a588b8",
+      "size_bytes": 5143
+    }
+  ]
+}

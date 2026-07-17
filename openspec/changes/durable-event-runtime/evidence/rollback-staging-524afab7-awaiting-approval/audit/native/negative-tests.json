@@ -1,0 +1,1 @@
+{"drill_id":"durable-event-runtime-524afab7","errors":{"forbidden_payload":"EventSecurityError","identity_collision":"EventIdentityCollisionError","record_checksum_tamper":"EventStoreCorruptionError","unknown_schema":"EventUnknownSchemaError"},"schema":"newsroom.durable-event-rollback-native-negative/v1","watermark_after_rejections":20,"watermark_before":20}
