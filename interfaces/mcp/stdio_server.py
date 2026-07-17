@@ -16,6 +16,7 @@ from framework.events import (
     default_event_telemetry,
     reset_trace_context,
 )
+from framework.shared.public_errors import project_public_error, sanitize_mcp_result_payload
 from interfaces.services.mcp_service import MCPApplicationService
 
 
@@ -97,7 +98,15 @@ def handle_jsonrpc_request(
             if not uri:
                 return _error(request_id, -32602, "resources/read uri is required")
             result = service.read_resource(uri)
-            return _success(request_id, result.to_dict())
+            return _success(
+                request_id,
+                sanitize_mcp_result_payload(
+                    result.to_dict(),
+                    expected_not_found_type="MCPResourceNotFound",
+                    expected_identifier=uri,
+                    operation="read_resource",
+                ),
+            )
         if method == "prompts/list":
             catalog = service.catalog().to_dict()
             return _success(request_id, {"prompts": catalog["prompts"]})
@@ -109,17 +118,39 @@ def handle_jsonrpc_request(
             if not isinstance(arguments, dict):
                 return _error(request_id, -32602, "prompts/get arguments must be an object")
             result = service.get_prompt(prompt_name, arguments)
-            return _success(request_id, result.to_dict())
+            return _success(
+                request_id,
+                sanitize_mcp_result_payload(
+                    result.to_dict(),
+                    expected_not_found_type="MCPPromptNotFound",
+                    expected_identifier=prompt_name,
+                    operation="get_prompt",
+                ),
+            )
         if method == "tools/call":
             tool_name = str(params.get("name") or "")
             arguments = params.get("arguments") or {}
             if not isinstance(arguments, dict):
                 return _error(request_id, -32602, "tools/call arguments must be an object")
             result = service.call_tool(tool_name, arguments)
-            return _success(request_id, result.to_dict())
+            return _success(
+                request_id,
+                sanitize_mcp_result_payload(
+                    result.to_dict(),
+                    expected_not_found_type="MCPToolNotFound",
+                    expected_identifier=tool_name,
+                    operation="call_tool",
+                ),
+            )
         return _error(request_id, -32601, f"method not found: {method}")
     except Exception as exc:
-        return _error(request_id, -32603, f"{type(exc).__name__}: {exc}")
+        projected = project_public_error(exc, context="mcp", operation=str(method or "jsonrpc"))
+        return _error(
+            request_id,
+            -32603,
+            projected.error_message,
+            data={"error_type": projected.error_type, "error_id": projected.error_id},
+        )
     finally:
         reset_trace_context(trace_token)
         span_scope.__exit__(None, None, None)
@@ -167,11 +198,20 @@ def _success(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
     return {"jsonrpc": JSONRPC_VERSION, "id": request_id, "result": result}
 
 
-def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
+def _error(
+    request_id: Any,
+    code: int,
+    message: str,
+    *,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = dict(data)
     return {
         "jsonrpc": JSONRPC_VERSION,
         "id": request_id,
-        "error": {"code": code, "message": message},
+        "error": error,
     }
 
 

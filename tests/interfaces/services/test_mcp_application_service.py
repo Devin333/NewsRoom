@@ -229,6 +229,31 @@ def test_mcp_unknown_tool_and_resource_fail_safely() -> None:
     assert resource.error_type == "MCPResourceNotFound"
 
 
+def test_mcp_unknown_tool_resource_and_prompt_exceptions_are_sanitized() -> None:
+    secret = "postgresql://operator:password@db.internal/news"
+    service = MCPApplicationService(
+        report_service_factory=lambda: _ExplodingMCPService(secret),
+        run_inspection_service_factory=lambda: _ExplodingMCPService(secret),
+    )
+
+    results = [
+        service.call_tool("news.report.latest", {}),
+        service.read_resource("news://reports/latest"),
+        service.get_prompt(
+            "news.research.paper_briefing",
+            {"paper_id": _ExplodingText(secret)},
+        ),
+    ]
+
+    for result in results:
+        payload = result.to_dict()
+        assert payload["success"] is False
+        assert payload["error_type"] == "MCPInternalError"
+        assert payload["error_message"] == "internal error"
+        assert payload["error_id"].startswith("err_")
+        assert secret not in json.dumps(payload)
+
+
 def test_mcp_artifact_path_failures_preserve_typed_failure_envelopes(tmp_path) -> None:
     fixture = write_canonical_terminal_run(tmp_path, "run-unsafe")
     (tmp_path / "outside.txt").write_text("artifact-secret", encoding="utf-8")
@@ -335,6 +360,25 @@ class _ArtifactIntegrityFailureService:
 
     def get_artifact(self, run_id, artifact_key):
         raise self.error
+
+
+class _ExplodingMCPService:
+    def __init__(self, secret) -> None:
+        self.secret = secret
+
+    def latest_report(self):
+        raise RuntimeError(self.secret)
+
+    def replay_run(self, run_id):
+        raise RuntimeError(self.secret)
+
+
+class _ExplodingText:
+    def __init__(self, secret) -> None:
+        self.secret = secret
+
+    def __str__(self):
+        raise RuntimeError(self.secret)
 
 
 def _raising_factory():

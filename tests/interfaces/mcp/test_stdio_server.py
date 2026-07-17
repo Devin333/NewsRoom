@@ -57,6 +57,53 @@ def test_stdio_handles_tool_call() -> None:
     assert response["result"]["data"]["source_count"] == 1
 
 
+def test_stdio_preserves_safe_request_identity_for_typed_not_found_results() -> None:
+    service = MCPApplicationService()
+    requests = [
+        (
+            {
+                "jsonrpc": "2.0",
+                "id": "missing-tool",
+                "method": "tools/call",
+                "params": {"name": "news.unknown", "arguments": {}},
+            },
+            "tool_name",
+            "news.unknown",
+            "MCPToolNotFound",
+        ),
+        (
+            {
+                "jsonrpc": "2.0",
+                "id": "missing-resource",
+                "method": "resources/read",
+                "params": {"uri": "news://unknown"},
+            },
+            "uri",
+            "news://unknown",
+            "MCPResourceNotFound",
+        ),
+        (
+            {
+                "jsonrpc": "2.0",
+                "id": "missing-prompt",
+                "method": "prompts/get",
+                "params": {"name": "news.unknown", "arguments": {}},
+            },
+            "name",
+            "news.unknown",
+            "MCPPromptNotFound",
+        ),
+    ]
+
+    for request, identifier_field, identifier, error_type in requests:
+        response = handle_jsonrpc_request(request, service=service)
+        result = response["result"]
+        assert result["success"] is False
+        assert result[identifier_field] == identifier
+        assert result["error_type"] == error_type
+        assert identifier in result["error_message"]
+
+
 def test_stdio_handles_resource_read() -> None:
     service = _FakeMCPService()
 
@@ -275,6 +322,60 @@ def test_stdio_unknown_method_returns_jsonrpc_error() -> None:
     assert response["error"]["code"] == -32601
 
 
+def test_stdio_sanitizes_unknown_service_exception_and_failed_result() -> None:
+    secret = "Bearer super-secret-token"
+    exception_response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "explode",
+            "method": "resources/read",
+            "params": {"uri": "news://reports/latest"},
+        },
+        service=_ExplodingMCPService(secret),
+    )
+    failed_response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "failed",
+            "method": "tools/call",
+            "params": {"name": "news.report.latest"},
+        },
+        service=_UnsafeFailedMCPService(secret),
+    )
+
+    assert exception_response["error"]["code"] == -32603
+    assert exception_response["error"]["message"] == "internal error"
+    assert exception_response["error"]["data"]["error_type"] == "MCPInternalError"
+    assert exception_response["error"]["data"]["error_id"].startswith("err_")
+    assert failed_response["result"]["error_type"] == "MCPInternalError"
+    assert failed_response["result"]["error_message"] == "internal error"
+    assert failed_response["result"]["error_id"].startswith("err_")
+    assert secret not in json.dumps(exception_response)
+    assert secret not in json.dumps(failed_response)
+
+
+def test_stdio_preserves_fixed_durable_event_failure_contract() -> None:
+    secret = "postgresql://operator:password@db.internal/news"
+    response = handle_jsonrpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": "event-store-unavailable",
+            "method": "tools/call",
+            "params": {"name": "news.event.dead_letters.list"},
+        },
+        service=_DurableEventFailedMCPService(secret),
+    )
+
+    assert response["result"] == {
+        "success": False,
+        "tool_name": "news.event.dead_letters.list",
+        "data": None,
+        "error_type": "EventStoreUnavailableError",
+        "error_message": "event store is unavailable",
+    }
+    assert secret not in json.dumps(response)
+
+
 def test_stdio_loop_reads_and_writes_json_lines() -> None:
     input_stream = io.StringIO(
         json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}) + "\n"
@@ -312,6 +413,30 @@ class _FakeMCPService:
         return _FakePromptResult(name, arguments)
 
 
+class _ExplodingMCPService:
+    def __init__(self, secret) -> None:
+        self.secret = secret
+
+    def read_resource(self, uri):
+        raise RuntimeError(self.secret)
+
+
+class _UnsafeFailedMCPService:
+    def __init__(self, secret) -> None:
+        self.secret = secret
+
+    def call_tool(self, tool_name, arguments):
+        return _UnsafeFailedResult(tool_name, self.secret)
+
+
+class _DurableEventFailedMCPService:
+    def __init__(self, secret) -> None:
+        self.secret = secret
+
+    def call_tool(self, tool_name, arguments):
+        return _DurableEventFailedResult(tool_name, self.secret)
+
+
 class _FailedMCPService:
     def __init__(self, error_type) -> None:
         self.error_type = error_type
@@ -334,6 +459,36 @@ class _FakeToolResult:
             "data": {"source_count": 1},
             "error_type": None,
             "error_message": None,
+        }
+
+
+class _UnsafeFailedResult:
+    def __init__(self, tool_name, secret) -> None:
+        self.tool_name = tool_name
+        self.secret = secret
+
+    def to_dict(self):
+        return {
+            "tool_name": self.tool_name,
+            "success": False,
+            "data": {"secret": self.secret},
+            "error_type": "DatabaseDriverError",
+            "error_message": self.secret,
+        }
+
+
+class _DurableEventFailedResult:
+    def __init__(self, tool_name, secret) -> None:
+        self.tool_name = tool_name
+        self.secret = secret
+
+    def to_dict(self):
+        return {
+            "tool_name": self.tool_name,
+            "success": False,
+            "data": {"dsn": self.secret},
+            "error_type": "EventStoreUnavailableError",
+            "error_message": self.secret,
         }
 
 

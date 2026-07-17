@@ -123,9 +123,10 @@ class MCPPromptGetResult:
     messages: list[dict[str, Any]] = field(default_factory=list)
     error_type: str | None = None
     error_message: str | None = None
+    error_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "name": self.name,
             "success": self.success,
             "description": self.description,
@@ -133,6 +134,9 @@ class MCPPromptGetResult:
             "error_type": self.error_type,
             "error_message": self.error_message,
         }
+        if self.error_id is not None:
+            payload["error_id"] = self.error_id
+        return payload
 
 
 @dataclass(frozen=True)
@@ -156,15 +160,19 @@ class MCPToolCallResult:
     data: dict[str, Any] | None = None
     error_type: str | None = None
     error_message: str | None = None
+    error_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "tool_name": self.tool_name,
             "success": self.success,
             "data": dict(self.data) if self.data is not None else None,
             "error_type": self.error_type,
             "error_message": self.error_message,
         }
+        if self.error_id is not None:
+            payload["error_id"] = self.error_id
+        return payload
 
 
 @dataclass(frozen=True)
@@ -175,9 +183,10 @@ class MCPResourceReadResult:
     data: dict[str, Any] | None = None
     error_type: str | None = None
     error_message: str | None = None
+    error_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "uri": self.uri,
             "success": self.success,
             "mime_type": self.mime_type,
@@ -185,3 +194,6 @@ class MCPResourceReadResult:
             "error_type": self.error_type,
             "error_message": self.error_message,
         }
+        if self.error_id is not None:
+            payload["error_id"] = self.error_id
+        return payload

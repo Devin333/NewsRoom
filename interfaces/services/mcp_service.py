@@ -13,7 +13,8 @@ from framework.events.errors import (
     EventRuntimeError,
     EventStoreUnavailableError,
 )
-from infrastructure.storage.lifecycle import RetentionPolicy
+from framework.shared.public_errors import PublicErrorProjection, project_public_error
+from interfaces.models.actor import ActorContext
 from interfaces.mcp.models import (
     MCPCatalog,
     MCPCapability,
@@ -25,13 +26,13 @@ from interfaces.mcp.models import (
     MCPTool,
     MCPToolCallResult,
 )
-from interfaces.models.actor import ActorContext
+from interfaces.services.research_service import ResearchAnalyzeInput, ResearchAskInput
 from interfaces.services.event_delivery_operations_service import (
     EventOperationCapabilityUnavailableError,
     EventOperationNotFoundError,
 )
 from interfaces.services.event_reader_service import EventAuthorizationError
-from interfaces.services.research_service import ResearchAnalyzeInput, ResearchAskInput
+from infrastructure.storage.lifecycle import RetentionPolicy
 
 
 DEFAULT_MEMORY_COLLECTION = "report_sections"
@@ -187,12 +188,16 @@ class MCPApplicationService:
                 ],
             )
         except Exception as exc:
-            error_type, error_message = _public_mcp_error(exc)
+            projected = _project_mcp_error(
+                exc,
+                operation="get_prompt",
+            )
             return MCPPromptGetResult(
                 name=name,
                 success=False,
-                error_type=error_type,
-                error_message=error_message,
+                error_type=projected.error_type,
+                error_message=projected.error_message,
+                error_id=projected.error_id,
             )
 
     def read_resource(self, uri: str) -> MCPResourceReadResult:
@@ -261,12 +266,16 @@ class MCPApplicationService:
                 error_message=f"unknown MCP resource: {uri}",
             )
         except Exception as exc:
-            error_type, error_message = _public_mcp_error(exc)
+            projected = _project_mcp_error(
+                exc,
+                operation="read_resource",
+            )
             return MCPResourceReadResult(
                 uri=uri,
                 success=False,
-                error_type=error_type,
-                error_message=error_message,
+                error_type=projected.error_type,
+                error_message=projected.error_message,
+                error_id=projected.error_id,
             )
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> MCPToolCallResult:
@@ -387,12 +396,16 @@ class MCPApplicationService:
                 error_message=f"unknown MCP tool: {tool_name}",
             )
         except Exception as exc:
-            error_type, error_message = _public_mcp_error(exc)
+            projected = _project_mcp_error(
+                exc,
+                operation="call_tool",
+            )
             return MCPToolCallResult(
                 tool_name=tool_name,
                 success=False,
-                error_type=error_type,
-                error_message=error_message,
+                error_type=projected.error_type,
+                error_message=projected.error_message,
+                error_id=projected.error_id,
             )
 
     def _event_operator_service(self):
@@ -2399,26 +2412,42 @@ def is_event_operator_resource_uri(uri: str) -> bool:
     )
 
 
-def _public_mcp_error(exc: Exception) -> tuple[str, str]:
+def _project_mcp_error(
+    exc: Exception,
+    *,
+    operation: str,
+) -> PublicErrorProjection:
     if isinstance(exc, EventAuthorizationError):
-        return "EventAuthorizationError", "event operator action is not authorized"
+        return PublicErrorProjection(
+            "EventAuthorizationError",
+            "event operator action is not authorized",
+        )
     if isinstance(exc, EventOperationNotFoundError):
-        return "EventOperationNotFoundError", "event operator resource not found"
+        return PublicErrorProjection(
+            "EventOperationNotFoundError",
+            "event operator resource not found",
+        )
     if isinstance(exc, EventOperationCapabilityUnavailableError):
-        return (
+        return PublicErrorProjection(
             "EventOperationCapabilityUnavailableError",
             "event operator capability is unavailable",
         )
     if isinstance(exc, EventStoreUnavailableError):
-        return "EventStoreUnavailableError", "event store is unavailable"
+        return PublicErrorProjection(
+            "EventStoreUnavailableError",
+            "event store is unavailable",
+        )
     if isinstance(exc, EventContractError):
-        return (
+        return PublicErrorProjection(
             "EventContractError",
             "event operator data conflicts with the durable event contract",
         )
     if isinstance(exc, EventRuntimeError):
-        return "EventRuntimeError", "event runtime operation failed"
-    return type(exc).__name__, str(exc)
+        return PublicErrorProjection(
+            "EventRuntimeError",
+            "event runtime operation failed",
+        )
+    return project_public_error(exc, context="mcp", operation=operation)
 
 
 def _tool_permission(tool_name: str) -> str:
