@@ -313,6 +313,33 @@ def test_publish_batch_commit_failure_rolls_back_without_returning_events() -> N
     assert unit_of_work.rollbacks == 1
 
 
+def test_publish_batch_identity_collision_does_not_mark_store_unhealthy() -> None:
+    unit_of_work = _UnitOfWork(
+        append_error=EventIdentityCollisionError("evt-batch-1")
+    )
+    backend = _MetricBackend()
+    runtime = EventRuntime(
+        store=_Store(unit_of_work),
+        schema_catalog=_catalog(),
+        telemetry=EventTelemetry(backend),
+        backend="sqlite",
+        monotonic=iter((10.0, 10.25)).__next__,
+    )
+
+    with pytest.raises(EventIdentityCollisionError):
+        runtime.publish_batch([_request(event_id="evt-batch-1")])
+
+    assert backend.counters == [
+        ("event_append_total", 1, {"backend": "sqlite", "result": "failed"}),
+        ("event_identity_collision_total", 1, {"source": "unknown"}),
+    ]
+    assert backend.histograms == [
+        ("event_append_latency_seconds", 0.25, {"backend": "sqlite"})
+    ]
+    assert backend.gauges == []
+    assert len(runtime.diagnostic_fallback) == 0
+
+
 @pytest.mark.parametrize("value", [-1, True, 1.5])
 def test_publish_rejects_invalid_expected_stream_position_before_store(value) -> None:
     unit_of_work = _UnitOfWork()

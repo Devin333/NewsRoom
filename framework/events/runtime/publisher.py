@@ -323,22 +323,25 @@ class EventRuntime:
                 result="failed",
                 started_at=append_started,
             )
-            self._telemetry.record_gauge(
-                "event_store_health",
-                0,
-                labels={"backend": self._backend},
-            )
+            store_health_failure = _is_store_health_failure(error)
+            if store_health_failure:
+                self._telemetry.record_gauge(
+                    "event_store_health",
+                    0,
+                    labels={"backend": self._backend},
+                )
             if isinstance(error, EventIdentityCollisionError):
                 self._telemetry.add_counter(
                     "event_identity_collision_total",
                     labels={"source": _source_metric_bucket(requests[0].source)},
                 )
-            self._diagnostic_fallback.record(
-                category=RuntimeDiagnosticCategory.EVENT_STORE_FAILURE,
-                component=RuntimeDiagnosticComponent.EVENT_PUBLISHER,
-                operation=RuntimeDiagnosticOperation.PUBLISH,
-                error=error,
-            )
+            if store_health_failure:
+                self._diagnostic_fallback.record(
+                    category=RuntimeDiagnosticCategory.EVENT_STORE_FAILURE,
+                    component=RuntimeDiagnosticComponent.EVENT_PUBLISHER,
+                    operation=RuntimeDiagnosticOperation.PUBLISH,
+                    error=error,
+                )
             raise
 
         for result in results:
