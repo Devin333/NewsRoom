@@ -34,7 +34,11 @@ _MCP_NOT_FOUND_TYPES = frozenset(
 )
 _MCP_SAFE_ERROR_TYPES = _ARTIFACT_ERROR_TYPES | _MCP_NOT_FOUND_TYPES | frozenset(
     {
+        "EventAuthorizationError",
         "EventContractError",
+        "EventOperationCapabilityUnavailableError",
+        "EventOperationNotFoundError",
+        "EventRuntimeError",
         "EventStoreUnavailableError",
         "PermissionError",
         "ValueError",
@@ -46,9 +50,15 @@ _FIXED_MCP_MESSAGES = {
     "ArtifactPathError": "invalid artifact path",
     "ArtifactStoreMetadataError": "artifact integrity verification failed",
     "ArtifactStoreRequiredError": "artifact integrity verification failed",
+    "EventAuthorizationError": "event operator action is not authorized",
     "EventContractError": (
         "event operator data conflicts with the durable event contract"
     ),
+    "EventOperationCapabilityUnavailableError": (
+        "event operator capability is unavailable"
+    ),
+    "EventOperationNotFoundError": "event operator resource not found",
+    "EventRuntimeError": "event runtime operation failed",
     "EventStoreUnavailableError": "event store is unavailable",
     "PermissionError": "MCP request is not authorized",
     "ValueError": "invalid MCP request",
@@ -149,10 +159,9 @@ def project_public_error(
     if diagnostic_hook is not None:
         diagnostic_hook(diagnostic)
     else:
-        _LOGGER.exception(
+        _LOGGER.error(
             "unknown runtime error projected",
             extra={"public_error": diagnostic},
-            exc_info=(type(exc), exc, exc.__traceback__),
         )
     return PublicErrorProjection(
         error_type=_INTERNAL_ERROR_TYPES[context],

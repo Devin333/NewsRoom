@@ -1,4 +1,7 @@
+import logging
 import re
+
+import pytest
 
 from framework.artifacts import ArtifactChecksumMismatchError
 from framework.shared.public_errors import (
@@ -33,6 +36,16 @@ def test_unknown_exception_projects_fixed_public_fields_and_safe_diagnostic() ->
     ]
     assert secret not in str(projection.to_dict())
     assert secret not in str(diagnostics)
+
+
+def test_unknown_exception_never_writes_raw_exception_details_to_log(caplog) -> None:
+    secret = "postgresql://operator:password@db.internal/news"
+
+    with caplog.at_level(logging.ERROR, logger="newsroom.public_errors"):
+        projection = project_public_error(RuntimeError(secret), context="mcp")
+
+    assert projection.error_type == "MCPInternalError"
+    assert secret not in caplog.text
 
 
 def test_approved_artifact_integrity_error_preserves_typed_contract() -> None:
@@ -144,6 +157,38 @@ def test_mcp_projection_preserves_fixed_durable_event_error_contracts() -> None:
     }
     assert secret not in str(unavailable)
     assert secret not in str(conflict)
+
+
+@pytest.mark.parametrize(
+    ("error_type", "message"),
+    (
+        ("EventAuthorizationError", "event operator action is not authorized"),
+        (
+            "EventOperationCapabilityUnavailableError",
+            "event operator capability is unavailable",
+        ),
+        ("EventOperationNotFoundError", "event operator resource not found"),
+        ("EventRuntimeError", "event runtime operation failed"),
+    ),
+)
+def test_mcp_projection_preserves_all_fixed_event_operator_errors(
+    error_type,
+    message,
+) -> None:
+    projected = sanitize_mcp_result_payload(
+        {
+            "success": False,
+            "error_type": error_type,
+            "error_message": "unsafe backend detail",
+        },
+        operation="call_tool",
+    )
+
+    assert projected == {
+        "success": False,
+        "error_type": error_type,
+        "error_message": message,
+    }
 
 
 def test_failed_mcp_projection_drops_all_untrusted_payload_extensions() -> None:

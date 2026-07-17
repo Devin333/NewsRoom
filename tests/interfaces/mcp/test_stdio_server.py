@@ -376,6 +376,32 @@ def test_stdio_preserves_fixed_durable_event_failure_contract() -> None:
     assert secret not in json.dumps(response)
 
 
+def test_stdio_preserves_all_fixed_event_operator_failure_contracts() -> None:
+    expected = {
+        "EventAuthorizationError": "event operator action is not authorized",
+        "EventOperationCapabilityUnavailableError": (
+            "event operator capability is unavailable"
+        ),
+        "EventOperationNotFoundError": "event operator resource not found",
+        "EventRuntimeError": "event runtime operation failed",
+    }
+
+    for error_type, error_message in expected.items():
+        response = handle_jsonrpc_request(
+            {
+                "jsonrpc": "2.0",
+                "id": error_type,
+                "method": "tools/call",
+                "params": {"name": "news.event.dead_letters.list"},
+            },
+            service=_FailedMCPService(error_type),
+        )
+
+        assert response["result"]["error_type"] == error_type
+        assert response["result"]["error_message"] == error_message
+        assert "error_id" not in response["result"]
+
+
 def test_stdio_loop_reads_and_writes_json_lines() -> None:
     input_stream = io.StringIO(
         json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}) + "\n"
