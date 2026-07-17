@@ -17,6 +17,10 @@ from framework.events import (
     EventSchemaValidationError,
     EventSecurePayloadRequiredError,
     EventSecurityError,
+    EventStoreContentionError,
+    EventStoreUnavailableError,
+    EventStreamVersionConflictError,
+    LocalRuntimeDiagnosticFallback,
     PayloadReference,
     ProducerIdentity,
     SecurityClassification,
@@ -274,7 +278,13 @@ def test_publish_strips_equal_context_duplicate_and_rejects_conflict_before_stor
 
 def test_caller_owned_unit_of_work_is_not_committed_by_runtime() -> None:
     owned = _UnitOfWork()
-    runtime = EventRuntime(store=_Store(_UnitOfWork()), schema_catalog=_catalog())
+    backend = _MetricBackend()
+    runtime = EventRuntime(
+        store=_Store(_UnitOfWork()),
+        schema_catalog=_catalog(),
+        telemetry=EventTelemetry(backend),
+        backend="sqlite",
+    )
 
     stored = runtime.publish(_request(), unit_of_work=owned)
 
@@ -282,6 +292,29 @@ def test_caller_owned_unit_of_work_is_not_committed_by_runtime() -> None:
     assert len(owned.appended) == 1
     assert owned.commits == 0
     assert owned.rollbacks == 0
+    assert backend.counters == []
+    assert backend.histograms == []
+    assert backend.gauges == []
+
+
+def test_caller_owned_unit_of_work_commit_failure_is_not_reported_as_accepted() -> None:
+    owned = _UnitOfWork(commit_error=RuntimeError("business transaction rolled back"))
+    backend = _MetricBackend()
+    runtime = EventRuntime(
+        store=_Store(_UnitOfWork()),
+        schema_catalog=_catalog(),
+        telemetry=EventTelemetry(backend),
+        backend="postgresql",
+    )
+
+    runtime.publish(_request(), unit_of_work=owned)
+    with pytest.raises(RuntimeError, match="business transaction rolled back"):
+        owned.commit()
+
+    assert owned.commits == 1
+    assert backend.counters == []
+    assert backend.histograms == []
+    assert backend.gauges == []
 
 
 def test_commit_failure_rolls_back_and_no_stored_event_is_returned() -> None:
@@ -319,36 +352,38 @@ def test_identical_duplicate_returns_original_store_assignment() -> None:
     assert unit_of_work.commits == 1
 
 
-def test_publish_records_append_latency_result_health_and_identity_collision() -> None:
+def test_publish_records_committed_append_latency_result_and_store_health() -> None:
     backend = _MetricBackend()
     telemetry = EventTelemetry(backend)
+    fallback = LocalRuntimeDiagnosticFallback()
     ticks = iter((10.0, 10.125, 20.0, 20.25))
     accepted = EventRuntime(
         store=_Store(_UnitOfWork()),
         schema_catalog=_catalog(),
         telemetry=telemetry,
+        diagnostic_fallback=fallback,
         backend="sqlite",
         monotonic=lambda: next(ticks),
     )
 
     accepted.publish(_request(source="workflow.runtime"))
 
-    collision = EventRuntime(
+    unavailable = EventRuntime(
         store=_Store(
-            _UnitOfWork(append_error=EventIdentityCollisionError("evt-publish-1"))
+            _UnitOfWork(append_error=EventStoreUnavailableError("store unavailable"))
         ),
         schema_catalog=_catalog(),
         telemetry=telemetry,
+        diagnostic_fallback=fallback,
         backend="sqlite",
         monotonic=lambda: next(ticks),
     )
-    with pytest.raises(EventIdentityCollisionError):
-        collision.publish(_request(source="workflow.runtime"))
+    with pytest.raises(EventStoreUnavailableError):
+        unavailable.publish(_request(source="workflow.runtime"))
 
     assert backend.counters == [
         ("event_append_total", 1, {"backend": "sqlite", "result": "accepted"}),
         ("event_append_total", 1, {"backend": "sqlite", "result": "failed"}),
-        ("event_identity_collision_total", 1, {"source": "workflow"}),
     ]
     assert backend.histograms == [
         ("event_append_latency_seconds", 0.125, {"backend": "sqlite"}),
@@ -358,6 +393,55 @@ def test_publish_records_append_latency_result_health_and_identity_collision() -
         ("event_store_health", 1.0, {"backend": "sqlite"}),
         ("event_store_health", 0.0, {"backend": "sqlite"}),
     ]
+    assert len(fallback) == 1
+
+
+@pytest.mark.parametrize(
+    "rejection",
+    [
+        EventIdentityCollisionError("evt-publish-1"),
+        EventStreamVersionConflictError(
+            stream_id="run:publish-1",
+            expected_last_sequence=2,
+            actual_last_sequence=3,
+        ),
+        EventStoreContentionError("retry wider transaction"),
+    ],
+    ids=("identity-collision", "stream-version-conflict", "contention"),
+)
+def test_healthy_append_rejection_does_not_mark_store_unhealthy(
+    rejection: Exception,
+) -> None:
+    backend = _MetricBackend()
+    fallback = LocalRuntimeDiagnosticFallback()
+    runtime = EventRuntime(
+        store=_Store(_UnitOfWork(append_error=rejection)),
+        schema_catalog=_catalog(),
+        telemetry=EventTelemetry(backend),
+        diagnostic_fallback=fallback,
+        backend="sqlite",
+        monotonic=iter((10.0, 10.25)).__next__,
+    )
+
+    with pytest.raises(type(rejection)):
+        runtime.publish(_request(source="workflow.runtime"))
+
+    assert backend.counters[0] == (
+        "event_append_total",
+        1,
+        {"backend": "sqlite", "result": "failed"},
+    )
+    if isinstance(rejection, EventIdentityCollisionError):
+        assert backend.counters[1:] == [
+            ("event_identity_collision_total", 1, {"source": "workflow"})
+        ]
+    else:
+        assert backend.counters[1:] == []
+    assert backend.histograms == [
+        ("event_append_latency_seconds", 0.25, {"backend": "sqlite"})
+    ]
+    assert backend.gauges == []
+    assert fallback.snapshot() == ()
 
 
 def test_payload_reference_requires_schema_opt_in_and_matching_content_type() -> None:

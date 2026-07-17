@@ -17,7 +17,12 @@ from framework.events.canonical import (
     assert_same_event_identity,
     normalize_canonical_json,
 )
-from framework.events.errors import EventContractError, EventIdentityCollisionError
+from framework.events.errors import (
+    EventContractError,
+    EventIdentityCollisionError,
+    EventStoreContentionError,
+    EventStreamVersionConflictError,
+)
 from framework.events.runtime.fallback import (
     LocalRuntimeDiagnosticFallback,
     RuntimeDiagnosticCategory,
@@ -240,7 +245,9 @@ class EventRuntime:
             max_inline_payload_bytes=policy.max_inline_payload_bytes,
         )
 
-        append_started = _safe_monotonic(self._monotonic)
+        # Only the transaction owner can observe whether an append became durable.
+        owns_commit = unit_of_work is None
+        append_started = _safe_monotonic(self._monotonic) if owns_commit else None
         try:
             if unit_of_work is not None:
                 result = _append_verified(
@@ -257,36 +264,41 @@ class EventRuntime:
                     )
                     owned_unit_of_work.commit()
         except Exception as error:
-            self._record_append_metrics(
-                result="failed",
-                started_at=append_started,
-            )
-            self._telemetry.record_gauge(
-                "event_store_health",
-                0,
-                labels={"backend": self._backend},
-            )
+            if owns_commit:
+                self._record_append_metrics(
+                    result="failed",
+                    started_at=append_started,
+                )
+            store_health_failure = _is_store_health_failure(error)
+            if store_health_failure:
+                self._telemetry.record_gauge(
+                    "event_store_health",
+                    0,
+                    labels={"backend": self._backend},
+                )
             if isinstance(error, EventIdentityCollisionError):
                 self._telemetry.add_counter(
                     "event_identity_collision_total",
                     labels={"source": _source_metric_bucket(event.source)},
                 )
-            self._diagnostic_fallback.record(
-                category=RuntimeDiagnosticCategory.EVENT_STORE_FAILURE,
-                component=RuntimeDiagnosticComponent.EVENT_PUBLISHER,
-                operation=RuntimeDiagnosticOperation.PUBLISH,
-                error=error,
-            )
+            if store_health_failure:
+                self._diagnostic_fallback.record(
+                    category=RuntimeDiagnosticCategory.EVENT_STORE_FAILURE,
+                    component=RuntimeDiagnosticComponent.EVENT_PUBLISHER,
+                    operation=RuntimeDiagnosticOperation.PUBLISH,
+                    error=error,
+                )
             raise
-        self._record_append_metrics(
-            result="accepted" if result.created else "duplicate",
-            started_at=append_started,
-        )
-        self._telemetry.record_gauge(
-            "event_store_health",
-            1,
-            labels={"backend": self._backend},
-        )
+        if owns_commit:
+            self._record_append_metrics(
+                result="accepted" if result.created else "duplicate",
+                started_at=append_started,
+            )
+            self._telemetry.record_gauge(
+                "event_store_health",
+                1,
+                labels={"backend": self._backend},
+            )
         return result.event
 
     def _record_append_metrics(
@@ -382,6 +394,17 @@ def _safe_monotonic(clock: Callable[[], float]) -> float | None:
     except Exception:
         return None
     return value if isfinite(value) else None
+
+
+def _is_store_health_failure(error: BaseException) -> bool:
+    return not isinstance(
+        error,
+        (
+            EventIdentityCollisionError,
+            EventStoreContentionError,
+            EventStreamVersionConflictError,
+        ),
+    )
 
 
 __all__ = ["EventPublishRequest", "EventRuntime"]
