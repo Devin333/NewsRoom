@@ -119,7 +119,8 @@ def run_staging_rollback(
     native_root = root / "native"
     technical_root = root / "technical"
     artifacts_root = technical_root / "artifacts"
-    for path in (releases_root, native_root, artifacts_root):
+    effect_root = root / "effect"
+    for path in (releases_root, native_root, artifacts_root, effect_root):
         path.mkdir(parents=True, exist_ok=False)
 
     drill_id = _required_text(local.get("drill_id"), "drill_id")
@@ -324,6 +325,8 @@ def run_staging_rollback(
         _write_failure_evidence(root, error)
         if database_created:
             _drop_staging_database(admin_dsn, database_name)
+        for release_root in (candidate_root, rollback_root):
+            _remove_worktree(controller_root, release_root)
         raise
 
 
@@ -518,6 +521,24 @@ def _add_worktree(repository: Path, target: Path, digest: str) -> None:
         raise StagingRollbackError("release_worktree_create_failed")
 
 
+def _remove_worktree(repository: Path, target: Path) -> None:
+    if not target.exists():
+        return
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "worktree",
+            "remove",
+            "--force",
+            str(target),
+        ],
+        check=False,
+        capture_output=True,
+    )
+
+
 def _verify_release_worktree(root: Path, digest: str) -> None:
     _require_path_without_reparse(root, must_exist=True)
     _require(_git(root, "rev-parse", "HEAD") == digest, "release_worktree_digest_mismatch")
@@ -566,7 +587,8 @@ def _run_worker(
     _require(len(stdout) <= _MAX_WORKER_OUTPUT_BYTES, "worker_stdout_too_large")
     _require(len(stderr) <= _MAX_WORKER_OUTPUT_BYTES, "worker_stderr_too_large")
     if process.returncode != 0:
-        raise StagingRollbackError(f"worker_failed:{command}")
+        reason = _worker_error_reason(stderr, command=command)
+        raise StagingRollbackError(f"worker_failed:{command}:{reason}")
     _require(not stderr.strip(), "worker_unexpected_stderr")
     result = _parse_worker_result(stdout, command=command, release_digest=release_digest)
     _require(result["process_id"] == process.pid, "worker_pid_mismatch")
@@ -701,6 +723,28 @@ def _parse_worker_result(
     _mapping(result.get("facts"), "worker.facts")
     _require(not _contains_boolean(result), "worker_reported_gate_boolean")
     return result
+
+
+def _worker_error_reason(payload: bytes, *, command: str) -> str:
+    if len(payload) > _MAX_WORKER_OUTPUT_BYTES:
+        return "stderr_too_large"
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, StagingRollbackError):
+        return "invalid_error_payload"
+    if not isinstance(value, Mapping):
+        return "invalid_error_payload"
+    if value.get("schema") != WORKER_SCHEMA or value.get("command") != command:
+        return "invalid_error_payload"
+    if set(value) != {"schema", "command", "error_type", "reason_class"}:
+        return "invalid_error_payload"
+    reason = value.get("reason_class")
+    if not isinstance(reason, str) or re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", reason) is None:
+        return "invalid_error_payload"
+    return reason
 
 
 def _contains_boolean(value: Any) -> bool:

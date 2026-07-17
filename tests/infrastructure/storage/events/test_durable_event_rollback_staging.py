@@ -40,6 +40,26 @@ def test_worker_protocol_accepts_only_release_observations_and_facts() -> None:
     assert result["facts"] == {"event_count": 20}
 
 
+def test_worker_error_reason_allows_only_bounded_protocol_codes() -> None:
+    payload = json.dumps(
+        {
+            "schema": worker.WORKER_SCHEMA,
+            "command": "initialize",
+            "error_type": "StagingWorkerError",
+            "reason_class": "path_missing",
+        }
+    ).encode("utf-8")
+
+    assert staging._worker_error_reason(payload, command="initialize") == "path_missing"
+    assert (
+        staging._worker_error_reason(
+            b'{"reason_class":"postgresql://secret"}',
+            command="initialize",
+        )
+        == "invalid_error_payload"
+    )
+
+
 def test_worker_config_rejects_duplicate_fields_and_paths_outside_workspace(
     tmp_path,
 ) -> None:
