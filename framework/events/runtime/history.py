@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import dis
 import inspect
 from collections.abc import Callable, Iterable, Mapping
@@ -70,10 +71,12 @@ _PURE_HISTORY_FORBIDDEN_OPCODES = frozenset(
         "IMPORT_NAME",
         "IMPORT_STAR",
         "LOAD_BUILD_CLASS",
-        "MAKE_FUNCTION",
         "STORE_DEREF",
         "STORE_GLOBAL",
     }
+)
+_PURE_HISTORY_ALLOWED_GENERATED_CODE_NAMES = frozenset(
+    {"<dictcomp>", "<genexpr>", "<listcomp>", "<setcomp>"}
 )
 _PURE_HISTORY_FORBIDDEN_NAMES = frozenset(
     {
@@ -1213,27 +1216,11 @@ def _audit_history_function_dependencies(
         if name not in _PURE_HISTORY_ALLOWED_BUILTINS:
             raise ValueError(f"{field_name} uses forbidden builtin: {name}")
     for name, dependency in {**closure.globals, **closure.nonlocals}.items():
-        if dependency in _PURE_HISTORY_TRUSTED_FUNCTIONS:
-            continue
-        if isinstance(dependency, FunctionType):
-            _audit_history_function_dependencies(
-                dependency,
-                field_name=field_name,
-                seen=seen,
-            )
-            continue
-        if (
-            dependency is DeterministicCommand
-            or dependency in {Mapping, CanonicalValue}
-            or _is_history_immutable(dependency)
-        ):
-            continue
-        if isinstance(dependency, ModuleType):
-            kind = "module"
-        else:
-            kind = type(dependency).__name__
-        raise ValueError(
-            f"{field_name} captures forbidden dependency {name}: {kind}"
+        _audit_history_dependency(
+            name,
+            dependency,
+            field_name=field_name,
+            seen=seen,
         )
     for default in function.__defaults__ or ():
         if not _is_history_immutable(default):
@@ -1245,7 +1232,36 @@ def _audit_history_function_dependencies(
         function.__code__,
         field_name=field_name,
         seen=set(),
+        dependency_seen=seen,
+        global_namespace=function.__globals__,
     )
+
+
+def _audit_history_dependency(
+    name: str,
+    dependency: Any,
+    *,
+    field_name: str,
+    seen: set[int],
+) -> None:
+    if any(dependency is trusted for trusted in _PURE_HISTORY_TRUSTED_FUNCTIONS):
+        return
+    if isinstance(dependency, FunctionType):
+        _audit_history_function_dependencies(
+            dependency,
+            field_name=field_name,
+            seen=seen,
+        )
+        return
+    if (
+        dependency is DeterministicCommand
+        or dependency is Mapping
+        or dependency is CanonicalValue
+        or _is_history_immutable(dependency)
+    ):
+        return
+    kind = "module" if isinstance(dependency, ModuleType) else type(dependency).__name__
+    raise ValueError(f"{field_name} captures forbidden dependency {name}: {kind}")
 
 
 def _audit_history_code(
@@ -1253,12 +1269,27 @@ def _audit_history_code(
     *,
     field_name: str,
     seen: set[int],
+    dependency_seen: set[int],
+    global_namespace: Mapping[str, Any],
 ) -> None:
     identity = id(code)
     if identity in seen:
         return
     seen.add(identity)
-    for instruction in dis.get_instructions(code):
+    instructions = tuple(dis.get_instructions(code))
+    generated_code = tuple(
+        instruction.argval
+        for instruction in instructions
+        if instruction.opname == "LOAD_CONST"
+        and isinstance(instruction.argval, CodeType)
+    )
+    if any(instruction.opname == "MAKE_FUNCTION" for instruction in instructions):
+        if not generated_code or any(
+            nested.co_name not in _PURE_HISTORY_ALLOWED_GENERATED_CODE_NAMES
+            for nested in generated_code
+        ):
+            raise ValueError(f"{field_name} uses forbidden operation: MAKE_FUNCTION")
+    for instruction in instructions:
         name = str(instruction.argval) if instruction.argval is not None else ""
         if instruction.opname in _PURE_HISTORY_FORBIDDEN_OPCODES:
             raise ValueError(
@@ -1268,6 +1299,19 @@ def _audit_history_code(
             name.startswith("__") and name.endswith("__")
         ):
             raise ValueError(f"{field_name} uses forbidden reflection name: {name}")
+        if instruction.opname in {"LOAD_GLOBAL", "LOAD_NAME"}:
+            if name in global_namespace:
+                _audit_history_dependency(
+                    name,
+                    global_namespace[name],
+                    field_name=field_name,
+                    seen=dependency_seen,
+                )
+            elif hasattr(builtins, name):
+                if name not in _PURE_HISTORY_ALLOWED_BUILTINS:
+                    raise ValueError(f"{field_name} uses forbidden builtin: {name}")
+            else:
+                raise ValueError(f"{field_name} uses unresolved global: {name}")
         if instruction.opname == "LOAD_CONST" and isinstance(
             instruction.argval,
             CodeType,
@@ -1276,6 +1320,8 @@ def _audit_history_code(
                 instruction.argval,
                 field_name=field_name,
                 seen=seen,
+                dependency_seen=dependency_seen,
+                global_namespace=global_namespace,
             )
 
 
