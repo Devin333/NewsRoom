@@ -661,8 +661,18 @@ def test_conformance_retirement_cancellation_is_bounded_audited_and_fenced(
     )
     first = case.store.cancel_retired_subscription(first_request)
     exact_retry = case.store.cancel_retired_subscription(first_request)
+    reauthorized_retry = case.store.cancel_retired_subscription(
+        replace(
+            first_request,
+            requested_at=first_request.requested_at + timedelta(seconds=1),
+            authorization_evidence_ref=(
+                first_request.authorization_evidence_ref + ":reauthorized"
+            ),
+        )
+    )
 
     assert exact_retry == first
+    assert reauthorized_retry == first
     assert first.cancelled_count == 2
     assert first.remaining_nonterminal_count == 2
     assert first.completed is False
@@ -771,6 +781,57 @@ def test_conformance_retirement_cancellation_is_bounded_audited_and_fenced(
         )
     ).records
     assert later.event_id not in {delivery.event_id for delivery in after_retirement}
+
+
+def test_conformance_retirement_cancellation_uses_byte_stable_stream_order(
+    event_store_case: EventStoreCase,
+) -> None:
+    case = event_store_case
+    subscription = case.store.register_subscription(
+        DurableSubscription(
+            subscription_id=f"{case.scope}:retirement-order",
+            subscription_version=1,
+            consumer_id=f"{case.scope}:retirement-order-consumer",
+            tenant_id=_tenant_id(case.scope),
+        )
+    )
+    stream_ids = (
+        f"{case.scope}:stream:a",
+        f"{case.scope}:stream:Z",
+        f"{case.scope}:stream:\u00e9",
+        f"{case.scope}:stream:\u03a9",
+    )
+    for index, stream_id in enumerate(reversed(stream_ids), start=100):
+        case.store.append_event(
+            _candidate(case.scope, index=index, stream_id=stream_id)
+        )
+    retired_at = (subscription.updated_at or case.now()) + timedelta(seconds=1)
+    case.store.set_subscription_status(
+        subscription.key,
+        SubscriptionStatus.RETIRED,
+        changed_at=retired_at,
+        reason="retire multi-stream ordering fixture",
+    )
+
+    report = case.store.cancel_retired_subscription(
+        RetirementCancellationRequest(
+            cancellation_id=f"{case.scope}:retirement-order-command",
+            subscription=subscription.key,
+            requested_at=max(case.now(), retired_at),
+            operator_id=f"{case.scope}:operator",
+            operator_reason="cancel streams in byte-stable order",
+            authorization_evidence_ref=f"authz:{case.scope}:retirement-order",
+            tenant_id=subscription.tenant_id,
+            limit=len(stream_ids),
+        )
+    )
+
+    expected = sorted(stream_ids, key=lambda value: value.encode("utf-8"))
+    assert [item.stream_id for item in report.items] == expected
+    assert case.store.get_retirement_cancellation_report(
+        report.cancellation_id,
+        tenant_id=subscription.tenant_id,
+    ) == report
 
 
 def test_conformance_retirement_cancellation_never_rewinds_for_late_repair(

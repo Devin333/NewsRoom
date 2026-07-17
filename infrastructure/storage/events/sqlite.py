@@ -1350,7 +1350,7 @@ class SQLiteEventStore:
                 "AND delivery.state IN ('pending', 'claimed', 'retry_wait') "
                 "AND state.retirement_watermark IS NOT NULL "
                 "AND delivery.stream_sequence <= state.retirement_watermark "
-                "ORDER BY delivery.stream_id, delivery.stream_sequence, "
+                "ORDER BY delivery.stream_id COLLATE BINARY, delivery.stream_sequence, "
                 "delivery.delivery_generation, delivery.delivery_id LIMIT ?",
                 (
                     tenant_scope,
@@ -3792,8 +3792,8 @@ def _select_retirement_cancellation_report(
         "FROM event_retirement_cancellation_items AS item "
         "JOIN event_deliveries AS delivery ON delivery.delivery_id = item.delivery_id "
         "WHERE item.tenant_scope = ? AND item.cancellation_id = ? "
-        "ORDER BY item.stream_id, item.stream_sequence, item.delivery_generation, "
-        "item.delivery_id LIMIT ?",
+        "ORDER BY item.stream_id COLLATE BINARY, item.stream_sequence, "
+        "item.delivery_generation, item.delivery_id COLLATE BINARY LIMIT ?",
         (tenant_scope, cancellation_id, item_limit + 1),
     ).fetchall()
     if len(item_rows) > item_limit:
@@ -3915,20 +3915,16 @@ def _retirement_cancellation_identity(
         return (
             value.cancellation_id,
             value.subscription,
-            value.requested_at,
             value.operator_id,
             value.operator_reason,
-            value.authorization_evidence_ref,
             value.tenant_id,
             value.limit,
         )
     return (
         value.cancellation_id,
         value.subscription,
-        value.requested_at,
         value.operator_id,
         value.operator_reason,
-        value.authorization_evidence_ref,
         value.tenant_id,
         value.item_limit,
     )

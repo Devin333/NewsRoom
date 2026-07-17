@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import inspect
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from threading import Barrier, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -72,6 +74,7 @@ class _Store:
         )
         self.dead_letter = _dead_letter()
         self.retirement_cancellation = None
+        self.retirement_cancellation_lock = Lock()
         self.subscription = DurableSubscription(
             subscription_id="subscription-1",
             subscription_version=1,
@@ -157,21 +160,22 @@ class _Store:
         return None
 
     def cancel_retired_subscription(self, request):
-        report = RetirementCancellationReport(
-            cancellation_id=request.cancellation_id,
-            subscription=request.subscription,
-            requested_at=request.requested_at,
-            cancelled_at=request.requested_at,
-            operator_id=request.operator_id,
-            operator_reason=request.operator_reason,
-            authorization_evidence_ref=request.authorization_evidence_ref,
-            item_limit=request.limit,
-            remaining_nonterminal_count=0,
-            items=(),
-            tenant_id=request.tenant_id,
-        )
-        self.retirement_cancellation = report
-        return report
+        with self.retirement_cancellation_lock:
+            if self.retirement_cancellation is None:
+                self.retirement_cancellation = RetirementCancellationReport(
+                    cancellation_id=request.cancellation_id,
+                    subscription=request.subscription,
+                    requested_at=request.requested_at,
+                    cancelled_at=request.requested_at,
+                    operator_id=request.operator_id,
+                    operator_reason=request.operator_reason,
+                    authorization_evidence_ref=request.authorization_evidence_ref,
+                    item_limit=request.limit,
+                    remaining_nonterminal_count=0,
+                    items=(),
+                    tenant_id=request.tenant_id,
+                )
+            return self.retirement_cancellation
 
 
 class _DeliveryRuntime:
@@ -348,6 +352,76 @@ def test_retirement_cancellation_facade_returns_bounded_audit_dto(tmp_path) -> N
     assert json.loads(json.dumps(cancelled)) == cancelled
 
 
+def test_retirement_cancellation_retry_reauthorizes_across_actor_requests(
+    tmp_path,
+) -> None:
+    store = _Store()
+    first = build_event_operator_service(
+        _actor("events:operate", "events:read", request_id="request-1"),
+        tenant_id="tenant-a",
+        artifact_root=tmp_path,
+        event_storage=_storage(store),
+        clock=lambda: NOW,
+    )
+    retry = build_event_operator_service(
+        _actor("events:operate", "events:read", request_id="request-2"),
+        tenant_id="tenant-a",
+        artifact_root=tmp_path,
+        event_storage=_storage(store),
+        clock=lambda: NOW + timedelta(seconds=1),
+    )
+
+    original = first.cancel_retired_subscription(
+        "retirement-cancel-across-requests",
+        subscription_id="subscription-1",
+        subscription_version=1,
+        operator_reason="retired worker removed from service",
+        limit=10,
+    )
+    retried = retry.cancel_retired_subscription(
+        "retirement-cancel-across-requests",
+        subscription_id="subscription-1",
+        subscription_version=1,
+        operator_reason="retired worker removed from service",
+        limit=10,
+    )
+
+    assert retried == original
+
+
+def test_concurrent_application_retry_has_no_read_before_write_dependency(
+    tmp_path,
+) -> None:
+    store = _Store()
+    barrier = Barrier(8)
+
+    def cancel(index: int):
+        service = build_event_operator_service(
+            _actor(
+                "events:operate",
+                "events:read",
+                request_id=f"request-{index}",
+            ),
+            tenant_id="tenant-a",
+            artifact_root=tmp_path,
+            event_storage=_storage(store),
+            clock=lambda: NOW + timedelta(seconds=index),
+        )
+        barrier.wait(timeout=15)
+        return service.cancel_retired_subscription(
+            "retirement-cancel-concurrent-application",
+            subscription_id="subscription-1",
+            subscription_version=1,
+            operator_reason="retired worker removed from service",
+            limit=10,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        reports = tuple(executor.map(cancel, range(8)))
+
+    assert all(report == reports[0] for report in reports)
+
+
 def test_build_rejects_delivery_runtime_bound_to_another_store(tmp_path) -> None:
     store = _Store()
 
@@ -479,13 +553,13 @@ def test_public_facade_methods_cannot_accept_identity_or_time_fields() -> None:
         assert forbidden.isdisjoint(parameters)
 
 
-def _actor(*permissions: str) -> ActorContext:
+def _actor(*permissions: str, request_id: str = "request-1") -> ActorContext:
     return ActorContext(
         actor_id="operator-1",
         actor_type="user",
         roles=[],
         permissions=list(permissions),
-        request_id="request-1",
+        request_id=request_id,
     )
 
 

@@ -27,6 +27,12 @@ _CHECKSUM_PATTERN: Final = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _T = TypeVar("_T")
 
 
+def stable_text_order_key(value: str) -> bytes:
+    """Match SQLite BINARY and PostgreSQL C ordering for durable text identities."""
+
+    return value.encode("utf-8")
+
+
 def _required_text(value: str, field_name: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be a string")
@@ -1812,10 +1818,10 @@ class RetirementCancellationReport:
             raise ValueError("retirement cancellation report exceeded its item_limit")
         ordering = tuple(
             (
-                item.stream_id,
+                stable_text_order_key(item.stream_id),
                 item.stream_sequence,
                 item.delivery_generation,
-                item.delivery_id,
+                stable_text_order_key(item.delivery_id),
             )
             for item in items
         )

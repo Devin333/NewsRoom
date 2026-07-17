@@ -535,25 +535,10 @@ class EventDeliveryOperationsService:
             target=target,
         )
 
-        existing = self._store.get_retirement_cancellation_report(
-            normalized_id,
-            tenant_id=authorization.tenant_id,
-        )
-        if existing is not None and (
-            not isinstance(existing, RetirementCancellationReport)
-            or existing.cancellation_id != normalized_id
-            or existing.tenant_id != authorization.tenant_id
-        ):
-            raise EventContractError(
-                "retirement cancellation store returned another target"
-            )
-        requested_at = (
-            existing.requested_at if existing is not None else _clock_value(self._clock)
-        )
         request = RetirementCancellationRequest(
             cancellation_id=normalized_id,
             subscription=subscription,
-            requested_at=requested_at,
+            requested_at=_clock_value(self._clock),
             operator_id=authorization.principal_id,
             operator_reason=reason,
             authorization_evidence_ref=decision.authorization_evidence_ref,
@@ -579,11 +564,8 @@ class EventDeliveryOperationsService:
             not isinstance(report, RetirementCancellationReport)
             or report.cancellation_id != request.cancellation_id
             or report.subscription != request.subscription
-            or report.requested_at != request.requested_at
             or report.operator_id != request.operator_id
             or report.operator_reason != request.operator_reason
-            or report.authorization_evidence_ref
-            != request.authorization_evidence_ref
             or report.item_limit != request.limit
             or report.tenant_id != request.tenant_id
         ):

@@ -1217,11 +1217,8 @@ class DurableDeliveryRuntime:
         if (
             report.cancellation_id != request.cancellation_id
             or report.subscription != request.subscription
-            or report.requested_at != request.requested_at
             or report.operator_id != request.operator_id
             or report.operator_reason != request.operator_reason
-            or report.authorization_evidence_ref
-            != request.authorization_evidence_ref
             or report.item_limit != request.limit
             or report.tenant_id != request.tenant_id
         ):

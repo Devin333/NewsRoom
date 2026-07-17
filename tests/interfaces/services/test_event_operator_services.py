@@ -570,7 +570,7 @@ def test_retirement_cancellation_denial_and_scope_fail_before_runtime_mutation()
     assert wrong_scope_runtime.retirement_cancellation_calls == []
 
 
-def test_retirement_cancellation_retry_reuses_durable_request_time() -> None:
+def test_retirement_cancellation_retry_uses_fresh_authorization_metadata() -> None:
     store = _DeliveryStore()
     store.subscription.status = SubscriptionStatus.RETIRED
     runtime = _DeliveryRuntime()
@@ -602,7 +602,9 @@ def test_retirement_cancellation_retry_reuses_durable_request_time() -> None:
         authorization=_authorization(),
     )
 
-    assert runtime.retirement_cancellation_calls[0].requested_at == NOW
+    request = runtime.retirement_cancellation_calls[0]
+    assert request.requested_at == NOW + timedelta(days=1)
+    assert request.authorization_evidence_ref == "authz://decision/operator-1"
 
 
 def test_cross_tenant_requeue_is_rejected_before_runtime_mutation() -> None:

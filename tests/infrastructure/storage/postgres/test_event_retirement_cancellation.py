@@ -11,12 +11,15 @@ from framework.events.errors import (
     EventStoreCorruptionError,
 )
 from framework.events.runtime.models import (
+    ConsumerCheckpoint,
+    DeliveryRecord,
     DeliveryState,
     RetirementCancellationRequest,
     SubscriptionKey,
 )
 from infrastructure.storage.events.postgres import (
     PostgresDurableEventStore,
+    _checkpoint_checksum,
     _delivery_columns,
     _retirement_cancellation_report_from_postgres,
 )
@@ -160,6 +163,73 @@ def test_changed_retirement_cancellation_retry_rolls_back_with_typed_collision()
     assert connection.closed
 
 
+def test_retry_identity_excludes_fresh_authorization_audit_metadata() -> None:
+    connection = _ReportConnection(_report_row(), [_item_row()])
+    store = _store(connection)
+
+    report = store.cancel_retired_subscription(
+        replace(
+            _request(),
+            requested_at=REQUESTED_AT + timedelta(minutes=5),
+            authorization_evidence_ref="authorization:decision-2",
+        )
+    )
+
+    assert report.requested_at == REQUESTED_AT
+    assert report.authorization_evidence_ref == "authorization:decision-1"
+    assert connection.commits == 1
+    assert connection.rollbacks == 0
+
+
+def test_checkpoint_advance_scans_only_after_locked_durable_frontier() -> None:
+    existing = _checkpoint(41, event_id="event-41", updated_at=REQUESTED_AT)
+    frontier = _delivery_row(42, state="acked")
+    cursor = _CheckpointCursor(
+        start_sequence=1,
+        existing_row=_checkpoint_row(existing),
+        delivery_rows=[frontier],
+        updated_row=_checkpoint_row(
+            _checkpoint(42, event_id="event-42", updated_at=CANCELLED_AT)
+        ),
+    )
+    store = object.__new__(PostgresDurableEventStore)
+
+    result = store._advance_checkpoint(
+        cursor,
+        _delivery(42, state=DeliveryState.ACKED),
+        updated_at=CANCELLED_AT,
+    )
+
+    assert result is not None
+    assert result.highest_contiguous_terminal_sequence == 42
+    assert cursor.scan_params is not None
+    assert cursor.scan_params[-1] == 42
+    assert cursor.checkpoint_select_for_update
+
+
+def test_checkpoint_advance_without_existing_frontier_starts_at_subscription_boundary() -> None:
+    cursor = _CheckpointCursor(
+        start_sequence=7,
+        existing_row=None,
+        delivery_rows=[_delivery_row(7, state="acked")],
+        inserted_row=_checkpoint_row(
+            _checkpoint(7, event_id="event-7", updated_at=CANCELLED_AT)
+        ),
+    )
+    store = object.__new__(PostgresDurableEventStore)
+
+    result = store._advance_checkpoint(
+        cursor,
+        _delivery(7, state=DeliveryState.ACKED),
+        updated_at=CANCELLED_AT,
+    )
+
+    assert result is not None
+    assert result.highest_contiguous_terminal_sequence == 7
+    assert cursor.scan_params is not None
+    assert cursor.scan_params[-1] == 7
+
+
 def _request() -> RetirementCancellationRequest:
     return RetirementCancellationRequest(
         cancellation_id="cancel-1",
@@ -235,6 +305,98 @@ def _item_row(
     )
 
 
+def _delivery(sequence: int, *, state: DeliveryState) -> DeliveryRecord:
+    attempt_count = 0 if state is DeliveryState.PENDING else 1
+    return DeliveryRecord(
+        delivery_id=f"delivery-{sequence}",
+        event_id=f"event-{sequence}",
+        stream_id="stream-1",
+        stream_sequence=sequence,
+        subscription_id="subscription-1",
+        subscription_version=1,
+        consumer_id="consumer-1",
+        tenant_id="tenant-1",
+        state=state,
+        attempt_count=attempt_count,
+        created_at=REQUESTED_AT,
+        updated_at=CANCELLED_AT,
+    )
+
+
+def _delivery_row(sequence: int, *, state: str) -> tuple[Any, ...]:
+    record = _delivery(sequence, state=DeliveryState(state))
+    return (
+        record.delivery_id,
+        record.event_id,
+        record.stream_id,
+        record.stream_sequence,
+        record.subscription_id,
+        record.subscription_version,
+        record.consumer_id,
+        record.consumer_effect_id,
+        record.tenant_id,
+        record.delivery_generation,
+        record.state.value,
+        record.attempt_count,
+        record.available_at,
+        record.lease_owner,
+        record.lease_generation,
+        record.lease_expires_at,
+        record.first_failure_at,
+        record.last_failure_at,
+        record.reason_class,
+        record.redacted_diagnostic,
+        record.created_at,
+        record.updated_at,
+    )
+
+
+def _checkpoint(
+    sequence: int,
+    *,
+    event_id: str,
+    updated_at: datetime,
+) -> ConsumerCheckpoint:
+    checksum = _checkpoint_checksum(
+        subscription_id="subscription-1",
+        subscription_version=1,
+        stream_id="stream-1",
+        tenant_id="tenant-1",
+        sequence=sequence,
+        event_id=event_id,
+        disposition=DeliveryState.ACKED,
+        updated_at=updated_at,
+        checkpoint_version=1,
+    )
+    return ConsumerCheckpoint(
+        subscription_id="subscription-1",
+        subscription_version=1,
+        stream_id="stream-1",
+        highest_contiguous_terminal_sequence=sequence,
+        last_event_id=event_id,
+        terminal_disposition=DeliveryState.ACKED,
+        updated_at=updated_at,
+        checksum=checksum,
+        checkpoint_version=1,
+        tenant_id="tenant-1",
+    )
+
+
+def _checkpoint_row(checkpoint: ConsumerCheckpoint) -> tuple[Any, ...]:
+    return (
+        checkpoint.subscription_id,
+        checkpoint.subscription_version,
+        checkpoint.stream_id,
+        checkpoint.highest_contiguous_terminal_sequence,
+        checkpoint.last_event_id,
+        checkpoint.terminal_disposition.value,
+        checkpoint.updated_at,
+        checkpoint.checksum,
+        checkpoint.checkpoint_version,
+        checkpoint.tenant_id,
+    )
+
+
 class _ReportCursor:
     def __init__(self, *, item_rows: list[tuple[Any, ...]]) -> None:
         self.item_rows = item_rows
@@ -256,6 +418,57 @@ class _ReportCursor:
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return list(self.item_rows)
+
+
+class _CheckpointCursor:
+    def __init__(
+        self,
+        *,
+        start_sequence: int,
+        existing_row: tuple[Any, ...] | None,
+        delivery_rows: list[tuple[Any, ...]],
+        inserted_row: tuple[Any, ...] | None = None,
+        updated_row: tuple[Any, ...] | None = None,
+    ) -> None:
+        self.start_sequence = start_sequence
+        self.existing_row = existing_row
+        self.delivery_rows = delivery_rows
+        self.inserted_row = inserted_row
+        self.updated_row = updated_row
+        self.current = ""
+        self.scan_params: tuple[Any, ...] | None = None
+        self.checkpoint_select_for_update = False
+
+    def execute(self, query: object, params: object = None) -> None:
+        normalized = " ".join(str(query).split())
+        self.current = normalized
+        if (
+            "FROM event_consumer_checkpoints" in normalized
+            and "FOR UPDATE" in normalized
+        ):
+            self.checkpoint_select_for_update = True
+        if (
+            "FROM event_deliveries" in normalized
+            and "delivery_generation = 1" in normalized
+        ):
+            assert isinstance(params, tuple)
+            self.scan_params = params
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        if "SELECT start_sequence" in self.current:
+            return (self.start_sequence,)
+        if "FROM event_consumer_checkpoints" in self.current:
+            return self.existing_row
+        if self.current.startswith("INSERT INTO event_consumer_checkpoints"):
+            return self.inserted_row
+        if self.current.startswith("UPDATE event_consumer_checkpoints"):
+            return self.updated_row
+        raise AssertionError(f"unexpected fetchone query: {self.current}")
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        if "FROM event_deliveries" not in self.current:
+            raise AssertionError(f"unexpected fetchall query: {self.current}")
+        return list(self.delivery_rows)
 
 
 class _TransactionCursor(_ReportCursor):

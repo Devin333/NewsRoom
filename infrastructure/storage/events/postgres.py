@@ -700,8 +700,10 @@ class PostgresDurableEventStore:
                           AND delivery.state IN ('pending', 'claimed', 'retry_wait')
                           AND state.retirement_watermark IS NOT NULL
                           AND delivery.stream_sequence <= state.retirement_watermark
-                        ORDER BY delivery.stream_id, delivery.stream_sequence,
-                                 delivery.delivery_generation, delivery.delivery_id
+                        ORDER BY delivery.stream_id COLLATE "C",
+                                 delivery.stream_sequence,
+                                 delivery.delivery_generation,
+                                 delivery.delivery_id COLLATE "C"
                         LIMIT %s
                         FOR UPDATE OF delivery
                         """,
@@ -2823,6 +2825,13 @@ class PostgresDurableEventStore:
         *,
         updated_at: datetime,
     ) -> ConsumerCheckpoint | None:
+        tenant_scope = _tenant_scope(settled.tenant_id)
+        checkpoint_params = (
+            tenant_scope,
+            settled.subscription_id,
+            settled.subscription_version,
+            settled.stream_id,
+        )
         cursor.execute(
             """
             SELECT start_sequence
@@ -2833,12 +2842,7 @@ class PostgresDurableEventStore:
               AND stream_id = %s
             FOR SHARE
             """,
-            (
-                _tenant_scope(settled.tenant_id),
-                settled.subscription_id,
-                settled.subscription_version,
-                settled.stream_id,
-            ),
+            checkpoint_params,
         )
         state_row = cursor.fetchone()
         if state_row is None:
@@ -2846,6 +2850,30 @@ class PostgresDurableEventStore:
                 "delivery checkpoint has no subscription stream state"
             )
         start_sequence = int(state_row[0])
+        cursor.execute(
+            f"""
+            SELECT {_checkpoint_columns()}
+            FROM event_consumer_checkpoints
+            WHERE tenant_scope = %s
+              AND subscription_id = %s
+              AND subscription_version = %s
+              AND stream_id = %s
+            FOR UPDATE
+            """,
+            checkpoint_params,
+        )
+        existing_row = cursor.fetchone()
+        existing = (
+            _checkpoint_from_row(existing_row) if existing_row is not None else None
+        )
+        scan_sequence = start_sequence
+        if existing is not None:
+            existing_sequence = existing.highest_contiguous_terminal_sequence
+            if existing_sequence is None:
+                raise EventStoreCorruptionError(
+                    "persisted checkpoint frontier is incomplete"
+                )
+            scan_sequence = max(start_sequence, existing_sequence + 1)
         cursor.execute(
             f"""
             SELECT {_delivery_columns()}
@@ -2860,11 +2888,11 @@ class PostgresDurableEventStore:
             FOR SHARE
             """,
             (
-                _tenant_scope(settled.tenant_id),
+                tenant_scope,
                 settled.subscription_id,
                 settled.subscription_version,
                 settled.stream_id,
-                start_sequence,
+                scan_sequence,
             ),
         )
         frontier: DeliveryRecord | None = None
@@ -2874,24 +2902,7 @@ class PostgresDurableEventStore:
                 break
             frontier = delivery
         if frontier is None:
-            cursor.execute(
-                f"""
-                SELECT {_checkpoint_columns()}
-                FROM event_consumer_checkpoints
-                WHERE tenant_scope = %s
-                  AND subscription_id = %s
-                  AND subscription_version = %s
-                  AND stream_id = %s
-                """,
-                (
-                    _tenant_scope(settled.tenant_id),
-                    settled.subscription_id,
-                    settled.subscription_version,
-                    settled.stream_id,
-                ),
-            )
-            existing = cursor.fetchone()
-            return _checkpoint_from_row(existing) if existing is not None else None
+            return existing
 
         checksum = _checkpoint_checksum(
             subscription_id=frontier.subscription_id,
@@ -2914,14 +2925,7 @@ class PostgresDurableEventStore:
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
             ON CONFLICT (
                 tenant_scope, subscription_id, subscription_version, stream_id
-            ) DO UPDATE SET
-                highest_contiguous_terminal_sequence =
-                    EXCLUDED.highest_contiguous_terminal_sequence,
-                last_event_id = EXCLUDED.last_event_id,
-                terminal_disposition = EXCLUDED.terminal_disposition,
-                updated_at = EXCLUDED.updated_at,
-                checksum = EXCLUDED.checksum,
-                checkpoint_version = EXCLUDED.checkpoint_version
+            ) DO NOTHING
             RETURNING {_checkpoint_columns()}
             """,
             (
@@ -2938,9 +2942,35 @@ class PostgresDurableEventStore:
         )
         checkpoint_row = cursor.fetchone()
         if checkpoint_row is None:
-            raise EventStoreCorruptionError(
-                "checkpoint upsert returned no durable row"
+            cursor.execute(
+                f"""
+                UPDATE event_consumer_checkpoints
+                SET highest_contiguous_terminal_sequence = %s,
+                    last_event_id = %s,
+                    terminal_disposition = %s,
+                    updated_at = %s,
+                    checksum = %s,
+                    checkpoint_version = 1
+                WHERE tenant_scope = %s
+                  AND subscription_id = %s
+                  AND subscription_version = %s
+                  AND stream_id = %s
+                  AND highest_contiguous_terminal_sequence < %s
+                RETURNING {_checkpoint_columns()}
+                """,
+                (
+                    frontier.stream_sequence,
+                    frontier.event_id,
+                    frontier.state.value,
+                    updated_at,
+                    checksum,
+                    *checkpoint_params,
+                    frontier.stream_sequence,
+                ),
             )
+            checkpoint_row = cursor.fetchone()
+        if checkpoint_row is None:
+            raise EventStoreCorruptionError("checkpoint frontier did not advance")
         return _checkpoint_from_row(checkpoint_row)
 
     def _register_subscription_in_transaction(
@@ -4318,8 +4348,8 @@ def _retirement_cancellation_report_from_postgres(
         JOIN event_deliveries AS deliveries
           ON deliveries.delivery_id = items.delivery_id
         WHERE items.tenant_scope = %s AND items.cancellation_id = %s
-        ORDER BY items.stream_id, items.stream_sequence,
-                 items.delivery_generation, items.delivery_id
+        ORDER BY items.stream_id COLLATE "C", items.stream_sequence,
+                 items.delivery_generation, items.delivery_id COLLATE "C"
         LIMIT %s
         """,
         (str(row[2]), str(row[0]), item_limit + 1),
@@ -4439,20 +4469,16 @@ def _retirement_cancellation_identity(
         return (
             value.cancellation_id,
             value.subscription,
-            value.requested_at,
             value.operator_id,
             value.operator_reason,
-            value.authorization_evidence_ref,
             value.tenant_id,
             value.limit,
         )
     return (
         value.cancellation_id,
         value.subscription,
-        value.requested_at,
         value.operator_id,
         value.operator_reason,
-        value.authorization_evidence_ref,
         value.tenant_id,
         value.item_limit,
     )
