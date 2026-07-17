@@ -17,6 +17,7 @@ from typing import Any
 
 
 WORKER_SCHEMA = "newsroom.durable-event-rollback-stage-worker/v1"
+CRASH_HANDSHAKE_SCHEMA = "newsroom.durable-event-rollback-crash-handshake/v1"
 CONFIG_SCHEMA = "newsroom.durable-event-rollback-staging-config/v1"
 CRASH_EXIT_CODE = 86
 STAGING_DSN_ENV = "NEWS_ROLLBACK_STAGING_DSN"
@@ -1114,6 +1115,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             "project-rollback": lambda value: _project(value, role="rollback"),
             "negative-gates": _negative_gates,
         }
+        if args.command == "crash-effect":
+            print(
+                json.dumps(
+                    {
+                        "schema": CRASH_HANDSHAKE_SCHEMA,
+                        "command": args.command,
+                        "release_digest": args.expected_release,
+                        "process_id": os.getpid(),
+                        "started_at": _utc_text(started_at),
+                    },
+                    ensure_ascii=True,
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
         facts = commands[args.command](config)
         result = {
             "schema": WORKER_SCHEMA,

@@ -60,6 +60,24 @@ def test_worker_error_reason_allows_only_bounded_protocol_codes() -> None:
     )
 
 
+def test_crash_handshake_reports_the_actual_worker_pid() -> None:
+    digest = "a" * 40
+    payload = {
+        "schema": worker.CRASH_HANDSHAKE_SCHEMA,
+        "command": "crash-effect",
+        "release_digest": digest,
+        "process_id": 4321,
+        "started_at": "2026-07-17T00:00:00Z",
+    }
+
+    result = staging._parse_crash_handshake(
+        json.dumps(payload).encode("utf-8"),
+        release_digest=digest,
+    )
+
+    assert result["process_id"] == 4321
+
+
 def test_worker_config_rejects_duplicate_fields_and_paths_outside_workspace(
     tmp_path,
 ) -> None:

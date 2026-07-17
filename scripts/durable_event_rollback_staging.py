@@ -23,6 +23,7 @@ from framework.shared.json import stable_json_dumps
 from scripts import durable_event_rollback_drill as rollback_verifier
 from scripts.durable_event_rollback_stage_worker import (
     CONFIG_SCHEMA,
+    CRASH_HANDSHAKE_SCHEMA,
     CRASH_EXIT_CODE,
     EFFECT_ID,
     EFFECT_SUBSCRIPTION_ID,
@@ -591,7 +592,7 @@ def _run_worker(
         raise StagingRollbackError(f"worker_failed:{command}:{reason}")
     _require(not stderr.strip(), "worker_unexpected_stderr")
     result = _parse_worker_result(stdout, command=command, release_digest=release_digest)
-    _require(result["process_id"] == process.pid, "worker_pid_mismatch")
+    result["launcher_process_id"] = process.pid
     _wait_for_application_sessions_zero(
         staging_dsn,
         application_name,
@@ -610,7 +611,6 @@ def _run_crash_worker(
 ) -> dict[str, Any]:
     command = "crash-effect"
     application_name = f"newsroom_rollback_candidate_crash_{uuid4().hex[:8]}"
-    started_at = datetime.now(UTC)
     process = subprocess.Popen(
         [
             sys.executable,
@@ -638,7 +638,7 @@ def _run_crash_worker(
         raise StagingRollbackError("crash_worker_timeout") from error
     completed_at = datetime.now(UTC)
     _require(process.returncode == CRASH_EXIT_CODE, "effect_process_did_not_crash")
-    _require(not stdout.strip(), "crash_worker_unexpected_stdout")
+    handshake = _parse_crash_handshake(stdout, release_digest=release_digest)
     _require(not stderr.strip(), "crash_worker_unexpected_stderr")
     _wait_for_application_sessions_zero(
         staging_dsn,
@@ -649,8 +649,9 @@ def _run_crash_worker(
         "schema": WORKER_SCHEMA,
         "command": command,
         "release_digest": release_digest,
-        "process_id": process.pid,
-        "started_at": _utc_text(started_at),
+        "process_id": handshake["process_id"],
+        "launcher_process_id": process.pid,
+        "started_at": handshake["started_at"],
         "completed_at": _utc_text(completed_at),
         "return_code": process.returncode,
     }
@@ -723,6 +724,43 @@ def _parse_worker_result(
     _mapping(result.get("facts"), "worker.facts")
     _require(not _contains_boolean(result), "worker_reported_gate_boolean")
     return result
+
+
+def _parse_crash_handshake(
+    payload: bytes,
+    *,
+    release_digest: str,
+) -> dict[str, Any]:
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise StagingRollbackError("crash_handshake_invalid") from error
+    handshake = _mapping(value, "crash_handshake")
+    _require(
+        set(handshake)
+        == {"schema", "command", "release_digest", "process_id", "started_at"},
+        "crash_handshake_fields_invalid",
+    )
+    _require(
+        handshake.get("schema") == CRASH_HANDSHAKE_SCHEMA,
+        "crash_handshake_schema_invalid",
+    )
+    _require(handshake.get("command") == "crash-effect", "crash_handshake_command_invalid")
+    _require(
+        handshake.get("release_digest") == release_digest,
+        "crash_handshake_release_invalid",
+    )
+    _require(
+        isinstance(handshake.get("process_id"), int)
+        and not isinstance(handshake.get("process_id"), bool)
+        and handshake["process_id"] > 0,
+        "crash_handshake_pid_invalid",
+    )
+    _parse_utc(handshake.get("started_at"), "crash_handshake.started_at")
+    return handshake
 
 
 def _worker_error_reason(payload: bytes, *, command: str) -> str:
