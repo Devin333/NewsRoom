@@ -150,6 +150,22 @@ superseded history. Technical invariants and database presence do not
 constitute the three independent rollback signatures or the separate D/A/B/C
 qualification chain.
 
+### 2026-07-18 remote source-refresh CI
+
+The source-refresh branch `codex/durable-event-compatibility-v2` was pushed at
+commit `c27a18971d04ef5cc98fc96ee486efc76c315a7b`. GitHub Actions run
+`29638256686` completed successfully on the exact commit. Its Linux/Python 3.11
+steps passed compile, workflow runtime/domain, service, RAG promotion, daily
+regression, durable-event compatibility, and fixed smoke checks. The run is
+retained at:
+
+`https://github.com/Devin333/NewsRoom/actions/runs/29638256686`
+
+This is remote CI evidence only. It creates no deployment, environment,
+immutable release artifact, authority root, signed D/A/B/C record, trusted
+timestamp, or rollback approval/qualification, and therefore does not change
+the pending external status of task 9.5.
+
 ### 2026-07-18 final candidate technical refresh
 
 The replay reducer capability audit was hardened and committed as

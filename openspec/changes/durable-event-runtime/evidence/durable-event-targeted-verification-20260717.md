@@ -301,6 +301,12 @@ The exact candidate completed:
 | Replay reducer regression | module `33 passed` |
 | Rollback staging | `awaiting_approval`; seven technical gates true |
 
+The later approval-handoff source refresh was pushed as commit
+`c27a18971d04ef5cc98fc96ee486efc76c315a7b`; remote CI run `29638256686`
+completed successfully, including the durable-event compatibility gate and
+fixed smoke. This confirms the handoff documentation and verifier path on the
+remote checkout only; it is not deployment or external qualification evidence.
+
 The current tracked rollback handoff is
 `rollback-staging-a2662442-awaiting-approval/technical/technical-evidence.json`:
 
