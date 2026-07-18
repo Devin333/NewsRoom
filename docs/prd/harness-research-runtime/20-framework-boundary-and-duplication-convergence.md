@@ -4,7 +4,7 @@
 >
 > Implementation status: IN_PROGRESS
 >
-> Version: v1.3
+> Version: v1.4
 >
 > Priority: P1（控制权与生产运行阻断）/ P2（架构与契约收敛）
 >
@@ -15,6 +15,8 @@
 > Existing OpenSpec owners: `research-runtime-production-composition`、`framework-runtime-safety-hardening`、`durable-event-runtime`
 >
 > Completed OpenSpec slice: `harness-deterministic-gate-enforcement`（ARCHIVED；implementation `017a227e`；archive `2026-07-18-harness-deterministic-gate-enforcement`）
+>
+> Next OpenSpec slice: `source-policy-contract-convergence`（BASELINE_READY；12 个 URL/rate/retry/error 直接前序 changes 已同步 canonical specs）
 >
 > Depends on: 阶段 1/2 Harness authority、阶段 8/9 legacy deletion rules、阶段 19 durable gate-event contract，以及上述 active changes 的明确 file ownership
 >
