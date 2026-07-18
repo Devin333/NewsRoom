@@ -2,13 +2,14 @@
 
 Date: 2026-07-18
 
-Tasks 10.1-10.3 verified commit: `b935d4fd5cd07bf7550fd955e4f0efaf72c0ab8d`
+Historical baseline for tasks 10.1-10.3: `b935d4fd5cd07bf7550fd955e4f0efaf72c0ab8d`
 
-OpenSpec tasks: `10.1`, `10.2`, `10.3`
+Historical baseline tasks: `10.1`, `10.2`, `10.3`; final task 10.4 evidence
+is recorded in the exact-candidate section below.
 
-Status: PASSED for tasks 10.1-10.3. Tasks 9.5, 10.4, and 10.5 remain open.
+Status: PASSED for tasks 10.1-10.4. Tasks 9.5 and 10.5 remain open.
 
-## 2026-07-18 clean-candidate verification refresh
+## 2026-07-18 clean-candidate verification refresh (historical interim)
 
 This is an interim refresh, not completion evidence for task 10.4. The current
 candidate includes the Python 3.11 comprehension audit, the content-addressed
@@ -142,7 +143,7 @@ gate instead of relying on a Markdown assertion. The original two-record policy
 was superseded because it made the consumer-owner decision depend on deletion
 deployment facts that could exist only after that decision. Tracked policy v4
 checksum
-`sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f`
+`sha256:301a202fc6948eb22a4079c002ae0c992afe54e45a534dff7a495172ff2a6e8f`
 pins the compatibility source, deletion boundary, and exact qualified descendant
 source with their Git trees and parents, but intentionally remains
 `pending_external_activation` with a null trust epoch and null governance,
@@ -243,13 +244,12 @@ Repository tests and the approval-pending rollback bundle satisfy neither this
 compatibility D/A/B/C chain nor the independent rollback qualification chain.
 Until both chains exist, neither PRD may be marked `IMPLEMENTED`.
 
-## 2026-07-18 exact-candidate evidence refresh
+## 2026-07-18 exact-candidate evidence refresh (superseded source binding)
 
-The qualified source was refreshed before trust activation to include the
-committed memory trace identity fix and the pending policy/verifier source
-binding. The current evidence head is
-`5c59f879b57a984e5a072952c32ac08de3b70e76`; the qualified source bound by
-policy is `0a24e52b8f084099aa5f614c7a9c64081ce79ca3`.
+This historical evidence head is
+`5c59f879b57a984e5a072952c32ac08de3b70e76`. Its earlier qualified-source
+binding was `0a24e52b8f084099aa5f614c7a9c64081ce79ca3`; that binding is
+superseded by the final pre-activation refreeze to `a266244246b33c093905562cb9e3a514ea82703f` documented below.
 
 The real PostgreSQL storage gate completed `419 passed, 9 skipped`. The real
 rollback staging gate then completed `9 passed`, including cross-release worker
@@ -286,6 +286,10 @@ The replay reducer capability audit was corrected so forbidden bytecode
 operations are diagnosed before version-dependent global-capture inspection.
 The fix is committed at exact candidate
 `a266244246b33c093905562cb9e3a514ea82703f`.
+The pending compatibility policy now binds this candidate's tree
+`140ff053f87a096a89877e044c8f527439905ca0`, direct parent
+`e6b6d348c0511f2dc5aec2182e35154e2593c293`, and policy checksum
+`sha256:301a202fc6948eb22a4079c002ae0c992afe54e45a534dff7a495172ff2a6e8f`.
 
 The exact candidate completed:
 

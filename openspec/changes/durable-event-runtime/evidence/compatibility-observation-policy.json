@@ -7,9 +7,9 @@
   "deletion_boundary_commit": "570f840c7df3870841c93e37480d7a53a67921dd",
   "deletion_boundary_tree": "8607c510e87c7f405519f5851949f9f5b5b5203b",
   "deletion_boundary_parent_commit": "42a8636cd72aea0c466126fc5f2d69c55db1a1d6",
-  "qualified_deletion_source_commit": "0a24e52b8f084099aa5f614c7a9c64081ce79ca3",
-  "qualified_deletion_source_tree": "9ef7b8720e6392845299849dbe1598f60e3d77f5",
-  "qualified_deletion_source_parent_commit": "06b0b19eb7c0cd23a33cc98c9defaa449f3df68c",
+  "qualified_deletion_source_commit": "a266244246b33c093905562cb9e3a514ea82703f",
+  "qualified_deletion_source_tree": "140ff053f87a096a89877e044c8f527439905ca0",
+  "qualified_deletion_source_parent_commit": "e6b6d348c0511f2dc5aec2182e35154e2593c293",
   "authority_trust_status": "pending_external_activation",
   "trust_epoch": null,
   "trusted_governance_authority": null,
@@ -35,5 +35,5 @@
   "minimum_observation_seconds": 3600,
   "maximum_observation_seconds": 604800,
   "maximum_observation_records": 1000,
-  "policy_checksum": "sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f"
+  "policy_checksum": "sha256:301a202fc6948eb22a4079c002ae0c992afe54e45a534dff7a495172ff2a6e8f"
 }

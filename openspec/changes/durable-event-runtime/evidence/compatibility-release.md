@@ -6,17 +6,24 @@ OpenSpec tasks: 9.3 and 9.5
 
 Status: AWAITING_EXTERNAL_AUTHORITY_ACTIVATION
 
-## 2026-07-18 qualified-source refresh
+## 2026-07-18 qualified-source refresh history
+
+The first pre-activation refreeze used `0a24e52b8f084099aa5f614c7a9c64081ce79ca3`
+and is retained only as superseded historical evidence. It must not be used for
+the active deletion build because the later `a266244246b33c093905562cb9e3a514ea82703f`
+candidate contains an additional production replay hardening fix.
+
+## 2026-07-18 final qualified-source refresh
 
 Before any external authority activation, the qualified deletion source was
-refrozen to the latest verified clean runtime candidate so the release chain
-cannot approve the superseded `f5ed16cc` snapshot. The pending policy now binds:
+refrozen again to the latest verified clean runtime candidate. The pending
+policy now binds:
 
 ```text
-qualified_source_commit: 0a24e52b8f084099aa5f614c7a9c64081ce79ca3
-qualified_source_tree:   9ef7b8720e6392845299849dbe1598f60e3d77f5
-qualified_source_parent: 06b0b19eb7c0cd23a33cc98c9defaa449f3df68c
-policy_checksum:         sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f
+qualified_source_commit: a266244246b33c093905562cb9e3a514ea82703f
+qualified_source_tree:   140ff053f87a096a89877e044c8f527439905ca0
+qualified_source_parent: e6b6d348c0511f2dc5aec2182e35154e2593c293
+policy_checksum:         sha256:301a202fc6948eb22a4079c002ae0c992afe54e45a534dff7a495172ff2a6e8f
 ```
 
 This is a source-identity refresh only. `authority_trust_status` remains
@@ -24,6 +31,10 @@ This is a source-identity refresh only. `authority_trust_status` remains
 remain null, and no D/A/B/C or rollback approval/attestation/qualification
 record has been accepted. Any future trust activation must bind this exact
 policy checksum and content-addressed verifier/source combination.
+The runtime source `a2662442...` and the later verifier source-refresh commit
+are intentionally distinct: external record D must bind the content-addressed
+verifier build that contains the updated policy constants, not claim that the
+`a2662442...` runtime commit itself is that verifier build.
 
 ## Release candidate identity
 
@@ -41,11 +52,11 @@ policy checksum and content-addressed verifier/source combination.
 - Deletion boundary parent:
   `42a8636cd72aea0c466126fc5f2d69c55db1a1d6`
 - Qualified deletion source commit:
-  `0a24e52b8f084099aa5f614c7a9c64081ce79ca3`
+  `a266244246b33c093905562cb9e3a514ea82703f`
 - Qualified deletion source tree:
-  `9ef7b8720e6392845299849dbe1598f60e3d77f5`
+  `140ff053f87a096a89877e044c8f527439905ca0`
 - Qualified deletion source parent:
-  `06b0b19eb7c0cd23a33cc98c9defaa449f3df68c`
+  `e6b6d348c0511f2dc5aec2182e35154e2593c293`
 - Canonical writer cutover commit: `1e3d0183`
 - Durable run-query cutover commit: `dc47ce50`
 - Tenant-scoped operator surfaces commit: `f6bce48f`
@@ -57,9 +68,9 @@ framework `EventRecord`, storage flat `EventRecord`, and writable
 `LocalJsonEventStore`.
 
 The deletion boundary is not the deployable qualified source. Commit
-`0a24e52b...` is a verified descendant 39 commits after the boundary and
-includes the completed deletion plus subsequent runtime and Python 3.11
-hardening. The tracked policy freezes all three Git identities for the
+`a2662442...` is a verified descendant 44 commits after the boundary and
+includes the completed deletion plus subsequent runtime, Python 3.11, and
+replay hardening. The tracked policy freezes all three Git identities for the
 compatibility source, deletion boundary, and qualified deletion source.
 
 These Git facts do not prove deployment or observation. No GitHub environment,
@@ -77,7 +88,7 @@ The tracked policy is deliberately fail closed:
 - `trusted_observer_authority`: `null`
 - `trusted_consumer_owner_authority`: `null`
 - Pending-policy checksum:
-  `sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f`
+  `sha256:301a202fc6948eb22a4079c002ae0c992afe54e45a534dff7a495172ff2a6e8f`
 
 This pending policy cannot qualify D, A, B, or C. A pre-existing independent
 release-security/change-control governance bootstrap root must already be pinned
@@ -241,7 +252,7 @@ exact record checksum and inventory checksum, copies A's
 `compatibility_release_digest` and `compatibility_build_digest`, copies every
 required surface disposition, binds D's exact `trust_epoch` and
 `trust_activation_record_checksum`, and approves a known immutable build plan
-from qualified deletion source `0a24e52b...` for the same activation and target
+from qualified deletion source `a2662442...` for the same activation and target
 environment.
 
 The approved plan includes source commit/tree/parent, build digest, and
@@ -291,7 +302,7 @@ The repository provides a verify-only gate for these external inputs:
 - Current policy state: `pending_external_activation`
 - Current trust epoch and governance/observer/consumer-owner roots: `null`
 - Current pending-policy checksum:
-  `sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f`
+  `sha256:301a202fc6948eb22a4079c002ae0c992afe54e45a534dff7a495172ff2a6e8f`
 - Verifier: `python -m scripts.durable_event_compatibility_release`
 - Record schemas:
   `newsroom.durable-event-compatibility-trust-activation/v1`,

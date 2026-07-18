@@ -36,7 +36,7 @@ TRACKED_POLICY = (
     / "compatibility-observation-policy.json"
 )
 TRACKED_PENDING_POLICY_CHECKSUM = (
-    "sha256:383355c7a5382fb47448346a1da8f6c3f38475615042cbab8a5072c128d4eb1f"
+    "sha256:301a202fc6948eb22a4079c002ae0c992afe54e45a534dff7a495172ff2a6e8f"
 )
 TEST_OBSERVER_AUTHORITY_ID = "deployment-observer"
 TEST_OBSERVER_KEY_ID = "deployment-observer-ed25519-test"

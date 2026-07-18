@@ -6,11 +6,12 @@ OpenSpec task: 10.3
 
 Status: PASSED - OpenSpec task 10.3 qualification is complete.
 
-## 2026-07-18 Exact-Candidate Refresh
+## 2026-07-18 Exact-Candidate Refresh (historical superseded source)
 
-The prior qualification record below is retained as historical evidence. The
-following run was executed from the clean candidate that includes the memory
-trace identity fix and PRD index synchronization:
+The prior qualification record below is retained as historical evidence and is
+not the current qualified deletion source. The following run was executed from
+the clean candidate that includes the memory trace identity fix and PRD index
+synchronization:
 
 ```text
 candidate_commit: 0a24e52b8f084099aa5f614c7a9c64081ce79ca3
@@ -70,6 +71,10 @@ The benchmark executed from a descendant commit whose production scope
 (`business`, `framework`, `infrastructure`, `interfaces`, `scripts`) is byte-
 identical to the candidate; the source binding is recorded in
 `durable-event-benchmark-source-binding-20260718-a2662442.json`.
+The benchmark remains intentionally bound to that exact runtime candidate; the
+subsequent pending-policy and verifier-constant source refresh is not presented
+as benchmark evidence for a different verifier build and is covered separately
+by the compatibility suite, compile, smoke, and strict OpenSpec gates.
 
 | Workload | Committed | Rate | p50 | p95 | p99 |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -217,6 +222,7 @@ The fixed run used the isolated PostgreSQL database
 and left zero residual rows across all 14 related tables. Machine, SQLite, and
 PostgreSQL configuration evidence is retained in the qualification JSON.
 
-This evidence completes OpenSpec task 10.3 only. It does not satisfy the real
-deployment rollback qualification in task 9.5 or the final repository gates in
-tasks 10.4 and 10.5. Both PRDs therefore remain `IN_PROGRESS`.
+This historical evidence completes OpenSpec task 10.3 only. It does not satisfy
+the real deployment rollback qualification in task 9.5 or final task 10.5;
+task 10.4 is recorded separately against the final candidate in the targeted
+verification evidence. Both PRDs therefore remain `IN_PROGRESS`.
