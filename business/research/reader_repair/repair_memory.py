@@ -193,9 +193,18 @@ class ReaderRepairMemoryService:
             },
         )
 
-    def commit_case(self, repair_case: ReaderRepairCase) -> str:
-        candidate = self.memory.propose_write(self.memory_candidate_for_case(repair_case))
-        ref = self.memory.write_case(repair_case, namespace=candidate.namespace)
+    def commit_case(
+        self,
+        repair_case: ReaderRepairCase,
+        *,
+        candidate: MemoryWriteCandidate | None = None,
+    ) -> str:
+        write_candidate = candidate or self.memory_candidate_for_case(repair_case)
+        self.memory.propose_write(write_candidate)
+        ref = self.memory.write_case(
+            repair_case,
+            namespace=write_candidate.namespace,
+        )
         self.write_refs.append(ref)
         return ref
 

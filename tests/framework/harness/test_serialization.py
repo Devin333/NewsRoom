@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
 from framework.harness import (
+    DeterministicGateRegistry,
+    GateBinding,
+    GateReference,
+    GateRegistration,
     HarnessCheckpoint,
     HarnessDecision,
     HarnessEvent,
@@ -11,6 +17,7 @@ from framework.harness import (
     HarnessState,
     HarnessStepSpec,
     HarnessTrace,
+    HarnessValidationError,
     HarnessWorkerResult,
     HarnessWorkflowSpec,
 )
@@ -60,3 +67,41 @@ def test_trace_rejects_event_from_other_run() -> None:
         assert exc.__class__.__name__ == "HarnessValidationError"
     else:
         raise AssertionError("expected HarnessValidationError")
+
+
+def test_versioned_gate_contracts_are_public_and_quality_gate_stays_a_string() -> None:
+    reference = GateReference.parse("candidate_schema@2")
+    step = HarnessStepSpec(
+        step_id="collect",
+        worker_type="llm",
+        quality_gate=str(reference),
+    )
+
+    payload = step.to_dict()
+
+    assert payload["quality_gate"] == "candidate_schema@2"
+    assert isinstance(payload["quality_gate"], str)
+    assert set(payload) == {
+        "step_id",
+        "worker_type",
+        "input_keys",
+        "output_key",
+        "retry_policy",
+        "quality_gate",
+        "metadata",
+    }
+    assert GateBinding.__module__ == "framework.harness.control_plane.gate_registry"
+    assert GateRegistration.__module__ == "framework.harness.control_plane.gate_registry"
+    assert DeterministicGateRegistry.__module__ == "framework.harness.control_plane.gate_registry"
+
+
+@pytest.mark.parametrize("quality_gate", ("", 1, GateReference.parse("schema@1")))
+def test_quality_gate_rejects_non_string_or_blank_serialization_values(
+    quality_gate: object,
+) -> None:
+    with pytest.raises(HarnessValidationError, match="non-blank string"):
+        HarnessStepSpec(
+            step_id="collect",
+            worker_type="llm",
+            quality_gate=quality_gate,  # type: ignore[arg-type]
+        )

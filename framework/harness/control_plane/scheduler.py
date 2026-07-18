@@ -169,11 +169,21 @@ class HarnessScheduler:
                 return budget_decision
             return HarnessDecision(decision_type=HarnessDecisionType.VERIFY_STEP, run_id=state.run_spec.run_id, step_id=step_id)
         if worker_result.status == HarnessWorkerStatus.WAITING_APPROVAL:
+            if (
+                step_spec.metadata.get("approval_required") is True
+                and not get_step_state(state, step_id).metadata.get("approval_granted")
+            ):
+                return HarnessDecision(
+                    decision_type=HarnessDecisionType.WAIT_FOR_APPROVAL,
+                    run_id=state.run_spec.run_id,
+                    step_id=step_id,
+                    reason="step requires Harness approval",
+                )
             return HarnessDecision(
-                decision_type=HarnessDecisionType.WAIT_FOR_APPROVAL,
+                decision_type=HarnessDecisionType.HALT_RUN,
                 run_id=state.run_spec.run_id,
                 step_id=step_id,
-                reason="worker is waiting for approval",
+                reason="worker requested approval without Harness policy",
             )
         if worker_result.status == HarnessWorkerStatus.BLOCKED:
             return HarnessDecision(

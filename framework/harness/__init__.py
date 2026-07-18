@@ -40,9 +40,13 @@ from framework.harness.control_plane import (
     BudgetGate,
     DeduplicationGate,
     DeterministicGate,
+    DeterministicGateRegistry,
     DurableHarnessEventPort,
     DurableHarnessTransitionPort,
     GateContext,
+    GateBinding,
+    GateReference,
+    GateRegistration,
     HarnessBudget,
     HarnessBudgetSnapshot,
     HarnessActivity,
@@ -121,7 +125,12 @@ from framework.harness.ports import (
     HarnessTransitionPort,
     HarnessWorkerPort,
 )
-from framework.harness.quality import FakeQualityGate, HarnessQualityVerdict, QualityGatePort
+from framework.harness.quality import (
+    FakeQualityGate,
+    HarnessQualityVerdict,
+    QualityGatePort,
+    aggregate_gate_verdict,
+)
 from framework.harness.rag import (
     AnswerClaim,
     AnswerWorkerPort,
@@ -256,6 +265,7 @@ from framework.harness.workers import (
     CallableSubAgentWorkerAdapter,
     FakeLLMWorker,
     FakeSubAgentWorker,
+    FORBIDDEN_WORKER_RESULT_KEYS,
     HarnessWorkerResult,
     HarnessWorkerStatus,
     LLMWorkerPort,
@@ -312,6 +322,7 @@ __all__ = [
     "DeduplicationGate",
     "DeterministicRAGPlanner",
     "DeterministicGate",
+    "DeterministicGateRegistry",
     "DurableHarnessEventPort",
     "DurableHarnessTransitionPort",
     "EvidenceCandidate",
@@ -342,7 +353,11 @@ __all__ = [
     "FakeSubAgentRuntime",
     "FakeSubAgentTranscriptStore",
     "FakeSubAgentWorker",
+    "FORBIDDEN_WORKER_RESULT_KEYS",
     "GateContext",
+    "GateBinding",
+    "GateReference",
+    "GateRegistration",
     "GroundedAnswerCandidate",
     "HarnessArtifactPort",
     "HarnessActivity",
@@ -532,4 +547,5 @@ __all__ = [
     "transcript_entry_from_event",
     "transcript_entry_from_stored_event",
     "validate_rag_evidence_refs",
+    "aggregate_gate_verdict",
 ]

@@ -42,6 +42,7 @@ from framework.harness.control_plane.transition import (
     workflow_checksum,
     workflow_version,
 )
+from framework.harness.quality.verdict import gate_result_evidence
 
 
 HARNESS_HISTORY_HANDLER_ID = "harness-control-plane"
@@ -197,7 +198,7 @@ def harness_decision_input_snapshot(
             for step in state.step_states
         ),
         "budget": state.run_spec.budget.to_dict(),
-        "gate_results": tuple(result.to_dict() for result in gate_results),
+        "gate_results": tuple(_gate_decision_evidence(result) for result in gate_results),
         "quality_verdict": (
             None if quality_verdict is None else quality_verdict.to_dict()
         ),
@@ -210,6 +211,10 @@ def harness_decision_input_snapshot(
         ),
     }
     return _decision_input(snapshot)
+
+
+def _gate_decision_evidence(result: Any) -> Mapping[str, Any]:
+    return gate_result_evidence(result)
 
 
 def harness_event_history(event: HarnessEvent, *, data_schema: str) -> DeterministicHistoryRecord:

@@ -2,9 +2,9 @@
 
 > Document status: READY_FOR_OPENSPEC
 >
-> Implementation status: NOT_STARTED
+> Implementation status: IN_PROGRESS
 >
-> Version: v1.0
+> Version: v1.2
 >
 > Priority: P1（控制权与生产运行阻断）/ P2（架构与契约收敛）
 >
@@ -14,11 +14,13 @@
 >
 > Existing OpenSpec owners: `research-runtime-production-composition`、`framework-runtime-safety-hardening`、`durable-event-runtime`
 >
+> Active OpenSpec slice: `harness-deterministic-gate-enforcement`（READY_TO_ARCHIVE）
+>
 > Depends on: 阶段 1/2 Harness authority、阶段 8/9 legacy deletion rules、阶段 19 durable gate-event contract，以及上述 active changes 的明确 file ownership
 >
-> Last updated: 2026-07-18
+> Last updated: 2026-07-19
 
-> 状态说明：`READY_FOR_OPENSPEC` 表示问题、目标、非目标、ownership、兼容边界、实施顺序和验收标准已经形成 PRD 基线，但本 PRD 不授权把全部工作塞进一个 change。每个实施批次必须先建立或更新对应 OpenSpec delta，并通过 strict validation。文档被后续 PRD 取代时标记 `SUPERSEDED`。
+> 状态说明：`READY_FOR_OPENSPEC` 表示问题、目标、非目标、ownership、兼容边界、实施顺序和验收标准已经形成 PRD 基线，但本 PRD 不授权把全部工作塞进一个 change。`IN_PROGRESS` 仅表示至少一个独立实施批次已开始，不代表阶段 20 整体完成。每个实施批次必须先建立或更新对应 OpenSpec delta，并通过 strict validation。文档被后续 PRD 取代时标记 `SUPERSEDED`。
 
 ## 0. 一句话结论
 

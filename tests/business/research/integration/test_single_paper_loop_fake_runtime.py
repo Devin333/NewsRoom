@@ -4,6 +4,7 @@ from framework.harness import FakeArtifactPort, InMemoryHarnessEventPort
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
 from business.research.application.single_paper_runtime import ResearchSinglePaperRuntime
+from business.research.workflows.paper_analysis_gates import PAPER_ANALYSIS_GATE_REFERENCES
 from tests.business.research.fakes import (
     FakeGithubRepositoryPort,
     FakeResearchDocumentCompiler,
@@ -47,9 +48,38 @@ def test_single_paper_loop_outputs_artifacts_trace_and_transcript() -> None:
     assert any(entry.phase == "PLAN" for entry in result.transcript.entries())
     assert any(entry.phase == "EXECUTE" for entry in result.transcript.entries())
     assert any(entry.phase == "VERIFY" for entry in result.transcript.entries())
+    domain_gate_refs_by_step: dict[str, list[str]] = {}
+    active_refs = set(PAPER_ANALYSIS_GATE_REFERENCES)
+    for event in result.trace.events:
+        event_payload = event.to_dict()
+        gate_ref = (
+            event_payload.get("payload", {})
+            .get("details", {})
+            .get("harness_gate", {})
+            .get("reference")
+        )
+        if gate_ref in active_refs:
+            domain_gate_refs_by_step.setdefault(str(event_payload.get("step_id")), []).append(gate_ref)
+    assert domain_gate_refs_by_step == {
+        "load_paper_source": ["PaperSourceLineageGate@1"],
+        "compile_document": ["ResearchDocumentSchemaGate@1"],
+        "run_research_rag": ["ResearchRAGContextProjectionGate@1"],
+        "build_evidence_pack": ["ResearchEvidenceCoverageGate@1"],
+        "analyze_structure": ["SummarySchemaGate@1"],
+        "analyze_contribution": ["SummaryEvidenceCoverageGate@1"],
+        "analyze_experiments": ["BenchmarkEvidenceLineageGate@1"],
+        "verify_claims": ["ClaimEvidenceGate@1"],
+        "quality_gate": ["ResearchQualityGate@1"],
+        "build_reader_payload": ["ReaderPayloadSchemaGate@1"],
+        "build_paper_card": ["ResearchPaperCardGate@1"],
+    }
+    assert all(
+        "quality_score" not in worker_result["output"]
+        for worker_result in result.diagnostics["worker_results"].values()
+    )
 
 
-def test_reader_payload_gate_failure_routes_to_issue_artifact_without_repair_rag() -> None:
+def test_reader_payload_gate_failure_halts_without_publishing_failed_payload() -> None:
     result = AnalyzePaperUseCase(
         _runtime(document_compiler=FakeResearchDocumentCompiler(omit_sections=True))
     ).analyze(
@@ -61,13 +91,11 @@ def test_reader_payload_gate_failure_routes_to_issue_artifact_without_repair_rag
         )
     )
 
-    assert result.status == "succeeded"
+    assert result.status == "halted"
     assert result.reader_issue is not None
     assert result.reader_issue.error_signature == "no_sections"
-    assert result.paper_card is not None
-    assert result.paper_card.reader_payload_status == "needs_repair"
-    assert "reader-issue" in result.artifact_refs
-    assert "research-rag-gap-report" not in result.artifact_refs
+    assert result.paper_card is None
+    assert result.artifact_refs == {}
 
 
 def test_score_range_gate_halts_invalid_score() -> None:
@@ -83,4 +111,9 @@ def test_score_range_gate_halts_invalid_score() -> None:
     )
 
     assert result.status == "halted"
-    assert any(failure["gate"] == "ResearchScoreRangeGate" for failure in result.diagnostics["gate_failures"])
+    failure = next(
+        failure
+        for failure in result.diagnostics["gate_failures"]
+        if failure["gate"] == "BenchmarkEvidenceLineageGate"
+    )
+    assert failure["details"]["harness_gate"]["reference"] == "BenchmarkEvidenceLineageGate@1"

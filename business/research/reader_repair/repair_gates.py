@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from framework.harness.memory import MemoryWriteCandidate, MemoryWriteStatus
+
 from business.research.domain import GateResult, ResearchReaderPayload
 from business.research.domain.reader_repair import (
     FORBIDDEN_REPAIR_CANDIDATE_KEYS,
     READER_REPAIR_NAMESPACE,
+    ReaderIssue,
     ReaderRepairCandidate,
     ReaderRepairCase,
     ReaderRepairContextPack,
@@ -17,6 +20,16 @@ from business.research.reader.gates import validate_reader_navigation, validate_
 
 
 class ReaderRepairGateSuite:
+    def verify_issue_source_lineage(self, issue: ReaderIssue) -> list[GateResult]:
+        if not issue.source_refs:
+            return [
+                GateResult.fail(
+                    "RepairRAGSourceLineageGate",
+                    "reader repair requires source lineage before memory access",
+                )
+            ]
+        return [GateResult.pass_("RepairRAGSourceLineageGate")]
+
     def verify_memory_query(self, query: ReaderRepairMemoryQuery) -> list[GateResult]:
         return [
             GateResult.pass_("RepairRAGNamespaceGate")
@@ -26,7 +39,11 @@ class ReaderRepairGateSuite:
 
     def verify_rag_policy(self, policy: ReaderRepairRAGPolicy) -> list[GateResult]:
         results = []
-        namespace_violation = set(policy.allowed_memory_namespaces) - {READER_REPAIR_NAMESPACE}
+        configured_namespaces = set(policy.allowed_memory_namespaces)
+        namespace_violation = (
+            policy.namespace != READER_REPAIR_NAMESPACE
+            or configured_namespaces != {READER_REPAIR_NAMESPACE}
+        )
         results.append(
             GateResult.fail("RepairRAGNamespaceGate", "repair RAG policy can only access research.reader_repair")
             if namespace_violation
@@ -109,6 +126,13 @@ class ReaderRepairGateSuite:
         results: list[GateResult] = []
         if repair_case.successful and not repair_case.payload_after_ref:
             results.append(GateResult.fail("ReaderRepairPayloadFidelityGate", "successful repair requires payload_after_ref"))
+        elif not repair_case.successful and repair_case.payload_after_ref:
+            results.append(
+                GateResult.fail(
+                    "ReaderRepairPayloadFidelityGate",
+                    "failed repair must not publish a payload_after_ref",
+                )
+            )
         else:
             results.append(GateResult.pass_("ReaderRepairPayloadFidelityGate"))
         if repair_case.metadata.get("active_skill_mutation"):
@@ -121,9 +145,42 @@ class ReaderRepairGateSuite:
             results.append(GateResult.pass_("ReaderRepairVerificationGate"))
         return results
 
+    def verify_memory_write_candidate(
+        self,
+        candidate: MemoryWriteCandidate,
+    ) -> list[GateResult]:
+        violations: dict[str, Any] = {}
+        if candidate.namespace != READER_REPAIR_NAMESPACE:
+            violations["namespace"] = candidate.namespace
+        if not candidate.source_refs:
+            violations["source_refs"] = []
+        if candidate.status != MemoryWriteStatus.PROPOSED:
+            violations["status"] = candidate.status.value
+        if candidate.metadata.get("active_skill_mutation"):
+            violations["active_skill_mutation"] = True
+        repair_case = candidate.content.get("repair_case")
+        if not isinstance(repair_case, dict):
+            violations["repair_case"] = "missing"
+        if violations:
+            return [
+                GateResult.fail(
+                    "ReaderRepairMemoryPolicyGate",
+                    "reader repair memory write candidate violates policy",
+                    metadata={"violations": violations},
+                )
+            ]
+        return [GateResult.pass_("ReaderRepairMemoryPolicyGate")]
+
     def verify_result(self, result: ReaderRepairResult) -> list[GateResult]:
         if result.successful and not result.payload_after_ref:
             return [GateResult.fail("ReaderRepairPayloadFidelityGate", "successful repair result requires payload_after_ref")]
+        if not result.successful and result.payload_after_ref:
+            return [
+                GateResult.fail(
+                    "ReaderRepairPayloadFidelityGate",
+                    "failed repair result must not publish a payload_after_ref",
+                )
+            ]
         return [GateResult.pass_("ReaderRepairPayloadFidelityGate")]
 
 

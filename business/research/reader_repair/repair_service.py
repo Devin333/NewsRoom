@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from business.research.domain import ResearchReaderPayload, stable_research_id
+from business.research.domain import GateResult, ResearchReaderPayload, stable_research_id
 from business.research.domain.reader_repair import (
     ReaderIssue,
     ReaderRepairAttempt,
@@ -20,6 +20,19 @@ from business.research.reader_repair.repair_gates import ReaderRepairGateSuite
 from business.research.ports import ReaderRepairMemoryPort
 from business.research.reader_repair.repair_memory import InMemoryReaderRepairMemory, ReaderRepairMemoryService
 from business.research.reader_repair.workflow import build_reader_repair_subagent_specs
+
+
+class ReaderRepairPreconditionError(ValueError):
+    def __init__(self, stage: str, gate_results: tuple[GateResult, ...]) -> None:
+        self.stage = stage
+        self.gate_results = gate_results
+        self.failed_gate_names = tuple(result.gate_name for result in gate_results if not result.passed)
+        details = "; ".join(
+            f"{result.gate_name}: {', '.join(result.reasons) or 'failed'}"
+            for result in gate_results
+            if not result.passed
+        )
+        super().__init__(f"reader repair precondition failed at {stage}: {details}")
 
 
 @dataclass(frozen=True)
@@ -85,8 +98,17 @@ class ReaderRepairService:
         if not issues:
             raise ValueError("reader repair requires a detected reader issue")
         issue = issues[0]
+        source_lineage_results = tuple(self.gates.verify_issue_source_lineage(issue))
+        _require_preconditions("source_lineage", source_lineage_results)
+
         query = self.memory_service.build_query(issue, source_format=source_format)
         policy = ReaderRepairRAGPolicy(policy_id=stable_research_id("repair_rag_policy", issue.error_signature))
+        memory_access_results = (
+            *self.gates.verify_memory_query(query),
+            *self.gates.verify_rag_policy(policy),
+        )
+        _require_preconditions("memory_access", memory_access_results)
+
         recalled = self.memory_service.recall(query)
         context_pack = self.context_builder.build_pack(
             issue=issue,
@@ -96,6 +118,9 @@ class ReaderRepairService:
             strategies=list(recalled["promoted_strategies"]),
             policy=policy,
         )
+        context_gate_results = tuple(self.gates.verify_context_pack(context_pack))
+        _require_preconditions("repair_context", context_gate_results)
+
         context_result = self.context_builder.assemble_for_subagent(
             context_pack=context_pack,
             run_id=run_id,
@@ -142,12 +167,15 @@ class ReaderRepairService:
             context_snapshot_ref=context_result.context_envelope.snapshot_ref or context_result.context_envelope.envelope_id,
             handoff_ref=stable_research_id("repair_handoff", proposer_spec.subagent_id, verifier_spec.subagent_id, candidate.candidate_id),
         )
-        verification_results = [
-            *self.gates.verify_memory_query(query),
-            *self.gates.verify_rag_policy(policy),
-            *self.gates.verify_context_pack(context_pack),
+        candidate_gate_results = [
             *self.gates.verify_candidate_payload(candidate_input),
             *self.gates.verify_candidate(candidate, issue.source_refs),
+        ]
+        verification_results = [
+            *source_lineage_results,
+            *memory_access_results,
+            *context_gate_results,
+            *candidate_gate_results,
         ]
         successful = all(result.passed for result in verification_results)
         repair_result = ReaderRepairResult(
@@ -156,7 +184,11 @@ class ReaderRepairService:
             successful=successful,
             verification_results=[result.to_dict() for result in verification_results],
             payload_before_ref=issue.payload_ref or payload.payload_id,
-            payload_after_ref=repaired_payload_ref or (f"{payload.payload_id}:repaired" if successful else None),
+            payload_after_ref=(
+                repaired_payload_ref or f"{payload.payload_id}:repaired"
+            )
+            if successful
+            else None,
             source_refs=issue.source_refs,
             failure_reason=None if successful else "reader repair verification failed",
             metadata={"skill_promotion_triggered": False},
@@ -175,10 +207,24 @@ class ReaderRepairService:
             constraints=context_pack.repair_constraints,
             failure_reason=repair_result.failure_reason,
             tags=[issue.issue_type, issue.error_signature],
-            metadata={"active_skill_mutation": False, "context_snapshot_ref": attempt.context_snapshot_ref},
+            metadata={
+                "active_skill_mutation": False,
+                "context_snapshot_ref": attempt.context_snapshot_ref,
+                "memory_preconditions_passed": True,
+                "memory_record_kind": "successful_repair" if successful else "failed_repair_diagnostic",
+            },
         )
-        case_gate_results = self.gates.verify_case(repair_case)
-        memory_ref = self.memory_service.commit_case(repair_case)
+        memory_candidate = self.memory_service.memory_candidate_for_case(repair_case)
+        memory_write_results = (
+            *self.gates.verify_case(repair_case),
+            *self.gates.verify_memory_write_candidate(memory_candidate),
+        )
+        _require_preconditions("memory_write", memory_write_results)
+
+        memory_ref = self.memory_service.commit_case(
+            repair_case,
+            candidate=memory_candidate,
+        )
         strategies = self.consolidator.consolidate(list(self.memory_service.list_cases()))
         seed_ref = None
         for strategy in strategies:
@@ -198,8 +244,23 @@ class ReaderRepairService:
             context_snapshot_ref=attempt.context_snapshot_ref,
             skill_candidate_seed_ref=seed_ref,
             skill_promotion_triggered=False,
-            gate_results=[result.to_dict() for result in [*verification_results, *case_gate_results]],
+            gate_results=[
+                result.to_dict()
+                for result in [*verification_results, *memory_write_results]
+            ],
         )
 
 
-__all__ = ["ReaderRepairRunResult", "ReaderRepairService"]
+def _require_preconditions(stage: str, gate_results: tuple[GateResult, ...]) -> None:
+    if not gate_results:
+        gate_results = (
+            GateResult.fail(
+                "ReaderRepairPreconditionResultGate",
+                f"reader repair precondition stage {stage} returned no gate results",
+            ),
+        )
+    if any(not result.passed for result in gate_results):
+        raise ReaderRepairPreconditionError(stage, gate_results)
+
+
+__all__ = ["ReaderRepairPreconditionError", "ReaderRepairRunResult", "ReaderRepairService"]

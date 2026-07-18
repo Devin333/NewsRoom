@@ -16,7 +16,6 @@ from framework.harness import (
     HarnessControlPlane,
     HarnessEvent,
     HarnessTransitionPort,
-    HarnessGateResult,
     HarnessRunSpec,
     HarnessRunStatus,
     HarnessTrace,
@@ -35,6 +34,7 @@ from business.research.benchmark.models import ResearchScore
 from business.research.domain import (
     EvidenceRef,
     GateResult,
+    PaperSourceRecord,
     ReaderIssue,
     ResearchAnalysis,
     ResearchClaim,
@@ -49,9 +49,18 @@ from business.research.domain import (
 from business.research.paper_card import PaperCardBuilder, ResearchPaperCard
 from business.research.rag import ResearchRAGContext, ResearchRetrievalGoal
 from business.research.reader import ReaderPayloadBuilder
-from business.research.services import ResearchEvidenceBuilder, ResearchQualityGate, ResearchRAGPolicyBuilder, ReaderIssueDetector
+from business.research.services import (
+    CitationVerifier,
+    ReaderIssueDetector,
+    ResearchEvidenceBuilder,
+    ResearchQualityGate,
+    ResearchRAGPolicyBuilder,
+)
 from business.research.taxonomy import TaxonomyAssignment, TaxonomyAssignmentBuilder, TaxonomyCandidate, TaxonomyRegistry
-from business.research.workflows import build_paper_analysis_workflow_spec
+from business.research.workflows import (
+    build_paper_analysis_gate_registry,
+    build_paper_analysis_workflow_spec,
+)
 
 
 @dataclass(frozen=True)
@@ -149,6 +158,8 @@ class ResearchSinglePaperRuntime:
         self.paper_card_builder = PaperCardBuilder()
         self.reader_issue_detector = ReaderIssueDetector()
         self.rag_policy_builder = ResearchRAGPolicyBuilder()
+        self.citation_verifier = CitationVerifier()
+        self.gate_registry = build_paper_analysis_gate_registry()
 
     def run(self, request: AnalyzePaperRequest) -> ResearchAnalysisResult:
         run_id = validate_artifact_path_segment(request.run_id, field="run_id")
@@ -167,16 +178,7 @@ class ResearchSinglePaperRuntime:
         control_plane = HarnessControlPlane(
             event_port=event_port,
             worker_registry=self._worker_registry(workspace),
-            verify_gates=(
-                ResearchToolAllowlistGate(),
-                ResearchClaimDedupGate(),
-                ResearchScoreRangeGate(),
-                ResearchEvidenceCoverageGate(),
-                ResearchReaderPayloadGate(),
-                ResearchPaperCardGate(),
-                ResearchTaxonomyGate(),
-                ResearchBudgetGate(),
-            ),
+            gate_registry=self.gate_registry,
         )
         harness_result = control_plane.run(run_spec)
         trace = HarnessTrace(
@@ -186,7 +188,7 @@ class ResearchSinglePaperRuntime:
         )
         transcript = _transcript_from_events(run_id, harness_result.events)
         artifacts = dict(workspace.artifact_refs)
-        if trace.events:
+        if harness_result.state.status == HarnessRunStatus.SUCCEEDED and trace.events:
             artifacts["harness-trace"] = self._write_artifact(
                 "harness-trace",
                 trace.to_dict(),
@@ -248,14 +250,21 @@ class ResearchSinglePaperRuntime:
 
     def _load_paper_source(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
         paper = self.source_provider.fetch_paper(workspace.request.source_ref)
+        source_record = self.source_provider.fetch_source_record(paper.paper_id)
         workspace.paper = paper
-        return _ok({"paper": paper.to_dict(), "source_refs": [workspace.request.source_ref]})
+        workspace.source_record = source_record
+        return _ok(
+            {
+                "paper": paper.to_dict(),
+                "source_record": source_record.to_dict(),
+                "source_refs": [workspace.request.source_ref],
+            }
+        )
 
     def _compile_document(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
-        if workspace.paper is None:
+        if workspace.paper is None or workspace.source_record is None:
             return _failed("paper source must be loaded before compile_document")
-        source_record = self.source_provider.fetch_source_record(workspace.paper.paper_id)
-        document = self.document_compiler.compile(source_record)
+        document = self.document_compiler.compile(workspace.source_record)
         workspace.document = document
         return _ok({"document": document.to_dict(), "source_refs": document.lineage.source_refs})
 
@@ -332,10 +341,26 @@ class ResearchSinglePaperRuntime:
         )
         workspace.llm_candidate_warnings.extend(_forbidden_candidate_keys(candidate))
         summary_payload = dict(candidate.get("three_minute_read", {}))
-        evidence_refs = [
-            EvidenceRef(**item) if isinstance(item, dict) else item
-            for item in summary_payload.get("evidence_refs", [])
-        ]
+        evidence_by_id = {
+            item.evidence_id: item
+            for item in (workspace.evidence_pack.items if workspace.evidence_pack else ())
+        }
+        evidence_refs: list[EvidenceRef] = []
+        for item in summary_payload.get("evidence_refs", []):
+            evidence_ref = EvidenceRef(**item) if isinstance(item, dict) else item
+            canonical_evidence = evidence_by_id.get(evidence_ref.evidence_id)
+            if canonical_evidence is not None and evidence_ref.source_ref != canonical_evidence.source_ref:
+                evidence_ref = evidence_ref.model_copy(
+                    update={
+                        "source_ref": canonical_evidence.source_ref,
+                        "metadata": {
+                            **evidence_ref.metadata,
+                            "candidate_source_ref": evidence_ref.source_ref,
+                            "source_ref_normalized": True,
+                        },
+                    }
+                )
+            evidence_refs.append(evidence_ref)
         summary = ThreeMinuteRead(
             problem=str(summary_payload.get("problem") or ""),
             core_idea=str(summary_payload.get("core_idea") or ""),
@@ -383,6 +408,9 @@ class ResearchSinglePaperRuntime:
                 "contributions": list(workspace.contributions),
                 "taxonomy_assignment": assignment.to_dict(),
                 "taxonomy_review_candidate_ids": assignment.review_candidate_ids,
+                "summary_evidence_refs": [
+                    evidence_ref.to_dict() for evidence_ref in workspace.summary.evidence_refs
+                ],
             }
         )
 
@@ -406,6 +434,11 @@ class ResearchSinglePaperRuntime:
                 )
             )
         for item in candidate.get("scores", []):
+            candidate_source_refs = [str(ref) for ref in item.get("source_refs", [])]
+            canonical_source_refs = _canonicalize_evidence_source_refs(
+                candidate_source_refs,
+                workspace.evidence_pack,
+            )
             candidate_score = {
                 "score_id": str(item.get("score_id")),
                 "paper_id": workspace.request.paper_id,
@@ -413,8 +446,13 @@ class ResearchSinglePaperRuntime:
                 "dataset_id": str(item.get("dataset_id")),
                 "metric_id": str(item.get("metric_id")),
                 "value": float(item.get("value")),
-                "source_refs": [str(ref) for ref in item.get("source_refs", [])],
+                "source_refs": canonical_source_refs,
             }
+            if canonical_source_refs != candidate_source_refs:
+                candidate_score["metadata"] = {
+                    "candidate_source_refs": candidate_source_refs,
+                    "source_refs_normalized": True,
+                }
             candidate_scores.append(candidate_score)
             if _score_candidate_is_in_supported_range(candidate_score):
                 scores.append(ResearchScore(**candidate_score))
@@ -440,23 +478,22 @@ class ResearchSinglePaperRuntime:
                 "claims": [claim.text for claim in claims],
                 "claim_models": [claim.to_dict() for claim in claims],
                 "scores": candidate_scores,
-                "quality_score": min([claim.confidence for claim in claims] or [1.0]),
+                "claim_confidence_observation": min([claim.confidence for claim in claims] or [1.0]),
             }
         )
 
     def _verify_claims(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
-        gate_results = []
-        available = set(workspace.evidence_pack.evidence_ids if workspace.evidence_pack else [])
-        for claim in workspace.claims:
-            if not claim.evidence_ids:
-                gate_results.append(GateResult.fail("ResearchEvidenceCoverageGate", "claim requires evidence ids", metadata={"claim_id": claim.claim_id}))
-            elif any(evidence_id not in available for evidence_id in claim.evidence_ids):
-                gate_results.append(GateResult.fail("ResearchEvidenceCoverageGate", "claim references missing evidence", metadata={"claim_id": claim.claim_id}))
-            else:
-                gate_results.append(GateResult.pass_("ResearchEvidenceCoverageGate", metadata={"claim_id": claim.claim_id}))
+        if workspace.evidence_pack is None:
+            return _failed("evidence pack is required before claim verification")
+        gate_results = self.citation_verifier.verify_claims(workspace.claims, workspace.evidence_pack)
         workspace.claim_gate_results = gate_results
-        passed = all(result.passed for result in gate_results)
-        return _ok({"claim_gate_results": [result.to_dict() for result in gate_results], "quality_score": 1.0 if passed else 0.0})
+        return _ok(
+            {
+                "claim_gate_results": [result.to_dict() for result in gate_results],
+                "claim_models": [claim.to_dict() for claim in workspace.claims],
+                "evidence_pack": workspace.evidence_pack.to_dict(),
+            }
+        )
 
     def _quality_gate(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
         if workspace.paper is None or workspace.summary is None or workspace.evidence_pack is None:
@@ -488,7 +525,6 @@ class ResearchSinglePaperRuntime:
             {
                 "analysis": analysis.to_dict(),
                 "research_quality": quality.to_dict(),
-                "quality_score": quality.score,
                 "gate_failures": [flag.to_dict() for flag in quality.quality_flags],
             }
         )
@@ -509,7 +545,6 @@ class ResearchSinglePaperRuntime:
             {
                 "reader_payload": reader_payload.to_dict(),
                 "reader_issue": workspace.reader_issue.to_dict() if workspace.reader_issue else None,
-                "quality_score": 0.0 if workspace.reader_issue else 1.0,
             }
         )
 
@@ -533,7 +568,7 @@ class ResearchSinglePaperRuntime:
             metadata={"source_lineage": [workspace.request.source_ref]},
         )
         workspace.paper_card = card
-        return _ok({"paper_card": card.to_dict(), "quality_score": 1.0})
+        return _ok({"paper_card": card.to_dict()})
 
     def _publish_artifacts(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
         if workspace.analysis:
@@ -616,7 +651,7 @@ class ResearchSinglePaperRuntime:
         )
 
     def _record_skill_experience(self, workspace: "_ResearchRunWorkspace") -> SkillExperience:
-        quality_score = workspace.quality.score if workspace.quality else 0.0
+        research_quality_score = workspace.quality.score if workspace.quality else 0.0
         return SkillExperience(
             experience_id=stable_research_id("skill_experience", workspace.request.run_id, workspace.request.paper_id),
             run_id=workspace.request.run_id,
@@ -629,8 +664,12 @@ class ResearchSinglePaperRuntime:
             output_refs=list(workspace.artifact_refs.values()),
             transcript_refs=[f"harness-transcript://{workspace.request.run_id}"],
             gate_results=[result.to_dict() for result in workspace.claim_gate_results],
-            score=quality_score,
-            outcome=SkillExperienceOutcome.SUCCESS if quality_score >= 0.8 else SkillExperienceOutcome.FAILURE,
+            score=research_quality_score,
+            outcome=(
+                SkillExperienceOutcome.SUCCESS
+                if research_quality_score >= 0.8
+                else SkillExperienceOutcome.FAILURE
+            ),
             evidence_refs=workspace.evidence_pack.evidence_ids if workspace.evidence_pack else (),
             source="research_single_paper_run",
             summary="Single-paper Research analysis experience recorded for offline skill evolution.",
@@ -653,6 +692,7 @@ class ResearchSinglePaperRuntime:
 class _ResearchRunWorkspace:
     request: AnalyzePaperRequest
     paper: ResearchPaper | None = None
+    source_record: PaperSourceRecord | None = None
     document: ResearchDocument | None = None
     evidence_pack: ResearchEvidencePack | None = None
     rag_context_pack: RAGContextPack | None = None
@@ -677,125 +717,6 @@ class _ResearchRunWorkspace:
     context_envelope: ContextEnvelope | None = None
     compression_records: list[dict[str, Any]] = field(default_factory=list)
     skill_experience_refs: list[str] = field(default_factory=list)
-
-
-class ResearchToolAllowlistGate:
-    gate_name = "ResearchToolAllowlistGate"
-
-    def evaluate(self, context: Any) -> HarnessGateResult:
-        requested = set(context.step_spec.metadata.get("requested_tools", ()))
-        diagnostics = context.worker_result.diagnostics if context.worker_result else {}
-        requested.update(diagnostics.get("requested_tools", ()))
-        allowed = set(context.step_spec.metadata.get("tool_allowlist", ()))
-        denied = sorted(str(tool) for tool in requested if tool not in allowed)
-        return HarnessGateResult(self.gate_name, not denied, None if not denied else "tool outside allowlist", {"denied": denied})
-
-
-class ResearchClaimDedupGate:
-    gate_name = "ResearchClaimDedupGate"
-
-    def evaluate(self, context: Any) -> HarnessGateResult:
-        claims = []
-        if context.worker_result is not None:
-            claims = [str(claim) for claim in context.worker_result.output.get("claims", ())]
-        duplicates = sorted({claim for claim in claims if claims.count(claim) > 1})
-        return HarnessGateResult(self.gate_name, not duplicates, None if not duplicates else "duplicate claims", {"claims": duplicates})
-
-
-class ResearchScoreRangeGate:
-    gate_name = "ResearchScoreRangeGate"
-
-    def evaluate(self, context: Any) -> HarnessGateResult:
-        violations: dict[str, Any] = {}
-        output = context.worker_result.output if context.worker_result else {}
-        if "quality_score" in output:
-            score = output["quality_score"]
-            if not isinstance(score, int | float) or score < 0 or score > 1:
-                violations["quality_score"] = score
-        for item in output.get("scores", ()):
-            value = item.get("value") if isinstance(item, dict) else None
-            if not isinstance(value, int | float) or value < -1_000_000_000 or value > 1_000_000_000:
-                violations[str(item.get("score_id", "score")) if isinstance(item, dict) else "score"] = value
-        return HarnessGateResult(self.gate_name, not violations, None if not violations else "score out of range", {"violations": violations})
-
-
-class ResearchEvidenceCoverageGate:
-    gate_name = "ResearchEvidenceCoverageGate"
-
-    def evaluate(self, context: Any) -> HarnessGateResult:
-        output = context.worker_result.output if context.worker_result else {}
-        failures = []
-        for result in output.get("claim_gate_results", ()):
-            if isinstance(result, dict) and result.get("passed") is False:
-                failures.append(result)
-        research_quality = output.get("research_quality")
-        if isinstance(research_quality, dict) and research_quality.get("passed") is False:
-            failures.append({"gate": "ResearchQualityGate", "quality": research_quality})
-        if output.get("rag_gap_report", {}).get("missing_information"):
-            failures.append({"gate": "ResearchRAGEvidenceNeedGate", "missing": output["rag_gap_report"]["missing_information"]})
-        return HarnessGateResult(self.gate_name, not failures, None if not failures else "evidence coverage failed", {"failures": failures})
-
-
-class ResearchBudgetGate:
-    gate_name = "ResearchBudgetGate"
-
-    def evaluate(self, context: Any) -> HarnessGateResult:
-        budget = context.budget
-        if budget is None:
-            return HarnessGateResult(self.gate_name, True, "no budget snapshot")
-        violations = {}
-        if budget.turns_used > budget.max_turns:
-            violations["turns"] = {"used": budget.turns_used, "max": budget.max_turns}
-        if budget.worker_calls_used > budget.max_worker_calls:
-            violations["worker_calls"] = {"used": budget.worker_calls_used, "max": budget.max_worker_calls}
-        return HarnessGateResult(self.gate_name, not violations, None if not violations else "budget exhausted", {"violations": violations})
-
-
-class ResearchReaderPayloadGate:
-    gate_name = "ResearchReaderPayloadGate"
-
-    def evaluate(self, context: Any) -> HarnessGateResult:
-        output = context.worker_result.output if context.worker_result else {}
-        if "reader_payload" not in output:
-            return HarnessGateResult(self.gate_name, True, "not a reader step")
-        if output.get("reader_issue"):
-            return HarnessGateResult(self.gate_name, False, "reader payload has issue", {"reader_issue": output["reader_issue"]})
-        payload = output["reader_payload"]
-        missing = []
-        if not payload.get("navigation"):
-            missing.append("navigation")
-        if not payload.get("source_lineage", {}).get("source_refs"):
-            missing.append("source_lineage")
-        return HarnessGateResult(self.gate_name, not missing, None if not missing else "reader payload missing required fields", {"missing": missing})
-
-
-class ResearchPaperCardGate:
-    gate_name = "ResearchPaperCardGate"
-
-    def evaluate(self, context: Any) -> HarnessGateResult:
-        output = context.worker_result.output if context.worker_result else {}
-        payload = output.get("paper_card")
-        if not isinstance(payload, dict):
-            return HarnessGateResult(self.gate_name, True, "not a paper card step")
-        missing = [field for field in ("pdf_url", "code_url", "github_repo", "three_minute_read") if not payload.get(field)]
-        metric_source = payload.get("metadata", {}).get("github_metrics_source")
-        if payload.get("github_stars") is not None and metric_source not in {"github_api", "github_graphql", "github_repository_port"}:
-            missing.append("github_metrics_source")
-        return HarnessGateResult(self.gate_name, not missing, None if not missing else "paper card missing required fields", {"missing": missing})
-
-
-class ResearchTaxonomyGate:
-    gate_name = "ResearchTaxonomyGate"
-
-    def evaluate(self, context: Any) -> HarnessGateResult:
-        output = context.worker_result.output if context.worker_result else {}
-        review_ids = output.get("taxonomy_review_candidate_ids", ())
-        return HarnessGateResult(
-            self.gate_name,
-            not review_ids,
-            None if not review_ids else "taxonomy candidates require review",
-            {"review_candidate_ids": list(review_ids)},
-        )
 
 
 def _budget_from_options(options: dict[str, Any]) -> HarnessBudget:
@@ -839,6 +760,36 @@ def _score_candidate_is_in_supported_range(candidate: dict[str, Any]) -> bool:
     return isinstance(value, int | float) and -1_000_000_000 <= value <= 1_000_000_000 and bool(refs)
 
 
+def _canonicalize_evidence_source_refs(
+    source_refs: list[str],
+    evidence_pack: ResearchEvidencePack | None,
+) -> list[str]:
+    if evidence_pack is None:
+        return source_refs
+    allowed = {
+        ref
+        for item in evidence_pack.items
+        for ref in (item.source_ref, *item.lineage.source_refs)
+    }
+    normalized: list[str] = []
+    for source_ref in source_refs:
+        if source_ref in allowed:
+            normalized.append(source_ref)
+            continue
+        matches = {
+            item.source_ref
+            for item in evidence_pack.items
+            if any(
+                source_ref == span_ref
+                or source_ref.endswith(f"/{span_ref}")
+                or source_ref.endswith(f"#{span_ref}")
+                for span_ref in item.span_refs
+            )
+        }
+        normalized.append(next(iter(matches)) if len(matches) == 1 else source_ref)
+    return list(dict.fromkeys(normalized))
+
+
 def _research_ordered_compression_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         records,
@@ -868,13 +819,5 @@ def _gate_failures(events: list[HarnessEvent]) -> list[dict[str, Any]]:
 __all__ = [
     "AnalyzePaperRequest",
     "ResearchAnalysisResult",
-    "ResearchBudgetGate",
-    "ResearchClaimDedupGate",
-    "ResearchEvidenceCoverageGate",
-    "ResearchPaperCardGate",
-    "ResearchReaderPayloadGate",
-    "ResearchScoreRangeGate",
     "ResearchSinglePaperRuntime",
-    "ResearchTaxonomyGate",
-    "ResearchToolAllowlistGate",
 ]

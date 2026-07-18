@@ -535,6 +535,11 @@ def test_default_catalog_accepts_harness_safe_summary_contracts() -> None:
             "gate": "quality",
             "passed": True,
             "details_ref": "sha256:" + "7" * 64,
+            "reference": "quality@1",
+            "input_ref": "sha256:" + "8" * 64,
+            "result_ref": "sha256:" + "9" * 64,
+            "reason_code": "gate_passed",
+            "score": 0.9,
         },
     }
 

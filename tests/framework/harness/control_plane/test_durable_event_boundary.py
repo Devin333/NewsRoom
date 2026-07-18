@@ -12,6 +12,7 @@ from framework.events.canonical import (
     StoredEvent,
     assert_same_event_identity,
     canonical_json_bytes,
+    checksum_for,
     thaw_canonical_json,
 )
 from framework.events.errors import (
@@ -43,6 +44,10 @@ from framework.events.schema import (
     default_event_schema_catalog,
 )
 from framework.harness import (
+    DeterministicGate,
+    DeterministicGateRegistry,
+    GateReference,
+    GateRegistration,
     DurableHarnessEventPort,
     DurableHarnessTransitionPort,
     HarnessBudget,
@@ -66,6 +71,10 @@ from framework.harness import (
 )
 from framework.harness.control_plane.transition import HarnessStateProjection
 from framework.harness.control_plane.transitions import transition_run, transition_step
+from framework.harness.quality.verdict import (
+    aggregate_gate_verdict,
+    verification_evidence,
+)
 from framework.shared.json import stable_json_dumps
 
 
@@ -356,7 +365,9 @@ def _durable_port(runtime: CanonicalRecordingRuntime):
     )
 
 
-class CountingGate:
+class CountingGate(DeterministicGate):
+    gate_name = "counting"
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -365,9 +376,10 @@ class CountingGate:
         return HarnessGateResult(gate_name="counting", passed=True)
 
 
-class EntryStateGate:
+class EntryStateGate(DeterministicGate):
     def __init__(self, expected_step_status: str) -> None:
         self.expected_step_status = expected_step_status
+        self.gate_name = f"entry_state_{expected_step_status}"
         self.observations: list[tuple[str, bool]] = []
 
     def evaluate(self, context) -> HarnessGateResult:
@@ -384,7 +396,9 @@ class EntryStateGate:
         )
 
 
-class FailingGate:
+class FailingGate(DeterministicGate):
+    gate_name = "always_fail"
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -394,7 +408,9 @@ class FailingGate:
         return HarnessGateResult(gate_name="always_fail", passed=False)
 
 
-class FailOnceGate:
+class FailOnceGate(DeterministicGate):
+    gate_name = "fail_once"
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -405,6 +421,38 @@ class FailOnceGate:
             gate_name="fail_once",
             passed=self.calls > 1,
         )
+
+
+class VersionedCountingGate(DeterministicGate):
+    gate_name = "candidate_quality"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def evaluate(self, context) -> HarnessGateResult:
+        self.calls += 1
+        return HarnessGateResult(
+            gate_name=self.gate_name,
+            passed=context.step_state.status.value == "verifying",
+            details={"score": 0.9},
+        )
+
+
+class FailAfterInMemoryTransitionPort(InMemoryHarnessEventPort):
+    def __init__(self, transition_kind: str) -> None:
+        super().__init__()
+        self.transition_kind = transition_kind
+        self.fail_once = True
+
+    def commit_transition(self, *args, **kwargs):
+        commit = super().commit_transition(*args, **kwargs)
+        if (
+            self.fail_once
+            and str(kwargs.get("transition_kind")) == self.transition_kind
+        ):
+            self.fail_once = False
+            raise EventStoreUnavailableError("commit outcome was uncertain")
+        return commit
 
 
 def test_control_plane_requires_an_explicit_event_port() -> None:
@@ -1068,11 +1116,375 @@ def test_recovery_reuses_phase_entry_state_after_exit_commit_response_is_lost(
     )
 
     assert recovered.succeeded is True
-    assert gate.observations == [(entry_status, True), (entry_status, True)]
+    expected_observations = 1 if gate_phase == "verify" else 2
+    assert gate.observations == [(entry_status, True)] * expected_observations
     assert transition_kinds.count(f"{gate_phase}_entry") == 1
     assert transition_kinds.count(f"{gate_phase}_exit") == 1
     assert gate_event_count == 1
     assert worker_calls == 1
+
+
+def test_verify_recovery_requires_and_reuses_exact_declared_gate_version() -> None:
+    fail_once = True
+    worker_calls = 0
+    gate = VersionedCountingGate()
+
+    def fail_after(request: EventPublishRequest) -> bool:
+        nonlocal fail_once
+        if (
+            fail_once
+            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
+            and request.payload is not None
+            and request.payload.get("transition_kind") == "verify_exit"
+        ):
+            fail_once = False
+            return True
+        return False
+
+    def worker(task) -> HarnessWorkerResult:
+        nonlocal worker_calls
+        worker_calls += 1
+        return HarnessWorkerResult(status="succeeded", output={"candidate": True})
+
+    runtime = CanonicalRecordingRuntime(fail_after=fail_after)
+    secure_store = SecureActivityStore()
+
+    def build_port() -> DurableHarnessTransitionPort:
+        return DurableHarnessTransitionPort(
+            runtime,
+            runtime,
+            secure_activity_store=secure_store,
+            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
+        )
+
+    run_spec = HarnessRunSpec(
+        run_id="run-versioned-verify-recovery",
+        workflow=HarnessWorkflowSpec(
+            workflow_id="versioned-verify-recovery",
+            steps=(
+                HarnessStepSpec(
+                    step_id="collect",
+                    worker_type="llm",
+                    quality_gate="candidate_quality@1",
+                ),
+            ),
+            entry_step_id="collect",
+        ),
+    )
+    registration = GateRegistration(
+        reference=GateReference.parse("candidate_quality@1"),
+        gate=gate,
+    )
+
+    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
+        HarnessControlPlane(
+            event_port=build_port(),
+            worker_registry={"collect": worker},
+            gate_registry=DeterministicGateRegistry((registration,)),
+        ).run(run_spec)
+
+    with pytest.raises(HarnessValidationError) as missing:
+        HarnessControlPlane(
+            event_port=build_port(),
+            worker_registry={"collect": worker},
+            gate_registry=DeterministicGateRegistry(),
+        ).recover_and_run(run_spec)
+    assert missing.value.code == "unknown_gate_reference"
+
+    recovered = HarnessControlPlane(
+        event_port=build_port(),
+        worker_registry={"collect": worker},
+        gate_registry=DeterministicGateRegistry((registration,)),
+    ).recover_and_run(run_spec)
+
+    assert recovered.succeeded is True
+    assert worker_calls == 1
+    assert gate.calls == 1
+    assert recovered.quality_verdicts["collect"].score == 0.9
+
+
+def test_in_memory_recovery_reuses_committed_verify_evidence() -> None:
+    worker_calls = 0
+    gate = VersionedCountingGate()
+    event_port = FailAfterInMemoryTransitionPort("verify_exit")
+
+    def worker(task) -> HarnessWorkerResult:
+        nonlocal worker_calls
+        del task
+        worker_calls += 1
+        return HarnessWorkerResult(status="succeeded", output={"candidate": True})
+
+    run_spec = HarnessRunSpec(
+        run_id="run-in-memory-verify-recovery",
+        workflow=HarnessWorkflowSpec(
+            workflow_id="in-memory-verify-recovery",
+            steps=(
+                HarnessStepSpec(
+                    step_id="collect",
+                    worker_type="llm",
+                    quality_gate="candidate_quality@1",
+                ),
+            ),
+            entry_step_id="collect",
+        ),
+    )
+    registration = GateRegistration(
+        reference=GateReference.parse("candidate_quality@1"),
+        gate=gate,
+    )
+
+    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
+        HarnessControlPlane(
+            event_port=event_port,
+            worker_registry={"collect": worker},
+            gate_registry=DeterministicGateRegistry((registration,)),
+        ).run(run_spec)
+
+    recovered = HarnessControlPlane(
+        event_port=event_port,
+        worker_registry={"collect": worker},
+        gate_registry=DeterministicGateRegistry((registration,)),
+    ).recover_and_run(run_spec)
+
+    assert recovered.succeeded is True
+    assert worker_calls == 1
+    assert gate.calls == 1
+
+
+def test_recovery_rejects_committed_verify_with_missing_gate_evidence() -> None:
+    gate = VersionedCountingGate()
+    event_port = FailAfterInMemoryTransitionPort("verify_exit")
+    run_spec = HarnessRunSpec(
+        run_id="run-missing-committed-gate-evidence",
+        workflow=HarnessWorkflowSpec(
+            workflow_id="missing-committed-gate-evidence",
+            steps=(
+                HarnessStepSpec(
+                    step_id="collect",
+                    worker_type="llm",
+                    quality_gate="candidate_quality@1",
+                ),
+            ),
+            entry_step_id="collect",
+        ),
+    )
+    registration = GateRegistration(
+        reference=GateReference.parse("candidate_quality@1"),
+        gate=gate,
+    )
+
+    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
+        HarnessControlPlane(
+            event_port=event_port,
+            worker_registry={
+                "collect": lambda task: HarnessWorkerResult(
+                    status="succeeded",
+                    output={"candidate": True},
+                )
+            },
+            gate_registry=DeterministicGateRegistry((registration,)),
+        ).run(run_spec)
+
+    missing_event_index = next(
+        index
+        for index, event in enumerate(event_port.events)
+        if event.event_type == HarnessEventType.GATE_EVALUATED
+        and event.payload.get("gate") == "candidate_quality"
+    )
+    del event_port.events[missing_event_index]
+
+    with pytest.raises(
+        EventIncompleteHistoryError,
+        match="gate evidence count is incomplete",
+    ):
+        HarnessControlPlane(
+            event_port=event_port,
+            worker_registry={"collect": lambda task: pytest.fail("worker reran")},
+            gate_registry=DeterministicGateRegistry((registration,)),
+        ).recover_and_run(run_spec)
+
+    assert gate.calls == 1
+
+
+def test_recovery_rejects_coordinated_gate_input_reference_tampering() -> None:
+    gate = VersionedCountingGate()
+    event_port = FailAfterInMemoryTransitionPort("verify_exit")
+    run_spec = HarnessRunSpec(
+        run_id="run-coordinated-gate-input-tamper",
+        workflow=HarnessWorkflowSpec(
+            workflow_id="coordinated-gate-input-tamper",
+            steps=(
+                HarnessStepSpec(
+                    step_id="collect",
+                    worker_type="llm",
+                    quality_gate="candidate_quality@1",
+                ),
+            ),
+            entry_step_id="collect",
+        ),
+    )
+    registration = GateRegistration(
+        reference=GateReference.parse("candidate_quality@1"),
+        gate=gate,
+    )
+
+    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
+        HarnessControlPlane(
+            event_port=event_port,
+            worker_registry={
+                "collect": lambda task: HarnessWorkerResult(
+                    status="succeeded",
+                    output={"candidate": True},
+                )
+            },
+            gate_registry=DeterministicGateRegistry((registration,)),
+        ).run(run_spec)
+
+    verify_entry_index = max(
+        index
+        for index, event in enumerate(event_port.events)
+        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
+        and event.payload.get("transition_kind") == "verify_entry"
+    )
+    verify_exit_index = next(
+        index
+        for index, event in enumerate(event_port.events[verify_entry_index + 1 :], verify_entry_index + 1)
+        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
+        and event.payload.get("transition_kind") == "verify_exit"
+    )
+    gate_event_indexes = [
+        index
+        for index in range(verify_entry_index + 1, verify_exit_index)
+        if event_port.events[index].event_type == HarnessEventType.GATE_EVALUATED
+    ]
+    target_index = next(
+        index
+        for index in gate_event_indexes
+        if event_port.events[index].payload.get("gate") == "candidate_quality"
+    )
+    target_event = event_port.events[target_index]
+    target_payload = thaw_canonical_json(target_event.payload)
+    target_details = dict(target_payload["details"])
+    target_evidence = dict(target_details["harness_gate"])
+    target_evidence["input_ref"] = "sha256:" + "f" * 64
+    target_details["harness_gate"] = target_evidence
+    target_payload["details"] = target_details
+    event_port.events[target_index] = replace(target_event, payload=target_payload)
+
+    gate_results = tuple(
+        HarnessGateResult(
+            gate_name=str(event_port.events[index].payload["gate"]),
+            passed=event_port.events[index].payload["passed"],
+            reason=event_port.events[index].payload.get("reason"),
+            details=dict(event_port.events[index].payload["details"]),
+        )
+        for index in gate_event_indexes
+    )
+    verdict = aggregate_gate_verdict(
+        gate_results,
+        declared_gate_reference="candidate_quality@1",
+    )
+    tampered_gate_ref = checksum_for(verification_evidence(gate_results, verdict))
+    transitions = event_port.transitions[run_spec.run_id]
+    transition_index = next(
+        index
+        for index, transition in enumerate(transitions)
+        if str(transition.transition_kind) == "verify_exit"
+    )
+    tampered_transition = replace(
+        transitions[transition_index],
+        gate_ref=tampered_gate_ref,
+    )
+    transitions[transition_index] = tampered_transition
+    verify_exit_event = event_port.events[verify_exit_index]
+    event_port.events[verify_exit_index] = replace(
+        verify_exit_event,
+        payload=tampered_transition.to_payload(),
+    )
+
+    with pytest.raises(
+        EventStoreCorruptionError,
+        match="exact binding",
+    ):
+        HarnessControlPlane(
+            event_port=event_port,
+            worker_registry={"collect": lambda task: pytest.fail("worker reran")},
+            gate_registry=DeterministicGateRegistry((registration,)),
+        ).recover_and_run(run_spec)
+
+    assert gate.calls == 1
+
+
+def test_recovery_uses_recorded_verification_before_step_success_retry() -> None:
+    fail_once = True
+    worker_calls = 0
+    gate = VersionedCountingGate()
+
+    def fail_before(request: EventPublishRequest) -> bool:
+        nonlocal fail_once
+        if (
+            fail_once
+            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
+            and request.payload is not None
+            and request.payload.get("transition_kind") == "step_success"
+        ):
+            fail_once = False
+            return True
+        return False
+
+    def worker(task) -> HarnessWorkerResult:
+        nonlocal worker_calls
+        worker_calls += 1
+        return HarnessWorkerResult(status="succeeded", output={"candidate": True})
+
+    runtime = CanonicalRecordingRuntime(fail_before=fail_before)
+    secure_store = SecureActivityStore()
+
+    def build_port() -> DurableHarnessTransitionPort:
+        return DurableHarnessTransitionPort(
+            runtime,
+            runtime,
+            secure_activity_store=secure_store,
+            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
+        )
+
+    run_spec = HarnessRunSpec(
+        run_id="run-recorded-verify-recovery",
+        workflow=HarnessWorkflowSpec(
+            workflow_id="recorded-verify-recovery",
+            steps=(
+                HarnessStepSpec(
+                    step_id="collect",
+                    worker_type="llm",
+                    quality_gate="candidate_quality@1",
+                ),
+            ),
+            entry_step_id="collect",
+        ),
+    )
+    registration = GateRegistration(
+        reference=GateReference.parse("candidate_quality@1"),
+        gate=gate,
+    )
+
+    with pytest.raises(EventStoreUnavailableError):
+        HarnessControlPlane(
+            event_port=build_port(),
+            worker_registry={"collect": worker},
+            gate_registry=DeterministicGateRegistry((registration,)),
+        ).run(run_spec)
+    assert gate.calls == 1
+
+    recovered = HarnessControlPlane(
+        event_port=build_port(),
+        worker_registry={"collect": worker},
+        gate_registry=DeterministicGateRegistry((registration,)),
+    ).recover_and_run(run_spec)
+
+    assert recovered.succeeded is True
+    assert worker_calls == 1
+    assert gate.calls == 1
+    assert recovered.quality_verdicts["collect"].score == 0.9
 
 
 def test_failed_plan_gate_is_not_bypassed_when_plan_exit_commit_fails() -> None:

@@ -1567,6 +1567,11 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                 "details": _OBJECT,
                 "reason_ref": _CHECKSUM_TEXT,
                 "details_ref": _CHECKSUM_TEXT,
+                "reference": _TEXT,
+                "input_ref": _CHECKSUM_TEXT,
+                "result_ref": _CHECKSUM_TEXT,
+                "reason_code": _TEXT,
+                "score": {"type": "number", "minimum": 0, "maximum": 1},
             },
             required=("gate", "passed"),
             any_of=(

@@ -169,4 +169,9 @@ def test_missing_evidence_halts_after_replan_budget_is_exhausted() -> None:
     assert result.status == "halted"
     assert result.quality.passed is False
     assert result.diagnostics["terminal_reason"] == "verification failed and replan budget is exhausted"
-    assert any(failure["gate"] == "ResearchEvidenceCoverageGate" for failure in result.diagnostics["gate_failures"])
+    failure = next(
+        failure
+        for failure in result.diagnostics["gate_failures"]
+        if failure["gate"] == "SummaryEvidenceCoverageGate"
+    )
+    assert failure["details"]["harness_gate"]["reference"] == "SummaryEvidenceCoverageGate@1"

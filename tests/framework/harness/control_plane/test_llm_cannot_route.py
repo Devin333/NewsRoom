@@ -7,9 +7,7 @@ import pytest
 
 from framework.harness import (
     HarnessControlPlane,
-    HarnessDecisionType,
     HarnessRunSpec,
-    HarnessRunStatus,
     HarnessStepSpec,
     HarnessValidationError,
     HarnessWorkerResult,
@@ -44,7 +42,7 @@ def test_worker_result_contract_rejects_next_step_field() -> None:
         HarnessWorkerResult(status="succeeded", output={"next_step": "publish"})
 
 
-def test_fake_llm_next_step_output_does_not_control_routing() -> None:
+def test_fake_llm_next_step_output_is_rejected_at_worker_ingress() -> None:
     workflow = HarnessWorkflowSpec(
         workflow_id="llm-route",
         steps=(
@@ -54,19 +52,58 @@ def test_fake_llm_next_step_output_does_not_control_routing() -> None:
         ),
         entry_step_id="draft",
     )
-    result = HarnessControlPlane(
-        event_port=InMemoryHarnessEventPort(),
+    event_port = InMemoryHarnessEventPort()
+    downstream_calls: list[str] = []
+    control_plane = HarnessControlPlane(
+        event_port=event_port,
         worker_registry={
             "draft": lambda task: LeakyWorkerResult(
                 status=HarnessWorkerStatus.SUCCEEDED,
                 output={"next_step": "publish", "body": "candidate text"},
             ),
-            "review": lambda task: HarnessWorkerResult(status="succeeded", output={"reviewed": True}),
-            "publish": lambda task: HarnessWorkerResult(status="succeeded", output={"published": True}),
+            "review": lambda task: downstream_calls.append("review"),
+            "publish": lambda task: downstream_calls.append("publish"),
         }
-    ).run(HarnessRunSpec(run_id="run-llm-route", workflow=workflow))
+    )
 
-    route_decisions = [decision for decision in result.decisions if decision.decision_type == HarnessDecisionType.ROUTE_TO_STEP]
-    assert route_decisions[0].target_step_id == "review"
-    assert result.state.status == HarnessRunStatus.SUCCEEDED
-    assert "publish" in result.worker_results
+    with pytest.raises(HarnessValidationError) as captured:
+        control_plane.run(HarnessRunSpec(run_id="run-llm-route", workflow=workflow))
+
+    assert captured.value.details["forbidden"] == ["next_step"]
+    assert downstream_calls == []
+    assert not any(
+        event.event_type.value == "worker_result_recorded"
+        for event in event_port.events
+    )
+
+
+@pytest.mark.parametrize("forbidden_key", ("next_step", "write_memory", "publish"))
+def test_mutated_worker_result_is_revalidated_at_ingress(forbidden_key: str) -> None:
+    worker_result = HarnessWorkerResult(
+        status="succeeded",
+        output={"candidate": "safe at construction"},
+    )
+    worker_result.output[forbidden_key] = True
+    event_port = InMemoryHarnessEventPort()
+    workflow = HarnessWorkflowSpec(
+        workflow_id="mutated-worker-result",
+        steps=(HarnessStepSpec(step_id="draft", worker_type="llm"),),
+        entry_step_id="draft",
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessControlPlane(
+            event_port=event_port,
+            worker_registry={"draft": lambda task: worker_result},
+        ).run(
+            HarnessRunSpec(
+                run_id=f"run-mutated-worker-{forbidden_key}",
+                workflow=workflow,
+            )
+        )
+
+    assert captured.value.details["forbidden"] == [forbidden_key]
+    assert not any(
+        event.event_type.value == "worker_result_recorded"
+        for event in event_port.events
+    )

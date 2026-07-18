@@ -5,13 +5,20 @@ from datetime import UTC, datetime
 
 import pytest
 
+from business.research.workflows.paper_analysis_gates import (
+    build_paper_analysis_gate_registry,
+)
 from framework.events import (
     PayloadReference,
     StoredEvent,
     canonical_json_bytes,
     thaw_canonical_json,
 )
-from framework.events.errors import EventIncompleteHistoryError, EventStoreCorruptionError
+from framework.events.errors import (
+    EventIncompleteHistoryError,
+    EventStoreCorruptionError,
+    EventStoreUnavailableError,
+)
 from framework.events.runtime.activities import (
     REPLAY_ACTIVITY_RECORD_CONTENT_TYPE,
     RecordedActivityPayloadWrite,
@@ -40,9 +47,15 @@ from framework.events.schema import (
     default_event_schema_catalog,
 )
 from framework.harness import (
+    DeterministicGate,
+    DeterministicGateRegistry,
     DurableHarnessTransitionPort,
+    GateContext,
+    GateReference,
+    GateRegistration,
     HarnessEventCanonicalAdapter,
     HarnessControlPlane,
+    HarnessGateResult,
     HarnessRunSpec,
     HarnessStepSpec,
     HarnessWorkerResult,
@@ -57,6 +70,52 @@ from infrastructure.storage.events.factory import DurableEventStorage
 from infrastructure.storage.events.replay_checkpoints import (
     SQLiteReplayCheckpointStore,
 )
+from tests.business.research.fakes import FakeResearchSourceProvider
+
+
+class _VersionedSQLiteGate(DeterministicGate):
+    gate_name = "sqlite_quality"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def evaluate(self, context: GateContext) -> HarnessGateResult:
+        self.calls += 1
+        return HarnessGateResult(
+            gate_name=self.gate_name,
+            passed=True,
+            details={"score": 0.85},
+        )
+
+
+class _FailOnceBeforeTransitionRuntime:
+    def __init__(self, delegate: EventRuntime, transition_kind: str) -> None:
+        self.delegate = delegate
+        self.transition_kind = transition_kind
+        self.failed = False
+
+    def publish(
+        self,
+        event,
+        *,
+        expected_last_sequence=None,
+        unit_of_work=None,
+    ):
+        if (
+            not self.failed
+            and event.event_type == "harness_transition_committed"
+            and event.payload is not None
+            and event.payload.get("transition_kind") == self.transition_kind
+        ):
+            self.failed = True
+            raise EventStoreUnavailableError(
+                f"injected failure before {self.transition_kind} commit"
+            )
+        return self.delegate.publish(
+            event,
+            expected_last_sequence=expected_last_sequence,
+            unit_of_work=unit_of_work,
+        )
 
 
 class _RecordedActivityStore:
@@ -321,6 +380,93 @@ def test_harness_run_commits_through_default_catalog_and_sqlite_without_raw_work
     ) == 3
 
 
+def test_research_gate_evidence_precedes_downstream_worker_in_sqlite(
+    tmp_path,
+) -> None:
+    source_ref = "https://arxiv.org/abs/2606.00123"
+    provider = FakeResearchSourceProvider()
+    paper = provider.fetch_paper(source_ref)
+    source_record = provider.fetch_source_record(paper.paper_id)
+    secure_store = _activity_store(tmp_path)
+    event_store = SQLiteEventStore(tmp_path / "research-gates.sqlite3")
+    runtime = EventRuntime(
+        store=event_store,
+        schema_catalog=default_event_schema_catalog(),
+        security_projector=EventSecurityProjector(
+            secure_payload_store=secure_store,
+        ),
+    )
+    workflow = HarnessWorkflowSpec(
+        workflow_id="research.durable_gate_contract",
+        steps=(
+            HarnessStepSpec(
+                step_id="load_paper_source",
+                worker_type="script",
+                quality_gate="PaperSourceLineageGate@1",
+            ),
+            HarnessStepSpec(step_id="downstream", worker_type="script"),
+        ),
+        entry_step_id="load_paper_source",
+        metadata={"version": "1"},
+    )
+    run_spec = HarnessRunSpec(
+        run_id="run-research-durable-gate",
+        workflow=workflow,
+        inputs={"paper_id": paper.paper_id, "source_ref": source_ref},
+    )
+
+    result = HarnessControlPlane(
+        event_port=DurableHarnessTransitionPort(
+            runtime,
+            event_store,
+            secure_activity_store=secure_store,
+            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
+        ),
+        worker_registry={
+            "load_paper_source": lambda task: HarnessWorkerResult(
+                status="succeeded",
+                output={
+                    "paper": paper.to_dict(),
+                    "source_record": source_record.to_dict(),
+                    "source_refs": [source_ref],
+                },
+            ),
+            "downstream": lambda task: HarnessWorkerResult(
+                status="succeeded",
+                output={"downstream_result": "recorded"},
+            ),
+        },
+        gate_registry=build_paper_analysis_gate_registry(),
+    ).run(run_spec)
+
+    assert result.succeeded is True
+    events = event_store.read_stream(
+        StreamReadRequest(
+            stream_id="run:run-research-durable-gate",
+            limit=200,
+            tenant_id="tenant-test",
+        )
+    ).events
+    gate_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "gate_evaluated"
+        and event.business_context.step_id == "load_paper_source"
+        and event.payload["reference"] == "PaperSourceLineageGate@1"
+    )
+    downstream_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "worker_called"
+        and event.business_context.step_id == "downstream"
+    )
+    gate_payload = thaw_canonical_json(events[gate_index].payload)
+    assert gate_payload["passed"] is True
+    assert gate_payload["input_ref"].startswith("sha256:")
+    assert gate_payload["result_ref"].startswith("sha256:")
+    assert gate_index < downstream_index
+
+
 def test_sqlite_harness_history_verification_uses_recorded_decision_commands(
     tmp_path,
 ) -> None:
@@ -334,9 +480,20 @@ def test_sqlite_harness_history_verification_uses_recorded_decision_commands(
             secure_payload_store=secure_store,
         ),
     )
+    gate = _VersionedSQLiteGate()
+    registration = GateRegistration(
+        reference=GateReference.parse("sqlite_quality@1"),
+        gate=gate,
+    )
     workflow = HarnessWorkflowSpec(
         workflow_id="durable-history",
-        steps=(HarnessStepSpec(step_id="collect", worker_type="llm"),),
+        steps=(
+            HarnessStepSpec(
+                step_id="collect",
+                worker_type="llm",
+                quality_gate="sqlite_quality@1",
+            ),
+        ),
         entry_step_id="collect",
         metadata={"version": "1"},
     )
@@ -347,6 +504,7 @@ def test_sqlite_harness_history_verification_uses_recorded_decision_commands(
         worker_calls += 1
         return HarnessWorkerResult(status="succeeded")
 
+    run_spec = HarnessRunSpec(run_id="run-history-verify", workflow=workflow)
     HarnessControlPlane(
         event_port=DurableHarnessTransitionPort(
             runtime,
@@ -355,7 +513,18 @@ def test_sqlite_harness_history_verification_uses_recorded_decision_commands(
             adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
         ),
         worker_registry={"collect": worker},
-    ).run(HarnessRunSpec(run_id="run-history-verify", workflow=workflow))
+        gate_registry=DeterministicGateRegistry((registration,)),
+    ).run(run_spec)
+    recovered = HarnessControlPlane(
+        event_port=DurableHarnessTransitionPort(
+            runtime,
+            store,
+            secure_activity_store=secure_store,
+            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
+        ),
+        worker_registry={"collect": worker},
+        gate_registry=DeterministicGateRegistry((registration,)),
+    ).recover_and_run(run_spec)
     storage = DurableEventStorage(
         event_store=store,
         replay_checkpoint_store=SQLiteReplayCheckpointStore(
@@ -393,11 +562,93 @@ def test_sqlite_harness_history_verification_uses_recorded_decision_commands(
     )
 
     assert result.report.status.value == "succeeded"
+    assert recovered.succeeded is True
     assert worker_calls == 1
+    assert gate.calls == 1
     assert result.report.to_sequence == store.get_stream_high_watermark(
         "run:run-history-verify",
         tenant_id="tenant-test",
     )
+
+
+@pytest.mark.parametrize(
+    ("failed_transition_kind", "expected_gate_calls"),
+    (
+        ("verify_exit", 2),
+        ("step_success", 1),
+    ),
+)
+def test_sqlite_recovery_respects_verify_commit_boundary(
+    tmp_path,
+    failed_transition_kind: str,
+    expected_gate_calls: int,
+) -> None:
+    secure_store = _activity_store(tmp_path)
+    store = SQLiteEventStore(tmp_path / "events.sqlite3")
+    runtime = EventRuntime(
+        store=store,
+        schema_catalog=default_event_schema_catalog(),
+        security_projector=EventSecurityProjector(
+            secure_payload_store=secure_store,
+        ),
+    )
+    failing_runtime = _FailOnceBeforeTransitionRuntime(
+        runtime,
+        failed_transition_kind,
+    )
+    gate = _VersionedSQLiteGate()
+    registration = GateRegistration(
+        reference=GateReference.parse("sqlite_quality@1"),
+        gate=gate,
+    )
+    run_spec = HarnessRunSpec(
+        run_id=f"run-sqlite-{failed_transition_kind}",
+        workflow=HarnessWorkflowSpec(
+            workflow_id="sqlite-verify-recovery",
+            steps=(
+                HarnessStepSpec(
+                    step_id="collect",
+                    worker_type="llm",
+                    quality_gate="sqlite_quality@1",
+                ),
+            ),
+            entry_step_id="collect",
+            metadata={"version": "1"},
+        ),
+    )
+    worker_calls = 0
+
+    def worker(_task):
+        nonlocal worker_calls
+        worker_calls += 1
+        return HarnessWorkerResult(status="succeeded", output={"candidate": True})
+
+    def build_port(event_runtime) -> DurableHarnessTransitionPort:
+        return DurableHarnessTransitionPort(
+            event_runtime,
+            store,
+            secure_activity_store=secure_store,
+            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
+        )
+
+    with pytest.raises(EventStoreUnavailableError, match=failed_transition_kind):
+        HarnessControlPlane(
+            event_port=build_port(failing_runtime),
+            worker_registry={"collect": worker},
+            gate_registry=DeterministicGateRegistry((registration,)),
+        ).run(run_spec)
+
+    recovered = HarnessControlPlane(
+        event_port=build_port(runtime),
+        worker_registry={"collect": worker},
+        gate_registry=DeterministicGateRegistry((registration,)),
+    ).recover_and_run(run_spec)
+
+    assert failing_runtime.failed is True
+    assert recovered.succeeded is True
+    assert recovered.quality_verdicts["collect"].score == 0.85
+    assert worker_calls == 1
+    assert gate.calls == expected_gate_calls
 
 
 def test_approval_restart_recovers_secure_worker_result_without_reinvocation(
@@ -466,7 +717,7 @@ def test_approval_restart_recovers_secure_worker_result_without_reinvocation(
     (
         ("failed", "failed"),
         ("blocked", "blocked"),
-        ("waiting_approval", "waiting_approval"),
+        ("waiting_approval", "halted"),
     ),
 )
 def test_recovery_reuses_recorded_non_success_worker_outcome(

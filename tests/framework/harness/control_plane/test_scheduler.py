@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from framework.harness import (
+    DeterministicGate,
+    DeterministicGateRegistry,
+    GateContext,
+    GateReference,
+    GateRegistration,
     HarnessBudget,
     HarnessControlPlane,
     HarnessDecisionType,
     HarnessEventType,
+    HarnessGateResult,
     InMemoryHarnessEventPort,
     HarnessRetryPolicy,
     HarnessRouteKind,
@@ -20,6 +26,17 @@ from framework.events.runtime.history import (
     DETERMINISTIC_HISTORY_EXTENSION,
     DeterministicHistoryRecord,
 )
+
+
+class _RoutingQualityGate(DeterministicGate):
+    gate_name = "routing_quality"
+
+    def evaluate(self, context: GateContext) -> HarnessGateResult:
+        return HarnessGateResult(
+            gate_name=self.gate_name,
+            passed=True,
+            details={"score": 0.95},
+        )
 
 
 def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> None:
@@ -90,11 +107,46 @@ def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> N
     assert all(not history.commands for history in transition_histories)
 
 
+def test_worker_waiting_approval_status_cannot_create_approval_state() -> None:
+    result = HarnessControlPlane(
+        event_port=InMemoryHarnessEventPort(),
+        worker_registry={
+            "draft": lambda task: HarnessWorkerResult(
+                status="waiting_approval",
+                output={"approval_observation": {"requested": True}},
+            )
+        },
+    ).run(
+        HarnessRunSpec(
+            run_id="run-worker-approval-request",
+            workflow=HarnessWorkflowSpec(
+                workflow_id="worker-approval-request",
+                steps=(HarnessStepSpec(step_id="draft", worker_type="llm"),),
+                entry_step_id="draft",
+            ),
+        )
+    )
+
+    assert result.state.status == HarnessRunStatus.HALTED
+    assert all(
+        decision.decision_type != HarnessDecisionType.WAIT_FOR_APPROVAL
+        for decision in result.decisions
+    )
+    assert result.state.metadata["terminal_reason"] == (
+        "worker requested approval without Harness policy"
+    )
+
+
 def test_routing_rule_jumps_to_declared_step() -> None:
     workflow = HarnessWorkflowSpec(
         workflow_id="route",
         steps=(
-            HarnessStepSpec(step_id="classify", worker_type="llm", output_key="classification"),
+            HarnessStepSpec(
+                step_id="classify",
+                worker_type="llm",
+                output_key="classification",
+                quality_gate="routing_quality@1",
+            ),
             HarnessStepSpec(step_id="normal_path", worker_type="llm", output_key="normal"),
             HarnessStepSpec(step_id="repair", worker_type="llm", output_key="repair"),
         ),
@@ -111,10 +163,18 @@ def test_routing_rule_jumps_to_declared_step() -> None:
     result = HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
         worker_registry={
-            "classify": lambda task: HarnessWorkerResult(status="succeeded", output={"quality_score": 0.95}),
+            "classify": lambda task: HarnessWorkerResult(status="succeeded", output={"classification": "repair"}),
             "repair": lambda task: HarnessWorkerResult(status="succeeded", output={"fixed": True}),
             "normal_path": lambda task: HarnessWorkerResult(status="succeeded", output={"normal": True}),
-        }
+        },
+        gate_registry=DeterministicGateRegistry(
+            (
+                GateRegistration(
+                    reference=GateReference.parse("routing_quality@1"),
+                    gate=_RoutingQualityGate(),
+                ),
+            )
+        ),
     ).run(HarnessRunSpec(run_id="run-route", workflow=workflow))
 
     routed = [decision for decision in result.decisions if decision.decision_type == HarnessDecisionType.ROUTE_TO_STEP]

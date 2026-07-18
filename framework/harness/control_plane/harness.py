@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
-from framework.events.canonical import PayloadReference, checksum_for
+from framework.events.canonical import (
+    PayloadReference,
+    checksum_for,
+    normalize_canonical_json,
+)
 from framework.events.errors import (
     EventIncompleteHistoryError,
     EventReplayMismatchError,
     EventStoreCorruptionError,
 )
 from framework.events.runtime.activities import ReplayActivityDescriptor
+from framework.events.runtime.history import DeterministicHistoryRecord
 from framework.harness.control_plane.activity import (
     HarnessActivity,
     validate_activity_call_marker,
@@ -23,6 +29,11 @@ from framework.harness.control_plane.durable_events import (
 )
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.event import HarnessEvent, HarnessEventType
+from framework.harness.control_plane.gate_registry import (
+    DeterministicGateRegistry,
+    GateBinding,
+    GateReference,
+)
 from framework.harness.control_plane.replay_history import (
     harness_decision_history,
     harness_decision_input_snapshot,
@@ -61,8 +72,15 @@ from framework.harness.control_plane.transition import (
     HarnessTransitionKind,
     run_spec_checksum,
 )
-from framework.harness.quality.verdict import HarnessQualityVerdict
+from framework.harness.quality.verdict import (
+    HarnessQualityVerdict,
+    aggregate_gate_verdict,
+    gate_result_evidence,
+    quality_verdict_evidence,
+    verification_evidence,
+)
 from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.workflow.spec import HarnessRouteKind
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 
 WorkerCallable = Callable[[dict[str, Any]], HarnessWorkerResult]
@@ -297,6 +315,7 @@ class HarnessControlPlane:
         worker_registry: dict[str, WorkerCallable | Iterable[HarnessWorkerResult]] | None = None,
         plan_gates: tuple[DeterministicGate, ...] | None = None,
         verify_gates: tuple[DeterministicGate, ...] | None = None,
+        gate_registry: DeterministicGateRegistry | None = None,
     ) -> None:
         if event_port is None:
             raise HarnessValidationError(
@@ -311,6 +330,7 @@ class HarnessControlPlane:
         self.worker_registry = dict(worker_registry or {})
         self.plan_gates = plan_gates or default_plan_gates()
         self.verify_gates = verify_gates or default_verify_gates()
+        self.gate_registry = gate_registry if gate_registry is not None else DeterministicGateRegistry()
         self._iterable_workers: dict[str, list[HarnessWorkerResult]] = {}
         self._committed_events: list[HarnessEvent] = []
         self._state_versions: dict[str, int] = {}
@@ -318,8 +338,79 @@ class HarnessControlPlane:
         self._recovered_worker_results: dict[str, HarnessWorkerResult] = {}
         self._recovered_gate_results: tuple[HarnessGateResult, ...] = ()
         self._recovered_quality_verdict: HarnessQualityVerdict | None = None
+        self._gate_bindings_by_run: dict[str, dict[str, tuple[GateBinding, ...]]] = {}
+        self._prepared_run_specs: dict[str, str] = {}
+
+    def _prepare_run_spec(self, run_spec: HarnessRunSpec) -> None:
+        if not isinstance(run_spec, HarnessRunSpec):
+            raise TypeError("run_spec must be HarnessRunSpec")
+        spec_ref = run_spec_checksum(run_spec)
+        prepared_ref = self._prepared_run_specs.get(run_spec.run_id)
+        if prepared_ref is not None:
+            if prepared_ref != spec_ref:
+                raise HarnessValidationError(
+                    "run_id cannot be reused with a different Harness run spec",
+                    details={"run_id": run_spec.run_id},
+                )
+            return
+
+        # Plan gates are also committed and replayed, so moving aliases must be
+        # rejected before RUN_CREATED even though they are not workflow-bound.
+        for gate in self.plan_gates:
+            _gate_reference(gate)
+
+        mandatory_by_reference: dict[str, DeterministicGate] = {}
+        for gate in self.verify_gates:
+            reference = _gate_reference(gate)
+            previous = mandatory_by_reference.get(reference)
+            if previous is not None and previous is not gate:
+                raise HarnessValidationError(
+                    "mandatory verify gates contain conflicting implementations for one exact reference",
+                    code="conflicting_mandatory_gate_reference",
+                    details={"code": "conflicting_mandatory_gate_reference", "reference": reference},
+                )
+            mandatory_by_reference[reference] = gate
+
+        bindings: dict[str, tuple[GateBinding, ...]] = {}
+        steps_by_id = {step.step_id: step for step in run_spec.workflow.steps}
+        for step in run_spec.workflow.steps:
+            if step.quality_gate is None:
+                bindings[step.step_id] = ()
+                continue
+            step_bindings = self.gate_registry.bindings_for(step.quality_gate)
+            for binding in step_bindings:
+                mandatory = mandatory_by_reference.get(str(binding.reference))
+                if mandatory is not None and mandatory is not binding.gate:
+                    raise HarnessValidationError(
+                        "declared and mandatory gates conflict for one exact reference",
+                        code="conflicting_gate_implementation",
+                        details={
+                            "code": "conflicting_gate_implementation",
+                            "reference": str(binding.reference),
+                            "step_id": step.step_id,
+                        },
+                    )
+            bindings[step.step_id] = step_bindings
+
+        for rule in run_spec.workflow.routing_rules:
+            if rule.kind != HarnessRouteKind.ON_VERDICT:
+                continue
+            source_step = steps_by_id[rule.from_step]
+            if source_step.quality_gate is None:
+                raise HarnessValidationError(
+                    "ON_VERDICT routing requires a declared deterministic quality gate",
+                    code="missing_quality_gate_for_verdict_route",
+                    details={
+                        "code": "missing_quality_gate_for_verdict_route",
+                        "step_id": source_step.step_id,
+                    },
+                )
+
+        self._gate_bindings_by_run[run_spec.run_id] = bindings
+        self._prepared_run_specs[run_spec.run_id] = spec_ref
 
     def initialize(self, run_spec: HarnessRunSpec) -> HarnessState:
+        self._prepare_run_spec(run_spec)
         recovery = self._restore_recovery(run_spec)
         if recovery.state is not None:
             return recovery.state
@@ -541,6 +632,8 @@ class HarnessControlPlane:
         decisions: list[HarnessDecision] = list(initial_decisions or ())
         worker_results: dict[str, HarnessWorkerResult] = {}
         quality_verdicts: dict[str, HarnessQualityVerdict] = {}
+        if initial_quality_verdict is not None and state.current_step_id is not None:
+            quality_verdicts[state.current_step_id] = initial_quality_verdict
         gate_results = initial_gate_results
         quality_verdict = initial_quality_verdict
 
@@ -833,6 +926,8 @@ class HarnessControlPlane:
                 activity=activity,
                 started_at=started_at,
             )
+        else:
+            worker_result = _coerce_worker_result(worker_result)
         activity_result_event_id = self._record_activity_result(
             state,
             step_id=step_id,
@@ -1030,18 +1125,21 @@ class HarnessControlPlane:
             self._record_state_change(previous, state, transition_kind="verify_entry")
         self._record_step_change(previous, state, step_id, transition_kind="verify_entry")
         self._record_phase(state, HarnessPhase.VERIFY, step_id, (), boundary=HarnessPhaseBoundary.ENTRY)
-        quality_verdict = self._quality_verdict(state, step_id, worker_result)
+        gate_entries = self._verify_gate_entries(state, step_id)
         gate_results = self._evaluate_gates(
-            self.verify_gates,
+            tuple(gate for _, gate in gate_entries),
             state,
             step_id,
             worker_result=worker_result,
-            quality_verdict=quality_verdict,
+            quality_verdict=None,
+            gate_references=tuple(reference for reference, _ in gate_entries),
         )
+        quality_verdict = self._quality_verdict(state, step_id, gate_results)
         state = self._commit_verify_exit(
             state,
             step_id=step_id,
             gate_results=gate_results,
+            quality_verdict=quality_verdict,
             record_observations=True,
         )
         return state, gate_results, quality_verdict
@@ -1052,6 +1150,7 @@ class HarnessControlPlane:
         *,
         step_id: str,
         gate_results: tuple[HarnessGateResult, ...],
+        quality_verdict: HarnessQualityVerdict | None,
         record_observations: bool,
     ) -> HarnessState:
         previous = state
@@ -1063,6 +1162,7 @@ class HarnessControlPlane:
             transition_kind=HarnessTransitionKind.VERIFY_EXIT,
             occurred_at=transition_time,
             gate_results=gate_results,
+            quality_verdict=quality_verdict,
             activity=_activity_for_state_step(state, step_id),
             activity_result_event_id=_activity_result_event_id(state, step_id),
         )
@@ -1445,6 +1545,7 @@ class HarnessControlPlane:
         worker_result: HarnessWorkerResult | None,
         quality_verdict: HarnessQualityVerdict | None,
         record_events: bool = True,
+        gate_references: tuple[str, ...] | None = None,
     ) -> tuple[HarnessGateResult, ...]:
         step_spec = _get_step_spec(state, step_id)
         context = GateContext(
@@ -1455,7 +1556,17 @@ class HarnessControlPlane:
             quality_verdict=quality_verdict,
             budget=self._budget_snapshot(state, worker_result),
         )
-        results = tuple(gate.evaluate(context) for gate in gates)
+        references = gate_references or tuple(_gate_reference(gate) for gate in gates)
+        if len(references) != len(gates):
+            raise HarnessValidationError("gate references must match gate implementations")
+        results = tuple(
+            self._evaluate_gate(
+                gate,
+                reference=reference,
+                context=context,
+            )
+            for gate, reference in zip(gates, references, strict=True)
+        )
         if record_events:
             for result in results:
                 self._record_event(
@@ -1467,6 +1578,82 @@ class HarnessControlPlane:
                     )
                 )
         return results
+
+    def _evaluate_gate(
+        self,
+        gate: DeterministicGate,
+        *,
+        reference: str,
+        context: GateContext,
+    ) -> HarnessGateResult:
+        expected_gate_name = GateReference.parse(reference).gate_id
+        input_ref = _gate_input_ref(context, reference)
+        try:
+            result = gate.evaluate(context)
+        except Exception as exc:
+            result = HarnessGateResult(
+                gate_name=expected_gate_name,
+                passed=False,
+                reason="deterministic gate evaluation failed",
+                details={
+                    "reason_code": "gate_exception",
+                    "exception_type": type(exc).__name__,
+                },
+            )
+        if not isinstance(result, HarnessGateResult):
+            result = HarnessGateResult(
+                gate_name=expected_gate_name,
+                passed=False,
+                reason="deterministic gate returned an invalid result",
+                details={"reason_code": "invalid_gate_result"},
+            )
+        elif result.gate_name != expected_gate_name:
+            result = HarnessGateResult(
+                gate_name=expected_gate_name,
+                passed=False,
+                reason="deterministic gate result identity mismatch",
+                details={
+                    "reason_code": "gate_identity_mismatch",
+                    "actual_gate_name": result.gate_name,
+                },
+            )
+        elif not _is_valid_gate_result(result):
+            result = HarnessGateResult(
+                gate_name=expected_gate_name,
+                passed=False,
+                reason="deterministic gate returned an invalid result",
+                details={"reason_code": "invalid_gate_result"},
+            )
+        reason_code = result.details.get("reason_code")
+        if not isinstance(reason_code, str) or not reason_code.strip():
+            reason_code = "gate_passed" if result.passed else "gate_failed"
+        return result.with_evidence(
+            gate_reference=reference,
+            input_ref=input_ref,
+            reason_code=reason_code,
+        )
+
+    def _verify_gate_entries(
+        self,
+        state: HarnessState,
+        step_id: str,
+    ) -> tuple[tuple[str, DeterministicGate], ...]:
+        entries: list[tuple[str, DeterministicGate]] = [
+            (_gate_reference(gate), gate) for gate in self.verify_gates
+        ]
+        bindings = self._gate_bindings_by_run.get(state.run_spec.run_id, {}).get(
+            step_id,
+            (),
+        )
+        entries.extend((str(binding.reference), binding.gate) for binding in bindings)
+        deduplicated: list[tuple[str, DeterministicGate]] = []
+        seen: set[str] = set()
+        for reference, gate in entries:
+            if reference in seen:
+                continue
+            seen.add(reference)
+            deduplicated.append((reference, gate))
+        return tuple(deduplicated)
 
     def _budget_snapshot(
         self,
@@ -1542,22 +1729,34 @@ class HarnessControlPlane:
                 output={},
             )
         if callable(worker):
-            return worker(execution_task)
+            return _coerce_worker_result(worker(execution_task))
         execute = getattr(worker, "execute", None)
         if callable(execute):
-            return execute(execution_task)
+            return _coerce_worker_result(execute(execution_task))
         if step_spec.worker_type.value == "llm":
             generate = getattr(worker, "generate", None)
             if callable(generate):
-                return generate(execution_task)
+                return _coerce_worker_result(generate(execution_task))
         if step_spec.worker_type.value == "skill":
             run_skill = getattr(worker, "run_skill", None)
             if callable(run_skill):
-                return run_skill(str(execution_task.get("skill_name", execution_task["step_id"])), dict(execution_task.get("inputs", {})), dict(execution_task.get("context", {})))
+                return _coerce_worker_result(
+                    run_skill(
+                        str(execution_task.get("skill_name", execution_task["step_id"])),
+                        dict(execution_task.get("inputs", {})),
+                        dict(execution_task.get("context", {})),
+                    )
+                )
         if step_spec.worker_type.value == "subagent":
             run_subagent = getattr(worker, "run_subagent", None)
             if callable(run_subagent):
-                return run_subagent(str(execution_task.get("subagent_id", execution_task["step_id"])), dict(execution_task), dict(execution_task.get("budget", {})))
+                return _coerce_worker_result(
+                    run_subagent(
+                        str(execution_task.get("subagent_id", execution_task["step_id"])),
+                        dict(execution_task),
+                        dict(execution_task.get("budget", {})),
+                    )
+                )
         try:
             queued = self._iterable_workers.setdefault(step_spec.step_id, list(worker))
         except TypeError as exc:
@@ -1567,26 +1766,233 @@ class HarnessControlPlane:
                 status=HarnessWorkerStatus.FAILED,
                 error="fake worker queue is exhausted",
             )
-        return queued.pop(0)
+        return _coerce_worker_result(queued.pop(0))
 
     def _quality_verdict(
         self,
         state: HarnessState,
         step_id: str,
-        worker_result: HarnessWorkerResult | None,
+        gate_results: tuple[HarnessGateResult, ...],
     ) -> HarnessQualityVerdict | None:
-        if worker_result is None:
-            return None
         step_spec = _get_step_spec(state, step_id)
-        verdict = step_spec.metadata.get("quality_verdict")
-        if isinstance(verdict, HarnessQualityVerdict):
-            return verdict
-        if isinstance(verdict, dict):
-            return HarnessQualityVerdict(**verdict)
-        if "quality_score" in worker_result.output:
-            score = float(worker_result.output["quality_score"])
-            return HarnessQualityVerdict(passed=score >= float(step_spec.metadata.get("minimum_quality_score", 0)), score=score)
-        return HarnessQualityVerdict(passed=True)
+        return aggregate_gate_verdict(
+            gate_results,
+            declared_gate_reference=step_spec.quality_gate,
+        )
+
+    def _recorded_quality_verdict(
+        self,
+        run_id: str,
+        step_id: str,
+    ) -> HarnessQualityVerdict | None:
+        for event in reversed(self.event_port.read_history(run_id)):
+            if (
+                event.event_type != HarnessEventType.DECISION_RECORDED
+                or event.step_id != step_id
+                or not isinstance(event.deterministic_history, Mapping)
+            ):
+                continue
+            handler_input = event.deterministic_history.get("handler_input")
+            if not isinstance(handler_input, Mapping):
+                continue
+            verdict = handler_input.get("quality_verdict")
+            if isinstance(verdict, Mapping):
+                return HarnessQualityVerdict(**dict(verdict))
+        return None
+
+    def _recorded_gate_results_for_verify(
+        self,
+        state: HarnessState,
+        step_id: str,
+        transition: HarnessTransitionCommitted,
+        *,
+        worker_result: HarnessWorkerResult,
+    ) -> tuple[HarnessGateResult, ...]:
+        history = self.event_port.read_history(state.run_spec.run_id)
+        try:
+            transition_index = next(
+                index
+                for index, event in enumerate(history)
+                if event.event_id == transition.transition_id
+            )
+        except StopIteration as exc:
+            raise EventIncompleteHistoryError(
+                "Harness history is missing its committed VERIFY transition"
+            ) from exc
+
+        recorded_events: list[HarnessEvent] = []
+        found_verify_entry = False
+        for event in reversed(history[:transition_index]):
+            if event.event_type == HarnessEventType.TRANSITION_COMMITTED:
+                if event.payload.get("transition_kind") == HarnessTransitionKind.VERIFY_ENTRY.value:
+                    found_verify_entry = True
+                break
+            if event.event_type == HarnessEventType.GATE_EVALUATED and event.step_id == step_id:
+                recorded_events.append(event)
+        if not found_verify_entry:
+            raise EventIncompleteHistoryError(
+                "Harness committed VERIFY is missing its entry transition"
+            )
+        recorded_events.reverse()
+
+        expected_references = tuple(
+            reference for reference, _ in self._verify_gate_entries(state, step_id)
+        )
+        context = GateContext(
+            state=state,
+            step_spec=_get_step_spec(state, step_id),
+            step_state=get_step_state(state, step_id),
+            worker_result=worker_result,
+            quality_verdict=None,
+            budget=self._budget_snapshot(state, worker_result),
+        )
+        expected_input_refs = tuple(
+            _gate_input_ref(context, reference) for reference in expected_references
+        )
+        if len(recorded_events) != len(expected_references):
+            raise EventIncompleteHistoryError(
+                "Harness committed VERIFY gate evidence count is incomplete"
+            )
+        return tuple(
+            _gate_result_from_recorded_event(
+                event,
+                expected_reference=reference,
+                expected_input_ref=expected_input_ref,
+            )
+            for event, reference, expected_input_ref in zip(
+                recorded_events,
+                expected_references,
+                expected_input_refs,
+                strict=True,
+            )
+        )
+
+    def _recorded_verification_snapshot(
+        self,
+        state: HarnessState,
+        step_id: str,
+        *,
+        evaluation_state: HarnessState,
+        worker_result: HarnessWorkerResult,
+    ) -> tuple[tuple[HarnessGateResult, ...], HarnessQualityVerdict] | None:
+        expected_state_ref = checksum_for(state.to_dict())
+        expected_references = tuple(
+            reference
+            for reference, _ in self._verify_gate_entries(evaluation_state, step_id)
+        )
+        context = GateContext(
+            state=evaluation_state,
+            step_spec=_get_step_spec(evaluation_state, step_id),
+            step_state=get_step_state(evaluation_state, step_id),
+            worker_result=worker_result,
+            quality_verdict=None,
+            budget=self._budget_snapshot(evaluation_state, worker_result),
+        )
+        expected_input_refs = tuple(
+            _gate_input_ref(context, reference) for reference in expected_references
+        )
+        for event in reversed(self.event_port.read_history(state.run_spec.run_id)):
+            if (
+                event.event_type != HarnessEventType.DECISION_RECORDED
+                or event.step_id != step_id
+                or not isinstance(event.deterministic_history, Mapping)
+            ):
+                continue
+            try:
+                history = DeterministicHistoryRecord.from_dict(
+                    event.deterministic_history
+                )
+                history.verify_integrity()
+            except (TypeError, ValueError) as exc:
+                raise EventStoreCorruptionError(
+                    "Harness deterministic decision history is corrupt"
+                ) from exc
+            handler_input = history.handler_input
+            if handler_input.get("before_state_checksum") != expected_state_ref:
+                continue
+            gate_values = handler_input.get("gate_results")
+            verdict_value = handler_input.get("quality_verdict")
+            if not isinstance(gate_values, tuple | list) or not isinstance(
+                verdict_value,
+                Mapping,
+            ):
+                continue
+            if len(gate_values) != len(expected_references):
+                raise EventStoreCorruptionError(
+                    "recorded Harness gate evidence count conflicts with workflow binding"
+                )
+            gate_results: list[HarnessGateResult] = []
+            for value, expected_reference, expected_input_ref in zip(
+                gate_values,
+                expected_references,
+                expected_input_refs,
+                strict=True,
+            ):
+                if not isinstance(value, Mapping):
+                    raise EventStoreCorruptionError(
+                        "recorded Harness gate evidence must be an object"
+                    )
+                reference = value.get("reference")
+                input_ref = value.get("input_ref")
+                result_ref = value.get("result_ref")
+                reason_code = value.get("reason_code")
+                passed = value.get("passed")
+                score = value.get("score")
+                if (
+                    reference != expected_reference
+                    or input_ref != expected_input_ref
+                    or not _is_checksum_ref(result_ref)
+                    or not isinstance(reason_code, str)
+                    or not reason_code.strip()
+                    or not isinstance(passed, bool)
+                    or (
+                        score is not None
+                        and (
+                            not isinstance(score, int | float)
+                            or isinstance(score, bool)
+                        )
+                    )
+                ):
+                    raise EventStoreCorruptionError(
+                        "recorded Harness gate evidence conflicts with exact binding"
+                    )
+                details: dict[str, Any] = {
+                    "harness_gate": {
+                        "reference": reference,
+                        "input_ref": input_ref,
+                        "result_ref": result_ref,
+                        "reason_code": reason_code,
+                    }
+                }
+                if score is not None:
+                    details["score"] = float(score)
+                gate_results.append(
+                    HarnessGateResult(
+                        gate_name=str(value.get("gate") or reference.rsplit("@", 1)[0]),
+                        passed=passed,
+                        details=details,
+                    )
+                )
+            try:
+                verdict = HarnessQualityVerdict(**dict(verdict_value))
+            except (TypeError, ValueError, HarnessValidationError) as exc:
+                raise EventStoreCorruptionError(
+                    "recorded Harness quality verdict is invalid"
+                ) from exc
+            expected_verdict = aggregate_gate_verdict(
+                gate_results,
+                declared_gate_reference=_get_step_spec(state, step_id).quality_gate,
+            )
+            if (
+                expected_verdict is None
+                or quality_verdict_evidence(verdict)
+                != quality_verdict_evidence(expected_verdict)
+            ):
+                raise EventStoreCorruptionError(
+                    "recorded Harness quality verdict conflicts with gate evidence"
+                )
+            return tuple(gate_results), verdict
+        return None
 
     def _record_decision(
         self,
@@ -1747,6 +2153,7 @@ class HarnessControlPlane:
         return committed
 
     def _restore_recovery(self, run_spec: HarnessRunSpec) -> HarnessRecovery:
+        self._prepare_run_spec(run_spec)
         self._recovered_gate_results = ()
         self._recovered_quality_verdict = None
         converged_exit_kind: HarnessTransitionKind | None = None
@@ -1811,6 +2218,8 @@ class HarnessControlPlane:
                             activity=activity,
                             started_at=started_at,
                         )
+                    else:
+                        worker_result = _coerce_worker_result(worker_result)
                     activity_result_event_id = self._record_activity_result(
                         state,
                         step_id=step_id,
@@ -1886,23 +2295,22 @@ class HarnessControlPlane:
                     raise EventIncompleteHistoryError(
                         "Harness verify recovery requires a committed worker result"
                     )
-                quality_verdict = self._quality_verdict(
-                    state,
-                    step_id,
-                    worker_result,
-                )
+                gate_entries = self._verify_gate_entries(state, step_id)
                 gate_results = self._evaluate_gates(
-                    self.verify_gates,
+                    tuple(gate for _, gate in gate_entries),
                     state,
                     step_id,
                     worker_result=worker_result,
-                    quality_verdict=quality_verdict,
+                    quality_verdict=None,
                     record_events=False,
+                    gate_references=tuple(reference for reference, _ in gate_entries),
                 )
+                quality_verdict = self._quality_verdict(state, step_id, gate_results)
                 self._commit_verify_exit(
                     state,
                     step_id=step_id,
                     gate_results=gate_results,
+                    quality_verdict=quality_verdict,
                     record_observations=False,
                 )
                 converged_exit_kind = HarnessTransitionKind.VERIFY_EXIT
@@ -1955,36 +2363,45 @@ class HarnessControlPlane:
                     raise EventIncompleteHistoryError(
                         "Harness verify recovery requires a committed worker result"
                     )
-                if converged_exit_kind == HarnessTransitionKind.VERIFY_EXIT:
+                evaluation_state = _phase_entry_evaluation_state(
+                    recovery,
+                    expected_entry=HarnessTransitionKind.VERIFY_ENTRY,
+                )
+                recorded_verification = self._recorded_verification_snapshot(
+                    state,
+                    step_id,
+                    evaluation_state=evaluation_state,
+                    worker_result=worker_result,
+                )
+                if recorded_verification is not None:
+                    gate_results, quality_verdict = recorded_verification
+                elif converged_exit_kind == HarnessTransitionKind.VERIFY_EXIT:
                     gate_results = converged_gate_results
                     quality_verdict = converged_quality_verdict
                 else:
-                    evaluation_state = _phase_entry_evaluation_state(
-                        recovery,
-                        expected_entry=HarnessTransitionKind.VERIFY_ENTRY,
+                    gate_results = self._recorded_gate_results_for_verify(
+                        evaluation_state,
+                        step_id,
+                        last_transition,
+                        worker_result=worker_result,
                     )
                     quality_verdict = self._quality_verdict(
                         evaluation_state,
                         step_id,
-                        worker_result,
+                        gate_results,
                     )
-                    gate_results = self._evaluate_gates(
-                        self.verify_gates,
-                        evaluation_state,
-                        step_id,
-                        worker_result=worker_result,
-                        quality_verdict=quality_verdict,
-                        record_events=False,
-                    )
-                _validate_recovered_gate_results(last_transition, gate_results)
+                _validate_recovered_gate_results(
+                    last_transition,
+                    gate_results,
+                    quality_verdict=quality_verdict,
+                )
                 self._recovered_gate_results = gate_results
                 self._recovered_quality_verdict = quality_verdict
             elif last_transition.transition_kind == HarnessTransitionKind.STEP_SUCCESS:
-                if step_id is not None and recovery.current_worker_result is not None:
-                    self._recovered_quality_verdict = self._quality_verdict(
-                        state,
+                if step_id is not None:
+                    self._recovered_quality_verdict = self._recorded_quality_verdict(
+                        run_spec.run_id,
                         step_id,
-                        recovery.current_worker_result,
                     )
         history = self.event_port.read_history(run_spec.run_id)
         if not isinstance(history, tuple) or not all(
@@ -2010,12 +2427,14 @@ class HarnessControlPlane:
         occurred_at=None,
         decision: HarnessDecision | None = None,
         gate_results: tuple[HarnessGateResult, ...] = (),
+        quality_verdict: HarnessQualityVerdict | None = None,
         activity: HarnessActivity | None = None,
         activity_result_event_id: str | None = None,
     ) -> HarnessState:
         run_id = state.run_spec.run_id
         from_version = self._state_versions.get(run_id, 0)
         transition_time = occurred_at or state.updated_at
+        is_verify_exit = str(transition_kind) == HarnessTransitionKind.VERIFY_EXIT.value
         commit = self.event_port.commit_transition(
             previous,
             state,
@@ -2025,7 +2444,11 @@ class HarnessControlPlane:
             decision=(
                 None if decision is None else _decision_transition_projection(decision)
             ),
-            gate_results=tuple(result.to_dict() for result in gate_results),
+            gate_results=(
+                verification_evidence(gate_results, quality_verdict)
+                if is_verify_exit
+                else tuple(result.to_dict() for result in gate_results)
+            ),
             budget=self._budget_snapshot(state, None).to_dict(),
             activity=activity,
             activity_result_event_id=activity_result_event_id,
@@ -2081,6 +2504,177 @@ class HarnessControlPlane:
                 if key
             },
         )
+
+
+def _gate_reference(gate: DeterministicGate) -> str:
+    gate_name = str(getattr(gate, "gate_name", "")).strip()
+    gate_version = str(getattr(gate, "gate_version", "1")).strip()
+    try:
+        return str(GateReference(gate_id=gate_name, version=gate_version))
+    except HarnessValidationError as exc:
+        raise HarnessValidationError(
+            "deterministic gate requires an exact stable name and version",
+            code=exc.code,
+            details=exc.details,
+        ) from exc
+
+
+def _gate_input_ref(context: GateContext, reference: str) -> str:
+    step_state = context.step_state.to_dict()
+    step_metadata = dict(step_state.get("metadata", {}))
+    # The worker result is already an explicit checksum input. In-memory state
+    # retains a raw duplicate here while durable projections retain only refs.
+    step_metadata.pop("worker_result", None)
+    step_state["metadata"] = step_metadata
+    return checksum_for(
+        {
+            "gate_reference": reference,
+            "run_id": context.state.run_spec.run_id,
+            "workflow": context.state.run_spec.workflow.to_dict(),
+            "step_spec": context.step_spec.to_dict(),
+            "step_state": step_state,
+            "worker_result": (
+                None if context.worker_result is None else context.worker_result.to_dict()
+            ),
+            "quality_verdict": (
+                None if context.quality_verdict is None else context.quality_verdict.to_dict()
+            ),
+            "budget": None if context.budget is None else context.budget.to_dict(),
+        }
+    )
+
+
+def _is_valid_gate_result(result: HarnessGateResult) -> bool:
+    if result.reason is not None and not isinstance(result.reason, str):
+        return False
+    score = result.details.get("score")
+    if score is not None and (
+        not isinstance(score, int | float)
+        or isinstance(score, bool)
+        or (isinstance(score, float) and not math.isfinite(score))
+        or not 0 <= score <= 1
+    ):
+        return False
+    if "repair_hints" in result.details:
+        repair_hints = result.details["repair_hints"]
+        if not isinstance(repair_hints, list | tuple) or any(
+            not isinstance(hint, str) for hint in repair_hints
+        ):
+            return False
+    if "reason_code" in result.details:
+        reason_code = result.details["reason_code"]
+        if not isinstance(reason_code, str) or not reason_code.strip():
+            return False
+    try:
+        normalize_canonical_json(
+            result.to_dict(),
+            path="$.harness_gate_result",
+        )
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
+    to_dict = getattr(value, "to_dict", None)
+    payload = to_dict() if callable(to_dict) else value
+    if not isinstance(payload, Mapping):
+        raise HarnessValidationError(
+            "worker must return a HarnessWorkerResult-compatible object"
+        )
+    try:
+        return HarnessWorkerResult(
+            status=payload.get("status"),
+            output=payload.get("output", {}),
+            artifacts=payload.get("artifacts", ()),
+            diagnostics=payload.get("diagnostics", {}),
+            metrics=payload.get("metrics", {}),
+            error=payload.get("error"),
+        )
+    except (TypeError, ValueError, HarnessValidationError) as exc:
+        if isinstance(exc, HarnessValidationError):
+            raise
+        raise HarnessValidationError("worker returned an invalid result contract") from exc
+
+
+def _is_checksum_ref(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
+
+
+def _gate_result_from_recorded_event(
+    event: HarnessEvent,
+    *,
+    expected_reference: str,
+    expected_input_ref: str,
+) -> HarnessGateResult:
+    payload = event.payload
+    details = payload.get("details")
+    if isinstance(details, Mapping) and isinstance(details.get("harness_gate"), Mapping):
+        result = HarnessGateResult(
+            gate_name=str(payload.get("gate") or ""),
+            passed=payload.get("passed"),
+            reason=None if payload.get("reason") is None else str(payload["reason"]),
+            details=dict(details),
+        )
+    else:
+        reference = payload.get("reference")
+        input_ref = payload.get("input_ref")
+        result_ref = payload.get("result_ref")
+        reason_code = payload.get("reason_code")
+        score = payload.get("score")
+        if (
+            not isinstance(reference, str)
+            or not _is_checksum_ref(input_ref)
+            or not _is_checksum_ref(result_ref)
+            or not isinstance(reason_code, str)
+            or not reason_code.strip()
+            or not isinstance(payload.get("passed"), bool)
+            or (
+                score is not None
+                and (
+                    not isinstance(score, int | float)
+                    or isinstance(score, bool)
+                )
+            )
+        ):
+            raise EventIncompleteHistoryError(
+                "Harness committed VERIFY is missing versioned gate evidence"
+            )
+        safe_details: dict[str, Any] = {
+            "harness_gate": {
+                "reference": reference,
+                "input_ref": input_ref,
+                "result_ref": result_ref,
+                "reason_code": reason_code,
+            }
+        }
+        if score is not None:
+            safe_details["score"] = float(score)
+        result = HarnessGateResult(
+            gate_name=str(payload.get("gate") or ""),
+            passed=payload["passed"],
+            details=safe_details,
+        )
+    try:
+        evidence = gate_result_evidence(result)
+    except (TypeError, ValueError, HarnessValidationError) as exc:
+        raise EventStoreCorruptionError(
+            "recorded Harness gate evidence is invalid"
+        ) from exc
+    expected_gate_id = expected_reference.rsplit("@", maxsplit=1)[0]
+    if (
+        evidence["reference"] != expected_reference
+        or evidence["gate"] != expected_gate_id
+        or evidence["input_ref"] != expected_input_ref
+        or not _is_checksum_ref(evidence["result_ref"])
+    ):
+        raise EventStoreCorruptionError(
+            "recorded Harness gate evidence conflicts with the exact binding"
+        )
+    return result
 
 
 def _require_step(decision: HarnessDecision) -> str:
@@ -2365,15 +2959,20 @@ def _in_memory_called_activity_ids(
 def _validate_recovered_gate_results(
     transition: HarnessTransitionCommitted,
     gate_results: tuple[HarnessGateResult, ...],
+    *,
+    quality_verdict: HarnessQualityVerdict | None = None,
 ) -> None:
-    gate_ref = checksum_for(tuple(result.to_dict() for result in gate_results))
+    evidence: Any
+    if transition.transition_kind == HarnessTransitionKind.VERIFY_EXIT:
+        evidence = verification_evidence(gate_results, quality_verdict)
+    else:
+        evidence = tuple(result.to_dict() for result in gate_results)
+    gate_ref = checksum_for(evidence)
     if transition.gate_ref != gate_ref:
         raise EventReplayMismatchError(
             sequence=transition.stream_sequence or transition.state_version,
             reason="Harness deterministic gate result conflicts with durable history",
         )
-
-
 def _phase_entry_evaluation_state(
     recovery: HarnessRecovery,
     *,

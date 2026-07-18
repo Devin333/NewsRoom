@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from framework.events.canonical import checksum_for
+from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.event_log import HarnessEventLogEntry
+from framework.harness.control_plane.gate_registry import GateReference
 from framework.harness.control_plane.transcript import HarnessTranscript, HarnessTranscriptEntry
 from framework.harness.runtime.checkpoint import HarnessCheckpoint
 from framework.shared.json import to_jsonable
@@ -61,7 +65,11 @@ class HarnessReplayReader:
         entries = transcript.entries() if transcript is not None else ()
         status = checkpoint.state.status.value if checkpoint is not None else _status_from_events(events)
         phase_transitions = tuple(_phase_transition(entry) for entry in entries if entry.phase)
-        gate_results = tuple(result for entry in entries for result in entry.gate_results)
+        gate_results = tuple(
+            _gate_replay_projection(result)
+            for entry in entries
+            for result in entry.gate_results
+        )
         event_gate_results = tuple(
             event.metadata
             for event in events
@@ -152,6 +160,50 @@ def _phase_transition(entry: HarnessTranscriptEntry) -> dict[str, Any]:
         "budget_snapshot": entry.budget_snapshot,
         "metadata": entry.metadata,
     }
+
+
+def _gate_replay_projection(value: dict[str, Any]) -> dict[str, Any]:
+    result = dict(value)
+    details = result.get("details")
+    evidence = details.get("harness_gate") if isinstance(details, Mapping) else None
+    if not isinstance(evidence, Mapping):
+        result["verification_status"] = "legacy_unverified"
+        return result
+    try:
+        reference = GateReference.parse(str(evidence.get("reference") or ""))
+    except HarnessValidationError:
+        result["verification_status"] = "malformed_unverified"
+        return result
+    input_ref = evidence.get("input_ref")
+    result_ref = evidence.get("result_ref")
+    reason_code = evidence.get("reason_code")
+    raw_details = dict(details)
+    raw_details.pop("harness_gate", None)
+    raw_result = {
+        "gate": result.get("gate"),
+        "passed": result.get("passed"),
+        "reason": result.get("reason"),
+        "details": raw_details,
+    }
+    valid = (
+        reference.gate_id == result.get("gate")
+        and _is_checksum_ref(input_ref)
+        and _is_checksum_ref(result_ref)
+        and result_ref == checksum_for(raw_result)
+        and isinstance(reason_code, str)
+        and bool(reason_code.strip())
+    )
+    result["verification_status"] = (
+        "versioned_evidence" if valid else "malformed_unverified"
+    )
+    return result
+
+
+def _is_checksum_ref(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
 
 
 def _status_from_events(events: tuple[HarnessEventLogEntry, ...]) -> str | None:

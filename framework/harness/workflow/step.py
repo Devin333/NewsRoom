@@ -85,6 +85,10 @@ class HarnessStepSpec:
             raise HarnessValidationError("output_key must not be blank")
         if not isinstance(self.retry_policy, HarnessRetryPolicy):
             raise HarnessValidationError("retry_policy must be HarnessRetryPolicy")
+        if self.quality_gate is not None and (
+            not isinstance(self.quality_gate, str) or not self.quality_gate.strip()
+        ):
+            raise HarnessValidationError("quality_gate must be a non-blank string")
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:

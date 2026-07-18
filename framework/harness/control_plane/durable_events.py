@@ -79,6 +79,7 @@ from framework.harness.control_plane.transition import (
     HarnessTransitionKind,
     legacy_transition_id,
 )
+from framework.harness.quality.verdict import gate_result_evidence
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.shared.time import format_datetime, parse_datetime
 
@@ -1301,6 +1302,17 @@ def _canonical_harness_payload(event: HarnessEvent) -> dict[str, Any]:
         return payload
     if event_type == "gate_evaluated":
         details = payload.pop("details", {})
+        if isinstance(details, Mapping) and isinstance(details.get("harness_gate"), Mapping):
+            evidence = gate_result_evidence({**payload, "details": details})
+            for key in (
+                "reference",
+                "input_ref",
+                "result_ref",
+                "reason_code",
+                "score",
+            ):
+                if key in evidence:
+                    payload[key] = evidence[key]
         payload["details_ref"] = _value_ref(details)
         reason = payload.pop("reason", None)
         if reason is not None:

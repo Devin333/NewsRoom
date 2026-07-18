@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from framework.events.canonical import checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.control_plane.state import HarnessState, HarnessStepState
@@ -21,8 +22,40 @@ class HarnessGateResult:
     def __post_init__(self) -> None:
         if not str(self.gate_name).strip():
             raise HarnessValidationError("gate_name is required")
-        object.__setattr__(self, "gate_name", str(self.gate_name))
+        if not isinstance(self.passed, bool):
+            raise HarnessValidationError("gate result passed must be a boolean")
+        object.__setattr__(self, "gate_name", str(self.gate_name).strip())
         object.__setattr__(self, "details", dict(self.details))
+
+    def with_evidence(
+        self,
+        *,
+        gate_reference: str,
+        input_ref: str,
+        reason_code: str,
+    ) -> "HarnessGateResult":
+        reference = str(gate_reference).strip()
+        if not reference or "@" not in reference:
+            raise HarnessValidationError("gate_reference must include an exact version")
+        if not _is_checksum(input_ref):
+            raise HarnessValidationError("input_ref must be a sha256 reference")
+        code = str(reason_code).strip()
+        if not code:
+            raise HarnessValidationError("reason_code is required")
+        raw_result = self.to_dict()
+        details = dict(self.details)
+        details["harness_gate"] = {
+            "reference": reference,
+            "input_ref": input_ref,
+            "result_ref": checksum_for(raw_result),
+            "reason_code": code,
+        }
+        return HarnessGateResult(
+            gate_name=self.gate_name,
+            passed=self.passed,
+            reason=self.reason,
+            details=details,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +78,8 @@ class GateContext:
 
 class DeterministicGate:
     gate_name = "deterministic"
+    gate_version = "1"
+    gate_dependencies: tuple[str, ...] = ()
 
     def evaluate(self, context: GateContext) -> HarnessGateResult:
         raise NotImplementedError
@@ -312,6 +347,13 @@ def _get_nested(payload: dict[str, Any], dotted_path: str) -> Any:
             return None
         current = current.get(segment)
     return current
+
+
+def _is_checksum(value: str) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
 
 
 __all__ = [

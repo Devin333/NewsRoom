@@ -32,6 +32,12 @@ from framework.harness.control_plane.gates import (
     SkillEvolutionBudgetGate,
     ToolAllowlistGate,
 )
+from framework.harness.control_plane.gate_registry import (
+    DeterministicGateRegistry,
+    GateBinding,
+    GateReference,
+    GateRegistration,
+)
 from framework.harness.control_plane.harness import HarnessControlPlane, HarnessRunResult, InMemoryHarnessEventPort
 from framework.harness.control_plane.phase import (
     HarnessPhase,
@@ -81,9 +87,13 @@ __all__ = [
     "BudgetGate",
     "DeduplicationGate",
     "DeterministicGate",
+    "DeterministicGateRegistry",
     "DurableHarnessEventPort",
     "DurableHarnessTransitionPort",
     "GateContext",
+    "GateBinding",
+    "GateReference",
+    "GateRegistration",
     "HarnessBudgetSnapshot",
     "HarnessActivity",
     "HarnessActivityResultRecord",

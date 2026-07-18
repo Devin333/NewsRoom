@@ -20,7 +20,7 @@ from business.research.reader_repair.issue_signature import build_reader_issue_s
 from business.research.reader_repair.repair_context import ReaderRepairContextBuilder
 from business.research.reader_repair.repair_gates import ReaderRepairGateSuite
 from business.research.reader_repair.repair_memory import InMemoryReaderRepairMemory, ReaderRepairMemoryService
-from business.research.reader_repair.repair_service import ReaderRepairService
+from business.research.reader_repair.repair_service import ReaderRepairPreconditionError, ReaderRepairService
 from business.research.reader_repair.workflow import build_reader_repair_subagent_specs
 
 __all__ = [
@@ -38,6 +38,7 @@ __all__ = [
     "ReaderRepairIssueDetector",
     "ReaderRepairMemoryQuery",
     "ReaderRepairMemoryService",
+    "ReaderRepairPreconditionError",
     "ReaderRepairRAGPolicy",
     "ReaderRepairResult",
     "ReaderRepairService",
