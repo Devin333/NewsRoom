@@ -128,16 +128,26 @@ exists. At remote candidate `89594289fd3e967633c3ed22e750ed72126631df`:
   evidence.
 
 The canonical rollback technical handoff is now
-`rollback-staging-5c59f879-awaiting-approval`. Its technical evidence remains
+`rollback-staging-a2662442-awaiting-approval`. Its technical evidence remains
 `awaiting_approval`, with technical checksum
-`sha256:6fb3d2fd2cd51914b183675c372534e73d89c98cf8e87233a2fc93c3e1d0d3dd`
+`sha256:0fdcef5d85bfcbdcb21e6845e0baf84f1e5a9d65c453b43f92ca7d89a99dd7b7`
 and approval-request checksum
-`sha256:ecd49c670115d63830e5a672b6b68d63c0db6519d13c9c202c96df1dcd09a345`.
-The new run used PostgreSQL database `newsroom_rollback_staging_38c36a98bd1d4ad1`.
-The former `rollback-staging-7a595636-awaiting-approval` bundle is retained as
+`sha256:ce98f42b4decf72de2c6b15c9f4005239b0f92ceef1c07033a65a4c338da49bc`.
+The new run used PostgreSQL database `newsroom_rollback_staging_10a7bb97e8da4579`.
+The former `rollback-staging-5c59f879-awaiting-approval` bundle is retained as
 superseded history. Technical invariants and database presence do not
 constitute the three independent rollback signatures or the separate D/A/B/C
 qualification chain.
+
+### 2026-07-18 final candidate technical refresh
+
+The replay reducer capability audit was hardened and committed as
+`a266244246b33c093905562cb9e3a514ea82703f`. The exact candidate then passed the
+full offline suite (`4442 passed, 119 skipped`) and fixed smoke
+(`1014 passed, 23 skipped`, source registry valid). The rollback staging run
+bound to this candidate passed all seven technical external gates and remains
+approval-pending; no approval, signature, attestation, qualification, private
+key, or trust root was created.
 
 ## Read cutover
 

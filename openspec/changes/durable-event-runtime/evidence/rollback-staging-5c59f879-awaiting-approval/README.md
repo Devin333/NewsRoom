@@ -1,4 +1,6 @@
-# Rollback staging evidence: awaiting approval
+# Rollback staging evidence: superseded
+
+Status: SUPERSEDED by `../rollback-staging-a2662442-awaiting-approval/`.
 
 This bundle is the canonical technical handoff for the rollback drill run from
 candidate `5c59f879b57a984e5a072952c32ac08de3b70e76` against rollback release

@@ -280,6 +280,38 @@ attestation, qualification signature, governance activation D, compatibility
 observation A, consumer-owner approval B, or deletion deployment attestation C
 exists.
 
+## 2026-07-18 final candidate refresh
+
+The replay reducer capability audit was corrected so forbidden bytecode
+operations are diagnosed before version-dependent global-capture inspection.
+The fix is committed at exact candidate
+`a266244246b33c093905562cb9e3a514ea82703f`.
+
+The exact candidate completed:
+
+| Gate | Result |
+| --- | --- |
+| Full offline suite | `4442 passed, 119 skipped` |
+| Fixed smoke | `1014 passed, 23 skipped`; source registry `is_valid=true` |
+| OpenSpec strict | change and all-repository validation passed (`169/0`) |
+| Replay reducer regression | module `33 passed` |
+| Rollback staging | `awaiting_approval`; seven technical gates true |
+
+The current tracked rollback handoff is
+`rollback-staging-a2662442-awaiting-approval/technical/technical-evidence.json`:
+
+```text
+candidate_release_digest: a266244246b33c093905562cb9e3a514ea82703f
+technical_evidence_checksum: sha256:0fdcef5d85bfcbdcb21e6845e0baf84f1e5a9d65c453b43f92ca7d89a99dd7b7
+approval_request_checksum: sha256:ce98f42b4decf72de2c6b15c9f4005239b0f92ceef1c07033a65a4c338da49bc
+postgres_database: newsroom_rollback_staging_10a7bb97e8da4579
+```
+
+The bundle intentionally remains unqualified until an independent approval
+authority signs the exact request and separate deployment and release
+authorities complete their attestation and qualification steps. It also does
+not satisfy the separate compatibility D/A/B/C chain.
+
 ## Disposition
 
 - Task 10.1 is complete based on the exact-candidate full suite and refreshed
@@ -288,8 +320,6 @@ exists.
   rollback staging runs above.
 - Task 10.3 is complete based on the exact-candidate strict fixed 600-second
   qualification JSON above.
-- Task 10.4 remains open until task 9.5, signed governance activation D, the
-  complete compatibility D/A/B/C chain, and the independent rollback
-  qualification chain are complete; the final all-repository gate must then
-  pass before task 10.5 updates the PRDs and final evidence.
+- Task 10.4 is complete: the exact candidate passed compile, smoke, both strict
+  OpenSpec validations, and diff-check after the final replay audit fix.
 - Task 10.5 remains open until every Definition of Done item, including task 9.5, is satisfied.

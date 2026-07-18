@@ -1,0 +1,1 @@
+{"drill_id":"rollback-drill-fa9bc85a26d54ff19acc77e0bc8e8d32","errors":{"forbidden_payload":"EventSecurityError","identity_collision":"EventIdentityCollisionError","record_checksum_tamper":"EventStoreCorruptionError","unknown_schema":"EventUnknownSchemaError"},"schema":"newsroom.durable-event-rollback-native-negative/v1","watermark_after_rejections":20,"watermark_before":20}
