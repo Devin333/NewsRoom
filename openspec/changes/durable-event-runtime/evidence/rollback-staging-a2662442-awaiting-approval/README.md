@@ -18,8 +18,11 @@ approval_request_checksum: sha256:ce98f42b4decf72de2c6b15c9f4005239b0f92ceef1c07
 
 This bundle contains no approval record, detached signature, external
 attestation, qualification output, private key, or trust root. An independent
-approval authority must sign the exact `technical/approval-request.json`, after
-which the staging `finalize` step, independent deployment attestation, release
-qualification, and strict verification must be performed. This rollback chain
-is separate from the compatibility governance `D -> A -> B -> deploy -> C`
-chain; neither chain substitutes for the other.
+approval system must review `technical/approval-request.json`, produce the exact
+`newsroom.durable-event-rollback-approval/v1` `approval-record.json`, and have
+the approval authority sign the exact approval-record bytes. The approval
+request is review input, not the detached-signature payload. The staging
+`finalize` step then verifies the record and signature before independent
+deployment attestation, release qualification, and strict verification. This
+rollback chain is separate from the compatibility governance
+`D -> A -> B -> deploy -> C` chain; neither chain substitutes for the other.

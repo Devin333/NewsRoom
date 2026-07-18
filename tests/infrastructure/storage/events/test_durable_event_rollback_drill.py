@@ -889,7 +889,7 @@ def test_unsigned_external_evidence_requires_real_approval_signature(tmp_path) -
     assert "attestation" not in evidence
 
 
-def test_staging_finalize_binds_signed_approval_request_to_technical_bundle(
+def test_staging_finalize_binds_signed_approval_record_to_technical_bundle(
     tmp_path,
 ) -> None:
     source_path = _write_external_evidence(

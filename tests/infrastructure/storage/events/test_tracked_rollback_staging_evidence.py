@@ -47,6 +47,26 @@ def test_previous_pending_bundles_are_explicitly_superseded() -> None:
     assert "awaiting approval" in latest_readme
 
 
+def test_tracked_handoff_signs_the_approval_record_not_the_request() -> None:
+    readme = (BUNDLE / "README.md").read_text(encoding="utf-8")
+    assert "`technical/approval-request.json`" in readme
+    assert "`newsroom.durable-event-rollback-approval/v1`" in readme
+    assert "`approval-record.json`" in readme
+    assert "sign the exact approval-record bytes" in readme
+    assert "sign the exact `technical/approval-request.json`" not in readme
+
+    for bundle in SUPERSEDED_BUNDLES:
+        historical = (bundle / "README.md").read_text(encoding="utf-8")
+        assert "sign the exact `technical/approval-request.json`" not in historical
+        assert "signs the exact `technical/approval-request.json`" not in historical
+
+    targeted = (
+        BUNDLE.parent / "durable-event-targeted-verification-20260717.md"
+    ).read_text(encoding="utf-8")
+    assert "authority signs the exact request" not in targeted
+    assert "sign the exact approval-record bytes" in targeted
+
+
 def test_tracked_pending_approval_bundle_is_complete_and_byte_verified() -> None:
     manifest = _read_json(BUNDLE / "manifest.json")
     assert manifest["schema"] == "newsroom.durable-event-rollback-tracked-bundle/v1"

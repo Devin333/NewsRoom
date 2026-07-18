@@ -319,9 +319,11 @@ Its source binding records an empty production-scope diff from candidate
 `a266244246b33c093905562cb9e3a514ea82703f`.
 
 The bundle intentionally remains unqualified until an independent approval
-authority signs the exact request and separate deployment and release
-authorities complete their attestation and qualification steps. It also does
-not satisfy the separate compatibility D/A/B/C chain.
+system reviews the request, produces the exact approval record, and has the
+approval authority sign the exact approval-record bytes. Separate deployment
+and release authorities must then complete their attestation and qualification
+steps. The bundle also does not satisfy the separate compatibility D/A/B/C
+chain.
 
 ## Disposition
 

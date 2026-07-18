@@ -195,6 +195,8 @@ effect ledger、Git 和 projection bytes 后推导。worker 输出中的 boolean
 
 审批系统读取 `approval-request.json`，由不同 operator/approver 产生精确
 `newsroom.durable-event-rollback-approval/v1` record，并用独立 approval key 签署该文件。
+`approval-request.json` 只是未签名的审批输入，不是 detached signature 的 payload；签名必须覆盖
+`approval-record.json` 的精确 bytes。
 runner 不生成 operator、approver、approval key 或 decision：
 
 ```powershell

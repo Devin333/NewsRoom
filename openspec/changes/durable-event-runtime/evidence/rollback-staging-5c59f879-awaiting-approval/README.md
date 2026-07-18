@@ -25,8 +25,12 @@ compatibility governance root -> D -> A -> B -> deploy -> C chain.
 
 Required continuation:
 
-1. An independent approval authority signs the exact `technical/approval-request.json`.
-2. Run `scripts.durable_event_rollback_staging finalize` with that record and trusted public key.
+1. An independent approval system reviews `technical/approval-request.json`,
+   produces the exact `newsroom.durable-event-rollback-approval/v1`
+   `approval-record.json`, and signs the exact approval-record bytes. The
+   request itself is not the signature payload.
+2. Run `scripts.durable_event_rollback_staging finalize` with that signed record
+   and trusted public key.
 3. A separate deployment authority runs `attest-external`.
 4. A separate release authority runs `qualify` and strict `verify`.
 5. Retain the resulting signed qualification bundle or immutable external evidence URI.
