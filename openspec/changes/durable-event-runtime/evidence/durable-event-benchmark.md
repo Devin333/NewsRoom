@@ -50,6 +50,39 @@ across five exact scopes and left zero rows in all scoped tables.
 
 All correctness (8/8), qualification (12/12), and SLO (12/12) gates passed.
 
+## 2026-07-18 Final Candidate Qualification
+
+The fixed workload was rerun after the replay reducer audit fix. The benchmark
+JSON is retained at
+`durable-event-benchmark-qualification-20260718-a2662442.json` and strict
+verification passed.
+
+```text
+candidate_commit: a266244246b33c093905562cb9e3a514ea82703f
+candidate_tree:   140ff053f87a096a89877e044c8f527439905ca0
+started_at:       2026-07-18T07:02:14.150393Z
+finished_at:      2026-07-18T07:36:42.349180Z
+evidence_checksum: sha256:7485553ad9a4ceff2bab6194e4baa48b5259b2be5af27931933daf64e3cd11e0
+file_sha256:       sha256:25f775da88312cf1545dfae571f20953812385f820c723e2a4c6930a751e4790
+```
+
+The benchmark executed from a descendant commit whose production scope
+(`business`, `framework`, `infrastructure`, `interfaces`, `scripts`) is byte-
+identical to the candidate; the source binding is recorded in
+`durable-event-benchmark-source-binding-20260718-a2662442.json`.
+
+| Workload | Committed | Rate | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| SQLite, 1 writer / 1 stream | 15,000/15,000 | 25.001/s | 10.868 ms | 15.462 ms | 24.912 ms |
+| PostgreSQL, 8 writers / same stream | 60,000/60,000 | 100.001/s | 1.947 ms | 2.834 ms | 3.195 ms |
+| PostgreSQL, 8 writers / 8 streams | 60,000/60,000 | 100.001/s | 1.962 ms | 2.743 ms | 3.133 ms |
+
+The 10,000-event ordered read/replay completed with zero loss, duplicate, or
+checksum failure (read 3.071 s, replay 3.914 s). PostgreSQL cleanup reported
+zero rows in every generated scope. All correctness, qualification, and SLO
+gates passed. This remains technical benchmark evidence only and does not
+provide governance activation or release qualification.
+
 ## Benchmark boundary
 
 - All workload publication enters `EventRuntime.publish(EventPublishRequest)`.

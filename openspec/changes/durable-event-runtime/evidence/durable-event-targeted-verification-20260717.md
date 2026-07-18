@@ -307,6 +307,13 @@ approval_request_checksum: sha256:ce98f42b4decf72de2c6b15c9f4005239b0f92ceef1c07
 postgres_database: newsroom_rollback_staging_10a7bb97e8da4579
 ```
 
+The exact-candidate fixed benchmark was also rerun and strictly verified at
+`durable-event-benchmark-qualification-20260718-a2662442.json` with evidence
+checksum
+`sha256:7485553ad9a4ceff2bab6194e4baa48b5259b2be5af27931933daf64e3cd11e0`.
+Its source binding records an empty production-scope diff from candidate
+`a266244246b33c093905562cb9e3a514ea82703f`.
+
 The bundle intentionally remains unqualified until an independent approval
 authority signs the exact request and separate deployment and release
 authorities complete their attestation and qualification steps. It also does

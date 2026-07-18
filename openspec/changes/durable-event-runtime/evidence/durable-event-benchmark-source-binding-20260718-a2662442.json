@@ -1,0 +1,41 @@
+{
+  "schema": "newsroom.durable-event-benchmark-source-binding/v1",
+  "status": "technical_evidence_only",
+  "candidate": {
+    "commit": "a266244246b33c093905562cb9e3a514ea82703f",
+    "tree": "140ff053f87a096a89877e044c8f527439905ca0",
+    "parent": "e6b6d348c0511f2dc5aec2182e35154e2593c293"
+  },
+  "execution": {
+    "commit": "e0ccd9d54d1f2e40673337c1bdb648b7ec2e2377",
+    "tree": "2bfef93d4edd2f626f487037bb96213bc6de2dd8",
+    "parent": "a266244246b33c093905562cb9e3a514ea82703f",
+    "production_scope": [
+      "business",
+      "framework",
+      "infrastructure",
+      "interfaces",
+      "scripts"
+    ],
+    "production_scope_diff_from_candidate": "empty"
+  },
+  "benchmark_evidence": {
+    "path": "durable-event-benchmark-qualification-20260718-a2662442.json",
+    "file_sha256": "sha256:25f775da88312cf1545dfae571f20953812385f820c723e2a4c6930a751e4790",
+    "evidence_checksum": "sha256:7485553ad9a4ceff2bab6194e4baa48b5259b2be5af27931933daf64e3cd11e0",
+    "started_at": "2026-07-18T07:02:14.150393Z",
+    "finished_at": "2026-07-18T07:36:42.349180Z",
+    "duration_seconds": 600,
+    "read_replay_events": 10000,
+    "postgres_database": "newsroom_benchmark_a2662442",
+    "strict_verify": "passed"
+  },
+  "qualification_boundary": {
+    "all_correctness_gates": true,
+    "all_qualification_gates": true,
+    "all_slo_gates": true,
+    "external_governance_activation": "not_present",
+    "compatibility_dabc": "not_present",
+    "rollback_approval_attestation_qualification": "not_present"
+  }
+}

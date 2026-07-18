@@ -147,7 +147,10 @@ full offline suite (`4442 passed, 119 skipped`) and fixed smoke
 (`1014 passed, 23 skipped`, source registry valid). The rollback staging run
 bound to this candidate passed all seven technical external gates and remains
 approval-pending; no approval, signature, attestation, qualification, private
-key, or trust root was created.
+key, or trust root was created. The fixed 600-second benchmark was separately
+rerun from the same production scope and strictly verified with evidence
+checksum
+`sha256:7485553ad9a4ceff2bab6194e4baa48b5259b2be5af27931933daf64e3cd11e0`.
 
 ## Read cutover
 
