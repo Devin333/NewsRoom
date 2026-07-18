@@ -2167,6 +2167,11 @@ def _audit_function_dependencies(function: FunctionType, *, seen: set[int]) -> N
             raise ReplayReducerRegistrationError(
                 f"replay reducer uses forbidden builtin: {name}"
             )
+    # Report capability-bearing bytecode before dependency inspection. Python
+    # versions differ in which imported modules appear in getclosurevars(); an
+    # import must always be rejected as an operation rather than as a global
+    # capture, while ordinary mutable captures retain their existing diagnostic.
+    _audit_forbidden_reducer_operations(function.__code__, seen=set())
     for name, value in {**closure.globals, **closure.nonlocals}.items():
         if isinstance(value, ModuleType) or not _is_immutable_constant(value):
             raise ReplayReducerRegistrationError(
@@ -2184,6 +2189,23 @@ def _audit_function_dependencies(function: FunctionType, *, seen: set[int]) -> N
         function_seen=seen,
         code_seen=set(),
     )
+
+
+def _audit_forbidden_reducer_operations(code: CodeType, *, seen: set[int]) -> None:
+    """Reject capability-bearing opcodes before version-sensitive dependency checks."""
+
+    identity = id(code)
+    if identity in seen:
+        return
+    seen.add(identity)
+    for instruction in dis.get_instructions(code):
+        operation = instruction.opname
+        if operation in _FORBIDDEN_REDUCER_OPCODES:
+            raise ReplayReducerRegistrationError(
+                f"replay reducer uses forbidden operation: {operation}"
+            )
+        if operation == "LOAD_CONST" and isinstance(instruction.argval, CodeType):
+            _audit_forbidden_reducer_operations(instruction.argval, seen=seen)
 
 
 def _audit_reducer_code(
