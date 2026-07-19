@@ -2,8 +2,23 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from business.research.code_repository import CodeRepositoryObservation, CodeRepositoryProfile, compute_star_growth
+from business.research.code_repository import (
+    CodeRepositoryObservation,
+    CodeRepositoryProfile,
+    compute_star_growth,
+)
+from business.research.domain.code_repository import (
+    CodeRepositoryObservation as DomainCodeRepositoryObservation,
+)
+from business.research.domain.code_repository import (
+    CodeRepositoryProfile as DomainCodeRepositoryProfile,
+)
 from tests.business.research.helpers import FIXED_NOW
+
+
+def test_code_repository_public_models_reexport_domain_contracts() -> None:
+    assert CodeRepositoryObservation is DomainCodeRepositoryObservation
+    assert CodeRepositoryProfile is DomainCodeRepositoryProfile
 
 
 def test_code_repository_profile_supports_star_growth_observations() -> None:

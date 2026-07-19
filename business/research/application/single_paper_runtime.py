@@ -212,6 +212,7 @@ class ResearchSinglePaperRuntime:
             "terminal_reason": harness_result.state.metadata.get("terminal_reason"),
             "worker_results": {key: value.to_dict() for key, value in harness_result.worker_results.items()},
             "gate_failures": _gate_failures(harness_result.events),
+            "research_diagnostics": list(workspace.diagnostics),
         }
         return ResearchAnalysisResult(
             run_id=run_id,
@@ -551,7 +552,16 @@ class ResearchSinglePaperRuntime:
     def _build_paper_card(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
         if workspace.paper is None:
             return _failed("paper is required before paper card")
-        github_profile = self.github_repository.fetch_profile(workspace.paper.code_url or workspace.paper.source_url or "")
+        github_profile = None
+        repository_status = "missing"
+        repository_diagnostics: list[str] = []
+        if workspace.paper.code_url:
+            github_profile = self.github_repository.fetch_profile(workspace.paper.code_url)
+            repository_status = "available"
+        else:
+            repository_diagnostics.append("code_repository_missing")
+            if "code_repository_missing" not in workspace.diagnostics:
+                workspace.diagnostics.append("code_repository_missing")
         taxonomy = workspace.taxonomy_assignment or TaxonomyAssignment(paper_id=workspace.paper.paper_id)
         card = self.paper_card_builder.build(
             paper=workspace.paper,
@@ -563,12 +573,22 @@ class ResearchSinglePaperRuntime:
                 "methods": [candidate.term_id for candidate in workspace.taxonomy_candidates if candidate.level == "area"],
                 "benchmarks": [score.benchmark_id for score in workspace.scores],
             },
-            github=github_profile.to_dict(),
+            github=github_profile.to_dict() if github_profile is not None else None,
             reader_payload_status="needs_repair" if workspace.reader_issue else ("ready" if workspace.reader_payload else "missing"),
-            metadata={"source_lineage": [workspace.request.source_ref]},
+            metadata={
+                "source_lineage": [workspace.request.source_ref],
+                "code_repository_status": repository_status,
+                "code_repository_diagnostics": repository_diagnostics,
+            },
         )
         workspace.paper_card = card
-        return _ok({"paper_card": card.to_dict()})
+        return _ok(
+            {
+                "paper_card": card.to_dict(),
+                "code_repository_status": repository_status,
+                "code_repository_diagnostics": repository_diagnostics,
+            }
+        )
 
     def _publish_artifacts(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
         if workspace.analysis:
@@ -717,6 +737,7 @@ class _ResearchRunWorkspace:
     context_envelope: ContextEnvelope | None = None
     compression_records: list[dict[str, Any]] = field(default_factory=list)
     skill_experience_refs: list[str] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
 
 
 def _budget_from_options(options: dict[str, Any]) -> HarnessBudget:

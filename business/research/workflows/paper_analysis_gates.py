@@ -690,8 +690,17 @@ class ResearchPaperCardGateAdapter(DeterministicGate):
             validate_paper_card_code_url(card),
         ]
         expected_paper_id = _expected_paper_id(context)
-        expected_source_ref = str(context.state.run_spec.inputs.get("source_ref") or "")
-        if card.paper_id != expected_paper_id or card.source_url != expected_source_ref:
+        paper, prior_failure = _prior_model_from_state(
+            context,
+            state_output_key="paper_source",
+            payload_key="paper",
+            model_type=ResearchPaper,
+            gate_name=self.gate_name,
+        )
+        if prior_failure is not None:
+            return prior_failure
+        assert isinstance(paper, ResearchPaper)
+        if card.paper_id != expected_paper_id or card.source_url != paper.source_url:
             results.append(
                 GateResult.fail(
                     self.gate_name,
@@ -699,7 +708,10 @@ class ResearchPaperCardGateAdapter(DeterministicGate):
                     metadata={
                         "expected_paper_id": expected_paper_id,
                         "actual_paper_id": card.paper_id,
-                        "expected_source_ref": expected_source_ref,
+                        "requested_source_ref": str(
+                            context.state.run_spec.inputs.get("source_ref") or ""
+                        ),
+                        "verified_source_ref": paper.source_url,
                         "actual_source_ref": card.source_url,
                     },
                 )

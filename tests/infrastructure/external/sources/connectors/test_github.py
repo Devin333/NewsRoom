@@ -122,6 +122,7 @@ GITHUB_REPOSITORY_METADATA = json.dumps(
         "description": "Repository description",
         "language": "Python",
         "stargazers_count": 123,
+        "subscribers_count": 17,
         "forks_count": 4,
         "open_issues_count": 5,
         "archived": False,
@@ -368,6 +369,7 @@ def test_github_connector_fetches_repository_metadata_without_search() -> None:
     assert metadata is not None
     assert metadata.full_name == "owner/repo"
     assert metadata.stargazers_count == 123
+    assert metadata.watchers_count == 17
     assert metadata.pushed_at == datetime(2026, 5, 11, 9, 0, tzinfo=UTC)
 
 

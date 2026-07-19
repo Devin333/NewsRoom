@@ -20,7 +20,12 @@ def validate_github_metrics_source(card: ResearchPaperCard) -> GateResult:
     if not has_metric:
         return GateResult.pass_("PaperCardGithubMetricGate", metadata={"metrics_present": False})
     metric_source = str(card.metadata.get("github_metrics_source") or "")
-    if metric_source not in {"github_api", "github_graphql", "github_repository_port"}:
+    if metric_source not in {
+        "github_api",
+        "github_graphql",
+        "github_repository_api",
+        "github_repository_port",
+    }:
         return GateResult.fail(
             "PaperCardGithubMetricGate",
             "GitHub metrics must come from a real GitHub data source port",

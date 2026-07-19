@@ -175,6 +175,7 @@ class GithubRepositoryMetadata:
     topics: list[str]
     pushed_at: datetime | None
     updated_at: datetime | None
+    watchers_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -192,6 +193,7 @@ class GithubRepositoryMetadata:
             "topics": list(self.topics),
             "pushed_at": _dt(self.pushed_at),
             "updated_at": _dt(self.updated_at),
+            "watchers_count": self.watchers_count,
         }
 
 
@@ -1081,6 +1083,7 @@ def _repository_metadata(item: dict[str, Any]) -> GithubRepositoryMetadata | Non
         topics=[str(topic) for topic in item.get("topics") or []],
         pushed_at=_parse_datetime(item.get("pushed_at")),
         updated_at=_parse_datetime(item.get("updated_at")),
+        watchers_count=_optional_int(item.get("subscribers_count")),
     )
 
 

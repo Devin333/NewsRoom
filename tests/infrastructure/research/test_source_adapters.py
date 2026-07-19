@@ -1,0 +1,510 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime, timezone
+
+import pytest
+
+from business.research.domain import (
+    PaperSourceRecord,
+    ResearchDocument,
+    ResearchSection,
+)
+from business.research.domain.common import SourceLineage
+from infrastructure.external.sources.models import RawSourceItem, SourceType
+from infrastructure.external.sources.fetch_policy import (
+    RateLimitDecision,
+    SourceRateLimitExceededError,
+    UnsupportedContentTypeError,
+)
+from infrastructure.research import (
+    ArxivResearchSourceProvider,
+    ResearchDocumentCompileError,
+    ResearchDocumentCompilerAdapter,
+    ResearchSourceError,
+    require_arxiv_id,
+)
+
+
+UTC = timezone.utc
+
+
+def test_arxiv_provider_projects_exact_recorded_connector_item() -> None:
+    connector = _RecordedArxivConnector([_raw_item()])
+    provider = ArxivResearchSourceProvider(connector)
+
+    paper = provider.fetch_paper("https://arxiv.org/abs/2606.00001")
+    record = provider.fetch_source_record("2606.00001")
+
+    assert connector.queries == ["id:2606.00001"]
+    assert paper.paper_id == "2606.00001"
+    assert paper.title == "Harness-grounded Research"
+    assert paper.abstract == "Evidence-backed abstract."
+    assert paper.source_url == "https://arxiv.org/abs/2606.00001"
+    assert record.paper_id == paper.paper_id
+    assert record.source_hash
+    assert record.metadata["abstract"] == paper.abstract
+    assert record.metadata["source_item_id"] == "raw-recorded"
+
+
+def test_arxiv_provider_accepts_one_resolved_version_for_unversioned_request() -> None:
+    connector = _RecordedArxivConnector([_raw_item(arxiv_id="2606.00001v2")])
+    provider = ArxivResearchSourceProvider(connector)
+
+    paper = provider.fetch_paper("2606.00001")
+    record = provider.fetch_source_record("2606.00001")
+
+    assert paper.paper_id == "2606.00001"
+    assert paper.source_url == "https://arxiv.org/abs/2606.00001v2"
+    assert record.paper_id == "2606.00001"
+    assert record.metadata["arxiv_id"] == "2606.00001v2"
+    assert record.metadata["requested_arxiv_id"] == "2606.00001"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2606.00001",
+        "https://arxiv.org/abs/2606.00001",
+        "http://www.arxiv.org/abs/2606.00001?context=cs",
+        "https://arxiv.org/pdf/2606.00001.pdf",
+        "https://export.arxiv.org/e-print/2606.00001",
+        "https://arxiv.org/src/2606.00001#source",
+    ],
+)
+def test_require_arxiv_id_accepts_supported_identity_aliases(value: str) -> None:
+    assert require_arxiv_id(value) == "2606.00001"
+
+
+def test_arxiv_provider_rejects_wrong_explicit_version() -> None:
+    provider = ArxivResearchSourceProvider(
+        _RecordedArxivConnector([_raw_item(arxiv_id="2606.00001v2")])
+    )
+
+    with pytest.raises(ResearchSourceError, match="requested paper"):
+        provider.fetch_paper("2606.00001v1")
+
+
+def test_arxiv_provider_cache_reuses_records_and_evicts_at_its_bound() -> None:
+    connector = _RecordedArxivConnector(
+        [
+            _raw_item(arxiv_id="2606.00001"),
+            _raw_item(arxiv_id="2606.00002"),
+        ]
+    )
+    provider = ArxivResearchSourceProvider(connector, cache_size=1)
+
+    first = provider.fetch_paper("2606.00001")
+    cached = provider.fetch_paper("2606.00001")
+    first_record = provider.fetch_source_record("2606.00001")
+
+    assert cached is first
+    assert first_record.source_hash == first.metadata["source_hash"]
+    assert connector.queries == ["id:2606.00001"]
+
+    provider.fetch_paper("2606.00002")
+
+    assert connector.queries == ["id:2606.00001", "id:2606.00002"]
+    with pytest.raises(ResearchSourceError, match="not available"):
+        provider.fetch_source_record("2606.00001")
+
+
+def test_arxiv_provider_uses_top_level_retryability() -> None:
+    provider = ArxivResearchSourceProvider(
+        _RecordedArxivConnector(
+            [],
+            errors=[
+                _SourceError(
+                    error_type="fetch_timeout",
+                    retryable=True,
+                    metadata={"retryable": False},
+                )
+            ],
+        )
+    )
+
+    with pytest.raises(ResearchSourceError) as exc_info:
+        provider.fetch_paper("2606.00001")
+
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "https://example.com/abs/2606.00001",
+        "file:///tmp/paper.pdf",
+        "../2606.00001",
+        "not-an-arxiv-id",
+    ],
+)
+def test_arxiv_provider_rejects_unsupported_or_invalid_source(value: str) -> None:
+    with pytest.raises(ResearchSourceError):
+        require_arxiv_id(value)
+
+
+def test_arxiv_provider_rejects_ambiguous_or_mismatched_feed() -> None:
+    connector = _RecordedArxivConnector(
+        [_raw_item(arxiv_id="2606.00002"), _raw_item(arxiv_id="2606.00003")]
+    )
+    provider = ArxivResearchSourceProvider(connector)
+
+    with pytest.raises(ResearchSourceError, match="requested paper"):
+        provider.fetch_paper("2606.00001")
+
+
+def test_arxiv_provider_rejects_conflicting_versions_for_unversioned_request() -> None:
+    provider = ArxivResearchSourceProvider(
+        _RecordedArxivConnector(
+            [
+                _raw_item(arxiv_id="2606.00001v1"),
+                _raw_item(arxiv_id="2606.00001v2"),
+            ]
+        )
+    )
+
+    with pytest.raises(ResearchSourceError, match="requested paper"):
+        provider.fetch_paper("2606.00001")
+
+
+def test_arxiv_provider_rejects_item_url_and_metadata_identity_conflict() -> None:
+    item = replace(
+        _raw_item(arxiv_id="2606.00001"),
+        url="https://arxiv.org/abs/2606.00002",
+    )
+    provider = ArxivResearchSourceProvider(_RecordedArxivConnector([item]))
+
+    with pytest.raises(ResearchSourceError, match="conflicting paper identities"):
+        provider.fetch_paper("2606.00001")
+
+
+def test_arxiv_provider_rejects_pdf_and_metadata_identity_conflict() -> None:
+    item = _raw_item(arxiv_id="2606.00001")
+    item = replace(
+        item,
+        metadata={
+            **dict(item.metadata),
+            "pdf_url": "https://arxiv.org/pdf/2606.00003.pdf",
+        },
+    )
+    provider = ArxivResearchSourceProvider(_RecordedArxivConnector([item]))
+
+    with pytest.raises(ResearchSourceError, match="conflicting paper identities"):
+        provider.fetch_paper("2606.00001")
+
+
+def test_arxiv_provider_rejects_conflicting_explicit_versions_within_item() -> None:
+    item = replace(
+        _raw_item(arxiv_id="2606.00001v2"),
+        url="https://arxiv.org/abs/2606.00001v1",
+    )
+    provider = ArxivResearchSourceProvider(_RecordedArxivConnector([item]))
+
+    with pytest.raises(ResearchSourceError, match="conflicting paper identities"):
+        provider.fetch_paper("2606.00001v2")
+
+
+def test_document_compiler_prefers_real_latex_result() -> None:
+    expected = _document(parse_source="latex")
+    compiler = ResearchDocumentCompilerAdapter(
+        _FailingFetcher(),
+        latex_compiler=_Compiler(result=expected),
+    )
+
+    actual = compiler.compile(_source_record())
+
+    assert actual.sections[0].text == "Derived full text."
+    assert actual.source_hash == "a" * 64
+    assert actual.lineage.source_hash == "a" * 64
+    assert actual.metadata["compiler"] == "latex"
+    assert actual.metadata["compiled_content_hash"] == "b" * 64
+    assert actual.metadata["missing_information"] == []
+
+
+def test_document_compiler_uses_real_pdf_bytes_after_latex_failure() -> None:
+    fetcher = _PdfFetcher(b"%PDF-recorded")
+    expected = _document(parse_source="pymupdf")
+    parser = _PdfParser(expected)
+    compiler = ResearchDocumentCompilerAdapter(
+        fetcher,
+        latex_compiler=_Compiler(error=RuntimeError("latex unavailable")),
+        pdf_parser=parser,
+    )
+
+    actual = compiler.compile(_source_record())
+
+    assert parser.calls == [("2606.00001", b"%PDF-recorded")]
+    assert actual.source_hash == "a" * 64
+    assert actual.lineage.source_hash == "a" * 64
+    assert actual.metadata["compiler"] == "pdf_cascade"
+    assert actual.metadata["compiled_content_hash"] == "b" * 64
+    assert actual.metadata["source_package_checksum"] == fetcher.package.checksum
+    assert actual.metadata["compiler_attempts"][0] == {
+        "compiler": "latex",
+        "status": "failed",
+        "error_type": "RuntimeError",
+    }
+
+
+def test_document_compiler_abstract_fallback_is_truth_preserving_and_sanitized() -> None:
+    secret = "postgresql://admin:TOPSECRET@db/news"
+    compiler = ResearchDocumentCompilerAdapter(
+        _FailingFetcher(secret),
+        latex_compiler=_Compiler(error=RuntimeError(secret)),
+    )
+
+    document = compiler.compile(_source_record())
+    payload = document.model_dump_json()
+
+    assert [section.title for section in document.sections] == ["Abstract"]
+    assert document.sections[0].text == "Evidence-backed abstract."
+    assert document.figures == []
+    assert document.tables == []
+    assert document.equations == []
+    assert document.references == []
+    assert document.source_hash == "a" * 64
+    assert document.lineage.source_hash == "a" * 64
+    assert document.metadata["missing_information"] == ["full_text_sections"]
+    assert document.metadata["compiler_attempts"][-1] == {
+        "compiler": "pdf_cascade",
+        "status": "unavailable",
+        "error_type": "not_configured",
+    }
+    assert secret not in payload
+
+
+def test_document_compiler_preserves_typed_rate_limit_diagnostics() -> None:
+    decision = RateLimitDecision(
+        allowed=False,
+        domain="arxiv.org",
+        limit_per_minute=1,
+        retry_after_seconds=42,
+    )
+    rate_limit_error = SourceRateLimitExceededError(
+        "https://arxiv.org/pdf/2606.00001.pdf",
+        decision,
+    )
+    compiler = ResearchDocumentCompilerAdapter(
+        _ErrorFetcher(rate_limit_error),
+        latex_compiler=_Compiler(error=RuntimeError("latex unavailable")),
+        pdf_parser=_PdfParser(_document(parse_source="unused")),
+    )
+
+    document = compiler.compile(_source_record())
+    attempt = document.metadata["compiler_attempts"][-1]
+
+    assert attempt == {
+        "compiler": "pdf_cascade",
+        "status": "failed",
+        "error_type": "SourceRateLimitExceededError",
+        "error_code": "source_rate_limited",
+        "retryable": True,
+        "domain": "arxiv.org",
+        "limit_per_minute": 1,
+        "window_seconds": 60,
+        "retry_after_seconds": 42,
+    }
+
+
+def test_document_compiler_uses_only_explicitly_injected_compilers() -> None:
+    compiler = ResearchDocumentCompilerAdapter(_FailingFetcher())
+
+    document = compiler.compile(_source_record())
+
+    assert document.metadata["compiler"] == "abstract_fallback"
+    assert document.metadata["compiler_attempts"] == [
+        {
+            "compiler": "latex",
+            "status": "unavailable",
+            "error_type": "not_configured",
+        },
+        {
+            "compiler": "pdf_cascade",
+            "status": "unavailable",
+            "error_type": "not_configured",
+        },
+    ]
+
+
+def test_document_compiler_fails_when_no_real_text_is_available() -> None:
+    source = _source_record().model_copy(update={"metadata": {"title": "No abstract"}})
+    compiler = ResearchDocumentCompilerAdapter(
+        _FailingFetcher(),
+        latex_compiler=_Compiler(error=RuntimeError("missing")),
+    )
+
+    with pytest.raises(ResearchDocumentCompileError, match="no abstract"):
+        compiler.compile(source)
+
+
+def test_document_compiler_rejects_accepted_record_without_source_hash() -> None:
+    compiler = ResearchDocumentCompilerAdapter(_FailingFetcher())
+    source = _source_record().model_copy(update={"source_hash": None})
+
+    with pytest.raises(ResearchDocumentCompileError, match="missing its source hash"):
+        compiler.compile(source)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        UnsupportedContentTypeError("text/html", ("application/pdf",)),
+        ValueError("arXiv PDF exceeds configured maximum size"),
+    ],
+)
+def test_document_compiler_records_pdf_policy_failure_without_fabrication(
+    error: Exception,
+) -> None:
+    compiler = ResearchDocumentCompilerAdapter(
+        _ErrorFetcher(error),
+        latex_compiler=_Compiler(error=RuntimeError("latex unavailable")),
+        pdf_parser=_PdfParser(_document(parse_source="unused")),
+    )
+
+    document = compiler.compile(_source_record())
+
+    assert [section.title for section in document.sections] == ["Abstract"]
+    assert document.metadata["missing_information"] == ["full_text_sections"]
+    assert document.metadata["compiler_attempts"][-1]["error_type"] == type(error).__name__
+
+
+class _RecordedArxivConnector:
+    def __init__(self, items: list[RawSourceItem], *, errors=None) -> None:
+        self.items = items
+        self.errors = list(errors or [])
+        self.queries: list[str] = []
+
+    def fetch(self, source, *, query: str, limit: int):
+        self.queries.append(query)
+        return list(self.items[:limit]), list(self.errors)
+
+
+def _raw_item(*, arxiv_id: str = "2606.00001") -> RawSourceItem:
+    return RawSourceItem(
+        source_item_id="raw-recorded",
+        source_id="recorded-arxiv",
+        source_name="Recorded arXiv",
+        source_type=SourceType.ARXIV,
+        title="Harness-grounded Research",
+        url=f"https://arxiv.org/abs/{arxiv_id}",
+        fetched_at=datetime(2026, 7, 14, tzinfo=UTC),
+        published_at=datetime(2026, 7, 1, tzinfo=UTC),
+        summary="Evidence-backed abstract.",
+        raw_content="<entry>recorded</entry>",
+        authors=["Ada Lovelace"],
+        tags=["cs.AI"],
+        metadata={
+            "arxiv_id": arxiv_id,
+            "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+            "primary_category": "cs.AI",
+        },
+    )
+
+
+def _source_record() -> PaperSourceRecord:
+    return PaperSourceRecord(
+        source_id="arxiv:2606.00001",
+        paper_id="2606.00001",
+        source_type="arxiv",
+        source_url="https://arxiv.org/abs/2606.00001",
+        source_hash="a" * 64,
+        metadata={
+            "arxiv_id": "2606.00001",
+            "title": "Harness-grounded Research",
+            "abstract": "Evidence-backed abstract.",
+        },
+    )
+
+
+def _document(*, parse_source: str) -> ResearchDocument:
+    return ResearchDocument(
+        paper_id="2606.00001",
+        source_hash="b" * 64,
+        sections=[
+            ResearchSection(
+                section_id="section-1",
+                title="Method",
+                text="Derived full text.",
+                source_ref="arxiv://2606.00001/section/1",
+            )
+        ],
+        lineage=SourceLineage(
+            source_refs=["arxiv://2606.00001/section/1"],
+            source_hash="b" * 64,
+        ),
+        metadata={"parse_source": parse_source},
+    )
+
+
+class _Compiler:
+    def __init__(
+        self,
+        *,
+        result: ResearchDocument | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+
+    def compile(self, source: PaperSourceRecord) -> ResearchDocument:
+        if self.error is not None:
+            raise self.error
+        assert self.result is not None
+        return self.result
+
+
+class _Package:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+        self.checksum = "c" * 64
+
+
+class _PdfFetcher:
+    def __init__(self, content: bytes) -> None:
+        self.package = _Package(content)
+
+    def fetch_pdf_package(self, arxiv_id: str) -> _Package:
+        return self.package
+
+
+class _FailingFetcher:
+    def __init__(self, message: str = "offline") -> None:
+        self.message = message
+
+    def fetch_source_package(self, arxiv_id: str):
+        raise RuntimeError(self.message)
+
+    def fetch_pdf_package(self, arxiv_id: str):
+        raise RuntimeError(self.message)
+
+
+class _ErrorFetcher:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def fetch_pdf_package(self, arxiv_id: str):
+        raise self.error
+
+
+class _SourceError:
+    def __init__(
+        self,
+        *,
+        error_type: str,
+        retryable: bool,
+        metadata: dict,
+    ) -> None:
+        self.error_type = error_type
+        self.retryable = retryable
+        self.metadata = metadata
+
+
+class _PdfParser:
+    def __init__(self, result: ResearchDocument) -> None:
+        self.result = result
+        self.calls: list[tuple[str, bytes]] = []
+
+    def parse(self, paper_id: str, content: bytes) -> ResearchDocument:
+        self.calls.append((paper_id, content))
+        return self.result

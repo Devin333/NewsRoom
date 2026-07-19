@@ -27,6 +27,19 @@ ALLOWED_BUSINESS_IMPORTS = {
     "infrastructure/external/sources/errors/taxonomy.py": {
         "business.layers.signal.source_processing.error_taxonomy",
     },
+    "infrastructure/research/document_compiler.py": {
+        "business.research.domain.common",
+        "business.research.domain.document",
+        "business.research.domain.paper",
+        "business.research.ports.document_compiler",
+        "business.research.ports.document_parser",
+    },
+    "infrastructure/research/github_repository.py": {
+        "business.research.domain.code_repository",
+    },
+    "infrastructure/research/source_provider.py": {
+        "business.research.domain.paper",
+    },
 }
 
 SOURCE_ADAPTER_BUSINESS_IMPORTS = {
@@ -41,6 +54,22 @@ SOURCE_ADAPTER_BUSINESS_IMPORTS = {
 SOURCE_STORAGE_BUSINESS_IMPORTS = {
     "infrastructure/storage/postgres/repository.py": {
         "business.foundation.models.source_error_normalization",
+    },
+}
+
+RESEARCH_ADAPTER_BUSINESS_IMPORTS = {
+    "infrastructure/research/document_compiler.py": {
+        "business.research.domain.common",
+        "business.research.domain.document",
+        "business.research.domain.paper",
+        "business.research.ports.document_compiler",
+        "business.research.ports.document_parser",
+    },
+    "infrastructure/research/github_repository.py": {
+        "business.research.domain.code_repository",
+    },
+    "infrastructure/research/source_provider.py": {
+        "business.research.domain.paper",
     },
 }
 
@@ -76,6 +105,28 @@ def test_source_storage_business_imports_are_exact_contract_exceptions() -> None
     }
 
     assert actual == SOURCE_STORAGE_BUSINESS_IMPORTS
+
+
+def test_research_adapter_business_imports_are_exact_contract_exceptions() -> None:
+    actual: dict[str, set[str]] = {}
+    for path in (INFRASTRUCTURE_ROOT / "research").rglob("*.py"):
+        relative_path = path.relative_to(PROJECT_ROOT).as_posix()
+        business_imports = {
+            imported
+            for imported in _imports_for_file(path)
+            if imported == "business" or imported.startswith("business.")
+        }
+        if business_imports:
+            actual[relative_path] = business_imports
+
+    assert actual == RESEARCH_ADAPTER_BUSINESS_IMPORTS
+    assert all(
+        imported.startswith(
+            ("business.research.domain.", "business.research.ports.")
+        )
+        for imports in actual.values()
+        for imported in imports
+    )
 
 
 def _imports_for_file(path: Path) -> list[str]:

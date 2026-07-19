@@ -12,6 +12,11 @@ from business.research.domain.common import (
     SourceScopedValue,
     stable_research_id,
 )
+from business.research.domain.code_repository import (
+    CodeRepositoryObservation,
+    CodeRepositoryProfile,
+    compute_star_growth,
+)
 from business.research.domain.document import (
     ResearchDocument,
     ResearchEquation,
@@ -43,6 +48,8 @@ from business.research.domain.reader_repair import (
 __all__ = [
     "CandidateReview",
     "CandidateStatus",
+    "CodeRepositoryObservation",
+    "CodeRepositoryProfile",
     "EvidenceRef",
     "GateResult",
     "PaperSourceRecord",
@@ -79,5 +86,6 @@ __all__ = [
     "SourceLineage",
     "SourceScopedValue",
     "ThreeMinuteRead",
+    "compute_star_growth",
     "stable_research_id",
 ]

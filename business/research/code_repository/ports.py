@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from business.research.code_repository.models import CodeRepositoryObservation, CodeRepositoryProfile
+from business.research.domain.code_repository import (
+    CodeRepositoryObservation,
+    CodeRepositoryProfile,
+)
 
 
 @runtime_checkable
