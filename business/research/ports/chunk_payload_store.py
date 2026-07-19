@@ -25,6 +25,7 @@ class ChunkPayloadStorePort(Protocol):
         *,
         filters: dict[str, Any] | None = None,
         limit: int = 30,
+        offset: int = 0,
     ) -> list[tuple[dict[str, Any], float]]: ...
 
     def search_payloads(
@@ -34,6 +35,7 @@ class ChunkPayloadStorePort(Protocol):
         *,
         filters: dict[str, Any] | None = None,
         limit: int = 10,
+        offset: int = 0,
         score_threshold: float | None = None,
     ) -> list[dict[str, Any]]: ...
 

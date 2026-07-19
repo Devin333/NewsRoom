@@ -27,6 +27,9 @@ def test_bounded_rag_controller_returns_verified_context_pack() -> None:
     assert result.status == RAGSessionStatus.SUCCEEDED
     assert result.decision.decision_type == RAGDecisionType.RETURN_CONTEXT_PACK
     assert result.context_pack is not None
+    assert result.budget_snapshot == result.context_pack.budget_snapshot
+    assert result.budget_snapshot.context_items_used > 0
+    assert result.budget_snapshot.context_tokens_used > 0
     assert result.context_pack.accepted_evidence[0].lineage
     assert "retrieval://fake/1" in result.context_pack.artifact_refs
     assert result.context_pack.metadata["artifact_refs"] == list(result.context_pack.artifact_refs)
@@ -64,6 +67,16 @@ def test_controller_replans_when_required_evidence_is_missing() -> None:
     ).run_fake_session(spec)
 
     assert result.status == RAGSessionStatus.INSUFFICIENT_EVIDENCE
+    assert result.context_pack is None
+    assert [item.evidence_type for item in result.accepted_evidence] == ["method"]
+    assert result.rejected_evidence == ()
+    assert result.conflicting_evidence == ()
+    assert result.gap_report["missing_evidence_types"] == ["limitation"]
+    assert result.budget_snapshot.rounds_used == 2
+    serialized = result.to_dict()
+    assert serialized["accepted_evidence"][0]["evidence_type"] == "method"
+    assert serialized["gap_report"]["missing_evidence_types"] == ["limitation"]
+    assert serialized["budget_snapshot"] == result.budget_snapshot.to_dict()
     assert any(event["event_type"] == "rag_replanned" for event in result.transcript.events)
     assert result.decision.metadata["gap_report"]["missing_evidence_types"] == ["limitation"]
 
@@ -152,6 +165,7 @@ def test_controller_gap_report_includes_low_relevance_rejection_summary() -> Non
 def test_controller_propagates_tenant_scope_only_to_business_retrieval_request() -> None:
     base = fake_rag_session_spec()
     scope = {
+        "paper_id": "paper-scope-a",
         "tenant_id": "tenant-a",
         "user_id": "user-1",
         "memory_namespace": "research:tenant:tenant-a:user:user-1",
@@ -171,7 +185,12 @@ def test_controller_propagates_tenant_scope_only_to_business_retrieval_request()
 
     result = controller.run(spec)
 
+    assert retrieval.requests[0].filters["paper_id"] == "paper-scope-a"
+    assert retrieval.requests[0].filters["run_id"] == spec.run_id
     assert retrieval.requests[0].filters["tenant_id"] == "tenant-a"
+    assert retrieval.requests[0].filters["user_id"] == "user-1"
+    assert retrieval.requests[0].metadata["paper_id"] == "paper-scope-a"
+    assert retrieval.requests[0].metadata["run_id"] == spec.run_id
     assert retrieval.requests[0].metadata["tenant_id"] == "tenant-a"
     assert retrieval.requests[0].metadata["user_id"] == "user-1"
     assert retrieval.requests[0].metadata["memory_namespace"] == "research:tenant:tenant-a:user:user-1"

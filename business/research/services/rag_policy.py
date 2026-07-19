@@ -52,7 +52,13 @@ class ResearchRAGPolicyBuilder:
                 target_entities=tuple(goal.target_sections + goal.target_claims),
                 known_context_refs=tuple(goal.allowed_source_refs),
                 constraints=goal.constraints,
-                metadata={"paper_id": goal.paper_id, **scope_metadata, **goal.metadata},
+                metadata={
+                    "paper_id": goal.paper_id,
+                    "target_sections": list(goal.target_sections),
+                    "target_claims": list(goal.target_claims),
+                    **scope_metadata,
+                    **goal.metadata,
+                },
             ),
             allowed_corpora=allowed_corpora,
             allowed_memory_namespaces=tuple(goal.allowed_memory_namespaces),
@@ -66,7 +72,7 @@ class ResearchRAGPolicyBuilder:
             budget=budget or RAGBudget.safe_default(),
             context_policy={"projection": "research_rag_context", "stable_prefix": False},
             generation_policy=dict(generation_policy or {}),
-            metadata={"paper_id": goal.paper_id, **scope_metadata},
+            metadata={"paper_id": goal.paper_id, "run_id": run_id, **scope_metadata},
         )
 
 

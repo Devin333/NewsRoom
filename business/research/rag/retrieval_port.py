@@ -15,11 +15,15 @@ from business.research.rag.retrieval.paper_retriever import ResearchRetriever
 
 def _extract_paper_id(request: RetrievalRequest) -> str:
     """Extract paper_id from context_refs (arxiv://id/...) or fall back to scope."""
+    explicit = str(request.metadata.get("paper_id") or "").strip()
+    if explicit:
+        return explicit
     for ref in request.context_refs:
-        if ref.startswith("arxiv://"):
-            part = ref.removeprefix("arxiv://").split("/")[0]
-            if part:
-                return part
+        for prefix in ("arxiv://", "paper://"):
+            if ref.startswith(prefix):
+                part = ref.removeprefix(prefix).split("/")[0]
+                if part:
+                    return part
     return request.scope
 
 

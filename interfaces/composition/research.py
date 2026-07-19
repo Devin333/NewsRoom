@@ -4,12 +4,18 @@ from collections.abc import Callable, Iterable
 from threading import Condition, Lock
 from typing import Any
 
+from business.research.document.chunk_storage import PaperChunkStoreAdapter
+from business.research.ports.chunk_store import ChunkStorePort
+from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from interfaces.composition.research_errors import (
     ResearchCapability,
     ResearchCompositionError,
     ResearchRuntimeUnavailableError,
 )
-from interfaces.composition.research_settings import ResearchRuntimeSettings
+from interfaces.composition.research_settings import (
+    ResearchRAGSettings,
+    ResearchRuntimeSettings,
+)
 from interfaces.services.research_service import (
     ResearchApplicationService,
     ResearchRunRecord,
@@ -354,6 +360,75 @@ def _research_service_error(error: ResearchCompositionError) -> ResearchServiceE
         retryable=bool(public["retryable"]),
         user_action_required=True,
     )
+
+
+def _build_research_chunk_store(
+    settings: ResearchRAGSettings,
+    *,
+    qdrant_client_factory: Callable[..., Any] | None = None,
+    embedding_model_factory: Callable[..., Any] | None = None,
+) -> tuple[ChunkStorePort, tuple[Any, ...]]:
+    if not isinstance(settings, ResearchRAGSettings):
+        raise TypeError("settings must be ResearchRAGSettings")
+
+    client: Any | None = None
+    try:
+        if settings.backend == "local":
+            payload_store = LocalChunkPayloadStore(
+                settings.local_root,
+                collection=settings.collection,
+            )
+            store = PaperChunkStoreAdapter(payload_store)
+            resources: tuple[Any, ...] = ()
+        else:
+            # Qdrant is optional for baseline readiness. Keep every Qdrant import
+            # inside this selected branch so the local backend remains importable
+            # without the optional client/runtime.
+            from qdrant_client import QdrantClient
+
+            from infrastructure.storage.vector.embeddings import embedding_model_from_env
+            from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
+            from infrastructure.storage.vector.qdrant_store import QdrantVectorStore
+
+            client_builder = qdrant_client_factory or QdrantClient
+            embedding_builder = embedding_model_factory or embedding_model_from_env
+            client = client_builder(url=settings.qdrant_url)
+            embedding_model = embedding_builder(vector_size=settings.vector_size)
+            vector_store = QdrantVectorStore(
+                client,
+                embedding_model=embedding_model,
+                vector_size=settings.vector_size,
+            )
+            store = PaperChunkStoreAdapter(
+                PaperChunkStore(vector_store, collection=settings.collection)
+            )
+            resources = (client,)
+        store.ensure_collection()
+        return store, resources
+    except ResearchCompositionError:
+        _close_quietly(client)
+        raise
+    except Exception:
+        _close_quietly(client)
+        capability = (
+            ResearchCapability.RAG_LOCAL_ROOT
+            if settings.backend == "local"
+            else ResearchCapability.RAG_VECTOR_BACKEND
+        )
+        raise ResearchRuntimeUnavailableError(
+            (capability,),
+            retryable=True,
+        ) from None
+
+
+def _close_quietly(resource: Any | None) -> None:
+    close = getattr(resource, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:
+        return
 
 
 def _build_configured_composition(

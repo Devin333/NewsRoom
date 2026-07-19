@@ -72,6 +72,7 @@ class QdrantVectorStore:
             query=query_vector,
             query_filter=_qdrant_filter(query.filters),
             limit=query.limit,
+            offset=query.offset,
             with_payload=True,
             score_threshold=query.score_threshold,
         )

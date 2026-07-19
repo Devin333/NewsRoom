@@ -802,6 +802,12 @@ class PaperDocumentChunker:
                 source_ref=abstract.source_ref,
                 source_locator=abstract.metadata.get("source_locator"),
                 semantic_text=abstract.text,
+                base={
+                    "section_id": abstract.section_id,
+                    "section_level": abstract.level,
+                    "page_start": abstract.page_start,
+                    "page_end": abstract.page_end,
+                },
             ),
         ))
 
@@ -837,7 +843,14 @@ class PaperDocumentChunker:
                     source_ref=section.source_ref,
                     source_locator=section.metadata.get("source_locator"),
                     semantic_text=section.text,
-                    base={"is_parent": True, "level": section.level},
+                    base={
+                        "is_parent": True,
+                        "level": section.level,
+                        "section_id": section.section_id,
+                        "section_level": section.level,
+                        "page_start": section.page_start,
+                        "page_end": section.page_end,
+                    },
                 ),
             ))
 
@@ -925,6 +938,10 @@ class PaperDocumentChunker:
                         base={
                             "is_parent": False,
                             "para_index": para_idx,
+                            "section_id": section.section_id,
+                            "section_level": section.level,
+                            "page_start": section.page_start,
+                            "page_end": section.page_end,
                             "needs_proposition_decomposition": need_propositions,
                             "formula_references": formula_references,
                             "visual_references": visual_references,
@@ -1230,6 +1247,13 @@ class PaperDocumentChunker:
                     base={
                         "fallback": True,
                         "chunk_index": chunk_idx // token_limit,
+                        "section_ids": [
+                            section.section_id
+                            for section in doc.sections
+                            if section.text.strip()
+                        ],
+                        "token_start": chunk_idx,
+                        "token_end": min(chunk_idx + token_limit, len(words)),
                         "formula_references": formula_references,
                     },
                 ),

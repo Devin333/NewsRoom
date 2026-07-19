@@ -619,6 +619,8 @@ class RAGTranscript:
 
     @property
     def ref(self) -> str:
+        if self.transcript_id.startswith("rag-transcript://"):
+            return self.transcript_id
         return f"rag-transcript://{self.transcript_id}"
 
     def to_dict(self) -> dict[str, Any]:

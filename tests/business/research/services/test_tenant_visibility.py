@@ -20,6 +20,15 @@ def test_chunk_visibility_rejects_other_tenant_chunks() -> None:
     assert chunk_visible_to_tenant(_Chunk({"tenant_id": "tenant-b"}), tenant_id="tenant-a") is False
 
 
+def test_chunk_visibility_without_actor_tenant_only_allows_public_chunks() -> None:
+    assert chunk_visible_to_tenant(_Chunk(), tenant_id=None) is True
+    assert chunk_visible_to_tenant(_Chunk({"tenant_id": "tenant-a"}), tenant_id=None) is False
+    assert chunk_visible_to_tenant(
+        _Chunk({"allowed_tenant_ids": ["tenant-a"]}),
+        tenant_id="",
+    ) is False
+
+
 def test_public_metrics_removes_user_and_namespace_scope_recursively() -> None:
     metrics = public_metrics({
         "tenant_id": "tenant-a",

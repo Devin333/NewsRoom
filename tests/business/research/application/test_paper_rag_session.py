@@ -3,6 +3,7 @@ from __future__ import annotations
 from business.research.application import paper_rag_session
 from business.research.application.paper_rag_session import PaperRAGSession
 from business.research.rag.models import ResearchRetrievalGoal
+from framework.harness.rag.models import RAGBudget, RAGSessionSpec, RetrievalGoal
 from framework.harness.rag.source_verifier import SourceVerifier
 
 
@@ -180,6 +181,51 @@ def test_paper_rag_session_wires_optional_memory_port(monkeypatch):
     )
 
     assert _FakeController.last_memory is memory
+
+
+def test_paper_rag_session_run_spec_preserves_supplied_contract_identity(monkeypatch):
+    monkeypatch.setattr(paper_rag_session, "ResearchRetriever", _FakeRetriever)
+    monkeypatch.setattr(paper_rag_session, "PaperChunkRetrievalPort", _FakeRetrievalPort)
+    monkeypatch.setattr(paper_rag_session, "BoundedRAGSessionController", _FakeController)
+    supplied_spec = RAGSessionSpec(
+        session_id="session-supplied",
+        run_id="run-supplied",
+        workflow_id="workflow-supplied",
+        step_id="step-supplied",
+        goal=RetrievalGoal(
+            goal_id="goal-supplied",
+            question="Which evidence is supported?",
+            required_evidence_types=("method",),
+            known_context_refs=("paper://p1",),
+            metadata={"paper_id": "p1", "target_sections": ["method"]},
+        ),
+        allowed_corpora=("paper:p1",),
+        allowed_memory_namespaces=("research",),
+        allowed_tools=("paper_chunk_search",),
+        source_policy={"allowed_source_refs": ["paper://p1"]},
+        budget=RAGBudget(
+            max_rounds=3,
+            max_replans=2,
+            max_queries=5,
+            max_source_reads=7,
+            max_memory_hits=1,
+            max_context_items=4,
+            max_context_tokens=1024,
+            max_worker_calls=6,
+        ),
+        context_policy={"projection": "caller-owned"},
+        generation_policy={"enabled": True, "mode": "caller-owned"},
+        metadata={"paper_id": "p1", "run_id": "run-supplied"},
+    )
+
+    result = PaperRAGSession(object()).run_spec(supplied_spec, current_section_index=4)
+
+    assert result["spec"] is supplied_spec
+    assert result["spec"].budget is supplied_spec.budget
+    assert result["spec"].source_policy is supplied_spec.source_policy
+    assert result["spec"].context_policy is supplied_spec.context_policy
+    assert result["spec"].generation_policy is supplied_spec.generation_policy
+    assert _FakeRetrievalPort.last_default_section_index == 4
 
 
 def test_paper_rag_session_propagates_tenant_scope_to_session_spec(monkeypatch):

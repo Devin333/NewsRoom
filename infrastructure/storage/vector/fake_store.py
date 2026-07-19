@@ -49,7 +49,7 @@ class InMemoryVectorStore:
                 continue
             scored.append(VectorSearchResult.from_payload(score=score, payload=doc.to_payload()))
         scored.sort(key=lambda result: result.score, reverse=True)
-        return scored[: query.limit]
+        return scored[query.offset : query.offset + query.limit]
 
     def ensure_payload_indexes(self, collections: list[str], payload_indexes=None) -> list:
         return []

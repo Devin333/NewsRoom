@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from framework.harness.memory.ports import MemoryPort
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionResult
-from framework.harness.rag.models import RAGBudget
+from framework.harness.rag.models import RAGBudget, RAGSessionSpec
 from framework.harness.rag.planner import WorkerRAGPlanner
 from framework.harness.rag.relevance import RelevanceScorerPort
 from framework.harness.rag.source_verifier import SourceVerifier
@@ -77,7 +77,27 @@ class PaperRAGSession:
         session_id: str,
         current_section_index: int = 0,
     ) -> RAGSessionResult:
-        # per-run controller + port so reader position stays request-scoped (no shared mutable state)
+        spec = self._policy_builder.build_session_spec(
+            goal=goal,
+            run_id=run_id,
+            workflow_id=workflow_id,
+            step_id=step_id,
+            session_id=session_id,
+            budget=self._budget,
+            generation_policy=self._generation_policy,
+        )
+        return self.run_spec(spec, current_section_index=current_section_index)
+
+    def run_spec(
+        self,
+        spec: RAGSessionSpec,
+        *,
+        current_section_index: int = 0,
+    ) -> RAGSessionResult:
+        if not isinstance(spec, RAGSessionSpec):
+            raise TypeError("spec must be RAGSessionSpec")
+
+        # Per-run controller + port keep reader position and controller state scoped.
         retriever = ResearchRetriever(
             self._chunk_store,
             reranker=self._reranker,
@@ -103,15 +123,6 @@ class PaperRAGSession:
         if self._answer_worker is not None:
             controller_kwargs["answer_worker"] = self._answer_worker
         controller = BoundedRAGSessionController(**controller_kwargs)
-        spec = self._policy_builder.build_session_spec(
-            goal=goal,
-            run_id=run_id,
-            workflow_id=workflow_id,
-            step_id=step_id,
-            session_id=session_id,
-            budget=self._budget,
-            generation_policy=self._generation_policy,
-        )
         return controller.run(spec)
 
 

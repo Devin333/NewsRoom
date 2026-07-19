@@ -14,11 +14,13 @@ from business.research.rag.retrieval.paper_retriever import RetrievalResult
 @dataclass
 class _SpyRetriever:
     """Records the section_index it was asked to retrieve with."""
+    seen_paper_id: str | None = None
     seen_section_index: int | None = None
     seen_filters: dict | None = None
     result: RetrievalResult | None = None
 
     def retrieve(self, request) -> RetrievalResult:
+        self.seen_paper_id = request.paper_id
         self.seen_section_index = request.current_section_index
         self.seen_filters = dict(request.filters)
         if self.result is not None:
@@ -88,6 +90,30 @@ def test_paper_id_extracted_from_context_refs():
     result = port.retrieve(_request({}))
     assert result.packs
     assert result.packs[0].lineage == ("1706.03762",)
+
+
+def test_explicit_paper_id_takes_precedence_over_context_locator():
+    spy = _SpyRetriever()
+    port = PaperChunkRetrievalPort(spy)  # type: ignore[arg-type]
+
+    port.retrieve(_request({"paper_id": "paper-explicit"}))
+
+    assert spy.seen_paper_id == "paper-explicit"
+
+
+def test_paper_id_is_extracted_from_paper_locator():
+    spy = _SpyRetriever()
+    port = PaperChunkRetrievalPort(spy)  # type: ignore[arg-type]
+    request = RetrievalRequest(
+        query="how does attention work",
+        scope="default",
+        context_refs=("paper://paper-locator/pdf#page=3",),
+        limit=5,
+    )
+
+    port.retrieve(request)
+
+    assert spy.seen_paper_id == "paper-locator"
 
 
 def test_section_index_echoed_in_collection_metadata():

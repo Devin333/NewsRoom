@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone as _tz
-UTC = _tz.utc
 from typing import Any
+
+UTC = _tz.utc
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class VectorSearchQuery:
     vector: list[float] | None = None
     filters: dict[str, Any] = field(default_factory=dict)
     limit: int = 10
+    offset: int = 0
     score_threshold: float | None = None
 
 

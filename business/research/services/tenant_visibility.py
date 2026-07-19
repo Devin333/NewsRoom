@@ -28,9 +28,9 @@ def payload_visible_to_tenant(payload: dict[str, Any], *, tenant_id: str | None)
 
 def metadata_visible_to_tenant(metadata: Any, *, tenant_id: str | None) -> bool:
     tenant = str(tenant_id or "").strip()
-    if not tenant:
-        return True
     chunk_tenants = metadata_tenant_ids(metadata)
+    if not tenant:
+        return not chunk_tenants
     return not chunk_tenants or tenant in chunk_tenants
 
 

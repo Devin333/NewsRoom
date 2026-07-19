@@ -9,6 +9,8 @@ def test_successful_rag_transcript_records_plan_execute_verify_and_return() -> N
     event_types = [event["event_type"] for event in result.transcript.events]
 
     assert result.transcript.status == RAGSessionStatus.SUCCEEDED
+    assert result.transcript.ref == result.transcript.transcript_id
+    assert result.transcript.ref.count("rag-transcript://") == 1
     assert "rag_session_started" in event_types
     assert "rag_plan_candidate_created" in event_types
     assert "rag_plan_verified" in event_types

@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
-from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.memory.ports import MemoryPort
 from framework.harness.mcp.policy import MCPToolRequest
 from framework.harness.rag.answer_gate import RAGAnswerGate, unsupported_claims_from_answer_gate
@@ -51,6 +50,11 @@ class RAGSessionResult:
     decision: RAGDecision
     answer: GroundedAnswerCandidate | None = None
     metrics: RAGSessionMetrics | None = None
+    accepted_evidence: tuple[EvidenceCandidate, ...] = ()
+    rejected_evidence: tuple[EvidenceCandidate, ...] = ()
+    conflicting_evidence: tuple[EvidenceCandidate, ...] = ()
+    gap_report: dict[str, Any] = field(default_factory=dict)
+    budget_snapshot: RAGBudgetSnapshot = field(default_factory=RAGBudgetSnapshot)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +64,11 @@ class RAGSessionResult:
             "decision": self.decision.to_dict(),
             "answer": self.answer.to_dict() if self.answer else None,
             "metrics": self.metrics.to_dict() if self.metrics else {},
+            "accepted_evidence": [item.to_dict() for item in self.accepted_evidence],
+            "rejected_evidence": [item.to_dict() for item in self.rejected_evidence],
+            "conflicting_evidence": [item.to_dict() for item in self.conflicting_evidence],
+            "gap_report": to_jsonable(self.gap_report),
+            "budget_snapshot": self.budget_snapshot.to_dict(),
         }
 
 
@@ -239,6 +248,8 @@ class BoundedRAGSessionController(RAGSessionController):
                 budget_snapshot=state.budget_snapshot,
                 policy=policy,
             )
+            if pack.budget_snapshot is not None:
+                state.budget_snapshot = pack.budget_snapshot
             pack_results = self.gates.verify_context_pack(pack, policy=policy)
             self._event(state, "rag_context_pack_assembled", {"pack": pack.to_dict(), "gate_results": _results(pack_results)})
             self._record_gate_failures(state, pack_results)
@@ -289,6 +300,11 @@ class BoundedRAGSessionController(RAGSessionController):
             decision=decision,
             answer=answer,
             metrics=metrics,
+            accepted_evidence=tuple(state.accepted_evidence),
+            rejected_evidence=tuple(state.rejected_evidence),
+            conflicting_evidence=tuple(state.conflicting_evidence),
+            gap_report=dict(state.gap_report),
+            budget_snapshot=state.budget_snapshot,
         )
 
     def _run_generation_phase(
@@ -599,8 +615,9 @@ class BoundedRAGSessionController(RAGSessionController):
         state.executed_queries.add(normalize_query(query))
         scope_metadata = _session_scope_metadata(state.spec)
         filters = dict(step.metadata.get("filters", {}))
-        if scope_metadata.get("tenant_id"):
-            filters["tenant_id"] = scope_metadata["tenant_id"]
+        for key in ("paper_id", "run_id", "tenant_id", "user_id"):
+            if scope_metadata.get(key):
+                filters[key] = scope_metadata[key]
         collection = self.retrieval.retrieve(
             RetrievalRequest(
                 query=query,
@@ -874,7 +891,10 @@ def _default_evidence_type(spec: RAGSessionSpec) -> str:
 
 
 def _session_scope_metadata(spec: RAGSessionSpec) -> dict[str, str]:
-    values: dict[str, str] = {}
+    values: dict[str, str] = {"run_id": spec.run_id}
+    paper_id = spec.metadata.get("paper_id") or spec.goal.metadata.get("paper_id")
+    if str(paper_id or "").strip():
+        values["paper_id"] = str(paper_id).strip()
     for key in ("tenant_id", "user_id", "memory_namespace"):
         raw = spec.metadata.get(key) or spec.goal.metadata.get(key)
         text = str(raw or "").strip()
