@@ -35,12 +35,12 @@
 
 ## 5. Bounded Document RAG Adapter
 
-- [ ] 5.1 Add stable `ResearchDocument` section-to-`PaperChunk` mapping with section/span/source lineage and tenant/run scope.
-- [ ] 5.2 Implement a durable local single-host chunk payload store and optional existing Qdrant-backed selection without requiring Qdrant for baseline readiness.
-- [ ] 5.3 Implement `BoundedDocumentRAGRuntime` using `PaperRAGSession`/`BoundedRAGSessionController` and the supplied `RAGSessionSpec` goal, budgets, and allowed source scope.
-- [ ] 5.4 Project `RAGContextPack` into accepted, rejected, conflicting, and missing `ResearchEvidenceItem` collections with stable ids and scores.
+- [x] 5.1 Add stable `ResearchDocument` section-to-`PaperChunk` mapping with section/span/source lineage and tenant/run scope.
+- [x] 5.2 Implement a durable local single-host chunk payload store and optional existing Qdrant-backed selection without requiring Qdrant for baseline readiness.
+- [x] 5.3 Implement `BoundedDocumentRAGRuntime` using `PaperRAGSession`/`BoundedRAGSessionController` and the supplied `RAGSessionSpec` goal, budgets, and allowed source scope.
+- [x] 5.4 Project `RAGContextPack` into accepted, rejected, conflicting, and missing `ResearchEvidenceItem` collections with stable ids and scores.
 - [ ] 5.5 Keep `last_context_pack` request-scoped and add concurrent-run tests proving no document, goal, budget, trace, or source-ref leakage.
-- [ ] 5.6 Add RAG regressions for relevant evidence, missing required evidence, rejected out-of-scope candidates, budget exhaustion, and deterministic replay of recorded chunks.
+- [x] 5.6 Add RAG regressions for relevant evidence, missing required evidence, rejected out-of-scope candidates, budget exhaustion, and deterministic replay of recorded chunks.
 
 ## 6. Durable Artifacts And Research Run Store
 
