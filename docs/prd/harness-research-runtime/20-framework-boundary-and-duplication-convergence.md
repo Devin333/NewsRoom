@@ -4,7 +4,7 @@
 >
 > Implementation status: IN_PROGRESS
 >
-> Version: v1.15
+> Version: v1.16
 >
 > Priority: P1（控制权与生产运行阻断）/ P2（架构与契约收敛）
 >
@@ -12,13 +12,15 @@
 >
 > Source audit: 2026-07-18 审查基线为 tracked HEAD `e1cd72f3` + 当时 dirty/untracked working tree（包含未跟踪的 `infrastructure/research/`）；该 commit 只标识 tracked baseline，不是完整可重放快照
 >
-> PRD revision baseline: Research implementation `12ed843a` + 2026-07-20 当前 dirty working tree；历史审查快照、已交付实现与其他并行改动必须分开解释
+> PRD revision input baseline: parent tracked HEAD `cacb7089`（包含 Research 文档闭环）；Research implementation `12ed843a`；本次 apply-ready `harness-side-effect-authority-closure` proposal 与 PRD revision；历史审查快照、已交付实现与其他并行改动必须分开解释
 >
 > Existing OpenSpec owners: `research-runtime-production-composition`、`framework-runtime-safety-hardening`、`durable-event-runtime`
 >
 > Completed OpenSpec slice: `harness-deterministic-gate-enforcement`（ARCHIVED；implementation `017a227e`；archive `2026-07-18-harness-deterministic-gate-enforcement`）
 >
 > Active OpenSpec slices: `source-policy-contract-convergence`（IN_PROGRESS）与尚未归档的 `research-runtime-production-composition`（implementation tasks `46/46`；唯一进度台账见第 1.1 节，其他章节不得复制任务数字作为完成证据）
+>
+> Apply-ready OpenSpec slice: `harness-side-effect-authority-closure`（HAR-008..009；proposal/design/specs/tasks 齐全，`51` 项 implementation tasks 均未开始；strict validation 已通过）
 >
 > Depends on: 阶段 1/2 Harness authority、阶段 8/9 legacy deletion rules、阶段 19 durable gate-event contract，以及上述 active changes 的明确 file ownership
 >
@@ -59,8 +61,10 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | Source composition/persistence focused selection | `30 passed` | 覆盖 Source runtime provider、Research arXiv shared-ledger denial、URL/SourceError persistence/replay 和 Research URL identity compatibility；不是完整 Source suite |
 | `tests/architecture/test_infrastructure_boundary.py` | `4 passed` | 证明当前精确 allowlist 与已扫描 import 一致；不自动证明每个新增 exception 的 ownership 正确 |
 | `openspec validate source-policy-contract-convergence --strict` | 通过 | 只证明 active change 语法与 schema 有效 |
-| `openspec validate --all --strict` | `508 passed, 0 failed` | 只证明当前全部 OpenSpec artifacts 可验证 |
+| `openspec validate harness-side-effect-authority-closure --strict` | 通过 | 证明 HAR-008..009 配套 proposal/design/specs/tasks 的结构有效，不替代实现与行为证据 |
+| `openspec validate --all --strict` | `509 passed, 0 failed` | 只证明当前全部 OpenSpec artifacts 可验证 |
 | `git diff --check` | 通过 | 有 CRLF -> LF 警告，但没有 whitespace error |
+| HAR/Research side-effect evidence-focused selection | `167 passed in 59.78s` | 覆盖现有 worker-result、skill-evolution、workflow inventory、Research filesystem store/service/single-paper integration；这是修复前 green baseline，不证明新 side-effect authority requirement 已实现 |
 | Research staged-only candidate `59a92c90` | recorded production `2 passed`；durable dependency `3 passed`；mandatory smoke `1304 passed, 23 deselected, 20 warnings`；Source validation `0` errors/warnings；isolated OpenSpec `181 passed, 0 failed`；diff check 通过 | candidate 与 implementation `12ed843a` 共享 tree `d433ca469a0f...`，相对 parent `8693833c` 恰为 `95` paths；证明 delivered snapshot，不证明 live arXiv/LLM ready |
 
 其中 Source focused selection 使用以下可重放命令：
@@ -74,14 +78,28 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
   tests/business/research/test_source_url_identity_compatibility.py
 ```
 
+HAR/Research side-effect 修复前 focused baseline 使用：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests/framework/harness/test_worker_result_contract.py `
+  tests/framework/harness/control_plane/test_skill_evolution_budget.py `
+  tests/framework/harness/skills/evolution `
+  tests/business/research/workflows/test_workflow_gate_inventory.py `
+  tests/infrastructure/research/test_filesystem_run_store.py `
+  tests/interfaces/services/test_research_service.py `
+  tests/business/research/integration/test_single_paper_loop_fake_runtime.py
+```
+
 上述结果不替代各实施切片的完整 focused tests、mandatory smoke 或真实 backend contract gate。
 
-以下是本 PRD 内唯一的实施进度台账，`as_of_head=12ed843a`、`as_of_date=2026-07-20`。`task ledger` 不替代 committed implementation、测试日志或 `evidence.md`；第 14、17、21 节只引用本表，不再复制任务数字。
+以下是本 PRD 内唯一的实施进度台账，`as_of_parent_head=cacb7089`、`as_of_research_implementation=12ed843a`、`as_of_date=2026-07-20`。`task ledger` 不替代 committed implementation、测试日志或 `evidence.md`；第 14、17、21 节只引用本表，不再复制任务数字。
 
 | Active change | Committed evidence baseline | Current task ledger | Open tasks / blocker | 解释 |
 | --- | --- | --- | --- | --- |
 | `source-policy-contract-convergence` | implementation `372027ac`；URL、limiter/retry、taxonomy、mapper 与兼容读取已有 core evidence | `38/41` | `3.7`、`3.10`、`7.5` | Research/entry/Harness composition 与 release/operator evidence 尚未全部闭环，不能宣称 change complete |
 | `research-runtime-production-composition` | implementation `12ed843a`；tree `d433ca469a0f...`；staged-only candidate `59a92c90` 与 final commit tree 相同；`95` delivered paths | `46/46` | change 内 implementation task 无开放项；U7 live provider qualification、U9 operator release evidence 和外部 owner 的 `RES-007` 仍开放 | `RES-001..006`、`RES-008..011` 已交付；该 change 尚未归档且阶段 20 仍有 Tool、Quality、Workflow、Source、legacy 等切片，不能据此宣称 umbrella complete |
+| `harness-side-effect-authority-closure` | apply-ready proposal/design/delta specs/tasks；目标与全仓 strict validation 通过 | `0/51` | 全部 implementation tasks 开放；Research baseline 必须先归档，且 v1/v2 reader 必须先于 v2 writer 部署 | 只承接 HAR-008..009；真实生产切口限于 Research artifact、terminal trace/transcript 与 run disposition，generic Tool/Memory 与 production skill release 不得由 fake contract 冒充已接入 |
 
 现有 Harness 在 `PLAN -> EXECUTE -> VERIFY`、`max_turns`、`max_replans`、retry budget 和 durable transition 方面有明确实现与测试。本阶段不替换这套状态机，只修复 VERIFY authority 和外围 composition/contract 漂移。
 
@@ -93,7 +111,10 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | --- | --- | --- | --- | --- |
 | H1 | P1 | Worker 自报 `quality_score` 会被转成 `HarnessQualityVerdict` 并参与 `ON_VERDICT` 路由 | `framework/harness/workers/result.py:18-35`；`framework/harness/control_plane/harness.py:1572-1589`；`framework/harness/control_plane/routing.py:70-87` | LLM/subagent 可间接决定 quality 和下一步 |
 | H2 | P1 | `HarnessStepSpec.quality_gate` 只被序列化，没有 fail-closed registry 绑定 | `framework/harness/workflow/step.py:68-98`；`framework/harness/control_plane/harness.py:1033-1040` | workflow 声明的 gate 可能从未执行或进入 replay |
+| H3 | P2 | Worker side-effect 拒绝只检查 `output` 顶层 exact key；`published`、`promote`、`release`、嵌套 decision、`diagnostics` 与 `metrics` 可绕过，但当前未发现生产 consumer 直接执行这些值 | `framework/harness/workers/result.py:18-82`；`framework/harness/control_plane/harness.py:2775-2804`；只读构造探针已接受上述 alias，其中 `output` 会被合入 step output/state metadata。`artifacts` 当前只是 string ref channel，不作为已证实的 executable bypass | 未拒绝值可保留在 worker result 或 step state projection，形成未来 handler 误消费与 replay projection 语义漂移风险；当前没有证据证明原始值进入 canonical event history 或已经触发生产 side effect，因此结论只定为 ingress contract 缺口 |
+| H4 | P1 | Research ARTIFACT worker 在 EXECUTE 内直接写 canonical artifact；`publish_requires_verify` 只有序列化测试，没有运行时 consumer | `business/research/application/single_paper_runtime.py:1036-1075`；`business/research/workflows/paper_analysis_workflow.py:87-98`；`infrastructure/research/artifact_port.py:329-344`；`tests/business/research/workflows/test_paper_analysis_workflow.py:13` | 后续 gate failure 或 budget halt 不能撤销已经可见的 artifact/manifest 写入；approval pending/cancel 只适用于配置了 approval policy 的 effectful step，当前 Research workflow 未声明该 policy |
 | R1 | P1 | 默认 HTTP/MCP 构造裸 `ResearchApplicationService`，固定使用 unconfigured use case 和进程内 store | `interfaces/api/app.py:102-123`；`interfaces/services/research_service.py:100-110,315-323,485` | 真实 `source -> evidence -> analysis -> quality -> artifacts` 链路在默认入口不可达 |
+| R2 | P1 | Research service 在 run/quality 验收前保存返回结果，正常 paper 查询通过 `_record_for_paper() -> list_by_paper_id()` 读取，而 filesystem index/list 都从全部 record 中按 commit 顺序选取；worker/handler exception 则在 `save()` 前直接返回错误；成功 trace/transcript 在 Harness 已成功后才写 | `interfaces/services/research_service.py:184-205,417-439`；`infrastructure/research/filesystem_run_store.py:296-337,511-528`；`business/research/application/single_paper_runtime.py:605-629` | 失败 run 可遮蔽上一个 accepted run，并影响 `get_analysis`、`get_reader` 与 `ask_paper`，即使只修 `get_latest_by_paper_id()` 也不会消除该风险；异常 run 还可能有 durable Harness history/部分 artifact 却没有 by-run quarantine record |
 | T1 | P1 | `ToolApprovalRequest.to_worker_approval_request()` 返回 tool 模块中的重复 DTO | `framework/tool/governance/approval.py:64-150`；`framework/workers/approval/model.py:74-167` | approval 幂等、secret validation、status 和序列化依赖 store backend |
 | T2 | P2 | Framework、infrastructure、business 和 `ToolPolicy` 各自维护危险工具分类 | `framework/tool/registry/catalog.py:192-201`；`infrastructure/tools/catalog.py:146-155`；`business/tools.py:204-230`；`framework/tool/models/policy.py:154-168` | 同一个 ToolDefinition 在 discovery/schema/executor 中可能得到不同授权结论 |
 | B1 | P2 | Research/Harness adapter ownership 与 architecture test 不一致 | `business/research/services/rag_policy.py:3-70`；`business/research/application/paper_rag_session.py:5-115`；`tests/architecture/test_infrastructure_boundary.py:24-34` | business application 直接构造 Harness DTO/controller，同时合法 outbound adapter 无法通过 smoke |
@@ -164,6 +185,7 @@ C1（budget/conversation/memory contract）与 D1（legacy builder/facade）是�
 3. 一个高风险工具从 CLI、MCP、Agent 或 Workflow 进入系统，所有入口得到相同风险分类和 approval request，重复审批被拒绝。
 4. RSS、HTML、health probe 和 source tool 请求同一域名时，共享同一个 domain quota，并对同一个异常得到相同 retry/taxonomy 结论。
 5. 同一个 report/evidence fixture 经 production tool、eval 和 Research projection 后，共享规则得到同一判定；领域特有差异被显式记录，而不是隐藏在平行实现中。
+6. 一个 Research publication candidate 通过全部 gate 后，Harness 先持久化 effect-specific authorization，再由独立 handler 原子发布并持久化 outcome；进程在任一边界崩溃时 recovery 复用同一 effect id，offline replay 只读历史且绝不重放副作用。
 
 ---
 
@@ -188,6 +210,9 @@ C1（budget/conversation/memory contract）与 D1（legacy builder/facade）是�
 | Harness 状态机边界 | 每个 run 只按合法 `PLAN -> EXECUTE -> VERIFY` transition 推进；`max_turns`、`max_replans` 与 retry budget 在边界值耗尽后不再产生 worker/gate 调用 |
 | Durable phase event 完整性 | 每次 phase transition、retry/replan decision 和 terminal state 均有单调有序、可去重的 durable event；replay 后 state/counter/scheduler decision 100% 一致 |
 | Artifact namespace 隔离 | accepted output 只进入 canonical/published store；失败、halted、待审批 candidate/diagnostic 只通过 quarantine reader 可见，published/latest index 可见数为 `0` |
+| Side-effect authority 顺序 | 所有声明式 effect 均满足 `durable decision -> idempotent handler -> durable/read-back outcome -> STEP_SUCCESS/COMPLETE_RUN`；gate/approval/budget/scope 失败时 handler 调用与 canonical write 均为 `0` |
+| Side-effect recovery/replay | decision 后崩溃复用原 ordinal/effect id；已有 outcome 的 handler 重调次数为 `0`；offline replay 在 outcome 缺失时 live port 调用仍为 `0` |
+| Research accepted latest | accepted 后发生 failed/halted/quality-failed run 时 latest 仍返回原 accepted；只有 quarantine 时 latest 返回空；v1/v2 混合 repair 结果确定且不改写 v1 bytes |
 | Configured 默认 Research 成功路径 | 六个 Research/MCP entry surfaces 解析到同一 factory implementation/object-graph contract；不包含 unconfigured use case 或 in-memory production store |
 | Approval canonical model | ToolExecutor、InMemory、LocalJson 及 interface service 类型/状态语义 100% 一致 |
 | Tool risk parity | 同一 ToolDefinition 在 catalog、schema export、executor、inspection 中决策 100% 一致 |
@@ -223,6 +248,9 @@ C1（budget/conversation/memory contract）与 D1（legacy builder/facade）是�
 - Worker 自报分数、标签或建议不得直接成为 `HarnessQualityVerdict`、route、approval、memory write 或 publication decision。
 - VERIFY verdict 必须带 gate id、gate version、deterministic input refs 和 result，并写入 durable transcript。
 - 声明了 `quality_gate` 的 step 不允许在 gate 未解析、未执行或结果缺失时成功。
+- Worker-originated effect intent 必须绑定 run/step/attempt/worker result、`identity_scope_ref` 与 `subject_scope_ref`；controller-terminal intent 必须绑定 terminal policy、state checksum 与 completion input，二者不得互相伪装。
+- Effect-specific approval 必须解析到同一 run/step/attempt/effect/candidate/scope/decision version；authorization 先于 handler，durable outcome read-back 先于 `STEP_SUCCESS`、下游 routing 或 `COMPLETE_RUN`。
+- Recovery 可以用原 effect id 补交一个缺 outcome 的已授权 effect；offline replay 即使缺 outcome 也不得调用 worker、handler、store、publisher、Tool adapter、memory port 或 release registry。
 
 ### 5.2 One owner per decision
 
@@ -270,7 +298,8 @@ C1（budget/conversation/memory contract）与 D1（legacy builder/facade）是�
 | 5 | Research report builder | verified-shape candidate、evidence refs | candidate report；不得自行发布或写 memory |
 | 6 | Harness VERIFY | candidate report、deterministic gates | versioned gate results + verdict |
 | 7 | Harness scheduler | verified verdict、explicit policy | replan/retry/repair/halt/complete；全程受预算约束 |
-| 8 | Artifact/run/experience stores | accepted outputs、隔离的 candidate/diagnostic outputs、events、refs | accepted outputs 才能进入 canonical/published store 与 latest index；失败、halted 或待审批输出只能进入 quarantine namespace，且 publication 与 memory write 需要独立确定性授权 |
+| 8 | Harness side-effect authority | verified candidate 或 controller-terminal completion input、scope refs、exact handler、approval/policy/budget evidence | durable authorization -> idempotent handler -> durable/read-back outcome；任何 identity/scope/evidence mismatch fail-closed |
+| 9 | Artifact/run/experience stores | accepted outputs、隔离的 candidate/diagnostic outputs、events、refs | accepted outputs 才能进入 canonical/published store 与 latest index；失败、halted 或待审批输出只能进入 quarantine namespace，且 publication 与 memory write 需要独立确定性授权 |
 
 任何默认入口都必须保留 `source collection -> evidence -> agent analysis -> report -> quality gate -> artifacts/storage` 的顺序。降级路径可以缩减证据内容，但不能跳过 evidence lineage、deterministic gate 或 accepted-output publication 边界。
 
@@ -279,6 +308,7 @@ C1（budget/conversation/memory contract）与 D1（legacy builder/facade）是�
 | Contract/能力 | Canonical owner | Adapter/consumer |
 | --- | --- | --- |
 | Harness gate registry/verdict | `framework/harness` | Research gates、Workflow declarations |
+| Harness side-effect intent/authorization/outcome | `framework/harness`；`harness-side-effect-authority-closure` 只建立 contract 与 Research production cutover | Research artifact/run handlers；未来 Tool/Memory/skill production handler 必须由各自 owner 显式接入，fake contract 不代表 production-ready |
 | Approval request/decision/status | `framework/workers/approval` | Tool wrapper、interfaces、LocalJson 及任何明确声明支持的 durable store |
 | Tool risk decision | `framework/tool` policy/governance | framework/infrastructure/business registries |
 | Harness production tool composition | 目标 owner `interfaces/composition` + `tool-governance-canonicalization`（planned） | `HarnessToolPort`/`MCPToolPort` production adapter、ToolRegistry 与 Source runtime provider；当前只有 Protocol/export/fake，`HarnessControlPlane` 尚未接入 production owner |
@@ -323,8 +353,8 @@ C1（budget/conversation/memory contract）与 D1（legacy builder/facade）是�
 | HAR-005 | Harness 必须按有界 `PLAN -> EXECUTE -> VERIFY` 状态机推进。Gate failure 只能触发 spec/policy 允许的 retry、replan、repair、halt 或 fail；`max_replans`、`max_turns` 与 retry budget 在边界值耗尽后必须形成稳定 terminal state，且不得再调用 worker 或 gate。 |
 | HAR-006 | Durable transcript/event log 必须记录每次 phase transition、attempt/retry/replan counter、gate id/version、input refs/hash、结果、失败原因、聚合 verdict、scheduler decision 和 terminal reason。事件必须具有稳定 identity 与单调顺序；重复投递不得重复推进状态，缺失或乱序事件必须 fail-closed，replay 必须重建相同 state、counter 与 decision。 |
 | HAR-007 | Research workflow 中声明的 gate 必须逐一映射；不存在的历史 gate name 必须删除或实现，不能仅作为 metadata 保留。 |
-| HAR-008 | Worker 返回的 tool authorization、memory-write、publication 或 skill-promotion 建议只能是 candidate observation；Harness 必须丢弃或显式拒绝可执行 decision 字段，并分别调用 canonical policy/gate。 |
-| HAR-009 | Report、memory 和 production artifact 的最终写入只能发生在 deterministic gate/authorization 成功之后；失败、halted 或待审批 run 只能写隔离的 candidate/diagnostic artifact，不得进入 published/latest index。 |
+| HAR-008 | Worker 返回的 tool authorization、memory-write、publication 或 skill-promotion 建议只能是 candidate observation。所有支持的 `output`、`diagnostics`、`metrics` 与嵌套 untyped mapping 必须按 versioned reserved-path matrix 递归拒绝 executable alias；`artifacts` 字段只做严格 candidate-ref/type validation，不解释为结构化授权 payload。Schema-validated typed intent payload 可以包含同名领域字段，但只能生成 candidate，不能授权 handler。 |
+| HAR-009 | 每个声明式 side effect 必须遵循 `typed intent -> deterministic authorization -> idempotent handler -> durable/read-back outcome`。Authorization 必须绑定 origin、run/step-or-terminal/attempt、effect、candidate/state、gate、budget、approval（或显式 `not_required` policy evidence）、identity/subject scope 与 exact handler，并先于 effect 持久化；outcome 必须先于 `STEP_SUCCESS`、下游 routing 或 `COMPLETE_RUN` 可验证。Research artifact step 只允许产生同一 `atomic_group` 的 hidden `prepared` outcome，唯一 canonical manifest/index visibility commit 必须由 controller-terminal handler 连同 trace/transcript 完成。Effect retry/recovery 必须消耗有界 attempt budget；失败、halted、待审批或 scope mismatch 只能保留隔离 diagnostics，不得进入 published/latest index。 |
 
 ### 7.2 Acceptance
 
@@ -334,9 +364,30 @@ C1（budget/conversation/memory contract）与 D1（legacy builder/facade）是�
 - `max_turns`、`max_replans` 与 retry budget 分别覆盖 `limit-1`、`limit`、`limit+1` 边界；耗尽后 run 进入唯一 terminal state，后续 worker/gate 调用数为 `0`。
 - 正常、gate failure、retry、replan、repair 与 halt 路径均记录完整 `PLAN -> EXECUTE -> VERIFY` transition 序列；事件 identity/sequence 无缺失、重复或倒序。
 - Replay 使用已记录 phase/gate/decision events 重建相同 state、counter 与 scheduler decision，不重新调用 LLM 或以当前默认值替换历史 verdict；重复事件幂等，缺失或乱序事件 fail-closed。
-- Worker 即使返回 `approved=true`、`write_memory=true` 或 `publish=true`，也不能增加 tool side effect、memory record 或 published artifact；拒绝原因写入 transcript。
+- Worker 即使在顶层、嵌套、`diagnostics` 或 `metrics` 返回 `approved=true`、`write_memory=true`、`published=true`、`promote=true` 或 `release=true`，也不能增加 tool side effect、memory record、published artifact、latest index 或 release write；返回稳定 reason code 与排序后的 field paths。`artifacts` 只接受合法 candidate ref，不解释为 decision payload。显式 `*_observation` 和 typed domain payload 可以保留，但不能形成 authority decision。
 - Worker 即使伪造 `promote_skill=true`、production version 或 active package ref，也不能修改 active skill package、promotion record 或 release index；普通 run 的 active-skill mutation/promotion count 为 `0`，candidate 与拒绝原因进入 transcript，只有 Harness 控制的 held-out evaluation/promotion workflow 可以激活版本。
+- Gate failure、approval pending/cancel、budget halt 与 identity/subject scope mismatch 均不得调用 handler；approval 必须绑定同一 run/step/attempt/effect/candidate/scope/decision version，retry/replan 产生的新 attempt 不得复用旧 approval。
+- `HarnessTerminalSideEffectPolicy` 必须在 run/workflow terminal-policy projection 中版本化声明 exact handler/kind、approval requirement 或 pinned `not_required` evidence、继承 gate/budget 规则和 retry limit；unknown/duplicate/version mismatch 在 `RUN_CREATED` 前失败。历史无该 policy 的 completed run 只允许离线 replay，不能在 live recovery 中推断默认 handler。
+- Authorization durable 后、effect 前崩溃可用原 ordinal/effect id 补交；effect 后、outcome durable/read-back 前崩溃必须由 handler/store 幂等返回同一 durable outcome；已有 outcome 时 handler 调用为 `0`。Offline replay 在有无 outcome 两种情况下 live port 调用均为 `0`。
+- 每个 worker step 最多产生一个 typed side-effect intent；一个 intent 可以包含多个 atomic-group members。多个 intent、多个 handler 或 kind 不得隐式合并，必须拆为独立 step/attempt；effect/terminal recovery 重试次数必须受现有 retry/attempt budget 限制，耗尽后进入稳定 `effect_retry_exhausted` terminal state。
 - Gate failure、approval pending、budget halt 三种终态可以持久化 quarantine candidate/diagnostic artifact，但 published/latest index 必须不可见；accepted run 才能原子写入 canonical/published store，并有 contract test 验证两类 namespace 的 read/write 隔离。
+- ARTIFACT step 的 post-VERIFY handler 只写 hidden candidates 并返回 `prepared` outcome；该 step 成功后 normal artifact reader 仍可见 `0` 个新 ref。Controller-terminal handler 必须把主 artifacts、trace 与 transcript 纳入同一 atomic group，通过一次 manifest/index commit 变为可见；任一成员或 outcome 失败时整组可见数为 `0`。
+- `prepared` 是正式的非公开 disposition，并具有有界 retention lease；terminal publish 成功后转 `accepted`，cancel、terminal failure、retry/replan supersession 或过期时先持久化 `quarantine` 再执行 owned cleanup，稳定 history/disposition ref 不得被删除。
+- Research v1 record 只有在 `succeeded + quality passed + complete identity/checksum-consistent artifact evidence + unambiguous legacy identity scope` 同时成立时才分类为 accepted；当前旧 Research publisher 创建且未调用 `finalize_run_manifest()` 的 manifest 保持 `running`，不得把该 legacy status 当 acceptance evidence。缺失、共享根目录无法归属或互相冲突的 v1 scope evidence 必须 quarantine。v2 显式写 disposition、publication authority 并原子 finalize accepted manifest。双读必须先部署，v2 writer 后启用；mixed index repair 只选 accepted，历史 failed manifest 标记 `legacy_quarantined` 且不删除 bytes。
+- Accepted-only 语义必须同时覆盖 store 的 `get_latest_by_paper_id()` 与 `list_by_paper_id()`，因为 `ResearchApplicationService._record_for_paper()` 实际消费后者。对同一 paper 的 accepted-then-failed/halted/quality-failed 序列，`get_analysis`、`get_reader` 与 `ask_paper` 在同一进程和重启后的 filesystem service 中都必须继续返回原 accepted run；quarantine record 只能通过 scoped by-run/diagnostic reader 查询。
+- Trace/transcript 由 `origin=controller_terminal` handler 在全部 step outcome durable 之后、`COMPLETE_RUN` 之前发布，并记录 committed-history cutoff；完整 replay 仍以 durable event history 为 source of truth，避免 terminal artifact 自引用最终 transition。Handler outcome 不可回读时 run 不得持久化为 succeeded。Failed/halted run 的 durable history 与 scoped diagnostics 保留，但不写 canonical success trace/transcript artifact。
+- Worker、Nth-artifact 或 terminal handler 在 durable run 创建后抛错时，application boundary 必须先从 durable Harness history 重建并保存 quarantine run diagnostic，再返回现有 typed service error；尚未创建 run 的 invalid request 不伪造 record。若进程在 `COMPLETE_RUN`/terminal publication 已 durable、但 accepted Research record 尚未保存时硬崩溃，Research persistence owner 的 bounded startup/read reconciler 必须在暴露 finalized manifest 或 normal latest 前，依据 terminal outcome、quality/gate、publication authority 和 identity scope 幂等重建 accepted/quarantine disposition；reconciler 不得重跑 worker 或 side effect。
+
+### 7.3 HAR-008..009 交付边界
+
+| Effect surface | 本 change 的承诺 | 不得宣称 |
+| --- | --- | --- |
+| Research artifact bundle | 真实 production cutover：ARTIFACT worker 只产 typed candidate intent，post-VERIFY handler 只写同一 atomic group 的 hidden candidates 和 durable `prepared` outcome | step 完成时提交 canonical manifest，或单个 artifact 顺序直写后再补 audit |
+| Research trace/transcript | 真实 production cutover：controller-terminal intent 在 `COMPLETE_RUN` 前把 trace/transcript 加入 prepared group，并完成唯一 finalized manifest/index visibility commit 与 durable outcome | Harness 已 succeeded 后再 best-effort 写 artifact，或先发布主 artifacts 再补 terminal diagnostics |
+| Research run persistence | 真实 production cutover：v2 accepted/quarantine、v1/v2 双读、accepted-only normal readers/latest、exception-to-quarantine、post-`COMPLETE_RUN` hard-crash reconciler、历史 manifest quarantine | 只修 latest index、只保存正常返回的 result，或依赖人工修复 missing disposition 即可覆盖所有 consumer/异常路径 |
+| Generic Tool | 只建立 Harness handler contract；production Tool policy/approval/binding 仍由 `tool-governance-canonicalization` owner 接入 | counting fake 或协议测试代表 Tool production-ready |
+| Generic Harness memory | 先完成 production call graph/object graph inventory；不存在 writer 则保存可重放的 absence evidence，存在 writer 则路由到具名 owning change 并阻断本 change 的 generic Memory production-complete 声明 | 在当前 Research-focused cutover 中顺手接线，或仅凭 `FakeMemoryPort` 通过宣称 memory production cutover 完成 |
+| Skill release | 收紧现有 in-memory registry/fake contract，要求 provenance-bound authority；production release store 另立 change | 普通 Research run 或 caller-created promotion object 可以激活版本 |
 
 ---
 
@@ -496,7 +547,9 @@ QLT-002 的差异分类由 Analysis Quality domain owner 与 Architecture owner 
 
 | Surface | 本阶段策略 | 允许变化 | 禁止变化 |
 | --- | --- | --- | --- |
+| Harness worker result | versioned recursive reserved-path matrix + typed intent envelope | 将 legacy ambiguous aliases 迁移为显式 observation 或 schema-validated typed intent；这是有记录的 internal breaking change | 静默丢弃 executable alias、扫描 typed domain payload 并把同名领域字段误判为授权 |
 | Research HTTP/MCP | 保留现有 route/tool 名，替换默认 factory | unavailable error 可增加稳定 capability details | 成功 response envelope、analysis/reader/trace key 静默变化 |
+| Research run store | 先部署 strict v1/v2 dual reader，再启用 v2 accepted/quarantine writer；by-run diagnostics 保留，latest 只选 accepted | v2 增加 disposition、identity scope 与 publication-authority refs；历史 failed manifest 非破坏性分类为 `legacy_quarantined` | 改写 v1 bytes、让 v1-only build 读取 v2、让 quarantine 覆盖 accepted latest、删除历史诊断 bytes |
 | `/ask`/`/rag-ask` | 统一 service owner，保留显式 mode/alias | 增加 deprecation metadata、actor propagation | router singleton 和无 tenant filter 继续作为默认 |
 | Approval store v1 | 保留 JSON fields 和 id | 修复 runtime type、validation、idempotency | 重写已有 approval id/status 或泄漏 secret |
 | SourceError | Live object mapper 与 persisted serialized reader 职责分离，完整字段 round-trip | 恢复此前丢失字段、增加受限 codec validation | 改变 error_type/retryable 历史语义而无 migration，或让 persistence reader 复制 interface mapper |
@@ -520,11 +573,11 @@ QLT-002 的差异分类由 Analysis Quality domain owner 与 Architecture owner 
 | `framework-runtime-safety-hardening` | TOOL-004 的 unique built-in registration、composition safety；继续完成其 attempt/lease/error scope | 不在无 proposal 更新时加入 approval/risk model、quality engine 或 Workflow graph 迁移 |
 | `durable-event-runtime` | HAR-006、RES-008 所消费的 durable transcript/event/replay contract | 本 PRD 不修改 canonical event、outbox/inbox、sequence 或 replay engine |
 
-### 14.2 建议新增 changes
+### 14.2 已创建与建议新增 changes
 
 | 顺序 | Change | Requirements | 说明 |
 | --- | --- | --- | --- |
-| 1 | `harness-side-effect-authority-closure` | HAR-008..009 | 先提交越权字段与 publication ordering contract probes；仅在 probe 失败时修复 production，不重造 gate/state machine |
+| 1 | `harness-side-effect-authority-closure`（APPLY_READY） | HAR-008..009 | proposal/design/specs/tasks 已齐全且 strict-valid；先提交越权字段与 ordering probes，再按 `decision -> effect -> durable outcome -> success` 修复。真实 cutover 限于 Research artifact/terminal diagnostics/run disposition；不重造 gate/state machine，不宣称 generic Tool/Memory 或 production skill release 已接入。其 `research-run-persistence` delta 只能在 baseline Research change 先归档后归档 |
 | 2 | `tool-governance-canonicalization` | TOOL-001..003、005..007 | P1/P2；消费 `framework-runtime-safety-hardening` 已验收的 TOOL-004 unique registration contract，不并行修改 registry ownership |
 | 3 | Conditional `harness-source-tool-composition` | SRC-002 Harness integration evidence | 仅当 U2 确认 Harness 应支持 Source tools 时创建；接入唯一 ToolRegistry/ToolPort 与同一 Source provider。若能力明确不支持，则在 Source change 中记录经批准的 capability decision，不创建空 registry/fake path；SRC-002 仍由 Source change accountable |
 | 4 | `analysis-quality-contract-convergence` | QLT-001..005 | 先 parity，后 production cutover，再删旧算法 |
@@ -554,7 +607,7 @@ QLT-002 的差异分类由 Analysis Quality domain owner 与 Architecture owner 
 | --- | --- | --- | --- |
 | P0（按 slice 持续） | 每个切片在自身修复前本地运行对应 failing regression、把 red 命令与失败 oracle 记录到 OpenSpec `evidence.md`，并冻结受影响 public contract snapshot | 无 | 每个新切片至少一条可复现的修复前失败证据；不合并 red commit；已归档切片保持 regression 常绿 |
 | P1A（已完成基线） | Harness gate authority HAR-001..007 | P0；阶段 19 gate-event schema 稳定 | 已归档 change 的 focused、deterministic replay、architecture、smoke 保持常绿 |
-| P1A2 | Harness authorization/memory/publication side-effect authority | P1A | forged decision fields、publication ordering、durable transcript、smoke |
+| P1A2（OpenSpec apply-ready） | Harness authorization/memory/publication side-effect authority；Research hidden preparation、terminal atomic publication 与 run disposition 为 production cutover | P1A；Research baseline capability 必须先归档 | recursive forged-field matrix、origin/scope-bound approval、decision/effect/outcome crash ordering、prepared-before-terminal visibility=0、offline replay 零 live-call、v1/v2 migration、durable transcript、smoke |
 | P1B | Approval canonical model、tool risk decision | P0；framework safety unique registration 完成 | Tool/store contract、全工具分类矩阵、smoke |
 | P1C | Workflow canonical graph semantics | P0 | validator/compiler/runtime parity、serialization/replay compatibility |
 | P2A-core（实施中） | Source URL/retry/rate/taxonomy、object mapper、serialized reader 与通用 composition 收敛 | P0 | Source contract matrix、public payload parity、shared quota、object/persistence round-trip；独立记录 core evidence，不提前勾选跨 owner tasks |
@@ -578,9 +631,9 @@ P1A2、P1B、P1C 可以在 file ownership 不冲突时并行；P2A-core 与 P2B 
 
 | Area | 代表文件 | 目标变化 |
 | --- | --- | --- |
-| Harness VERIFY | `framework/harness/control_plane/harness.py`、`scheduler.py`、`routing.py`、`workflow/step.py` | named gate registry、gate-derived verdict、worker observation 隔离、durable gate identity |
+| Harness VERIFY/side-effect authority | `framework/harness/control_plane/harness.py`、`scheduler.py`、`routing.py`、`workflow/step.py`、`workers/result.py`、新增 side-effect contract/registry modules | named gate registry、gate-derived verdict、recursive worker ingress、worker/controller-terminal typed intent、approval resolver、decision-before-effect、durable outcome read-back、recovery/replay |
 | Research composition | `interfaces/api/app.py`、`interfaces/services/research_service.py`、`interfaces/services/mcp_service.py`、`interfaces/api/routers/research.py` | 统一 production factory、durable store、移除 route singleton、actor propagation，并注入 Source core 已验证的 provider/ledger |
-| Research boundary | `business/research/workflows/paper_analysis_workflow.py`、`services/rag_policy.py`、`application/paper_rag_session.py`、`application/single_paper_runtime.py`、`infrastructure/research/*` | 明确 canonical 外层 workflow 与 bounded RAG 子会话、designated runtime/adapter boundary、精确 port/DTO imports、experience store/provenance |
+| Research boundary | `business/research/workflows/paper_analysis_workflow.py`、`services/rag_policy.py`、`application/paper_rag_session.py`、`application/single_paper_runtime.py`、`infrastructure/research/*` | 明确 canonical 外层 workflow 与 bounded RAG 子会话、designated runtime/adapter boundary、精确 port/DTO imports、hidden artifact preparation/controller-terminal group publication、run disposition/latest/read isolation、experience store/provenance |
 | Tool governance | `framework/tool/governance/approval.py`、`framework/workers/approval/model.py`、`framework/tool/models/policy.py`、framework/infra/business catalogs | canonical approval DTO 与 risk decision，registry 只追加 inventory |
 | Source policy | business Source normalization/runtime/health、`infrastructure/external/sources/fetch_policy.py`、`interfaces/services/source_mapping.py`、`business/foundation/models/source_error_normalization.py`、Harness/Research composition boundaries | URL/retry/taxonomy/limiter/object-mapper/serialized-reader 单一 owner；entry、Research、Harness integration gate 独立；public `RawSourceItem` payload 不丢字段 |
 | Quality | `business/layers/analysis/quality_records.py`、`analysis/quality/*`、`analysis/tools.py`、Research quality adapter | canonical engine、shadow parity、compatibility mapper、旧算法退出 |
@@ -590,9 +643,9 @@ P1A2、P1B、P1C 可以在 file ownership 不冲突时并行；P2A-core 与 P2B 
 
 | Test area | 覆盖 |
 | --- | --- |
-| `tests/framework/harness` | named gate binding、worker score isolation、gate event/replay、budgeted failure handling |
+| `tests/framework/harness` | named gate binding、worker score/decision alias isolation、worker/controller-terminal intent identity、effect-bound approval/scope、decision/effect/outcome crash boundaries、offline replay、budgeted failure handling |
 | `tests/framework/tool` + approval stores | model identity、backend lifecycle、risk matrix、side-effect-before-approval invariant |
-| `tests/interfaces/research` + `tests/infrastructure/research` | configured object graph、六个 entry/adapter surfaces factory parity、各自 transport/adapter contract、recorded outer workflow/inner RAG session identity、actor/tenant、restart/concurrency、adapter allowlist、shared Source provider |
+| `tests/interfaces/research` + `tests/infrastructure/research` | configured object graph、六个 entry/adapter surfaces factory parity、各自 transport/adapter contract、recorded outer workflow/inner RAG session identity、actor/tenant、restart/concurrency、adapter allowlist、shared Source provider、accepted/quarantine disposition、`get_latest_by_paper_id`/`list_by_paper_id` parity、accepted-then-failed 的 analysis/reader/ask 同进程与重启回归、v1/v2 mixed index、historical manifest quarantine、terminal publication ordering |
 | Source business/infra/interface tests | golden URL、taxonomy/retry、shared quota、live SourceError mapper、历史 persisted SourceError codec/real-reader round-trip、17-field public `RawSourceItem` cross-entry parity、entry/Research/Harness composition gates |
 | Analysis quality tests | shared golden corpus、shadow diff classification、engine identity、persisted payload decode |
 | Workflow/storage contracts | fallback graph parity、budget parity、conversation/vector backend conformance |
@@ -614,7 +667,10 @@ P1A2、P1B、P1C 可以在 file ownership 不冲突时并行；P2A-core 与 P2B 
 | --- | --- | --- | --- | --- | --- |
 | H1 Worker score 形成 verdict/route | 架构边界 | 同一 worker 输出跨越 candidate 与 deterministic decision，两条路径没有独立领域输入 | HAR-001、004；`framework/harness` | archived gate change；worker score matrix 中 route 不变 | 已收敛基线，保留回归 |
 | H2 named gate 未解析仍成功 | 架构边界 | workflow 已声明 gate，跳过执行不是“无 gate”变体 | HAR-002、003、006、007；gate registry | archived gate change；unknown gate 时 `worker_calls=0` | 已收敛基线，保留回归 |
+| H3 nested/alternate worker decision alias 可进入结果 | 架构边界 | executable decision 的 authority 不会因字段嵌套或换成 `published/promote/release` 就变成领域事实；不同 ingress 无独立策略输入 | HAR-008；versioned reserved-path matrix + typed intent parser | `harness-side-effect-authority-closure`；direct/nested/channel matrix + stable path oracle | OpenSpec apply-ready，implementation 未开始 |
+| H4 ARTIFACT worker 在 VERIFY 前直写 canonical store | 架构边界/职责泄漏 | candidate preparation 与 canonical publication 是两个生命周期；事后 gate 无法撤销外部写入，不是 artifact adapter 变体 | HAR-009；Harness exact handler/outcome contract + Research prepare/terminal handlers | 同 change；gate/approval/budget failure handler=0、prepared-step visibility=0、Nth/terminal member failure visibility=0 | OpenSpec apply-ready，implementation 未开始 |
 | R1 默认 Research 进入 unconfigured/in-memory path | 功能重复/竞争路径 | 默认入口与显式 runtime 接收相同请求，却只有前者永久 503 且不可持久化 | RES-001、002、008、011；已落地的 `interfaces/composition/research.py` composition root | Research change；configured object graph + restart read + six-surface recorded parity | `12ed843a` 已交付，staged-only candidate 与 final commit tree 一致；保留 regression，U7 live provider readiness 仍单独未确认 |
+| R2 failed run 可覆盖 latest，terminal artifacts 晚于 durable success | 持久化边界/竞争可见性 | by-run diagnostics 与 accepted latest 是明确不同读模型；把所有 record 放进一个 latest/list 并让 normal service 取首条不是有意的存储 backend 差异 | HAR-009；Research v2 disposition、accepted-only latest/list、controller-terminal publication | 同 change；accepted-then-failed 的 `get_analysis/get_reader/ask_paper` 同进程与重启回归、mixed v1/v2、success-before-terminal-artifact crash oracle | OpenSpec apply-ready，implementation 未开始 |
 | T1 Tool/Worker approval DTO 竞争 | 重复代码 | 字段、状态和持久化用途相同，差异来自复制后的 backend 漂移 | TOOL-001..003；`framework/workers/approval` | Tool change；InMemory/LocalJson 及本切片新增 store 的 type/state contract | 已确认 |
 | T2 四处 tool risk classifier | 功能重复 | 输入均为同一 ToolDefinition，调用入口不应改变 authorization | TOOL-004..007；framework Tool policy | Safety change 验证唯一注册，Tool change 验证全 inventory risk matrix | 已确认 |
 | B1 Research/Harness adapter ownership 漂移 | 依赖拓扑 | application 组装 concrete controller 与 hexagonal port 不是领域变体；外层 workflow 与 bounded RAG session 是 parent/child contract，不是两个平行 controller | RES-003、004、009、010；Research ports + interface composition | Research change；recorded workflow/session identity、AST/import graph、MCP dependency acyclic | `12ed843a` 已收敛，保留边界与 replay regression |
@@ -632,7 +688,7 @@ P1A2、P1B、P1C 可以在 file ownership 不冲突时并行；P2A-core 与 P2B 
 | Requirements | Accountable change / task-ledger obligation | 必须测试/证据 | 关键 oracle |
 | --- | --- | --- | --- |
 | HAR-001..007 | `harness-deterministic-gate-enforcement`（accountable baseline；HAR-006 消费非 accountable 的 `durable-event-runtime` evidence） | worker forbidden fields、unknown gate、step/global gate selection、LLM score routing；`PLAN -> EXECUTE -> VERIFY` transition sequence；turn/replan/retry 的 `limit-1/limit/limit+1`；事件重复/缺失/乱序与 transcript replay；若现有 evidence 缺项则先创建 modified-requirement change 并转移 accountable mapping | verdict 只引用 deterministic gate result；未知 gate 或预算耗尽后 `worker_calls=0`；replay state/counter/scheduler decision 一致，invalid event stream fail-closed |
-| HAR-008..009 | `harness-side-effect-authority-closure` | forged worker authorization/memory/publication/skill-promotion fields、gate/approval/budget terminal states、active skill/release store 与 canonical/published/quarantine namespace read/write isolation、atomic publication | unauthorized side effect/memory/published index/active-skill writes 为 `0`；普通 run promotion count 为 `0`；terminal diagnostic 可由 quarantine reader 查询但不出现在 published/latest index |
+| HAR-008..009 | `harness-side-effect-authority-closure`；唯一 accountable completion task 为 7.5，其余 50 项均为 supporting tasks | recursive forged worker fields、worker/controller-terminal intent identity、effect-bound approval/scope、gate/budget terminal states、decision/effect/outcome crash boundaries、offline replay、Research v1/v2 disposition/latest、historical manifest quarantine、atomic publication、skill contract；generic Tool/Memory production binding 不在 fake contract 中冒充完成 | unauthorized side effect/memory/published/latest/release/active-skill writes 为 `0`；durable outcome 先于 success；offline replay live-call 为 `0`；accepted-then-failed latest 不变；普通 run promotion count 为 `0` |
 | RES-001..006、RES-008..011 | `research-runtime-production-composition` completion | configured/unavailable object graph；HTTP Research route、HTTP MCP route、local MCP call、stdio loop、CLI direct commands、`NewsMCPServerAdapter` factory parity与各自 contract；recorded outer workflow/inner RAG session；Source shared binding；restart、concurrent runs、tenant visibility、AST dependencies | 无 fake/unconfigured/in-memory production dependency；workflow/session parent-child identity 可 replay；50-run isolation 串扰为 0；entry/adapter 不直达 executor/store |
 | RES-007 | `research-experience-memory-provenance` | experience append/query、real package hash、gate failure/no-promotion | ref 可查询；普通 run promotion count 为 0 |
 | TOOL-001..003、TOOL-005..007 | `tool-governance-canonicalization` | type identity、InMemory/LocalJson 及新增 store 的 pending/decision/duplicate/expiry/secret-rejection contract、risk signal conflict golden matrix、Harness approval、消费 canonical registry 的 object-graph/AST contract | 所有 store 的 status/error/immutability 一致，secret rejection 后 record count 为 `0`；所有入口得到同一 risk/approval/reason decision；side effect 在 durable approval 前为 `0`；不创建第二 registry |
@@ -675,6 +731,9 @@ git diff --check
 | --- | --- | --- |
 | `harness_gate_resolution_failed_total` | 发现未知/缺失 gate | 只记录 gate id/version、workflow/step id |
 | `harness_worker_verdict_field_rejected_total` | 发现 worker 越权输出 | 不记录 raw LLM output |
+| `harness_side_effect_authorization_total{kind,outcome}` | 观察 authorized/denied/quarantined 与 stable reason code | 只记录 handler/version、effect kind、hashed scope refs，不记录 candidate payload 或 raw subject |
+| `harness_side_effect_recovery_total{result}` | 发现 dangling decision、outcome reuse、idempotent retry 与 identity mismatch | 不记录 approval 内容、artifact body 或 namespace 明文 |
+| `research_run_disposition_total{disposition,schema_version}` | 验证 accepted/quarantine、v1/v2 migration 与 latest isolation | 只记录 hashed paper/run identity 与 reason code |
 | `research_composition_mode` | configured/unavailable 与 capability readiness | 不记录 env value、credential、filesystem absolute path |
 | `tool_risk_policy_disagreement_total` | migration shadow 阶段比较旧/新 classifier | 只记录 tool name/version 和 decision code |
 | `source_rate_limit_decision_total` | 验证跨入口共享 quota | 记录 canonical domain hash，不记录完整敏感 URL/query |
@@ -699,6 +758,7 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 | Surface | 处置类型 | 触发门槛 | 决策 owner | 目标/动作 | 数据与回滚后 oracle |
 | --- | --- | --- | --- | --- | --- |
 | Harness gate registry | Rollback | 任一 pre-cutover 合法 workflow corpus 被误拒，或 recorded replay verdict 不一致 | Harness runtime owner | 切回上一已资格化 registry mapping/version；不得恢复 worker score verdict | 不改写历史 gate event；compatibility corpus、replay 和 unknown-gate fail-closed 全部通过 |
+| Harness side-effect authority / Research disposition | Containment + reader-compatible rollback | 出现 success-without-outcome、duplicate effect、scope crossover、quarantine 进入 latest/published，或 v2 record 无法读取 | Harness + Research persistence owner | 停止新 effect/v2 writer，保留 dual reader和现有 disposition/decision records，切回上一已资格化 handler binding；不得恢复 pre-VERIFY publication | 不改写 v1 bytes或已提交 outcome；decision/effect/outcome crash matrix、offline replay、mixed-index repair 与 historical manifest quarantine 全部通过 |
 | Research production factory | Containment + rollback | 任一已资格化 configured graph 无法启动、recorded analysis 失败或 restart read 失败 | Research runtime owner | 先进入 typed unavailable containment，再切回上一已资格化 factory/adapter；不得选择 fake/in-memory success path | 已写 run/artifact 保持 dual-read；object-graph、recorded analysis、restart-read contract 通过 |
 | Tool risk/approval | Forward-fix，必要时 policy rollback | Golden matrix 出现任一未分类差异、合法 read-only tool 被误阻断，或 approval 前发生 side effect | Tool governance owner | 修正或切回上一 policy version；高风险仍 fail-closed，不允许 bypass approval | 不重写既有 approval decision；risk matrix、duplicate decision 和 pre-approval side-effect oracle 通过 |
 | Source policy/composition | Rollback | Shared-ledger invariant violation 大于 0、实际 attempts 超出 retry matrix，或 golden case 出现误限流/请求放大 | Source runtime owner | 切回上一已资格化 composition binding，同时保留单一 shared limiter；不得复制 ledger | 历史 identity/ref 继续 dual-read；quota、retry、taxonomy 和 persistence compatibility matrix 通过 |
@@ -722,6 +782,9 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 | Live Redis/Postgres/Qdrant 与 fake 行为不同 | contract suite + real-service CI；被修改或被声明支持时必须通过，外部 provider E2E 才可 optional |
 | 修复 Source/Tool policy 时引入新的共享 god module | contract 放 owning domain；adapter 保持薄；禁止无 owner generic utils |
 | Active change 的 task ledger 早于阶段 20 requirement IDs | 当前数字只引用第 1.1 节；Research `evidence.md` 已回填逐项 `RES-* -> task -> test/evidence -> implementation commit/status`，implementation 为 `12ed843a`。其他 change 仍须在各自交付前建立相同映射，且不得把单一 change 的 task completion 解释为阶段 20 requirement 全部完成 |
+| Terminal trace/transcript 被实现成 post-success best effort | 使用显式 `origin=controller_terminal` intent；在 `COMPLETE_RUN` 前完成 durable outcome read-back，失败则 run 不得 durable succeeded |
+| Outcome 只存在于内存返回值或 `STEP_SUCCESS` payload | handler/store 先以 effect id 持久化 outcome并支持 scoped read-back；success transition 只引用已验证 outcome，crash recovery 先 lookup 后 idempotent retry |
+| Tenant/namespace 在 effect retry 或 approval 中串扰 | intent、approval、decision、handler lookup、outcome 和 idempotency 同时绑定 `identity_scope_ref` 与 `subject_scope_ref`；任一 mismatch fail-closed |
 
 ---
 
@@ -752,6 +815,8 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 - [ ] 所有 step quality gates 可解析、可执行、可 replay；未知 gate fail-closed。
 - [ ] `PLAN -> EXECUTE -> VERIFY` 每次 phase transition 与 retry/replan/terminal decision 均持久化；`max_turns`、`max_replans` 和 retry budget 边界测试通过，耗尽后无额外 worker/gate 调用；重复事件幂等，缺失或乱序 replay fail-closed。
 - [ ] Worker 不能直接授权 tool、memory write、skill promotion 或 publication；未通过 gate/approval 的 candidate 只允许进入隔离 quarantine namespace，不进入 canonical/published store 或 published/latest index。
+- [ ] Worker ingress 的 direct/nested/alternate/channel alias matrix 全部 fail-closed；typed payload 与显式 observation 保持 candidate-only。所有 effect 满足 durable authorization 先于 handler、durable/read-back outcome 先于 step/run success，且 offline replay live-call 为 `0`。
+- [ ] Research artifact hidden preparation 与 controller-terminal atomic-group publication 完成真实 production handler cutover；step 完成前后 normal visibility 均符合契约，主 artifacts/trace/transcript 只通过一个 finalized manifest/index commit 发布。accepted/quarantine v2、v1/v2 双读、mixed latest repair 与 `legacy_quarantined` reader 行为有 committed regression。Generic Tool/Memory 与 production skill release 未接入时必须明确记录 unsupported/absence evidence，不得以 fake 宣称完成。
 - [ ] 默认 configured Research HTTP/MCP/CLI 进入真实 runtime 和 durable store。
 - [ ] Tool approval 使用唯一 canonical worker model，重复 decision 在所有 store 中一致拒绝。
 
