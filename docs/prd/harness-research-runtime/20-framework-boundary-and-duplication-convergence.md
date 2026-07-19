@@ -4,19 +4,19 @@
 >
 > Implementation status: IN_PROGRESS
 >
-> Version: v1.4
+> Version: v1.8
 >
 > Priority: P1（控制权与生产运行阻断）/ P2（架构与契约收敛）
 >
 > Scope: Harness VERIFY authority、Research production composition、Tool approval/policy、Source governance、Analysis quality、Workflow/framework contract 与 legacy cleanup
 >
-> Source audit: 2026-07-18 当前工作树“框架层与重复实现专项审查”
+> Source audit: 2026-07-18 审查基线为 tracked HEAD `e1cd72f3` + 当时 dirty/untracked working tree（包含未跟踪的 `infrastructure/research/`）；该 commit 只标识 tracked baseline，不是完整可重放快照
 >
 > Existing OpenSpec owners: `research-runtime-production-composition`、`framework-runtime-safety-hardening`、`durable-event-runtime`
 >
 > Completed OpenSpec slice: `harness-deterministic-gate-enforcement`（ARCHIVED；implementation `017a227e`；archive `2026-07-18-harness-deterministic-gate-enforcement`）
 >
-> Next OpenSpec slice: `source-policy-contract-convergence`（BASELINE_READY；12 个 URL/rate/retry/error 直接前序 changes 已同步 canonical specs）
+> Active OpenSpec slice: `source-policy-contract-convergence`（IN_PROGRESS；12 个 URL/rate/retry/error 直接前序 changes 已归档；当前 tasks 为 0/41，工作树已有部分 core/compatibility tests 但尚无 `evidence.md`；task 3.7/3.10 仍受默认 Research binding 与 Harness Source-tool production owner 两个 integration gate 阻断）
 >
 > Depends on: 阶段 1/2 Harness authority、阶段 8/9 legacy deletion rules、阶段 19 durable gate-event contract，以及上述 active changes 的明确 file ownership
 >
@@ -34,9 +34,9 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 
 ## 1. 背景与审查依据
 
-### 1.1 当前运行基线
+### 1.1 审查起点与当前验证状态
 
-截至 2026-07-18，当前工作树的验证结果为：
+截至 2026-07-18，审查基线（tracked HEAD `e1cd72f3` + 当时 dirty/untracked working tree）的会话验证结果为：
 
 | 检查 | 结果 | 说明 |
 | --- | --- | --- |
@@ -48,30 +48,58 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | `openspec validate --all --strict` | 510 项通过 | 说明规格语法有效，不代表 live implementation 已满足全部约束 |
 | `git diff --check` | 通过 | 当前审查没有格式错误证据 |
 
+上述历史数字来自审查会话记录，仓库中没有保存完整 suite 选择命令与原始日志；尤其 7 个 `infrastructure/research -> business` imports 位于当时未跟踪文件中，不能由 `e1cd72f3` 单独重放。因此这些数字只作为问题发现基线，不作为任何切片的 release evidence；可重放结论必须引用 committed regression、OpenSpec `evidence.md` 或当前重新执行的命令结果。
+
+截至 2026-07-19，本 PRD 定稿时在当前 dirty working tree 上获得以下只读验证证据：
+
+| 当前检查 | 结果 | 结论边界 |
+| --- | --- | --- |
+| Source composition/persistence focused selection | `25 passed` | 覆盖 Source runtime provider、Research arXiv shared-ledger denial、URL/SourceError persistence/replay 和 Research URL identity compatibility；不是完整 Source suite |
+| `tests/architecture/test_infrastructure_boundary.py` | `4 passed` | 证明当前精确 allowlist 与已扫描 import 一致；不自动证明每个新增 exception 的 ownership 正确 |
+| `openspec validate source-policy-contract-convergence --strict` | 通过 | 只证明 active change 语法与 schema 有效 |
+| `openspec validate --all --strict` | `508 passed, 0 failed` | 只证明当前全部 OpenSpec artifacts 可验证 |
+| `git diff --check` | 通过 | 有 CRLF -> LF 警告，但没有 whitespace error |
+| Source tasks/evidence | `0/41`；`evidence.md` 不存在 | 任何 working-tree implementation 或 passing test 都不能据此勾选 task 或宣称 change complete |
+
+其中 Source focused selection 使用以下可重放命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests/interfaces/services/test_source_runtime_composition.py `
+  tests/interfaces/services/test_source_research_rate_limit.py `
+  tests/contracts/test_source_url_persistence_compatibility.py `
+  tests/contracts/test_source_error_persistence_compatibility.py `
+  tests/business/research/test_source_url_identity_compatibility.py
+```
+
+上述结果不替代各实施切片的完整 focused tests、mandatory smoke 或真实 backend contract gate。
+
 现有 Harness 在 `PLAN -> EXECUTE -> VERIFY`、`max_turns`、`max_replans`、retry budget 和 durable transition 方面有明确实现与测试。本阶段不替换这套状态机，只修复 VERIFY authority 和外围 composition/contract 漂移。
 
-### 1.2 已确认问题
+### 1.2 审查起点已确认问题与当前状态
+
+下表记录上述审查基线确认的问题定义和当时证据，不表示所有问题在当前 `HEAD` 仍可复现。H1/H2 已由 `017a227e` 修复并归档；其他切片的当前状态以第 17.1 节为准。保留审查起点证据是为了维持 finding -> requirement -> regression 的可追踪性。
 
 | ID | 级别 | 已确认问题 | 关键证据 | 实际后果 |
 | --- | --- | --- | --- | --- |
-| H1 | P1 | Worker 自报 `quality_score` 会被转成 `HarnessQualityVerdict` 并参与 `ON_VERDICT` 路由 | `framework/harness/workers/result.py:18-35`；`control_plane/harness.py:1572-1589`；`routing.py:70-87` | LLM/subagent 可间接决定 quality 和下一步 |
-| H2 | P1 | `HarnessStepSpec.quality_gate` 只被序列化，没有 fail-closed registry 绑定 | `framework/harness/workflow/step.py:68-98`；`control_plane/harness.py:1033-1040` | workflow 声明的 gate 可能从未执行或进入 replay |
+| H1 | P1 | Worker 自报 `quality_score` 会被转成 `HarnessQualityVerdict` 并参与 `ON_VERDICT` 路由 | `framework/harness/workers/result.py:18-35`；`framework/harness/control_plane/harness.py:1572-1589`；`framework/harness/control_plane/routing.py:70-87` | LLM/subagent 可间接决定 quality 和下一步 |
+| H2 | P1 | `HarnessStepSpec.quality_gate` 只被序列化，没有 fail-closed registry 绑定 | `framework/harness/workflow/step.py:68-98`；`framework/harness/control_plane/harness.py:1033-1040` | workflow 声明的 gate 可能从未执行或进入 replay |
 | R1 | P1 | 默认 HTTP/MCP 构造裸 `ResearchApplicationService`，固定使用 unconfigured use case 和进程内 store | `interfaces/api/app.py:102-123`；`interfaces/services/research_service.py:100-110,315-323,485` | 真实 `source -> evidence -> analysis -> quality -> artifacts` 链路在默认入口不可达 |
 | T1 | P1 | `ToolApprovalRequest.to_worker_approval_request()` 返回 tool 模块中的重复 DTO | `framework/tool/governance/approval.py:64-150`；`framework/workers/approval/model.py:74-167` | approval 幂等、secret validation、status 和序列化依赖 store backend |
 | T2 | P2 | Framework、infrastructure、business 和 `ToolPolicy` 各自维护危险工具分类 | `framework/tool/registry/catalog.py:192-201`；`infrastructure/tools/catalog.py:146-155`；`business/tools.py:204-230`；`framework/tool/models/policy.py:154-168` | 同一个 ToolDefinition 在 discovery/schema/executor 中可能得到不同授权结论 |
 | B1 | P2 | Research/Harness adapter ownership 与 architecture test 不一致 | `business/research/services/rag_policy.py:3-70`；`business/research/application/paper_rag_session.py:5-115`；`tests/architecture/test_infrastructure_boundary.py:24-34` | business application 直接构造 Harness DTO/controller，同时合法 outbound adapter 无法通过 smoke |
-| S1 | P2 | URL、rate limiter、retry、error taxonomy 和 mapper 存在重复及行为漂移 | `business/layers/signal/source_processing/url_normalization.py:10-43`；`source_tool_runtime.py:43-87,171-202`；`infrastructure/external/sources/fetch_policy.py:88-172` | quota 分裂、retry 结论不一致、canonical id 漂移和 lineage 字段丢失 |
+| S1 | P2 | URL、rate limiter、retry、error taxonomy 和 mapper 存在重复及行为漂移 | `business/layers/signal/source_processing/url_normalization.py:10-43`；`business/layers/signal/source_tool_runtime.py:43-87,171-202`；`infrastructure/external/sources/fetch_policy.py:88-172` | quota 分裂、retry 结论不一致、canonical id 漂移和 lineage 字段丢失 |
 | Q1 | P2 | 生产 `quality_records.py`、评估 `analysis/quality/*` 和 Research gate 三条质量路径并存 | `business/layers/analysis/tools.py:8-17,88-139`；`business/layers/analysis/quality/eval_dataset.py:69-95` | 同一 report/evidence 在不同入口可能得到不同 pass/score |
-| W1 | P2 | Spec validator、compiler 和 runtime 对 fallback edge 的 graph 语义不一致 | `framework/specs/validation.py:171-190`；`framework/workflow/compiler/compiler.py:221-251`；`execution_loop.py:626-679` | 合法 recovery workflow 可能通过 spec validation 却无法 strict compile |
+| W1 | P2 | Spec validator、compiler 和 runtime 对 fallback edge 的 graph 语义不一致 | `framework/specs/validation.py:171-190`；`framework/workflow/compiler/compiler.py:221-251`；`framework/workflow/runtime/execution_loop.py:626-679` | 合法 recovery workflow 可能通过 spec validation 却无法 strict compile |
 | E1 | P2 | Research 返回未持久化的 `skill_experience_refs`，并写入固定伪 package hash | `business/research/application/single_paper_runtime.py:586-650` | experience 无法查询/replay，skill provenance 不可信 |
 | C1 | P2 | Budget、conversation 和 memory document contract 在 framework/storage 侧重复 | `framework/llm/budget`；`framework/agent/runtime/llm.py`；`framework/agent/messages/message.py`；`infrastructure/storage/conversation/models.py` | 同一跨层对象依赖 structural typing，validation 和异常语义逐步漂移 |
 | D1 | P3 | 私有 legacy builder、薄 facade 和测试脚手架已确认仓内不可达或重复 | `business/layers/analysis/pipeline.py:122-363`；`business/layers/relation/relation_validator.py:6-8` | 维护者可能修改无效路径，测试 setup 成本持续增加 |
 
-### 1.3 已执行反例探针
+### 1.3 审查起点反例探针
 
-以下探针均在当前工作树上只读执行，未修改仓库：
+以下探针均在上述 tracked + dirty/untracked 审查基线上执行，未修改当时工作树。H1/H2 对应探针已在后续归档切片中转为 committed regression；其余结果仍是对应切片的修复前 observation，只有转成 committed regression 后才算可重放 evidence：
 
-| Probe | 当前结果 | 目标结果 |
+| Probe | 审查起点结果 | 目标结果 |
 | --- | --- | --- |
 | LLM step 声明不存在的 `quality_gate="DefinitelyMissingGate"` | run 仍为 `succeeded` | compile 或 run start 前 fail-closed |
 | LLM worker 返回 `quality_score=0.95` | 形成 verdict 并按 `ON_VERDICT` 路由 | 只能作为 candidate observation，不能直接形成 verdict |
@@ -80,7 +108,19 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | read-only ToolDefinition 危险分类矩阵 | `mcp.foo`、`source.fetch_url`、`local_json.save`、`qdrant.upsert` 结论不一致 | 所有入口使用同一 policy decision |
 | fallback-only workflow | spec validation 通过，strict compiler 报 `unreachable_step` | validator/compiler/runtime 使用同一 graph |
 
-实施任何修复前，必须先把这些探针转成 committed regression tests。聊天记录和本 PRD 中的输出不能替代可重复测试。
+实施每个对应切片的修复前，必须先把相关探针转成可复现的本地 failing regression，并把 red 命令、失败 oracle 和结果记录到 OpenSpec `evidence.md`；regression 与根因修复随后以 green implementation commit 提交。已归档切片保留其 regression，不要求为了文档顺序重演历史失败提交。聊天记录和本 PRD 中的输出不能替代可重复测试。
+
+### 1.4 重复分类与结论边界
+
+本 PRD 只把行为、输入输出和真实调用路径重叠的实现列为收敛对象。以下分类是后续 OpenSpec 和删除决策的约束，不允许仅凭文件名或代码形态改变分类。
+
+| 分类 | 当前结论 | 代表范围 | 处理原则 |
+| --- | --- | --- | --- |
+| 真正的重复实现 | 已确认 | Source URL/retry/taxonomy/error construction、Tool risk decision、Workflow adjacency、conversation persistence records | 选定 canonical owner，以 contract test 迁移调用方，再删除算法副本 |
+| 有意保留的变体 | 已确认 | Marker/MinerU/Nougat/PyMuPDF parser；Local JSON/PostgreSQL/Redis/Qdrant backend；Source business DTO 与 infrastructure transport DTO | 保留各自 I/O、事务、部署或领域生命周期，只共享 deterministic contract 和 mapper |
+| 仅表面相似 | 已确认 | `/ask` 与 `/rag-ask`；MCP server 入站接口与 ToolRuntime 出站 MCP adapter；Research-specific gate 与共享 citation/support gate；外层 `HarnessWorkflowSpec` 与内层 `RAGSessionSpec` | 不合并职责；通过显式 mode、port、parent/child run identity 和依赖测试防止互相替代或形成第二条外层控制路径 |
+| 死代码候选 | 部分确认 | 私有 legacy builder、薄 facade、旧 Workflow/Agent control-plane exports | 仓内不可达不等于可安全删除；必须补齐 public export、dynamic entry、外部 consumer 和 replay 审计 |
+| 待验证疑似问题 | 未确认 | test fixture/mock/setup、pagination/config/serialization helper、旧 report DTO、重复 storage adapter | 在获得生产调用和契约重叠证据前不进入删除或合并范围，统一登记在第 22 节 |
 
 ---
 
@@ -124,12 +164,14 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | --- | --- |
 | 未解析的 step quality gate | `0`；任何未知 gate 在执行前失败 |
 | Worker 输出直接形成 quality verdict 的路径 | `0` |
-| Configured 默认 Research 成功路径 | HTTP、HTTP MCP、local MCP、stdio/CLI 均通过同一 factory；不包含 unconfigured use case 或 in-memory production store |
+| Configured 默认 Research 成功路径 | 六个 Research/MCP entry surfaces 解析到同一 factory implementation/object-graph contract；不包含 unconfigured use case 或 in-memory production store |
 | Approval canonical model | ToolExecutor、InMemory、LocalJson 及 interface service 类型/状态语义 100% 一致 |
 | Tool risk parity | 同一 ToolDefinition 在 catalog、schema export、executor、inspection 中决策 100% 一致 |
 | Source policy parity | URL golden、retry matrix、taxonomy、shared quota 和 `SourceError` round-trip 100% 通过 |
+| Source public payload parity | `RawSourceItem` 17 个公开字段、lineage、artifact refs、nested metadata 和 UTC `Z` 在 API/MCP/worker/CLI/tool 路径 100% 一致 |
 | Production quality owner | 每个共享 citation/support/score/editor 规则只有一个生产实现 |
 | Workflow graph parity | fallback-only、failure edge、cycle、dataflow 和 runtime route 使用同一 adjacency contract |
+| Research workflow/session ownership | Recorded production analysis run 引用 canonical workflow id/version/checksum 并产生对应 phase/gate events；bounded RAG session 不成为第二个外层 workflow |
 | Mandatory smoke | `0 failed`；architecture tests 无未文档化 allowlist |
 | Legacy 调用 | 被标记删除的私有路径仓内引用为 `0`；公共 export 删除前有明确 migration evidence |
 
@@ -168,7 +210,7 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 
 | 层 | 允许职责 | 禁止职责 |
 | --- | --- | --- |
-| `interfaces/api|cli|mcp` | transport parsing、actor/request context、调用 application service | 构造 process-global business runtime、直接访问 executor/store |
+| `interfaces/api`、`interfaces/cli`、`interfaces/mcp` | transport parsing、actor/request context、调用 application-layer service 或明确获批的 application use case | 构造 process-global business runtime、直接访问 executor/store |
 | `interfaces/composition` | 选择 concrete adapters、settings、lifecycle/cache | 表达 Research 业务规则或复制 authorization policy |
 | `business/research` | domain model、use case、candidate worker contract、deterministic Research rules、声明式 workflow metadata；指定 runtime boundary 可消费 domain-neutral Harness contracts | import interfaces/infrastructure；在普通 application/service public contract 中暴露 Harness DTO；构造 concrete store/adapter |
 | `infrastructure/research` | 实现 Research outbound ports、source/compiler/storage/RAG adapters | 依赖 Research application/services/workflows 或复制 domain rule |
@@ -177,7 +219,7 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 
 `infrastructure` 依赖 business-owned ports/domain DTO 是允许的 hexagonal adapter 方向，但必须由精确 architecture allowlist 表达。Blanket allowlist 不得扩展到 `business.research.application`、`services`、`workflows` 或 concrete parser/runtime implementation。
 
-本阶段不全面禁止 `business/research -> framework`。Research 可以依赖经过批准的 domain-neutral Harness contract；需要收敛的是 `rag_policy.py`、`paper_rag_session.py` 等普通 service/application 模块分散构造 Harness DTO/controller，以及 framework 反向出现 Research-specific fixture/rule。`ResearchSinglePaperRuntime` 的最终位置与职责必须在 `research-runtime-production-composition` design 中明确，不能靠 import 移动暗中改变。
+本阶段不全面禁止 `business/research -> framework`。Research 可以依赖经过批准的 domain-neutral Harness contract；需要收敛的是 `rag_policy.py`、`paper_rag_session.py` 等普通 service/application 模块分散构造 Harness DTO/controller，以及 framework 反向出现 Research-specific fixture/rule。`build_paper_analysis_workflow_spec()` 是 production analysis 的外层 workflow contract，`RAGSessionSpec`/`BoundedRAGSessionController` 只能作为该 workflow step 的有界子会话，或作为显式 standalone ask scope；两者不得竞争同一外层 routing/publication authority。`ResearchSinglePaperRuntime` 的最终位置与职责必须在 `research-runtime-production-composition` design 中明确，不能靠 import 移动暗中改变。
 
 ### 5.4 Compatibility first
 
@@ -185,37 +227,60 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 - 迁移必须采用 expand -> dual-read/adapter -> cutover -> contract window -> delete。
 - Compatibility adapter 必须有 owner、删除条件和最长一个 release window；不得成为第二条永久运行路径。
 
+每个 compatibility adapter 必须在对应 OpenSpec 的 `evidence.md` 登记 `surface`、`owner`、`introduced_release`、`expires_release`、`removal_condition`、`telemetry`、`evidence` 和 `kill_switch_retirement`。`introduced_release` 是首次包含 adapter 的发布，`expires_release` 最迟是其后的一个发布；若仓库尚未分配版本号，则使用目标 release id 并同时记录引入 commit。到期 adapter 必须删除或先通过新的 OpenSpec/PRD 决策显式续期，阶段级验收要求 registry `overdue=0`。
+
 ---
 
 ## 6. 目标架构与 canonical ownership
 
 ### 6.1 控制与运行路径
 
-| 顺序 | Owner | 输入 | 输出 |
+| 顺序 | Owner | 输入 | 输出/约束 |
 | --- | --- | --- | --- |
-| 1 | Interface composition | settings、actor、transport request | application service + concrete port graph |
-| 2 | Research application | Research request/domain refs | Harness run request + candidate worker ports |
-| 3 | Harness PLAN/EXECUTE | workflow spec、state、budget | worker candidate result |
-| 4 | Harness VERIFY | candidate result、deterministic gates | versioned gate results + verdict |
-| 5 | Harness scheduler | verified verdict、explicit policy | replan/retry/route/halt/complete |
-| 6 | Artifact/run/experience stores | accepted outputs、events、refs | durable records and queryable refs |
+| 1 | Interface composition + application service/use case | settings、actor、transport request | application request + concrete port graph；transport 不直达 executor/store |
+| 2 | Source collection | normalized source request、shared fetch policy | canonical Source records + fetch lineage |
+| 3 | Evidence assembly | Source records、Research document/chunks | bounded evidence set + source refs；缺口显式记录 |
+| 4 | Harness PLAN/EXECUTE | workflow spec、state、budget、evidence refs | LLM/subagent 只返回 analysis candidate |
+| 5 | Research report builder | verified-shape candidate、evidence refs | candidate report；不得自行发布或写 memory |
+| 6 | Harness VERIFY | candidate report、deterministic gates | versioned gate results + verdict |
+| 7 | Harness scheduler | verified verdict、explicit policy | replan/retry/repair/halt/complete；全程受预算约束 |
+| 8 | Artifact/run/experience stores | 仅 accepted outputs、events、refs | durable artifacts/storage；publication 与 memory write 需要独立确定性授权 |
+
+任何默认入口都必须保留 `source collection -> evidence -> agent analysis -> report -> quality gate -> artifacts/storage` 的顺序。降级路径可以缩减证据内容，但不能跳过 evidence lineage、deterministic gate 或 accepted-output publication 边界。
 
 ### 6.2 Ownership matrix
 
 | Contract/能力 | Canonical owner | Adapter/consumer |
 | --- | --- | --- |
 | Harness gate registry/verdict | `framework/harness` | Research gates、Workflow declarations |
-| Approval request/decision/status | `framework/workers/approval` | Tool wrapper、interfaces、LocalJson/Postgres stores |
+| Approval request/decision/status | `framework/workers/approval` | Tool wrapper、interfaces、LocalJson 及任何明确声明支持的 durable store |
 | Tool risk decision | `framework/tool` policy/governance | framework/infrastructure/business registries |
-| Research production graph | `interfaces/composition/research.py` | HTTP/MCP/CLI factories |
+| Harness production tool composition | 目标 owner `interfaces/composition` + `tool-governance-canonicalization`（planned） | `HarnessToolPort`/`MCPToolPort` production adapter、ToolRegistry 与 Source runtime provider；当前只有 Protocol/export/fake，`HarnessControlPlane` 尚未接入 production owner |
+| Research production graph | 目标新 owner `interfaces/composition/research.py`（planned/new） | HTTP/MCP/CLI entry surfaces；当前默认入口尚未完成切换 |
 | Research domain/ports | `business/research` | infrastructure Research adapters |
-| Source identity/canonical URL | business-owned Source contract | connectors、tools、health、mappers |
-| HTTP retry/rate-limit execution | one infrastructure Source runtime policy | all connectors and interface compositions |
+| Source identity/canonical URL | `business/foundation/primitives/source_ref.py` | `infrastructure/external/sources/url_utils.py` 仅作无逻辑 adapter；normalization、tools、Research Source identity consumers |
+| Source retry/rate-limit execution | `infrastructure/external/sources/fetch_policy.py` | business limiter port/decision DTO、`interfaces/services/source_runtime.py`、connectors/tools/health/Research arXiv |
+| Source error taxonomy | `business/layers/signal/source_processing/error_taxonomy.py` | infrastructure taxonomy re-export、health、quality/operator projections |
+| Source error construction | `infrastructure/external/sources/errors/factory.py` | 八个 connector；保留 connector-specific classification/diagnostics |
+| Source DTO object mapping | `interfaces/services/source_mapping.py` | Source application/tool/interface projections；不得承担 persisted payload decode |
+| SourceError serialized reader | `business/foundation/models/source_error_normalization.py` | artifact/event/checkpoint/PostgreSQL readers；只允许 exact adapter-to-contract import，不得依赖 business application/service 或复制 retry precedence |
 | Analysis quality engine | `business/layers/analysis/quality` | production tools、eval、Research adapter |
-| Workflow graph semantics | one framework spec/compiler graph module | validation、compiler、dataflow、runtime |
+| Workflow graph semantics | 目标新 owner `framework/specs/graph_semantics.py`（planned/new；纯函数/不可变 graph contract） | 该 leaf module 只依赖 stdlib 并定义 normalized node/edge inputs；`WorkflowSpec`/`EdgeSpec` 通过单一 spec adapter 投影，validation、compiler、dataflow、scheduler/runtime 消费同一结果。禁止 owner import sibling specs model、validation、compiler、runner 或 runtime，必须保留 edge kind |
 | LLM budget | `framework/llm/budget` | Agent/Workflow adapters |
-| Conversation/memory persistence DTO | owning port contract | LocalJson/Postgres/Qdrant mappers |
+| Conversation persistence record | 目标 owner `framework/agent/messages/message.py` | `infrastructure/storage/conversation/*`、PostgreSQL conversation adapter；message/compaction/cursor/checkpoint 统一 contract，infrastructure 只保留 mapper/backend lifecycle |
+| Memory record/document contract | `framework/memory/models/record.py` + `framework/memory/indexing/document.py` | Local/Vector/Qdrant mappers；backend `VectorDocument` 不成为 framework contract |
 | Skill experience store/provenance | `framework/harness/skills/evolution` | Research memory/experience adapter |
+
+### 6.3 Requirement kind 与完成证据
+
+每个 requirement 只有一个 accountable OpenSpec change。其他 change 可以是 dependency、consumer 或 integration evidence provider，但不能共同声明拥有同一个 requirement ID。完成证据按 requirement 的主导类型判定：
+
+| Kind | Requirement IDs | 必须完成的证据 |
+| --- | --- | --- |
+| `behavioral` | HAR-001..005、HAR-008..009；RES-001..002、RES-005..008、RES-011；TOOL-002..005；SRC-002..004、SRC-006；QLT-001、QLT-004；WF-001..002 | deterministic failing regression + passing acceptance/contract test + runtime evidence |
+| `contract` | HAR-006..007；RES-003..004、RES-009..010；TOOL-001、TOOL-006..007；SRC-001、SRC-005；QLT-003；WF-003..004 | schema/AST/dependency or cross-implementation conformance test + compatibility evidence |
+| `migration` | QLT-002、WF-007 | versioned decision/migration record、golden fixtures、validator；能确定性测试的部分仍必须有 passing test |
+| `retirement` | QLT-005、WF-005..006、WF-008 | import/export/dynamic-entry/consumer/persistence/replay audit、expiry 与 deletion evidence；不得用 prose-only waiver |
 
 ---
 
@@ -232,6 +297,8 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | HAR-005 | Gate failure 只能触发 spec/policy 允许的 retry、replan、repair、halt 或 fail，并继续受 `max_replans/max_turns/retry budget` 约束。 |
 | HAR-006 | Transcript 必须记录 gate id/version、input refs/hash、结果、失败原因、聚合 verdict 和由此产生的 scheduler decision。 |
 | HAR-007 | Research workflow 中声明的 gate 必须逐一映射；不存在的历史 gate name 必须删除或实现，不能仅作为 metadata 保留。 |
+| HAR-008 | Worker 返回的 tool authorization、memory-write、publication 或 skill-promotion 建议只能是 candidate observation；Harness 必须丢弃或显式拒绝可执行 decision 字段，并分别调用 canonical policy/gate。 |
+| HAR-009 | Report、memory 和 production artifact 的最终写入只能发生在 deterministic gate/authorization 成功之后；失败、halted 或待审批 run 只能写隔离的 candidate/diagnostic artifact，不得进入 published/latest index。 |
 
 ### 7.2 Acceptance
 
@@ -239,6 +306,8 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 - `quality_gate="DefinitelyMissingGate"` 在执行 worker 前失败。
 - Research paper-analysis workflow 的每个 gate name 都有 registry identity 和 committed execution test。
 - Replay 使用已记录 gate result，不重新调用 LLM 或以当前默认值替换历史 verdict。
+- Worker 即使返回 `approved=true`、`write_memory=true` 或 `publish=true`，也不能增加 tool side effect、memory record 或 published artifact；拒绝原因写入 transcript。
+- Gate failure、approval pending、budget halt 三种终态均验证 published/latest index 不可见 candidate，accepted run 才能原子发布。
 
 ---
 
@@ -250,24 +319,31 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | --- | --- |
 | RES-001 | 复用 active `research-runtime-production-composition`，让 configured HTTP/MCP/CLI 默认入口共享 `ResearchApplicationService -> AnalyzePaperUseCase -> ResearchSinglePaperRuntime` production factory。 |
 | RES-002 | Configured graph 不得包含 `_UnconfiguredAnalyzeUseCase`、Research fake、`FakeArtifactPort` 或 production `InMemoryResearchRunStore`；缺配置时返回 typed/sanitized unavailable service。 |
-| RES-003 | 普通 `business/research/application` 与 `services` 的 public contract 只暴露 Research request/result/ports，不分散构造 `RAGSessionSpec`、`BoundedRAGSessionController` 或 concrete store；`business/research/workflows` 可保留声明式 Harness metadata，指定 runtime boundary 可消费 domain-neutral Harness control-plane contract。 |
-| RES-004 | `infrastructure/research` 只依赖获批的 `business.research.domain|ports` contract；禁止依赖 application/services/workflows 和 concrete business runtime/parser implementation。 |
+| RES-003 | 普通 `business/research/application` 与 `services` 的 public contract 只暴露 Research request/result/ports，不分散构造 `RAGSessionSpec`、`BoundedRAGSessionController` 或 concrete store；`business/research/workflows` 拥有 canonical 外层 `HarnessWorkflowSpec`，production analysis 必须把它传入 `HarnessRunSpec`。指定 runtime boundary 可消费 domain-neutral Harness control-plane contract；bounded RAG session 只能是 workflow step 的子会话或显式 standalone ask scope，不能成为第二个外层 controller。 |
+| RES-004 | `infrastructure/research` 只依赖获批的 `business.research.domain` / `business.research.ports` contract；禁止依赖 application/services/workflows 和 concrete business runtime/parser implementation。 |
 | RES-005 | `/ask` 与 `/rag-ask` 统一由注入的 Research application factory 管理；以显式 mode 保留 summary projection 与 chunk-RAG 差异，不保留 router-owned singleton。 |
 | RES-006 | API actor 的 `tenant_id/user_id/memory_namespace` 必须进入 RAG retrieval、visibility、memory 和 transcript；tenant-aware 数据不允许在 tenant 缺失时静默全量放行。 |
-| RES-007 | `SkillExperience` 必须先通过 Harness-controlled store 持久化，成功后才返回 ref；package hash 来自真实 released package manifest。普通 Research run 不得触发 promotion。 |
-| RES-008 | Analysis、reader、ask、trace、artifact refs 和 experience refs 在 service/process 重建后仍可查询。 |
+| RES-007 | `SkillExperience` 必须先通过 Harness-controlled store 持久化，成功后才返回 ref；package hash 来自真实 released package manifest，ref 在 service/process 重建后仍可查询。普通 Research run 不得触发 promotion。 |
+| RES-008 | Analysis、reader、ask、trace 和 artifact refs 在 service/process 重建后仍可查询。 |
+| RES-009 | HTTP、MCP 和 CLI entry surfaces 只调用 `ResearchApplicationService` 或明确的 application use case；禁止 router/server/adapter 直接访问 Harness executor、repository、run store 或 artifact store。Worker 不属于本 change 的六入口 parity，若未来暴露 Research 能力必须遵守同一 architecture rule。 |
+| RES-010 | MCP server 入站接口与 ToolRuntime 出站 MCP adapter 使用独立 composition/port；入站 server 不得把请求回送到 outbound adapter 形成隐式递归或共享 transport-global request state。 |
+| RES-011 | Production factory 可以 process-scoped cache 昂贵 client/store，但必须有显式 lifecycle/reset hook；request/run state 只能位于 run-scoped object 或 context-local binding，禁止无生命周期的模块级 mutable singleton。 |
 
 ### 8.2 Architecture rule
 
-`tests/architecture/test_infrastructure_boundary.py` 必须从“全部禁止”收敛为可解释规则：Research adapter 可以 import 稳定 port/domain DTO，但不得通过宽泛 `business.*` allowlist 掩盖 application/service/runtime 依赖。现有 7 个 violation 必须逐项迁移或收窄，不允许只添加目录级例外使 smoke 变绿。
+`tests/architecture/test_infrastructure_boundary.py` 必须从“全部禁止”收敛为可解释规则：Research adapter 可以 import 稳定 port/domain DTO，但不得通过宽泛 `business.*` allowlist 掩盖 application/service/runtime 依赖。现有 7 个 violation 必须逐项迁移或收窄，不允许只添加目录级例外使 smoke 变绿。Architecture suite 还必须覆盖 interface -> application 调用方向、MCP inbound/outbound 隔离、禁止 import cycle 和禁止未登记模块级 mutable runtime state。
 
 ### 8.3 Acceptance
 
 - 默认 configured API 真实执行一次 recorded-transport Research analysis，并在新 service instance 中读取 analysis/trace。
-- HTTP、MCP、CLI/stdio 使用同一 factory identity 和 durable store。
-- `/rag-ask` 的 DI、actor/tenant propagation 和并发隔离有 route-level tests。
+- Recorded production analysis run 必须记录 `research.paper_analysis` workflow id、version/checksum、`PLAN -> EXECUTE -> VERIFY` phase transition 和声明 gate identity；仅验证静态 spec shape 不算通过。嵌入 analysis 的 bounded RAG session 必须记录 parent run/workflow/step identity，standalone ask 必须使用显式独立 session scope。
+- 六个 entry/adapter surfaces 使用同一 factory implementation/version 与 object-graph contract：HTTP Research route、HTTP MCP route、local `MCPApplicationService` call、stdio MCP loop、CLI direct MCP commands（不把 `serve-stdio` 重复计数）以及 adapter-only `NewsMCPServerAdapter` contract。同一进程复用受管 client/store，跨进程通过 durable store 读取同一 run；parity 不要求六者拥有相同 transport loop。
+- `/ask` 与 `/rag-ask` 都通过注入的 application factory；route-level tests 覆盖显式 mode/alias、actor/tenant propagation、并发隔离和两种 projection 的预期差异。
+- 新建 service/process 后，analysis、reader、ask、trace 和 artifact refs 均可按既有 contract 查询，不依赖旧进程内对象。
+- Factory lifecycle tests 证明 process-scoped client/store 可受控复用和 reset/close，request/run state 不跨请求、tenant 或测试泄漏。
 - 返回的每个 `skill_experience_ref` 都可查询；metadata 不出现 `fake` hash。
 - `business/research` 继续不依赖 legacy `business/boards/paper_radar`、interfaces 或 infrastructure。
+- AST/import graph 证明六个 entry/adapter surfaces 不直接 import/调用 Harness executor 或 concrete store，且 MCP inbound/outbound dependency graph 无环。
 
 ---
 
@@ -278,12 +354,12 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | ID | Requirement |
 | --- | --- |
 | TOOL-001 | 保留 tool-specific `ToolApprovalRequest`，删除重复 generic approval DTO；转换必须返回 `framework.workers.approval.ApprovalRequest`。 |
-| TOOL-002 | InMemory、LocalJson 和后续 Postgres store 对 pending、decision、重复决定、expiry、secret rejection 使用同一语义。 |
+| TOOL-002 | InMemory、LocalJson 及本切片明确声明支持的任何新增 store，对 pending、decision、重复决定、expiry、secret rejection 使用同一语义；不存在的 Postgres approval adapter 不作为隐式范围。 |
 | TOOL-003 | 定义一个以 `ToolDefinition` 为输入的 canonical risk decision；name list 只能作为 legacy/default fallback，side effect、approval metadata 和 explicit dangerous flag 优先。 |
-| TOOL-004 | Framework registry 只拥有 base tools；infrastructure/business 追加各自 definitions，但不得重写 filter/classifier。 |
-| TOOL-005 | Catalog、schema export、batch executor、ToolExecutor、inspection 和 Harness tool gate 必须调用同一 risk decision。 |
+| TOOL-004 | Framework registry 只拥有 base tools；infrastructure/business 追加各自 definitions。每个 built-in tool name 只有一个 registration owner，重复注册 fail-closed。 |
+| TOOL-005 | Catalog、schema export、batch executor、ToolExecutor、inspection 和 Harness tool gate 必须调用同一 risk decision；framework/infrastructure/business inventory 不得各自重写 filter/classifier。 |
 | TOOL-006 | `business/tools.py` 不再选择 concrete infrastructure connectors；concrete binding 移到 interface composition。 |
-| TOOL-007 | 本阶段复用 `framework-runtime-safety-hardening` 的 unique registration 工作，但不得把 approval/risk semantic 修复偷偷并入未声明 task。 |
+| TOOL-007 | `tool-governance-canonicalization` 必须消费 `framework-runtime-safety-hardening` 产出的唯一 registry/composition contract，不得建立第二套 registration path；unique registration 与 risk/approval semantic 分别由各自 change 验收。 |
 
 ### 9.2 Acceptance
 
@@ -301,19 +377,21 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 
 | ID | Requirement |
 | --- | --- |
-| SRC-001 | 选择一个 canonical URL identity contract，锁定 scheme/host/port/path/trailing slash/query key/tracking key/relative URL 行为；删除逐行重复实现。 |
-| SRC-002 | Default connector、source tool、health probe 和 runtime assembly 对同一 domain 使用共享 limiter instance；不能按 connector class 或入口拆配额。 |
-| SRC-003 | Retry decision 由一个 policy 实现，明确 HTTP status、timeout、URL/config error、unknown error 和 exhausted budget 语义。 |
-| SRC-004 | Error taxonomy 只有一个规则实现；connector-specific keyword 只能作为显式扩展输入，不复制整套 classifier。 |
-| SRC-005 | Business/infrastructure DTO 可以不同，但必须通过一个显式 mapper；所有 SourceError 字段包括 `request_ref`、`response_ref`、`occurred_at` 完整 round-trip。 |
-| SRC-006 | 八个 connector 的重复 `_source_error()` 收敛为共享 construction helper，同时保留 connector-specific classification。 |
+| SRC-001 | `business/foundation/primitives/source_ref.py` 是 canonical URL identity contract，锁定 scheme/host/port/path/trailing slash/query key/tracking key/relative URL 行为；signal-layer 算法副本删除，infrastructure 只保留无逻辑 adapter。 |
+| SRC-002 | Default connector、source tool、health probe 和 runtime assembly 对同一 domain 使用 `infrastructure/external/sources/fetch_policy.py` 创建的共享 limiter ledger；API、MCP、worker、CLI 与 Source-tool entry 按 process/command lifetime 复用稳定 composition，不能按 connector class、request 或入口拆配额。Research arXiv package/PDF 必须注入同一 provider/ledger；Harness Source-tool capability 必须绑定唯一 production registry/ToolPort owner，或通过独立 OpenSpec 明确声明当前不支持，禁止为完成 task 创建第二 registry。 |
+| SRC-003 | Retry decision 仅由 `infrastructure/external/sources/fetch_policy.py` 实现，明确 HTTP status、timeout、URL/config error、unknown error 和 exhausted budget 语义。 |
+| SRC-004 | Error taxonomy 仅由 `business/layers/signal/source_processing/error_taxonomy.py` 实现；connector-specific keyword 只能作为显式扩展输入，不复制整套 classifier。 |
+| SRC-005 | Business/infrastructure live DTO 可以不同，但 object projection 必须通过 `interfaces/services/source_mapping.py`；persisted `SourceError` payload 由 `business/foundation/models/source_error_normalization.py` 的受限 codec contract 解码。两条路径都必须保留 `request_ref`、`response_ref`、`occurred_at`、timezone、metadata 与 retry semantics，且不得互相复制职责。公开 `RawSourceItem` payload 必须保留全部 17 个字段、lineage、`raw_artifact_ref`、`parse_artifact_ref`、nested metadata，并统一输出 UTC `Z` 时间。 |
+| SRC-006 | 八个 connector 的重复 `_source_error()` 收敛到 `infrastructure/external/sources/errors/factory.py`，同时保留 connector-specific classification/diagnostics。 |
 
 ### 10.2 Acceptance
 
 - URL golden corpus 在 connector、SourceRef、signal pipeline 和 tool path 输出一致。
 - 同域跨 RSS/HTML/tool/health 的第 N+1 次请求在 network fetch 前被统一 rate-limit。
+- API/MCP/worker/CLI/Source-tool 连续调用保留同一 quota state；Research arXiv 使用同一 ledger；Harness Source-tool 只有一个 production composition owner，或存在经批准的 explicit unsupported decision。
 - Retry matrix 对 HTTP 4xx/5xx、timeout、URLError、ValueError 和 unknown error 有唯一预期。
-- SourceError 经 business -> infra -> business 后没有字段、时区或 metadata 丢失。
+- SourceError 经 live object mapping 后没有字段、时区或 metadata 丢失；历史 persisted payload 通过 canonical codec/real reader 解码并保持原 instant、refs 与 retry semantics。
+- 同一 `RawSourceItem` 经 connector、application service、API/MCP、worker、CLI、Source tool 与 connector tool 投影后，17 个公开字段、lineage、artifact refs、nested metadata 和 UTC `Z` 完全一致；任何入口不得手写缩减 serializer。
 - Source DTO enum 差异通过支持矩阵记录，不通过强制继承或字段并集掩盖。
 
 ---
@@ -334,6 +412,8 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | QLT-004 | Research-specific gate 不能复制 canonical claim/citation/support algorithm，只添加领域特有约束。 |
 | QLT-005 | `quality_records.py` compatibility window 最长一个 release；包外 consumer 验证完成后删除。 |
 
+QLT-002 的差异分类由 Analysis Quality domain owner 与 Architecture owner 共同批准并记录到该 change 的 `evidence.md`。每条 decision record 至少包含 corpus case id、旧/新结果、`bug_fix|intentional_stricter|compatibility_required` 分类、公共/持久化兼容影响、批准者和日期；未分类差异不得进入 production cutover。
+
 ### 11.3 Acceptance
 
 - Production tools 与 eval 使用相同 engine identity。
@@ -349,17 +429,19 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 
 | ID | Requirement |
 | --- | --- |
-| WF-001 | Spec validation、compiler、dataflow、cycle detection 和 runtime 共享一个 graph builder；fallback edge 是正式 graph edge，并保留 edge kind。 |
+| WF-001 | 新建 stdlib-only 的纯 graph semantics owner `framework/specs/graph_semantics.py`，以 normalized node/edge value inputs 工作，由唯一 spec adapter 连接 `WorkflowSpec`/`EdgeSpec`，再供 Spec validation、compiler、dataflow、cycle detection 和 runtime 共同消费；fallback edge 是正式 graph edge并保留 edge kind。当前 `framework/workflow/compiler/graph_builder.py` 只作为限时 compatibility facade 或删除，不能让 specs 反向依赖会 import `framework.specs` 的 compiler。 |
 | WF-002 | `framework/llm/budget` 是 token/cost/call budget 唯一 owner；Agent/Workflow 只保留 tool/wall-time 等领域 adapter。 |
-| WF-003 | Conversation message/cursor/checkpoint 和 memory vector document 归 owning port contract；framework/business 对 concrete store 使用显式 mapper，不依赖 structural typing 偶然兼容。 |
-| WF-004 | 新 Harness-managed code 禁止依赖 legacy Agent/Workflow control-plane result；旧 exports 冻结，不新增调用方。 |
-| WF-005 | 旧 WorkflowRunner/Agent subagent/budget 的删除必须先完成包外 import、动态入口、checkpoint/replay 和 persisted payload compatibility 审计。 |
-| WF-006 | Framework fake 必须 domain-neutral；paper/reader-repair-specific fixture 移到 Research tests。 |
-| WF-007 | 已确认不可达的私有 `_build_*`/`_legacy_build_*`、connector timeout/taxonomy wrapper 和薄 test-only facade 在回归覆盖后删除。 |
+| WF-003 | Conversation message/compaction/cursor/checkpoint 归 `framework/agent/messages/message.py`；LocalJson/Postgres conversation store 使用显式 mapper，不依赖 structural typing 偶然兼容。 |
+| WF-004 | Memory record/document contract 归 `framework/memory/models/record.py` 与 `framework/memory/indexing/document.py`；Local/Vector/Qdrant adapter 只保留 backend mapping 和 lifecycle。 |
+| WF-005 | 新 Harness-managed code 禁止依赖 legacy Agent/Workflow control-plane result；旧 exports 冻结，不新增调用方。 |
+| WF-006 | 旧 WorkflowRunner/Agent subagent/budget 的删除必须先完成包外 import、动态入口、checkpoint/replay 和 persisted payload compatibility 审计。 |
+| WF-007 | Framework fake 必须 domain-neutral；paper/reader-repair-specific fixture 移到 Research tests。 |
+| WF-008 | 已确认不可达的私有 `_build_*`/`_legacy_build_*`、connector timeout/taxonomy wrapper 和薄 test-only facade 只能在各自 owning area 的 child change 中删除，并且必须已有回归覆盖。 |
 
 ### 12.2 Acceptance
 
 - fallback-only terminal workflow 可 strict compile 并按同一 graph 执行；fallback dataflow/cycle/max-visits 有测试。
+- AST/import-cycle test 证明 graph semantics owner 不依赖 compiler/runner/runtime，且不存在 `framework.specs -> framework.workflow.compiler -> framework.specs` 环。
 - Canonical budget 对 router、Agent adapter 和 Workflow adapter 的 reserve/record/cost rounding 结果一致。
 - AgentRunner -> LocalJson/Postgres conversation store，以及 MemoryIngestion -> vector store 完成真实 contract round-trip。
 - 新生产代码对 legacy control-plane modules 的 import 数为 `0`。
@@ -374,7 +456,8 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | Research HTTP/MCP | 保留现有 route/tool 名，替换默认 factory | unavailable error 可增加稳定 capability details | 成功 response envelope、analysis/reader/trace key 静默变化 |
 | `/ask`/`/rag-ask` | 统一 service owner，保留显式 mode/alias | 增加 deprecation metadata、actor propagation | router singleton 和无 tenant filter 继续作为默认 |
 | Approval store v1 | 保留 JSON fields 和 id | 修复 runtime type、validation、idempotency | 重写已有 approval id/status 或泄漏 secret |
-| SourceError | 完整字段 round-trip | 恢复此前丢失字段 | 改变 error_type/retryable 历史语义而无 migration |
+| SourceError | Live object mapper 与 persisted serialized reader 职责分离，完整字段 round-trip | 恢复此前丢失字段、增加受限 codec validation | 改变 error_type/retryable 历史语义而无 migration，或让 persistence reader 复制 interface mapper |
+| Source public item payload | 锁定 `RawSourceItem` 17 字段、lineage、artifact refs、nested metadata 与 UTC `Z` | 通过 additive/versioned field 扩展 | 任一 API/MCP/worker/CLI/tool 入口静默删字段、改时区或使用缩减 serializer |
 | Quality artifacts | canonical engine + compatibility mapper | 新增 engine version/reason codes | 删除已有 artifact keys、projection fields |
 | Workflow checkpoint/events | 消费阶段 19 contract | graph semantics 修正 | 私自改 event/checkpoint schema 或 replay ordering |
 | Conversation/vector data | mapper/port contract | 增加 validation | 无迁移改 persisted JSON/SQL/Qdrant payload |
@@ -384,26 +467,32 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 
 ## 14. OpenSpec 映射与 change 边界
 
-### 14.1 复用 active changes
+### 14.1 复用 active 与 archived changes
 
 | Existing change | 本 PRD 使用范围 | 禁止扩展 |
 | --- | --- | --- |
-| `research-runtime-production-composition` | RES-001..006、RES-008 的 production factory、adapters、durable run store、transport parity、`/rag-ask` lifecycle/actor propagation 和 adapter boundary；新增范围必须先更新 design/tasks | 不顺手重写 Harness quality、Tool policy、Source 全局 policy |
-| `framework-runtime-safety-hardening` | TOOL-004/007 的 unique built-in registration、composition safety；继续完成其 attempt/lease/error scope | 不在无 proposal 更新时加入 approval model、quality engine 或 Workflow graph 迁移 |
+| `harness-deterministic-gate-enforcement`（ARCHIVED） | HAR-001..007 的 gate binding、worker score isolation、gate-derived verdict 与 replay 基线；实现 `017a227e` | 不重开 archived tasks；新增回归以新的 modified requirement/change 表达 |
+| `source-policy-contract-convergence`（ACTIVE） | SRC-001..006 的 URL identity、fetch policy、taxonomy、error factory、object mapper、serialized reader、shared composition 与 compatibility cutover。Core、API/MCP/worker/CLI entry binding、Research arXiv binding、Harness Source-tool capability 四个 gate 分开记录；task 3.7/3.10 只有在相关 gate 均有 evidence 后才能勾选 | 不把 Tool authorization、Research parser/RAG 或 generic framework utils 纳入 Source change；不得为提前勾选 task 新造第二个 Research factory、Harness registry、Source runtime 或 limiter；当前 0/41 且无 `evidence.md`，未提交 tests 不等于 task 完成 |
+| `research-runtime-production-composition` | RES-001..006、RES-008..011 的 planned production factory、adapters、durable run store、六入口/adapter parity、外层 workflow/内层 RAG session ownership、`/rag-ask` lifecycle/actor propagation、interface/MCP adapter boundary 和 lifecycle；同时承接 Source task 3.7/3.10 的 Research binding cutover，新增范围必须先更新 design/tasks | 不顺手重写 Harness quality、Tool policy、Source 全局 policy；只注入 Source change 已验证的 provider/ledger contract，不复制其实现 |
+| `framework-runtime-safety-hardening` | TOOL-004 的 unique built-in registration、composition safety；继续完成其 attempt/lease/error scope | 不在无 proposal 更新时加入 approval/risk model、quality engine 或 Workflow graph 迁移 |
 | `durable-event-runtime` | HAR-006、RES-008 所消费的 durable transcript/event/replay contract | 本 PRD 不修改 canonical event、outbox/inbox、sequence 或 replay engine |
 
 ### 14.2 建议新增 changes
 
 | 顺序 | Change | Requirements | 说明 |
 | --- | --- | --- | --- |
-| 1 | `harness-deterministic-gate-enforcement` | HAR-001..007 | P1，落实既有 `harness-runtime` 唯一决策者契约，不重造状态机 |
-| 2 | `tool-governance-canonicalization` | TOOL-001..006 | P1/P2；依赖 `framework-runtime-safety-hardening` 的 unique registration tasks 完成，避免并行改 composition |
-| 3 | `source-policy-contract-convergence` | SRC-001..006 | 独立 contract change，可与 quality 批次并行 |
+| 1 | `harness-side-effect-authority-closure` | HAR-008..009 | 先提交越权字段与 publication ordering contract probes；仅在 probe 失败时修复 production，不重造 gate/state machine |
+| 2 | `tool-governance-canonicalization` | TOOL-001..003、005..007 | P1/P2；消费 `framework-runtime-safety-hardening` 已验收的 TOOL-004 unique registration contract，不并行修改 registry ownership |
+| 3 | Conditional `harness-source-tool-composition` | SRC-002 Harness integration evidence | 仅当 U2 确认 Harness 应支持 Source tools 时创建；接入唯一 ToolRegistry/ToolPort 与同一 Source provider。若能力明确不支持，则在 Source change 中记录经批准的 capability decision，不创建空 registry/fake path；SRC-002 仍由 Source change accountable |
 | 4 | `analysis-quality-contract-convergence` | QLT-001..005 | 先 parity，后 production cutover，再删旧算法 |
-| 5 | `workflow-canonical-graph-semantics` | WF-001 | 聚焦 fallback/reachability/dataflow/cycle；保持 serialization/replay version compatibility |
+| 5 | `workflow-canonical-graph-semantics` | WF-001 | 先建立不依赖 compiler/runtime 的 pure specs graph owner，再迁移 fallback/reachability/dataflow/cycle consumers；保持 serialization/replay version compatibility并增加 import-cycle gate |
 | 6 | `research-experience-memory-provenance` | RES-007 | 独立于 production composition，修改 `harness-skill-evolution` experience/store/provenance contract |
-| 7 | `framework-port-contract-convergence` | WF-002..003 | 先做 budget/conversation/memory contract audit，再分别迁移 canonical owner；不得建立 generic DTO god module |
-| 8 | `framework-legacy-retirement` | WF-004..007 | 复用阶段 8/9 删除规则；只有在 production cutover 和外部 consumer/replay 审计后实施 |
+| 7 | `framework-budget-contract-convergence` | WF-002 | 只收敛 token/cost/call budget；tool/wall-time adapter 保持领域 ownership |
+| 8 | `framework-conversation-contract-convergence` | WF-003 | 只收敛 message/compaction/cursor/checkpoint 与 LocalJson/Postgres mapper contract |
+| 9 | `framework-memory-document-contract-convergence` | WF-004 | 只收敛 memory record/document 与 Local/Vector/Qdrant mapper contract |
+| 10 | `framework-legacy-inventory-and-freeze` | WF-005..006 | 建立 export/dynamic/replay/consumer inventory、冻结新增调用方并定义删除门，不在该 change 跨域删除实现 |
+| 11 | `framework-fixture-domain-boundary` | WF-007 | 只迁移 domain-specific framework fake/fixture，保持生产 contract 不变 |
+| 12 | owner-local `*-legacy-retirement` child changes | WF-008 | Analysis、Source、Workflow/Agent、Research/test facade 分 owning area 提案、验收和删除；禁止一个 commit 跨域清场 |
 
 ### 14.3 Completed changes 的处理
 
@@ -420,19 +509,23 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 
 | 阶段 | 交付内容 | 依赖 | 合并门禁 |
 | --- | --- | --- | --- |
-| P0 | 将全部反例转为 failing regressions；归档/建立 OpenSpec；冻结 public contract snapshots | 无 | 每个 P1 至少一条修复前失败测试 |
-| P1A | Harness gate authority | P0；阶段 19 gate-event schema 稳定 | Harness focused、deterministic replay、architecture、smoke |
+| P0（按 slice 持续） | 每个切片在自身修复前本地运行对应 failing regression、把 red 命令与失败 oracle 记录到 OpenSpec `evidence.md`，并冻结受影响 public contract snapshot | 无 | 每个新切片至少一条可复现的修复前失败证据；不合并 red commit；已归档切片保持 regression 常绿 |
+| P1A（已完成基线） | Harness gate authority HAR-001..007 | P0；阶段 19 gate-event schema 稳定 | 已归档 change 的 focused、deterministic replay、architecture、smoke 保持常绿 |
+| P1A2 | Harness authorization/memory/publication side-effect authority | P1A | forged decision fields、publication ordering、durable transcript、smoke |
 | P1B | Approval canonical model、tool risk decision | P0；framework safety unique registration 完成 | Tool/store contract、全工具分类矩阵、smoke |
 | P1C | Workflow canonical graph semantics | P0 | validator/compiler/runtime parity、serialization/replay compatibility |
-| P2A | Source policy/mapper 收敛 | P0 | Source contract matrix、shared quota、round-trip |
-| P2B | Quality parity、canonical cutover、compat adapter | P1A | Golden decision review、artifact/persistence compatibility |
-| P3 | Research production composition 完成；boundary、ask、tenant、durability 和 experience 分批收敛 | P1A/P1B/P2A；active Research change | HTTP/MCP/CLI parity、restart/concurrency、no fake graph、experience lookup |
-| P4 | Budget、port DTO、legacy freeze/delete | P1-P3；与 durable event 文件冲突解除 | Store contract、external import/replay audit |
+| P2A-core（实施中） | Source URL/retry/rate/taxonomy、object mapper、serialized reader 与通用 composition 收敛 | P0 | Source contract matrix、public payload parity、shared quota、object/persistence round-trip；独立记录 core evidence，不提前勾选跨 owner tasks |
+| P2A-entry | API、MCP、worker、CLI 与 Source-tool service 绑定稳定 Source composition | P2A-core | process/command lifetime 连续调用保留 quota state；无 per-request runtime 重建 |
+| P2A-Research | 将同一 Source provider/ledger 注入默认 Research arXiv package/PDF composition，完成 task 3.7/3.10 的 Research 部分 | P2A-core；P3 Research factory 可构造 | recorded no-network typed denial、连续调用 quota state、无第二 Source runtime/ledger |
+| P2A-Harness | 为 Harness Source-tool capability 绑定唯一 production ToolRegistry/ToolPort owner，或记录 explicit unsupported decision | P2A-core；P1B Tool governance；U2 决策 | production object graph/recorded run 证明同一 provider，或 capability contract 明确不可用；禁止 fake/空 registry。Source task 3.7 在该 gate 前不得完成 |
+| P2B | Quality parity、canonical cutover、compat adapter | P1A/P1A2 | Golden decision review、artifact/persistence compatibility |
+| P3 | Research production composition 完成；boundary、outer-workflow/inner-RAG-session ownership、ask、tenant、durability 和 experience 分批收敛 | P1A/P1A2/P1B/P2A-core；active Research change；P2A-Research 与 factory cutover 同批验收；`research-experience-memory-provenance` 完成后才验收 experience | HTTP/MCP/CLI parity、recorded workflow/session identity、restart/concurrency、no fake graph、shared Source ledger、experience lookup |
+| P4 | Budget、conversation、memory contract 分切片收敛；legacy inventory/freeze 与 owner-local delete | P1-P3；与 durable event 文件冲突解除 | 每个 port/backend 独立 contract；external import/replay audit；删除 commit 不跨 owning area |
 | P5 | 全量回归、迁移/回滚演练、删除 compatibility window 到期项 | P1-P4 | mandatory smoke、strict OpenSpec、diff check、release evidence |
 
-P1A、P1B、P1C 可以在 file ownership 不冲突时并行；P2A 与 P2B 可以并行。Research adapter 实现可以提前推进，但 P3 final cutover 必须等待 Harness authority、Tool governance 和 Source policy contract 稳定。P4 若触碰 event/checkpoint 文件，必须等待 `durable-event-runtime` 对相同文件的 owner 明确后再实施。
+P1A2、P1B、P1C 可以在 file ownership 不冲突时并行；P2A-core 与 P2B 可以并行。P2A-entry 由 Source change 自身闭环；Research adapter/factory 在 P2A-core contract 稳定后即可推进，不等待 Source change 整体 complete；P2A-Research 与 P3 factory cutover 是一个共享验收门，双方不得互相声明为前置完成条件。P2A-Harness 独立于 Research gate，但会阻断 Source task 3.7 和 Source change overall completion。P3 final 仍须等待 Harness authority、Tool governance 和 Source core contract 稳定。P4 的 budget、conversation、memory changes 互不作为默认前置；若任一切片触碰 event/checkpoint 文件，必须等待 `durable-event-runtime` 对相同文件的 owner 明确后再实施。
 
-每个 change 至少独立提交：tests/spec -> implementation -> migration/cutover -> deletion/docs。禁止用一个提交同时完成跨 Tool、Source、Quality、Research、Workflow 的大规模移动。
+每个 change 按 OpenSpec/spec -> regression + implementation -> migration/cutover -> deletion/docs 的逻辑顺序交付；只有在每个中间提交都通过其范围门禁时才拆成多个提交。修复前 red 状态只保存在本地运行记录或临时分支及 `evidence.md`，不得进入可合并历史；regression 与根因修复可以在同一个 green implementation commit 中提交。禁止用一个提交同时完成跨 Tool、Source、Quality、Research、Workflow 的大规模移动。
 
 ---
 
@@ -443,12 +536,12 @@ P1A、P1B、P1C 可以在 file ownership 不冲突时并行；P2A 与 P2B 可以
 | Area | 代表文件 | 目标变化 |
 | --- | --- | --- |
 | Harness VERIFY | `framework/harness/control_plane/harness.py`、`scheduler.py`、`routing.py`、`workflow/step.py` | named gate registry、gate-derived verdict、worker observation 隔离、durable gate identity |
-| Research composition | `interfaces/api/app.py`、`interfaces/services/research_service.py`、`interfaces/services/mcp_service.py`、`interfaces/api/routers/research.py` | 统一 production factory、durable store、移除 route singleton、actor propagation |
-| Research boundary | `business/research/services/rag_policy.py`、`application/paper_rag_session.py`、`application/single_paper_runtime.py`、`infrastructure/research/*` | 明确 designated runtime/adapter boundary、精确 port/DTO imports、experience store/provenance |
+| Research composition | `interfaces/api/app.py`、`interfaces/services/research_service.py`、`interfaces/services/mcp_service.py`、`interfaces/api/routers/research.py` | 统一 production factory、durable store、移除 route singleton、actor propagation，并注入 Source core 已验证的 provider/ledger |
+| Research boundary | `business/research/workflows/paper_analysis_workflow.py`、`services/rag_policy.py`、`application/paper_rag_session.py`、`application/single_paper_runtime.py`、`infrastructure/research/*` | 明确 canonical 外层 workflow 与 bounded RAG 子会话、designated runtime/adapter boundary、精确 port/DTO imports、experience store/provenance |
 | Tool governance | `framework/tool/governance/approval.py`、`framework/workers/approval/model.py`、`framework/tool/models/policy.py`、framework/infra/business catalogs | canonical approval DTO 与 risk decision，registry 只追加 inventory |
-| Source policy | business Source normalization/runtime/health、`infrastructure/external/sources/fetch_policy.py`、interface mappers | URL/retry/taxonomy/limiter/mapper 单一 owner |
+| Source policy | business Source normalization/runtime/health、`infrastructure/external/sources/fetch_policy.py`、`interfaces/services/source_mapping.py`、`business/foundation/models/source_error_normalization.py`、Harness/Research composition boundaries | URL/retry/taxonomy/limiter/object-mapper/serialized-reader 单一 owner；entry、Research、Harness integration gate 独立；public `RawSourceItem` payload 不丢字段 |
 | Quality | `business/layers/analysis/quality_records.py`、`analysis/quality/*`、`analysis/tools.py`、Research quality adapter | canonical engine、shadow parity、compatibility mapper、旧算法退出 |
-| Workflow/contracts | specs validation、workflow compiler/runtime、LLM/Agent budget、conversation/memory models | canonical graph 与 port-owned contracts；legacy freeze |
+| Workflow/contracts | `framework/specs/graph_semantics.py`（planned/new）、specs validation、workflow compiler/runtime、LLM/Agent budget、conversation/memory models | 无环 canonical graph 与 port-owned contracts；legacy freeze |
 
 ### 16.2 必须新增或扩展的测试区域
 
@@ -456,8 +549,8 @@ P1A、P1B、P1C 可以在 file ownership 不冲突时并行；P2A 与 P2B 可以
 | --- | --- |
 | `tests/framework/harness` | named gate binding、worker score isolation、gate event/replay、budgeted failure handling |
 | `tests/framework/tool` + approval stores | model identity、backend lifecycle、risk matrix、side-effect-before-approval invariant |
-| `tests/interfaces/research` + `tests/infrastructure/research` | configured object graph、transport parity、actor/tenant、restart/concurrency、adapter allowlist |
-| Source business/infra/interface tests | golden URL、taxonomy/retry、shared quota、mapper round-trip |
+| `tests/interfaces/research` + `tests/infrastructure/research` | configured object graph、六个 entry/adapter surfaces factory parity、各自 transport/adapter contract、recorded outer workflow/inner RAG session identity、actor/tenant、restart/concurrency、adapter allowlist、shared Source provider |
+| Source business/infra/interface tests | golden URL、taxonomy/retry、shared quota、live SourceError mapper、历史 persisted SourceError codec/real-reader round-trip、17-field public `RawSourceItem` cross-entry parity、entry/Research/Harness composition gates |
 | Analysis quality tests | shared golden corpus、shadow diff classification、engine identity、persisted payload decode |
 | Workflow/storage contracts | fallback graph parity、budget parity、conversation/vector backend conformance |
 
@@ -470,23 +563,49 @@ P1A、P1B、P1C 可以在 file ownership 不冲突时并行；P2A 与 P2B 可以
 
 ---
 
-## 17. 测试计划与 Requirements -> Tasks -> Tests 追踪
+## 17. 审查发现与 Requirements -> Tasks -> Tests 追踪
 
-| Requirements | Task/change | 必须测试 | 关键 oracle |
+### 17.1 Finding -> requirement 决策闭环
+
+| Finding | 类型/分类 | 为什么不是有意策略差异 | Requirement / canonical owner | Change / test oracle | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| H1 Worker score 形成 verdict/route | 架构边界 | 同一 worker 输出跨越 candidate 与 deterministic decision，两条路径没有独立领域输入 | HAR-001、004；`framework/harness` | archived gate change；worker score matrix 中 route 不变 | 已收敛基线，保留回归 |
+| H2 named gate 未解析仍成功 | 架构边界 | workflow 已声明 gate，跳过执行不是“无 gate”变体 | HAR-002、003、006、007；gate registry | archived gate change；unknown gate 时 `worker_calls=0` | 已收敛基线，保留回归 |
+| R1 默认 Research 进入 unconfigured/in-memory path | 功能重复/竞争路径 | 默认入口与显式 runtime 接收相同请求，却只有前者永久 503 且不可持久化 | RES-001、002、008、011；planned `interfaces/composition/research.py` | active Research change；configured object graph + restart read | 已确认，待完成 |
+| T1 Tool/Worker approval DTO 竞争 | 重复代码 | 字段、状态和持久化用途相同，差异来自复制后的 backend 漂移 | TOOL-001..003；`framework/workers/approval` | Tool change；InMemory/LocalJson 及本切片新增 store 的 type/state contract | 已确认 |
+| T2 四处 tool risk classifier | 功能重复 | 输入均为同一 ToolDefinition，调用入口不应改变 authorization | TOOL-004..007；framework Tool policy | Safety change 验证唯一注册，Tool change 验证全 inventory risk matrix | 已确认 |
+| B1 Research/Harness adapter ownership 漂移 | 依赖拓扑 | application 组装 concrete controller 与 hexagonal port 不是领域变体；外层 workflow 与 bounded RAG session 是 parent/child contract，不是两个平行 controller | RES-003、004、009、010；Research ports + interface composition | active Research change；recorded workflow/session identity、AST/import graph、MCP dependency acyclic | 已确认，边界迁移中 |
+| S1 Source URL/retry/taxonomy/mapper 多份规则 | 重复代码 | 同一 URL、exception、quota 和 SourceError 在不同入口产生不同结果；live object 与 persisted decode 是不同边界但都需要唯一 owner | SRC-001..006；第 6.2 节精确 owner | active Source change；golden/parity/object+persisted round-trip/shared ledger/四 gate evidence | 已确认，实施中（0/41；无 `evidence.md`） |
+| Q1 production/eval/Research 共享质量规则分叉 | 功能重复 | citation/support 输入输出一致；Research 特有 readiness 另有显式字段 | QLT-001..005；`business/layers/analysis/quality` | Quality change；golden diff 必须全部分类 | 已确认 |
+| W1 validator/compiler/runtime graph 分叉 | 重复代码/依赖拓扑 | 三者消费同一 WorkflowSpec，fallback edge 不是可选策略；当前 compiler wrapper 反向依赖 specs，不能成为 specs 的下层 owner | WF-001；目标纯 `framework/specs/graph_semantics.py` | Workflow graph change；fallback/cycle/dataflow parity + import-cycle oracle | 已确认 |
+| E1 experience ref 未持久化且 hash 伪造 | 架构边界 | ref/hash 对外承诺可查询 provenance，不是 presentation 变体 | RES-007；Harness skill experience store | Experience change；append/query/manifest hash | 已确认 |
+| C1 conversation/memory persistence DTO 复制 | 重复代码 | record/cursor/checkpoint 字段和序列化目标相同，backend 差异只在 I/O | WF-003..004；framework agent/memory contracts | Conversation 与 memory child changes；Local/Postgres/vector round-trip | 已确认 |
+| D1 legacy builder/facade 仓内不可达 | 死代码候选 | 生产替代路径已存在，但包外/dynamic/replay 证据尚不完整 | WF-005..008；原 owner 冻结 | Inventory/freeze change + owner-local child changes；五类删除证据齐全才允许 delete | 部分确认，不可直接删除 |
+
+### 17.2 Requirements -> tasks -> tests/evidence
+
+| Requirements | Accountable task/change | 必须测试/证据 | 关键 oracle |
 | --- | --- | --- | --- |
 | HAR-001..007 | `harness-deterministic-gate-enforcement` | worker forbidden fields、unknown gate、step/global gate selection、LLM score routing、replan budget、transcript replay | verdict 只引用 deterministic gate result；未知 gate 时 `worker_calls=0` |
-| RES-001..006、008 | `research-runtime-production-composition` completion | configured/unavailable object graph、六类 transport parity、restart、concurrent runs、tenant visibility | 无 fake/unconfigured/in-memory production dependency；50-run isolation 串扰为 0 |
+| HAR-008..009 | `harness-side-effect-authority-closure` | forged worker authorization/memory/publication fields、gate/approval/budget terminal states、atomic publication | unauthorized side effect/memory/published index writes 为 0 |
+| RES-001..006、RES-008..011 | `research-runtime-production-composition` completion | configured/unavailable object graph；HTTP Research route、HTTP MCP route、local MCP call、stdio loop、CLI direct commands、`NewsMCPServerAdapter` factory parity与各自 contract；recorded outer workflow/inner RAG session；Source shared binding；restart、concurrent runs、tenant visibility、AST dependencies | 无 fake/unconfigured/in-memory production dependency；workflow/session parent-child identity 可 replay；50-run isolation 串扰为 0；entry/adapter 不直达 executor/store |
 | RES-007 | `research-experience-memory-provenance` | experience append/query、real package hash、gate failure/no-promotion | ref 可查询；普通 run promotion count 为 0 |
-| TOOL-001..007 | `tool-governance-canonicalization` | type identity、InMemory/LocalJson/Postgres contract、duplicate decision、risk golden matrix、registry partition、Harness approval | 所有入口同一 decision；side effect 在 durable approval 前为 0 |
-| SRC-001..006 | `source-policy-contract-convergence` | URL golden corpus、retry/status matrix、cross-entry limiter、taxonomy、mapper round-trip、connector factory | 相同 input 得到相同 identity/retry/quota/error payload |
+| TOOL-001..003、TOOL-005..007 | `tool-governance-canonicalization` | type identity、InMemory/LocalJson 及新增 store contract、duplicate decision、risk golden matrix、Harness approval、消费 canonical registry 的 object-graph/AST contract | 所有入口同一 decision；side effect 在 durable approval 前为 0；不创建第二 registry |
+| TOOL-004 | `framework-runtime-safety-hardening` | unique built-in registration、registry partition、duplicate fail-closed、custom-provider forwarding | 每个 built-in name 只有一个 registration owner |
+| SRC-001..006 | `source-policy-contract-convergence` | URL golden corpus、retry/status matrix、cross-entry limiter、taxonomy、live object mapper、persisted codec/real reader、17-field public item parity、connector factory、entry/Research/Harness composition evidence | 相同 input 得到相同 identity/retry/quota/error/public payload；core、entry、Research、Harness gate 分别可定位，最终共用一个 ledger 或有 explicit unsupported Harness decision |
 | QLT-001..005 | `analysis-quality-contract-convergence` | old/new parity snapshot、production/eval identity、Research adapter、artifact/persistence projection、100-run determinism | `unclassified_diff_count=0`；一个生产算法 owner |
-| WF-001 | `workflow-canonical-graph-semantics` | fallback-only、cycle/dataflow、read_keys、compiler/runtime route parity | 三层 graph semantic disagreement 为 0 |
-| WF-002..003 | `framework-port-contract-convergence` | budget parity、conversation/vector backend conformance | persisted contract 不变；structural-typing-only path 为 0 |
-| WF-004..007 | `framework-legacy-retirement` | AST/import/export、dynamic entry、replay fixture、legacy metric | 未确认 public consumer 的 symbol 不删除；undocumented compatibility 为 0 |
+| WF-001 | `workflow-canonical-graph-semantics` | fallback-only、cycle/dataflow、read_keys、compiler/runtime route parity、AST import-cycle | 三层 graph semantic disagreement 为 0；graph owner 到 specs/compiler/runtime 的依赖无环 |
+| WF-002 | `framework-budget-contract-convergence` | router/Agent/Workflow reserve/record/cost-rounding parity | 同一 logical budget 得到相同余额、拒绝和 cost |
+| WF-003 | `framework-conversation-contract-convergence` | message/compaction/cursor/checkpoint 与 LocalJson/Postgres round-trip | persisted conversation contract 不变；structural-typing-only path 为 0 |
+| WF-004 | `framework-memory-document-contract-convergence` | memory record/document 与 Local/Vector/Qdrant round-trip | persisted/vector contract 不变；backend DTO 不反向成为 framework contract |
+| WF-005..006 | `framework-legacy-inventory-and-freeze` | AST/import/export、dynamic entry、replay fixture、package consumer inventory | 新增 legacy caller 为 0；未确认 public consumer 的 symbol 不删除 |
+| WF-007 | `framework-fixture-domain-boundary` | fixture import graph、production package exclusion、Research regression parity | framework fake 无 Research-specific DTO/rule；测试行为不变 |
+| WF-008 | owner-local `*-legacy-retirement` child changes | 每个 candidate 的 production/dynamic/public-export/persistence/replay 五类证据与替代测试 | 无跨 owning-area delete commit；undocumented compatibility 为 0 |
 | Architecture | 各 change architecture batch | AST/import rules、composition owner、framework domain neutrality、legacy freeze | 禁止规则精确，无 blanket ignore |
-| Optional live | release qualification | credential-gated arXiv/LLM、Redis/Postgres/Qdrant conformance | ordinary smoke 不依赖 live；live failure 与代码失败分开报告 |
+| Required backend qualification | 被修改或被声明支持的 persistence backend | real-service Redis/Postgres/Qdrant conformance | 对应 contract suite 必须通过，否则撤回支持声明且阶段不得标 `FINAL` |
+| Optional external-provider E2E | release qualification | credential-gated arXiv/LLM | ordinary smoke 不依赖外部 provider；live failure 与 deterministic contract failure 分开报告 |
 
-测试不得只断言源码包含某个字符串或 factory 名称。Boundary tests 应使用 AST/import graph；composition tests 应检查真实对象图和行为；backend tests 应复用参数化 contract suite，同时保留各 backend 的事务/SQL/锁断言。
+Runtime/contract requirement 必须有可执行 regression 或 contract test；migration/parity requirement 必须有 committed golden corpus、差异 decision record 与兼容快照；retirement/compatibility requirement 必须有 import/export、dynamic entry、persisted replay、package consumer 与替代测试证据。流程依赖只作为明确的 change gate，不得用源码字符串或文件存在性测试充数。Boundary tests 应使用 AST/import graph；composition tests 应检查真实对象图和行为；backend tests 应复用参数化 contract suite，同时保留各 backend 的事务/SQL/锁断言。
 
 ---
 
@@ -501,7 +620,7 @@ python -m scripts.dev smoke
 git diff --check
 ```
 
-如果 change 修改 PostgreSQL、Redis、Qdrant 或 live transport adapter，必须额外运行其 backend contract suite，并记录依赖缺失、credential skip 和真实代码失败的区别。不得用新增 `skip/xfail` 关闭本 PRD 的 regression。
+如果 change 修改 PostgreSQL、Redis、Qdrant 或 live transport adapter，必须额外运行其 backend contract suite，并记录依赖缺失、credential skip 和真实代码失败的区别。任何被本阶段修改或在阶段 `FINAL` 中声明支持的 Redis/PostgreSQL/Qdrant backend，都必须在真实服务上通过对应 contract suite；缺失服务会阻断该 backend 的支持声明和阶段 `FINAL`，不能用 fake 通过替代。只有 arXiv/LLM 等外部 provider 的 live E2E 可以作为不阻断 ordinary gate 的 optional qualification。不得用新增 `skip/xfail` 关闭本 PRD 的 regression。
 
 ---
 
@@ -530,16 +649,18 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 - Public payload 和 persisted record 使用 dual-read/single-write 迁移；禁止永久 dual-write 两套事实模型。
 - 每次切换保留明确 kill switch 只用于选择旧 adapter，不允许关闭 quality/authorization gate。
 
-### 20.2 回滚条件
+### 20.2 回滚、隔离与前向修复
 
-| 条件 | 回滚动作 |
-| --- | --- |
-| Gate registry 误拒合法 workflow | 回滚 registry mapping/version，不恢复 worker score verdict |
-| Research factory 配置导致启动不可用 | 回到 typed unavailable service，不回到 fake/in-memory success path |
-| Tool risk cutover 阻断合法 read-only tool | 修正 canonical decision/golden case；高风险默认仍 fail-closed |
-| Source policy 造成请求激增或误限流 | 回滚 composition binding并保留共享 limiter，不复制 limiter |
-| Quality canonical engine 改变外部 payload | 回滚 compatibility mapper/cutover，保留 parity evidence和新 engine |
-| Workflow graph 修正影响历史 checkpoint | 保留历史 reader/upcaster，停止新 graph cutover，不改写历史记录 |
+| Surface | 处置类型 | 触发门槛 | 决策 owner | 目标/动作 | 数据与回滚后 oracle |
+| --- | --- | --- | --- | --- | --- |
+| Harness gate registry | Rollback | 任一 pre-cutover 合法 workflow corpus 被误拒，或 recorded replay verdict 不一致 | Harness runtime owner | 切回上一已资格化 registry mapping/version；不得恢复 worker score verdict | 不改写历史 gate event；compatibility corpus、replay 和 unknown-gate fail-closed 全部通过 |
+| Research production factory | Containment + rollback | 任一已资格化 configured graph 无法启动、recorded analysis 失败或 restart read 失败 | Research runtime owner | 先进入 typed unavailable containment，再切回上一已资格化 factory/adapter；不得选择 fake/in-memory success path | 已写 run/artifact 保持 dual-read；object-graph、recorded analysis、restart-read contract 通过 |
+| Tool risk/approval | Forward-fix，必要时 policy rollback | Golden matrix 出现任一未分类差异、合法 read-only tool 被误阻断，或 approval 前发生 side effect | Tool governance owner | 修正或切回上一 policy version；高风险仍 fail-closed，不允许 bypass approval | 不重写既有 approval decision；risk matrix、duplicate decision 和 pre-approval side-effect oracle 通过 |
+| Source policy/composition | Rollback | Shared-ledger invariant violation 大于 0、实际 attempts 超出 retry matrix，或 golden case 出现误限流/请求放大 | Source runtime owner | 切回上一已资格化 composition binding，同时保留单一 shared limiter；不得复制 ledger | 历史 identity/ref 继续 dual-read；quota、retry、taxonomy 和 persistence compatibility matrix 通过 |
+| Analysis quality engine | Rollback cutover/adapter | `unclassified_diff_count > 0`、公共 payload snapshot 改变，或 persisted projection 无法读取 | Analysis Quality domain owner | 切回上一 engine/compatibility adapter version；不得降低 deterministic gate 或删除 parity evidence | 不改写历史 artifact；golden parity、payload/persistence round-trip 和 gate regression 通过 |
+| Workflow graph semantics | Containment + rollback | Compatibility corpus 出现 compile/runtime route 分歧，或历史 checkpoint replay 失败 | Workflow runtime owner | 停止新 graph cutover并切回上一 graph adapter/version；保留历史 reader/upcaster | 不改写 checkpoint/event；fallback/cycle/dataflow/route parity 与 replay 通过 |
+
+每个 production cutover 的 OpenSpec `design.md`/`evidence.md` 必须在切换前填入 `trigger_metric`、观测窗口与阈值、`decision_owner`/on-call、精确 `rollback_target`（version/commit/flag）、数据兼容处理、`post_rollback_oracle` 和 `max_recovery_time`。上表的零容忍 invariant 不得被切片放宽；字段未填或未完成一次 recorded/fault-injection rehearsal 时，不得执行 production cutover。
 
 ---
 
@@ -553,54 +674,79 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 | Architecture allowlist 变成逃生口 | 只允许精确 module/type，禁止目录级/前缀级 blanket exception |
 | Active OpenSpec 并行修改相同文件 | 每个 change 声明 file owner；Research、安全、event 三个 active change 先做 overlap check |
 | 删除 public legacy export 破坏包外消费者 | 一个 release deprecation、usage telemetry/import audit、migration note 后再删 |
-| Live Redis/Postgres/Qdrant 与 fake 行为不同 | contract suite + optional real-service CI；缺依赖/凭据单列环境盲区 |
+| Live Redis/Postgres/Qdrant 与 fake 行为不同 | contract suite + real-service CI；被修改或被声明支持时必须通过，外部 provider E2E 才可 optional |
 | 修复 Source/Tool policy 时引入新的共享 god module | contract 放 owning domain；adapter 保持薄；禁止无 owner generic utils |
 
 ---
 
-## 22. Definition of Done
+## 22. 未确认项与决策门
 
-### 22.1 P1 authority
+下列项目缺少足够运行、外部 consumer 或真实 backend 证据，当前不得写成“可合并”或“可安全删除”。每项必须由下表 owner 在指定 evidence 中记录验证或明确保留决策；验证仍不充分时按默认处置保留现状，不得让不确定性扩散为新的 compatibility path。
+
+| ID | 未确认项 | Accountable owner / evidence | 决策期限与阻断项 | 验证方式与默认处置 |
+| --- | --- | --- | --- | --- |
+| U1 | Legacy public exports 是否有包外消费者 | `framework-legacy-inventory-and-freeze` owner；其 `evidence.md` compatibility registry | 每个 public export 删除提案前；阻断该 symbol 删除与相关 owner-local retirement final | package/export inventory、文档/entry-point、release telemetry 或 consumer confirmation；未证实时保留并设置 owner/expiry |
+| U2 | Production Harness 是否应提供 Source ToolRegistry/ToolPort capability，以及唯一 composition owner 在哪里 | Tool governance/Harness composition owner + Source integration owner；在 Source `evidence.md` 与条件 child change 交叉引用同一 evidence id | P2A-Harness 前；阻断 Source task 3.7 和 Source change overall completion，不阻断独立 Research gate | runtime composition probe、registry inspection、recorded Harness run；确认支持则接同一 provider，确认不支持则发布 explicit capability decision；不得造第二 registry/fake path |
+| U3 | Redis/PostgreSQL/Qdrant 与 local/fake contract parity | 每个 backend adapter owner；记录在触碰或声明支持该 backend 的 change `evidence.md` | 对外支持声明与 phase `FINAL` 前；阻断对应 backend 支持声明 | service-gated contract CI + backend-specific SQL/lease/transaction assertions；未通过时撤回支持声明 |
+| U4 | 测试 fixture/mock/setup 是否为真实重复 | 对应测试 owning area maintainer；`framework-fixture-domain-boundary` 或 owner-local change evidence | 抽取 shared fixture 前；只阻断该次抽取，不阻断保留现状 | AST/fixture use graph、参数矩阵、mutation/failure-path comparison；生命周期不一致时保留独立 fixture |
+| U5 | pagination/config/serialization helper 是否重复 | 当前模块 owner；仅在拟议 helper change 的 `evidence.md` 建账 | 新 generic helper 或合并提交前；只阻断该重构 | 静态调用图 + golden cases + exception/compatibility matrix；证据不足不新增 helper、不强制合并 |
+| U6 | 旧 analyzer/report DTO/WorkflowExecutor/storage adapter 是否可删除 | `framework-legacy-inventory-and-freeze` owner + 对应 owner-local retirement owner | 每个 candidate 删除前；阻断该 candidate 删除 | `rg`/AST/export/entry-point、fixture replay、package consumer audit；五类证据不齐则冻结并保留 |
+| U7 | Live arXiv/LLM Research 默认 composition 可用性 | Research release owner；`research-runtime-production-composition/evidence.md` live qualification | 宣称 live provider ready 前；不阻断 ordinary offline gate | 独立 credential-gated smoke，记录 provider/model/capability code且不记录 secret；缺证据时不得作 live readiness 声明 |
+| U8 | 外部 HTTP/MCP/SDK 对 payload 的隐式依赖 | Interface contract owner；记录在实施 payload cutover 的 change `evidence.md` | 删除/重命名字段前；阻断对应 breaking change | OpenAPI/JSON snapshot、SDK fixture、release note 与 consumer feedback；未确认时保留 additive/dual-read 兼容窗 |
+
+---
+
+## 23. Definition of Done
+
+### 23.1 P1 authority
 
 - [ ] Worker output 不能直接形成 Harness quality verdict 或 route。
 - [ ] 所有 step quality gates 可解析、可执行、可 replay；未知 gate fail-closed。
+- [ ] Worker 不能直接授权 tool、memory write、skill promotion 或 publication；未通过 gate/approval 的 candidate 不进入 published/latest index。
 - [ ] 默认 configured Research HTTP/MCP/CLI 进入真实 runtime 和 durable store。
 - [ ] Tool approval 使用唯一 canonical worker model，重复 decision 在所有 store 中一致拒绝。
 
-### 22.2 Contract convergence
+### 23.2 Contract convergence
 
 - [ ] Tool risk classification 在 discovery/schema/executor/inspection/Harness 中一致。
 - [ ] Source URL、limiter、retry、taxonomy 和 mapper 各只有一个决策 owner。
+- [ ] Source core、entry binding、Research binding 与 Harness Source-tool capability 分门禁验收：默认 Research arXiv package/PDF 复用同一 Source provider/ledger；Harness 绑定唯一 production ToolRegistry/ToolPort，或有经批准的 explicit unsupported decision；不存在为完成 task 新建的第二 registry、runtime 或 limiter。
 - [ ] Production/eval 通用 quality 规则使用同一 engine。
-- [ ] Workflow validation/compiler/runtime 使用同一 graph semantics。
+- [ ] Workflow validation/compiler/runtime 使用同一 pure graph semantics owner，且依赖图不存在 `specs -> compiler -> specs` 环。
 - [ ] LLM budget、conversation 和 memory document 不再依赖重复 DTO 的 structural typing。
 
-### 22.3 Boundaries and compatibility
+### 23.3 Boundaries and compatibility
 
 - [ ] `business/research` 不依赖 legacy、interfaces 或 infrastructure；普通 application/service 不分散构造 Harness controller，指定 runtime boundary 只依赖获批的 domain-neutral contract。
+- [ ] Production analysis recorded run 引用 canonical outer workflow id/version/checksum 和 phase/gate events；bounded RAG session 只作为可追踪子会话或显式 standalone ask scope，不形成第二条外层控制路径。
 - [ ] `infrastructure/research` 只依赖精确获批的 Research domain/port contract，architecture smoke 通过。
-- [ ] HTTP/MCP/SDK、approval JSON、quality artifacts、SourceError、event/checkpoint 和 storage payload compatibility 有 committed tests。
+- [ ] Interface transport 只调用 application-layer service 或明确获批的 application use case；MCP inbound server 与 outbound ToolRuntime adapter 依赖无环、状态隔离。
+- [ ] HTTP/MCP/SDK、approval JSON、quality artifacts、`SourceError`、17-field public `RawSourceItem`、event/checkpoint 和 storage payload compatibility 有 committed tests。
 - [ ] 每个 compatibility adapter 有 owner、删除条件和期限。
 
-### 22.4 Delivery evidence
+### 23.4 Delivery evidence
 
+- [ ] HAR-001..009、RES-001..011、TOOL-001..007、SRC-001..006、QLT-001..005、WF-001..008 共 46/46 个 requirement IDs 均映射到单一 accountable OpenSpec task，并具备与 requirement kind 匹配的 passing regression/contract test 或 migration/retirement 审计 evidence；未完成项不得以 waiver 标记阶段 `FINAL / IMPLEMENTED`，需求撤销必须先修改 PRD 与对应 OpenSpec。
 - [ ] 所有建议 change 通过 `openspec validate <change> --strict`。
 - [ ] `openspec validate --all --strict`、`python -m scripts.dev compile`、mandatory `python -m scripts.dev smoke` 和 `git diff --check` 全部通过。
-- [ ] Optional live Redis/Postgres/Qdrant/arXiv/LLM 结果与 ordinary offline gate 分开记录。
+- [ ] 被修改或被声明支持的 Redis/Postgres/Qdrant backend 在真实服务上通过 contract suite；optional arXiv/LLM live E2E 结果与 ordinary offline gate 分开记录。
 - [ ] 删除清单附 `rg`/import graph、包外 consumer、dynamic entry、persisted replay 和替代测试证据。
 - [ ] PRD、OpenSpec tasks、tests 和 implementation commits 建立 requirements traceability。
+- [ ] 第 22 节每个未确认项都有验证记录或带 owner/expiry 的明确保留决策。
+- [ ] Compatibility registry 字段完整且 `overdue=0`；所有 migration kill switch 都有 retirement evidence。
+- [ ] 每个 production cutover 已填写第 20.2 节 rollback contract，并保存一次 recorded 或 fault-injection rehearsal、恢复时长和 post-rollback oracle 结果。
 
 阶段 20 只有在上述条件全部满足时才能标记 `FINAL / IMPLEMENTED`。局部 change 完成不得用于宣称整个阶段已收敛。
 
 ---
 
-## 23. 可复制给 Codex 的实施提示
+## 24. 可复制给 Codex 的实施提示
 
 实施任一阶段 20 change 时，Codex 必须：
 
 1. 只读取本 PRD 中该 change 对应的 requirement、owner、兼容矩阵和测试 oracle，不把 umbrella scope 一次性实现。
-2. 先执行 live repro 并提交 failing regression，再修改 production code。
+2. 先在本地执行 live repro 与 failing regression，把命令、失败 oracle 和结果记录到对应 OpenSpec `evidence.md`；不得把 red commit 合入可合并历史。
 3. 读取 active OpenSpec/file ownership，避免与 Research、framework safety、durable event 并行 change 修改同一 contract。
 4. 使用 canonical owner 和显式 adapter，不新增第二套 policy、DTO、graph、store 或 compatibility path。
-5. 完成 focused tests、architecture tests、strict OpenSpec、compile、mandatory smoke 和 diff check 后再提交。
+5. Regression 与根因修复形成 green implementation commit；完成 focused tests、architecture tests、strict OpenSpec、compile、mandatory smoke 和 diff check 后才允许合并最终切片。
 6. 删除 legacy 前附 production/dynamic/public-export/persistence/replay 证据；证据不完整时保留并登记 expiry，不猜测安全删除。
