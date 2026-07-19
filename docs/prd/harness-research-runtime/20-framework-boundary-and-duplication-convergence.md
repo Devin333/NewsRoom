@@ -4,7 +4,7 @@
 >
 > Implementation status: IN_PROGRESS
 >
-> Version: v1.9
+> Version: v1.10
 >
 > Priority: P1（控制权与生产运行阻断）/ P2（架构与契约收敛）
 >
@@ -167,6 +167,9 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | --- | --- |
 | 未解析的 step quality gate | `0`；任何未知 gate 在执行前失败 |
 | Worker 输出直接形成 quality verdict 的路径 | `0` |
+| Harness 状态机边界 | 每个 run 只按合法 `PLAN -> EXECUTE -> VERIFY` transition 推进；`max_turns`、`max_replans` 与 retry budget 在边界值耗尽后不再产生 worker/gate 调用 |
+| Durable phase event 完整性 | 每次 phase transition、retry/replan decision 和 terminal state 均有单调有序、可去重的 durable event；replay 后 state/counter/scheduler decision 100% 一致 |
+| Artifact namespace 隔离 | accepted output 只进入 canonical/published store；失败、halted、待审批 candidate/diagnostic 只通过 quarantine reader 可见，published/latest index 可见数为 `0` |
 | Configured 默认 Research 成功路径 | 六个 Research/MCP entry surfaces 解析到同一 factory implementation/object-graph contract；不包含 unconfigured use case 或 in-memory production store |
 | Approval canonical model | ToolExecutor、InMemory、LocalJson 及 interface service 类型/状态语义 100% 一致 |
 | Tool risk parity | 同一 ToolDefinition 在 catalog、schema export、executor、inspection 中决策 100% 一致 |
@@ -247,7 +250,7 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | 5 | Research report builder | verified-shape candidate、evidence refs | candidate report；不得自行发布或写 memory |
 | 6 | Harness VERIFY | candidate report、deterministic gates | versioned gate results + verdict |
 | 7 | Harness scheduler | verified verdict、explicit policy | replan/retry/repair/halt/complete；全程受预算约束 |
-| 8 | Artifact/run/experience stores | 仅 accepted outputs、events、refs | durable artifacts/storage；publication 与 memory write 需要独立确定性授权 |
+| 8 | Artifact/run/experience stores | accepted outputs、隔离的 candidate/diagnostic outputs、events、refs | accepted outputs 才能进入 canonical/published store 与 latest index；失败、halted 或待审批输出只能进入 quarantine namespace，且 publication 与 memory write 需要独立确定性授权 |
 
 任何默认入口都必须保留 `source collection -> evidence -> agent analysis -> report -> quality gate -> artifacts/storage` 的顺序。降级路径可以缩减证据内容，但不能跳过 evidence lineage、deterministic gate 或 accepted-output publication 边界。
 
@@ -297,8 +300,8 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | HAR-002 | `HarnessStepSpec.quality_gate` 必须解析到 deterministic gate registry；未知、重复、版本不兼容或缺少依赖的 gate 在 run start 前 fail-closed。 |
 | HAR-003 | 每个 step 只执行其声明 gate 加全局 mandatory gates；不得用一个不区分 step 的 gate 列表替代声明契约。 |
 | HAR-004 | `HarnessQualityVerdict` 只能从 gate result aggregation 生成；默认 `passed=True` 仅允许明确声明“无 quality gate”的 framework utility step。 |
-| HAR-005 | Gate failure 只能触发 spec/policy 允许的 retry、replan、repair、halt 或 fail，并继续受 `max_replans/max_turns/retry budget` 约束。 |
-| HAR-006 | Transcript 必须记录 gate id/version、input refs/hash、结果、失败原因、聚合 verdict 和由此产生的 scheduler decision。 |
+| HAR-005 | Harness 必须按有界 `PLAN -> EXECUTE -> VERIFY` 状态机推进。Gate failure 只能触发 spec/policy 允许的 retry、replan、repair、halt 或 fail；`max_replans`、`max_turns` 与 retry budget 在边界值耗尽后必须形成稳定 terminal state，且不得再调用 worker 或 gate。 |
+| HAR-006 | Durable transcript/event log 必须记录每次 phase transition、attempt/retry/replan counter、gate id/version、input refs/hash、结果、失败原因、聚合 verdict、scheduler decision 和 terminal reason。事件必须具有稳定 identity 与单调顺序；重复投递不得重复推进状态，缺失或乱序事件必须 fail-closed，replay 必须重建相同 state、counter 与 decision。 |
 | HAR-007 | Research workflow 中声明的 gate 必须逐一映射；不存在的历史 gate name 必须删除或实现，不能仅作为 metadata 保留。 |
 | HAR-008 | Worker 返回的 tool authorization、memory-write、publication 或 skill-promotion 建议只能是 candidate observation；Harness 必须丢弃或显式拒绝可执行 decision 字段，并分别调用 canonical policy/gate。 |
 | HAR-009 | Report、memory 和 production artifact 的最终写入只能发生在 deterministic gate/authorization 成功之后；失败、halted 或待审批 run 只能写隔离的 candidate/diagnostic artifact，不得进入 published/latest index。 |
@@ -308,9 +311,11 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 - 任何 `worker_type=llm|subagent` 的自报 score 都不能单独改变 route。
 - `quality_gate="DefinitelyMissingGate"` 在执行 worker 前失败。
 - Research paper-analysis workflow 的每个 gate name 都有 registry identity 和 committed execution test。
-- Replay 使用已记录 gate result，不重新调用 LLM 或以当前默认值替换历史 verdict。
+- `max_turns`、`max_replans` 与 retry budget 分别覆盖 `limit-1`、`limit`、`limit+1` 边界；耗尽后 run 进入唯一 terminal state，后续 worker/gate 调用数为 `0`。
+- 正常、gate failure、retry、replan、repair 与 halt 路径均记录完整 `PLAN -> EXECUTE -> VERIFY` transition 序列；事件 identity/sequence 无缺失、重复或倒序。
+- Replay 使用已记录 phase/gate/decision events 重建相同 state、counter 与 scheduler decision，不重新调用 LLM 或以当前默认值替换历史 verdict；重复事件幂等，缺失或乱序事件 fail-closed。
 - Worker 即使返回 `approved=true`、`write_memory=true` 或 `publish=true`，也不能增加 tool side effect、memory record 或 published artifact；拒绝原因写入 transcript。
-- Gate failure、approval pending、budget halt 三种终态均验证 published/latest index 不可见 candidate，accepted run 才能原子发布。
+- Gate failure、approval pending、budget halt 三种终态可以持久化 quarantine candidate/diagnostic artifact，但 published/latest index 必须不可见；accepted run 才能原子写入 canonical/published store，并有 contract test 验证两类 namespace 的 read/write 隔离。
 
 ---
 
@@ -475,7 +480,7 @@ QLT-002 的差异分类由 Analysis Quality domain owner 与 Architecture owner 
 
 | Existing change | 本 PRD 使用范围 | 禁止扩展 |
 | --- | --- | --- |
-| `harness-deterministic-gate-enforcement`（ARCHIVED） | HAR-001..007 的 gate binding、worker score isolation、gate-derived verdict 与 replay 基线；实现 `017a227e` | 不重开 archived tasks；新增回归以新的 modified requirement/change 表达 |
+| `harness-deterministic-gate-enforcement`（ARCHIVED） | HAR-001..007 的 gate binding、worker score isolation、gate-derived verdict、bounded scheduler 与 replay 基线；实现 `017a227e`。HAR-005/006 的强化验收先组合复用该 archived regression、canonical `harness-runtime` spec 与 `durable-event-runtime` 的 ordered/idempotent/fail-closed replay evidence | 不重开 archived tasks；若 `limit-1/limit/limit+1` 或 phase-event duplicate/missing/out-of-order 矩阵仍有缺口，必须新建 modified-requirement change 并更新本表的单一 accountable owner，不得把新增工作伪记为 archived completion |
 | `source-policy-contract-convergence`（ACTIVE） | SRC-001..006 的 URL identity、fetch policy、taxonomy、error factory、object mapper、serialized reader、shared composition 与 compatibility cutover。Core、API/MCP/worker/CLI entry binding、Research arXiv binding、Harness Source-tool capability 四个 gate 分开记录；task 3.7/3.10 只有在相关 gate 均有 evidence 后才能勾选 | implementation `372027ac` 已提交，当前 38/41 且有 `evidence.md`；3.7、3.10、7.5 保持开放。不把 Tool authorization、Research parser/RAG 或 generic framework utils 纳入 Source change；不得为提前勾选 task 新造第二个 Research factory、Harness registry、Source runtime 或 limiter |
 | `research-runtime-production-composition`（ACTIVE） | RES-001..006、RES-008..011 的 production factory、adapters、durable run store、六入口/adapter parity、外层 workflow/内层 RAG session ownership、`/rag-ask` lifecycle/actor propagation、interface/MCP adapter boundary 和 lifecycle；同时承接 Source task 3.7/3.10 的 Research binding cutover，新增范围必须先更新 design/tasks。`5effa03e` 已提交 settings、typed unavailable 和 composition lifecycle foundation；完整 object graph 仍未完成 | 当前 OpenSpec ledger 为 12/46；逐项状态必须以 committed implementation 与 evidence 复核，不以 ledger 数字代替验收。不顺手重写 Harness quality、Tool policy、Source 全局 policy；只注入 Source change 已验证的 provider/ledger contract，不复制其实现 |
 | `framework-runtime-safety-hardening` | TOOL-004 的 unique built-in registration、composition safety；继续完成其 attempt/lease/error scope | 不在无 proposal 更新时加入 approval/risk model、quality engine 或 Workflow graph 迁移 |
@@ -590,8 +595,8 @@ P1A2、P1B、P1C 可以在 file ownership 不冲突时并行；P2A-core 与 P2B 
 
 | Requirements | Accountable task/change | 必须测试/证据 | 关键 oracle |
 | --- | --- | --- | --- |
-| HAR-001..007 | `harness-deterministic-gate-enforcement` | worker forbidden fields、unknown gate、step/global gate selection、LLM score routing、replan budget、transcript replay | verdict 只引用 deterministic gate result；未知 gate 时 `worker_calls=0` |
-| HAR-008..009 | `harness-side-effect-authority-closure` | forged worker authorization/memory/publication fields、gate/approval/budget terminal states、atomic publication | unauthorized side effect/memory/published index writes 为 0 |
+| HAR-001..007 | `harness-deterministic-gate-enforcement`（accountable baseline；HAR-006 消费非 accountable 的 `durable-event-runtime` evidence） | worker forbidden fields、unknown gate、step/global gate selection、LLM score routing；`PLAN -> EXECUTE -> VERIFY` transition sequence；turn/replan/retry 的 `limit-1/limit/limit+1`；事件重复/缺失/乱序与 transcript replay；若现有 evidence 缺项则先创建 modified-requirement change 并转移 accountable mapping | verdict 只引用 deterministic gate result；未知 gate 或预算耗尽后 `worker_calls=0`；replay state/counter/scheduler decision 一致，invalid event stream fail-closed |
+| HAR-008..009 | `harness-side-effect-authority-closure` | forged worker authorization/memory/publication fields、gate/approval/budget terminal states、canonical/published 与 quarantine namespace read/write isolation、atomic publication | unauthorized side effect/memory/published index writes 为 `0`；terminal diagnostic 可由 quarantine reader 查询但不出现在 published/latest index |
 | RES-001..006、RES-008..011 | `research-runtime-production-composition` completion | configured/unavailable object graph；HTTP Research route、HTTP MCP route、local MCP call、stdio loop、CLI direct commands、`NewsMCPServerAdapter` factory parity与各自 contract；recorded outer workflow/inner RAG session；Source shared binding；restart、concurrent runs、tenant visibility、AST dependencies | 无 fake/unconfigured/in-memory production dependency；workflow/session parent-child identity 可 replay；50-run isolation 串扰为 0；entry/adapter 不直达 executor/store |
 | RES-007 | `research-experience-memory-provenance` | experience append/query、real package hash、gate failure/no-promotion | ref 可查询；普通 run promotion count 为 0 |
 | TOOL-001..003、TOOL-005..007 | `tool-governance-canonicalization` | type identity、InMemory/LocalJson 及新增 store contract、duplicate decision、risk golden matrix、Harness approval、消费 canonical registry 的 object-graph/AST contract | 所有入口同一 decision；side effect 在 durable approval 前为 0；不创建第二 registry |
@@ -707,7 +712,8 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 
 - [ ] Worker output 不能直接形成 Harness quality verdict 或 route。
 - [ ] 所有 step quality gates 可解析、可执行、可 replay；未知 gate fail-closed。
-- [ ] Worker 不能直接授权 tool、memory write、skill promotion 或 publication；未通过 gate/approval 的 candidate 不进入 published/latest index。
+- [ ] `PLAN -> EXECUTE -> VERIFY` 每次 phase transition 与 retry/replan/terminal decision 均持久化；`max_turns`、`max_replans` 和 retry budget 边界测试通过，耗尽后无额外 worker/gate 调用；重复事件幂等，缺失或乱序 replay fail-closed。
+- [ ] Worker 不能直接授权 tool、memory write、skill promotion 或 publication；未通过 gate/approval 的 candidate 只允许进入隔离 quarantine namespace，不进入 canonical/published store 或 published/latest index。
 - [ ] 默认 configured Research HTTP/MCP/CLI 进入真实 runtime 和 durable store。
 - [ ] Tool approval 使用唯一 canonical worker model，重复 decision 在所有 store 中一致拒绝。
 
