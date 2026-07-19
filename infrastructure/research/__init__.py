@@ -1,3 +1,8 @@
+from infrastructure.research.artifact_port import (
+    ArtifactRunBindingError,
+    ArtifactWriteConflictError,
+    FilesystemHarnessArtifactPort,
+)
 from infrastructure.research.candidate_worker import (
     CANDIDATE_TASK_SCHEMAS,
     ResearchCandidateContractError,
@@ -21,15 +26,27 @@ from infrastructure.research.github_repository import (
     GithubResearchRepositoryAdapter,
     parse_github_repository_url,
 )
+from infrastructure.research.filesystem_run_store import (
+    DEFAULT_RESEARCH_RUN_RECORD_MAX_BYTES,
+    RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION,
+    RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+    FilesystemResearchRunStore,
+    ResearchResultDecoder,
+)
 from infrastructure.research.source_provider import (
     ArxivResearchSourceProvider,
     require_arxiv_id,
 )
 
 __all__ = [
+    "ArtifactRunBindingError",
+    "ArtifactWriteConflictError",
     "ArxivResearchSourceProvider",
     "CANDIDATE_TASK_SCHEMAS",
+    "DEFAULT_RESEARCH_RUN_RECORD_MAX_BYTES",
+    "FilesystemResearchRunStore",
     "GithubResearchRepositoryAdapter",
+    "FilesystemHarnessArtifactPort",
     "ResearchAdapterError",
     "ResearchCandidateContractError",
     "ResearchCandidateError",
@@ -39,6 +56,9 @@ __all__ = [
     "ResearchDocumentCompileError",
     "ResearchDocumentCompilerAdapter",
     "ResearchRepositoryError",
+    "ResearchResultDecoder",
+    "RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION",
+    "RESEARCH_RUN_RECORD_SCHEMA_VERSION",
     "ResearchSourceError",
     "SourceAdapterFailureSummary",
     "SUPPORTED_CANDIDATE_TASKS",

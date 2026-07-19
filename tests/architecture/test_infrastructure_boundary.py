@@ -34,6 +34,9 @@ ALLOWED_BUSINESS_IMPORTS = {
         "business.research.ports.document_compiler",
         "business.research.ports.document_parser",
     },
+    "infrastructure/research/filesystem_run_store.py": {
+        "business.research.ports.run_store",
+    },
     "infrastructure/research/github_repository.py": {
         "business.research.domain.code_repository",
     },
@@ -64,6 +67,9 @@ RESEARCH_ADAPTER_BUSINESS_IMPORTS = {
         "business.research.domain.paper",
         "business.research.ports.document_compiler",
         "business.research.ports.document_parser",
+    },
+    "infrastructure/research/filesystem_run_store.py": {
+        "business.research.ports.run_store",
     },
     "infrastructure/research/github_repository.py": {
         "business.research.domain.code_repository",

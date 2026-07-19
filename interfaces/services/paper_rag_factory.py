@@ -10,10 +10,11 @@ both business and infrastructure (the architecture boundary forbids business →
 from __future__ import annotations
 
 import os
+from threading import Condition, Lock
+from typing import Any, Callable, cast
 
 from framework.memory.runtime import MemoryRuntime
 from infrastructure.external.reranker import CrossEncoderReranker
-from infrastructure.external.sources.arxiv import ArxivSourceConnector
 from infrastructure.storage.postgres.paper_chunk_repository import PaperChunkRepository
 from infrastructure.storage.vector.paper_chunk_store import PaperChunkStore
 from infrastructure.storage.vector.paper_field_chunk_store import PaperFieldChunkStore
@@ -44,6 +45,10 @@ from business.research.rag.retrieval.paper_retriever import (
     ResearchRetriever,
     build_retrieval_policy_from_env,
 )
+from interfaces.services.source_runtime import (
+    SourceRuntimeComposition,
+    build_source_runtime_composition,
+)
 
 
 def _dsn() -> str:
@@ -54,27 +59,305 @@ def _dsn() -> str:
     return normalize_dsn(dsn)
 
 
-# Process-wide singleton: loading the cross-encoder weights costs ~18s, so the
-# reranker is built once and reused across requests (kept resident in memory).
-_RERANKER_SINGLETON: CrossEncoderReranker | None = None
 NEWS_RAG_MEMORY_ENV = "NEWS_RAG_MEMORY"
 NEWS_RAG_MEMORY_COLLECTION_ENV = "NEWS_RAG_MEMORY_COLLECTION"
+_UNSET = object()
 
 
-def get_reranker() -> CrossEncoderReranker:
-    global _RERANKER_SINGLETON
-    if _RERANKER_SINGLETON is None:
-        _RERANKER_SINGLETON = CrossEncoderReranker()
-    return _RERANKER_SINGLETON
+class _SynchronizedReranker:
+    """Serialize lazy model initialization and prediction on a shared reranker."""
+
+    def __init__(self, delegate: Any) -> None:
+        self._delegate = delegate
+        self._lock = Lock()
+        self._closed = False
+
+    def score(self, query: str, passages: list[str]) -> list[float]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Paper RAG reranker is closed")
+            return self._delegate.score(query, passages)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            delegate = self._delegate
+            self._delegate = None
+            close = getattr(delegate, "close", None)
+            if callable(close):
+                close()
+
+
+class PaperRagRuntimeResources:
+    """Own the reusable adapters used by one process-scoped Paper RAG service."""
+
+    def __init__(
+        self,
+        *,
+        vector_store_factory: Callable[[], Any] | None = None,
+        visual_store_factory: Callable[[], PaperVisualChunkStore | None] | None = None,
+        reranker_factory: Callable[[], CrossEncoderReranker] | None = None,
+        retrieval_policy_factory: Callable[[], Any] | None = None,
+        answer_worker_factory: Callable[[], Any] | None = None,
+        plan_worker_factory: Callable[[], Any | None] | None = None,
+    ) -> None:
+        self._vector_store_factory = vector_store_factory or qdrant_store_from_env
+        self._visual_store_factory = visual_store_factory or paper_visual_chunk_store_from_env
+        self._reranker_factory = reranker_factory or CrossEncoderReranker
+        self._retrieval_policy_factory = (
+            retrieval_policy_factory or build_retrieval_policy_from_env
+        )
+        self._answer_worker_factory = answer_worker_factory or (
+            lambda: PaperAnswerWorker(
+                AnswerGenerator(build_unity_llm_call(max_tokens=600))
+            )
+        )
+        self._plan_worker_factory = plan_worker_factory or _build_optional_plan_worker
+        self._lock = Condition(Lock())
+        self._closing = False
+        self._closed = False
+        self._vector_store: Any | None = None
+        self._chunk_store: PaperChunkStoreAdapter | None = None
+        self._field_chunk_store: PaperFieldChunkStore | None = None
+        self._visual_chunk_store: PaperVisualChunkStore | None | object = _UNSET
+        self._reranker: _SynchronizedReranker | None = None
+        self._retrieval_policy: Any = _UNSET
+        self._memory: ResearchRAGMemoryPort | None | object = _UNSET
+        self._answer_worker: Any = _UNSET
+        self._plan_worker: Any = _UNSET
+        self._owned_resources: list[Any] = []
+        self._owned_resource_ids: set[int] = set()
+
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed
+
+    def get_reranker(self) -> Any:
+        with self._lock:
+            self._ensure_open_locked()
+            return self._reranker_locked()
+
+    def preload_reranker(self) -> None:
+        self.get_reranker().score("warmup", ["warmup passage"])
+
+    def build_research_retriever(
+        self,
+        *,
+        with_reranker: bool = True,
+    ) -> ResearchRetriever:
+        with self._lock:
+            self._ensure_open_locked()
+            chunk_store = self._chunk_store_locked()
+            field_store = self._field_chunk_store_locked()
+            visual_store = self._visual_chunk_store_locked()
+            reranker = self._reranker_locked() if with_reranker else None
+            retrieval_policy = self._retrieval_policy_locked()
+        return ResearchRetriever(
+            chunk_store,
+            policy=retrieval_policy,
+            reranker=reranker,
+            field_index=field_store,
+            field_reranker=reranker,
+            visual_store=visual_store,
+        )
+
+    def build_paper_rag_session(
+        self,
+        *,
+        with_reranker: bool = True,
+        plan_worker: Any | None = None,
+        with_answer_worker: bool = False,
+    ) -> PaperRAGSession:
+        with self._lock:
+            self._ensure_open_locked()
+            chunk_store = self._chunk_store_locked()
+            field_store = self._field_chunk_store_locked()
+            visual_store = self._visual_chunk_store_locked()
+            reranker = self._reranker_locked() if with_reranker else None
+            retrieval_policy = self._retrieval_policy_locked()
+            memory = self._memory_locked()
+            answer_worker = (
+                self._answer_worker_locked() if with_answer_worker else None
+            )
+            resolved_plan_worker = (
+                plan_worker if plan_worker is not None else self._plan_worker_locked()
+            )
+        relevance_scorer = (
+            RerankerRelevanceScorer(reranker) if reranker is not None else None
+        )
+        generation_policy: dict[str, object] = (
+            {"enabled": True, "max_attempts": 2} if answer_worker is not None else {}
+        )
+        return PaperRAGSession(
+            chunk_store,
+            reranker=reranker,
+            field_index=field_store,
+            field_reranker=reranker,
+            visual_store=visual_store,
+            retrieval_policy=retrieval_policy,
+            plan_worker=resolved_plan_worker,
+            answer_worker=answer_worker,
+            generation_policy=generation_policy,
+            relevance_scorer=relevance_scorer,
+            memory=memory,
+        )
+
+    def close(self) -> None:
+        with self._lock:
+            while self._closing:
+                self._lock.wait()
+            if self._closed:
+                return
+            self._closing = True
+            self._closed = True
+            resources = tuple(reversed(self._owned_resources))
+            self._owned_resources.clear()
+            self._owned_resource_ids.clear()
+            self._vector_store = None
+            self._chunk_store = None
+            self._field_chunk_store = None
+            self._visual_chunk_store = _UNSET
+            self._reranker = None
+            self._retrieval_policy = _UNSET
+            self._memory = _UNSET
+            self._answer_worker = _UNSET
+            self._plan_worker = _UNSET
+
+        first_error: Exception | None = None
+        try:
+            for resource in resources:
+                try:
+                    resource.close()
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = exc
+        finally:
+            with self._lock:
+                self._closing = False
+                self._lock.notify_all()
+        if first_error is not None:
+            raise first_error
+
+    def _ensure_open_locked(self) -> None:
+        if self._closed:
+            raise RuntimeError("Paper RAG runtime resources are closed")
+
+    def _vector_store_locked(self) -> Any:
+        if self._vector_store is None:
+            self._vector_store = self._vector_store_factory()
+            self._register_lifecycle_locked(self._vector_store)
+        return self._vector_store
+
+    def _chunk_store_locked(self) -> PaperChunkStoreAdapter:
+        if self._chunk_store is None:
+            self._chunk_store = PaperChunkStoreAdapter(
+                PaperChunkStore(self._vector_store_locked())
+            )
+            self._chunk_store.ensure_collection()
+        return self._chunk_store
+
+    def _field_chunk_store_locked(self) -> PaperFieldChunkStore:
+        if self._field_chunk_store is None:
+            self._field_chunk_store = PaperFieldChunkStore(
+                self._vector_store_locked()
+            )
+            self._field_chunk_store.ensure_collection()
+        return self._field_chunk_store
+
+    def _visual_chunk_store_locked(self) -> PaperVisualChunkStore | None:
+        if self._visual_chunk_store is _UNSET:
+            visual_store = self._visual_store_factory()
+            if visual_store is not None:
+                self._register_lifecycle_locked(visual_store)
+                visual_store.ensure_collection()
+            self._visual_chunk_store = visual_store
+        value = self._visual_chunk_store
+        return cast(PaperVisualChunkStore | None, value)
+
+    def _reranker_locked(self) -> _SynchronizedReranker:
+        if self._reranker is None:
+            delegate = self._reranker_factory()
+            self._reranker = _SynchronizedReranker(delegate)
+            self._register_lifecycle_locked(self._reranker)
+        return self._reranker
+
+    def _retrieval_policy_locked(self) -> Any:
+        if self._retrieval_policy is _UNSET:
+            self._retrieval_policy = self._retrieval_policy_factory()
+        return self._retrieval_policy
+
+    def _memory_locked(self) -> ResearchRAGMemoryPort | None:
+        if self._memory is _UNSET:
+            if _env_truthy(os.environ.get(NEWS_RAG_MEMORY_ENV)):
+                self._memory = build_rag_memory_port(
+                    vector_store=self._vector_store_locked()
+                )
+            else:
+                self._memory = None
+        value = self._memory
+        return cast(ResearchRAGMemoryPort | None, value)
+
+    def _answer_worker_locked(self) -> Any:
+        if self._answer_worker is _UNSET:
+            self._answer_worker = self._answer_worker_factory()
+            self._register_lifecycle_locked(self._answer_worker)
+        return self._answer_worker
+
+    def _plan_worker_locked(self) -> Any | None:
+        if self._plan_worker is _UNSET:
+            self._plan_worker = self._plan_worker_factory()
+            if self._plan_worker is not None:
+                self._register_lifecycle_locked(self._plan_worker)
+        return self._plan_worker
+
+    def _register_lifecycle_locked(self, resource: Any) -> None:
+        nested_store = getattr(resource, "_store", None)
+        candidates = (
+            resource,
+            getattr(resource, "client", None),
+            nested_store,
+            getattr(nested_store, "client", None),
+        )
+        candidate = next(
+            (
+                item
+                for item in candidates
+                if item is not None and callable(getattr(item, "close", None))
+            ),
+            None,
+        )
+        if candidate is None:
+            return
+        identity = id(candidate)
+        if identity in self._owned_resource_ids:
+            return
+        self._owned_resource_ids.add(identity)
+        self._owned_resources.append(candidate)
+
+
+def get_reranker() -> Any:
+    """Return the reranker owned by the default Research composition."""
+    from interfaces.composition.research import get_default_research_reranker
+
+    return get_default_research_reranker()
 
 
 def preload_reranker() -> None:
     """Warm the reranker weights at service startup so the first request is fast."""
-    get_reranker().score("warmup", ["warmup passage"])
+    from interfaces.composition.research import preload_default_research_reranker
+
+    preload_default_research_reranker()
 
 
-def build_chunk_store() -> PaperChunkStoreAdapter:
-    store = PaperChunkStoreAdapter(PaperChunkStore(qdrant_store_from_env()))
+def build_chunk_store(*, vector_store: Any | None = None) -> PaperChunkStoreAdapter:
+    store = PaperChunkStoreAdapter(
+        PaperChunkStore(
+            vector_store if vector_store is not None else qdrant_store_from_env()
+        )
+    )
     store.ensure_collection()
     return store
 
@@ -83,8 +366,10 @@ def build_chunk_repository() -> PaperChunkRepositoryAdapter:
     return PaperChunkRepositoryAdapter(PaperChunkRepository(_dsn()))
 
 
-def build_field_chunk_store() -> PaperFieldChunkStore:
-    store = PaperFieldChunkStore(qdrant_store_from_env())
+def build_field_chunk_store(*, vector_store: Any | None = None) -> PaperFieldChunkStore:
+    store = PaperFieldChunkStore(
+        vector_store if vector_store is not None else qdrant_store_from_env()
+    )
     store.ensure_collection()
     return store
 
@@ -96,23 +381,35 @@ def build_visual_chunk_store() -> PaperVisualChunkStore | None:
     return store
 
 
-def build_rag_memory_port() -> ResearchRAGMemoryPort | None:
+def build_rag_memory_port(
+    *,
+    vector_store: Any | None = None,
+) -> ResearchRAGMemoryPort | None:
     if not _env_truthy(os.environ.get(NEWS_RAG_MEMORY_ENV)):
         return None
     collection = os.environ.get(NEWS_RAG_MEMORY_COLLECTION_ENV) or DEFAULT_MEMORY_COLLECTION
-    vector_store = qdrant_store_from_env()
-    ensure_collections = getattr(vector_store, "ensure_collections", None)
+    actual_vector_store = (
+        vector_store if vector_store is not None else qdrant_store_from_env()
+    )
+    ensure_collections = getattr(actual_vector_store, "ensure_collections", None)
     if callable(ensure_collections):
         ensure_collections([collection])
-    memory_runtime = MemoryRuntime(VectorMemoryStoreAdapter(vector_store, collection=collection))
+    memory_runtime = MemoryRuntime(
+        VectorMemoryStoreAdapter(actual_vector_store, collection=collection)
+    )
     return ResearchRAGMemoryPort(memory_runtime)
 
 
-def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeline:
+def build_chunk_pipeline(
+    *,
+    with_propositions: bool = False,
+    source_runtime: SourceRuntimeComposition | None = None,
+) -> ChunkPaperPipeline:
+    actual_source_runtime = source_runtime or build_source_runtime_composition()
     return ChunkPaperPipeline(
         build_chunk_store(),
         build_chunk_repository(),
-        ArxivSourceConnector(),
+        actual_source_runtime.research_arxiv_connector,
         CascadeArxivDocumentParser(),
         field_chunk_indexer=build_field_chunk_store(),
         visual_chunk_indexer=build_visual_chunk_store(),
@@ -121,16 +418,14 @@ def build_chunk_pipeline(*, with_propositions: bool = False) -> ChunkPaperPipeli
     )
 
 
-def build_research_retriever(*, with_reranker: bool = True) -> ResearchRetriever:
-    reranker = get_reranker() if with_reranker else None
-    retrieval_policy = build_retrieval_policy_from_env()
-    return ResearchRetriever(
-        build_chunk_store(),
-        policy=retrieval_policy,
-        reranker=reranker,
-        field_index=build_field_chunk_store(),
-        field_reranker=reranker,
-        visual_store=build_visual_chunk_store(),
+def build_research_retriever(
+    *,
+    with_reranker: bool = True,
+    runtime_resources: PaperRagRuntimeResources | None = None,
+) -> ResearchRetriever:
+    resources = runtime_resources or _default_runtime_resources()
+    return resources.build_research_retriever(
+        with_reranker=with_reranker,
     )
 
 
@@ -139,33 +434,32 @@ def build_paper_rag_session(
     with_reranker: bool = True,
     plan_worker=None,
     with_answer_worker: bool = False,
+    runtime_resources: PaperRagRuntimeResources | None = None,
 ) -> PaperRAGSession:
-    reranker = get_reranker() if with_reranker else None
-    relevance_scorer = RerankerRelevanceScorer(reranker) if reranker is not None else None
-    memory = build_rag_memory_port()
-    retrieval_policy = build_retrieval_policy_from_env()
-    answer_worker = None
-    generation_policy: dict[str, object] = {}
-    if with_answer_worker:
-        answer_worker = PaperAnswerWorker(AnswerGenerator(build_unity_llm_call(max_tokens=600)))
-        generation_policy = {"enabled": True, "max_attempts": 2}
-    resolved_plan_worker = plan_worker
-    if resolved_plan_worker is None and _env_truthy(os.environ.get("NEWS_RAG_LLM_PLANNER")):
-        resolved_plan_worker = LLMResearchRAGPlanCandidateWorker(
-            build_unity_llm_call(max_tokens=900, temperature=0.0)
-        )
-    return PaperRAGSession(
-        build_chunk_store(),
-        reranker=reranker,
-        field_index=build_field_chunk_store(),
-        field_reranker=reranker,
-        visual_store=build_visual_chunk_store(),
-        retrieval_policy=retrieval_policy,
-        plan_worker=resolved_plan_worker,
-        answer_worker=answer_worker,
-        generation_policy=generation_policy,
-        relevance_scorer=relevance_scorer,
-        memory=memory,
+    resources = runtime_resources or _default_runtime_resources()
+    return resources.build_paper_rag_session(
+        with_reranker=with_reranker,
+        plan_worker=plan_worker,
+        with_answer_worker=with_answer_worker,
+    )
+
+
+def _default_runtime_resources() -> PaperRagRuntimeResources:
+    from interfaces.composition.research import (
+        get_default_paper_rag_runtime_resources,
+    )
+
+    resources = get_default_paper_rag_runtime_resources()
+    if not isinstance(resources, PaperRagRuntimeResources):
+        raise RuntimeError("default Research composition returned invalid RAG resources")
+    return resources
+
+
+def _build_optional_plan_worker() -> Any | None:
+    if not _env_truthy(os.environ.get("NEWS_RAG_LLM_PLANNER")):
+        return None
+    return LLMResearchRAGPlanCandidateWorker(
+        build_unity_llm_call(max_tokens=900, temperature=0.0)
     )
 
 
@@ -174,6 +468,7 @@ def _env_truthy(value: str | None) -> bool:
 
 
 __all__ = [
+    "PaperRagRuntimeResources",
     "build_chunk_pipeline",
     "build_chunk_repository",
     "build_chunk_store",

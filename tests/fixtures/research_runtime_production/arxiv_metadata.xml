@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://export.arxiv.org/api/query?id_list=2607.00001</id>
+  <title>arXiv Query: 2607.00001</title>
+  <updated>2026-07-01T00:00:00Z</updated>
+  <entry>
+    <id>https://arxiv.org/abs/2607.00001</id>
+    <updated>2026-07-01T00:00:00Z</updated>
+    <published>2026-07-01T00:00:00Z</published>
+    <title>Harness-Controlled Research Runtime with Durable Evidence</title>
+    <summary>
+      We study a bounded research runtime that separates deterministic workflow
+      control from language-model candidate generation. The runtime records
+      source lineage, quality gates, durable artifacts, and replayable events.
+    </summary>
+    <author><name>Ada Example</name></author>
+    <author><name>Grace Example</name></author>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom" />
+    <arxiv:primary_category term="cs.AI" />
+    <link href="https://arxiv.org/abs/2607.00001" rel="alternate" type="text/html" />
+    <link href="https://arxiv.org/pdf/2607.00001" rel="related" type="application/pdf" title="pdf" />
+  </entry>
+</feed>

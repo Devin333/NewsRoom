@@ -6,6 +6,7 @@ from framework.harness.rag.gates import RAGGateResult, RAGLineageGate, RAGSource
 from framework.harness.rag.models import EvidenceCandidate
 from framework.harness.rag.policy import RAGExecutionPolicy
 from framework.harness.rag.relevance import RAGRelevanceGate, RelevanceScorerPort
+from framework.harness.rag.visibility import evidence_tenant_ids, evidence_visible_to_tenant
 
 
 @dataclass(frozen=True)
@@ -192,22 +193,25 @@ def _tenant_scope_gate(
     policy: RAGExecutionPolicy,
 ) -> RAGGateResult | None:
     tenant_id = _policy_tenant_id(policy)
-    if not tenant_id:
-        return None
     violations = [
         violation
         for candidate in evidence
         if (violation := _tenant_scope_violation(candidate, policy)) is not None
     ]
+    if not tenant_id and not violations:
+        return None
+    details: dict[str, object] = {
+        "visibility_scope": f"tenant:{tenant_id}" if tenant_id else "public",
+        "checked_count": len(evidence),
+        "violations": violations,
+    }
+    if tenant_id:
+        details["tenant_id"] = tenant_id
     return RAGGateResult(
         "rag_tenant_scope",
         not violations,
         None if not violations else "one or more evidence candidates are outside the tenant scope",
-        {
-            "tenant_id": tenant_id,
-            "checked_count": len(evidence),
-            "violations": violations,
-        },
+        details,
     )
 
 
@@ -216,53 +220,18 @@ def _tenant_scope_violation(
     policy: RAGExecutionPolicy,
 ) -> dict[str, object] | None:
     tenant_id = _policy_tenant_id(policy)
-    if not tenant_id:
-        return None
-    candidate_tenants = _candidate_tenant_ids(candidate)
-    if not candidate_tenants or tenant_id in candidate_tenants:
+    if evidence_visible_to_tenant(candidate, tenant_id=tenant_id or None):
         return None
     return {
         "evidence_id": candidate.evidence_id,
-        "tenant_id": tenant_id,
-        "candidate_tenant_ids": sorted(candidate_tenants),
+        "visibility_scope": f"tenant:{tenant_id}" if tenant_id else "public",
+        "candidate_tenant_ids": sorted(evidence_tenant_ids(candidate)),
+        **({"tenant_id": tenant_id} if tenant_id else {}),
     }
 
 
 def _policy_tenant_id(policy: RAGExecutionPolicy) -> str:
     return str(policy.source_policy.get("tenant_id") or "").strip()
-
-
-def _candidate_tenant_ids(candidate: EvidenceCandidate) -> set[str]:
-    values: set[str] = set()
-    metadata = candidate.metadata
-    for key in ("tenant_id", "tenant", "workspace_id"):
-        _add_tenant_value(values, metadata.get(key))
-    for key in ("tenant_ids", "allowed_tenant_ids"):
-        _add_tenant_value(values, metadata.get(key))
-    for ref in (candidate.source_ref, *candidate.span_refs, *candidate.artifact_refs, *candidate.lineage):
-        ref_tenant = _tenant_from_ref(ref)
-        if ref_tenant:
-            values.add(ref_tenant)
-    return values
-
-
-def _add_tenant_value(values: set[str], raw: object) -> None:
-    if raw is None:
-        return
-    if isinstance(raw, (list, tuple, set)):
-        for item in raw:
-            _add_tenant_value(values, item)
-        return
-    text = str(raw).strip()
-    if text:
-        values.add(text)
-
-
-def _tenant_from_ref(ref: object) -> str:
-    text = str(ref or "").strip()
-    if not text.startswith("tenant://"):
-        return ""
-    return text.removeprefix("tenant://").split("/", 1)[0].strip()
 
 
 def _with_rejection_metadata(

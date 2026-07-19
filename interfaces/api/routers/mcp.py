@@ -27,6 +27,11 @@ _MCP_ERROR_HTTP_CONTRACT = {
     "MCPToolNotFound": (404, "mcp_tool_not_found"),
     "MCPResourceNotFound": (404, "mcp_resource_not_found"),
     "MCPPromptNotFound": (404, "mcp_prompt_not_found"),
+    "ResearchActorAuthorizationError": (403, "forbidden"),
+    "ResearchConfigurationError": (503, "research_configuration_invalid"),
+    "ResearchQualityGateError": (422, "quality_gate_failed"),
+    "ResearchRuntimeUnavailableError": (503, "research_runtime_unavailable"),
+    "ResearchSourceError": (500, "research_run_failed"),
     "EventAuthorizationError": (403, "forbidden"),
     "EventOperationNotFoundError": (404, "event_operator_resource_not_found"),
     "EventOperationCapabilityUnavailableError": (

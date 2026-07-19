@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from fastapi import Request
 
+from interfaces.composition.research import build_research_application_service
 from interfaces.models import ActorContext, actor_context_from_headers
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
@@ -106,7 +107,7 @@ def build_api_services(
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
-    research_service_factory: ResearchServiceFactory = ResearchApplicationService,
+    research_service_factory: ResearchServiceFactory = build_research_application_service,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,

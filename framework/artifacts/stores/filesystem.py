@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
-from pathlib import Path
+import stat
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from framework.artifacts.models import ArtifactRef, ArtifactWriteRequest, compute_checksum
@@ -13,7 +15,13 @@ from framework.artifacts.paths import (
 from framework.artifacts.stores.errors import (
     ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
+    ArtifactStoreMetadataError,
 )
+from framework.artifacts.stores.fs_safety import (
+    reject_link_chain,
+    verified_atomic_write,
+)
+from framework.artifacts.stores.integrity import verify_sha256_checksum
 
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -38,10 +46,14 @@ class FilesystemArtifactStore:
             content_type=artifact.content_type,
             step_id=artifact.step_id,
         )
-        target = self._artifact_path(artifact.run_id, relative_path)
+        target = self._raw_artifact_path(artifact.run_id, relative_path)
         data = artifact.content_bytes()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        verified_atomic_write(
+            target,
+            data,
+            root=self.root,
+            identity=f"{artifact.run_id}/{artifact_id}",
+        )
 
         return ArtifactRef(
             artifact_id=artifact_id,
@@ -58,12 +70,31 @@ class FilesystemArtifactStore:
         )
 
     def read(self, artifact_ref: ArtifactRef) -> bytes:
-        path = self._artifact_path(artifact_ref.run_id, artifact_ref.path)
-        if not path.exists():
-            raise ArtifactNotFoundError(f"artifact not found: {artifact_ref.run_id}/{artifact_ref.path}")
-        data = path.read_bytes()
-        if artifact_ref.checksum and compute_checksum(data) != artifact_ref.checksum:
-            raise ArtifactChecksumMismatchError(f"artifact checksum mismatch: {artifact_ref.artifact_id}")
+        path = self._raw_artifact_path(artifact_ref.run_id, artifact_ref.path)
+        try:
+            data = _read_verified_regular_file(
+                path,
+                root=self.root.resolve(strict=False),
+                artifact_id=artifact_ref.artifact_id,
+            )
+        except FileNotFoundError as exc:
+            raise ArtifactNotFoundError(f"artifact not found: {artifact_ref.run_id}/{artifact_ref.path}") from exc
+        except (IsADirectoryError, OSError) as exc:
+            raise ArtifactStoreMetadataError(
+                f"artifact is not a regular file: {artifact_ref.artifact_id}"
+            ) from exc
+        if artifact_ref.checksum:
+            verify_sha256_checksum(
+                data,
+                artifact_ref.checksum,
+                artifact_id=artifact_ref.artifact_id,
+                store="filesystem",
+                operation="read",
+            )
+        if artifact_ref.size_bytes is not None and len(data) != artifact_ref.size_bytes:
+            raise ArtifactStoreMetadataError(
+                f"artifact size mismatch: {artifact_ref.artifact_id}"
+            )
         return data
 
     def exists(self, artifact_ref: ArtifactRef) -> bool:
@@ -87,10 +118,20 @@ class FilesystemArtifactStore:
         return sorted(paths)
 
     def checksum(self, artifact_ref: ArtifactRef) -> str:
-        path = self._artifact_path(artifact_ref.run_id, artifact_ref.path)
-        if not path.exists():
-            raise ArtifactNotFoundError(f"artifact not found: {artifact_ref.run_id}/{artifact_ref.path}")
-        return compute_checksum(path.read_bytes())
+        path = self._raw_artifact_path(artifact_ref.run_id, artifact_ref.path)
+        try:
+            content = _read_verified_regular_file(
+                path,
+                root=self.root.resolve(strict=False),
+                artifact_id=artifact_ref.artifact_id,
+            )
+        except FileNotFoundError as exc:
+            raise ArtifactNotFoundError(f"artifact not found: {artifact_ref.run_id}/{artifact_ref.path}") from exc
+        except (IsADirectoryError, OSError) as exc:
+            raise ArtifactStoreMetadataError(
+                f"artifact is not a regular file: {artifact_ref.artifact_id}"
+            ) from exc
+        return compute_checksum(content)
 
     def delete(self, artifact_ref: ArtifactRef) -> None:
         path = self._artifact_path(artifact_ref.run_id, artifact_ref.path)
@@ -102,6 +143,54 @@ class FilesystemArtifactStore:
         relative = validate_relative_artifact_path(relative_path, field="artifact path")
         run_dir = resolve_artifact_descendant(self.root, run_id, field="run_id")
         return resolve_artifact_descendant(run_dir, relative, field="artifact path")
+
+    def _raw_artifact_path(self, run_id: str, relative_path: str) -> Path:
+        """Return a lexical path so reads can reject final symlinks before open."""
+
+        validate_artifact_path_segment(run_id, field="run_id")
+        relative = validate_relative_artifact_path(relative_path, field="artifact path")
+        root = self.root.resolve(strict=False)
+        path = root.joinpath(run_id, *PurePosixPath(relative).parts)
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ArtifactStoreMetadataError("artifact path escapes the artifact root") from exc
+        return path
+
+
+def _read_verified_regular_file(path: Path, *, root: Path, artifact_id: str) -> bytes:
+    _reject_symlink_chain(path, root=root, artifact_id=artifact_id)
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode):
+        raise ArtifactStoreMetadataError(
+            f"artifact is not a regular file: {artifact_id}"
+        )
+    try:
+        with path.open("rb") as handle:
+            opened = os.fstat(handle.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise ArtifactStoreMetadataError(
+                    f"artifact is not a regular file: {artifact_id}"
+                )
+            if not os.path.samestat(before, opened):
+                raise ArtifactStoreMetadataError(
+                    f"artifact identity changed while opening: {artifact_id}"
+                )
+            _reject_symlink_chain(path, root=root, artifact_id=artifact_id)
+            return handle.read()
+    except FileNotFoundError:
+        raise
+    except IsADirectoryError:
+        raise
+
+
+def _reject_symlink_chain(path: Path, *, root: Path, artifact_id: str) -> None:
+    reject_link_chain(
+        path,
+        root=root,
+        identity=artifact_id,
+        role="artifact",
+    )
 
 
 def _default_relative_path(
@@ -138,3 +227,10 @@ def _normalize_relative_path(value: str) -> str:
 
 def _validate_id(value: str, label: str) -> None:
     validate_artifact_path_segment(value, field=label)
+
+
+__all__ = [
+    "ArtifactChecksumMismatchError",
+    "ArtifactNotFoundError",
+    "FilesystemArtifactStore",
+]

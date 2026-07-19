@@ -63,5 +63,7 @@ def test_research_router_uses_research_service_factory_only() -> None:
     source = RESEARCH_ROUTER.read_text(encoding="utf-8")
 
     assert "research_service_factory" in source
+    assert "_RAG_SERVICE" not in source
+    assert "PaperRagApplicationService" not in source
     assert "papers_service_factory" not in source
     assert "/api/v1/papers" not in source

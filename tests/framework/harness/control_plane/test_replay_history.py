@@ -5,7 +5,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from framework.events.canonical import PayloadReference, checksum_for
+from framework.events.canonical import (
+    DEFAULT_MAX_EXTENSION_BYTES,
+    PayloadReference,
+    canonical_json_bytes,
+    checksum_for,
+)
 from framework.events.runtime.activities import (
     ReplayActivityDescriptor,
     ReplayActivityKind,
@@ -172,6 +177,98 @@ def test_harness_verifier_reexecutes_pure_decision_kernel() -> None:
     session = verifier.start().verify_event(_event())
 
     assert session.state.next_command_ordinal == 1
+
+
+def test_decision_snapshot_compaction_preserves_kernel_and_extension_budget() -> None:
+    steps = tuple(
+        HarnessStepSpec(
+            step_id=f"bounded-replay-step-{index:02d}",
+            worker_type="llm",
+        )
+        for index in range(48)
+    )
+    routing_rules = tuple(
+        HarnessRoutingRule(from_step=left.step_id, to_step=right.step_id)
+        for left, right in zip(steps, steps[1:])
+    )
+    run_spec = HarnessRunSpec(
+        run_id="run-bounded-replay-history",
+        workflow=HarnessWorkflowSpec(
+            workflow_id="bounded-replay-history",
+            steps=steps,
+            entry_step_id=steps[0].step_id,
+            routing_rules=routing_rules,
+            metadata={"version": "1"},
+        ),
+        created_at=NOW,
+    )
+    state = HarnessState.initial(run_spec)
+    compact = dict(
+        harness_decision_input_snapshot(
+            state=state,
+            command_ordinal=0,
+            causation_id="harness-run:run-bounded-replay-history",
+        )
+    )
+    full = {
+        **compact,
+        "routing_rules": tuple(rule.to_dict() for rule in routing_rules),
+        "step_states": tuple(
+            {
+                "step_id": step.step_id,
+                "status": step.status.value,
+                "attempts": step.attempts,
+                "replans": step.replans,
+                "approval_granted": bool(step.metadata.get("approval_granted")),
+            }
+            for step in state.step_states
+        ),
+    }
+
+    compact_decision = harness_decision_kernel(compact, None)
+    assert harness_decision_kernel(full, None) == compact_decision
+    assert compact["before_state_checksum"] == full["before_state_checksum"]
+    assert [item["step_id"] for item in compact["step_states"]] == [
+        steps[0].step_id
+    ]
+    assert [item["from_step"] for item in compact["routing_rules"]] == [
+        steps[0].step_id
+    ]
+
+    decision = HarnessDecision(
+        decision_type=compact_decision["decision_type"],
+        run_id=run_spec.run_id,
+        step_id=compact_decision["step_id"],
+        target_step_id=compact_decision["target_step_id"],
+        reason=compact_decision["reason"],
+        payload=dict(compact_decision["payload"]),
+        decided_at=NOW,
+    )
+    compact_history = harness_decision_history(
+        workflow_id=run_spec.workflow.workflow_id,
+        workflow_version="1",
+        command_ordinal=0,
+        decision_input=compact,
+        decision=decision,
+        causation_id="harness-run:run-bounded-replay-history",
+    )
+    full_history = harness_decision_history(
+        workflow_id=run_spec.workflow.workflow_id,
+        workflow_version="1",
+        command_ordinal=0,
+        decision_input=full,
+        decision=decision,
+        causation_id="harness-run:run-bounded-replay-history",
+    )
+    compact_size = len(
+        canonical_json_bytes({"deterministic_history": compact_history.to_dict()})
+    )
+    full_size = len(
+        canonical_json_bytes({"deterministic_history": full_history.to_dict()})
+    )
+
+    assert full_size > DEFAULT_MAX_EXTENSION_BYTES
+    assert compact_size <= DEFAULT_MAX_EXTENSION_BYTES
 
 
 def test_recorded_transition_output_cannot_drive_expected_decision() -> None:

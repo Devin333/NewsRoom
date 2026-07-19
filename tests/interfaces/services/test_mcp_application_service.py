@@ -8,6 +8,7 @@ from framework.artifacts import (
     ArtifactStoreMetadataError,
     ArtifactStoreRequiredError,
 )
+from interfaces.models import ActorContext
 from interfaces.services.approval_service import ApprovalApplicationService
 from interfaces.services.artifact_service import ArtifactInspectionService
 from interfaces.services.mcp_service import MCPApplicationService
@@ -101,6 +102,11 @@ def test_mcp_capability_manifest_describes_research_permissions() -> None:
 def test_mcp_research_tools_use_configured_research_service_factory() -> None:
     research_service = _FakeResearchService()
     service = MCPApplicationService(research_service_factory=lambda: research_service)
+    actor_args = {
+        "tenant_id": "tenant-a",
+        "user_id": "user-1",
+        "memory_namespace": "research:tenant:tenant-a:user:user-1",
+    }
 
     analyzed = service.call_tool(
         "news.research.analyze_paper",
@@ -109,15 +115,30 @@ def test_mcp_research_tools_use_configured_research_service_factory() -> None:
             "source_url": "https://arxiv.org/abs/2605.00001",
             "run_id": "research-run-1",
             "metadata": {"collection": "benchmarks"},
+            **actor_args,
         },
     )
-    analysis = service.call_tool("news.research.paper_analysis", {"paper_id": "paper-1"})
-    reader = service.call_tool("news.research.reader", {"paper_id": "paper-1"})
+    analysis = service.call_tool(
+        "news.research.paper_analysis",
+        {"paper_id": "paper-1", **actor_args},
+    )
+    reader = service.call_tool(
+        "news.research.reader",
+        {"paper_id": "paper-1", **actor_args},
+    )
     answer = service.call_tool(
         "news.research.ask",
-        {"paper_id": "paper-1", "question": "What is the method?", "locale": "en"},
+        {
+            "paper_id": "paper-1",
+            "question": "What is the method?",
+            "locale": "en",
+            **actor_args,
+        },
     )
-    trace = service.call_tool("news.research.trace", {"run_id": "research-run-1"})
+    trace = service.call_tool(
+        "news.research.trace",
+        {"run_id": "research-run-1", **actor_args},
+    )
 
     assert analyzed.success is True
     assert analysis.success is True
@@ -130,6 +151,95 @@ def test_mcp_research_tools_use_configured_research_service_factory() -> None:
     assert answer.data["evidenceRefs"] == ["ev-1"]
     assert trace.data["trace"]["phases"] == ["PLAN", "EXECUTE", "VERIFY"]
     assert research_service.calls[0][0] == "analyze_paper"
+    analyze_input = research_service.calls[0][1]
+    ask_input = research_service.calls[3][2]
+    assert (
+        analyze_input.tenant_id,
+        analyze_input.user_id,
+        analyze_input.memory_namespace,
+    ) == (
+        "tenant-a",
+        "user-1",
+        "research:tenant:tenant-a:user:user-1",
+    )
+    assert (
+        ask_input.tenant_id,
+        ask_input.user_id,
+        ask_input.memory_namespace,
+    ) == (
+        "tenant-a",
+        "user-1",
+        "research:tenant:tenant-a:user:user-1",
+    )
+    for actor in (
+        research_service.calls[1][2],
+        research_service.calls[2][2],
+        research_service.calls[4][2],
+    ):
+        assert (
+            actor.tenant_id,
+            actor.user_id,
+            actor.memory_namespace,
+        ) == (
+            "tenant-a",
+            "user-1",
+            "research:tenant:tenant-a:user:user-1",
+        )
+
+    tools = {tool.name: tool for tool in service.catalog().tools}
+    analyze_properties = tools["news.research.analyze_paper"].input_schema[
+        "properties"
+    ]
+    ask_properties = tools["news.research.ask"].input_schema["properties"]
+    analysis_properties = tools["news.research.paper_analysis"].input_schema[
+        "properties"
+    ]
+    reader_properties = tools["news.research.reader"].input_schema["properties"]
+    trace_properties = tools["news.research.trace"].input_schema["properties"]
+    assert {"tenant_id", "user_id", "memory_namespace"} <= analyze_properties.keys()
+    assert {"tenant_id", "user_id", "memory_namespace"} <= ask_properties.keys()
+    for properties in (analysis_properties, reader_properties, trace_properties):
+        assert {"tenant_id", "user_id", "memory_namespace"} <= properties.keys()
+
+
+def test_mcp_research_scope_is_bound_to_transport_actor() -> None:
+    research_service = _FakeResearchService()
+    actor = ActorContext(
+        actor_id="mcp-client-a",
+        actor_type="mcp_client",
+        roles=["mcp_client"],
+        request_id="request-1",
+        metadata={"tenant_id": "tenant-a"},
+    )
+    service = MCPApplicationService(
+        research_service_factory=lambda: research_service,
+    ).for_actor(actor)
+
+    allowed = service.call_tool(
+        "news.research.analyze_paper",
+        {
+            "paper_id": "paper-1",
+            "source_url": "https://arxiv.org/abs/2605.00001",
+            "run_id": "run-1",
+        },
+    )
+    spoofed = service.call_tool(
+        "news.research.ask",
+        {
+            "paper_id": "paper-1",
+            "question": "What is the method?",
+            "tenant_id": "tenant-b",
+        },
+    )
+
+    assert allowed.success is True
+    analyze_input = research_service.calls[0][1]
+    assert analyze_input.tenant_id == "tenant-a"
+    assert analyze_input.memory_namespace == "research:tenant:tenant-a:public"
+    assert spoofed.success is False
+    assert spoofed.error_type == "ResearchActorAuthorizationError"
+    assert "tenant-b" not in str(spoofed.to_dict())
+    assert len(research_service.calls) == 1
 
 
 def test_mcp_source_tools_call_source_service() -> None:
@@ -398,8 +508,8 @@ class _FakeResearchService:
             "analysisRef": "artifact://analysis",
         }
 
-    def get_analysis(self, paper_id):
-        self.calls.append(("get_analysis", paper_id))
+    def get_analysis(self, paper_id, *, actor=None):
+        self.calls.append(("get_analysis", paper_id, actor))
         return {
             "runId": "research-run-1",
             "paperId": paper_id,
@@ -407,8 +517,8 @@ class _FakeResearchService:
             "analysis": {"summary": "Grounded analysis"},
         }
 
-    def get_reader(self, paper_id):
-        self.calls.append(("get_reader", paper_id))
+    def get_reader(self, paper_id, *, actor=None):
+        self.calls.append(("get_reader", paper_id, actor))
         return {
             "paper": {"paperId": paper_id},
             "document": {"sections": []},
@@ -427,8 +537,8 @@ class _FakeResearchService:
             "confidence": 0.8,
         }
 
-    def get_trace(self, run_id):
-        self.calls.append(("get_trace", run_id))
+    def get_trace(self, run_id, *, actor=None):
+        self.calls.append(("get_trace", run_id, actor))
         return {
             "runId": run_id,
             "paperId": "paper-1",

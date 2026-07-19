@@ -5,9 +5,21 @@ from threading import RLock
 from typing import Any, Protocol
 from uuid import uuid4
 
-from business.research.application import AnalyzePaperRequest, AskPaperUseCase
-from business.research.rag import ResearchRetrievalGoal
+from business.research.application import (
+    AnalyzePaperRequest,
+    AskPaperUseCase,
+    ResearchActorScope,
+)
 from business.research.domain import stable_research_id
+from business.research.ports.run_store import (
+    ResearchRunRecord,
+    ResearchRunStore,
+    ResearchRunStoreConflictError,
+    ResearchRunStoreError,
+    ResearchRunStoreReason,
+)
+from business.research.rag import ResearchRetrievalGoal
+from interfaces.models import ActorContext
 
 
 @dataclass(frozen=True)
@@ -19,6 +31,8 @@ class ResearchAnalyzeInput:
     user_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
+    tenant_id: str | None = None
+    memory_namespace: str | None = None
 
 
 @dataclass(frozen=True)
@@ -27,13 +41,21 @@ class ResearchAskInput:
     locale: str | None = None
     selection: dict[str, Any] = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
+    tenant_id: str | None = None
+    user_id: str | None = None
+    memory_namespace: str | None = None
+    mode: str = "summary"
+    section_index: int = 0
+    limit: int = 5
+    generate: bool = False
+    gated: bool = True
 
 
 @dataclass(frozen=True)
-class ResearchRunRecord:
-    run_id: str
-    paper_id: str
-    result: Any
+class ResearchActorInput:
+    tenant_id: str | None = None
+    user_id: str | None = None
+    memory_namespace: str | None = None
 
 
 class ResearchServiceError(Exception):
@@ -56,19 +78,29 @@ class ResearchServiceError(Exception):
         self.user_action_required = user_action_required
 
 
+class ResearchActorAuthorizationError(ResearchServiceError):
+    pass
+
+
 class ResearchAnalyzeUseCase(Protocol):
     def analyze(self, request: AnalyzePaperRequest) -> Any:
         ...
 
 
-class ResearchRunStore(Protocol):
-    def save(self, record: ResearchRunRecord) -> None:
-        ...
-
-    def get_by_run_id(self, run_id: str) -> ResearchRunRecord | None:
-        ...
-
-    def get_latest_by_paper_id(self, paper_id: str) -> ResearchRunRecord | None:
+class ResearchRagAskUseCase(Protocol):
+    def rag_ask(
+        self,
+        paper_id: str,
+        question: str,
+        *,
+        section_index: int,
+        limit: int,
+        generate: bool,
+        gated: bool,
+        tenant_id: str | None,
+        user_id: str | None,
+        memory_namespace: str,
+    ) -> dict[str, Any]:
         ...
 
 
@@ -79,7 +111,16 @@ class InMemoryResearchRunStore:
         self._lock = RLock()
 
     def save(self, record: ResearchRunRecord) -> None:
+        if not isinstance(record, ResearchRunRecord):
+            raise TypeError("record must be ResearchRunRecord")
         with self._lock:
+            existing = self._records_by_run_id.get(record.run_id)
+            if existing is not None:
+                if existing != record:
+                    raise ResearchRunStoreConflictError(
+                        reason=ResearchRunStoreReason.IDENTITY_CONFLICT,
+                    )
+                return
             self._records_by_run_id[record.run_id] = record
             run_ids = self._run_ids_by_paper_id.setdefault(record.paper_id, [])
             if record.run_id not in run_ids:
@@ -96,6 +137,15 @@ class InMemoryResearchRunStore:
                 return None
             return self._records_by_run_id.get(run_ids[-1])
 
+    def list_by_paper_id(self, paper_id: str) -> list[ResearchRunRecord]:
+        with self._lock:
+            run_ids = reversed(self._run_ids_by_paper_id.get(paper_id) or [])
+            return [
+                self._records_by_run_id[run_id]
+                for run_id in run_ids
+                if run_id in self._records_by_run_id
+            ]
+
 
 class ResearchApplicationService:
     def __init__(
@@ -103,10 +153,12 @@ class ResearchApplicationService:
         *,
         analyze_use_case: ResearchAnalyzeUseCase | None = None,
         ask_use_case: AskPaperUseCase | None = None,
+        rag_ask_use_case: ResearchRagAskUseCase | None = None,
         run_store: ResearchRunStore | None = None,
     ) -> None:
         self._analyze_use_case = analyze_use_case or _UnconfiguredAnalyzeUseCase()
         self._ask_use_case = ask_use_case or AskPaperUseCase()
+        self._rag_ask_use_case = rag_ask_use_case or _UnconfiguredRagAskUseCase()
         self._run_store = run_store or _DEFAULT_RESEARCH_RUN_STORE
 
     def analyze_paper(self, command: ResearchAnalyzeInput) -> dict[str, Any]:
@@ -114,12 +166,20 @@ class ResearchApplicationService:
         source_ref = _source_ref(command)
         run_id = _optional_text(command.run_id) or f"research-run-{uuid4().hex}"
         options = _runtime_options(command)
+        actor_scope = _resolve_actor_scope(
+            self._ask_use_case,
+            tenant_id=command.tenant_id,
+            user_id=command.user_id,
+            memory_namespace=command.memory_namespace,
+        )
         request = AnalyzePaperRequest(
             run_id=run_id,
             paper_id=paper_id,
             source_ref=source_ref,
-            user_id=_optional_text(command.user_id),
+            user_id=actor_scope.user_id,
             options=options,
+            tenant_id=actor_scope.tenant_id,
+            memory_namespace=actor_scope.memory_namespace,
         )
         try:
             result = self._analyze_use_case.analyze(request)
@@ -137,13 +197,22 @@ class ResearchApplicationService:
             ) from exc
 
         record = ResearchRunRecord(run_id=run_id, paper_id=paper_id, result=result)
-        self._run_store.save(record)
+        try:
+            self._run_store.save(record)
+        except ResearchRunStoreError as exc:
+            raise _run_store_service_error(exc, operation="save") from None
         self._ensure_run_succeeded(record)
         self._ensure_quality_passed(record)
         return self._analyze_response(record)
 
-    def get_analysis(self, paper_id: str) -> dict[str, Any]:
-        record = self._record_for_paper(paper_id)
+    def get_analysis(
+        self,
+        paper_id: str,
+        *,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        record = self._record_for_paper(paper_id, actor_scope=actor_scope)
         self._ensure_run_succeeded(record)
         self._ensure_quality_passed(record)
         analysis = getattr(record.result, "analysis", None)
@@ -166,8 +235,14 @@ class ResearchApplicationService:
             "metadata": {"artifactRefs": _artifact_refs(record.result)},
         }
 
-    def get_reader(self, paper_id: str) -> dict[str, Any]:
-        record = self._record_for_paper(paper_id)
+    def get_reader(
+        self,
+        paper_id: str,
+        *,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        record = self._record_for_paper(paper_id, actor_scope=actor_scope)
         self._ensure_run_succeeded(record)
         self._ensure_quality_passed(record)
         reader_payload = getattr(record.result, "reader_payload", None)
@@ -197,7 +272,27 @@ class ResearchApplicationService:
 
     def ask_paper(self, paper_id: str, request: ResearchAskInput) -> dict[str, Any]:
         question = _require_text(request.question, "question")
-        record = self._record_for_paper(paper_id)
+        mode = _ask_mode(request.mode)
+        actor_scope = _resolve_actor_scope(
+            self._ask_use_case,
+            tenant_id=request.tenant_id,
+            user_id=(
+                request.user_id
+                or _optional_text(request.options.get("userId"))
+                or _optional_text(request.options.get("user_id"))
+            ),
+            memory_namespace=request.memory_namespace,
+        )
+        if mode == "chunk_rag":
+            return self._ask_paper_chunks(
+                paper_id,
+                question,
+                request=request,
+                actor_scope=actor_scope,
+            )
+
+        record = self._record_for_paper(paper_id, actor_scope=actor_scope)
+        _ensure_record_visible_to_actor(record, actor_scope)
         self._ensure_run_succeeded(record)
         self._ensure_quality_passed(record)
         reader_payload = getattr(record.result, "reader_payload", None)
@@ -217,9 +312,9 @@ class ResearchApplicationService:
                 required_evidence_types=["claim_support"],
                 target_sections=_selection_targets(request.selection),
                 allowed_source_refs=_reader_source_refs(reader_payload),
-                allowed_memory_namespaces=[f"research:user:{_optional_text(request.options.get('userId')) or 'anonymous'}"],
+                allowed_memory_namespaces=[actor_scope.memory_namespace],
                 constraints={"locale": request.locale or "en", "paper_only": True},
-                metadata={"run_id": record.run_id},
+                metadata={"run_id": record.run_id, **actor_scope.to_metadata()},
             )
         )
         evidence_refs = _answer_evidence_refs(analysis, reader_payload, request.selection)
@@ -236,9 +331,68 @@ class ResearchApplicationService:
             },
         }
 
-    def get_trace(self, run_id: str) -> dict[str, Any]:
+    def _ask_paper_chunks(
+        self,
+        paper_id: str,
+        question: str,
+        *,
+        request: ResearchAskInput,
+        actor_scope: ResearchActorScope,
+    ) -> dict[str, Any]:
+        normalized_paper_id = _require_text(paper_id, "paperId")
+        section_index = _bounded_int(
+            request.section_index,
+            "sectionIndex",
+            minimum=0,
+        )
+        limit = _bounded_int(
+            request.limit,
+            "limit",
+            minimum=1,
+            maximum=20,
+        )
+        try:
+            return self._rag_ask_use_case.rag_ask(
+                normalized_paper_id,
+                question,
+                section_index=section_index,
+                limit=limit,
+                generate=bool(request.generate),
+                gated=bool(request.gated),
+                tenant_id=actor_scope.tenant_id,
+                user_id=actor_scope.user_id,
+                memory_namespace=actor_scope.memory_namespace,
+            )
+        except ResearchServiceError:
+            raise
+        except ValueError as exc:
+            raise ResearchServiceError(
+                "invalid_request",
+                str(exc),
+                status_code=400,
+                user_action_required=True,
+            ) from exc
+        except Exception as exc:
+            raise ResearchServiceError(
+                "research_run_failed",
+                "research RAG request failed",
+                status_code=500,
+                details={"error_type": type(exc).__name__},
+                retryable=True,
+            ) from exc
+
+    def get_trace(
+        self,
+        run_id: str,
+        *,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
         normalized_run_id = _require_text(run_id, "runId")
-        record = self._run_store.get_by_run_id(normalized_run_id)
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        try:
+            record = self._run_store.get_by_run_id(normalized_run_id)
+        except ResearchRunStoreError as exc:
+            raise _run_store_service_error(exc, operation="read_by_run") from None
         if record is None:
             raise ResearchServiceError(
                 "research_run_failed",
@@ -246,6 +400,7 @@ class ResearchApplicationService:
                 status_code=404,
                 user_action_required=True,
             )
+        _ensure_record_visible_to_actor(record, actor_scope)
         return {
             "runId": record.run_id,
             "paperId": record.paper_id,
@@ -259,17 +414,29 @@ class ResearchApplicationService:
             },
         }
 
-    def _record_for_paper(self, paper_id: str) -> ResearchRunRecord:
+    def _record_for_paper(
+        self,
+        paper_id: str,
+        *,
+        actor_scope: ResearchActorScope,
+    ) -> ResearchRunRecord:
         normalized = _require_text(paper_id, "paperId")
-        record = self._run_store.get_latest_by_paper_id(normalized)
-        if record is None:
-            raise ResearchServiceError(
-                "paper_not_found",
-                f"paper not found: {normalized}",
-                status_code=404,
-                user_action_required=True,
-            )
-        return record
+        try:
+            records = self._run_store.list_by_paper_id(normalized)
+        except ResearchRunStoreError as exc:
+            raise _run_store_service_error(
+                exc,
+                operation="list_by_paper",
+            ) from None
+        for record in records:
+            if _record_visible_to_actor(record, actor_scope):
+                return record
+        raise ResearchServiceError(
+            "paper_not_found",
+            f"paper not found: {normalized}",
+            status_code=404,
+            user_action_required=True,
+        )
 
     def _ensure_run_succeeded(self, record: ResearchRunRecord) -> None:
         status = _result_status(record.result)
@@ -323,6 +490,17 @@ class _UnconfiguredAnalyzeUseCase:
         )
 
 
+class _UnconfiguredRagAskUseCase:
+    def rag_ask(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise ResearchServiceError(
+            "research_run_failed",
+            "Research chunk RAG runtime is not configured",
+            status_code=503,
+            retryable=False,
+            user_action_required=True,
+        )
+
+
 def _source_ref(command: ResearchAnalyzeInput) -> str:
     source_ref = _optional_text(command.source_url) or _optional_text(command.pdf_url)
     if source_ref is None:
@@ -346,6 +524,155 @@ def _runtime_options(command: ResearchAnalyzeInput) -> dict[str, Any]:
     return options
 
 
+def _resolve_actor_scope(
+    use_case: AskPaperUseCase,
+    *,
+    tenant_id: str | None,
+    user_id: str | None,
+    memory_namespace: str | None,
+) -> ResearchActorScope:
+    try:
+        return use_case.resolve_actor_scope(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            memory_namespace=memory_namespace,
+        )
+    except ValueError as exc:
+        raise ResearchServiceError(
+            "invalid_request",
+            str(exc),
+            status_code=400,
+            user_action_required=True,
+        ) from exc
+
+
+def _resolve_actor_input(
+    use_case: AskPaperUseCase,
+    actor: ResearchActorInput | None,
+) -> ResearchActorScope:
+    actual = actor or ResearchActorInput()
+    if not isinstance(actual, ResearchActorInput):
+        raise ResearchServiceError(
+            "invalid_request",
+            "actor must be ResearchActorInput",
+            status_code=400,
+            user_action_required=True,
+        )
+    return _resolve_actor_scope(
+        use_case,
+        tenant_id=actual.tenant_id,
+        user_id=actual.user_id,
+        memory_namespace=actual.memory_namespace,
+    )
+
+
+def bind_research_actor_input(
+    requested: ResearchActorInput,
+    actor: ActorContext | None,
+) -> ResearchActorInput:
+    if not isinstance(requested, ResearchActorInput):
+        raise TypeError("requested must be ResearchActorInput")
+    if actor is None:
+        return requested
+    if not isinstance(actor, ActorContext):
+        raise TypeError("actor must be ActorContext or None")
+
+    metadata = actor.metadata if isinstance(actor.metadata, dict) else {}
+    trusted_user_id = _optional_text(metadata.get("user_id"))
+    if trusted_user_id is None and actor.actor_type == "user":
+        trusted_user_id = _trusted_actor_scope_id(actor.actor_id)
+    trusted = ResearchActorInput(
+        tenant_id=_optional_text(metadata.get("tenant_id")),
+        user_id=trusted_user_id,
+        memory_namespace=_optional_text(metadata.get("memory_namespace")),
+    )
+    try:
+        trusted_scope = AskPaperUseCase().resolve_actor_scope(
+            tenant_id=trusted.tenant_id,
+            user_id=trusted.user_id,
+            memory_namespace=trusted.memory_namespace,
+        )
+        merged_scope = AskPaperUseCase().resolve_actor_scope(
+            tenant_id=requested.tenant_id or trusted_scope.tenant_id,
+            user_id=requested.user_id or trusted_scope.user_id,
+            memory_namespace=(
+                requested.memory_namespace or trusted_scope.memory_namespace
+            ),
+        )
+    except ValueError:
+        raise _research_actor_forbidden() from None
+    if merged_scope != trusted_scope:
+        raise _research_actor_forbidden()
+    return ResearchActorInput(
+        tenant_id=trusted_scope.tenant_id,
+        user_id=trusted_scope.user_id,
+        memory_namespace=trusted_scope.memory_namespace,
+    )
+
+
+def _trusted_actor_scope_id(actor_id: str) -> str:
+    text = str(actor_id or "").strip()
+    try:
+        return AskPaperUseCase().resolve_actor_scope(user_id=text).user_id or ""
+    except ValueError:
+        return stable_research_id("research_actor", text)
+
+
+def _research_actor_forbidden() -> ResearchActorAuthorizationError:
+    return ResearchActorAuthorizationError(
+        "forbidden",
+        "Research actor scope does not match the authenticated principal",
+        status_code=403,
+        user_action_required=True,
+    )
+
+
+def _ensure_record_visible_to_actor(
+    record: ResearchRunRecord,
+    actor_scope: ResearchActorScope,
+) -> None:
+    if _record_visible_to_actor(record, actor_scope):
+        return
+    raise ResearchServiceError(
+        "paper_not_found",
+        f"paper not found: {record.paper_id}",
+        status_code=404,
+        user_action_required=True,
+    )
+
+
+def _record_visible_to_actor(
+    record: ResearchRunRecord,
+    actor_scope: ResearchActorScope,
+) -> bool:
+    persisted_scope = getattr(record.result, "actor_scope", None)
+    if isinstance(persisted_scope, ResearchActorScope):
+        record_tenant = persisted_scope.tenant_id
+        record_user = persisted_scope.user_id
+        record_namespace = persisted_scope.memory_namespace
+    else:
+        trace = getattr(record.result, "trace", None)
+        trace_metadata = getattr(trace, "metadata", None)
+        if not isinstance(trace_metadata, dict) and isinstance(trace, dict):
+            trace_metadata = trace.get("metadata")
+        metadata = trace_metadata if isinstance(trace_metadata, dict) else {}
+        record_tenant = _optional_text(metadata.get("tenant_id"))
+        record_user = _optional_text(metadata.get("user_id"))
+        record_namespace = _optional_text(metadata.get("memory_namespace"))
+    if record_tenant is not None:
+        if actor_scope.tenant_id != record_tenant:
+            return False
+        if record_namespace == f"research:tenant:{record_tenant}:public":
+            return True
+    elif record_namespace in {None, "research.public"} and record_user is None:
+        return True
+    if record_user is not None and actor_scope.user_id != record_user:
+        return False
+    if record_namespace is not None:
+        return actor_scope.memory_namespace == record_namespace
+    return record_user is None or actor_scope.user_id == record_user
+
+
 def _require_text(value: Any, field_name: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -363,6 +690,43 @@ def _optional_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _ask_mode(value: Any) -> str:
+    mode = str(value or "summary").strip().lower()
+    if mode not in {"summary", "chunk_rag"}:
+        raise ResearchServiceError(
+            "invalid_request",
+            "mode must be summary or chunk_rag",
+            status_code=400,
+            user_action_required=True,
+        )
+    return mode
+
+
+def _bounded_int(
+    value: Any,
+    field_name: str,
+    *,
+    minimum: int,
+    maximum: int | None = None,
+) -> int:
+    if isinstance(value, bool):
+        parsed = -1
+    else:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = -1
+    if parsed < minimum or maximum is not None and parsed > maximum:
+        suffix = f" and at most {maximum}" if maximum is not None else ""
+        raise ResearchServiceError(
+            "invalid_request",
+            f"{field_name} must be at least {minimum}{suffix}",
+            status_code=400,
+            user_action_required=True,
+        )
+    return parsed
 
 
 def _result_status(result: Any) -> str:
@@ -471,6 +835,23 @@ def _quality_gate_failures(quality: Any) -> list[dict[str, Any]]:
     return failures
 
 
+def _run_store_service_error(
+    error: ResearchRunStoreError,
+    *,
+    operation: str,
+) -> ResearchServiceError:
+    return ResearchServiceError(
+        "research_run_failed",
+        "research run storage operation failed",
+        status_code=500,
+        details={
+            "operation": operation,
+            "reason": error.reason_code,
+        },
+        retryable=error.retryable,
+    )
+
+
 def _unique_texts(values: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -488,9 +869,13 @@ _DEFAULT_RESEARCH_RUN_STORE = InMemoryResearchRunStore()
 __all__ = [
     "InMemoryResearchRunStore",
     "ResearchAnalyzeInput",
+    "ResearchActorInput",
+    "ResearchActorAuthorizationError",
     "ResearchApplicationService",
     "ResearchAskInput",
+    "ResearchRagAskUseCase",
     "ResearchRunRecord",
     "ResearchRunStore",
     "ResearchServiceError",
+    "bind_research_actor_input",
 ]

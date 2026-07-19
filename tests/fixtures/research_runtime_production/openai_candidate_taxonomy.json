@@ -1,0 +1,21 @@
+{
+  "id": "recorded-taxonomy",
+  "object": "chat.completion",
+  "created": 1782864001,
+  "model": "recorded-research-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"taxonomy_candidates\":[{\"level\":\"domain\",\"term_id\":\"code\",\"label\":\"Code\",\"evidence_refs\":[\"arxiv://2607.00001\"],\"confidence\":0.9},{\"level\":\"area\",\"term_id\":\"agent\",\"label\":\"Agent\",\"evidence_refs\":[\"arxiv://2607.00001\"],\"confidence\":0.88},{\"level\":\"task\",\"term_id\":\"paper_reading\",\"label\":\"paper reading\",\"evidence_refs\":[\"arxiv://2607.00001\"],\"confidence\":0.86}]}"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 300,
+    "completion_tokens": 110,
+    "total_tokens": 410
+  }
+}

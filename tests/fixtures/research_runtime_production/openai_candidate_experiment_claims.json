@@ -1,0 +1,21 @@
+{
+  "id": "recorded-experiment-claims",
+  "object": "chat.completion",
+  "created": 1782864002,
+  "model": "recorded-research-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"claims\":[{\"claim_id\":\"claim-method-control\",\"text\":\"Harness separates deterministic workflow routing from language-model candidate generation.\",\"claim_type\":\"method\",\"section_id\":\"sec_b7540af96587\",\"evidence_ids\":[\"evidence_065e46143503\"],\"confidence\":0.92},{\"claim_id\":\"claim-recorded-evaluation\",\"text\":\"The recorded evaluation reports claim verification accuracy of 0.91.\",\"claim_type\":\"experiment\",\"section_id\":\"sec_01b8a39804f8\",\"evidence_ids\":[\"evidence_3f51463d32b5\"],\"confidence\":0.9}],\"scores\":[{\"score_id\":\"score-claim-verification\",\"benchmark_id\":\"claim_verification\",\"dataset_id\":\"recorded_runtime_eval\",\"metric_id\":\"accuracy\",\"value\":0.91,\"source_refs\":[\"arxiv://2607.00001\"]}]}"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 280,
+    "completion_tokens": 150,
+    "total_tokens": 430
+  }
+}

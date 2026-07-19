@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from framework.harness.artifacts import ArtifactPort, ArtifactRef, ArtifactWriteRequest, FakeArtifactPort
+from framework.harness.artifacts import (
+    ArtifactPort,
+    ArtifactRef,
+    ArtifactWriteRequest,
+    FakeArtifactPort,
+    RunBoundArtifactPort,
+)
 from framework.harness.context import (
     CompressionRecord,
     ContextAssembler,
@@ -473,6 +479,7 @@ __all__ = [
     "RetrievalRequest",
     "RetrievalStepResult",
     "RetrievalStepSpec",
+    "RunBoundArtifactPort",
     "RelevanceScorerPort",
     "ScoreRangeGate",
     "SecureHarnessActivityStorePort",

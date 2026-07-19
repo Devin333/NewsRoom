@@ -83,6 +83,45 @@ class _BrokenTranscriptStore:
         raise OSError("transcript volume is read-only")
 
 
+def test_service_constructor_closes_owned_resources_on_graph_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import interfaces.services.paper_rag_service as paper_rag_service
+    from interfaces.services.paper_rag_factory import PaperRagRuntimeResources
+
+    class _VectorStore:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def ensure_collections(self, _collections):
+            return []
+
+        def ensure_payload_indexes(self, _collections, _indexes):
+            return []
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    vector_store = _VectorStore()
+    resources = PaperRagRuntimeResources(
+        vector_store_factory=lambda: vector_store,
+        visual_store_factory=lambda: (_ for _ in ()).throw(
+            RuntimeError("visual store unavailable")
+        ),
+    )
+    monkeypatch.setattr(
+        paper_rag_service,
+        "PaperRagRuntimeResources",
+        lambda: resources,
+    )
+
+    with pytest.raises(RuntimeError, match="visual store unavailable"):
+        PaperRagApplicationService()
+
+    assert resources.closed is True
+    assert vector_store.close_calls == 1
+
+
 def test_rag_ask_retrieve_only_keeps_legacy_payload_and_does_not_build_session() -> None:
     retriever = _Retriever()
     service = PaperRagApplicationService(
@@ -275,6 +314,46 @@ def test_rag_ask_gated_generation_carries_tenant_scope() -> None:
     _assert_public_metrics_scope_sanitized(payload["metrics"])
 
 
+@pytest.mark.parametrize(
+    ("tenant_id", "visible_ids"),
+    [
+        (None, ["public"]),
+        ("tenant-a", ["public", "tenant-a"]),
+        ("tenant-b", ["public", "tenant-b"]),
+    ],
+)
+def test_rag_ask_gated_projection_fails_closed_for_mixed_tenant_context_pack(
+    tenant_id: str | None,
+    visible_ids: list[str],
+) -> None:
+    result = _session_result(
+        status=RAGSessionStatus.ANSWERED,
+        decision_type=RAGDecisionType.RETURN_ANSWER,
+        answer=_visibility_answer(),
+        context_pack=_visibility_pack(),
+    )
+    service = PaperRagApplicationService(
+        retriever=_Retriever(),
+        session_factory=lambda **kwargs: _Session(result),
+        transcript_store=_RecordingTranscriptStore(),
+    )
+
+    payload = service.rag_ask(
+        "p1",
+        "How does it work?",
+        generate=True,
+        tenant_id=tenant_id,
+    )
+
+    assert [item["evidence_id"] for item in payload["passages"]] == visible_ids
+    assert payload["context_pack"]["accepted_evidence_ids"] == visible_ids
+    assert payload["metrics"]["accepted_evidence_count"] == len(visible_ids)
+    assert payload["answer"] is None
+    assert payload["answer_candidate"] is None
+    assert payload["claims"] == []
+    assert payload["citations"] == []
+
+
 def test_rag_ask_gated_generation_respects_expected_abstention_golden_case() -> None:
     pair = EvidenceQAPair.negative(
         question="Does this paper report a GPT-5 training run?",
@@ -319,6 +398,7 @@ def _session_result(
     status: RAGSessionStatus,
     decision_type: RAGDecisionType,
     answer: GroundedAnswerCandidate,
+    context_pack: RAGContextPack | None = None,
     tenant_id: str | None = None,
     user_id: str | None = None,
     memory_namespace: str | None = None,
@@ -332,7 +412,7 @@ def _session_result(
     )
     return RAGSessionResult(
         status=status,
-        context_pack=_pack(),
+        context_pack=context_pack if context_pack is not None else _pack(),
         transcript=RAGTranscript(
             transcript_id="transcript-1",
             session_id="session-1",
@@ -425,4 +505,54 @@ def _pack() -> RAGContextPack:
         accepted_evidence=(evidence,),
         gap_report={"missing_evidence_types": []},
         assembly_summary="assembled",
+    )
+
+
+def _visibility_pack() -> RAGContextPack:
+    evidence = []
+    for scope in ("public", "tenant-a", "tenant-b"):
+        metadata = {
+            "rag_chunk_id": f"chunk-{scope}",
+            "chunk_type": "paragraph",
+            "section_title": "Method",
+            "source_locator": f"paper://p1/{scope}",
+        }
+        if scope != "public":
+            metadata["tenant_id"] = scope
+        evidence.append(EvidenceCandidate(
+            evidence_id=scope,
+            title=f"{scope} Method",
+            summary=f"Method evidence for {scope}.",
+            source_ref=f"paper://p1/{scope}",
+            span_refs=(f"paper://p1/{scope}#span=1",),
+            evidence_type="method",
+            confidence=0.9,
+            lineage=("p1",),
+            metadata=metadata,
+        ))
+    return RAGContextPack(
+        pack_id="pack-visibility",
+        query="How does it work?",
+        accepted_evidence=tuple(evidence),
+        gap_report={"missing_evidence_types": []},
+        assembly_summary="assembled mixed visibility context",
+    )
+
+
+def _visibility_answer() -> GroundedAnswerCandidate:
+    claims = tuple(
+        AnswerClaim(
+            f"claim-{scope}",
+            f"Answer derived from {scope} evidence.",
+            (scope,),
+            span_refs=(f"paper://p1/{scope}#span=1",),
+        )
+        for scope in ("public", "tenant-a", "tenant-b")
+    )
+    return GroundedAnswerCandidate(
+        answer_id="answer-visibility",
+        question="How does it work?",
+        answer_text="Answer contains mixed-visibility evidence.",
+        cited_evidence_ids=("public", "tenant-a", "tenant-b"),
+        claims=claims,
     )

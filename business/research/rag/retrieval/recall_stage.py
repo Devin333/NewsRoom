@@ -14,6 +14,7 @@ from business.research.rag.retrieval.channels.field_embedding import FieldEmbedd
 from business.research.rag.retrieval.channels.sparse_lexical import SparseLexicalChannel, sparse_query_tokens
 from business.research.rag.retrieval.channels.visual import VisualRecallChannel
 from business.research.rag.retrieval.fusion import fuse_chunk_rankings
+from business.research.rag.retrieval.filtering import filter_scored_chunks_for_request
 from business.research.rag.retrieval.paper_claim_index import ClaimSearchHit
 from business.research.rag.retrieval.scoring import claim_from_citation_question
 from business.research.rag.retrieval.trace import RetrievalTrace
@@ -79,12 +80,30 @@ class CandidateRecallStage:
             candidate_limit,
             trace=trace,
         )
+        candidates = filter_scored_chunks_for_request(candidates, request)
         n_recalled = len(candidates)
         field_hits = self._search_field_candidates(request, route, candidate_filters)
+        visible_field_ids = _visible_chunk_ids(
+            self._field_channel.ranked_chunks(field_hits, request.paper_id),
+            request,
+        )
+        field_hits = [hit for hit in field_hits if hit.chunk_id in visible_field_ids]
         candidates = self._field_channel.merge_hits(candidates, field_hits, request.paper_id)
+        candidates = filter_scored_chunks_for_request(candidates, request)
         claim_hits = self._search_claim_candidates(request, route, limit=candidate_limit)
+        visible_claim_ids = _visible_chunk_ids(
+            self._claim_channel.ranked_chunks(claim_hits, request.paper_id),
+            request,
+        )
+        claim_hits = [hit for hit in claim_hits if hit.record.chunk_id in visible_claim_ids]
         candidates = self._claim_channel.merge_hits(candidates, claim_hits, request.paper_id)
+        candidates = filter_scored_chunks_for_request(candidates, request)
         visual_hits = self._search_visual_candidates(request, route, candidate_filters)
+        visible_visual_ids = _visible_chunk_ids(
+            self._visual_channel.ranked_chunks(visual_hits, request.paper_id),
+            request,
+        )
+        visual_hits = [hit for hit in visual_hits if hit.chunk_id in visible_visual_ids]
         n_visual_recalled = len(visual_hits)
         if self._policy.hybrid_rrf_enabled and intent_allowed(route.intent, _HYBRID_RRF_INTENTS):
             candidates = self._fuse_hybrid_candidate_channels(
@@ -95,6 +114,7 @@ class CandidateRecallStage:
                 paper_id=request.paper_id,
                 limit=candidate_limit,
             )
+            candidates = filter_scored_chunks_for_request(candidates, request)
         return CandidateRecallResult(
             candidates=candidates,
             field_hits=field_hits,
@@ -326,6 +346,16 @@ def _unique_nonempty_texts(values: list[str]) -> list[str]:
         seen.add(text)
         out.append(text)
     return out
+
+
+def _visible_chunk_ids(
+    ranked_chunks: list[tuple[PaperChunk, float]],
+    request: Any,
+) -> set[str]:
+    return {
+        chunk.chunk_id
+        for chunk, _score in filter_scored_chunks_for_request(ranked_chunks, request)
+    }
 
 
 __all__ = ["CandidateRecallResult", "CandidateRecallStage", "recall_queries_for_policy"]

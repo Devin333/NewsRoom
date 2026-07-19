@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
+from cryptography.fernet import Fernet
 
 from business.research.workflows.paper_analysis_gates import (
     build_paper_analysis_gate_registry,
@@ -66,6 +67,7 @@ from framework.harness.control_plane.replay_history import (
 )
 from framework.shared.json import stable_json_dumps
 from infrastructure.storage.events.sqlite import SQLiteEventStore
+from infrastructure.storage.events.activity_store import SQLiteRecordedActivityStore
 from infrastructure.storage.events.factory import DurableEventStorage
 from infrastructure.storage.events.replay_checkpoints import (
     SQLiteReplayCheckpointStore,
@@ -315,6 +317,47 @@ def test_harness_without_secure_activity_store_fails_before_worker(tmp_path) -> 
         ).run(HarnessRunSpec(run_id="run-no-secure-store", workflow=workflow))
 
     assert worker_calls == 0
+
+
+def test_durable_harness_accepts_canonical_zero_float_activity_input(
+    tmp_path,
+) -> None:
+    database = tmp_path / "canonical-zero-activity.sqlite3"
+    event_store = SQLiteEventStore(database)
+    secure_store = SQLiteRecordedActivityStore(
+        database,
+        encryption_key=Fernet.generate_key(),
+    )
+    runtime = EventRuntime(
+        store=event_store,
+        schema_catalog=default_event_schema_catalog(),
+    )
+    port = DurableHarnessTransitionPort(
+        runtime,
+        event_store,
+        secure_activity_store=secure_store,
+        adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
+    )
+    inputs = {
+        "inputs": {
+            "positive_zero": 0.0,
+            "negative_zero": -0.0,
+        }
+    }
+    activity = port.create_activity(
+        run_id="run-canonical-zero-activity",
+        step_id="collect",
+        attempt=1,
+        activity_type="llm",
+        inputs=inputs,
+    )
+
+    assert port.accept_activity(
+        activity,
+        inputs,
+        accepted_at=datetime(2026, 7, 16, 10, 30, tzinfo=UTC),
+        started_at=datetime(2026, 7, 16, 10, 30, tzinfo=UTC),
+    ) is None
 
 
 def test_harness_run_commits_through_default_catalog_and_sqlite_without_raw_worker_data(

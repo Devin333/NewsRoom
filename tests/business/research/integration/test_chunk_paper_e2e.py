@@ -41,13 +41,16 @@ _run_live_e2e = os.getenv("NEWS_RUN_LIVE_RESEARCH_E2E", "").strip().lower() in {
 _has_qdrant = bool(os.getenv("NEWS_QDRANT_URL"))
 _has_postgres = bool(os.getenv("NEWS_DATABASE_DSN"))
 
-pytestmark = pytest.mark.skipif(
-    not (_run_live_e2e and _has_qdrant and _has_postgres),
-    reason=(
-        "set NEWS_RUN_LIVE_RESEARCH_E2E=1 with NEWS_QDRANT_URL "
-        "and NEWS_DATABASE_DSN to run live chunk paper e2e"
+pytestmark = [
+    pytest.mark.live_research_e2e,
+    pytest.mark.skipif(
+        not (_run_live_e2e and _has_qdrant and _has_postgres),
+        reason=(
+            "set NEWS_RUN_LIVE_RESEARCH_E2E=1 with NEWS_QDRANT_URL "
+            "and NEWS_DATABASE_DSN to run live chunk paper e2e"
+        ),
     ),
-)
+]
 
 
 @pytest.fixture(scope="module")

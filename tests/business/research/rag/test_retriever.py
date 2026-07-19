@@ -78,9 +78,16 @@ def _seed_store(store: PaperChunkStore) -> tuple[PaperChunk, PaperChunk, PaperCh
 
 
 class _ScriptedChunkStore:
-    def __init__(self, chunks: list[PaperChunk], search_order: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        chunks: list[PaperChunk],
+        search_order: list[str] | None = None,
+        *,
+        ignore_filters: bool = False,
+    ) -> None:
         self.chunks = {chunk.chunk_id: chunk for chunk in chunks}
         self.search_order = search_order or [chunk.chunk_id for chunk in chunks]
+        self.ignore_filters = ignore_filters
         self.calls: list[dict[str, Any]] = []
 
     def ensure_collection(self) -> None:
@@ -114,7 +121,9 @@ class _ScriptedChunkStore:
         out: list[tuple[PaperChunk, float]] = []
         for index, chunk_id in enumerate(self.search_order):
             chunk = self.chunks[chunk_id]
-            if chunk.paper_id != paper_id or not _matches_filters(chunk, filters or {}):
+            if chunk.paper_id != paper_id or (
+                not self.ignore_filters and not _matches_filters(chunk, filters or {})
+            ):
                 continue
             out.append((chunk, 1.0 - (index / 100)))
             if len(out) >= limit:
@@ -346,6 +355,59 @@ def test_tenant_filter_merges_with_route_filters_and_excludes_other_tenants():
     assert {tuple(sorted(call["filters"].items())) for call in store.calls} >= {
         (("chunk_type", "table"), ("tenant_id", "tenant-a")),
         (("chunk_type", "paragraph"), ("tenant_id", "tenant-a")),
+    }
+
+
+@pytest.mark.parametrize(
+    ("tenant_id", "visible_scopes"),
+    [
+        (None, {"public"}),
+        ("tenant-a", {"public", "tenant-a"}),
+        ("tenant-b", {"public", "tenant-b"}),
+    ],
+)
+def test_retrieval_visibility_fails_closed_when_store_ignores_filters(
+    tenant_id: str | None,
+    visible_scopes: set[str],
+) -> None:
+    children: list[PaperChunk] = []
+    parents: list[PaperChunk] = []
+    refs: list[PaperChunk] = []
+    for scope in ("public", "tenant-a", "tenant-b"):
+        metadata = {} if scope == "public" else {"tenant_id": scope}
+        parent = _chunk(f"parent-{scope}", content=f"Parent context for {scope}.", metadata=metadata)
+        ref = _chunk(f"ref-{scope}", content=f"Referenced context for {scope}.", metadata=metadata)
+        child = _chunk(
+            f"child-{scope}",
+            parent_chunk_id=parent.chunk_id,
+            content=f"The attention method is described for {scope}.",
+            metadata=metadata,
+        ).model_copy(update={"references": [ref.chunk_id]})
+        children.append(child)
+        parents.append(parent)
+        refs.append(ref)
+    store = _ScriptedChunkStore(
+        [*children, *parents, *refs],
+        search_order=[child.chunk_id for child in children],
+        ignore_filters=True,
+    )
+    retriever = ResearchRetriever(store, policy=RetrievalPolicy(overfetch_multiplier=1))
+
+    result = retriever.retrieve(RetrievalRequest(
+        paper_id="p1",
+        question="How does the attention method work?",
+        limit=3,
+        filters={"tenant_id": tenant_id} if tenant_id else {},
+    ))
+
+    assert {chunk.chunk_id for chunk in result.child_chunks} == {
+        f"child-{scope}" for scope in visible_scopes
+    }
+    assert {chunk.chunk_id for chunk in result.parent_chunks} == {
+        f"parent-{scope}" for scope in visible_scopes
+    }
+    assert {chunk.chunk_id for chunk in result.ref_chunks} == {
+        f"ref-{scope}" for scope in visible_scopes
     }
 
 

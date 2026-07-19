@@ -109,12 +109,11 @@ class HarnessActivity:
             attempt=attempt,
             activity_type=activity_type,
             idempotency_key=f"{identity_prefix}:{digest}",
-            input_checksum=checksum_for(to_jsonable(inputs)),
+            input_checksum=harness_activity_input_checksum(inputs),
             identity_scope_ref=identity_scope_ref,
             contract_version=contract_version,
             worker_version=worker_version,
         )
-
     @property
     def result_event_id(self) -> str:
         digest = hashlib.sha256(
@@ -153,6 +152,16 @@ class HarnessActivity:
             identity_scope_ref=value.get("identity_scope_ref"),
             worker_version=value.get("worker_version"),
         )
+
+
+def harness_activity_input_checksum(inputs: Mapping[str, Any]) -> str:
+    if not isinstance(inputs, Mapping):
+        raise TypeError("inputs must be a mapping")
+    canonical = normalize_canonical_json(
+        to_jsonable(inputs),
+        path="$.harness_activity.inputs",
+    )
+    return checksum_for(canonical)
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,6 +452,7 @@ __all__ = [
     "HARNESS_ACTIVITY_RESULT_SCHEMA",
     "HarnessActivity",
     "HarnessActivityResultRecord",
+    "harness_activity_input_checksum",
     "SecureHarnessActivityStorePort",
     "resolve_activity_result",
     "validate_activity_call_marker",

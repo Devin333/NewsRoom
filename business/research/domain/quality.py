@@ -45,10 +45,14 @@ class ResearchQualityResult(PrimitiveModel):
 
     @model_validator(mode="after")
     def _derive_flags(self) -> "ResearchQualityResult":
-        flags = list(self.quality_flags)
+        flags: list[QualityFlag] = []
+        candidates = list(self.quality_flags)
         for result in self.gate_results:
             if not result.passed:
-                flags.extend(result.quality_flags)
+                candidates.extend(result.quality_flags)
+        for flag in candidates:
+            if flag not in flags:
+                flags.append(flag)
         object.__setattr__(self, "quality_flags", flags)
         return self
 

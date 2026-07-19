@@ -1,0 +1,26 @@
+\documentclass{article}
+\begin{document}
+\begin{abstract}
+This paper presents a Harness-controlled research runtime with bounded retrieval,
+deterministic verification, durable evidence, and replayable publication records.
+\end{abstract}
+
+\section{Introduction}
+Research agents need auditable claim support. The Harness owns workflow routing,
+authorization, quality decisions, memory writes, and publication while the language
+worker produces schema-bound candidate content.
+
+\section{Method}
+The method executes PLAN, EXECUTE, and VERIFY phases under bounded retry and replan
+budgets. Retrieval gathers method evidence and claim support from the accepted paper
+source. Deterministic gates verify evidence lineage before artifacts are published.
+
+\section{Experiments}
+The experiment compares the controlled runtime with an uncontrolled baseline on a
+recorded evaluation dataset. Claim verification accuracy reaches 0.91 while durable
+trace reconstruction preserves every gate decision and source reference.
+
+\section{Conclusion}
+The limitation is that the local durable backend targets one host. Multi-host
+scheduling and vector retrieval require separately configured production services.
+\end{document}

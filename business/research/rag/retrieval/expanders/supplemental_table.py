@@ -6,7 +6,11 @@ from typing import Any
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
 from business.research.rag.retrieval.expanders.table_context import should_expand_result_context
-from business.research.rag.retrieval.filtering import merge_request_filters
+from business.research.rag.retrieval.filtering import (
+    chunk_visible_for_request,
+    filter_chunks_for_request,
+    merge_request_filters,
+)
 from business.research.rag.retrieval.paper_visual_retrieval import with_retrieval_scores
 from business.research.rag.retrieval.scoring import ChildCandidateScorer
 
@@ -20,6 +24,7 @@ class SupplementalTableHitExpander:
         self._child_scorer = ChildCandidateScorer(policy)
 
     def expand(self, child_chunks: list[PaperChunk], request: Any, route: Any) -> list[PaperChunk]:
+        child_chunks = filter_chunks_for_request(child_chunks, request)
         if not should_expand_result_context(route.intent, request.question):
             return []
         if any(_is_table_chunk(chunk) for chunk in child_chunks):
@@ -38,7 +43,12 @@ class SupplementalTableHitExpander:
 
         out: list[PaperChunk] = []
         for chunk, score in candidates:
-            if chunk.paper_id != request.paper_id or chunk.chunk_id in seen or not _is_table_chunk(chunk):
+            if (
+                chunk.paper_id != request.paper_id
+                or chunk.chunk_id in seen
+                or not _is_table_chunk(chunk)
+                or not chunk_visible_for_request(chunk, request)
+            ):
                 continue
             seen.add(chunk.chunk_id)
             scored = with_retrieval_scores(

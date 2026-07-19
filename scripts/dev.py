@@ -154,6 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "tests/business/research",
                 "tests/interfaces/api/test_research_api.py",
                 "tests/interfaces/services/test_research_service.py",
+                "tests/interfaces/composition/test_research_recorded_transport.py",
                 "tests/architecture",
                 "-q",
             ),
@@ -379,7 +380,14 @@ def _rag_ingest_golden_set_papers_command(args: argparse.Namespace | None = None
 
 
 def _rag_live_e2e_command() -> list[str]:
-    return _pytest_command("tests/business/research/integration/test_chunk_paper_e2e.py", "-q")
+    return _pytest_command(
+        "tests/business/research/document/test_arxiv_latex_integration.py",
+        "tests/business/research/integration/test_chunk_paper_e2e.py",
+        "tests/interfaces/composition/test_research_live_e2e.py",
+        "-m",
+        "live_research_e2e",
+        "-q",
+    )
 
 
 def _prd_research_regression_command() -> list[str]:

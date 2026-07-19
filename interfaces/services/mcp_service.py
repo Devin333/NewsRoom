@@ -26,7 +26,14 @@ from interfaces.mcp.models import (
     MCPTool,
     MCPToolCallResult,
 )
-from interfaces.services.research_service import ResearchAnalyzeInput, ResearchAskInput
+from interfaces.services.research_service import (
+    ResearchActorAuthorizationError,
+    ResearchActorInput,
+    ResearchAnalyzeInput,
+    ResearchAskInput,
+    ResearchServiceError,
+    bind_research_actor_input,
+)
 from interfaces.services.event_delivery_operations_service import (
     EventOperationCapabilityUnavailableError,
     EventOperationNotFoundError,
@@ -517,15 +524,18 @@ class MCPApplicationService:
         return MCPResourceReadResult(uri=uri, success=True, data=dict(data))
 
     def _research_analyze_paper(self, args: dict[str, Any]) -> MCPToolCallResult:
+        actor = _research_actor_input(args, self._operator_actor)
         result = self.research_service_factory().analyze_paper(
             ResearchAnalyzeInput(
                 paper_id=_required_arg(args, "paper_id"),
                 source_url=_optional_arg(args, "source_url"),
                 pdf_url=_optional_arg(args, "pdf_url"),
                 run_id=_optional_arg(args, "run_id"),
-                user_id=_optional_arg(args, "user_id"),
+                user_id=actor.user_id,
                 metadata=dict(args.get("metadata") or {}),
                 options=dict(args.get("options") or {}),
+                tenant_id=actor.tenant_id,
+                memory_namespace=actor.memory_namespace,
             )
         )
         return MCPToolCallResult(
@@ -535,7 +545,10 @@ class MCPApplicationService:
         )
 
     def _research_paper_analysis(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.research_service_factory().get_analysis(_required_arg(args, "paper_id"))
+        result = self.research_service_factory().get_analysis(
+            _required_arg(args, "paper_id"),
+            actor=_research_actor_input(args, self._operator_actor),
+        )
         return MCPToolCallResult(
             tool_name="news.research.paper_analysis",
             success=True,
@@ -543,7 +556,10 @@ class MCPApplicationService:
         )
 
     def _research_reader(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.research_service_factory().get_reader(_required_arg(args, "paper_id"))
+        result = self.research_service_factory().get_reader(
+            _required_arg(args, "paper_id"),
+            actor=_research_actor_input(args, self._operator_actor),
+        )
         return MCPToolCallResult(
             tool_name="news.research.reader",
             success=True,
@@ -551,6 +567,7 @@ class MCPApplicationService:
         )
 
     def _research_ask(self, args: dict[str, Any]) -> MCPToolCallResult:
+        actor = _research_actor_input(args, self._operator_actor)
         result = self.research_service_factory().ask_paper(
             _required_arg(args, "paper_id"),
             ResearchAskInput(
@@ -558,6 +575,9 @@ class MCPApplicationService:
                 locale=_optional_arg(args, "locale"),
                 selection=dict(args.get("selection") or {}),
                 options=dict(args.get("options") or {}),
+                tenant_id=actor.tenant_id,
+                user_id=actor.user_id,
+                memory_namespace=actor.memory_namespace,
             ),
         )
         return MCPToolCallResult(
@@ -567,7 +587,10 @@ class MCPApplicationService:
         )
 
     def _research_trace(self, args: dict[str, Any]) -> MCPToolCallResult:
-        result = self.research_service_factory().get_trace(_required_arg(args, "run_id"))
+        result = self.research_service_factory().get_trace(
+            _required_arg(args, "run_id"),
+            actor=_research_actor_input(args, self._operator_actor),
+        )
         return MCPToolCallResult(
             tool_name="news.research.trace",
             success=True,
@@ -1375,6 +1398,8 @@ def _tools() -> list[MCPTool]:
                     "pdf_url": {"type": "string"},
                     "run_id": {"type": "string"},
                     "user_id": {"type": "string"},
+                    "tenant_id": {"type": "string"},
+                    "memory_namespace": {"type": "string"},
                     "metadata": {"type": "object"},
                     "options": {"type": "object"},
                 },
@@ -1387,7 +1412,12 @@ def _tools() -> list[MCPTool]:
             input_schema={
                 "type": "object",
                 "required": ["paper_id"],
-                "properties": {"paper_id": {"type": "string"}},
+                "properties": {
+                    "paper_id": {"type": "string"},
+                    "tenant_id": {"type": "string"},
+                    "user_id": {"type": "string"},
+                    "memory_namespace": {"type": "string"},
+                },
             },
         ),
         MCPTool(
@@ -1397,7 +1427,12 @@ def _tools() -> list[MCPTool]:
             input_schema={
                 "type": "object",
                 "required": ["paper_id"],
-                "properties": {"paper_id": {"type": "string"}},
+                "properties": {
+                    "paper_id": {"type": "string"},
+                    "tenant_id": {"type": "string"},
+                    "user_id": {"type": "string"},
+                    "memory_namespace": {"type": "string"},
+                },
             },
         ),
         MCPTool(
@@ -1411,6 +1446,9 @@ def _tools() -> list[MCPTool]:
                     "paper_id": {"type": "string"},
                     "question": {"type": "string"},
                     "locale": {"type": "string"},
+                    "tenant_id": {"type": "string"},
+                    "user_id": {"type": "string"},
+                    "memory_namespace": {"type": "string"},
                     "selection": {"type": "object"},
                     "options": {"type": "object"},
                 },
@@ -1423,7 +1461,12 @@ def _tools() -> list[MCPTool]:
             input_schema={
                 "type": "object",
                 "required": ["run_id"],
-                "properties": {"run_id": {"type": "string"}},
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "tenant_id": {"type": "string"},
+                    "user_id": {"type": "string"},
+                    "memory_namespace": {"type": "string"},
+                },
             },
         ),
         MCPTool(
@@ -2417,6 +2460,32 @@ def _project_mcp_error(
     *,
     operation: str,
 ) -> PublicErrorProjection:
+    if isinstance(exc, ResearchActorAuthorizationError):
+        return PublicErrorProjection(
+            "ResearchActorAuthorizationError",
+            "Research actor scope does not match the authenticated principal",
+        )
+    if isinstance(exc, ResearchServiceError):
+        if exc.code == "quality_gate_failed":
+            return PublicErrorProjection(
+                "ResearchQualityGateError",
+                "research quality gate failed",
+            )
+        if exc.code == "research_runtime_unavailable":
+            return PublicErrorProjection(
+                "ResearchRuntimeUnavailableError",
+                "research runtime is unavailable",
+            )
+        if exc.code == "research_configuration_invalid":
+            return PublicErrorProjection(
+                "ResearchConfigurationError",
+                "research runtime configuration is invalid",
+            )
+        if str(exc.details.get("error_type") or "") == "ResearchSourceError":
+            return PublicErrorProjection(
+                "ResearchSourceError",
+                "research source acquisition failed",
+            )
     if isinstance(exc, EventAuthorizationError):
         return PublicErrorProjection(
             "EventAuthorizationError",
@@ -2767,9 +2836,9 @@ def _run_service_factory():
 
 
 def _research_service_factory():
-    from interfaces.services.research_service import ResearchApplicationService
+    from interfaces.composition.research import build_research_application_service
 
-    return ResearchApplicationService()
+    return build_research_application_service()
 
 
 def _report_service_factory():
@@ -2861,7 +2930,7 @@ def _deployment_event_operator_actor() -> ActorContext | None:
         actor_type="service",
         roles=[role],
         request_id="mcp-stdio",
-        metadata={"tenant_scope_configured": True},
+        metadata={"tenant_id": tenant_id},
     )
 
 
@@ -3210,6 +3279,20 @@ def _optional_arg(args: dict[str, Any], name: str) -> str | None:
     if value is None or value == "":
         return None
     return str(value)
+
+
+def _research_actor_input(
+    args: dict[str, Any],
+    actor: ActorContext | None,
+) -> ResearchActorInput:
+    return bind_research_actor_input(
+        ResearchActorInput(
+            tenant_id=_optional_arg(args, "tenant_id"),
+            user_id=_optional_arg(args, "user_id"),
+            memory_namespace=_optional_arg(args, "memory_namespace"),
+        ),
+        actor,
+    )
 
 
 def _optional_int_arg(args: dict[str, Any], name: str, *, default: int) -> int:

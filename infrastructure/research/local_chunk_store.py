@@ -373,7 +373,7 @@ def _validated_payload(value: Any) -> dict[str, Any]:
     payload = dict(value)
     _required_text(payload.get("chunk_id"), "chunk_id")
     _required_text(payload.get("paper_id"), "paper_id")
-    _required_text(payload.get("content"), "content")
+    payload["content"] = _normalized_content(payload.get("content"))
     try:
         canonical = _canonical_json(payload)
         normalized = json.loads(canonical, parse_constant=_reject_json_constant)
@@ -417,6 +417,23 @@ def _required_text(value: Any, field: str) -> str:
     ):
         raise LocalChunkStoreValidationError(f"{field} is invalid")
     return value
+
+
+def _normalized_content(value: Any) -> str:
+    if not isinstance(value, str):
+        raise LocalChunkStoreValidationError("content is invalid")
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    if (
+        not normalized.strip()
+        or normalized != normalized.strip()
+        or any(
+            (ord(character) < 32 and character not in {"\n", "\t"})
+            or ord(character) == 127
+            for character in normalized
+        )
+    ):
+        raise LocalChunkStoreValidationError("content is invalid")
+    return normalized
 
 
 def _matches_filters(payload: dict[str, Any], filters: dict[str, Any]) -> bool:

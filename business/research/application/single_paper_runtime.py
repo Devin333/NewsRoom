@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from framework.artifacts.paths import validate_artifact_path_segment
@@ -22,6 +23,7 @@ from framework.harness import (
     HarnessTranscript,
     HarnessWorkerResult,
     HarnessWorkerStatus,
+    RunBoundArtifactPort,
     RAGBudget,
     RAGContextPack,
     SkillExperience,
@@ -30,6 +32,7 @@ from framework.harness import (
 )
 from framework.shared.json import to_jsonable
 
+from business.research.application.ask_paper import AskPaperUseCase, ResearchActorScope
 from business.research.benchmark.models import ResearchScore
 from business.research.domain import (
     EvidenceRef,
@@ -70,6 +73,8 @@ class AnalyzePaperRequest:
     source_ref: str
     user_id: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
+    tenant_id: str | None = None
+    memory_namespace: str | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,7 @@ class ResearchAnalysisResult:
     context_envelope: ContextEnvelope | None
     compression_records: list[dict[str, Any]]
     skill_experience_refs: list[str]
+    actor_scope: ResearchActorScope
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -120,10 +126,392 @@ class ResearchAnalysisResult:
             "context_envelope": self.context_envelope.to_dict() if self.context_envelope else None,
             "compression_records": to_jsonable(self.compression_records),
             "skill_experience_refs": list(self.skill_experience_refs),
+            "actor_scope": self.actor_scope.to_metadata(),
             "diagnostics": to_jsonable(self.diagnostics),
             "trace_ref": self.trace_ref,
             "reader_payload_ref": self.reader_payload_ref,
         }
+
+    def to_persistence_dict(self) -> dict[str, Any]:
+        payload = self.to_dict()
+        payload["trace"] = self.trace.to_dict(
+            include_deterministic_history=True
+        )
+        return payload
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ResearchAnalysisResult":
+        if not isinstance(value, Mapping):
+            raise ValueError("ResearchAnalysisResult payload must be an object")
+        payload = dict(value)
+        try:
+            run_id = validate_artifact_path_segment(
+                payload.pop("run_id"),
+                field="run_id",
+            )
+            status = HarnessRunStatus(payload.pop("status")).value
+            quality_payload = _result_mapping(
+                payload.pop("quality"),
+                "quality",
+            )
+            trace = HarnessTrace.from_dict(
+                _result_mapping(payload.pop("trace"), "trace")
+            )
+            transcript = HarnessTranscript.from_dict(
+                _result_mapping(payload.pop("transcript"), "transcript")
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"ResearchAnalysisResult field is required: {exc.args[0]}"
+            ) from exc
+
+        analysis_payload = _result_optional_mapping(
+            payload.pop("analysis", None),
+            "analysis",
+        )
+        paper_card_payload = _result_optional_mapping(
+            payload.pop("paper_card", None),
+            "paper_card",
+        )
+        reader_payload_value = _result_optional_mapping(
+            payload.pop("reader_payload", None),
+            "reader_payload",
+        )
+        rag_context_payload = _result_optional_mapping(
+            payload.pop("rag_context", None),
+            "rag_context",
+        )
+        reader_issue_payload = _result_optional_mapping(
+            payload.pop("reader_issue", None),
+            "reader_issue",
+        )
+        context_snapshot_payload = _result_optional_mapping(
+            payload.pop("context_snapshot", None),
+            "context_snapshot",
+        )
+        context_envelope_payload = _result_optional_mapping(
+            payload.pop("context_envelope", None),
+            "context_envelope",
+        )
+        artifact_refs = _result_text_mapping(
+            payload.pop("artifact_refs", {}),
+            "artifact_refs",
+        )
+        compression_records = _result_mapping_list(
+            payload.pop("compression_records", []),
+            "compression_records",
+        )
+        skill_experience_refs = _result_text_list(
+            payload.pop("skill_experience_refs", []),
+            "skill_experience_refs",
+        )
+        try:
+            actor_scope_payload = _result_mapping(
+                payload.pop("actor_scope"),
+                "actor_scope",
+            )
+        except KeyError as exc:
+            raise ValueError(
+                "ResearchAnalysisResult field is required: actor_scope"
+            ) from exc
+        diagnostics = _result_mapping(
+            payload.pop("diagnostics", {}),
+            "diagnostics",
+        )
+        try:
+            persisted_trace_ref = _result_optional_text(
+                payload.pop("trace_ref"),
+                "trace_ref",
+            )
+            persisted_reader_ref = _result_optional_text(
+                payload.pop("reader_payload_ref"),
+                "reader_payload_ref",
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"ResearchAnalysisResult field is required: {exc.args[0]}"
+            ) from exc
+        if payload:
+            raise ValueError(
+                "ResearchAnalysisResult payload contains unsupported fields: "
+                + ", ".join(sorted(payload))
+            )
+
+        analysis = (
+            ResearchAnalysis.model_validate(analysis_payload)
+            if analysis_payload is not None
+            else None
+        )
+        paper_card = (
+            ResearchPaperCard.model_validate(paper_card_payload)
+            if paper_card_payload is not None
+            else None
+        )
+        reader_payload = (
+            ResearchReaderPayload.model_validate(reader_payload_value)
+            if reader_payload_value is not None
+            else None
+        )
+        rag_context = (
+            ResearchRAGContext.model_validate(rag_context_payload)
+            if rag_context_payload is not None
+            else None
+        )
+        reader_issue = (
+            ReaderIssue.model_validate(reader_issue_payload)
+            if reader_issue_payload is not None
+            else None
+        )
+        context_snapshot = (
+            ContextSnapshot.from_dict(context_snapshot_payload)
+            if context_snapshot_payload is not None
+            else None
+        )
+        context_envelope = (
+            ContextEnvelope.from_dict(context_envelope_payload)
+            if context_envelope_payload is not None
+            else None
+        )
+        actor_scope = _persisted_actor_scope(
+            actor_scope_payload,
+            trace=trace,
+            transcript=transcript,
+            context_envelope=context_envelope,
+            rag_context=rag_context,
+        )
+        result = cls(
+            run_id=run_id,
+            status=status,
+            analysis=analysis,
+            quality=ResearchQualityResult.model_validate(quality_payload),
+            paper_card=paper_card,
+            reader_payload=reader_payload,
+            rag_context=rag_context,
+            reader_issue=reader_issue,
+            artifact_refs=artifact_refs,
+            trace=trace,
+            transcript=transcript,
+            context_snapshot=context_snapshot,
+            context_envelope=context_envelope,
+            compression_records=compression_records,
+            skill_experience_refs=skill_experience_refs,
+            actor_scope=actor_scope,
+            diagnostics=diagnostics,
+        )
+        _validate_persisted_result_identity(
+            result,
+            persisted_trace_ref=persisted_trace_ref,
+            persisted_reader_ref=persisted_reader_ref,
+        )
+        return result
+
+
+def _validate_persisted_result_identity(
+    result: ResearchAnalysisResult,
+    *,
+    persisted_trace_ref: str | None,
+    persisted_reader_ref: str | None,
+) -> None:
+    if result.trace.run_id != result.run_id:
+        raise ValueError("Research result trace run_id mismatch")
+    if result.transcript.run_id != result.run_id:
+        raise ValueError("Research result transcript run_id mismatch")
+    if any(
+        entry.run_id != result.run_id
+        for entry in result.transcript.entries()
+    ):
+        raise ValueError("Research result transcript entry run_id mismatch")
+    if result.reader_issue is not None and result.reader_issue.run_id is not None:
+        if result.reader_issue.run_id != result.run_id:
+            raise ValueError("Research result reader issue run_id mismatch")
+    if result.context_snapshot is not None:
+        if (
+            result.context_snapshot.run_id is not None
+            and result.context_snapshot.run_id != result.run_id
+        ):
+            raise ValueError("Research result context snapshot run_id mismatch")
+    if result.context_envelope is not None:
+        if (
+            result.context_envelope.run_id is not None
+            and result.context_envelope.run_id != result.run_id
+        ):
+            raise ValueError("Research result context envelope run_id mismatch")
+    if result.context_snapshot is not None and result.context_envelope is not None:
+        if result.context_snapshot.envelope_id != result.context_envelope.envelope_id:
+            raise ValueError("Research result context identity mismatch")
+    paper_ids = _persisted_result_paper_ids(result)
+    if len(paper_ids) > 1:
+        raise ValueError("Research result paper identity mismatch")
+    if result.status == HarnessRunStatus.SUCCEEDED.value and result.analysis is None:
+        raise ValueError("succeeded Research result requires analysis")
+    if persisted_trace_ref is not None and persisted_trace_ref != result.trace_ref:
+        raise ValueError("Research result trace_ref mismatch")
+    if persisted_reader_ref != result.reader_payload_ref:
+        raise ValueError("Research result reader_payload_ref mismatch")
+
+
+def _persisted_actor_scope(
+    explicit: Mapping[str, Any],
+    *,
+    trace: HarnessTrace,
+    transcript: HarnessTranscript,
+    context_envelope: ContextEnvelope | None,
+    rag_context: ResearchRAGContext | None,
+) -> ResearchActorScope:
+    projections: list[tuple[str, ResearchActorScope | None]] = [
+        ("trace", _actor_scope_projection(trace.metadata)),
+    ]
+    projections.extend(
+        (
+            f"transcript[{index}]",
+            _actor_scope_projection(entry.metadata),
+        )
+        for index, entry in enumerate(transcript.entries())
+    )
+    if context_envelope is not None:
+        projections.append(
+            (
+                "context_envelope",
+                _actor_scope_projection(context_envelope.metadata),
+            )
+        )
+    if rag_context is not None:
+        projections.extend(
+            (
+                label,
+                _actor_scope_projection(metadata),
+            )
+            for label, metadata in (
+                ("rag_context", rag_context.metadata),
+                ("rag_goal", rag_context.goal.metadata),
+            )
+        )
+
+    expected = _actor_scope_projection(explicit)
+    if expected is None:
+        raise ValueError("Research result actor_scope is incomplete")
+    mismatched = [
+        label
+        for label, projection in projections
+        if projection is None or projection != expected
+    ]
+    if mismatched:
+        raise ValueError(
+            "Research result actor scope mismatch: " + ", ".join(mismatched)
+        )
+    return expected
+
+
+def _actor_scope_projection(
+    metadata: Mapping[str, Any],
+) -> ResearchActorScope | None:
+    actor_keys = {"tenant_id", "user_id", "memory_namespace"}
+    if not any(key in metadata for key in actor_keys):
+        return None
+    memory_namespace = str(metadata.get("memory_namespace") or "").strip()
+    if not memory_namespace:
+        raise ValueError("Research result actor scope requires memory_namespace")
+    try:
+        return AskPaperUseCase().resolve_actor_scope(
+            tenant_id=str(metadata.get("tenant_id") or "").strip() or None,
+            user_id=str(metadata.get("user_id") or "").strip() or None,
+            memory_namespace=memory_namespace,
+        )
+    except ValueError:
+        raise ValueError("Research result actor scope is invalid") from None
+
+
+def _persisted_result_paper_ids(result: ResearchAnalysisResult) -> set[str]:
+    values: list[Any] = [
+        result.quality.target_id,
+        result.trace.metadata.get("paper_id"),
+    ]
+    if result.analysis is not None:
+        values.append(result.analysis.paper_id)
+    if result.paper_card is not None:
+        values.append(result.paper_card.paper_id)
+    if result.reader_payload is not None:
+        values.extend(
+            (
+                result.reader_payload.paper.paper_id,
+                result.reader_payload.document.paper_id,
+                result.reader_payload.analysis.paper_id,
+                result.reader_payload.evidence.paper_id,
+            )
+        )
+    if result.rag_context is not None:
+        values.extend((result.rag_context.paper_id, result.rag_context.goal.paper_id))
+    if result.reader_issue is not None:
+        values.append(result.reader_issue.paper_id)
+    if result.context_envelope is not None:
+        values.append(result.context_envelope.metadata.get("paper_id"))
+    if result.context_snapshot is not None:
+        values.append(result.context_snapshot.metadata.get("paper_id"))
+    return {
+        value.strip()
+        for value in values
+        if isinstance(value, str) and value.strip()
+    }
+
+
+def _result_mapping(value: Any, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"ResearchAnalysisResult {field_name} must be an object")
+    return dict(value)
+
+
+def _result_optional_mapping(
+    value: Any,
+    field_name: str,
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return _result_mapping(value, field_name)
+
+
+def _result_text_mapping(value: Any, field_name: str) -> dict[str, str]:
+    mapping = _result_mapping(value, field_name)
+    if any(
+        not isinstance(key, str)
+        or not key.strip()
+        or not isinstance(item, str)
+        or not item.strip()
+        for key, item in mapping.items()
+    ):
+        raise ValueError(
+            f"ResearchAnalysisResult {field_name} must map strings to strings"
+        )
+    return {key: item for key, item in mapping.items()}
+
+
+def _result_mapping_list(value: Any, field_name: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, Mapping) for item in value
+    ):
+        raise ValueError(
+            f"ResearchAnalysisResult {field_name} must be a list of objects"
+        )
+    return [dict(item) for item in value]
+
+
+def _result_text_list(value: Any, field_name: str) -> list[str]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
+        raise ValueError(
+            f"ResearchAnalysisResult {field_name} must be a list of strings"
+        )
+    return list(value)
+
+
+def _result_optional_text(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"ResearchAnalysisResult {field_name} must be a string or null"
+        )
+    return value
 
 
 class ResearchSinglePaperRuntime:
@@ -151,7 +539,8 @@ class ResearchSinglePaperRuntime:
             raise TypeError("event_port_factory must be callable")
         self.event_port_factory = event_port_factory
         self.taxonomy_registry = taxonomy_registry or TaxonomyRegistry.default()
-        self.context_assembler = context_assembler or ContextAssembler()
+        self.context_assembler = context_assembler
+        self.ask_use_case = AskPaperUseCase()
         self.quality_gate = quality_gate or ResearchQualityGate()
         self.evidence_builder = ResearchEvidenceBuilder()
         self.reader_builder = ReaderPayloadBuilder()
@@ -162,18 +551,51 @@ class ResearchSinglePaperRuntime:
         self.gate_registry = build_paper_analysis_gate_registry()
 
     def run(self, request: AnalyzePaperRequest) -> ResearchAnalysisResult:
+        actor_scope = self.ask_use_case.resolve_actor_scope(
+            tenant_id=request.tenant_id,
+            user_id=request.user_id,
+            memory_namespace=request.memory_namespace,
+        )
+        request = replace(
+            request,
+            tenant_id=actor_scope.tenant_id,
+            user_id=actor_scope.user_id,
+            memory_namespace=actor_scope.memory_namespace,
+        )
         run_id = validate_artifact_path_segment(request.run_id, field="run_id")
-        workspace = _ResearchRunWorkspace(request=request)
+        if not isinstance(self.artifact_port, RunBoundArtifactPort):
+            raise TypeError("artifact_port must implement RunBoundArtifactPort")
+        with self.artifact_port.bind_run(run_id):
+            return self._run_bound(request, run_id)
+
+    def _run_bound(
+        self,
+        request: AnalyzePaperRequest,
+        run_id: str,
+    ) -> ResearchAnalysisResult:
+        workspace = _ResearchRunWorkspace(
+            request=request,
+            context_assembler=self.context_assembler or ContextAssembler(),
+        )
         event_port = self.event_port_factory(run_id)
         if not isinstance(event_port, HarnessTransitionPort):
             raise TypeError("event_port_factory must return HarnessTransitionPort")
         workflow = build_paper_analysis_workflow_spec()
+        actor_metadata = _request_actor_metadata(request)
         run_spec = HarnessRunSpec(
             run_id=run_id,
             workflow=workflow,
-            inputs={"paper_id": request.paper_id, "source_ref": request.source_ref},
+            inputs={
+                "paper_id": request.paper_id,
+                "source_ref": request.source_ref,
+                **actor_metadata,
+            },
             budget=_budget_from_options(request.options),
-            metadata={"research_runtime": "single_paper", "paper_id": request.paper_id},
+            metadata={
+                "research_runtime": "single_paper",
+                "paper_id": request.paper_id,
+                **actor_metadata,
+            },
         )
         control_plane = HarnessControlPlane(
             event_port=event_port,
@@ -184,20 +606,26 @@ class ResearchSinglePaperRuntime:
         trace = HarnessTrace(
             run_id=run_id,
             events=harness_result.events,
-            metadata={"paper_id": request.paper_id},
+            metadata={"paper_id": request.paper_id, **actor_metadata},
         )
-        transcript = _transcript_from_events(run_id, harness_result.events)
+        transcript = _transcript_from_events(
+            run_id,
+            harness_result.events,
+            metadata=actor_metadata,
+            research_rag_context=workspace.research_rag_context,
+            rag_context_pack=workspace.rag_context_pack,
+        )
         artifacts = dict(workspace.artifact_refs)
         if harness_result.state.status == HarnessRunStatus.SUCCEEDED and trace.events:
             artifacts["harness-trace"] = self._write_artifact(
                 "harness-trace",
                 trace.to_dict(),
-                metadata={"run_id": run_id},
+                metadata={"run_id": run_id, **actor_metadata},
             ).ref
             artifacts["harness-transcript"] = self._write_artifact(
                 "harness-transcript",
                 transcript.to_dict(),
-                metadata={"run_id": run_id},
+                metadata={"run_id": run_id, **actor_metadata},
             ).ref
         quality = workspace.quality or ResearchQualityResult(
             result_id=stable_research_id("quality", run_id, "halted"),
@@ -230,6 +658,11 @@ class ResearchSinglePaperRuntime:
             context_envelope=workspace.context_envelope,
             compression_records=list(workspace.compression_records),
             skill_experience_refs=list(workspace.skill_experience_refs),
+            actor_scope=self.ask_use_case.resolve_actor_scope(
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+                memory_namespace=request.memory_namespace,
+            ),
             diagnostics=diagnostics,
         )
 
@@ -275,15 +708,18 @@ class ResearchSinglePaperRuntime:
         goal = ResearchRetrievalGoal(
             goal_id=stable_research_id("research_goal", workspace.request.run_id, workspace.paper.paper_id),
             paper_id=workspace.paper.paper_id,
-            question="Build evidence for method, experiment, limitation, and claim support.",
+            question="Build grounded evidence for the accepted paper.",
             required_evidence_types=["method", "experiment", "limitation", "claim_support"],
             target_sections=[section.section_id for section in workspace.document.sections],
             allowed_source_refs=[
                 source_ref for section in workspace.document.sections for source_ref in [section.source_ref]
             ]
             or list(workspace.document.lineage.source_refs),
-            allowed_memory_namespaces=[f"research:user:{workspace.request.user_id or 'anonymous'}"],
+            allowed_memory_namespaces=[
+                str(workspace.request.memory_namespace)
+            ],
             constraints={"paper_only": True},
+            metadata=_request_actor_metadata(workspace.request),
         )
         session_spec = self.rag_policy_builder.build_session_spec(
             run_id=workspace.request.run_id,
@@ -611,11 +1047,13 @@ class ResearchSinglePaperRuntime:
         if workspace.reader_issue:
             workspace.artifact_refs["reader-issue"] = self._write_artifact("reader-issue", workspace.reader_issue.to_dict()).ref
         workspace.context_envelope = self._assemble_context(workspace)
-        workspace.context_snapshot = self.context_assembler.snapshot_store.load(workspace.context_envelope.snapshot_ref or "")
+        workspace.context_snapshot = workspace.context_assembler.snapshot_store.load(
+            workspace.context_envelope.snapshot_ref or ""
+        )
         workspace.compression_records = _research_ordered_compression_records(
             [
                 event["payload"]
-                for event in self.context_assembler.events
+                for event in workspace.context_assembler.events
                 if event.get("event_type") == "context_compression_recorded"
             ]
         )
@@ -640,7 +1078,7 @@ class ResearchSinglePaperRuntime:
         source_refs = []
         if workspace.research_rag_context:
             source_refs = list(workspace.research_rag_context.source_refs)
-        return self.context_assembler.assemble(
+        return workspace.context_assembler.assemble(
             {
                 "run_id": workspace.request.run_id,
                 "workflow_id": "research.paper_analysis",
@@ -658,7 +1096,9 @@ class ResearchSinglePaperRuntime:
                 "artifact_refs": tuple(workspace.artifact_refs.values()),
                 "evidence_refs": tuple(workspace.evidence_pack.evidence_ids if workspace.evidence_pack else ()),
                 "allowed_tools": ("retrieval.search", "retrieval.read_source"),
-                "allowed_memory_namespaces": (f"research:user:{workspace.request.user_id or 'anonymous'}",),
+                "allowed_memory_namespaces": (
+                    str(workspace.request.memory_namespace),
+                ),
                 "budget": ContextBudget(
                     max_input_tokens=int(workspace.request.options.get("context_max_input_tokens", 4096)),
                     max_output_tokens=1024,
@@ -672,6 +1112,7 @@ class ResearchSinglePaperRuntime:
                 "evidence_memory_tokens": int(workspace.request.options.get("evidence_memory_tokens", 120)),
                 "metadata": {
                     "paper_id": workspace.request.paper_id,
+                    **_request_actor_metadata(workspace.request),
                     "stable_prefix_excludes": ["full_paper_text", "github_metrics", "user_notes", "dynamic_rag_results"],
                 },
             }
@@ -718,6 +1159,7 @@ class ResearchSinglePaperRuntime:
 @dataclass
 class _ResearchRunWorkspace:
     request: AnalyzePaperRequest
+    context_assembler: ContextAssembler
     paper: ResearchPaper | None = None
     source_record: PaperSourceRecord | None = None
     document: ResearchDocument | None = None
@@ -759,7 +1201,7 @@ def _budget_from_options(options: dict[str, Any]) -> HarnessBudget:
 def _rag_budget_from_options(options: dict[str, Any]) -> RAGBudget:
     return RAGBudget(
         max_rounds=min(int(options.get("rag_max_rounds", 6)), 8),
-        max_replans=1,
+        max_replans=_rag_max_replans_from_options(options),
         max_queries=min(int(options.get("rag_max_queries", 12)), 16),
         max_source_reads=min(int(options.get("rag_max_source_reads", 24)), 32),
         max_memory_hits=min(int(options.get("rag_max_memory_hits", 8)), 12),
@@ -767,6 +1209,25 @@ def _rag_budget_from_options(options: dict[str, Any]) -> RAGBudget:
         max_context_tokens=4096,
         max_worker_calls=16,
     )
+
+
+def _rag_max_replans_from_options(options: dict[str, Any]) -> int:
+    raw_value = options.get("rag_max_replans", 3)
+    if isinstance(raw_value, bool):
+        raise ValueError("rag_max_replans must be an integer between 0 and 4")
+    if isinstance(raw_value, int):
+        value = raw_value
+    elif isinstance(raw_value, str):
+        text = raw_value.strip()
+        digits = text[1:] if text[:1] in {"+", "-"} else text
+        if not digits.isascii() or not digits.isdigit():
+            raise ValueError("rag_max_replans must be an integer between 0 and 4")
+        value = int(text)
+    else:
+        raise ValueError("rag_max_replans must be an integer between 0 and 4")
+    if value < 0 or value > 4:
+        raise ValueError("rag_max_replans must be an integer between 0 and 4")
+    return value
 
 
 def _ok(output: dict[str, Any]) -> HarnessWorkerResult:
@@ -828,11 +1289,166 @@ def _research_ordered_compression_records(records: list[dict[str, Any]]) -> list
     )
 
 
-def _transcript_from_events(run_id: str, events: list[HarnessEvent]) -> HarnessTranscript:
-    transcript = HarnessTranscript(run_id)
+def _transcript_from_events(
+    run_id: str,
+    events: list[HarnessEvent],
+    *,
+    metadata: dict[str, str] | None = None,
+    research_rag_context: ResearchRAGContext | None = None,
+    rag_context_pack: RAGContextPack | None = None,
+) -> HarnessTranscript:
+    entries = []
     for index, event in enumerate(events):
-        transcript.append(transcript_entry_from_event(event, phase_index=index))
+        entry = transcript_entry_from_event(event, phase_index=index)
+        if metadata:
+            entry = replace(
+                entry,
+                metadata={**entry.metadata, **metadata},
+            )
+        entries.append(entry)
+
+    rag_projection = _validated_rag_transcript_projection(
+        run_id=run_id,
+        research_rag_context=research_rag_context,
+        rag_context_pack=rag_context_pack,
+    )
+    if rag_projection is not None:
+        matching_indexes = [
+            index
+            for index, entry in enumerate(entries)
+            if entry.step_id == "run_research_rag"
+            and entry.metadata.get("event_type") == "worker_result_recorded"
+        ]
+        if len(matching_indexes) != 1:
+            raise ValueError(
+                "Research RAG transcript projection requires exactly one "
+                "run_research_rag worker result"
+            )
+        entry_index = matching_indexes[0]
+        entry = entries[entry_index]
+        context_pack_id = rag_projection["context_pack_id"]
+        transcript_ref = rag_projection["transcript_ref"]
+        entries[entry_index] = replace(
+            entry,
+            rag_session_refs=(rag_projection["rag_session_ref"],),
+            context_pack_refs=(context_pack_id,),
+            output_refs=tuple(
+                dict.fromkeys((*entry.output_refs, transcript_ref, context_pack_id))
+            ),
+            metadata={
+                **entry.metadata,
+                "parent_run_id": run_id,
+                "parent_workflow_id": rag_projection["workflow_id"],
+                "parent_step_id": rag_projection["step_id"],
+                "workflow_id": rag_projection["workflow_id"],
+                "step_id": rag_projection["step_id"],
+                "session_id": rag_projection["session_id"],
+            },
+        )
+
+    transcript = HarnessTranscript(run_id)
+    for entry in entries:
+        transcript.append(entry)
     return transcript
+
+
+def _validated_rag_transcript_projection(
+    *,
+    run_id: str,
+    research_rag_context: ResearchRAGContext | None,
+    rag_context_pack: RAGContextPack | None,
+) -> dict[str, str] | None:
+    if research_rag_context is None and rag_context_pack is None:
+        return None
+    if research_rag_context is None or rag_context_pack is None:
+        raise ValueError(
+            "Research RAG context and context pack must be provided together"
+        )
+    if not isinstance(research_rag_context, ResearchRAGContext):
+        raise TypeError("research_rag_context must be ResearchRAGContext")
+    if not isinstance(rag_context_pack, RAGContextPack):
+        raise TypeError("rag_context_pack must be RAGContextPack")
+
+    context_metadata = research_rag_context.metadata
+    identity = {
+        field_name: _required_rag_identity(context_metadata, field_name)
+        for field_name in (
+            "run_id",
+            "workflow_id",
+            "step_id",
+            "session_id",
+            "context_pack_id",
+            "transcript_ref",
+        )
+    }
+    expected_identity = {
+        "run_id": run_id,
+        "workflow_id": "research.paper_analysis",
+        "step_id": "run_research_rag",
+    }
+    for field_name, expected_value in expected_identity.items():
+        if identity[field_name] != expected_value:
+            raise ValueError(
+                f"Research RAG transcript {field_name} identity mismatch"
+            )
+
+    session_id = identity["session_id"]
+    context_pack_id = identity["context_pack_id"]
+    transcript_ref = identity["transcript_ref"]
+    if context_pack_id != rag_context_pack.context_pack_id:
+        raise ValueError("Research RAG transcript context_pack identity mismatch")
+    if not _rag_ref_matches_session(
+        context_pack_id,
+        scheme="rag-context",
+        session_id=session_id,
+    ):
+        raise ValueError("Research RAG transcript context_pack session mismatch")
+    if not _rag_ref_matches_session(
+        transcript_ref,
+        scheme="rag-transcript",
+        session_id=session_id,
+    ):
+        raise ValueError("Research RAG transcript child transcript session mismatch")
+
+    return {
+        "workflow_id": identity["workflow_id"],
+        "step_id": identity["step_id"],
+        "session_id": session_id,
+        "context_pack_id": context_pack_id,
+        "transcript_ref": transcript_ref,
+        "rag_session_ref": f"rag-session://{session_id}",
+    }
+
+
+def _required_rag_identity(
+    metadata: Mapping[str, Any],
+    field_name: str,
+) -> str:
+    value = metadata.get(field_name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"Research RAG transcript {field_name} identity is required"
+        )
+    return value.strip()
+
+
+def _rag_ref_matches_session(
+    ref: str,
+    *,
+    scheme: str,
+    session_id: str,
+) -> bool:
+    expected = f"{scheme}://{session_id}"
+    return ref == expected or ref.startswith(f"{expected}/")
+
+
+def _request_actor_metadata(request: AnalyzePaperRequest) -> dict[str, str]:
+    metadata = {"memory_namespace": str(request.memory_namespace)}
+    if request.tenant_id:
+        metadata["tenant_id"] = request.tenant_id
+    if request.user_id:
+        metadata["user_id"] = request.user_id
+    return metadata
 
 
 def _gate_failures(events: list[HarnessEvent]) -> list[dict[str, Any]]:

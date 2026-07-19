@@ -69,6 +69,29 @@ def test_trace_rejects_event_from_other_run() -> None:
         raise AssertionError("expected HarnessValidationError")
 
 
+def test_trace_serializes_deterministic_history_only_when_explicitly_requested() -> None:
+    event = HarnessEvent(
+        event_type="decision_recorded",
+        run_id="run-history",
+        deterministic_history={
+            "schema": "newsroom.harness-deterministic-history/v1",
+            "handler_input": {"state_checksum": "sha256:before"},
+        },
+    )
+    trace = HarnessTrace(run_id="run-history", events=(event,))
+
+    public_payload = trace.to_dict()
+    persistence_payload = trace.to_dict(include_deterministic_history=True)
+
+    assert "deterministic_history" not in public_payload["events"][0]
+    assert persistence_payload["events"][0]["deterministic_history"] == {
+        "schema": "newsroom.harness-deterministic-history/v1",
+        "handler_input": {"state_checksum": "sha256:before"},
+    }
+    restored = HarnessTrace.from_dict(persistence_payload)
+    assert restored.to_dict(include_deterministic_history=True) == persistence_payload
+
+
 def test_versioned_gate_contracts_are_public_and_quality_gate_stays_a_string() -> None:
     reference = GateReference.parse("candidate_schema@2")
     step = HarnessStepSpec(

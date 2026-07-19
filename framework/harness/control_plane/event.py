@@ -9,7 +9,7 @@ from typing import Any
 from framework.events.canonical import normalize_canonical_json
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.shared.json import stable_json_dumps, to_jsonable
-from framework.shared.time import format_datetime, utc_now
+from framework.shared.time import format_datetime, parse_datetime, utc_now
 
 
 class HarnessEventType(StrEnum):
@@ -77,8 +77,12 @@ class HarnessEvent:
             raise HarnessValidationError("event_id is required")
         object.__setattr__(self, "event_id", str(event_id))
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
+    def to_dict(
+        self,
+        *,
+        include_deterministic_history: bool = False,
+    ) -> dict[str, Any]:
+        payload = {
             "event_id": self.event_id,
             "event_type": self.event_type.value,
             "run_id": self.run_id,
@@ -88,6 +92,49 @@ class HarnessEvent:
             "occurred_at": format_datetime(self.occurred_at),
             "trace_id": self.trace_id,
         }
+        if include_deterministic_history:
+            payload["deterministic_history"] = to_jsonable(
+                self.deterministic_history
+            )
+        return payload
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessEvent":
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError("Harness event payload must be an object")
+        payload = dict(value)
+        occurred_at = parse_datetime(payload.pop("occurred_at", None))
+        if occurred_at is None:
+            raise HarnessValidationError("Harness event occurred_at is required")
+        try:
+            event_type = payload.pop("event_type")
+            run_id = payload.pop("run_id")
+        except KeyError as exc:
+            raise HarnessValidationError(
+                f"Harness event field is required: {exc.args[0]}"
+            ) from exc
+        event_id = payload.pop("event_id", None)
+        step_id = payload.pop("step_id", None)
+        event_payload = payload.pop("payload", {})
+        metadata = payload.pop("metadata", {})
+        trace_id = payload.pop("trace_id", None)
+        deterministic_history = payload.pop("deterministic_history", None)
+        if payload:
+            raise HarnessValidationError(
+                "Harness event payload contains unsupported fields: "
+                + ", ".join(sorted(payload))
+            )
+        return cls(
+            event_type=event_type,
+            run_id=run_id,
+            event_id=event_id,
+            step_id=step_id,
+            payload=event_payload,
+            metadata=metadata,
+            occurred_at=occurred_at,
+            trace_id=trace_id,
+            deterministic_history=deterministic_history,
+        )
 
 
 def _stable_event_id(

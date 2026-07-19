@@ -12,6 +12,7 @@ from framework.harness.rag.models import (
     RAGSessionSpec,
 )
 from framework.harness.rag.policy import RAGExecutionPolicy
+from framework.harness.rag.visibility import evidence_visible_to_tenant
 from framework.shared.json import to_jsonable
 
 
@@ -34,6 +35,10 @@ class RAGContextPackAssembler:
         policy: RAGExecutionPolicy | None = None,
     ) -> RAGContextPack:
         policy = policy or RAGExecutionPolicy.from_session_spec(spec)
+        tenant_id = str(policy.source_policy.get("tenant_id") or "").strip() or None
+        accepted_evidence = _visible_evidence(accepted_evidence, tenant_id=tenant_id)
+        rejected_evidence = _visible_evidence(rejected_evidence, tenant_id=tenant_id)
+        conflicting_evidence = _visible_evidence(conflicting_evidence, tenant_id=tenant_id)
         snapshot = budget_snapshot or RAGBudgetSnapshot()
         context_budget = _context_budget_from_rag_policy(policy)
         source_refs = _source_refs(accepted_evidence, rejected_evidence, conflicting_evidence)
@@ -162,6 +167,18 @@ class RAGContextPackAssembler:
 
 class FakeRAGContextPackAssembler(RAGContextPackAssembler):
     pass
+
+
+def _visible_evidence(
+    evidence: tuple[EvidenceCandidate, ...],
+    *,
+    tenant_id: str | None,
+) -> tuple[EvidenceCandidate, ...]:
+    return tuple(
+        candidate
+        for candidate in evidence
+        if evidence_visible_to_tenant(candidate, tenant_id=tenant_id)
+    )
 
 
 def _context_budget_from_rag_policy(policy: RAGExecutionPolicy) -> ContextBudget:

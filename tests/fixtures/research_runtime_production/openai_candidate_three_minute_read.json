@@ -1,0 +1,21 @@
+{
+  "id": "recorded-three-minute-read",
+  "object": "chat.completion",
+  "created": 1782864000,
+  "model": "recorded-research-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"three_minute_read\":{\"problem\":\"Research agents need auditable workflow control.\",\"core_idea\":\"Harness owns routing while language models generate schema-bound candidates.\",\"key_contributions\":[\"Bounded retrieval\",\"Deterministic quality gates\",\"Durable replay records\"],\"method_summary\":\"The runtime executes PLAN, EXECUTE, and VERIFY under bounded budgets.\",\"experiment_summary\":\"Recorded evaluation measures claim verification and durable reconstruction.\",\"limitations\":[\"The local durable backend targets one host.\"],\"why_it_matters\":\"Candidate text cannot decide publication or bypass verification.\",\"read_next\":[\"Multi-host scheduling\"],\"evidence_refs\":[{\"evidence_id\":\"evidence_065e46143503\",\"source_ref\":\"arxiv://2607.00001\",\"section_id\":\"sec_b7540af96587\",\"confidence\":0.95}],\"confidence\":0.93}}"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 320,
+    "completion_tokens": 140,
+    "total_tokens": 460
+  }
+}

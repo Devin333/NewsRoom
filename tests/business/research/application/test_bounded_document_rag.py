@@ -222,14 +222,23 @@ def _spec(
     budget: RAGBudget | None = None,
 ) -> RAGSessionSpec:
     allowed_refs = source_refs or (f"arxiv://{paper_id}/latex",)
+    memory_namespace = f"research:tenant:{tenant_id or 'public'}:user:{user_id}"
     scope_metadata = {
         "paper_id": paper_id,
         "target_sections": ["sec-method"],
         "target_claims": ["claim-routing"],
         "user_id": user_id,
+        "memory_namespace": memory_namespace,
     }
-    source_policy: dict[str, Any] = {"allowed_source_refs": list(allowed_refs)}
-    metadata: dict[str, Any] = {"paper_id": paper_id, "user_id": user_id}
+    source_policy: dict[str, Any] = {
+        "allowed_source_refs": list(allowed_refs),
+        "memory_namespace": memory_namespace,
+    }
+    metadata: dict[str, Any] = {
+        "paper_id": paper_id,
+        "user_id": user_id,
+        "memory_namespace": memory_namespace,
+    }
     if tenant_id:
         scope_metadata["tenant_id"] = tenant_id
         source_policy["tenant_id"] = tenant_id
@@ -249,7 +258,7 @@ def _spec(
             metadata=scope_metadata,
         ),
         allowed_corpora=("research_papers",),
-        allowed_memory_namespaces=(f"research:tenant:{tenant_id or 'public'}:user:{user_id}",),
+        allowed_memory_namespaces=(memory_namespace,),
         allowed_tools=("retrieval.search", "retrieval.read_source"),
         source_policy=source_policy,
         budget=budget or RAGBudget.safe_default(),
@@ -1192,9 +1201,13 @@ def test_fifty_concurrent_runs_keep_all_request_scoped_state_isolated() -> None:
         chunker=_RelationalChunker(),  # type: ignore[arg-type]
         session_factory=factory,
     )
-    document = _document()
+    documents = [
+        _document(f"24{index:02d}.00001")
+        for index in range(run_count)
+    ]
     specs = [
         _spec(
+            paper_id=document.paper_id,
             run_id=f"run-{index:02d}",
             session_id=f"session-{index:02d}",
             tenant_id=f"tenant-{index:02d}",
@@ -1210,28 +1223,57 @@ def test_fifty_concurrent_runs_keep_all_request_scoped_state_isolated() -> None:
                 max_worker_calls=1,
             ),
         )
-        for index in range(run_count)
+        for index, document in enumerate(documents)
     ]
 
-    def execute(spec: RAGSessionSpec) -> tuple[Any, RAGContextPack | None]:
+    def execute(
+        spec: RAGSessionSpec,
+        document: ResearchDocument,
+    ) -> tuple[Any, RAGContextPack | None]:
         context = runtime.run(session_spec=spec, document=document)
         return context, runtime.last_context_pack
 
     with ThreadPoolExecutor(max_workers=run_count) as executor:
-        futures = [executor.submit(execute, spec) for spec in specs]
+        futures = [
+            executor.submit(execute, spec, document)
+            for spec, document in zip(specs, documents, strict=True)
+        ]
         results = [future.result(timeout=30) for future in futures]
 
     assert len({context.context_id for context, _ in results}) == run_count
-    for spec, (context, pack) in zip(specs, results, strict=True):
+    for spec, document, (context, pack) in zip(
+        specs,
+        documents,
+        results,
+        strict=True,
+    ):
         assert pack is not None
         assert pack.pack_id == f"rag-context://{spec.session_id}"
+        assert context.paper_id == document.paper_id
         assert context.metadata["run_id"] == spec.run_id
         assert context.metadata["session_id"] == spec.session_id
         assert context.metadata["tenant_id"] == spec.metadata["tenant_id"]
+        assert context.metadata["user_id"] == spec.metadata["user_id"]
+        assert (
+            context.metadata["memory_namespace"]
+            == spec.metadata["memory_namespace"]
+        )
         assert context.goal.goal_id == spec.goal.goal_id
+        assert context.goal.metadata["tenant_id"] == spec.metadata["tenant_id"]
+        assert context.goal.metadata["user_id"] == spec.metadata["user_id"]
+        assert (
+            context.goal.metadata["memory_namespace"]
+            == spec.metadata["memory_namespace"]
+        )
+        assert spec.source_policy["tenant_id"] == spec.metadata["tenant_id"]
+        assert (
+            spec.source_policy["memory_namespace"]
+            == spec.metadata["memory_namespace"]
+        )
         assert context.metadata["budget"] == spec.budget.to_dict()
         assert context.metadata["transcript"]["session_id"] == spec.session_id
         assert context.memory_context[0]["namespace"] == spec.allowed_memory_namespaces[0]
+        assert context.source_refs == [f"arxiv://{document.paper_id}/latex"]
     assert {
         chunk.metadata["run_id"]
         for batch in store.indexed_batches

@@ -372,8 +372,8 @@ def _project_result(
     document: ResearchDocument,
     scope: _RunChunkScope,
     source_refs: list[str],
-) -> tuple[ResearchRAGContext, RAGContextPack | None]:
-    raw_pack = result.context_pack
+) -> tuple[ResearchRAGContext, RAGContextPack]:
+    raw_pack = result.context_pack or _terminal_context_pack(result, spec=spec)
     accepted_candidates = _candidate_group(result.accepted_evidence, raw_pack, "accepted_evidence")
     rejected_candidates = list(
         _candidate_group(result.rejected_evidence, raw_pack, "rejected_evidence")
@@ -436,7 +436,7 @@ def _project_result(
     artifact_refs = unique_texts(
         [
             *document.lineage.artifact_refs,
-            *(pack.artifact_refs if pack is not None else ()),
+            *pack.artifact_refs,
         ]
     )
     context = ResearchRAGContext(
@@ -450,7 +450,7 @@ def _project_result(
         accepted_evidence=accepted,
         rejected_evidence=rejected,
         conflicting_evidence=conflicting,
-        memory_context=list(pack.memory_context) if pack is not None else [],
+        memory_context=list(pack.memory_context),
         gap_report=gap_report,
         source_refs=source_refs,
         lineage=SourceLineage(
@@ -467,34 +467,97 @@ def _project_result(
             "step_id": spec.step_id,
             "tenant_id": scope.tenant_id,
             "user_id": scope.user_id,
+            "memory_namespace": spec.allowed_memory_namespaces[0],
             "session_status": result.status.value,
-            "context_pack_id": pack.pack_id if pack is not None else None,
+            "context_pack_id": pack.pack_id,
             "budget": spec.budget.to_dict(),
             "budget_snapshot": budget_snapshot,
             "decision": result.decision.to_dict(),
             "transcript": transcript,
             "transcript_ref": result.transcript.ref,
-            "evidence_trace": list(pack.evidence_trace) if pack is not None else [],
-            "context_pack_metadata": dict(pack.metadata) if pack is not None else {},
+            "evidence_trace": list(pack.evidence_trace),
+            "context_pack_metadata": dict(pack.metadata),
         },
     )
     return context, pack
 
 
+def _terminal_context_pack(
+    result: RAGSessionResult,
+    *,
+    spec: RAGSessionSpec,
+) -> RAGContextPack:
+    if result.status not in {
+        RAGSessionStatus.INSUFFICIENT_EVIDENCE,
+        RAGSessionStatus.HALTED,
+        RAGSessionStatus.FAILED,
+    }:
+        raise ValueError(
+            "RAG session omitted a context pack for a non-terminal projection status"
+        )
+    return RAGContextPack(
+        pack_id=f"rag-context://{spec.session_id}/empty",
+        query=spec.goal.question,
+        evidence=tuple(
+            candidate.to_evidence_pack()
+            for candidate in result.accepted_evidence
+        ),
+        context_refs=spec.goal.known_context_refs,
+        goal=spec.goal,
+        accepted_evidence=result.accepted_evidence,
+        rejected_evidence=result.rejected_evidence,
+        conflicting_evidence=result.conflicting_evidence,
+        source_refs=tuple(
+            dict.fromkeys(
+                candidate.source_ref
+                for candidate in (
+                    *result.accepted_evidence,
+                    *result.rejected_evidence,
+                    *result.conflicting_evidence,
+                )
+            )
+        ),
+        artifact_refs=tuple(
+            dict.fromkeys(
+                artifact_ref
+                for candidate in (
+                    *result.accepted_evidence,
+                    *result.rejected_evidence,
+                    *result.conflicting_evidence,
+                )
+                for artifact_ref in candidate.artifact_refs
+            )
+        ),
+        gap_report=dict(result.gap_report),
+        budget_snapshot=result.budget_snapshot,
+        assembly_summary=(
+            "No verified complete context pack was produced; retained the "
+            "terminal evidence and gap state."
+        ),
+        metadata={
+            "run_id": spec.run_id,
+            "workflow_id": spec.workflow_id,
+            "step_id": spec.step_id,
+            "session_id": spec.session_id,
+            "status": result.status.value,
+            "decision": result.decision.to_dict(),
+            "terminal_gap_pack": True,
+        },
+    )
+
+
 def _candidate_group(
     result_candidates: tuple[EvidenceCandidate, ...],
-    pack: RAGContextPack | None,
+    pack: RAGContextPack,
     field_name: str,
 ) -> tuple[EvidenceCandidate, ...]:
     if result_candidates:
         return result_candidates
-    if pack is None:
-        return ()
     return tuple(getattr(pack, field_name))
 
 
 def _sanitize_context_pack(
-    pack: RAGContextPack | None,
+    pack: RAGContextPack,
     *,
     accepted: list[EvidenceCandidate],
     rejected: list[EvidenceCandidate],
@@ -502,9 +565,7 @@ def _sanitize_context_pack(
     scoped_rejected: list[EvidenceCandidate],
     spec: RAGSessionSpec,
     document: ResearchDocument,
-) -> RAGContextPack | None:
-    if pack is None:
-        return None
+) -> RAGContextPack:
     scoped_candidates = [*accepted, *scoped_rejected, *conflicting]
     source_refs = unique_texts(
         [

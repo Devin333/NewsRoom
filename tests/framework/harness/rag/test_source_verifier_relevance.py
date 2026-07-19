@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from framework.harness.rag.models import EvidenceCandidate
 from framework.harness.rag.policy import RAGExecutionPolicy
 from framework.harness.rag.relevance import RelevanceScorerPort
@@ -139,6 +141,43 @@ def test_source_verifier_allows_public_evidence_when_tenant_scope_is_declared() 
     assert result.rejected == ()
     tenant_gate = [gate for gate in result.gate_results if gate.gate_name == "rag_tenant_scope"][0]
     assert tenant_gate.passed is True
+
+
+@pytest.mark.parametrize(
+    ("tenant_id", "accepted_ids", "rejected_ids"),
+    [
+        (None, ["public"], ["tenant-a", "tenant-b"]),
+        ("tenant-a", ["public", "tenant-a"], ["tenant-b"]),
+        ("tenant-b", ["public", "tenant-b"], ["tenant-a"]),
+    ],
+)
+def test_source_verifier_enforces_public_or_matching_tenant_visibility(
+    tenant_id: str | None,
+    accepted_ids: list[str],
+    rejected_ids: list[str],
+) -> None:
+    policy = (
+        _tenant_policy(tenant_id)
+        if tenant_id
+        else RAGExecutionPolicy.from_session_spec(fake_rag_session_spec())
+    )
+    candidates = (
+        _candidate("method", evidence_id="public"),
+        _candidate("method", evidence_id="tenant-a", metadata={"tenant_id": "tenant-a"}),
+        _candidate("method", evidence_id="tenant-b", metadata={"tenant_id": "tenant-b"}),
+    )
+
+    result = SourceVerifier().verify(candidates, policy=policy)
+
+    assert [item.evidence_id for item in result.accepted] == accepted_ids
+    assert [item.evidence_id for item in result.rejected] == rejected_ids
+    assert all(item.metadata["rejection_reason"] == "tenant_scope_violation" for item in result.rejected)
+    tenant_gate = [gate for gate in result.gate_results if gate.gate_name == "rag_tenant_scope"]
+    assert len(tenant_gate) == 1
+    assert tenant_gate[0].passed is False
+    assert tenant_gate[0].details["visibility_scope"] == (
+        f"tenant:{tenant_id}" if tenant_id else "public"
+    )
 
 
 def test_source_verifier_without_question_skips_relevance_scoring() -> None:

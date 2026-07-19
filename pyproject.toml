@@ -109,7 +109,10 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "sdk/python"]
-addopts = ["--import-mode=importlib"]
+addopts = ["--import-mode=importlib", "-m", "not live_research_e2e"]
+markers = [
+  "live_research_e2e: opt-in live arXiv and LLM production-composition coverage; select explicitly with valid credentials",
+]
 
 [tool.pyright]
 extraPaths = ["sdk/python"]

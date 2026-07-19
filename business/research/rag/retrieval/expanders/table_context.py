@@ -7,7 +7,11 @@ from framework.rag.retrieval import RerankScoreSet, expansion_metadata, rerank_s
 
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
-from business.research.rag.retrieval.filtering import merge_request_filters
+from business.research.rag.retrieval.filtering import (
+    chunk_visible_for_request,
+    filter_chunks_for_request,
+    merge_request_filters,
+)
 
 if TYPE_CHECKING:
     from business.research.ports.reranker import RerankerPort
@@ -64,6 +68,7 @@ class TableContextExpander:
         self._reranker = reranker
 
     def expand(self, chunks: list[PaperChunk], request: Any, route: Any) -> list[PaperChunk]:
+        chunks = filter_chunks_for_request(chunks, request)
         table_hits = [chunk for chunk in chunks if _is_table_chunk(chunk)]
         if not table_hits:
             return []
@@ -80,7 +85,12 @@ class TableContextExpander:
                 nonlocal added_for_table, expansion_rank
                 if added_for_table >= self._policy.max_table_context_chunks:
                     return
-                if chunk is None or chunk.paper_id != request.paper_id or chunk.chunk_id in seen:
+                if (
+                    chunk is None
+                    or chunk.paper_id != request.paper_id
+                    or chunk.chunk_id in seen
+                    or not chunk_visible_for_request(chunk, request)
+                ):
                     return
                 seen.add(chunk.chunk_id)
                 added_for_table += 1
@@ -163,7 +173,11 @@ class TableContextExpander:
 
         candidates: list[tuple[tuple[int, int, int], float, PaperChunk]] = []
         for chunk, score in scored:
-            if chunk.paper_id != request.paper_id or chunk.chunk_id in seen:
+            if (
+                chunk.paper_id != request.paper_id
+                or chunk.chunk_id in seen
+                or not chunk_visible_for_request(chunk, request)
+            ):
                 continue
             priority = _result_context_priority(chunk, table)
             if priority is None:

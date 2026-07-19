@@ -1,11 +1,27 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from business.research.rag.retrieval.paper_policy import classify_query_intent
 from business.research.rag.models import ResearchRetrievalGoal
 
 _SCOPE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+@dataclass(frozen=True)
+class ResearchActorScope:
+    tenant_id: str | None
+    user_id: str | None
+    memory_namespace: str
+
+    def to_metadata(self) -> dict[str, str]:
+        metadata = {"memory_namespace": self.memory_namespace}
+        if self.tenant_id:
+            metadata["tenant_id"] = self.tenant_id
+        if self.user_id:
+            metadata["user_id"] = self.user_id
+        return metadata
 
 
 class AskPaperUseCase:
@@ -23,23 +39,39 @@ class AskPaperUseCase:
         user_id: str | None = None,
     ) -> ResearchRetrievalGoal:
         intent = classify_query_intent(question)
-        tenant = _scope_id(tenant_id, "tenant_id")
-        user = _scope_id(user_id, "user_id")
-        namespace = _memory_namespace(memory_namespace, tenant_id=tenant, user_id=user)
-        metadata = {"intent": intent}
-        if tenant:
-            metadata["tenant_id"] = tenant
-        if user:
-            metadata["user_id"] = user
-        metadata["memory_namespace"] = namespace
+        scope = self.resolve_actor_scope(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            memory_namespace=memory_namespace,
+        )
         return ResearchRetrievalGoal(
             goal_id=goal_id,
             paper_id=paper_id,
             question=question,
             required_evidence_types=_required_evidence_types(intent),
             allowed_source_refs=[f"arxiv://{paper_id}", paper_id],
-            allowed_memory_namespaces=[namespace],
-            metadata=metadata,
+            allowed_memory_namespaces=[scope.memory_namespace],
+            metadata={"intent": intent, **scope.to_metadata()},
+        )
+
+    def resolve_actor_scope(
+        self,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+        memory_namespace: str | None = None,
+    ) -> ResearchActorScope:
+        tenant = _scope_id(tenant_id, "tenant_id")
+        user = _scope_id(user_id, "user_id")
+        namespace = _memory_namespace(
+            memory_namespace,
+            tenant_id=tenant,
+            user_id=user,
+        )
+        return ResearchActorScope(
+            tenant_id=tenant or None,
+            user_id=user or None,
+            memory_namespace=namespace,
         )
 
 
@@ -78,6 +110,8 @@ def _memory_namespace(
 def _validate_namespace(namespace: str, *, tenant_id: str, user_id: str) -> None:
     if not namespace.strip():
         raise ValueError("memory_namespace is required")
+    if namespace.startswith("research:tenant:") and not tenant_id:
+        raise ValueError("tenant_id is required for tenant memory_namespace")
     if tenant_id:
         tenant_prefix = f"research:tenant:{tenant_id}:"
         if not namespace.startswith(tenant_prefix):
@@ -98,4 +132,4 @@ def _scope_id(value: str | None, field_name: str) -> str:
     return text
 
 
-__all__ = ["AskPaperUseCase"]
+__all__ = ["AskPaperUseCase", "ResearchActorScope"]

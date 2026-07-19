@@ -1,0 +1,595 @@
+from __future__ import annotations
+
+import argparse
+import json
+from email.message import Message
+from io import StringIO
+from pathlib import Path
+from typing import Any
+from urllib.request import Request
+
+import pytest
+from cryptography.fernet import Fernet
+from fastapi.testclient import TestClient
+
+import framework.llm.clients.openai_compatible as openai_transport
+import infrastructure.external.sources.arxiv as arxiv_transport
+from business.research.application.single_paper_runtime import (
+    ResearchAnalysisResult,
+    ResearchSinglePaperRuntime,
+)
+from business.research.workflows import (
+    PAPER_ANALYSIS_GATE_REFERENCES,
+    build_paper_analysis_workflow_spec,
+)
+from framework.events.canonical import checksum_for
+from framework.harness import HarnessEventType, HarnessReplayReader
+from infrastructure.research import (
+    ArxivResearchSourceProvider,
+    FilesystemHarnessArtifactPort,
+    FilesystemResearchRunStore,
+    StructuredResearchCandidateWorker,
+)
+from interfaces.api.app import create_app
+from interfaces.cli.commands import mcp as mcp_commands
+from interfaces.composition import research as research_composition
+from interfaces.composition.research import build_research_runtime_composition
+from interfaces.composition.research_settings import ResearchRuntimeSettings
+from interfaces.mcp.server import NewsMCPServerAdapter
+from interfaces.mcp.stdio_server import run_stdio
+from interfaces.services.mcp_service import MCPApplicationService
+from interfaces.services.research_service import (
+    ResearchActorInput,
+    ResearchAnalyzeInput,
+    ResearchServiceError,
+)
+
+
+_PAPER_ID = "2607.00001"
+_RUN_ID = "recorded-production-analysis"
+_MCP_RUN_ID = "recorded-production-mcp-analysis"
+_FIXTURE_ROOT = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "research_runtime_production"
+)
+_LLM_FIXTURES = {
+    "candidate_three_minute_read": "openai_candidate_three_minute_read.json",
+    "candidate_taxonomy": "openai_candidate_taxonomy.json",
+    "candidate_experiment_claims": "openai_candidate_experiment_claims.json",
+}
+
+
+class _RecordedHTTPResponse:
+    def __init__(
+        self,
+        body: bytes,
+        *,
+        url: str,
+        content_type: str,
+        file_name: str | None = None,
+    ) -> None:
+        headers = Message()
+        headers["Content-Type"] = content_type
+        headers["Content-Length"] = str(len(body))
+        if file_name is not None:
+            headers["Content-Disposition"] = f'attachment; filename="{file_name}"'
+        self.body = body
+        self.headers = headers
+        self.status = 200
+        self.url = url
+
+    def __enter__(self) -> "_RecordedHTTPResponse":
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return None
+
+    def geturl(self) -> str:
+        return self.url
+
+    def read(self, limit: int = -1) -> bytes:
+        return self.body if limit < 0 else self.body[:limit]
+
+
+def _recorded_environment(tmp_path: Path) -> dict[str, str]:
+    return {
+        "RECORDED_RESEARCH_API_KEY": "recorded-transport-only",
+        "NEWS_RESEARCH_LLM_API_KEY_ENV": "RECORDED_RESEARCH_API_KEY",
+        "NEWS_RESEARCH_LLM_BASE_URL": "https://recorded-llm.invalid/v1",
+        "NEWS_RESEARCH_LLM_MODEL": "recorded-research-model",
+        "NEWS_RESEARCH_LLM_MAX_ATTEMPTS": "1",
+        "NEWS_RESEARCH_ROOT": str(tmp_path / "research"),
+        "NEWS_RESEARCH_ARTIFACT_ROOT": str(tmp_path / "artifacts"),
+        "NEWS_RESEARCH_RUN_STORE_ROOT": str(tmp_path / "run-store"),
+        "NEWS_RESEARCH_RAG_LOCAL_ROOT": str(tmp_path / "chunks"),
+    }
+
+
+def _settings(tmp_path: Path) -> ResearchRuntimeSettings:
+    return ResearchRuntimeSettings.from_env(
+        _recorded_environment(tmp_path),
+        cwd=tmp_path,
+    )
+
+
+def _install_recorded_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> ResearchRuntimeSettings:
+    for name, value in _recorded_environment(tmp_path).items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv(
+        "NEWS_ACTIVITY_ENCRYPTION_KEY",
+        Fernet.generate_key().decode("ascii"),
+    )
+    monkeypatch.setenv("NEWS_PRELOAD_RERANKER", "0")
+    for name in (
+        "NEWS_API_KEYS",
+        "NEWS_DATABASE_DSN",
+        "NEWS_EVENT_OPERATOR_PRINCIPAL_ID",
+        "NEWS_EVENT_OPERATOR_ROLE",
+        "NEWS_TENANT_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    return ResearchRuntimeSettings.from_env(cwd=tmp_path)
+
+
+def _install_recorded_transports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[str], list[str]]:
+    source_requests: list[str] = []
+    llm_tasks: list[str] = []
+    metadata = (_FIXTURE_ROOT / "arxiv_metadata.xml").read_bytes()
+    source = (_FIXTURE_ROOT / "arxiv_source.tex").read_bytes()
+
+    def source_transport(request: Request, _policy: Any) -> _RecordedHTTPResponse:
+        url = request.full_url
+        source_requests.append(url)
+        if "/api/query" in url:
+            return _RecordedHTTPResponse(
+                metadata,
+                url=url,
+                content_type="application/atom+xml",
+            )
+        if f"/e-print/{_PAPER_ID}" in url:
+            return _RecordedHTTPResponse(
+                source,
+                url=url,
+                content_type="application/octet-stream",
+                file_name=f"{_PAPER_ID}.tex",
+            )
+        raise AssertionError(f"unexpected external source request: {url}")
+
+    def llm_transport(request: Request, timeout_seconds: float) -> bytes:
+        assert request.full_url == "https://recorded-llm.invalid/v1/chat/completions"
+        assert timeout_seconds > 0
+        payload = json.loads(bytes(request.data or b"").decode("utf-8"))
+        schema_name = payload["response_format"]["json_schema"]["name"]
+        task = str(schema_name).removeprefix("research_")
+        fixture_name = _LLM_FIXTURES.get(task)
+        if fixture_name is None:
+            raise AssertionError(f"unexpected Research candidate task: {task}")
+        llm_tasks.append(task)
+        return (_FIXTURE_ROOT / fixture_name).read_bytes()
+
+    monkeypatch.setattr(arxiv_transport, "ensure_robots_allowed", lambda *_args: None)
+    monkeypatch.setattr(
+        arxiv_transport,
+        "open_request_with_fetch_policy",
+        source_transport,
+    )
+    monkeypatch.setattr(openai_transport, "_urlopen_transport", llm_transport)
+    return source_requests, llm_tasks
+
+
+def test_recorded_transports_execute_full_production_research_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    settings = _install_recorded_environment(monkeypatch, tmp_path)
+    source_requests, llm_tasks = _install_recorded_transports(monkeypatch)
+
+    provider = research_composition.default_research_runtime_provider()
+    provider.reset()
+    original_service_factory = type(provider).service_factory
+    resolved_service_ids: list[int] = []
+
+    def tracked_service_factory(actual_provider):
+        service = original_service_factory(actual_provider)
+        if actual_provider is provider:
+            resolved_service_ids.append(id(service))
+        return service
+
+    monkeypatch.setattr(type(provider), "service_factory", tracked_service_factory)
+
+    try:
+        with TestClient(create_app(audit_emitter_factory=None)) as client:
+            analyzed = client.post(
+                "/api/v1/research/papers/analyze",
+                json={
+                    "paperId": _PAPER_ID,
+                    "sourceUrl": f"https://arxiv.org/abs/{_PAPER_ID}",
+                    "runId": _RUN_ID,
+                },
+            )
+            mcp_analyzed = client.post(
+                "/api/v1/mcp/tools/news.research.analyze_paper/call",
+                json={
+                    "arguments": {
+                        "paper_id": _PAPER_ID,
+                        "source_url": f"https://arxiv.org/abs/{_PAPER_ID}",
+                        "run_id": _MCP_RUN_ID,
+                    }
+                },
+            )
+            http_research = client.get(
+                f"/api/v1/research/papers/{_PAPER_ID}/analysis"
+            )
+            http_mcp = client.post(
+                "/api/v1/mcp/tools/news.research.paper_analysis/call",
+                json={"arguments": {"paper_id": _PAPER_ID}},
+            )
+
+        local_mcp = MCPApplicationService().call_tool(
+            "news.research.paper_analysis",
+            {"paper_id": _PAPER_ID},
+        )
+        cli_exit = mcp_commands.mcp_call(
+            argparse.Namespace(
+                tool_name="news.research.paper_analysis",
+                args_json=json.dumps({"paper_id": _PAPER_ID}),
+                json=True,
+            )
+        )
+        cli_payload = json.loads(capsys.readouterr().out)
+
+        stdio_output = StringIO()
+        run_stdio(
+            input_stream=StringIO(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "recorded-stdio",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "news.research.paper_analysis",
+                            "arguments": {"paper_id": _PAPER_ID},
+                        },
+                    }
+                )
+                + "\n"
+            ),
+            output_stream=stdio_output,
+        )
+        stdio_payload = json.loads(stdio_output.getvalue())["result"]
+        server_payload = NewsMCPServerAdapter().call_tool(
+            "news.research.paper_analysis",
+            {"paper_id": _PAPER_ID},
+        )
+
+        assert analyzed.status_code == 200
+        response = analyzed.json()["data"]
+        assert mcp_analyzed.status_code == 200
+        mcp_analyze_payload = mcp_analyzed.json()["data"]
+        assert mcp_analyze_payload["success"] is True
+        assert {
+            key: mcp_analyze_payload["data"][key]
+            for key in ("paperId", "status")
+        } == {
+            key: response[key]
+            for key in ("paperId", "status")
+        }
+        assert mcp_analyze_payload["data"]["runId"] == _MCP_RUN_ID
+        assert http_research.status_code == 200
+        assert http_mcp.status_code == 200
+        assert local_mcp.success is True
+        assert cli_exit == 0
+        assert cli_payload["success"] is True
+        assert stdio_payload["success"] is True
+        assert server_payload["success"] is True
+
+        surface_payloads = {
+            "http_research": http_research.json()["data"],
+            "http_mcp": http_mcp.json()["data"]["data"],
+            "local_mcp": local_mcp.data,
+            "stdio_mcp": stdio_payload["data"],
+            "cli_mcp": cli_payload["data"],
+            "server_adapter": server_payload["data"],
+        }
+        expected_surface_payload = surface_payloads["http_research"]
+        assert all(
+            payload == expected_surface_payload
+            for payload in surface_payloads.values()
+        )
+        assert expected_surface_payload["runId"] == _MCP_RUN_ID
+        assert expected_surface_payload["paperId"] == _PAPER_ID
+        assert expected_surface_payload["status"] == "succeeded"
+        assert expected_surface_payload["quality"]["passed"] is True
+
+        composition = provider.get()
+        assert composition.available is True
+        assert composition.settings == settings
+        service = composition.service
+        assert resolved_service_ids == [id(service)] * 8
+        runtime = service._analyze_use_case._runtime
+        assert isinstance(runtime, ResearchSinglePaperRuntime)
+        assert isinstance(runtime.source_provider, ArxivResearchSourceProvider)
+        assert isinstance(runtime.llm_worker, StructuredResearchCandidateWorker)
+        assert isinstance(runtime.artifact_port, FilesystemHarnessArtifactPort)
+        assert isinstance(service._run_store, FilesystemResearchRunStore)
+
+        record = service._run_store.get_by_run_id(_RUN_ID)
+        assert record is not None
+        assert isinstance(record.result, ResearchAnalysisResult)
+        result = record.result
+
+        assert response["status"] == "succeeded"
+        assert result.succeeded is True
+        assert result.quality.passed is True
+        assert result.rag_context is not None
+        assert {
+            item.evidence_type for item in result.rag_context.accepted_evidence
+        } == {"method", "experiment", "limitation", "claim_support"}
+        assert result.rag_context.metadata["budget"]["max_replans"] == 3
+        assert result.rag_context.gap_report.missing_information == []
+        assert len(source_requests) == 3
+        assert "/api/query?" in source_requests[0]
+        assert f"id%3A{_PAPER_ID}" in source_requests[0]
+        assert source_requests[1] == f"https://arxiv.org/e-print/{_PAPER_ID}"
+        assert source_requests[2] == f"https://arxiv.org/e-print/{_PAPER_ID}"
+        expected_llm_tasks = [
+            "candidate_three_minute_read",
+            "candidate_taxonomy",
+            "candidate_experiment_claims",
+        ]
+        assert llm_tasks == expected_llm_tasks * 2
+
+        phases = {entry.phase for entry in result.transcript.entries()}
+        assert {"PLAN", "EXECUTE", "VERIFY"}.issubset(phases)
+        phase_events = [
+            event
+            for event in result.trace.events
+            if event.event_type is HarnessEventType.PHASE_RECORDED
+        ]
+        assert {
+            (str(event.payload["phase"]).upper(), event.payload["boundary"])
+            for event in phase_events
+        } >= {
+            (phase, boundary)
+            for phase in ("PLAN", "EXECUTE", "VERIFY")
+            for boundary in ("entry", "exit")
+        }
+        gate_events = [
+            event
+            for event in result.trace.events
+            if event.event_type is HarnessEventType.GATE_EVALUATED
+        ]
+        assert gate_events
+        assert all(event.payload["passed"] is True for event in gate_events)
+        recorded_gate_refs = {
+            str(event.payload.get("reference"))
+            for event in gate_events
+        }
+        assert set(PAPER_ANALYSIS_GATE_REFERENCES).issubset(recorded_gate_refs)
+
+        workflow = build_paper_analysis_workflow_spec()
+        expected_workflow_checksum = checksum_for(workflow.to_dict())
+        transitions = [
+            event.payload
+            for event in result.trace.events
+            if event.event_type is HarnessEventType.TRANSITION_COMMITTED
+        ]
+        assert transitions
+        assert {
+            (
+                transition["state"]["workflow_id"],
+                transition["workflow_version"],
+                transition["workflow_checksum"],
+            )
+            for transition in transitions
+        } == {
+            (
+                "research.paper_analysis",
+                "1",
+                expected_workflow_checksum,
+            )
+        }
+
+        rag_metadata = result.rag_context.metadata
+        assert {
+            "run_id": rag_metadata["run_id"],
+            "workflow_id": rag_metadata["workflow_id"],
+            "step_id": rag_metadata["step_id"],
+        } == {
+            "run_id": _RUN_ID,
+            "workflow_id": "research.paper_analysis",
+            "step_id": "run_research_rag",
+        }
+        rag_transcript = rag_metadata["transcript"]
+        assert rag_transcript["session_id"] == rag_metadata["session_id"]
+        rag_started = next(
+            event
+            for event in rag_transcript["events"]
+            if event["event_type"] == "rag_session_started"
+        )
+        assert {
+            key: rag_started["payload"]["session"][key]
+            for key in ("session_id", "run_id", "workflow_id", "step_id")
+        } == {
+            "session_id": rag_metadata["session_id"],
+            "run_id": _RUN_ID,
+            "workflow_id": "research.paper_analysis",
+            "step_id": "run_research_rag",
+        }
+
+        artifact_refs = response["metadata"]["artifactRefs"]
+        assert {
+            "research-analysis",
+            "research-reader-payload",
+            "research-quality-result",
+            "harness-trace",
+            "harness-transcript",
+        }.issubset(artifact_refs)
+        manifest_path = settings.artifact.root / _RUN_ID / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["workflow_id"] == "research.paper_analysis"
+        assert manifest["workflow_version"] == "1"
+        assert all(
+            item["checksum"]
+            for item in manifest["artifact_metadata"].values()
+        )
+        assert len(list((settings.run_store.root / "records").glob("*.json"))) == 2
+        chunk_state = json.loads(
+            (settings.rag.local_root / "research_paper_chunks.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert chunk_state["payloads"]
+        assert any("\n" in item["content"] for item in chunk_state["payloads"])
+
+        actor = ResearchActorInput()
+        analysis_before_restart = service.get_analysis(_PAPER_ID, actor=actor)
+        trace_before_restart = service.get_trace(_RUN_ID, actor=actor)
+        provider.reset()
+
+        reopened = provider.get()
+        assert reopened.available is True
+        assert reopened.service is not service
+        assert reopened.service._run_store is not service._run_store
+        assert (
+            reopened.service.get_analysis(_PAPER_ID, actor=actor)
+            == analysis_before_restart
+        )
+        assert reopened.service.get_trace(_RUN_ID, actor=actor) == trace_before_restart
+
+        restored_record = reopened.service._run_store.get_by_run_id(_RUN_ID)
+        assert restored_record is not None
+        restored_rag_entry = next(
+            entry
+            for entry in restored_record.result.transcript.entries()
+            if entry.step_id == "run_research_rag"
+            and entry.metadata["event_type"] == "worker_result_recorded"
+        )
+        assert restored_rag_entry.rag_session_refs
+        assert restored_rag_entry.context_pack_refs
+        assert set(restored_rag_entry.context_pack_refs).issubset(
+            restored_rag_entry.output_refs
+        )
+        assert restored_record.result.rag_context is not None
+        assert (
+            restored_record.result.rag_context.metadata["transcript_ref"]
+            in restored_rag_entry.output_refs
+        )
+        replay = HarnessReplayReader().replay(
+            run_id=_RUN_ID,
+            transcript=restored_record.result.transcript,
+        )
+        assert replay.rag_sessions == restored_rag_entry.rag_session_refs
+        assert replay.context_packs == restored_rag_entry.context_pack_refs
+
+        reopened_runtime = reopened.service._analyze_use_case._runtime
+        restored_artifact = reopened_runtime.artifact_port.read_artifact(
+            artifact_refs["research-analysis"]
+        )
+        assert restored_artifact["artifact_type"] == "research-analysis"
+        assert restored_artifact["payload"]["paper_id"] == _PAPER_ID
+    finally:
+        provider.reset()
+
+
+def test_explicit_low_rag_replan_budget_halts_and_persists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("RECORDED_RESEARCH_API_KEY", "recorded-transport-only")
+    monkeypatch.setenv(
+        "NEWS_ACTIVITY_ENCRYPTION_KEY",
+        Fernet.generate_key().decode("ascii"),
+    )
+    monkeypatch.delenv("NEWS_DATABASE_DSN", raising=False)
+    source_requests, llm_tasks = _install_recorded_transports(monkeypatch)
+
+    composition = build_research_runtime_composition(settings=settings)
+    reopened = None
+    try:
+        service = composition.service
+        with pytest.raises(ResearchServiceError) as failed:
+            service.analyze_paper(
+                ResearchAnalyzeInput(
+                    paper_id=_PAPER_ID,
+                    source_url=f"https://arxiv.org/abs/{_PAPER_ID}",
+                    run_id="recorded-production-low-rag-budget",
+                    user_id="recorded-smoke-user",
+                    options={"max_replans": 0, "rag_max_replans": 0},
+                )
+            )
+
+        assert failed.value.code == "research_run_failed"
+        assert failed.value.details["status"] == "halted"
+        record = service._run_store.get_by_run_id(
+            "recorded-production-low-rag-budget"
+        )
+        assert record is not None
+        result = record.result
+        assert result.status == "halted"
+        assert result.rag_context is not None
+        assert result.rag_context.metadata["budget"]["max_replans"] == 0
+        assert result.rag_context.metadata["budget_snapshot"]["replans_used"] == 0
+        assert result.rag_context.gap_report.missing_information
+        halted_rag_entry = next(
+            entry
+            for entry in result.transcript.entries()
+            if entry.step_id == "run_research_rag"
+            and entry.metadata["event_type"] == "worker_result_recorded"
+        )
+        assert halted_rag_entry.context_pack_refs == (
+            result.rag_context.metadata["context_pack_id"],
+        )
+        assert halted_rag_entry.context_pack_refs[0].endswith("/empty")
+        assert halted_rag_entry.rag_session_refs
+        assert len(result.quality.quality_flags) == len(
+            {
+                json.dumps(flag.to_dict(), sort_keys=True)
+                for flag in result.quality.quality_flags
+            }
+        )
+        assert source_requests
+        assert llm_tasks == []
+
+        persisted = result.to_persistence_dict()
+        assert (
+            ResearchAnalysisResult.from_dict(persisted).to_persistence_dict()
+            == persisted
+        )
+        composition.close()
+
+        reopened = build_research_runtime_composition(settings=settings)
+        restored = reopened.service._run_store.get_by_run_id(
+            "recorded-production-low-rag-budget"
+        )
+        assert restored is not None
+        assert restored.result.to_persistence_dict() == persisted
+        restored_rag_entry = next(
+            entry
+            for entry in restored.result.transcript.entries()
+            if entry.step_id == "run_research_rag"
+            and entry.metadata["event_type"] == "worker_result_recorded"
+        )
+        assert restored.result.rag_context is not None
+        assert (
+            restored.result.rag_context.metadata["transcript_ref"]
+            in restored_rag_entry.output_refs
+        )
+        replay = HarnessReplayReader().replay(
+            run_id=restored.result.run_id,
+            transcript=restored.result.transcript,
+        )
+        assert replay.rag_sessions == restored_rag_entry.rag_session_refs
+        assert replay.context_packs == restored_rag_entry.context_pack_refs
+    finally:
+        if reopened is not None:
+            reopened.close()
+        composition.close()

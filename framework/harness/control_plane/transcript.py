@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -100,6 +101,119 @@ class HarnessTranscriptEntry:
             "metadata": to_jsonable(self.metadata),
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessTranscriptEntry":
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError(
+                "Harness transcript entry payload must be an object"
+            )
+        payload = dict(value)
+        try:
+            run_id = payload.pop("run_id")
+            phase = payload.pop("phase")
+        except KeyError as exc:
+            raise HarnessValidationError(
+                f"Harness transcript entry field is required: {exc.args[0]}"
+            ) from exc
+        timestamp = _required_timestamp(payload.pop("timestamp", None))
+        values = {
+            "entry_id": _transcript_optional_text(
+                payload.pop("entry_id", None),
+                "entry_id",
+            ),
+            "step_id": _transcript_optional_text(
+                payload.pop("step_id", None),
+                "step_id",
+            ),
+            "decision": _transcript_optional_mapping(
+                payload.pop("decision", None),
+                "decision",
+            ),
+            "input_refs": _transcript_text_sequence(
+                payload.pop("input_refs", ()),
+                "input_refs",
+            ),
+            "output_refs": _transcript_text_sequence(
+                payload.pop("output_refs", ()),
+                "output_refs",
+            ),
+            "gate_results": _transcript_mapping_sequence(
+                payload.pop("gate_results", ()),
+                "gate_results",
+            ),
+            "budget_snapshot": _transcript_optional_mapping(
+                payload.pop("budget_snapshot", None),
+                "budget_snapshot",
+            ),
+            "worker_call_ref": _transcript_optional_text(
+                payload.pop("worker_call_ref", None),
+                "worker_call_ref",
+            ),
+            "artifact_refs": _transcript_text_sequence(
+                payload.pop("artifact_refs", ()),
+                "artifact_refs",
+            ),
+            "skill_refs": _transcript_text_sequence(
+                payload.pop("skill_refs", ()),
+                "skill_refs",
+            ),
+            "candidate_refs": _transcript_text_sequence(
+                payload.pop("candidate_refs", ()),
+                "candidate_refs",
+            ),
+            "rag_session_refs": _transcript_text_sequence(
+                payload.pop("rag_session_refs", ()),
+                "rag_session_refs",
+            ),
+            "retrieval_plan_refs": _transcript_text_sequence(
+                payload.pop("retrieval_plan_refs", ()),
+                "retrieval_plan_refs",
+            ),
+            "context_pack_refs": _transcript_text_sequence(
+                payload.pop("context_pack_refs", ()),
+                "context_pack_refs",
+            ),
+            "context_envelope_ref": _transcript_optional_text(
+                payload.pop("context_envelope_ref", None),
+                "context_envelope_ref",
+            ),
+            "context_snapshot_ref": _transcript_optional_text(
+                payload.pop("context_snapshot_ref", None),
+                "context_snapshot_ref",
+            ),
+            "compression_record_refs": _transcript_text_sequence(
+                payload.pop("compression_record_refs", ()),
+                "compression_record_refs",
+            ),
+            "evidence_refs": _transcript_text_sequence(
+                payload.pop("evidence_refs", ()),
+                "evidence_refs",
+            ),
+            "eval_refs": _transcript_text_sequence(
+                payload.pop("eval_refs", ()),
+                "eval_refs",
+            ),
+            "release_refs": _transcript_text_sequence(
+                payload.pop("release_refs", ()),
+                "release_refs",
+            ),
+            "metadata": _transcript_mapping(
+                payload.pop("metadata", {}),
+                "metadata",
+            ),
+        }
+        if payload:
+            raise HarnessValidationError(
+                "Harness transcript entry payload contains unsupported fields: "
+                + ", ".join(sorted(payload))
+            )
+        return cls(
+            run_id=str(run_id),
+            phase=str(phase),
+            timestamp=timestamp,
+            **values,
+        )
+
 
 class HarnessTranscript:
     def __init__(self, run_id: str, entries: tuple[HarnessTranscriptEntry, ...] = ()) -> None:
@@ -123,6 +237,32 @@ class HarnessTranscript:
 
     def to_dict(self) -> dict[str, Any]:
         return {"run_id": self.run_id, "entries": [entry.to_dict() for entry in self._entries]}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessTranscript":
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError("Harness transcript payload must be an object")
+        payload = dict(value)
+        try:
+            run_id = str(payload.pop("run_id"))
+        except KeyError as exc:
+            raise HarnessValidationError("Harness transcript run_id is required") from exc
+        raw_entries = payload.pop("entries", ())
+        if not isinstance(raw_entries, (list, tuple)):
+            raise HarnessValidationError("Harness transcript entries must be a list")
+        if payload:
+            raise HarnessValidationError(
+                "Harness transcript payload contains unsupported fields: "
+                + ", ".join(sorted(payload))
+            )
+        entries = tuple(
+            HarnessTranscriptEntry.from_dict(entry) for entry in raw_entries
+        )
+        if any(entry.run_id != run_id for entry in entries):
+            raise HarnessValidationError(
+                "Harness transcript entry run_id must match transcript run_id"
+            )
+        return cls(run_id, entries)
 
 
 class InMemoryHarnessTranscriptStore:
@@ -319,6 +459,48 @@ def _required_timestamp(value: Any):
     if timestamp is None:
         raise HarnessValidationError("Harness event requires a valid occurred_at")
     return timestamp
+
+
+def _transcript_optional_text(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HarnessValidationError(f"{field_name} must be a string or null")
+    return value
+
+
+def _transcript_mapping(value: Any, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError(f"{field_name} must be an object")
+    return dict(value)
+
+
+def _transcript_optional_mapping(
+    value: Any,
+    field_name: str,
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return _transcript_mapping(value, field_name)
+
+
+def _transcript_text_sequence(value: Any, field_name: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)) or any(
+        not isinstance(item, str) for item in value
+    ):
+        raise HarnessValidationError(f"{field_name} must be a list of strings")
+    return tuple(value)
+
+
+def _transcript_mapping_sequence(
+    value: Any,
+    field_name: str,
+) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, (list, tuple)) or any(
+        not isinstance(item, Mapping) for item in value
+    ):
+        raise HarnessValidationError(f"{field_name} must be a list of objects")
+    return tuple(dict(item) for item in value)
 
 
 __all__ = [

@@ -60,6 +60,14 @@ def test_ask_paper_use_case_rejects_cross_tenant_memory_namespace() -> None:
         )
 
 
+def test_ask_paper_use_case_rejects_tenant_namespace_without_tenant_actor() -> None:
+    with pytest.raises(ValueError, match="tenant_id is required"):
+        AskPaperUseCase().resolve_actor_scope(
+            user_id="user-1",
+            memory_namespace="research:tenant:tenant-a:user:user-1",
+        )
+
+
 def test_ask_paper_use_case_maps_table_questions_to_experiment_evidence() -> None:
     goal = AskPaperUseCase().build_paper_ask_goal(
         paper_id="p1",

@@ -48,6 +48,7 @@ from interfaces.api.responses import (
     success,
 )
 from interfaces.api.errors import http_error_code
+from interfaces.composition.research import build_research_application_service
 from interfaces.events import AuditEmitter, audit_emitter_from_env
 from framework.shared.env import load_root_env
 from interfaces.services.approval_service import ApprovalApplicationService
@@ -118,7 +119,7 @@ def create_app(
     approval_service_factory: ApprovalServiceFactory = ApprovalApplicationService,
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
-    research_service_factory: ResearchServiceFactory = ResearchApplicationService,
+    research_service_factory: ResearchServiceFactory = build_research_application_service,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_keys: ApiKeyRoles | None = None,
@@ -744,6 +745,7 @@ def _authorized_api_actor(
         return None
     for expected_token, roles in api_keys.items():
         if hmac.compare_digest(token, expected_token):
+            tenant_id = str(os.environ.get("NEWS_TENANT_ID") or "").strip()
             return ActorContext(
                 actor_id=_api_key_actor_id(expected_token),
                 actor_type="mcp_client" if "mcp_client" in roles else "service",
@@ -751,6 +753,7 @@ def _authorized_api_actor(
                 request_id=_request_id(),
                 ip_address=request.client.host if request.client else None,
                 user_agent=request.headers.get("user-agent"),
+                metadata={"tenant_id": tenant_id} if tenant_id else {},
             )
     return None
 

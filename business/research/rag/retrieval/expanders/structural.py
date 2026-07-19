@@ -8,6 +8,7 @@ from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
 from business.research.rag.retrieval.expanders.formula_context import FormulaContextExpander
 from business.research.rag.retrieval.expanders.table_context import should_expand_result_context
+from business.research.rag.retrieval.filtering import chunk_visible_for_request, filter_chunks_for_request
 
 
 class StructuralContextExpander:
@@ -19,6 +20,7 @@ class StructuralContextExpander:
         self._formula_context = FormulaContextExpander(policy)
 
     def expand(self, chunks: list[PaperChunk], request: Any, route: Any) -> list[PaperChunk]:
+        chunks = filter_chunks_for_request(chunks, request)
         if not chunks:
             return chunks
         out: list[PaperChunk] = []
@@ -32,7 +34,11 @@ class StructuralContextExpander:
                 if ref_id in seen:
                     continue
                 ref = self._store.get_chunk(ref_id)
-                if ref is None or ref.paper_id != request.paper_id:
+                if (
+                    ref is None
+                    or ref.paper_id != request.paper_id
+                    or not chunk_visible_for_request(ref, request)
+                ):
                     continue
                 seen.add(ref.chunk_id)
                 added += 1

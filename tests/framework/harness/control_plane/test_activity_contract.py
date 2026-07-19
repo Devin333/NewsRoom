@@ -14,10 +14,16 @@ from framework.events.schema import (
     SecurePayloadValidation,
     SecurityClassification,
 )
+from framework.events.runtime.activities import (
+    ReplayActivityKind,
+    ReplayActivityPayload,
+    ReplayActivityPayloadRole,
+)
 from framework.harness.control_plane.activity import (
     HARNESS_ACTIVITY_RESULT_SCHEMA,
     HarnessActivity,
     HarnessActivityResultRecord,
+    harness_activity_input_checksum,
     resolve_activity_result,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -89,6 +95,27 @@ def test_activity_identity_is_stable_and_input_content_is_integrity_bound() -> N
     assert retry.input_checksum == first.input_checksum
     assert conflict.activity_id == first.activity_id
     assert conflict.input_checksum != first.input_checksum
+
+
+def test_activity_input_checksum_matches_recorded_payload_zero_canonicalization() -> None:
+    inputs = {"positive_zero": 0.0, "negative_zero": -0.0}
+    activity = _activity(inputs)
+    payload = ReplayActivityPayload(
+        activity_id=activity.activity_id,
+        activity_kind=ReplayActivityKind.LLM,
+        role=ReplayActivityPayloadRole.INPUT,
+        content=inputs,
+        idempotency_key=activity.idempotency_key,
+        attempt=activity.attempt,
+        contract_version=activity.contract_version,
+        handler_version=activity.worker_version,
+    )
+
+    assert activity.input_checksum == payload.content_checksum
+    assert activity.input_checksum == harness_activity_input_checksum(inputs)
+    assert activity.input_checksum == harness_activity_input_checksum(
+        {"positive_zero": 0, "negative_zero": 0}
+    )
 
 
 def test_activity_identity_is_tenant_scoped_without_persisting_raw_tenant() -> None:

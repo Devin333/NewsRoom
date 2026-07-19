@@ -1,19 +1,19 @@
 ## 1. Production Composition Regressions
 
-- [ ] 1.1 Replace the test that expects the default Research service to be permanently unconfigured with settings-aware configured/unavailable contract tests.
-- [ ] 1.2 Add production object-graph assertions rejecting `_UnconfiguredAnalyzeUseCase`, Research fakes, `FakeArtifactPort`, legacy paper-radar imports, and `InMemoryResearchRunStore` defaults.
-- [ ] 1.3 Add recorded arXiv metadata/source and OpenAI-compatible response fixtures at transport boundaries, with no fake Research provider or fake runtime in the composed path.
-- [ ] 1.4 Add HTTP Research, HTTP MCP, local MCP, stdio, CLI, and `NewsMCPServerAdapter` parity regressions through the production service factory.
-- [ ] 1.5 Add configuration-unavailable regressions proving module/catalog startup works and execution returns sanitized typed 503 without secret values.
-- [ ] 1.6 Add filesystem restart, concurrent-run isolation, tamper, non-regular-node, and atomic-replace fault-injection regressions for run records and Harness artifacts.
+- [x] 1.1 Replace the test that expects the default Research service to be permanently unconfigured with settings-aware configured/unavailable contract tests.
+- [x] 1.2 Add production object-graph assertions rejecting `_UnconfiguredAnalyzeUseCase`, Research fakes, `FakeArtifactPort`, legacy paper-radar imports, and `InMemoryResearchRunStore` defaults.
+- [x] 1.3 Add recorded arXiv metadata/source and OpenAI-compatible response fixtures at transport boundaries, with no fake Research provider or fake runtime in the composed path.
+- [x] 1.4 Add HTTP Research, HTTP MCP, local MCP, stdio, CLI, and `NewsMCPServerAdapter` parity regressions through the production service factory.
+- [x] 1.5 Add configuration-unavailable regressions proving module/catalog startup works and execution returns sanitized typed 503 without secret values.
+- [x] 1.6 Add filesystem restart, concurrent-run isolation, tamper, non-regular-node, and atomic-replace fault-injection regressions for run records and Harness artifacts.
 
 ## 2. Settings And Composition Root
 
 - [x] 2.1 Add immutable `ResearchRuntimeSettings.from_env()` for source, LLM, parser, RAG, artifact, and run-store configuration with path and bounded-limit validation.
 - [x] 2.2 Add typed composition/unavailable errors that expose capability names and remediation but never environment values or raw exceptions.
 - [x] 2.3 Create `interfaces/composition/research.py` with cached production dependencies, explicit reset/close hooks, and preserved injection seams.
-- [ ] 2.4 Compose `ResearchApplicationService -> AnalyzePaperUseCase -> ResearchSinglePaperRuntime` with concrete adapters and durable run storage when settings are valid.
-- [ ] 2.5 Prove shared clients/stores are reused while all run ids, RAG state, artifact bindings, and request data remain concurrency-safe.
+- [x] 2.4 Compose `ResearchApplicationService -> AnalyzePaperUseCase -> ResearchSinglePaperRuntime` with concrete adapters and durable run storage when settings are valid.
+- [x] 2.5 Prove shared clients/stores are reused while all run ids, RAG state, artifact bindings, and request data remain concurrency-safe.
 
 ## 3. Real Source And Document Adapters
 
@@ -39,31 +39,31 @@
 - [x] 5.2 Implement a durable local single-host chunk payload store and optional existing Qdrant-backed selection without requiring Qdrant for baseline readiness.
 - [x] 5.3 Implement `BoundedDocumentRAGRuntime` using `PaperRAGSession`/`BoundedRAGSessionController` and the supplied `RAGSessionSpec` goal, budgets, and allowed source scope.
 - [x] 5.4 Project `RAGContextPack` into accepted, rejected, conflicting, and missing `ResearchEvidenceItem` collections with stable ids and scores.
-- [ ] 5.5 Keep `last_context_pack` request-scoped and add concurrent-run tests proving no document, goal, budget, trace, or source-ref leakage.
+- [x] 5.5 Keep `last_context_pack` request-scoped and add concurrent-run tests proving no document, goal, budget, trace, or source-ref leakage.
 - [x] 5.6 Add RAG regressions for relevant evidence, missing required evidence, rejected out-of-scope candidates, budget exhaustion, and deterministic replay of recorded chunks.
 
 ## 6. Durable Artifacts And Research Run Store
 
-- [ ] 6.1 Implement context-local run binding for `FilesystemHarnessArtifactPort` without shared mutable run id.
-- [ ] 6.2 Adapt Harness artifact writes/reads to `ArtifactManager` with canonical names, checksum verification, manifest refs, atomic bytes, and typed integrity failures.
-- [ ] 6.3 Add `ResearchAnalysisResult.from_dict()` and any required typed nested reconstruction without unsafe deserialization or loss of trace/context fields.
-- [ ] 6.4 Implement `FilesystemResearchRunStore` with validated versioned JSON, content checksum, run/paper identity, regular-file/path containment, atomic replace, and owned-temp cleanup.
-- [ ] 6.5 Implement a concurrency-safe latest-by-paper index that references only committed run records and survives injected index-write failure.
-- [ ] 6.6 Cut `ResearchApplicationService` production composition to the durable store and prove `analysis`, `reader`, `ask`, and `trace` work after service reconstruction.
-- [ ] 6.7 Add run/artifact structured diagnostics with allow-listed fields and no paper content, prompt, credential, path, or raw exception leakage.
+- [x] 6.1 Implement context-local run binding for `FilesystemHarnessArtifactPort` without shared mutable run id.
+- [x] 6.2 Adapt Harness artifact writes/reads to `ArtifactManager` with canonical names, checksum verification, manifest refs, atomic bytes, and typed integrity failures.
+- [x] 6.3 Add `ResearchAnalysisResult.from_dict()` and any required typed nested reconstruction without unsafe deserialization or loss of trace/context fields.
+- [x] 6.4 Implement `FilesystemResearchRunStore` with validated versioned JSON, content checksum, run/paper identity, regular-file/path containment, atomic replace, and owned-temp cleanup.
+- [x] 6.5 Implement a concurrency-safe latest-by-paper index that references only committed run records and survives injected index-write failure.
+- [x] 6.6 Cut `ResearchApplicationService` production composition to the durable store and prove `analysis`, `reader`, `ask`, and `trace` work after service reconstruction.
+- [x] 6.7 Add run/artifact structured diagnostics with allow-listed fields and no paper content, prompt, credential, path, or raw exception leakage.
 
 ## 7. Entrypoint Cutover And Smoke
 
-- [ ] 7.1 Change `create_app()` default Research factory and its HTTP MCP composition to the shared production factory while preserving explicit test factories.
-- [ ] 7.2 Change `MCPApplicationService`, CLI MCP, stdio MCP, and `NewsMCPServerAdapter` defaults to the same factory without import-time live calls.
-- [ ] 7.3 Keep existing Research API response/error contracts and verify quality-gate failures, source failures, unavailable configuration, and successful runs map consistently across transports.
-- [ ] 7.4 Extend MCP/Research smoke to execute a configured production-composition analysis through recorded adapter transports rather than checking catalog counts only.
-- [ ] 7.5 Add an optional credential-gated live arXiv/LLM E2E marker and ensure ordinary offline smoke neither performs live calls nor counts a skip as production proof.
+- [x] 7.1 Change `create_app()` default Research factory and its HTTP MCP composition to the shared production factory while preserving explicit test factories.
+- [x] 7.2 Change `MCPApplicationService`, CLI MCP, stdio MCP, and `NewsMCPServerAdapter` defaults to the same factory without import-time live calls.
+- [x] 7.3 Keep existing Research API response/error contracts and verify quality-gate failures, source failures, unavailable configuration, and successful runs map consistently across transports.
+- [x] 7.4 Extend MCP/Research smoke to execute a configured production-composition analysis through recorded adapter transports rather than checking catalog counts only.
+- [x] 7.5 Add an optional credential-gated live arXiv/LLM E2E marker and ensure ordinary offline smoke neither performs live calls nor counts a skip as production proof.
 
 ## 8. Verification And Delivery
 
-- [ ] 8.1 Run focused source/compiler/candidate/GitHub/RAG/artifact/store/composition/service/API/MCP/stdio tests and architecture boundaries.
-- [ ] 8.2 Run the broader `tests/business/research`, Harness, interfaces, artifact, and smoke compatibility matrices with skip reasons recorded.
-- [ ] 8.3 Run `openspec validate research-runtime-production-composition --strict`, `openspec validate --all --strict`, and `git diff --check`.
-- [ ] 8.4 Run `.\.venv\Scripts\python.exe -m scripts.dev compile` and mandatory `.\.venv\Scripts\python.exe -m scripts.dev smoke`; fix root causes.
+- [x] 8.1 Run focused source/compiler/candidate/GitHub/RAG/artifact/store/composition/service/API/MCP/stdio tests and architecture boundaries.
+- [x] 8.2 Run the broader `tests/business/research`, Harness, interfaces, artifact, and smoke compatibility matrices with skip reasons recorded.
+- [x] 8.3 Run `openspec validate research-runtime-production-composition --strict`, `openspec validate --all --strict`, and `git diff --check`.
+- [x] 8.4 Run `.\.venv\Scripts\python.exe -m scripts.dev compile` and mandatory `.\.venv\Scripts\python.exe -m scripts.dev smoke`; fix root causes.
 - [ ] 8.5 Update task evidence, commit with path-scoped staging, and verify no unrelated active OpenSpec or user files are included.

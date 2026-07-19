@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from framework.harness import (
     FakeMemoryPort,
     FakeRAGPlanner,
@@ -17,8 +19,10 @@ from framework.harness import (
 )
 from framework.harness.rag.fake import fake_reader_repair_memory, fake_research_evidence_packs
 from framework.harness.rag.relevance import RelevanceScorerPort
+from framework.harness.rag.models import AnswerClaim, GroundedAnswerCandidate, RAGContextPack
 from framework.harness.rag.session import BoundedRAGSessionController
 from framework.harness.retrieval.fake import FakeRetrievalPort
+from framework.harness.retrieval.evidence_pack import EvidencePack
 
 
 def test_bounded_rag_controller_returns_verified_context_pack() -> None:
@@ -205,9 +209,99 @@ def test_controller_propagates_tenant_scope_only_to_business_retrieval_request()
     }.isdisjoint(result.metrics.to_dict())
 
 
+@pytest.mark.parametrize(
+    ("tenant_id", "visible_ids"),
+    [
+        (None, ["public"]),
+        ("tenant-a", ["public", "tenant-a"]),
+        ("tenant-b", ["public", "tenant-b"]),
+    ],
+)
+def test_controller_filters_store_results_before_context_pack_assembly(
+    tenant_id: str | None,
+    visible_ids: list[str],
+) -> None:
+    base = fake_rag_session_spec()
+    scope = {"tenant_id": tenant_id} if tenant_id else {}
+    spec = replace(
+        base,
+        goal=replace(base.goal, metadata={**base.goal.metadata, **scope}),
+        source_policy={**base.source_policy, **scope},
+        generation_policy={"enabled": True, "max_attempts": 1},
+        metadata={**base.metadata, **scope},
+    )
+    retrieval = FakeRetrievalPort(_tenant_evidence_packs())
+    answer_worker = _PackAnswerWorker()
+    controller = BoundedRAGSessionController(
+        retrieval=retrieval,
+        planner=FakeRAGPlanner(),
+        answer_worker=answer_worker,
+    )
+
+    result = controller.run(spec)
+
+    assert retrieval.requests[0].filters["tenant_id"] == tenant_id
+    assert [item.evidence_id for item in result.accepted_evidence] == visible_ids
+    assert result.context_pack is not None
+    assert [item.evidence_id for item in result.context_pack.accepted_evidence] == visible_ids
+    assert answer_worker.context_ids == [visible_ids]
+    assert result.answer is not None
+    assert list(result.answer.cited_evidence_ids) == visible_ids
+    step_event = next(
+        event for event in result.transcript.events if event["event_type"] == "rag_step_executed"
+    )
+    assert [item["evidence_id"] for item in step_event["payload"]["items"]] == visible_ids
+
+
 class _Scorer(RelevanceScorerPort):
     def __init__(self, scores: tuple[float, ...]) -> None:
         self.scores = scores
 
     def score(self, question: str, passages: list[str]) -> list[float]:
         return list(self.scores)
+
+
+class _PackAnswerWorker:
+    def __init__(self) -> None:
+        self.context_ids: list[list[str]] = []
+
+    def generate_answer(self, *, question: str, pack: RAGContextPack) -> GroundedAnswerCandidate:
+        evidence_ids = [item.evidence_id for item in pack.accepted_evidence]
+        self.context_ids.append(evidence_ids)
+        claims = tuple(
+            AnswerClaim(
+                claim_id=f"claim-{evidence_id}",
+                text=f"Grounded by {evidence_id} evidence.",
+                evidence_ids=(evidence_id,),
+            )
+            for evidence_id in evidence_ids
+        )
+        return GroundedAnswerCandidate(
+            answer_id="answer-visibility",
+            question=question,
+            answer_text=" ".join(
+                f"Grounded by {evidence_id} evidence. [{evidence_id}]"
+                for evidence_id in evidence_ids
+            ),
+            cited_evidence_ids=tuple(evidence_ids),
+            claims=claims,
+        )
+
+
+def _tenant_evidence_packs() -> tuple[EvidencePack, ...]:
+    packs = []
+    for scope in ("public", "tenant-a", "tenant-b"):
+        metadata = {"section_refs": [f"section-{scope}"]}
+        if scope != "public":
+            metadata["tenant_id"] = scope
+        packs.append(EvidencePack(
+            evidence_id=scope,
+            title=f"{scope} evidence",
+            summary=f"Method evidence visible to {scope}.",
+            source_refs=(f"source://{scope}",),
+            confidence=0.9,
+            freshness="recorded",
+            lineage=("retrieval.visibility-test",),
+            metadata=metadata,
+        ))
+    return tuple(packs)

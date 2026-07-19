@@ -158,6 +158,11 @@ def harness_decision_input_snapshot(
             ),
             **current_step.retry_policy.to_dict(),
         }
+    current_routing_rules = tuple(
+        rule
+        for rule in workflow.routing_rules
+        if rule.from_step == state.current_step_id
+    )
     routing_values: dict[str, Any] = {
         "quality_verdict.passed": (
             None if quality_verdict is None else quality_verdict.passed
@@ -166,7 +171,7 @@ def harness_decision_input_snapshot(
             None if quality_verdict is None else quality_verdict.score
         ),
     }
-    routing_values.update(_routing_snapshot_values(state, workflow.routing_rules))
+    routing_values.update(_routing_snapshot_values(state, current_routing_rules))
     snapshot = {
         "schema": HARNESS_DECISION_INPUT_SCHEMA,
         "command_ordinal": command_ordinal,
@@ -178,7 +183,7 @@ def harness_decision_input_snapshot(
         "entry_step_id": workflow.entry_step_id,
         "step_order": workflow.step_ids,
         "current_step_policy": current_policy,
-        "routing_rules": tuple(rule.to_dict() for rule in workflow.routing_rules),
+        "routing_rules": tuple(rule.to_dict() for rule in current_routing_rules),
         "before_state_checksum": checksum_for(state.to_dict()),
         "run_status": state.status.value,
         "current_step_id": state.current_step_id,
@@ -196,6 +201,7 @@ def harness_decision_input_snapshot(
                 ),
             }
             for step in state.step_states
+            if step.step_id == state.current_step_id
         ),
         "budget": state.run_spec.budget.to_dict(),
         "gate_results": tuple(_gate_decision_evidence(result) for result in gate_results),

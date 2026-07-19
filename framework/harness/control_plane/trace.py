@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Any
 
 from framework.harness.control_plane.event import HarnessEvent
@@ -28,12 +29,52 @@ class HarnessTrace:
             raise HarnessValidationError("event run_id must match trace run_id")
         return HarnessTrace(run_id=self.run_id, events=(*self.events, event), metadata=self.metadata)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(
+        self,
+        *,
+        include_deterministic_history: bool = False,
+    ) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
-            "events": [event.to_dict() for event in self.events],
+            "events": [
+                event.to_dict(
+                    include_deterministic_history=include_deterministic_history
+                )
+                for event in self.events
+            ],
             "metadata": to_jsonable(self.metadata),
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessTrace":
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError("Harness trace payload must be an object")
+        payload = dict(value)
+        raw_events = payload.pop("events", ())
+        if not isinstance(raw_events, (list, tuple)):
+            raise HarnessValidationError("Harness trace events must be a list")
+        metadata = payload.pop("metadata", {})
+        if not isinstance(metadata, Mapping):
+            raise HarnessValidationError("Harness trace metadata must be an object")
+        try:
+            run_id = payload.pop("run_id")
+        except KeyError as exc:
+            raise HarnessValidationError("Harness trace run_id is required") from exc
+        if payload:
+            raise HarnessValidationError(
+                "Harness trace payload contains unsupported fields: "
+                + ", ".join(sorted(payload))
+            )
+        trace = cls(
+            run_id=str(run_id),
+            events=tuple(HarnessEvent.from_dict(event) for event in raw_events),
+            metadata=dict(metadata),
+        )
+        if any(event.run_id != trace.run_id for event in trace.events):
+            raise HarnessValidationError(
+                "Harness trace event run_id must match trace run_id"
+            )
+        return trace
 
 
 __all__ = ["HarnessTrace"]

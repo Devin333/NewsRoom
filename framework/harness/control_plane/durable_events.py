@@ -62,6 +62,7 @@ from framework.harness.control_plane.replay_history import (
 from framework.harness.control_plane.activity import (
     HARNESS_ACTIVITY_EXTENSION,
     HarnessActivity,
+    harness_activity_input_checksum,
     validate_activity_call_marker,
 )
 from framework.harness.control_plane.state import (
@@ -545,7 +546,7 @@ class DurableHarnessEventPort:
         self.require_activity_storage()
         assert self._activity_recorder is not None
         assert self._adapter.tenant_id is not None
-        if checksum_for(inputs) != activity.input_checksum:
+        if harness_activity_input_checksum(inputs) != activity.input_checksum:
             raise EventReplayMismatchError(
                 sequence=activity.attempt,
                 reason="Harness accepted activity input conflicts with descriptor",

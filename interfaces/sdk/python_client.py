@@ -504,7 +504,9 @@ class ResearchClient:
         source_url: str | None = None,
         pdf_url: str | None = None,
         run_id: str | None = None,
+        tenant_id: str | None = None,
         user_id: str | None = None,
+        memory_namespace: str | None = None,
         metadata: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -518,14 +520,47 @@ class ResearchClient:
                 "userId": user_id,
                 "metadata": metadata or {},
                 "options": options or {},
+                **_research_actor_params(
+                    tenant_id=tenant_id,
+                    user_id=None,
+                    memory_namespace=memory_namespace,
+                ),
             },
         )
 
-    def analysis(self, paper_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/research/papers/{_quote_path_segment(paper_id)}/analysis")
+    def analysis(
+        self,
+        paper_id: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+        memory_namespace: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.get(
+            f"/api/v1/research/papers/{_quote_path_segment(paper_id)}/analysis",
+            params=_research_actor_params(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                memory_namespace=memory_namespace,
+            ),
+        )
 
-    def reader(self, paper_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/research/papers/{_quote_path_segment(paper_id)}/reader")
+    def reader(
+        self,
+        paper_id: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+        memory_namespace: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.get(
+            f"/api/v1/research/papers/{_quote_path_segment(paper_id)}/reader",
+            params=_research_actor_params(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                memory_namespace=memory_namespace,
+            ),
+        )
 
     def ask(
         self,
@@ -533,6 +568,9 @@ class ResearchClient:
         *,
         question: str,
         locale: str | None = None,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+        memory_namespace: str | None = None,
         selection: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -543,11 +581,47 @@ class ResearchClient:
                 "locale": locale,
                 "selection": selection or {},
                 "options": options or {},
+                **_research_actor_params(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    memory_namespace=memory_namespace,
+                ),
             },
         )
 
-    def trace(self, run_id: str) -> dict[str, Any]:
-        return self.client.get(f"/api/v1/research/runs/{_quote_path_segment(run_id)}/trace")
+    def trace(
+        self,
+        run_id: str,
+        *,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
+        memory_namespace: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.get(
+            f"/api/v1/research/runs/{_quote_path_segment(run_id)}/trace",
+            params=_research_actor_params(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                memory_namespace=memory_namespace,
+            ),
+        )
+
+
+def _research_actor_params(
+    *,
+    tenant_id: str | None,
+    user_id: str | None,
+    memory_namespace: str | None,
+) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in {
+            "tenantId": tenant_id,
+            "userId": user_id,
+            "memoryNamespace": memory_namespace,
+        }.items()
+        if value is not None
+    }
 
 
 def _url(base_url: str, path: str, *, params: dict[str, Any] | None) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -68,4 +69,10 @@ class ArtifactPort(Protocol):
         ...
 
 
-__all__ = ["ArtifactPort", "ArtifactRef", "ArtifactWriteRequest"]
+@runtime_checkable
+class RunBoundArtifactPort(ArtifactPort, Protocol):
+    def bind_run(self, run_id: str) -> AbstractContextManager[str]:
+        ...
+
+
+__all__ = ["ArtifactPort", "ArtifactRef", "ArtifactWriteRequest", "RunBoundArtifactPort"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -28,6 +29,8 @@ from framework.artifacts.observability import (
     ARTIFACT_OBSERVABILITY_LOGGER,
 )
 from framework.artifacts.stores import local as local_store_module
+from framework.artifacts.runtime import manager as manager_module
+from framework.artifacts.stores import filesystem as filesystem_store_module
 from framework.artifacts.stores.errors import artifact_observability_was_emitted
 
 
@@ -83,6 +86,26 @@ def test_legacy_run_write_methods_reject_unsafe_paths(tmp_path) -> None:
         manager.write_text("run-1", "../secret.txt", "nope")
 
 
+def test_run_relative_write_is_atomic_and_cleans_owned_temp_on_replace_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    target = manager.write_text("run-1", "payload.txt", "committed")
+
+    def fail_replace(_source, _target) -> None:
+        raise OSError("injected replace failure")
+
+    monkeypatch.setattr(manager_module.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="injected replace failure"):
+        manager.write_text("run-1", "payload.txt", "uncommitted")
+
+    assert target.read_text(encoding="utf-8") == "committed"
+    assert list(target.parent.glob(".payload.txt.*.tmp")) == []
+
+
 @pytest.mark.parametrize("run_id", ["../escape", "C:\\escape", "run:stream", "NUL"])
 def test_manager_rejects_unsafe_run_ids_before_side_effect(tmp_path, run_id: str) -> None:
     manager = ArtifactManager(tmp_path)
@@ -111,6 +134,58 @@ def test_filesystem_store_storage_compatibility(tmp_path) -> None:
     assert store.read(ref) == b"{}"
     store.delete(ref)
     assert store.exists(ref) is False
+
+
+def test_filesystem_store_rejects_final_symlink(tmp_path) -> None:
+    store = FilesystemArtifactStore(tmp_path)
+    ref = store.write(
+        ArtifactWriteRequest(
+            run_id="run-1",
+            artifact_id="a1",
+            artifact_type="report",
+            content=b"trusted",
+        )
+    )
+    path = tmp_path / "run-1" / ref.path
+    target = path.with_name("target.bin")
+    target.write_bytes(b"trusted")
+    path.unlink()
+    try:
+        path.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    with pytest.raises(ArtifactStoreMetadataError, match="symlink"):
+        store.read(ref)
+
+
+def test_filesystem_store_rejects_opened_identity_change(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = FilesystemArtifactStore(tmp_path)
+    ref = store.write(
+        ArtifactWriteRequest(
+            run_id="run-1",
+            artifact_id="a1",
+            artifact_type="report",
+            content=b"trusted",
+        )
+    )
+    real_fstat = filesystem_store_module.os.fstat
+
+    def changed_identity(descriptor):
+        info = real_fstat(descriptor)
+        return SimpleNamespace(
+            st_mode=info.st_mode,
+            st_dev=info.st_dev,
+            st_ino=info.st_ino + 1,
+        )
+
+    monkeypatch.setattr(filesystem_store_module.os, "fstat", changed_identity)
+
+    with pytest.raises(ArtifactStoreMetadataError, match="identity changed"):
+        store.read(ref)
 
 
 @pytest.mark.parametrize(

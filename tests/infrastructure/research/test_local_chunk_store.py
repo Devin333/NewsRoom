@@ -119,6 +119,58 @@ def test_local_chunk_store_returns_copies_instead_of_mutable_store_state(tmp_pat
     assert store.get_payload("chunk-a") == _payload("chunk-a")
 
 
+def test_local_chunk_store_canonicalizes_multiline_content_without_losing_tabs(
+    tmp_path,
+) -> None:
+    store = LocalChunkPayloadStore(tmp_path)
+    windows_content = "method evidence\r\nexperiment evidence\rlimitation\tclaim support"
+    canonical_content = "method evidence\nexperiment evidence\nlimitation\tclaim support"
+
+    store.index_payloads([_payload("chunk-a", content=windows_content)])
+
+    stored = store.get_payload("chunk-a")
+    assert stored is not None
+    assert stored["content"] == canonical_content
+    committed = store.path.read_bytes()
+
+    store.index_payloads([_payload("chunk-a", content=canonical_content)])
+
+    assert store.path.read_bytes() == committed
+    assert LocalChunkPayloadStore(tmp_path).get_payload("chunk-a") == stored
+
+
+@pytest.mark.parametrize("control", ["\x00", "\x01", "\x0b", "\x1f", "\x7f"])
+def test_local_chunk_store_rejects_unsafe_content_controls(
+    tmp_path,
+    control: str,
+) -> None:
+    store = LocalChunkPayloadStore(tmp_path)
+
+    with pytest.raises(LocalChunkStoreValidationError, match="content"):
+        store.index_payloads(
+            [_payload("chunk-a", content=f"method{control}evidence")]
+        )
+
+    assert store.path.exists() is False
+
+
+@pytest.mark.parametrize("field", ["chunk_id", "paper_id"])
+@pytest.mark.parametrize("control", ["\n", "\t", "\x00", "\x7f"])
+def test_local_chunk_store_keeps_identity_fields_control_free(
+    tmp_path,
+    field: str,
+    control: str,
+) -> None:
+    store = LocalChunkPayloadStore(tmp_path)
+    payload = _payload("chunk-a")
+    payload[field] = f"identity{control}value"
+
+    with pytest.raises(LocalChunkStoreValidationError, match=field):
+        store.index_payloads([payload])
+
+    assert store.path.exists() is False
+
+
 def test_local_chunk_store_serializes_concurrent_writes_across_instances(tmp_path) -> None:
     stores = [LocalChunkPayloadStore(tmp_path), LocalChunkPayloadStore(tmp_path)]
     payloads = [_payload(f"chunk-{index:02d}") for index in range(20)]

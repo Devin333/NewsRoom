@@ -6,6 +6,7 @@ from framework.rag.retrieval import expansion_metadata
 
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
+from business.research.services.tenant_visibility import chunk_visible_to_tenant, tenant_id_from_filters
 
 
 class CrossRefContextExpander:
@@ -14,7 +15,20 @@ class CrossRefContextExpander:
     def __init__(self, chunk_store: ChunkStorePort) -> None:
         self._store = chunk_store
 
-    def expand(self, children: list[PaperChunk], paper_id: str) -> list[PaperChunk]:
+    def expand(
+        self,
+        children: list[PaperChunk],
+        paper_id: str,
+        *,
+        filters: dict[str, Any] | None = None,
+    ) -> list[PaperChunk]:
+        tenant_id = tenant_id_from_filters(filters)
+        children = [
+            child
+            for child in children
+            if chunk_visible_to_tenant(child, tenant_id=tenant_id)
+        ]
+        children_by_id = {child.chunk_id: child for child in children}
         refs: list[tuple[str, str, str]] = []
         seen = {chunk.chunk_id for chunk in children}
         for child in children:
@@ -36,7 +50,11 @@ class CrossRefContextExpander:
                         refs.append((ref_id, child.chunk_id, reason))
                         seen.add(ref_id)
             if _is_formula_chunk(child):
-                for ref_id, reason, _edge in self._formula_context_refs_for_child(child, paper_id):
+                for ref_id, reason, _edge in self._formula_context_refs_for_child(
+                    child,
+                    paper_id,
+                    tenant_id=tenant_id,
+                ):
                     if ref_id and ref_id not in seen:
                         refs.append((ref_id, child.chunk_id, reason))
                         seen.add(ref_id)
@@ -44,7 +62,11 @@ class CrossRefContextExpander:
         result: list[PaperChunk] = []
         for ref_id, source_id, reason in refs:
             chunk = self._store.get_chunk(ref_id)
-            if chunk:
+            if (
+                chunk is not None
+                and chunk.paper_id == paper_id
+                and chunk_visible_to_tenant(chunk, tenant_id=tenant_id)
+            ):
                 result.append(_with_expansion_metadata(
                     chunk,
                     expanded_from_chunk_id=source_id,
@@ -55,7 +77,7 @@ class CrossRefContextExpander:
                         else reason
                     ),
                     rank=len(result) + 1,
-                    source_chunk=self._store.get_chunk(source_id),
+                    source_chunk=children_by_id.get(source_id),
                 ))
         return result
 
@@ -63,11 +85,17 @@ class CrossRefContextExpander:
         self,
         child: PaperChunk,
         paper_id: str,
+        *,
+        tenant_id: str | None,
     ) -> list[tuple[str, str, str]]:
         refs = list(_formula_context_refs(child))
         formula_id = child.chunk_id
         for candidate in self._store.list_chunks(paper_id):
-            if candidate.chunk_id == formula_id or candidate.paper_id != paper_id:
+            if (
+                candidate.chunk_id == formula_id
+                or candidate.paper_id != paper_id
+                or not chunk_visible_to_tenant(candidate, tenant_id=tenant_id)
+            ):
                 continue
             for ref_id, _reason, edge in _formula_reverse_context_refs(candidate):
                 if ref_id == formula_id:

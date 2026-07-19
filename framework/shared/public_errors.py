@@ -41,6 +41,11 @@ _MCP_SAFE_ERROR_TYPES = _ARTIFACT_ERROR_TYPES | _MCP_NOT_FOUND_TYPES | frozenset
         "EventRuntimeError",
         "EventStoreUnavailableError",
         "PermissionError",
+        "ResearchActorAuthorizationError",
+        "ResearchConfigurationError",
+        "ResearchQualityGateError",
+        "ResearchRuntimeUnavailableError",
+        "ResearchSourceError",
         "ValueError",
     }
 )
@@ -61,6 +66,13 @@ _FIXED_MCP_MESSAGES = {
     "EventRuntimeError": "event runtime operation failed",
     "EventStoreUnavailableError": "event store is unavailable",
     "PermissionError": "MCP request is not authorized",
+    "ResearchActorAuthorizationError": (
+        "Research actor scope does not match the authenticated principal"
+    ),
+    "ResearchConfigurationError": "research runtime configuration is invalid",
+    "ResearchQualityGateError": "research quality gate failed",
+    "ResearchRuntimeUnavailableError": "research runtime is unavailable",
+    "ResearchSourceError": "research source acquisition failed",
     "ValueError": "invalid MCP request",
 }
 _FIXED_WORKER_MESSAGES = {

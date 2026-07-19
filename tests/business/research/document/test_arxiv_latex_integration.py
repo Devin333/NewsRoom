@@ -1,9 +1,11 @@
 """
 Integration test: fetch arXiv LaTeX source → compile → chunk → verify.
 Uses "Attention Is All You Need" (1706.03762) as a real-world fixture.
-Skipped when network is unavailable.
+Requires explicit NEWS_RUN_LIVE_RESEARCH_E2E opt-in.
 """
 from __future__ import annotations
+
+import os
 
 import pytest
 
@@ -12,6 +14,21 @@ from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
 from business.research.domain.paper import PaperSourceRecord
 
 ARXIV_ID = "1706.03762"
+_RUN_LIVE_E2E = os.getenv("NEWS_RUN_LIVE_RESEARCH_E2E", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+pytestmark = [
+    pytest.mark.live_research_e2e,
+    pytest.mark.skipif(
+        not _RUN_LIVE_E2E,
+        reason="set NEWS_RUN_LIVE_RESEARCH_E2E=1 to run live arXiv LaTeX tests",
+    ),
+]
+
 SOURCE = PaperSourceRecord(
     source_id="arxiv-1706.03762",
     paper_id="arxiv-1706.03762",
@@ -27,7 +44,6 @@ def _fetch_doc():
 
 @pytest.fixture(scope="module")
 def arxiv_doc():
-    pytest.importorskip("urllib.request")  # always present; skip guard is below
     try:
         return _fetch_doc()
     except Exception as exc:

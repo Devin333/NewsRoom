@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
+import business.research.application.single_paper_runtime as single_paper_runtime
 from framework.artifacts.paths import ArtifactPathError
 from framework.harness import (
     FakeArtifactPort,
@@ -103,6 +104,38 @@ def test_analyze_paper_use_case_runs_single_paper_loop_successfully() -> None:
     assert "research-reader-payload" in result.artifact_refs
     assert "research-paper-card" in result.artifact_refs
     assert result.skill_experience_refs
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({}, 3),
+        ({"rag_max_replans": 0}, 0),
+        ({"rag_max_replans": 4}, 4),
+        ({"rag_max_replans": " 2 "}, 2),
+    ],
+)
+def test_research_rag_replan_budget_defaults_and_explicit_bounds(
+    options: dict[str, object],
+    expected: int,
+) -> None:
+    budget = single_paper_runtime._rag_budget_from_options(options)
+
+    assert budget.max_replans == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [-1, 5, True, 1.5, "2.0", "invalid", None],
+)
+def test_research_rag_replan_budget_rejects_invalid_values(value: object) -> None:
+    with pytest.raises(
+        ValueError,
+        match="rag_max_replans must be an integer between 0 and 4",
+    ):
+        single_paper_runtime._rag_budget_from_options(
+            {"rag_max_replans": value}
+        )
 
 
 def test_analyze_uses_committed_events_without_reading_port_storage() -> None:

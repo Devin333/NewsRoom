@@ -223,8 +223,35 @@ def test_real_local_runtime_reports_missing_evidence_without_synthesis(
         item.evidence_type == "experiment" for item in context.accepted_evidence
     )
     assert context.metadata["session_status"] == "insufficient_evidence"
-    assert context.metadata["context_pack_id"] is None
-    assert runtime.last_context_pack is None
+    pack = runtime.last_context_pack
+    assert pack is not None
+    assert pack.pack_id == "rag-context://session-missing/empty"
+    assert context.metadata["context_pack_id"] == pack.pack_id
+    assert pack.goal == spec.goal
+    assert not any(
+        item.evidence_type == "experiment" for item in pack.accepted_evidence
+    )
+    assert "experiment" in pack.gap_report["missing_evidence_types"]
+    assert pack.budget_snapshot is not None
+    assert pack.budget_snapshot.to_dict() == context.metadata["budget_snapshot"]
+    assert {
+        key: pack.metadata[key]
+        for key in (
+            "run_id",
+            "workflow_id",
+            "step_id",
+            "session_id",
+            "status",
+        )
+    } == {
+        "run_id": "run-missing",
+        "workflow_id": "research.paper_analysis",
+        "step_id": "run_research_rag",
+        "session_id": "session-missing",
+        "status": "insufficient_evidence",
+    }
+    assert pack.metadata["decision"] == context.metadata["decision"]
+    assert pack.metadata["terminal_gap_pack"] is True
 
 
 def test_real_local_runtime_halts_before_retrieval_when_query_budget_is_zero(

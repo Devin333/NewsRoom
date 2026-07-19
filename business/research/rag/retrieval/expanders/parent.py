@@ -9,6 +9,7 @@ from framework.rag.retrieval import RerankScoreSet, rerank_sort_key, weighted_co
 
 from business.research.document.models import PaperChunk
 from business.research.ports.chunk_store import ChunkStorePort
+from business.research.rag.retrieval.filtering import chunk_visible_for_request, filter_chunks_for_request
 
 if TYPE_CHECKING:
     from business.research.ports.reranker import RerankerPort
@@ -50,7 +51,8 @@ class ParentContextExpander:
         request: Any,
         route: Any,
     ) -> tuple[list[PaperChunk], dict[str, Any]]:
-        candidates = self._parent_candidates(children, request.paper_id)
+        children = filter_chunks_for_request(children, request)
+        candidates = self._parent_candidates(children, request)
         max_chunks, max_tokens = self._policy.parent_budget_for(route.intent)
         score_weights = self._policy.parent_score_weights_for(route.intent)
         metrics: dict[str, Any] = {
@@ -124,7 +126,7 @@ class ParentContextExpander:
         })
         return parents, metrics
 
-    def _parent_candidates(self, children: list[PaperChunk], paper_id: str) -> list[_ParentCandidate]:
+    def _parent_candidates(self, children: list[PaperChunk], request: Any) -> list[_ParentCandidate]:
         seen: set[str] = set()
         candidates: list[_ParentCandidate] = []
         for child_rank, child in enumerate(children):
@@ -132,7 +134,11 @@ class ParentContextExpander:
             if not parent_id or parent_id in seen:
                 continue
             parent = self._store.get_chunk(parent_id)
-            if parent is None or parent.paper_id != paper_id:
+            if (
+                parent is None
+                or parent.paper_id != request.paper_id
+                or not chunk_visible_for_request(parent, request)
+            ):
                 continue
             seen.add(parent.chunk_id)
             candidates.append(_ParentCandidate(

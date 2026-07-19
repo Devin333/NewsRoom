@@ -31,6 +31,7 @@ from framework.harness.rag.planner import DeterministicRAGPlanner, RAGPlanner
 from framework.harness.rag.policy import RAGDecision, RAGDecisionType, RAGExecutionPolicy, normalize_query
 from framework.harness.rag.source_verifier import SourceVerifier
 from framework.harness.rag.telemetry import RAGTelemetry, RAGTelemetrySpan
+from framework.harness.rag.visibility import evidence_visible_to_tenant
 from framework.harness.retrieval.ports import RetrievalPort
 from framework.harness.retrieval.request import RetrievalRequest
 from framework.shared.json import to_jsonable
@@ -615,7 +616,10 @@ class BoundedRAGSessionController(RAGSessionController):
         state.executed_queries.add(normalize_query(query))
         scope_metadata = _session_scope_metadata(state.spec)
         filters = dict(step.metadata.get("filters", {}))
-        for key in ("paper_id", "run_id", "tenant_id", "user_id"):
+        for key in ("tenant_id", "tenant", "workspace_id", "tenant_ids", "allowed_tenant_ids"):
+            filters.pop(key, None)
+        filters["tenant_id"] = scope_metadata.get("tenant_id") or None
+        for key in ("paper_id", "run_id", "user_id"):
             if scope_metadata.get(key):
                 filters[key] = scope_metadata[key]
         collection = self.retrieval.retrieve(
@@ -630,6 +634,7 @@ class BoundedRAGSessionController(RAGSessionController):
         )
         evidence_type = str(step.metadata.get("evidence_type") or _default_evidence_type(state.spec))
         artifact_refs = (collection.request_ref,) if collection.request_ref else ()
+        tenant_id = scope_metadata.get("tenant_id") or None
         candidates = tuple(
             EvidenceCandidate.from_evidence_pack(
                 pack,
@@ -637,6 +642,11 @@ class BoundedRAGSessionController(RAGSessionController):
                 artifact_refs=artifact_refs,
             )
             for pack in collection.packs
+        )
+        candidates = tuple(
+            candidate
+            for candidate in candidates
+            if evidence_visible_to_tenant(candidate, tenant_id=tenant_id)
         )
         return RetrievalStepResult(
             step_id=step.step_id,

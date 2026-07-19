@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from framework.artifacts import ArtifactManager, ArtifactPathError, ArtifactReference
+from framework.artifacts import ArtifactStoreMetadataError
+from framework.artifacts.runtime import manager as manager_module
 from framework.workflow.checkpoint import CheckpointReference
 
 
@@ -100,3 +104,28 @@ def test_manifest_updates_reject_unsafe_artifact_paths_without_rewrite(
 
     assert manifest_path.read_bytes() == original
     assert not (tmp_path / "outside.txt").exists()
+
+
+def test_manifest_read_rejects_opened_identity_change(tmp_path, monkeypatch) -> None:
+    manager = ArtifactManager(tmp_path)
+    manager.start_run("run-1")
+    manager.create_run_manifest(
+        run_id="run-1",
+        workflow_id="wf",
+        workflow_version="1.0",
+        started_at="2026-05-21T00:00:00Z",
+    )
+    real_fstat = manager_module.os.fstat
+
+    def changed_identity(descriptor):
+        info = real_fstat(descriptor)
+        return SimpleNamespace(
+            st_mode=info.st_mode,
+            st_dev=info.st_dev,
+            st_ino=info.st_ino + 1,
+        )
+
+    monkeypatch.setattr(manager_module.os, "fstat", changed_identity)
+
+    with pytest.raises(ArtifactStoreMetadataError, match="identity changed"):
+        manager.read_run_manifest("run-1")

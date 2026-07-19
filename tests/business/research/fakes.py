@@ -291,13 +291,18 @@ class FakeResearchRAGRuntime:
     def run(self, *, session_spec: Any, document: ResearchDocument) -> ResearchRAGContext:
         if self.query_budget_exhausted:
             gap = ResearchRAGGapReport(missing_information=["rag_query_budget_exhausted"])
+            context_pack_id = f"rag-context://{session_spec.session_id}/budget-exhausted"
             self.last_context_pack = RAGContextPack(
-                pack_id="rag-pack-budget-exhausted",
+                pack_id=context_pack_id,
                 query=session_spec.goal.question,
                 context_refs=[],
                 source_refs=[],
                 gap_report=gap.to_dict(),
-                metadata={"halted": True, "reason": "rag query budget exhausted"},
+                metadata={
+                    **_rag_session_identity(session_spec),
+                    "halted": True,
+                    "reason": "rag query budget exhausted",
+                },
             )
             return ResearchRAGContext(
                 context_id="research-rag-context-budget-exhausted",
@@ -309,6 +314,10 @@ class FakeResearchRAGRuntime:
                 gap_report=gap,
                 source_refs=[document.lineage.source_refs[0]],
                 lineage=SourceLineage(source_refs=[document.lineage.source_refs[0]], source_hash=document.source_hash),
+                metadata=_rag_context_metadata(
+                    session_spec,
+                    context_pack_id=context_pack_id,
+                ),
             )
         accepted: list[ResearchEvidenceItem] = []
         source_sections = document.sections or [
@@ -353,8 +362,9 @@ class FakeResearchRAGRuntime:
             conflicting_evidence=[item.evidence_id for item in conflicting],
             rejected_reasons=[],
         )
+        context_pack_id = f"rag-context://{session_spec.session_id}/fake"
         self.last_context_pack = RAGContextPack(
-            pack_id=stable_research_id("rag_pack", document.paper_id, session_spec.session_id),
+            pack_id=context_pack_id,
             query=session_spec.goal.question,
             evidence=[
                 EvidencePack(
@@ -371,6 +381,7 @@ class FakeResearchRAGRuntime:
             context_refs=[section.section_id for section in document.sections],
             source_refs=[item.source_ref for item in accepted],
             gap_report=gap.to_dict(),
+            metadata=_rag_session_identity(session_spec),
         )
         return ResearchRAGContext(
             context_id=stable_research_id("research_rag_context", document.paper_id, session_spec.session_id),
@@ -382,6 +393,10 @@ class FakeResearchRAGRuntime:
             gap_report=gap,
             source_refs=[item.source_ref for item in accepted],
             lineage=SourceLineage(source_refs=[item.source_ref for item in accepted], source_hash=document.source_hash),
+            metadata=_rag_context_metadata(
+                session_spec,
+                context_pack_id=context_pack_id,
+            ),
         )
 
 
@@ -397,4 +412,33 @@ def _research_goal_from_session(session_spec: Any):
         allowed_source_refs=list(session_spec.source_policy["allowed_source_refs"]),
         allowed_memory_namespaces=list(session_spec.allowed_memory_namespaces),
         constraints=session_spec.goal.constraints,
+        metadata=_rag_actor_metadata(session_spec),
     )
+
+
+def _rag_actor_metadata(session_spec: Any) -> dict[str, Any]:
+    metadata = dict(session_spec.goal.metadata)
+    metadata["memory_namespace"] = session_spec.allowed_memory_namespaces[0]
+    return metadata
+
+
+def _rag_session_identity(session_spec: Any) -> dict[str, str]:
+    return {
+        "run_id": session_spec.run_id,
+        "workflow_id": session_spec.workflow_id,
+        "step_id": session_spec.step_id,
+        "session_id": session_spec.session_id,
+    }
+
+
+def _rag_context_metadata(
+    session_spec: Any,
+    *,
+    context_pack_id: str,
+) -> dict[str, Any]:
+    return {
+        **_rag_actor_metadata(session_spec),
+        **_rag_session_identity(session_spec),
+        "context_pack_id": context_pack_id,
+        "transcript_ref": f"rag-transcript://{session_spec.session_id}/fake",
+    }

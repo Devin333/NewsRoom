@@ -19,6 +19,16 @@ from business.research.ports.repositories import (
     ResearchPaperRepository,
 )
 from business.research.ports.retrieval import ResearchRetrievalProjectionPort
+from business.research.ports.run_store import (
+    ResearchRunRecord,
+    ResearchRunStore,
+    ResearchRunStoreConflictError,
+    ResearchRunStoreCorruptionError,
+    ResearchRunStoreError,
+    ResearchRunStoreReason,
+    ResearchRunStoreUnavailableError,
+    ResearchRunStoreValidationError,
+)
 from business.research.ports.source_provider import PaperSourceProvider
 
 __all__ = [
@@ -39,4 +49,12 @@ __all__ = [
     "ResearchMemoryPort",
     "ResearchPaperRepository",
     "ResearchRetrievalProjectionPort",
+    "ResearchRunRecord",
+    "ResearchRunStore",
+    "ResearchRunStoreConflictError",
+    "ResearchRunStoreCorruptionError",
+    "ResearchRunStoreError",
+    "ResearchRunStoreReason",
+    "ResearchRunStoreUnavailableError",
+    "ResearchRunStoreValidationError",
 ]

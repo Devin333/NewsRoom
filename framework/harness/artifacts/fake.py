@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from framework.harness.artifacts.ports import ArtifactRef, ArtifactWriteRequest
 from framework.shared.json import stable_json_dumps
@@ -10,6 +12,10 @@ class FakeArtifactPort:
     def __init__(self) -> None:
         self.storage: dict[str, dict] = {}
         self.refs: dict[str, ArtifactRef] = {}
+
+    @contextmanager
+    def bind_run(self, run_id: str) -> Iterator[str]:
+        yield str(run_id)
 
     def write_artifact(self, request: ArtifactWriteRequest) -> ArtifactRef:
         checksum = hashlib.sha256(stable_json_dumps(request.to_dict()).encode()).hexdigest()
