@@ -4,7 +4,7 @@
 >
 > Implementation status: IN_PROGRESS
 >
-> Version: v1.8
+> Version: v1.9
 >
 > Priority: P1（控制权与生产运行阻断）/ P2（架构与契约收敛）
 >
@@ -16,7 +16,9 @@
 >
 > Completed OpenSpec slice: `harness-deterministic-gate-enforcement`（ARCHIVED；implementation `017a227e`；archive `2026-07-18-harness-deterministic-gate-enforcement`）
 >
-> Active OpenSpec slice: `source-policy-contract-convergence`（IN_PROGRESS；12 个 URL/rate/retry/error 直接前序 changes 已归档；当前 tasks 为 0/41，工作树已有部分 core/compatibility tests 但尚无 `evidence.md`；task 3.7/3.10 仍受默认 Research binding 与 Harness Source-tool production owner 两个 integration gate 阻断）
+> Active OpenSpec slice: `source-policy-contract-convergence`（IN_PROGRESS；implementation `372027ac`；当前 tasks 为 38/41，`evidence.md` 已记录可重放 core evidence；task 3.7/3.10 仍受默认 Research binding 与 Harness Source-tool production owner 两个 integration gate 阻断，task 7.5 仍受 production owner/on-call、观察窗口、qualified rollback target、RTO 与演练证据阻断）
+>
+> Active OpenSpec slice: `research-runtime-production-composition`（IN_PROGRESS；当前 ledger 为 12/46；settings、typed unavailable 与 composition lifecycle foundation 已由 `5effa03e` 提交，真实 production object graph task 2.4 仍未完成；ledger 数字不替代逐项 committed implementation/evidence 复核）
 >
 > Depends on: 阶段 1/2 Harness authority、阶段 8/9 legacy deletion rules、阶段 19 durable gate-event contract，以及上述 active changes 的明确 file ownership
 >
@@ -59,7 +61,8 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | `openspec validate source-policy-contract-convergence --strict` | 通过 | 只证明 active change 语法与 schema 有效 |
 | `openspec validate --all --strict` | `508 passed, 0 failed` | 只证明当前全部 OpenSpec artifacts 可验证 |
 | `git diff --check` | 通过 | 有 CRLF -> LF 警告，但没有 whitespace error |
-| Source tasks/evidence | `0/41`；`evidence.md` 不存在 | 任何 working-tree implementation 或 passing test 都不能据此勾选 task 或宣称 change complete |
+| Source committed slice | implementation `372027ac`；tasks `38/41`；`evidence.md` 已存在 | URL、limiter/retry、taxonomy、mapper 与兼容读取已有 committed core evidence；3.7、3.10、7.5 仍开放，不能宣称 change complete |
+| Research composition foundation | implementation `5effa03e`；OpenSpec ledger `12/46` | settings、typed unavailable、cache/reset/close 已提交；真实 dependency graph、durable store 与入口 cutover 未完成，ledger 必须继续按 committed implementation/evidence 逐项复核 |
 
 其中 Source focused selection 使用以下可重放命令：
 
@@ -256,7 +259,7 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 | Approval request/decision/status | `framework/workers/approval` | Tool wrapper、interfaces、LocalJson 及任何明确声明支持的 durable store |
 | Tool risk decision | `framework/tool` policy/governance | framework/infrastructure/business registries |
 | Harness production tool composition | 目标 owner `interfaces/composition` + `tool-governance-canonicalization`（planned） | `HarnessToolPort`/`MCPToolPort` production adapter、ToolRegistry 与 Source runtime provider；当前只有 Protocol/export/fake，`HarnessControlPlane` 尚未接入 production owner |
-| Research production graph | 目标新 owner `interfaces/composition/research.py`（planned/new） | HTTP/MCP/CLI entry surfaces；当前默认入口尚未完成切换 |
+| Research production graph | `interfaces/composition/research.py`（settings/lifecycle foundation 已实现；完整 object graph 未完成） | HTTP/MCP/CLI entry surfaces；当前默认入口尚未完成切换，valid settings 在 task 2.4 完成前仍必须 fail-closed |
 | Research domain/ports | `business/research` | infrastructure Research adapters |
 | Source identity/canonical URL | `business/foundation/primitives/source_ref.py` | `infrastructure/external/sources/url_utils.py` 仅作无逻辑 adapter；normalization、tools、Research Source identity consumers |
 | Source retry/rate-limit execution | `infrastructure/external/sources/fetch_policy.py` | business limiter port/decision DTO、`interfaces/services/source_runtime.py`、connectors/tools/health/Research arXiv |
@@ -336,6 +339,7 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 ### 8.3 Acceptance
 
 - 默认 configured API 真实执行一次 recorded-transport Research analysis，并在新 service instance 中读取 analysis/trace。
+- 全文编译必须保持 source identity 连续：`ResearchDocument.source_hash` 与 `lineage.source_hash` 必须等于已接受的 `PaperSourceRecord.source_hash`；parser 计算的内容 hash、LaTeX package checksum 与 PDF checksum 必须写入独立 metadata 字段，不能覆盖 source identity。LaTeX、PDF 与 abstract fallback 三条路径都必须通过真实 `ResearchDocumentSchemaGate` 回归。
 - Recorded production analysis run 必须记录 `research.paper_analysis` workflow id、version/checksum、`PLAN -> EXECUTE -> VERIFY` phase transition 和声明 gate identity；仅验证静态 spec shape 不算通过。嵌入 analysis 的 bounded RAG session 必须记录 parent run/workflow/step identity，standalone ask 必须使用显式独立 session scope。
 - 六个 entry/adapter surfaces 使用同一 factory implementation/version 与 object-graph contract：HTTP Research route、HTTP MCP route、local `MCPApplicationService` call、stdio MCP loop、CLI direct MCP commands（不把 `serve-stdio` 重复计数）以及 adapter-only `NewsMCPServerAdapter` contract。同一进程复用受管 client/store，跨进程通过 durable store 读取同一 run；parity 不要求六者拥有相同 transport loop。
 - `/ask` 与 `/rag-ask` 都通过注入的 application factory；route-level tests 覆盖显式 mode/alias、actor/tenant propagation、并发隔离和两种 projection 的预期差异。
@@ -472,8 +476,8 @@ QLT-002 的差异分类由 Analysis Quality domain owner 与 Architecture owner 
 | Existing change | 本 PRD 使用范围 | 禁止扩展 |
 | --- | --- | --- |
 | `harness-deterministic-gate-enforcement`（ARCHIVED） | HAR-001..007 的 gate binding、worker score isolation、gate-derived verdict 与 replay 基线；实现 `017a227e` | 不重开 archived tasks；新增回归以新的 modified requirement/change 表达 |
-| `source-policy-contract-convergence`（ACTIVE） | SRC-001..006 的 URL identity、fetch policy、taxonomy、error factory、object mapper、serialized reader、shared composition 与 compatibility cutover。Core、API/MCP/worker/CLI entry binding、Research arXiv binding、Harness Source-tool capability 四个 gate 分开记录；task 3.7/3.10 只有在相关 gate 均有 evidence 后才能勾选 | 不把 Tool authorization、Research parser/RAG 或 generic framework utils 纳入 Source change；不得为提前勾选 task 新造第二个 Research factory、Harness registry、Source runtime 或 limiter；当前 0/41 且无 `evidence.md`，未提交 tests 不等于 task 完成 |
-| `research-runtime-production-composition` | RES-001..006、RES-008..011 的 planned production factory、adapters、durable run store、六入口/adapter parity、外层 workflow/内层 RAG session ownership、`/rag-ask` lifecycle/actor propagation、interface/MCP adapter boundary 和 lifecycle；同时承接 Source task 3.7/3.10 的 Research binding cutover，新增范围必须先更新 design/tasks | 不顺手重写 Harness quality、Tool policy、Source 全局 policy；只注入 Source change 已验证的 provider/ledger contract，不复制其实现 |
+| `source-policy-contract-convergence`（ACTIVE） | SRC-001..006 的 URL identity、fetch policy、taxonomy、error factory、object mapper、serialized reader、shared composition 与 compatibility cutover。Core、API/MCP/worker/CLI entry binding、Research arXiv binding、Harness Source-tool capability 四个 gate 分开记录；task 3.7/3.10 只有在相关 gate 均有 evidence 后才能勾选 | implementation `372027ac` 已提交，当前 38/41 且有 `evidence.md`；3.7、3.10、7.5 保持开放。不把 Tool authorization、Research parser/RAG 或 generic framework utils 纳入 Source change；不得为提前勾选 task 新造第二个 Research factory、Harness registry、Source runtime 或 limiter |
+| `research-runtime-production-composition`（ACTIVE） | RES-001..006、RES-008..011 的 production factory、adapters、durable run store、六入口/adapter parity、外层 workflow/内层 RAG session ownership、`/rag-ask` lifecycle/actor propagation、interface/MCP adapter boundary 和 lifecycle；同时承接 Source task 3.7/3.10 的 Research binding cutover，新增范围必须先更新 design/tasks。`5effa03e` 已提交 settings、typed unavailable 和 composition lifecycle foundation；完整 object graph 仍未完成 | 当前 OpenSpec ledger 为 12/46；逐项状态必须以 committed implementation 与 evidence 复核，不以 ledger 数字代替验收。不顺手重写 Harness quality、Tool policy、Source 全局 policy；只注入 Source change 已验证的 provider/ledger contract，不复制其实现 |
 | `framework-runtime-safety-hardening` | TOOL-004 的 unique built-in registration、composition safety；继续完成其 attempt/lease/error scope | 不在无 proposal 更新时加入 approval/risk model、quality engine 或 Workflow graph 迁移 |
 | `durable-event-runtime` | HAR-006、RES-008 所消费的 durable transcript/event/replay contract | 本 PRD 不修改 canonical event、outbox/inbox、sequence 或 replay engine |
 
@@ -575,7 +579,7 @@ P1A2、P1B、P1C 可以在 file ownership 不冲突时并行；P2A-core 与 P2B 
 | T1 Tool/Worker approval DTO 竞争 | 重复代码 | 字段、状态和持久化用途相同，差异来自复制后的 backend 漂移 | TOOL-001..003；`framework/workers/approval` | Tool change；InMemory/LocalJson 及本切片新增 store 的 type/state contract | 已确认 |
 | T2 四处 tool risk classifier | 功能重复 | 输入均为同一 ToolDefinition，调用入口不应改变 authorization | TOOL-004..007；framework Tool policy | Safety change 验证唯一注册，Tool change 验证全 inventory risk matrix | 已确认 |
 | B1 Research/Harness adapter ownership 漂移 | 依赖拓扑 | application 组装 concrete controller 与 hexagonal port 不是领域变体；外层 workflow 与 bounded RAG session 是 parent/child contract，不是两个平行 controller | RES-003、004、009、010；Research ports + interface composition | active Research change；recorded workflow/session identity、AST/import graph、MCP dependency acyclic | 已确认，边界迁移中 |
-| S1 Source URL/retry/taxonomy/mapper 多份规则 | 重复代码 | 同一 URL、exception、quota 和 SourceError 在不同入口产生不同结果；live object 与 persisted decode 是不同边界但都需要唯一 owner | SRC-001..006；第 6.2 节精确 owner | active Source change；golden/parity/object+persisted round-trip/shared ledger/四 gate evidence | 已确认，实施中（0/41；无 `evidence.md`） |
+| S1 Source URL/retry/taxonomy/mapper 多份规则 | 重复代码 | 同一 URL、exception、quota 和 SourceError 在不同入口产生不同结果；live object 与 persisted decode 是不同边界但都需要唯一 owner | SRC-001..006；第 6.2 节精确 owner | active Source change；golden/parity/object+persisted round-trip/shared ledger/四 gate evidence | Core 已由 `372027ac` 收敛并留有 evidence；3.7、3.10、7.5 仍开放，change 为 38/41 |
 | Q1 production/eval/Research 共享质量规则分叉 | 功能重复 | citation/support 输入输出一致；Research 特有 readiness 另有显式字段 | QLT-001..005；`business/layers/analysis/quality` | Quality change；golden diff 必须全部分类 | 已确认 |
 | W1 validator/compiler/runtime graph 分叉 | 重复代码/依赖拓扑 | 三者消费同一 WorkflowSpec，fallback edge 不是可选策略；当前 compiler wrapper 反向依赖 specs，不能成为 specs 的下层 owner | WF-001；目标纯 `framework/specs/graph_semantics.py` | Workflow graph change；fallback/cycle/dataflow parity + import-cycle oracle | 已确认 |
 | E1 experience ref 未持久化且 hash 伪造 | 架构边界 | ref/hash 对外承诺可查询 provenance，不是 presentation 变体 | RES-007；Harness skill experience store | Experience change；append/query/manifest hash | 已确认 |
@@ -660,7 +664,7 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 | Analysis quality engine | Rollback cutover/adapter | `unclassified_diff_count > 0`、公共 payload snapshot 改变，或 persisted projection 无法读取 | Analysis Quality domain owner | 切回上一 engine/compatibility adapter version；不得降低 deterministic gate 或删除 parity evidence | 不改写历史 artifact；golden parity、payload/persistence round-trip 和 gate regression 通过 |
 | Workflow graph semantics | Containment + rollback | Compatibility corpus 出现 compile/runtime route 分歧，或历史 checkpoint replay 失败 | Workflow runtime owner | 停止新 graph cutover并切回上一 graph adapter/version；保留历史 reader/upcaster | 不改写 checkpoint/event；fallback/cycle/dataflow/route parity 与 replay 通过 |
 
-每个 production cutover 的 OpenSpec `design.md`/`evidence.md` 必须在切换前填入 `trigger_metric`、观测窗口与阈值、`decision_owner`/on-call、精确 `rollback_target`（version/commit/flag）、数据兼容处理、`post_rollback_oracle` 和 `max_recovery_time`。上表的零容忍 invariant 不得被切片放宽；字段未填或未完成一次 recorded/fault-injection rehearsal 时，不得执行 production cutover。
+每个 production cutover 的 OpenSpec `design.md`/`evidence.md` 必须在切换前填入 `trigger_metric`、观测窗口与阈值、`decision_owner`/on-call、精确 `rollback_target`（version/commit/flag）、数据兼容处理、`post_rollback_oracle` 和 `max_recovery_time`。仓库当前没有提供 named on-call、生产观察窗口、qualified rollback target 或 RTO；这些值属于第 22 节 U9 的 release/operator 输入，不能由实现者推测。上表的零容忍 invariant 不得被切片放宽；字段未填或未完成一次 recorded/fault-injection rehearsal 时，不得执行 production cutover，但不阻断独立代码切片完成 offline verification。
 
 ---
 
@@ -693,6 +697,7 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 | U6 | 旧 analyzer/report DTO/WorkflowExecutor/storage adapter 是否可删除 | `framework-legacy-inventory-and-freeze` owner + 对应 owner-local retirement owner | 每个 candidate 删除前；阻断该 candidate 删除 | `rg`/AST/export/entry-point、fixture replay、package consumer audit；五类证据不齐则冻结并保留 |
 | U7 | Live arXiv/LLM Research 默认 composition 可用性 | Research release owner；`research-runtime-production-composition/evidence.md` live qualification | 宣称 live provider ready 前；不阻断 ordinary offline gate | 独立 credential-gated smoke，记录 provider/model/capability code且不记录 secret；缺证据时不得作 live readiness 声明 |
 | U8 | 外部 HTTP/MCP/SDK 对 payload 的隐式依赖 | Interface contract owner；记录在实施 payload cutover 的 change `evidence.md` | 删除/重命名字段前；阻断对应 breaking change | OpenAPI/JSON snapshot、SDK fixture、release note 与 consumer feedback；未确认时保留 additive/dual-read 兼容窗 |
+| U9 | Production cutover 的 named on-call、观察窗口、qualified rollback target 与 `max_recovery_time` | Release/operator owner；记录到每个 cutover change 的 `design.md`/`evidence.md` 与演练记录 | production cutover 与阶段 `FINAL` 前；不阻断独立代码切片、offline contract 和 smoke 完成 | 由实际运营 owner 指定角色、版本/commit/flag、窗口、阈值与 RTO，并完成一次 recorded/fault-injection rehearsal；信息缺失时保持 cutover disabled，不编造 owner 或目标 |
 
 ---
 
@@ -734,7 +739,7 @@ Migration shadow metric 只能用于验证 cutover，不得长期保留第二套
 - [ ] PRD、OpenSpec tasks、tests 和 implementation commits 建立 requirements traceability。
 - [ ] 第 22 节每个未确认项都有验证记录或带 owner/expiry 的明确保留决策。
 - [ ] Compatibility registry 字段完整且 `overdue=0`；所有 migration kill switch 都有 retirement evidence。
-- [ ] 每个 production cutover 已填写第 20.2 节 rollback contract，并保存一次 recorded 或 fault-injection rehearsal、恢复时长和 post-rollback oracle 结果。
+- [ ] 第 22 节 U9 已由实际 release/operator owner 解决；每个 production cutover 已填写第 20.2 节 rollback contract，并保存一次 recorded 或 fault-injection rehearsal、恢复时长和 post-rollback oracle 结果。
 
 阶段 20 只有在上述条件全部满足时才能标记 `FINAL / IMPLEMENTED`。局部 change 完成不得用于宣称整个阶段已收敛。
 
