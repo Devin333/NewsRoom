@@ -5,11 +5,12 @@
 This file records replayable evidence for completed slices of the active change. It is not a declaration that the production Research composition is complete.
 
 - Evidence date: `2026-07-19`.
-- Slice baseline: branch `main`, `HEAD 4c1d7aaa`.
-- OpenSpec ledger before this slice: `12/46` complete and `34/46` open.
+- Slice baseline: branch `main`, adapter baseline `cd6e8f39`, PRD baseline `f799698d`.
+- OpenSpec ledger after the candidate-worker slice: `15/46` complete and `31/46` open.
 - Settings, sanitized unavailable errors, and composition lifecycle tasks `2.1`-`2.3` are committed in `5effa03e`.
 - Source/document adapter tasks `3.1`-`3.6` and GitHub tasks `4.4`-`4.6` were already checked in the initial task ledger although their implementation was not part of `5effa03e`. The adapter commit containing this evidence file closes that traceability gap; the checked state is justified only when the staged-candidate verification in section 3 passes.
-- Tasks `2.4`-`2.5`, `4.1`-`4.3`, `5.1`-`7.5`, and the final delivery tasks remain separately gated. In particular, valid settings still fail closed until the real production object graph and durable stores exist.
+- Structured candidate tasks `4.1`-`4.3` are implemented by the schema-bound `StructuredResearchCandidateWorker` and its real `OpenAICompatibleClient` transport integration; their evidence and completion boundary are recorded in sections 2 and 3.
+- Tasks `2.4`-`2.5`, `5.1`-`7.5`, and the final delivery tasks remain separately gated. In particular, valid settings still fail closed until the real production object graph and durable stores exist.
 
 ## 2. Adapter requirements and oracles
 
@@ -20,6 +21,7 @@ This file records replayable evidence for completed slices of the active change.
 | `3.6` | Concrete adapter and real gate regressions | LaTeX/PDF/abstract outputs pass `ResearchDocumentSchemaGate`; content-type/size failures produce explicit abstract-only gaps without fabricated sections | Live arXiv qualification remains optional and separate |
 | `4.4` | `GithubResearchRepositoryAdapter` over `GithubConnector.fetch_repository_metadata()` | response identity validation; stars, forks, watchers, issues, and observation lineage map from distinct real fields; observation clock is distinct from GitHub resource `updated_at` | Missing connector fields remain `None`; they are never copied from another metric |
 | `4.5`-`4.6` | paper-card runtime skips GitHub without `code_url` | zero connector calls; absent GitHub fields; bounded `code_repository_missing` diagnostic; canonical paper-card source identity accepts validated arXiv aliases | Does not implement the structured candidate worker or production object graph |
+| `4.1`-`4.3` | `StructuredResearchCandidateWorker` over `OpenAICompatibleClient`; `ResearchSinglePaperRuntime` supplies accepted taxonomy evidence; `WorkerRAGPlanner` consumes the same RAG candidate contract | four task-specific schemas with `additionalProperties=false`; strict task allowlist; provider/output error sanitization; evidence/source-scope rejection; bounded prompt projection includes only sanitized `allowed_source_refs`; canonical `RAGScopeGate` rejects missing/mismatched scope, invalid source policy, out-of-scope refs, and `read_source` without refs; real recorded OpenAI-compatible transport passes existing deterministic Research gates | Worker output is candidate data only. Harness remains the authoritative corpus/source/tool/budget/routing/quality gate, and this slice does not compose the default production service |
 
 The source identity contract is fail closed: all present identity-bearing fields on a recorded arXiv item (`RawSourceItem.url`, `metadata.arxiv_id`, and `metadata.pdf_url`) must normalize to one exact id before canonical abs/PDF URLs are constructed. An unversioned request may accept one consistently versioned response, but multiple matching versions or any intra-item conflict are rejected.
 
@@ -76,6 +78,79 @@ Observed results:
 - `openspec validate --all --strict`: `181 passed, 0 failed` in the staged-only tracked snapshot.
 - `git diff --check`: passed.
 
+Candidate-worker focused check on the current working tree:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests/infrastructure/research/test_candidate_worker.py `
+  tests/infrastructure/research/test_candidate_worker_runtime.py
+```
+
+Observed result: `25 passed`.
+
+Candidate plus full Harness/Research RAG contract check:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests/framework/harness/rag `
+  tests/business/research/rag `
+  tests/infrastructure/research/test_candidate_worker.py `
+  tests/infrastructure/research/test_candidate_worker_runtime.py
+```
+
+Observed result: `520 passed`.
+
+Candidate plus Research integration, concrete adapter, and architecture boundary check:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests/business/research/integration `
+  tests/infrastructure/research `
+  tests/architecture/test_infrastructure_boundary.py
+```
+
+Observed result: `117 passed, 9 skipped`. The skips are existing optional integration environments and are not counted as candidate-worker proof.
+
+Broader Research compatibility check:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests/business/research `
+  tests/infrastructure/research
+```
+
+Observed result: `770 passed, 23 skipped`. Staged-only compile, mandatory smoke, strict OpenSpec, and whitespace gates are recorded separately before the slice commit; these working-tree checks do not substitute for them.
+
+The complete architecture suite observed `97 passed, 4 warnings`; all warnings are the existing FastAPI `on_event` deprecations.
+
+Final staged-only code candidate `cffe1bda` was created from the main worktree index with `git write-tree`/`git commit-tree` and verified in a detached worktree. Unstaged Tool, Workflow, Redis, interface, OpenAPI, and other user changes were absent. The candidate gates were:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests/framework/harness/rag `
+  tests/business/research/rag `
+  tests/infrastructure/research/test_candidate_worker.py `
+  tests/infrastructure/research/test_candidate_worker_runtime.py
+.\.venv\Scripts\python.exe -m pytest -q tests/architecture
+.\.venv\Scripts\python.exe -m scripts.dev compile
+.\.venv\Scripts\python.exe -m scripts.dev smoke
+openspec validate research-runtime-production-composition --strict
+openspec validate --all --strict
+git diff --check HEAD^ HEAD
+```
+
+Observed staged-only results:
+
+- Candidate/Harness RAG: `520 passed`.
+- Architecture: `97 passed, 4 warnings`; warnings are existing FastAPI `on_event` deprecations.
+- Compile: passed.
+- Mandatory smoke: `1207 passed, 23 skipped, 12 warnings`; Source validation reported `is_valid=true`, `error_count=0`, and `warning_count=0`.
+- Research change strict validation: passed.
+- Repository OpenSpec strict validation: `181 passed, 0 failed` in the tracked staged-only snapshot.
+- Candidate whitespace check: passed.
+
+The evidence-result text was added after the code candidate completed. Only this Markdown evidence file changed afterward; final staged strict OpenSpec and whitespace checks are rerun before commit.
+
 ## 4. Boundary and compatibility evidence
 
 - `infrastructure/research` imports only exact approved `business.research.domain.*` and `business.research.ports.*` contracts. `tests/architecture/test_infrastructure_boundary.py` enumerates the complete adapter import set; there is no directory-wide `business.*` exception.
@@ -87,6 +162,6 @@ Observed results:
 ## 5. Known incomplete work
 
 - No configured production graph exists yet for `ResearchApplicationService -> AnalyzePaperUseCase -> ResearchSinglePaperRuntime`; task `2.4` remains open.
-- Structured candidate worker, bounded RAG adapter, durable artifact binding, durable run store, entrypoint cutover, and recorded transport smoke remain open.
+- Bounded RAG adapter, durable artifact binding, durable run store, production object graph, entrypoint cutover, and production-composition recorded transport smoke remain open. The structured candidate adapter itself is complete but is not a production path until task `2.4` binds it.
 - Source process ownership and shared arXiv package/PDF ledger evidence remain in `source-policy-contract-convergence` tasks `3.7` and `3.10`.
 - This slice does not provide live arXiv/GitHub/LLM readiness evidence and does not supply production on-call, rollback target, observation window, or RTO.

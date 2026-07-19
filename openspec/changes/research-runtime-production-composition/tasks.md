@@ -26,9 +26,9 @@
 
 ## 4. Structured Candidate And GitHub Adapters
 
-- [ ] 4.1 Define bounded prompts and JSON schemas for three-minute read, taxonomy, experiment claims, and existing RAG plan candidates.
-- [ ] 4.2 Implement `StructuredResearchCandidateWorker` over `OpenAICompatibleClient` with strict task allowlist, structured parsing, safe error mapping, and evidence-id scope validation.
-- [ ] 4.3 Preserve Harness/deterministic gate authority and add adversarial tests for unknown task, malformed JSON, extra fields, unsupported evidence ids, and prompt-secret exclusion.
+- [x] 4.1 Define bounded prompts and JSON schemas for three-minute read, taxonomy, experiment claims, and existing RAG plan candidates.
+- [x] 4.2 Implement `StructuredResearchCandidateWorker` over `OpenAICompatibleClient` with strict task allowlist, structured parsing, safe error mapping, and evidence-id scope validation.
+- [x] 4.3 Preserve Harness/deterministic gate authority and add adversarial tests for unknown task, malformed JSON, extra fields, unsupported evidence ids, and prompt-secret exclusion.
 - [x] 4.4 Implement `GithubResearchRepositoryAdapter` over `GithubConnector.fetch_repository_metadata()` with real profile/observation mapping and source diagnostics.
 - [x] 4.5 Change paper-card construction to skip GitHub lookup when `code_url` is absent and preserve missing repository fields without fabricated metrics.
 - [x] 4.6 Add GitHub adapter tests for valid repository metadata, connector failure, non-GitHub URL, and missing-code-url no-call behavior.

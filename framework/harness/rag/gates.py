@@ -128,18 +128,54 @@ class RAGScopeGate:
 
     def evaluate(self, plan: RetrievalPlanCandidate, spec: RAGSessionSpec) -> RAGGateResult:
         required_scope = spec.source_policy.get("scope_ref") or spec.goal.constraints.get("scope_ref")
-        if not required_scope:
+        raw_allowed_source_refs = spec.source_policy.get("allowed_source_refs")
+        if not required_scope and raw_allowed_source_refs is None:
             return RAGGateResult(self.gate_name, True, "no explicit scope_ref policy configured")
-        violations = [
-            step.step_id
-            for step in plan.steps
-            if step.metadata.get("scope_ref") not in {None, required_scope}
-        ]
+
+        invalid_source_policy = raw_allowed_source_refs is not None and not isinstance(
+            raw_allowed_source_refs,
+            (list, tuple, set, frozenset),
+        )
+        allowed_source_refs = (
+            set()
+            if invalid_source_policy or raw_allowed_source_refs is None
+            else {
+                str(source_ref).strip()
+                for source_ref in raw_allowed_source_refs
+                if str(source_ref).strip()
+            }
+        )
+        violations: list[str] = []
+        missing_source_refs: list[str] = []
+        out_of_scope_source_refs: list[dict[str, Any]] = []
+        for step in plan.steps:
+            if required_scope and step.metadata.get("scope_ref") != required_scope:
+                violations.append(step.step_id)
+            if raw_allowed_source_refs is None or invalid_source_policy:
+                continue
+            if step.operation == RetrievalOperation.READ_SOURCE and not step.source_refs:
+                missing_source_refs.append(step.step_id)
+                violations.append(step.step_id)
+            unexpected = sorted(set(step.source_refs) - allowed_source_refs)
+            if unexpected:
+                out_of_scope_source_refs.append(
+                    {"step_id": step.step_id, "source_refs": unexpected}
+                )
+                violations.append(step.step_id)
+        violations = list(dict.fromkeys(violations))
+        passed = not invalid_source_policy and not violations
         return RAGGateResult(
             self.gate_name,
-            not violations,
-            None if not violations else "retrieval plan step escapes the declared source scope",
-            {"required_scope": required_scope, "violations": violations},
+            passed,
+            None if passed else "retrieval plan step escapes the declared source scope",
+            {
+                "required_scope": required_scope,
+                "allowed_source_refs": sorted(allowed_source_refs),
+                "invalid_source_policy": invalid_source_policy,
+                "missing_source_refs": missing_source_refs,
+                "out_of_scope_source_refs": out_of_scope_source_refs,
+                "violations": violations,
+            },
         )
 
 

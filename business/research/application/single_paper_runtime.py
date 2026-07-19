@@ -399,7 +399,14 @@ class ResearchSinglePaperRuntime:
             )
             for item in self.llm_worker.generate_candidate(
                 task="candidate_taxonomy",
-                payload={"paper": workspace.paper.to_dict() if workspace.paper else {}},
+                payload={
+                    "paper": workspace.paper.to_dict() if workspace.paper else {},
+                    "evidence_pack": (
+                        workspace.evidence_pack.to_dict()
+                        if workspace.evidence_pack
+                        else {}
+                    ),
+                },
             ).get("taxonomy_candidates", [])
         ]
         assignment = TaxonomyAssignmentBuilder(self.taxonomy_registry).build(workspace.request.paper_id, workspace.taxonomy_candidates)

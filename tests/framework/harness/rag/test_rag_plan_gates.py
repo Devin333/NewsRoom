@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from framework.harness import (
     DeterministicRAGPlanner,
     WorkerRAGPlanner,
@@ -69,6 +71,149 @@ def test_plan_gates_reject_unauthorized_corpus_and_memory_namespace() -> None:
 
     assert result.passed is False
     assert {item["step_id"] for item in result.details["violations"]} == {"query-private", "memory-private"}
+
+
+def test_plan_scope_gate_rejects_out_of_scope_and_missing_source_refs() -> None:
+    allowed_source_ref = "source://paper/allowed#section=method"
+    spec = replace(
+        fake_rag_session_spec(),
+        source_policy={
+            "scope_ref": "paper://sparse-mixture-reader",
+            "allowed_source_refs": [allowed_source_ref],
+        },
+    )
+    policy = RAGExecutionPolicy.from_session_spec(spec)
+    plan = RetrievalPlanCandidate(
+        candidate_id="source-scope-plan",
+        queries=(
+            RetrievalStepSpec(
+                step_id="query-allowed",
+                operation=RetrievalOperation.SEARCH_CORPUS,
+                query="method evidence",
+                corpus="research-papers",
+                metadata={"scope_ref": "paper://sparse-mixture-reader"},
+            ),
+        ),
+        source_reading_plan=(
+            RetrievalStepSpec(
+                step_id="read-outside",
+                operation=RetrievalOperation.READ_SOURCE,
+                source_refs=("source://paper/other#section=method",),
+                max_source_reads=1,
+                metadata={
+                    "tool_name": "retrieval.read_source",
+                    "scope_ref": "paper://sparse-mixture-reader",
+                },
+            ),
+            RetrievalStepSpec(
+                step_id="read-missing",
+                operation=RetrievalOperation.READ_SOURCE,
+                max_source_reads=1,
+                metadata={
+                    "tool_name": "retrieval.read_source",
+                    "scope_ref": "paper://sparse-mixture-reader",
+                },
+            ),
+        ),
+    )
+
+    results = RAGGateSuite().verify_plan(
+        plan,
+        spec=spec,
+        policy=policy,
+        executed_queries=(),
+        projected_snapshot=RAGBudgetSnapshot(source_reads_used=2),
+    )
+
+    failed = {result.gate_name: result for result in results if not result.passed}
+    scope = failed["rag_scope"]
+    assert scope.details["violations"] == ["read-outside", "read-missing"]
+    assert scope.details["missing_source_refs"] == ["read-missing"]
+    assert scope.details["out_of_scope_source_refs"] == [
+        {
+            "step_id": "read-outside",
+            "source_refs": ["source://paper/other#section=method"],
+        }
+    ]
+
+
+def test_plan_scope_gate_accepts_exact_allowed_source_refs() -> None:
+    allowed_source_ref = "source://paper/allowed#section=method"
+    spec = replace(
+        fake_rag_session_spec(),
+        source_policy={"allowed_source_refs": [allowed_source_ref]},
+    )
+    plan = RetrievalPlanCandidate(
+        candidate_id="allowed-source-plan",
+        queries=(
+            RetrievalStepSpec(
+                step_id="query-allowed",
+                operation=RetrievalOperation.SEARCH_CORPUS,
+                query="method evidence",
+                corpus="research-papers",
+                metadata={"scope_ref": "paper://sparse-mixture-reader"},
+            ),
+        ),
+        source_reading_plan=(
+            RetrievalStepSpec(
+                step_id="read-allowed",
+                operation=RetrievalOperation.READ_SOURCE,
+                source_refs=(allowed_source_ref,),
+                max_source_reads=1,
+                metadata={"scope_ref": "paper://sparse-mixture-reader"},
+            ),
+        ),
+    )
+
+    result = RAGGateSuite().scope.evaluate(plan, spec)
+
+    assert result.passed is True
+    assert result.details["violations"] == []
+
+
+def test_plan_scope_gate_rejects_missing_required_scope_ref() -> None:
+    spec = fake_rag_session_spec()
+    plan = RetrievalPlanCandidate(
+        candidate_id="missing-scope-plan",
+        queries=(
+            RetrievalStepSpec(
+                step_id="query-without-scope",
+                operation=RetrievalOperation.SEARCH_CORPUS,
+                query="method evidence",
+                corpus="research-papers",
+            ),
+        ),
+    )
+
+    result = RAGGateSuite().scope.evaluate(plan, spec)
+
+    assert result.passed is False
+    assert result.details["required_scope"] == "paper://sparse-mixture-reader"
+    assert result.details["violations"] == ["query-without-scope"]
+
+
+def test_plan_scope_gate_rejects_invalid_allowed_source_policy_type() -> None:
+    spec = replace(
+        fake_rag_session_spec(),
+        source_policy={"allowed_source_refs": "source://paper/not-an-array"},
+    )
+    plan = RetrievalPlanCandidate(
+        candidate_id="invalid-source-policy-plan",
+        queries=(
+            RetrievalStepSpec(
+                step_id="query",
+                operation=RetrievalOperation.SEARCH_CORPUS,
+                query="method evidence",
+                corpus="research-papers",
+                metadata={"scope_ref": "paper://sparse-mixture-reader"},
+            ),
+        ),
+    )
+
+    result = RAGGateSuite().scope.evaluate(plan, spec)
+
+    assert result.passed is False
+    assert result.details["invalid_source_policy"] is True
 
 
 def test_budget_gate_rejects_projected_plan_over_limits() -> None:
