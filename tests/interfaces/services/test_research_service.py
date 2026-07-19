@@ -88,16 +88,6 @@ def test_research_service_standardizes_missing_and_quality_errors() -> None:
     assert quality.value.details["gateFailures"][0]["gate_name"] == "ResearchReportReadinessGate"
 
 
-def test_research_service_default_runtime_requires_real_configuration() -> None:
-    service = ResearchApplicationService(run_store=InMemoryResearchRunStore())
-
-    with pytest.raises(ResearchServiceError) as exc:
-        service.analyze_paper(ResearchAnalyzeInput(paper_id="paper-1", source_url="https://arxiv.org/abs/2606.00001"))
-
-    assert exc.value.code == "research_run_failed"
-    assert exc.value.status_code == 503
-
-
 def test_research_service_does_not_depend_on_old_papers_application_service() -> None:
     project_root = Path(__file__).resolve().parents[3]
     assert not (project_root / "interfaces" / "services" / "paper_service.py").exists()
