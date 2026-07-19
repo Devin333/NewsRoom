@@ -2,14 +2,15 @@
 
 ## 1. Evidence status
 
-This file records the implementation and replayable verification evidence for the active `research-runtime-production-composition` change. It distinguishes an implemented working-tree candidate from a delivered, staged-only commit and from live-provider production readiness.
+This file records the implementation and replayable verification evidence for the active `research-runtime-production-composition` change. It distinguishes the delivered, staged-only verified implementation from live-provider production readiness and from the remaining Stage-20 work owned by other changes.
 
-- Evidence date: `2026-07-19`.
-- Current branch/HEAD baseline: `main` at `8693833c`.
+- Offline qualification date: `2026-07-19`; staged-only candidate and delivery commit date: `2026-07-20` (`+08:00` Git metadata).
+- Implementation delivery: `12ed843a08a0f024c0c469adc45304aaea8d9ee1` (`feat(research): complete production runtime composition`) on `main`.
+- Delivered tree: `d433ca469a0fe7c62429e5014b75a4e77c51d686`, containing exactly `95` paths relative to parent `8693833cdcaf3c8f544613c077350689fe57e1c1`.
 - Committed implementation foundations: settings/composition lifecycle `5effa03e`, source/document/GitHub adapters `cd6e8f39`, structured candidate worker `7b23a75f`, and bounded document RAG `42f5348e`.
-- Current working-tree OpenSpec ledger: `45/46` complete. Tasks `1.1` through `8.4` are implemented and verified; only task `8.5` remains open for path-scoped staging, staged-only verification, evidence finalization, and commit.
-- The working-tree implementation now contains the real production object graph, durable Research run and Harness artifact storage, all six recorded entry surfaces, explicit actor-scope propagation, shared resource lifecycle, and restart-safe parent/child RAG replay.
-- The change is not delivered until task `8.5` produces a verified commit containing only this change's owned files. The status of every change-owned Stage-20 Research requirement is therefore `Awaiting delivery`, not `Complete`.
+- OpenSpec ledger: `46/46` complete. Tasks `1.1` through `8.5` are implemented, verified, and delivered by the commits recorded here.
+- Staged-only candidate `59a92c90d1dd95424e20478dccfb89d52d517894` and final implementation commit `12ed843a` have the same parent and the same tree `d433ca469a0f...`; the verified candidate therefore exactly matches the delivered source snapshot.
+- The delivered implementation contains the real production object graph, durable Research run and Harness artifact storage, all six recorded entry surfaces, explicit actor-scope propagation, shared resource lifecycle, and restart-safe parent/child RAG replay.
 - Live arXiv/LLM execution was not run. Recorded transports prove the concrete adapter/runtime contract without making external calls, but they do not prove that a live provider/model deployment is ready.
 - Stage-20 `RES-007` remains owned by the separate `research-experience-memory-provenance` change. This change neither closes nor waives it.
 
@@ -24,7 +25,7 @@ This file records the implementation and replayable verification evidence for th
 | `6.1`-`6.7` | `FilesystemHarnessArtifactPort`, `ArtifactManager`, `FilesystemResearchRunStore`, and typed `ResearchAnalysisResult.from_dict()` provide durable integrity-protected storage | Context-local run binding; canonical artifact refs and manifests; versioned JSON/checksum/identity/path/regular-file validation; atomic replace and index fault injection; restart reconstruction of analysis, reader, ask, trace, and artifacts | Production truth is durable storage, not a process-global result map |
 | `7.1`-`7.4` | HTTP Research, HTTP MCP, local `MCPApplicationService`, stdio MCP, CLI direct MCP, and `NewsMCPServerAdapter` resolve the same managed production provider | One recorded-transport run exercises concrete adapters and Harness; all six query surfaces return the same persisted payload; explicit injected factories still bypass the default provider | Transport loops intentionally differ; composition policy, service contract, actor scope, error semantics, and persistence do not |
 | `7.5` | `live_research_e2e` is an explicit opt-in marker and `scripts.dev test-rag-live-e2e` selects every live module | Ordinary pytest/smoke deselects all live modules; the explicit command removes the default exclusion; collection finds 24 live tests | Deselecting or skipping a live test is never production-readiness evidence |
-| `8.1`-`8.4` | Focused, broad, architecture, strict OpenSpec, compile, smoke, and whitespace gates were run on the current working tree | Exact commands and results are recorded in section 3 | Staged-only candidate verification and commit remain task `8.5` |
+| `8.1`-`8.5` | Focused, broad, architecture, strict OpenSpec, compile, smoke, whitespace, staged-scope, and delivered-tree identity gates were run | Exact commands and results are recorded in section 3 | The final commit has the same tree as the staged-only candidate and contains exactly 95 owned dependency-closure paths |
 
 ### 2.1 Actor-scope persistence contract
 
@@ -51,7 +52,7 @@ The hash contract intentionally separates identity from content integrity:
 
 ## 3. Replayable verification
 
-All results below are from the current working tree unless explicitly identified as historical committed evidence.
+Sections 3.1 through 3.5 record the pre-delivery working-tree qualification. Section 3.6 records the isolated staged-only candidate that is byte-for-byte identical to the delivered implementation tree.
 
 ### 3.1 Focused implementation matrix
 
@@ -169,7 +170,27 @@ Observed results:
 - Compile: passed.
 - Mandatory smoke: `1304 passed, 23 deselected, 20 warnings`; Source validation reported valid with zero errors. The 23 deselections are opt-in live Research coverage. The warnings are existing FastAPI `on_event` deprecations and do not substitute for live qualification.
 
-Task `8.5` still requires reproducing the applicable gates in a staged-only candidate and verifying that unrelated active OpenSpec, Tool, Workflow, Redis, OpenAPI, and user-owned files are absent before commit.
+The final delivery gate was repeated against the isolated staged-only candidate described in section 3.6. Unrelated active OpenSpec, Tool, Workflow, Redis, OpenAPI, PRD, generated, and user-owned files were absent from the 95-path implementation tree.
+
+### 3.6 Staged-only delivery verification
+
+The index was frozen into temporary candidate commit `59a92c90d1dd95424e20478dccfb89d52d517894` with parent `8693833c` and tree `d433ca469a0fe7c62429e5014b75a4e77c51d686`. Verification ran from an isolated detached worktree with import-origin checks preventing the editable environment from resolving source modules from the dirty main worktree. The temporary worktree was removed after verification.
+
+Observed staged-only results:
+
+- Recorded production composition and replay: `2 passed` from `tests/interfaces/composition/test_research_recorded_transport.py`.
+- Durable dependency regressions: `3 passed` for decision-history extension compaction, canonical activity-input checksum, and SQLite durable acceptance of canonical zero-valued inputs.
+- Mandatory smoke: `1304 passed, 23 deselected, 20 warnings`; Source validation reported `is_valid=true`, `error_count=0`, and `warning_count=0`.
+- Target OpenSpec strict validation: valid.
+- Isolated candidate `openspec validate --all --strict`: `181 passed, 0 failed`. This lower count than the dirty main-worktree `508 passed` result is expected because unrelated uncommitted OpenSpec changes were intentionally absent.
+- Candidate `git diff --check`: passed.
+
+Two failed intermediate candidates established that six Harness files were required transitive dependencies rather than unrelated scope expansion:
+
+1. A candidate without the replay-compaction changes in `framework/harness/control_plane/replay_history.py` and its regression failed the recorded production run with `event extensions exceed configured byte limit`. The Research outer workflow records deterministic decision history, so current-step routing/state compaction is required for the canonical event extension limit.
+2. After adding only that compaction, the recorded run failed with `EventStoreCorruptionError('recorded Harness activity input checksum conflicts with descriptor')`. The durable activity descriptor and stored canonical JSON differed for zero-valued numeric inputs, so `activity.py`, `durable_events.py`, and their focused regressions were required to share one canonical checksum function.
+
+The final candidate included `framework/harness/control_plane/{activity,durable_events,replay_history}.py` and `tests/framework/harness/control_plane/{test_activity_contract,test_replay_history}.py` plus `tests/infrastructure/storage/events/test_harness_durable_event_integration.py`. Its tree exactly matches final commit `12ed843a`; `git diff-tree` reports `95` delivered paths.
 
 ## 4. Boundary, ownership, and compatibility evidence
 
@@ -191,12 +212,13 @@ Task `8.5` still requires reproducing the applicable gates in a staged-only cand
 | `7b23a75f` | structured candidate worker | Four strict task schemas, bounded prompt projection, evidence/source-scope validation, sanitized provider errors, and deterministic gate authority |
 | `42f5348e` | bounded document RAG | Canonical chunk lineage, durable local store, optional Qdrant selection, bounded session budgets, context projection, and direct isolation/replay regressions |
 | `4113de2d` | prior evidence baseline | Preserves the staged-candidate history for the committed adapter/RAG slices; its earlier partial status is superseded by this current ledger |
+| `12ed843a` | production composition delivery | Real object graph, durable result/artifact storage, actor and lifecycle isolation, six entry surfaces, recorded transports, parent/child replay, and required Harness durable dependency closure |
 
-These commits are foundations, not a substitute for the uncommitted production composition, durable persistence, actor, lifecycle, entrypoint, and replay work that task `8.5` must deliver together.
+The foundation commits remain independently traceable, while `12ed843a` is the accountable delivery commit for the complete production composition slice.
 
 ## 5. Remaining release boundaries
 
-- Only OpenSpec task `8.5` remains in this change: update/finalize evidence, stage only owned paths and hunks, verify the staged snapshot, and commit. Until then the correct change status is `45/46`, not complete.
+- All OpenSpec implementation tasks are complete (`46/46`). The change remains unarchived so its live-provider and Stage-20 release boundaries stay explicit; task completion is not a declaration that the whole Stage-20 umbrella is `FINAL`.
 - Live arXiv/LLM E2E was not executed because this offline qualification did not use deployment credentials or external services. U7 remains unconfirmed, and no live provider/model is declared ready.
 - `RES-007` is intentionally not implemented by this change. Durable `SkillExperience` append/query, real released-package manifest hash, and no-promotion proof remain with `research-experience-memory-provenance`.
 - The Source change still owns its own final Research/Harness binding ledger. The shared Source runtime and reservation-ledger object graph here are supporting evidence and do not close another change's tasks by assertion.
@@ -205,18 +227,18 @@ These commits are foundations, not a substitute for the uncommitted production c
 
 ## 6. Stage-20 Research requirement ledger
 
-Each requirement has one accountable task/change owner. Supporting tasks and commits may provide integration evidence but do not independently close the requirement. All requirements owned by this change are implemented in the current working tree and remain `Awaiting delivery` until task `8.5` produces the scoped verified commit.
+Each requirement has one accountable task/change owner. Supporting tasks and commits may provide integration evidence but do not independently close the requirement. Requirements owned by this change are delivered by `12ed843a`; `RES-007` remains open under its external owner.
 
 | Requirement | Accountable task/change | Current tests/evidence | Implementation commit | Status |
 | --- | --- | --- | --- | --- |
-| `RES-001` | task `2.4` in this change | configured production object graph; recorded HTTP/MCP/CLI six-surface parity; real Harness run | foundations plus current working tree; task `8.5` commit pending | Awaiting delivery |
-| `RES-002` | task `2.4` in this change | configured graph excludes unconfigured/fake/in-memory defaults; missing configuration returns sanitized typed unavailable service | foundations plus current working tree; task `8.5` commit pending | Awaiting delivery |
-| `RES-003` | task `2.4` in this change | canonical outer workflow; child bounded RAG parent identity, refs, terminal empty pack, and restart replay; one-sided projection fails closed | foundations plus current working tree; task `8.5` commit pending | Awaiting delivery |
-| `RES-004` | task `1.2` in this change | precise Business/Infrastructure import boundary and full architecture suite `102 passed` | adapter foundations plus current working tree; task `8.5` commit pending | Awaiting delivery |
-| `RES-005` | task `7.1` in this change | `/ask` and `/rag-ask` share injected application factory with explicit mode, actor propagation, lifecycle, and projection-difference regressions | current working tree; task `8.5` commit pending | Awaiting delivery |
-| `RES-006` | task `2.5` in this change | explicit actor scope across entry/RAG/trace/transcript/store; tenant visibility; same-paper A/B and 50-run isolation | RAG foundation plus current working tree; task `8.5` commit pending | Awaiting delivery |
+| `RES-001` | task `2.4` in this change | configured production object graph; recorded HTTP/MCP/CLI six-surface parity; real Harness run | `12ed843a` | Complete |
+| `RES-002` | task `2.4` in this change | configured graph excludes unconfigured/fake/in-memory defaults; missing configuration returns sanitized typed unavailable service | `12ed843a` | Complete |
+| `RES-003` | task `2.4` in this change | canonical outer workflow; child bounded RAG parent identity, refs, terminal empty pack, and restart replay; one-sided projection fails closed | `12ed843a` | Complete |
+| `RES-004` | task `1.2` in this change | precise Business/Infrastructure import boundary and full architecture suite `102 passed` | `12ed843a` | Complete |
+| `RES-005` | task `7.1` in this change | `/ask` and `/rag-ask` share injected application factory with explicit mode, actor propagation, lifecycle, and projection-difference regressions | `12ed843a` | Complete |
+| `RES-006` | task `2.5` in this change | explicit actor scope across entry/RAG/trace/transcript/store; tenant visibility; same-paper A/B and 50-run isolation | `12ed843a` | Complete |
 | `RES-007` | external `research-experience-memory-provenance` change | no durable experience provenance is claimed by this change | none in this change | Open, external owner |
-| `RES-008` | task `6.6` in this change | durable restart reconstruction of analysis, reader, summary ask, chunk-RAG ask, trace, and checksum-bearing artifact refs | current working tree; task `8.5` commit pending | Awaiting delivery |
-| `RES-009` | task `7.2` in this change | HTTP/MCP/CLI/default services use the application boundary; AST/import graph rejects direct executor/store access; six-surface recorded parity | current working tree; task `8.5` commit pending | Awaiting delivery |
-| `RES-010` | task `7.2` in this change | inbound MCP and outbound ToolRuntime adapter import graph is separate, acyclic, and free of recursive shared request state | current working tree; task `8.5` commit pending | Awaiting delivery |
-| `RES-011` | task `2.5` in this change | managed client/store reuse; synchronized reranker; in-flight-aware close; reset-before-rebuild; no unregistered mutable runtime singleton | lifecycle foundation plus current working tree; task `8.5` commit pending | Awaiting delivery |
+| `RES-008` | task `6.6` in this change | durable restart reconstruction of analysis, reader, summary ask, chunk-RAG ask, trace, and checksum-bearing artifact refs | `12ed843a` | Complete |
+| `RES-009` | task `7.2` in this change | HTTP/MCP/CLI/default services use the application boundary; AST/import graph rejects direct executor/store access; six-surface recorded parity | `12ed843a` | Complete |
+| `RES-010` | task `7.2` in this change | inbound MCP and outbound ToolRuntime adapter import graph is separate, acyclic, and free of recursive shared request state | `12ed843a` | Complete |
+| `RES-011` | task `2.5` in this change | managed client/store reuse; synchronized reranker; in-flight-aware close; reset-before-rebuild; no unregistered mutable runtime singleton | `12ed843a` | Complete |

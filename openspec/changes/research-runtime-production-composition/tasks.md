@@ -66,4 +66,4 @@
 - [x] 8.2 Run the broader `tests/business/research`, Harness, interfaces, artifact, and smoke compatibility matrices with skip reasons recorded.
 - [x] 8.3 Run `openspec validate research-runtime-production-composition --strict`, `openspec validate --all --strict`, and `git diff --check`.
 - [x] 8.4 Run `.\.venv\Scripts\python.exe -m scripts.dev compile` and mandatory `.\.venv\Scripts\python.exe -m scripts.dev smoke`; fix root causes.
-- [ ] 8.5 Update task evidence, commit with path-scoped staging, and verify no unrelated active OpenSpec or user files are included.
+- [x] 8.5 Update task evidence, commit with path-scoped staging, and verify no unrelated active OpenSpec or user files are included.
