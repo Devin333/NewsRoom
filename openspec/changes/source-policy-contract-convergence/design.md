@@ -124,11 +124,14 @@ connectors receive the ledger directly while tools and health receive adapters
 over that same underlying ledger. Contract tests assert shared reservations, not
 Python wrapper identity.
 
-The limiter key is the case-folded hostname of the canonical URL. Scheme, user
-info, path, query, fragment, and port do not split a domain quota. A denial is
-decided before any network call and is not retried. The limiter protects its
-bucket mutation with a lock because one composition can be used by concurrent
-HTTP, MCP, worker, and tool calls.
+The limiter key is the case-folded canonical provider hostname of the canonical
+URL. Scheme, user info, path, query, fragment, and port do not split a domain
+quota. The official arXiv metadata host `export.arxiv.org` is explicitly
+aliased to `arxiv.org` so metadata, source-package, and PDF calls consume one
+provider bucket; other subdomains remain distinct unless a future contract adds
+an explicit tested alias. A denial is decided before any network call and is
+not retried. The limiter protects its bucket mutation with a lock because one
+composition can be used by concurrent HTTP, MCP, worker, and tool calls.
 
 A new Source composition factory at the interface composition boundary creates
 one infrastructure fetch policy, one reservation ledger, the business limiter

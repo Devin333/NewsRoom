@@ -1,11 +1,12 @@
 import json
+from types import SimpleNamespace
 
 import interfaces.cli.news as news_cli
 from interfaces.cli.commands import sources as source_commands
 
 
 def test_news_cli_sources_list_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(["sources", "list", "--json"])
 
@@ -18,7 +19,7 @@ def test_news_cli_sources_list_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_health_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(["sources", "health", "--json"])
 
@@ -30,7 +31,7 @@ def test_news_cli_sources_health_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_check_health_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(
         ["sources", "check-health", "--source-id", "source-1", "--limit", "1", "--json"]
@@ -45,7 +46,7 @@ def test_news_cli_sources_check_health_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_validate_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(["sources", "validate", "--json"])
 
@@ -58,7 +59,7 @@ def test_news_cli_sources_validate_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_arxiv_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(["sources", "arxiv", "--query", "cat:cs.AI", "--limit", "1", "--json"])
 
@@ -72,7 +73,7 @@ def test_news_cli_sources_arxiv_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_github_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(["sources", "github", "--repo", "owner/repo", "--limit", "1", "--json"])
 
@@ -214,3 +215,11 @@ class _FakeResult:
 
     def to_dict(self):
         return self.payload
+
+
+def _patch_source_service(monkeypatch) -> None:
+    monkeypatch.setattr(
+        source_commands,
+        "build_source_runtime_composition",
+        lambda: SimpleNamespace(source_service=_FakeSourceService()),
+    )

@@ -7,33 +7,34 @@ from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from html import unescape
 from typing import Callable
-from urllib.error import HTTPError, URLError
 from urllib.request import Request
 from xml.etree import ElementTree
 
 from infrastructure.external.sources.models import RawSourceItem, SourceDefinition, SourceError
 from infrastructure.external.sources.diagnostics import (
+    SourceFetchResponseMetadataContext,
     SourceFetchResponseMetadata,
     attach_response_metadata_to_error,
     attach_response_metadata_to_items,
     response_metadata_from_http_response,
+    source_fetch_response_scope,
 )
 from infrastructure.external.sources.fetch_policy import (
     DomainRateLimiter,
-    RobotsDisallowedError,
     SourceFetchPolicy,
-    TooManyRedirectsError,
-    UnsupportedContentTypeError,
     effective_fetch_policy,
     ensure_supported_content_type,
     ensure_robots_allowed,
-    fetch_attempts,
     open_request_with_fetch_policy,
-    rate_limited_source_error,
     run_with_fetch_retries,
 )
 from infrastructure.external.sources.metadata import source_item_metadata
-from infrastructure.external.sources.errors import classify_source_exception
+from infrastructure.external.sources.errors import (
+    SourceErrorContext,
+    build_source_error,
+    rate_limited_source_error,
+    source_error_from_exception,
+)
 
 
 FetchText = Callable[[str], str]
@@ -60,11 +61,11 @@ class FeedConnector:
         self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
-        self._last_response_metadata: SourceFetchResponseMetadata | None = None
+        self._response_metadata_context = SourceFetchResponseMetadataContext()
 
+    @source_fetch_response_scope
     def fetch(self, source: SourceDefinition, *, limit: int | None = None) -> tuple[list[RawSourceItem], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
-        self._last_response_metadata = None
         rate_limit = self._rate_limiter.reserve(
             source.url,
             limit_per_minute=self.fetch_policy.rate_limit_per_domain_per_minute,
@@ -78,22 +79,24 @@ class FeedConnector:
                 policy,
             )
         except Exception as exc:
-            error = _exception_source_error(source, exc, phase="fetch")
-            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
-        response_metadata = self._last_response_metadata
+            error = source_error_from_exception(
+                source,
+                exc,
+                context=SourceErrorContext(phase="fetch"),
+            )
+            return [], [attach_response_metadata_to_error(error, self._response_metadata_context.get())]
+        response_metadata = self._response_metadata_context.get()
 
         if not xml_text.strip():
             return [], [
                 attach_response_metadata_to_error(
-                    _source_error(
+                    build_source_error(
                         source,
                         "empty_source_response",
                         "source returned an empty response",
-                        metadata={
-                            "phase": "fetch",
-                            "retryable": True,
-                            "source_health_affecting": True,
-                        },
+                        context=SourceErrorContext(phase="fetch"),
+                        retryable=True,
+                        source_health_affecting=True,
                     ),
                     response_metadata,
                 )
@@ -102,22 +105,24 @@ class FeedConnector:
         try:
             items = self.parse(source, xml_text, limit=limit)
         except Exception as exc:
-            error = _exception_source_error(source, exc, phase="parse")
+            error = source_error_from_exception(
+                source,
+                exc,
+                context=SourceErrorContext(phase="parse"),
+            )
             return [], [attach_response_metadata_to_error(error, response_metadata)]
         items = attach_response_metadata_to_items(items, response_metadata)
 
         if not items:
             return [], [
                 attach_response_metadata_to_error(
-                    _source_error(
+                    build_source_error(
                         source,
                         "empty_feed",
                         "feed contained no valid items",
-                        metadata={
-                            "phase": "parse",
-                            "retryable": False,
-                            "source_health_affecting": False,
-                        },
+                        context=SourceErrorContext(phase="parse"),
+                        retryable=False,
+                        source_health_affecting=False,
                     ),
                     response_metadata,
                 )
@@ -226,8 +231,9 @@ class FeedConnector:
         policy = policy or self.fetch_policy
         request = Request(url, headers={"User-Agent": policy.user_agent})
         with open_request_with_fetch_policy(request, policy) as response:
-            self._last_response_metadata = response_metadata_from_http_response(response, url=url)
-            ensure_supported_content_type(self._last_response_metadata.content_type, FEED_CONTENT_TYPES)
+            response_metadata = response_metadata_from_http_response(response, url=url)
+            self._response_metadata_context.set(response_metadata)
+            ensure_supported_content_type(response_metadata.content_type, FEED_CONTENT_TYPES)
             body = response.read(policy.max_bytes + 1)
         if len(body) > policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {policy.max_bytes}")
@@ -238,69 +244,6 @@ class FeedConnector:
             ensure_robots_allowed(url, policy)
             return self._default_fetch_text(url, policy)
         return self._fetch_text(url)
-
-
-def _source_error(
-    source: SourceDefinition,
-    error_type: str,
-    error_message: str,
-    *,
-    metadata: dict[str, object] | None = None,
-) -> SourceError:
-    return SourceError(
-        source_id=source.source_id,
-        source_name=source.name,
-        error_type=error_type,
-        error_message=error_message,
-        url=source.url,
-        metadata=metadata or {},
-    )
-
-
-def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: str) -> SourceError:
-    classification = classify_source_exception(exc, phase=phase)
-    error_type, retryable = classification.to_tuple()
-    metadata: dict[str, object] = {
-        "phase": phase,
-        "original_exception_type": type(exc).__name__,
-        "retryable": retryable,
-        "source_health_affecting": classification.source_health_affecting,
-    }
-    if classification.operator_action_required:
-        metadata["operator_action_required"] = True
-    if isinstance(exc, UnsupportedContentTypeError):
-        metadata["content_type"] = exc.content_type
-        metadata["supported_content_types"] = list(exc.supported_content_types)
-        metadata["source_health_affecting"] = False
-    if isinstance(exc, TooManyRedirectsError):
-        metadata["redirect_url"] = exc.url
-        metadata["max_redirects"] = exc.max_redirects
-        metadata["source_health_affecting"] = False
-    if isinstance(exc, RobotsDisallowedError):
-        metadata["robots_url"] = exc.robots_url
-        metadata["user_agent"] = exc.user_agent
-        metadata["source_health_affecting"] = False
-    if isinstance(exc, HTTPError):
-        metadata["status_code"] = exc.code
-    attempts = fetch_attempts(exc)
-    if attempts is not None:
-        metadata["attempts"] = attempts
-    return _source_error(source, error_type, str(exc), metadata=metadata)
-
-
-def _taxonomy_for_exception(exc: Exception, *, phase: str) -> tuple[str, bool]:
-    return classify_source_exception(exc, phase=phase).to_tuple()
-
-
-def _is_timeout_exception(exc: Exception) -> bool:
-    if isinstance(exc, TimeoutError):
-        return True
-    if isinstance(exc, URLError):
-        reason = getattr(exc, "reason", None)
-        if isinstance(reason, TimeoutError):
-            return True
-        return "timed out" in str(reason).casefold() or "timeout" in str(reason).casefold()
-    return False
 
 
 def _raw_item(

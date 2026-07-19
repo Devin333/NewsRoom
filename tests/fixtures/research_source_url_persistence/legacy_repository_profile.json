@@ -1,0 +1,14 @@
+{
+  "repo_url": "https://github.com/NewsRoom/Runtime/",
+  "owner": "NewsRoom",
+  "name": "Runtime",
+  "stars": 42,
+  "forks": 7,
+  "watchers": 12,
+  "metadata": {
+    "canonical_url_hash": "legacy-repository-url-hash",
+    "artifact_ref": {
+      "artifact_id": "research-repository-legacy"
+    }
+  }
+}

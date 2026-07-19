@@ -32,13 +32,14 @@ from infrastructure.external.sources.fetch_policy import (
     RateLimitDecision,
     RobotsDisallowedError,
     SourceFetchPolicy,
+    SourceRateLimitExceededError,
     TooManyRedirectsError,
     effective_fetch_policy,
     ensure_robots_allowed,
     open_request_with_fetch_policy,
-    rate_limited_source_error,
     run_with_fetch_retries,
 )
+from infrastructure.external.sources.errors import rate_limited_source_error
 from infrastructure.external.sources.github import (
     GITHUB_API_URL,
     GithubConnector,
@@ -107,6 +108,7 @@ __all__ = [
     "RobotsDisallowedError",
     "STACKOVERFLOW_API_URL",
     "SourceFetchPolicy",
+    "SourceRateLimitExceededError",
     "SourceError",
     "SourceFetchRequest",
     "SourceFetchResult",

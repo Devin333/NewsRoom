@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
+from business.foundation.primitives.source_ref import source_url_read_aliases
 from business.layers.analysis.quality.models import CitationFailureCategory, CitationSectionResult
 from business.layers.analysis.quality.support_matrix import SupportMatrix, SupportMatrixBuilder
-from business.layers.signal.source_processing.normalize import canonicalize_url
+from business.layers.relation.evidence.models import EvidenceBundle, EvidenceItem, VerifiedFindings
 
 
 CLAIM_SUPPORT_TOKEN_OVERLAP_THRESHOLD = 0.75
@@ -63,26 +64,23 @@ class CitationChecker:
     ) -> CitationCheckResult:
         cited_urls = sorted(_collect_cited_urls(report))
         cited_evidence_ids = sorted(_collect_cited_evidence_ids(report))
-        publishable_urls = {
-            _canonical_url_or_raw(url)
+        publishable_url_aliases = _source_url_alias_index(
+            url
             for item in evidence_bundle.items
             if item.publishable
             for url in item.source_urls
             if url
-        }
-        known_urls = {
-            _canonical_url_or_raw(url)
-            for url in evidence_bundle.source_urls
-        }
+        )
+        known_url_aliases = _source_url_alias_index(evidence_bundle.source_urls)
         allowed_evidence_ids = evidence_bundle.evidence_ids
         unknown_urls = sorted(
-            url for url in cited_urls if _canonical_url_or_raw(url) not in known_urls
+            url for url in cited_urls if not _source_url_matches(url, known_url_aliases)
         )
         unsupported_urls = sorted(
             url
             for url in cited_urls
-            if _canonical_url_or_raw(url) in known_urls
-            and _canonical_url_or_raw(url) not in publishable_urls
+            if _source_url_matches(url, known_url_aliases)
+            and not _source_url_matches(url, publishable_url_aliases)
         )
         unsupported_evidence_ids = sorted(
             evidence_id for evidence_id in cited_evidence_ids if evidence_id not in allowed_evidence_ids
@@ -376,8 +374,8 @@ def _section_results(
     missing_section_sources: list[str],
     support_matrix: SupportMatrix,
 ) -> list[CitationSectionResult]:
-    unknown_url_set = {_canonical_url_or_raw(url) for url in unknown_urls}
-    unsupported_url_set = {_canonical_url_or_raw(url) for url in unsupported_urls}
+    unknown_url_aliases = _source_url_alias_index(unknown_urls)
+    unsupported_url_aliases = _source_url_alias_index(unsupported_urls)
     unsupported_evidence_id_set = set(unsupported_evidence_ids)
     missing_section_titles = set(missing_section_sources)
     unsupported_claims_by_section = {
@@ -401,14 +399,14 @@ def _section_results(
         issue_codes: list[str] = []
 
         section_unknown_urls = [
-            url for url in cited_urls if _canonical_url_or_raw(url) in unknown_url_set
+            url for url in cited_urls if _source_url_matches(url, unknown_url_aliases)
         ]
         if section_unknown_urls:
             issue_codes.append("unknown_urls")
             issue_details["unknown_urls"] = section_unknown_urls
 
         section_unsupported_urls = [
-            url for url in cited_urls if _canonical_url_or_raw(url) in unsupported_url_set
+            url for url in cited_urls if _source_url_matches(url, unsupported_url_aliases)
         ]
         if section_unsupported_urls:
             issue_codes.append("unsupported_urls")
@@ -459,11 +457,15 @@ def _section_id(section: dict[str, Any], section_index: int) -> str:
     return slug or f"section_{section_index + 1}"
 
 
-def _canonical_url_or_raw(url: str) -> str:
-    try:
-        return canonicalize_url(url)
-    except Exception:
-        return url.strip()
+def _source_url_alias_index(urls: Iterable[str]) -> set[str]:
+    aliases: set[str] = set()
+    for url in urls:
+        aliases.update(source_url_read_aliases(url))
+    return aliases
+
+
+def _source_url_matches(url: str, aliases: set[str]) -> bool:
+    return not aliases.isdisjoint(source_url_read_aliases(url))
 
 
 def _stable_strings(values: list[str]) -> list[str]:

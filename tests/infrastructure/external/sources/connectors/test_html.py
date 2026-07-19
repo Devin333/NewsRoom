@@ -112,6 +112,26 @@ def test_html_connector_normalizes_relative_canonical_url() -> None:
     assert items[0].metadata["canonical_url"] == "https://example.com/blog/post"
 
 
+def test_html_connector_rejects_malformed_canonical_as_structured_parse_error() -> None:
+    source = _source()
+    html = """
+    <html><head>
+      <title>Malformed canonical</title>
+      <link rel="canonical" href="https://example.com:not-a-port/article" />
+    </head><body><p>Body text remains parseable.</p></body></html>
+    """
+    connector = HtmlConnector(fetch_text=lambda _: html)
+
+    items, errors = connector.fetch(source)
+
+    assert items == []
+    assert len(errors) == 1
+    assert errors[0].error_type == "parse_error"
+    assert errors[0].retryable is False
+    assert errors[0].metadata["phase"] == "parse"
+    assert errors[0].metadata["original_exception_type"] == "ValueError"
+
+
 def test_html_connector_fetch_retries_transient_failure() -> None:
     calls = []
 

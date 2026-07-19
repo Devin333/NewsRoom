@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from business.foundation.models.source import (
     SourceDefinition,
@@ -24,6 +26,13 @@ from business.layers.signal.source_health import (
     SourceHealthStore,
 )
 from interfaces.services.source_health_probe import default_source_health_probe
+from interfaces.services.source_mapping import (
+    to_business_fetch_policy as _business_fetch_policy,
+    to_business_raw_source_item as _business_raw_item,
+    to_business_source_error as _business_source_error,
+    to_infrastructure_fetch_policy as _infra_fetch_policy,
+    to_infrastructure_source_definition as _infra_source,
+)
 from business.layers.signal.source_router import SourceConnectorRouter
 from business.layers.signal.source_catalog import SOURCE_CATEGORIES, SOURCE_PRIORITIES
 from business.foundation.models.source import SourceHealth
@@ -45,11 +54,6 @@ from infrastructure.external.sources import (
     DevToConnector,
     default_arxiv_connector,
     default_github_connector,
-)
-from infrastructure.external.sources.models import (
-    SourceDefinition as InfraSourceDefinition,
-    SourceReliability as InfraSourceReliability,
-    SourceType as InfraSourceType,
 )
 from infrastructure.storage.source_health import source_health_store_from_env
 
@@ -128,6 +132,7 @@ class SourceFetchPreviewResult:
     query: str
     items: list[RawSourceItem]
     errors: list[SourceError]
+    request_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -176,10 +181,11 @@ class SourceApplicationService:
         health_probe_fetcher=None,
         source_config_path: str | Path | None = None,
         fetch_policy: BusinessSourceFetchPolicy | InfraSourceFetchPolicy | None = None,
-        rate_limiter: DomainRateLimiter | None = None,
+        rate_limiter: Any | None = None,
         arxiv_connector: Any | None = None,
         github_connector: Any | None = None,
         source_router: SourceConnectorRouter | None = None,
+        request_id_factory: Callable[[], str] | None = None,
     ) -> None:
         explicit_components = any(
             component is not None
@@ -190,6 +196,7 @@ class SourceApplicationService:
         if fetch_policy is None:
             fetch_policy = build_default_source_fetch_policy(source_config_path=source_config_path)
         self.source_registry = source_registry
+        self._request_id_factory = request_id_factory or _new_source_request_id
         self.fetch_policy = _infra_fetch_policy(fetch_policy)
         self.rate_limiter = rate_limiter or DomainRateLimiter()
         self.source_health_store = source_health_store or (
@@ -319,7 +326,7 @@ class SourceApplicationService:
         checker = SourceHealthChecker(
             self.source_registry,
             self.health_manager,
-            fetch_policy=self.fetch_policy,
+            fetch_policy=_business_fetch_policy(self.fetch_policy),
             probe_fetcher=self.health_probe_fetcher,
             rate_limiter=self.rate_limiter,
         )
@@ -361,10 +368,16 @@ class SourceApplicationService:
             language="en",
             metadata={"query": query},
         )
-        blocked_result = self._blocked_preview_result(source, query=query)
+        request_id = self._request_id_factory()
+        blocked_result = self._blocked_preview_result(
+            source,
+            query=query,
+            request_id=request_id,
+        )
         if blocked_result is not None:
             return blocked_result
         items, errors = self.arxiv_connector.fetch(_infra_source(source), query=query, limit=limit)
+        errors = _with_request_id(errors, request_id=request_id)
         self._record_preview_health(source, items=items, errors=errors)
         return SourceFetchPreviewResult(
             source_id=source.source_id,
@@ -372,6 +385,7 @@ class SourceApplicationService:
             query=query,
             items=items,
             errors=errors,
+            request_id=request_id,
         )
 
     def fetch_github_releases(self, *, repository: str, limit: int = 5) -> SourceFetchPreviewResult:
@@ -391,7 +405,12 @@ class SourceApplicationService:
             language="en",
             metadata={"repository": repository},
         )
-        blocked_result = self._blocked_preview_result(source, query=repository)
+        request_id = self._request_id_factory()
+        blocked_result = self._blocked_preview_result(
+            source,
+            query=repository,
+            request_id=request_id,
+        )
         if blocked_result is not None:
             return blocked_result
         items, errors = self.github_connector.fetch_releases(
@@ -399,6 +418,7 @@ class SourceApplicationService:
             repository=repository,
             limit=limit,
         )
+        errors = _with_request_id(errors, request_id=request_id)
         self._record_preview_health(source, items=items, errors=errors)
         return SourceFetchPreviewResult(
             source_id=source.source_id,
@@ -406,6 +426,7 @@ class SourceApplicationService:
             query=repository,
             items=items,
             errors=errors,
+            request_id=request_id,
         )
 
     def fetch_source(
@@ -545,7 +566,13 @@ class SourceApplicationService:
         force: bool,
     ) -> SourceFetchPreviewResult:
         actual_query = _query_for_source(source, query=query)
-        blocked_result = self._blocked_preview_result(source, query=actual_query, force=force)
+        request_id = self._request_id_factory()
+        blocked_result = self._blocked_preview_result(
+            source,
+            query=actual_query,
+            request_id=request_id,
+            force=force,
+        )
         if blocked_result is not None:
             return blocked_result
         try:
@@ -567,6 +594,7 @@ class SourceApplicationService:
                     },
                 )
             ]
+        errors = _with_request_id(errors, request_id=request_id)
         self._record_preview_health(source, items=items, errors=errors)
         return SourceFetchPreviewResult(
             source_id=source.source_id,
@@ -574,6 +602,7 @@ class SourceApplicationService:
             query=actual_query,
             items=items,
             errors=errors,
+            request_id=request_id,
         )
 
     def _blocked_preview_result(
@@ -581,6 +610,7 @@ class SourceApplicationService:
         source: SourceDefinition,
         *,
         query: str,
+        request_id: str,
         force: bool = False,
     ) -> SourceFetchPreviewResult | None:
         if not source.enabled:
@@ -601,7 +631,8 @@ class SourceApplicationService:
                 source_type=BusinessSourceType(source.source_type).value,
                 query=query,
                 items=[],
-                errors=[error],
+                errors=_with_request_id([error], request_id=request_id),
+                request_id=request_id,
             )
         if force:
             return None
@@ -626,7 +657,8 @@ class SourceApplicationService:
             source_type=BusinessSourceType(source.source_type).value,
             query=query,
             items=[],
-            errors=[error],
+            errors=_with_request_id([error], request_id=request_id),
+            request_id=request_id,
         )
 
     def _record_preview_health(
@@ -661,25 +693,25 @@ class SourceApplicationService:
 
 
 def _raw_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
-    return {
-        "source_item_id": item.source_item_id,
-        "source_id": item.source_id,
-        "source_name": item.source_name,
-        "source_type": InfraSourceType(item.source_type).value,
-        "title": item.title,
-        "url": item.url,
-        "fetched_at": _dt(item.fetched_at),
-        "published_at": _dt(item.published_at),
-        "summary": item.summary,
-        "raw_content": item.raw_content,
-        "raw_artifact_ref": _artifact_ref(item.raw_artifact_ref),
-        "parse_artifact_ref": _artifact_ref(item.parse_artifact_ref),
-        "authors": list(item.authors),
-        "tags": list(item.tags),
-        "language": item.language,
-        "lineage": item.lineage.to_dict() if item.lineage else None,
-        "metadata": dict(item.metadata),
-    }
+    return _business_raw_item(item).to_dict()
+
+
+def _with_request_id(
+    errors: list[SourceError],
+    *,
+    request_id: str,
+) -> list[SourceError]:
+    return [
+        replace(
+            error,
+            metadata={**error.metadata, "request_id": request_id},
+        )
+        for error in errors
+    ]
+
+
+def _new_source_request_id() -> str:
+    return f"source-request-{uuid4()}"
 
 
 def _preview_skip_error(
@@ -713,67 +745,12 @@ def _preview_skip_error(
     )
 
 
-def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
-    return InfraSourceDefinition(
-        source_id=source.source_id,
-        name=source.name,
-        source_type=InfraSourceType(BusinessSourceType(source.source_type).value),
-        url=source.url,
-        reliability=InfraSourceReliability(BusinessSourceReliability(source.reliability).value),
-        authority_score=source.authority_score,
-        enabled=source.enabled,
-        fetch_interval_seconds=source.fetch_interval_seconds,
-        respect_robots=source.respect_robots,
-        user_agent=source.user_agent,
-        topics=list(source.topics),
-        category=source.category,
-        language=source.language,
-        region=source.region,
-        metadata=dict(source.metadata),
-    )
-
-
-def _infra_fetch_policy(policy: BusinessSourceFetchPolicy | InfraSourceFetchPolicy) -> InfraSourceFetchPolicy:
-    if isinstance(policy, InfraSourceFetchPolicy):
-        return policy
-    return InfraSourceFetchPolicy(
-        timeout_seconds=policy.timeout_seconds,
-        max_bytes=policy.max_bytes,
-        max_redirects=policy.max_redirects,
-        user_agent=policy.user_agent,
-        respect_robots=policy.respect_robots,
-        rate_limit_per_domain_per_minute=policy.rate_limit_per_domain_per_minute,
-        retry_times=policy.retry_times,
-        retry_on_status_codes=tuple(policy.retry_on_status_codes),
-    )
-
-
-def _business_source_error(error: SourceError) -> BusinessSourceError:
-    return BusinessSourceError(
-        source_id=error.source_id,
-        source_name=error.source_name,
-        error_type=error.error_type,
-        error_message=error.error_message,
-        url=error.url,
-        retryable=error.retryable,
-        metadata=dict(error.metadata),
-    )
-
-
 def _metadata_bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     if value is None:
         return default
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
-
-
-def _artifact_ref(value):
-    if value is None:
-        return None
-    if hasattr(value, "to_dict"):
-        return value.to_dict()
-    return value
 
 
 def _dt(value: datetime | None) -> str | None:

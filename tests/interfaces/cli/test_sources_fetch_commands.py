@@ -1,11 +1,12 @@
 import json
+from types import SimpleNamespace
 
 import interfaces.cli.news as news_cli
 from interfaces.cli.commands import sources as source_commands
 
 
 def test_news_cli_sources_fetch_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(["sources", "fetch", "--source-id", "source-1", "--limit", "2", "--json"])
 
@@ -16,7 +17,7 @@ def test_news_cli_sources_fetch_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_fetch_category_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(
         ["sources", "fetch-category", "--category", "research", "--limit-per-source", "1", "--json"]
@@ -29,7 +30,7 @@ def test_news_cli_sources_fetch_category_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_fetch_priority_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(
         ["sources", "fetch-priority", "--priority", "p0", "--limit-per-source", "1", "--json"]
@@ -41,7 +42,7 @@ def test_news_cli_sources_fetch_priority_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_fetch_topic_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(
         ["sources", "fetch-topic", "--topic", "AI agents", "--limit-per-source", "1", "--json"]
@@ -53,7 +54,7 @@ def test_news_cli_sources_fetch_topic_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_inspect_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     exit_code = news_cli.main(["sources", "inspect", "--source-id", "source-1", "--json"])
 
@@ -63,7 +64,7 @@ def test_news_cli_sources_inspect_json(monkeypatch, capsys) -> None:
 
 
 def test_news_cli_sources_categories_and_priorities_json(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(source_commands, "SourceApplicationService", _FakeSourceService)
+    _patch_source_service(monkeypatch)
 
     categories_code = news_cli.main(["sources", "categories", "--json"])
     categories = json.loads(capsys.readouterr().out)
@@ -172,3 +173,11 @@ class _FakeResult:
 
     def to_dict(self):
         return self.payload
+
+
+def _patch_source_service(monkeypatch) -> None:
+    monkeypatch.setattr(
+        source_commands,
+        "build_source_runtime_composition",
+        lambda: SimpleNamespace(source_service=_FakeSourceService()),
+    )

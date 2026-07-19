@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -351,6 +352,78 @@ def test_feed_connector_default_fetch_attaches_response_metadata(monkeypatch) ->
     assert response["url"] == "https://example.com/rss.xml"
     assert response["headers"]["Content-Type"] == "application/rss+xml"
     assert response["headers"]["Cache-Control"] == "max-age=60"
+
+
+def test_feed_connector_keeps_response_metadata_request_scoped(monkeypatch) -> None:
+    second_parse_started = threading.Event()
+
+    class Headers:
+        def get_content_type(self):
+            return "application/rss+xml"
+
+        def items(self):
+            return [("Content-Type", "application/rss+xml")]
+
+    class Response:
+        status = 200
+        headers = Headers()
+
+        def __init__(self, url: str) -> None:
+            self._url = url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def geturl(self):
+            return self._url
+
+        def read(self, size):
+            if "a.example" in self._url:
+                assert second_parse_started.wait(timeout=2)
+            return RSS_FIXTURE.encode("utf-8")
+
+    def fake_open_request(request, policy):
+        return Response(request.full_url)
+
+    connector = FeedConnector()
+    original_parse = connector.parse
+
+    def interleaved_parse(source, xml_text, *, limit=None):
+        if "b.example" in source.url:
+            second_parse_started.set()
+        return original_parse(source, xml_text, limit=limit)
+
+    monkeypatch.setattr(
+        "infrastructure.external.sources.feed.open_request_with_fetch_policy",
+        fake_open_request,
+    )
+    monkeypatch.setattr(connector, "parse", interleaved_parse)
+    sources = [
+        SourceDefinition(
+            source_id="source-a",
+            name="Source A",
+            source_type="rss",
+            url="https://a.example/rss.xml",
+            respect_robots=False,
+        ),
+        SourceDefinition(
+            source_id="source-b",
+            name="Source B",
+            source_type="rss",
+            url="https://b.example/rss.xml",
+            respect_robots=False,
+        ),
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(connector.fetch, sources))
+
+    for source, (items, errors) in zip(sources, results, strict=True):
+        assert errors == []
+        assert items[0].metadata["fetch_response"]["url"] == source.url
 
 
 def test_feed_connector_default_fetch_rejects_unsupported_content_type(monkeypatch) -> None:

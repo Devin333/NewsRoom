@@ -349,6 +349,89 @@ def test_postgres_repository_reads_source_health_by_id() -> None:
     assert health.last_error.metadata == {"phase": "fetch"}
 
 
+@pytest.mark.parametrize(
+    ("top_level", "metadata_retryable", "expected"),
+    [
+        ("false", True, False),
+        ("YES", False, True),
+        (None, "off", False),
+        (None, None, True),
+    ],
+)
+def test_postgres_source_error_reader_uses_canonical_retry_precedence(
+    top_level,
+    metadata_retryable,
+    expected,
+) -> None:
+    metadata = {"phase": "fetch"}
+    if metadata_retryable is not None:
+        metadata["retryable"] = metadata_retryable
+    payload = {
+        "source_id": "rss-example",
+        "source_name": "Example RSS",
+        "error_type": "fetch_timeout",
+        "error_message": "timed out",
+        "url": "https://example.com/feed.xml",
+        "request_ref": {"artifact_id": "request-ref"},
+        "response_ref": {"artifact_id": "response-ref"},
+        "occurred_at": "2026-05-11T10:00:00+08:00",
+        "metadata": metadata,
+    }
+    if top_level is not None:
+        payload["retryable"] = top_level
+    connection = FakeConnection(rows=[_source_health_row(payload)])
+
+    health = PostgresRepository(
+        "postgresql://example",
+        connection_factory=lambda: connection,
+    ).get_source_health("rss-example")
+
+    assert health is not None
+    assert health.last_error is not None
+    assert health.last_error.retryable is expected
+    assert health.last_error.request_ref == {"artifact_id": "request-ref"}
+    assert health.last_error.response_ref == {"artifact_id": "response-ref"}
+    assert health.last_error.occurred_at.isoformat() == "2026-05-11T10:00:00+08:00"
+
+
+def test_postgres_source_error_reader_rejects_unknown_boolean_string() -> None:
+    connection = FakeConnection(
+        rows=[
+            _source_health_row(
+                {
+                    "source_id": "rss-example",
+                    "error_type": "fetch_timeout",
+                    "error_message": "timed out",
+                    "retryable": "maybe",
+                }
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="documented boolean string"):
+        PostgresRepository(
+            "postgresql://example",
+            connection_factory=lambda: connection,
+        ).get_source_health("rss-example")
+
+
+def _source_health_row(last_error):
+    return (
+        "rss-example",
+        "Example RSS",
+        "https://example.com/feed.xml",
+        "degraded",
+        1,
+        None,
+        None,
+        None,
+        last_error,
+        0,
+        1,
+        None,
+    )
+
+
 def test_postgres_repository_lists_source_health_with_status_filter() -> None:
     connection = FakeConnection(
         rows=[

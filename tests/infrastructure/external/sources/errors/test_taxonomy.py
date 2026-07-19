@@ -1,6 +1,9 @@
 from urllib.error import HTTPError, URLError
 
 from infrastructure.external.sources.errors import classify_source_exception
+from business.layers.signal.source_processing.error_taxonomy import (
+    classify_source_exception as business_classify_source_exception,
+)
 
 
 def test_source_error_taxonomy_classifies_parse_errors_as_non_health_affecting() -> None:
@@ -68,3 +71,7 @@ def test_source_error_taxonomy_classifies_config_keywords() -> None:
     assert classification.retryable is False
     assert classification.source_health_affecting is False
     assert classification.operator_action_required is True
+
+
+def test_infrastructure_taxonomy_is_behavior_free_business_adapter() -> None:
+    assert classify_source_exception is business_classify_source_exception

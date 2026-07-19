@@ -27,6 +27,13 @@ before external network access.
   or ports resolve to the same hostname
 - **THEN** all Source entry points reserve the same case-folded domain bucket
 
+#### Scenario: arXiv provider hosts share one quota
+- **WHEN** Source metadata uses `export.arxiv.org` and Research source-package
+  or PDF retrieval uses `arxiv.org`
+- **THEN** all calls reserve the canonical `arxiv.org` provider bucket
+- **AND** other provider subdomains remain distinct unless explicitly declared
+  by this contract
+
 #### Scenario: Concurrent reservations cannot exceed the bucket
 - **GIVEN** one reservation remains in the configured domain budget
 - **WHEN** concurrent Source entry points attempt to reserve that domain

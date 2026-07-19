@@ -1,8 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.error import HTTPError, URLError
 from xml.etree.ElementTree import ParseError
+
+
+@dataclass(frozen=True)
+class SourceTaxonomyExtension:
+    invalid_config_keywords: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "invalid_config_keywords",
+            tuple(
+                str(keyword).strip()
+                for keyword in self.invalid_config_keywords
+                if str(keyword).strip()
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -17,15 +33,60 @@ class SourceErrorClassification:
         return self.error_type, self.retryable
 
 
+def effective_source_retryable(exc: Exception) -> bool | None:
+    """Read the transport-owned retry decision without importing its adapter type."""
+
+    retryable = getattr(exc, "source_fetch_retryable", None)
+    return retryable if isinstance(retryable, bool) else None
+
+
 def classify_source_exception(
     exc: Exception,
     *,
     phase: str,
+    extension: SourceTaxonomyExtension | None = None,
     invalid_config_keywords: tuple[str, ...] = (),
+    effective_retryable: bool | None = None,
+) -> SourceErrorClassification:
+    if extension is not None and invalid_config_keywords:
+        raise ValueError(
+            "use SourceTaxonomyExtension instead of duplicate invalid_config_keywords"
+        )
+    if effective_retryable is not None and not isinstance(effective_retryable, bool):
+        raise TypeError("effective_retryable must be a boolean or None")
+    if effective_retryable is not None and phase not in {"fetch", "probe"}:
+        raise ValueError(
+            "effective_retryable is only valid for fetch or probe classification"
+        )
+
+    classification = _classify_source_exception(
+        exc,
+        phase=phase,
+        invalid_config_keywords=(
+            extension.invalid_config_keywords
+            if extension is not None
+            else invalid_config_keywords
+        ),
+    )
+    if effective_retryable is None:
+        return classification
+    return replace(classification, retryable=effective_retryable)
+
+
+def _classify_source_exception(
+    exc: Exception,
+    *,
+    phase: str,
+    invalid_config_keywords: tuple[str, ...],
 ) -> SourceErrorClassification:
     if phase == "parse":
         message = str(exc).casefold()
-        if isinstance(exc, ParseError) or "feed" in message or "rss" in message or "atom" in message:
+        if (
+            isinstance(exc, ParseError)
+            or "feed" in message
+            or "rss" in message
+            or "atom" in message
+        ):
             return SourceErrorClassification(
                 error_type="invalid_feed",
                 retryable=False,
@@ -122,7 +183,9 @@ def classify_source_exception(
     )
 
 
-def _is_invalid_source_config(exc: Exception, invalid_config_keywords: tuple[str, ...]) -> bool:
+def _is_invalid_source_config(
+    exc: Exception, invalid_config_keywords: tuple[str, ...]
+) -> bool:
     if not isinstance(exc, ValueError):
         return False
     message = str(exc).casefold()
@@ -140,8 +203,15 @@ def _is_timeout_exception(exc: Exception) -> bool:
         reason = getattr(exc, "reason", None)
         if isinstance(reason, TimeoutError):
             return True
-        return "timed out" in str(reason).casefold() or "timeout" in str(reason).casefold()
+        return (
+            "timed out" in str(reason).casefold() or "timeout" in str(reason).casefold()
+        )
     return False
 
 
-__all__ = ["SourceErrorClassification", "classify_source_exception"]
+__all__ = [
+    "SourceErrorClassification",
+    "SourceTaxonomyExtension",
+    "classify_source_exception",
+    "effective_source_retryable",
+]

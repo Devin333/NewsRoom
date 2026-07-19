@@ -1,0 +1,21 @@
+{
+  "paper_id": "paper-legacy-url",
+  "title": "Persisted Source URL Compatibility",
+  "authors": [
+    "Ada Lovelace"
+  ],
+  "abstract": "A persisted Research paper used to verify URL compatibility.",
+  "source": "arxiv",
+  "source_url": "https://example.com/research/paper/?topic=AI",
+  "pdf_url": "https://example.com/research/paper.pdf",
+  "code_url": "https://github.com/NewsRoom/Runtime",
+  "topics": [
+    "research"
+  ],
+  "metadata": {
+    "canonical_url_hash": "legacy-paper-url-hash",
+    "artifact_ref": {
+      "artifact_id": "research-paper-legacy"
+    }
+  }
+}

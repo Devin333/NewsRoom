@@ -1,10 +1,13 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from business.foundation.models.source import SourceDefinition, SourceError, SourceFetchPolicy, SourceHealthStatus
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
 from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
 from business.layers.signal.source_health import BasicSourceHealthManager, ProbeObservation, SourceHealthChecker
+from business.layers.signal.source_tool_runtime import SourceRateLimitDecision
 
 
 def test_source_health_checker_probes_enabled_source_and_records_success() -> None:
@@ -118,6 +121,7 @@ def test_source_health_checker_rate_limits_same_domain_before_probe() -> None:
         manager,
         fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
         probe_fetcher=probe,
+        rate_limiter=_OneRequestLimiter(),
     ).run()
 
     assert result.checked_count == 2
@@ -147,6 +151,35 @@ def test_source_health_checker_rate_limits_same_domain_before_probe() -> None:
         and event.metadata["reason"] == "rate_limited"
         for event in result.events
     )
+
+
+def test_source_health_checker_requires_limiter_adapter_before_probe() -> None:
+    probe_calls: list[str] = []
+    checker = SourceHealthChecker(
+        SourceRegistry([_source()]),
+        BasicSourceHealthManager(),
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+        probe_fetcher=lambda source, _policy: probe_calls.append(source.url),
+    )
+
+    with pytest.raises(RuntimeError, match="rate limiter adapter is required"):
+        checker.run()
+
+    assert probe_calls == []
+
+
+class _OneRequestLimiter:
+    def __init__(self) -> None:
+        self._reservations = 0
+
+    def reserve(self, url: str, *, limit_per_minute: int | None) -> SourceRateLimitDecision:
+        self._reservations += 1
+        return SourceRateLimitDecision(
+            allowed=self._reservations == 1,
+            domain="example.com",
+            limit_per_minute=limit_per_minute,
+            retry_after_seconds=None if self._reservations == 1 else 60,
+        )
 
 
 def _source(

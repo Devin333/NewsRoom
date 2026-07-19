@@ -9,6 +9,11 @@ from typing import Any
 
 from infrastructure.external.sources.models import RawSourceItem, SourceDefinition, SourceError
 from infrastructure.external.sources.metadata import source_item_metadata
+from infrastructure.external.sources.errors import (
+    SourceErrorContext,
+    build_source_error,
+    source_error_from_exception,
+)
 
 
 class ManualConnector:
@@ -26,15 +31,23 @@ class ManualConnector:
                 limit=limit,
             )
         except Exception as exc:
-            return [], [_exception_source_error(source, exc)]
+            return [], [
+                source_error_from_exception(
+                    source,
+                    exc,
+                    context=SourceErrorContext(phase="parse"),
+                )
+            ]
 
         if not items:
             return [], [
-                _source_error(
+                build_source_error(
                     source,
                     "empty_manual_source",
                     "manual source contained no records",
-                    metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                    context=SourceErrorContext(phase="parse"),
+                    retryable=False,
+                    source_health_affecting=False,
                 )
             ]
         return items, []
@@ -133,34 +146,3 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return parsed.astimezone(UTC)
     except ValueError:
         return None
-
-
-def _source_error(
-    source: SourceDefinition,
-    error_type: str,
-    error_message: str,
-    *,
-    metadata: dict[str, object] | None = None,
-) -> SourceError:
-    return SourceError(
-        source_id=source.source_id,
-        source_name=source.name,
-        error_type=error_type,
-        error_message=error_message,
-        url=source.url,
-        metadata=metadata or {},
-    )
-
-
-def _exception_source_error(source: SourceDefinition, exc: Exception) -> SourceError:
-    return _source_error(
-        source,
-        "parse_error",
-        str(exc),
-        metadata={
-            "phase": "parse",
-            "original_exception_type": type(exc).__name__,
-            "retryable": False,
-            "source_health_affecting": False,
-        },
-    )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone as _tz
-UTC = _tz.utc
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -15,24 +14,30 @@ from business.foundation.models.source import (
     SourceReliability,
     SourceType,
 )
+from business.foundation.primitives.source_ref import canonicalize_url as canonicalize_source_url
 from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
 from business.layers.signal.source_processing.error_metadata import (
     SourceErrorMetadataInput,
     source_error_metadata,
 )
-from business.layers.signal.source_processing.error_taxonomy import classify_source_exception
+from business.layers.signal.source_processing.error_taxonomy import (
+    SourceTaxonomyExtension,
+    classify_source_exception,
+    effective_source_retryable,
+)
 from business.layers.signal.source_tool_runtime import (
     FetchText,
-    SourceDomainRateLimiter,
+    SourceRateLimiter,
     SourceTextFetchResult,
     SourceToolRuntime,
     effective_source_fetch_policy,
-    run_fetch_with_retries,
     source_fetch_policy_without_rate_limit,
     source_rate_limited_error,
 )
-from business.layers.signal.source_processing.url_normalization import canonicalize_url as canonicalize_source_url
+
+
+UTC = _tz.utc
 
 
 def register_source_tools(
@@ -43,13 +48,12 @@ def register_source_tools(
     allowed_domains: list[str] | None = None,
     health_manager: BasicSourceHealthManager | None = None,
     source_registry: SourceRegistry | None = None,
-    rate_limiter: SourceDomainRateLimiter | None = None,
+    rate_limiter: SourceRateLimiter | None = None,
     source_runtime: SourceToolRuntime | None = None,
 ) -> None:
     fetch_policy = _coerce_fetch_policy(fetch_policy)
     allowed_domain_tuple = _allowed_domains(allowed_domains) or tuple(fetch_policy.allowed_domains)
     health_manager = health_manager or BasicSourceHealthManager()
-    rate_limiter = rate_limiter or SourceDomainRateLimiter()
     registry.register(
         ToolDefinition(
             name="source.fetch_url",
@@ -395,7 +399,7 @@ def _fetch_official_blog(
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
     health_manager: BasicSourceHealthManager,
-    rate_limiter: SourceDomainRateLimiter,
+    rate_limiter: SourceRateLimiter | None,
     source_runtime: SourceToolRuntime | None,
 ) -> dict[str, Any]:
     source = _official_blog_source(args, source_registry=source_registry)
@@ -430,7 +434,7 @@ def _fetch_url(
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
     health_manager: BasicSourceHealthManager,
-    rate_limiter: SourceDomainRateLimiter,
+    rate_limiter: SourceRateLimiter | None,
     source_runtime: SourceToolRuntime | None,
 ) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
@@ -477,7 +481,7 @@ def _probe_source(
     fetch_text: FetchText | None,
     allowed_domains: tuple[str, ...],
     health_manager: BasicSourceHealthManager,
-    rate_limiter: SourceDomainRateLimiter,
+    rate_limiter: SourceRateLimiter | None,
     source_runtime: SourceToolRuntime | None,
 ) -> dict[str, Any]:
     source = _source_definition(args["source"], default_source_type=SourceType.RSS)
@@ -732,7 +736,8 @@ def _probe_exception_error(source: SourceDefinition, exc: Exception) -> SourceEr
     classification = classify_source_exception(
         exc,
         phase="probe",
-        invalid_config_keywords=("source url",),
+        extension=SourceTaxonomyExtension(invalid_config_keywords=("source url",)),
+        effective_retryable=effective_source_retryable(exc),
     )
     extra: dict[str, Any] = {"tool": "source.probe"}
     attempts = getattr(exc, "source_fetch_attempts", None)
@@ -762,7 +767,7 @@ def _probe_exception_error(source: SourceDefinition, exc: Exception) -> SourceEr
 def _ensure_source_rate_limit_allows_fetch(
     source: SourceDefinition,
     policy: SourceFetchPolicy,
-    rate_limiter: SourceDomainRateLimiter,
+    rate_limiter: SourceRateLimiter | None,
 ) -> None:
     error = _source_rate_limit_error(source, policy, rate_limiter)
     if error is None:
@@ -775,8 +780,12 @@ def _ensure_source_rate_limit_allows_fetch(
 def _source_rate_limit_error(
     source: SourceDefinition,
     policy: SourceFetchPolicy,
-    rate_limiter: SourceDomainRateLimiter,
+    rate_limiter: SourceRateLimiter | None,
 ) -> SourceError | None:
+    if policy.rate_limit_per_domain_per_minute is None:
+        return None
+    if rate_limiter is None:
+        raise RuntimeError("source rate limiter adapter is required when rate limiting is enabled")
     decision = rate_limiter.reserve(
         source.url,
         limit_per_minute=policy.rate_limit_per_domain_per_minute,
@@ -793,10 +802,11 @@ def _fetch_text(
     *,
     source_runtime: SourceToolRuntime | None,
 ) -> SourceTextFetchResult:
+    if source_runtime is not None:
+        return source_runtime.fetch_text(url, policy)
     if fetch_text is not None:
-        return run_fetch_with_retries(lambda: _call_fetch_text(fetch_text, url, policy), policy)
-    runtime = _require_source_runtime(source_runtime, "source.fetch_url")
-    return runtime.fetch_text(url, policy)
+        return _call_fetch_text(fetch_text, url, policy)
+    raise RuntimeError("source.fetch_url requires a source tool runtime adapter")
 
 
 def _call_fetch_text(fetch_text: FetchText, url: str, policy: SourceFetchPolicy) -> SourceTextFetchResult:
@@ -1011,33 +1021,7 @@ def _source_definition_to_dict(source: SourceDefinition) -> dict[str, Any]:
 
 
 def _raw_source_item_to_dict(item: RawSourceItem) -> dict[str, Any]:
-    return {
-        "source_item_id": item.source_item_id,
-        "source_id": item.source_id,
-        "source_name": item.source_name,
-        "source_type": SourceType(item.source_type).value,
-        "title": item.title,
-        "url": item.url,
-        "fetched_at": _dt(item.fetched_at),
-        "published_at": _dt(item.published_at),
-        "summary": item.summary,
-        "raw_content": item.raw_content,
-        "raw_artifact_ref": _artifact_ref(item.raw_artifact_ref),
-        "parse_artifact_ref": _artifact_ref(item.parse_artifact_ref),
-        "authors": list(item.authors),
-        "tags": list(item.tags),
-        "language": item.language,
-        "lineage": item.lineage.to_dict() if item.lineage else None,
-        "metadata": dict(item.metadata),
-    }
-
-
-def _artifact_ref(value):
-    if value is None:
-        return None
-    if hasattr(value, "to_dict"):
-        return value.to_dict()
-    return value
+    return item.to_dict()
 
 
 def _dt(value: datetime | None) -> str | None:

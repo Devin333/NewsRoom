@@ -1,7 +1,18 @@
 from datetime import UTC, datetime
+from urllib.error import HTTPError
+
+import pytest
 
 from business.foundation.models.source import SourceDefinition
-from infrastructure.external.sources import ARXIV_API_URL, ArxivConnector, SourceFetchPolicy
+from infrastructure.external.sources import (
+    ARXIV_API_URL,
+    ArxivConnector,
+    ArxivSourceConnector,
+    DomainRateLimiter,
+    RobotsDisallowedError,
+    SourceFetchPolicy,
+)
+from infrastructure.external.sources.fetch_policy import fetch_attempts
 
 
 ARXIV_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
@@ -145,6 +156,146 @@ def test_arxiv_connector_default_fetch_rejects_unsupported_content_type(monkeypa
     assert errors[0].metadata["retryable"] is False
     assert errors[0].metadata["source_health_affecting"] is False
     assert "application/atom+xml" in errors[0].metadata["supported_content_types"]
+
+
+@pytest.mark.parametrize(
+    ("method_name", "content_type", "body"),
+    [
+        ("fetch_source_package", "application/gzip", b"source archive"),
+        ("fetch_pdf_package", "application/pdf", b"%PDF-1.7\nsource"),
+    ],
+)
+def test_arxiv_package_fetch_retries_robots_transport_failure(
+    monkeypatch,
+    method_name: str,
+    content_type: str,
+    body: bytes,
+) -> None:
+    robots_calls = 0
+    fetch_calls = 0
+
+    class CountingRateLimiter:
+        def __init__(self) -> None:
+            self.delegate = DomainRateLimiter()
+            self.calls = 0
+
+        def reserve(self, url: str, *, limit_per_minute: int | None):
+            self.calls += 1
+            return self.delegate.reserve(
+                url,
+                limit_per_minute=limit_per_minute,
+            )
+
+    limiter = CountingRateLimiter()
+
+    class Headers:
+        def get_content_type(self):
+            return content_type
+
+        def get(self, _name, default=None):
+            return default
+
+        def items(self):
+            return []
+
+    class Response:
+        status = 200
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def geturl(self):
+            return "https://arxiv.org/result"
+
+        def read(self, _size):
+            return body
+
+    def ensure_robots(_url, _policy):
+        nonlocal robots_calls
+        robots_calls += 1
+        if robots_calls == 1:
+            raise HTTPError(
+                "https://arxiv.org/robots.txt",
+                503,
+                "temporarily unavailable",
+                hdrs=None,
+                fp=None,
+            )
+
+    def open_request(_request, _policy):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return Response()
+
+    monkeypatch.setattr(
+        "infrastructure.external.sources.arxiv.ensure_robots_allowed",
+        ensure_robots,
+    )
+    monkeypatch.setattr(
+        "infrastructure.external.sources.arxiv.open_request_with_fetch_policy",
+        open_request,
+    )
+    connector = ArxivSourceConnector(
+        fetch_policy=SourceFetchPolicy(
+            respect_robots=True,
+            retry_times=1,
+            retry_on_status_codes=(503,),
+        ),
+        rate_limiter=limiter,
+    )
+
+    package = getattr(connector, method_name)("2607.00001")
+
+    assert package.content == body
+    assert limiter.calls == 1
+    assert robots_calls == 2
+    assert fetch_calls == 1
+
+
+@pytest.mark.parametrize("method_name", ["fetch_source_package", "fetch_pdf_package"])
+def test_arxiv_package_fetch_does_not_retry_robots_denial(
+    monkeypatch,
+    method_name: str,
+) -> None:
+    robots_calls = 0
+    fetch_calls = 0
+
+    def deny_robots(url, policy):
+        nonlocal robots_calls
+        robots_calls += 1
+        raise RobotsDisallowedError(
+            url,
+            "https://arxiv.org/robots.txt",
+            policy.user_agent,
+        )
+
+    def open_request(_request, _policy):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        raise AssertionError("content fetch must not run after robots denial")
+
+    monkeypatch.setattr(
+        "infrastructure.external.sources.arxiv.ensure_robots_allowed",
+        deny_robots,
+    )
+    monkeypatch.setattr(
+        "infrastructure.external.sources.arxiv.open_request_with_fetch_policy",
+        open_request,
+    )
+    connector = ArxivSourceConnector(
+        fetch_policy=SourceFetchPolicy(respect_robots=True, retry_times=3)
+    )
+
+    with pytest.raises(RobotsDisallowedError) as captured:
+        getattr(connector, method_name)("2607.00001")
+
+    assert fetch_attempts(captured.value) == 1
+    assert robots_calls == 1
+    assert fetch_calls == 0
 
 
 def _source(*, metadata: dict[str, object] | None = None) -> SourceDefinition:

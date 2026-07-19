@@ -56,6 +56,14 @@ class Lineage:
     parse_artifact_ref: Any | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "fetched_at", _parse_datetime_optional(self.fetched_at))
+        object.__setattr__(
+            self,
+            "published_at",
+            _parse_datetime_optional(self.published_at),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         payload = {
             "source_id": self.source_id,
@@ -241,6 +249,15 @@ class RawSourceItem:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_type", SourceType(self.source_type))
+        fetched_at = _parse_datetime_optional(self.fetched_at)
+        if fetched_at is None:
+            raise ValueError("fetched_at is required")
+        object.__setattr__(self, "fetched_at", fetched_at)
+        object.__setattr__(
+            self,
+            "published_at",
+            _parse_datetime_optional(self.published_at),
+        )
         if self.lineage is None:
             object.__setattr__(
                 self,

@@ -1,0 +1,44 @@
+{
+  "business_context": {
+    "agent_id": null,
+    "request_id": null,
+    "run_id": "legacy-source-run",
+    "step_id": null,
+    "task_id": null,
+    "tool_call_id": null,
+    "workflow_id": null
+  },
+  "causation_id": null,
+  "content_checksum": "sha256:69169bc4cd8627ecf9dc01d87e0f73db97e87f32debc3021875e2dc73098e0dc",
+  "content_type": "application/json",
+  "correlation_id": null,
+  "data_schema": "io.newsroom.source.item.v1",
+  "envelope_schema": "newsroom.event-envelope/v2",
+  "event_id": "event-source-legacy",
+  "event_type": "source_item_recorded",
+  "extensions": {},
+  "observed_at": "2026-07-19T08:30:00Z",
+  "occurred_at": "2026-07-19T08:30:00Z",
+  "payload": {
+    "artifact_ref": {
+      "artifact_id": "legacy-source-item-artifact"
+    },
+    "canonical_url": "https://example.com/News/?topic=AI",
+    "canonical_url_hash": "legacy-url-hash",
+    "source_item_id": "legacy-source-item"
+  },
+  "payload_ref": null,
+  "producer": {
+    "component": "source-runtime",
+    "instance_id": null,
+    "version": "1"
+  },
+  "record_checksum": "sha256:f98e3aaac7e4f1575ebec82b38ab584b49461dfec7f89288f572685c6ccd1233",
+  "security_classification": "internal",
+  "source": "business.signal.source",
+  "stream_id": "source-stream-legacy",
+  "stream_sequence": 1,
+  "subject": null,
+  "tenant_id": null,
+  "trace": null
+}

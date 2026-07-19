@@ -1,0 +1,34 @@
+{
+  "artifact_type": "source_item",
+  "item": {
+    "canonical_url": "https://example.com/News/?topic=AI",
+    "content_hash": "legacy-content-hash",
+    "fetched_at": "2026-07-19T08:30:00Z",
+    "language": "en",
+    "metadata": {
+      "artifact_ref": {
+        "artifact_id": "legacy-source-item-artifact"
+      },
+      "canonical_url_hash": "legacy-url-hash"
+    },
+    "published_at": null,
+    "raw_artifact_id": "legacy-raw-artifact",
+    "run_id": "legacy-source-run",
+    "source_id": "legacy-source",
+    "source_item_id": "legacy-source-item",
+    "source_reliability": "high",
+    "summary": "A committed historical Source record.",
+    "title": "Legacy source item",
+    "url": "https://example.com/News/?topic=AI"
+  },
+  "parse_artifact_ref": {
+    "artifact_id": "source-item-legacy-source-legacy-source-item",
+    "artifact_type": "source_item",
+    "content_type": "application/json",
+    "path": "sources/items/legacy-source/legacy-source-item.json",
+    "run_id": "legacy-source-run"
+  },
+  "raw_artifact_ref": null,
+  "source_id": "legacy-source",
+  "source_item_id": "legacy-source-item"
+}

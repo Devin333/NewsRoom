@@ -9,8 +9,6 @@ from business.foundation.models.source import (
     SourceDefinition,
     SourceError,
     SourceFetchPolicy as BusinessSourceFetchPolicy,
-    SourceReliability as BusinessSourceReliability,
-    SourceType as BusinessSourceType,
 )
 from business.layers.signal.source_tool_runtime import (
     FetchText,
@@ -29,18 +27,26 @@ from infrastructure.external.sources.fetch_policy import (
     run_with_fetch_retries,
 )
 from infrastructure.external.sources.models import (
-    RawSourceItem as InfraRawSourceItem,
     SourceDefinition as InfraSourceDefinition,
-    SourceError as InfraSourceError,
-    SourceReliability as InfraSourceReliability,
     SourceType as InfraSourceType,
+)
+from interfaces.services.source_mapping import (
+    to_business_raw_source_item as _business_raw_source_item,
+    to_business_source_error as _business_source_error,
+    to_infrastructure_fetch_policy as _infra_fetch_policy,
+    to_infrastructure_source_definition as _infra_source,
 )
 
 
 class InfrastructureSourceToolRuntime:
-    def __init__(self, *, fetch_text: FetchText | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fetch_text: FetchText | None = None,
+        rate_limiter: DomainRateLimiter | None = None,
+    ) -> None:
         self._fetch_text = fetch_text
-        self._rate_limiter = DomainRateLimiter()
+        self._rate_limiter = rate_limiter or DomainRateLimiter()
 
     def fetch_text(
         self,
@@ -115,8 +121,15 @@ class InfrastructureSourceToolRuntime:
         )
 
 
-def default_source_tool_runtime(*, fetch_text: FetchText | None = None) -> InfrastructureSourceToolRuntime:
-    return InfrastructureSourceToolRuntime(fetch_text=fetch_text)
+def default_source_tool_runtime(
+    *,
+    fetch_text: FetchText | None = None,
+    rate_limiter: DomainRateLimiter | None = None,
+) -> InfrastructureSourceToolRuntime:
+    return InfrastructureSourceToolRuntime(
+        fetch_text=fetch_text,
+        rate_limiter=rate_limiter,
+    )
 
 
 def _fetch_with_callable(
@@ -181,80 +194,6 @@ def _policy_fetch_text(
         return content
 
     return wrapped
-
-
-def _infra_source(source: SourceDefinition) -> InfraSourceDefinition:
-    return InfraSourceDefinition(
-        source_id=source.source_id,
-        name=source.name,
-        source_type=InfraSourceType(BusinessSourceType(source.source_type).value),
-        url=source.url,
-        reliability=InfraSourceReliability(BusinessSourceReliability(source.reliability).value),
-        authority_score=source.authority_score,
-        enabled=source.enabled,
-        fetch_interval_seconds=source.fetch_interval_seconds,
-        respect_robots=source.respect_robots,
-        user_agent=source.user_agent,
-        topics=list(source.topics),
-        category=source.category,
-        language=source.language,
-        region=source.region,
-        metadata=dict(source.metadata),
-    )
-
-
-def _infra_fetch_policy(
-    policy: BusinessSourceFetchPolicy | InfraSourceFetchPolicy,
-) -> InfraSourceFetchPolicy:
-    if isinstance(policy, InfraSourceFetchPolicy):
-        return policy
-    return InfraSourceFetchPolicy(
-        timeout_seconds=policy.timeout_seconds,
-        max_bytes=policy.max_bytes,
-        max_redirects=policy.max_redirects,
-        user_agent=policy.user_agent,
-        respect_robots=policy.respect_robots,
-        rate_limit_per_domain_per_minute=policy.rate_limit_per_domain_per_minute,
-        retry_times=policy.retry_times,
-        retry_on_status_codes=tuple(policy.retry_on_status_codes),
-    )
-
-
-def _business_raw_source_item(item: InfraRawSourceItem) -> RawSourceItem:
-    return RawSourceItem(
-        source_item_id=item.source_item_id,
-        source_id=item.source_id,
-        source_name=item.source_name,
-        source_type=BusinessSourceType(item.source_type).value,
-        title=item.title,
-        url=item.url,
-        fetched_at=item.fetched_at,
-        published_at=item.published_at,
-        summary=item.summary,
-        raw_content=item.raw_content,
-        raw_artifact_ref=item.raw_artifact_ref,
-        parse_artifact_ref=item.parse_artifact_ref,
-        authors=list(item.authors),
-        tags=list(item.tags),
-        language=item.language,
-        lineage=item.lineage.to_dict() if item.lineage else None,
-        metadata=dict(item.metadata),
-    )
-
-
-def _business_source_error(error: InfraSourceError) -> SourceError:
-    return SourceError(
-        source_id=error.source_id,
-        source_name=error.source_name,
-        error_type=error.error_type,
-        error_message=error.error_message,
-        url=error.url,
-        retryable=error.retryable,
-        request_ref=error.request_ref,
-        response_ref=error.response_ref,
-        occurred_at=error.occurred_at,
-        metadata=dict(error.metadata),
-    )
 
 
 def _is_html_backed_source_type(source_type: InfraSourceType | str) -> bool:

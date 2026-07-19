@@ -15,9 +15,9 @@ from infrastructure.external.sources import (
     effective_fetch_policy,
     ensure_robots_allowed,
     open_request_with_fetch_policy,
+    rate_limited_source_error,
     run_with_fetch_retries,
 )
-from infrastructure.external.sources.fetch_policy import rate_limited_source_error
 from infrastructure.external.sources.models import RawSourceItem, SourceError, SourceType
 
 

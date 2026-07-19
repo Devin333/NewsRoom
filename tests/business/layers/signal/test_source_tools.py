@@ -14,6 +14,7 @@ from business.foundation.registry.source_registry import SourceRegistry
 from business.layers.signal.source_health import BasicSourceHealthManager
 from business.layers.signal.source_processing.error_metadata import SOURCE_ERROR_RUNTIME_METADATA_KEY
 from business.layers.signal.source_processing.error_policy import SOURCE_ERROR_POLICY_METADATA_KEY
+from infrastructure.external.sources import DomainRateLimiter
 from interfaces.services.source_tool_runtime import default_source_tool_runtime
 
 
@@ -85,6 +86,9 @@ HTML_FIXTURE = """<!doctype html>
 def register_test_source_tools(registry: ToolRegistry, **kwargs) -> None:
     fetch_text = kwargs.pop("fetch_text", None)
     kwargs.setdefault("source_runtime", default_source_tool_runtime(fetch_text=fetch_text))
+    fetch_policy = kwargs.get("fetch_policy")
+    if getattr(fetch_policy, "rate_limit_per_domain_per_minute", None) is not None:
+        kwargs.setdefault("rate_limiter", DomainRateLimiter())
     register_source_tools(registry, **kwargs)
 
 
@@ -166,6 +170,166 @@ def test_source_fetch_url_tool_retries_transient_fetch_error() -> None:
     assert observation.status == ToolStatus.SUCCEEDED
     assert observation.result.output["content"] == "source content"
     assert seen_urls == ["https://example.com/feed.xml", "https://example.com/feed.xml"]
+
+
+def test_source_fetch_url_tool_reserves_once_across_runtime_retries() -> None:
+    class CountingRateLimiter:
+        def __init__(self) -> None:
+            self.delegate = DomainRateLimiter()
+            self.calls = 0
+
+        def reserve(self, url: str, *, limit_per_minute: int | None):
+            self.calls += 1
+            return self.delegate.reserve(
+                url,
+                limit_per_minute=limit_per_minute,
+            )
+
+    registry = ToolRegistry()
+    fetch_calls = 0
+    limiter = CountingRateLimiter()
+
+    def fetch_text(_url: str) -> str:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        if fetch_calls < 3:
+            raise RuntimeError("temporary fetch failure")
+        return "source content"
+
+    register_source_tools(
+        registry,
+        fetch_policy=SourceFetchPolicy(
+            retry_times=2,
+            rate_limit_per_domain_per_minute=1,
+        ),
+        source_runtime=default_source_tool_runtime(fetch_text=fetch_text),
+        rate_limiter=limiter,
+    )
+
+    observation = ToolExecutor(registry).execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["content"] == "source content"
+    assert limiter.calls == 1
+    assert fetch_calls == 3
+
+
+def test_source_fetch_url_tool_prefers_runtime_over_legacy_fetch_hook() -> None:
+    registry = ToolRegistry()
+    runtime_calls: list[str] = []
+    legacy_calls: list[str] = []
+    register_source_tools(
+        registry,
+        fetch_text=lambda url: legacy_calls.append(url) or "legacy content",
+        source_runtime=default_source_tool_runtime(
+            fetch_text=lambda url: runtime_calls.append(url) or "runtime content"
+        ),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert observation.status == ToolStatus.SUCCEEDED
+    assert observation.result.output["content"] == "runtime content"
+    assert runtime_calls == ["https://example.com/feed.xml"]
+    assert legacy_calls == []
+
+
+def test_source_fetch_url_legacy_hook_is_not_wrapped_in_business_retry() -> None:
+    registry = ToolRegistry()
+    calls = 0
+
+    def failing_fetch(url: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("temporary fetch failure")
+
+    register_source_tools(
+        registry,
+        fetch_text=failing_fetch,
+        fetch_policy=SourceFetchPolicy(retry_times=3),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert calls == 1
+
+
+def test_source_fetch_url_fails_closed_without_rate_limiter_adapter() -> None:
+    registry = ToolRegistry()
+    calls = 0
+
+    def fetch_text(url: str) -> str:
+        nonlocal calls
+        calls += 1
+        return "content"
+
+    register_source_tools(
+        registry,
+        source_runtime=default_source_tool_runtime(fetch_text=fetch_text),
+        fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+    )
+    executor = ToolExecutor(registry)
+
+    observation = executor.execute(
+        ToolCall(
+            tool_name="source.fetch_url",
+            arguments={
+                "source": {
+                    "source_id": "rss-example",
+                    "name": "Example RSS",
+                    "url": "https://example.com/feed.xml",
+                    "source_type": "rss",
+                }
+            },
+        ),
+        ToolPolicy(allowed_tools=["source.fetch_url"]),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert "rate limiter adapter is required" in (observation.result.error_message or "")
+    assert calls == 0
 
 
 def test_source_fetch_url_tool_rejects_non_http_urls_before_fetch() -> None:
@@ -548,10 +712,12 @@ def test_source_probe_tool_projects_formal_metadata_for_cooling_source_skip() ->
 def test_source_probe_tool_returns_rate_limit_error_without_fetching() -> None:
     registry = ToolRegistry()
     seen_urls: list[str] = []
+    health_manager = BasicSourceHealthManager(failure_threshold=1)
     register_test_source_tools(
         registry,
         fetch_text=lambda url: seen_urls.append(url) or "content",
         fetch_policy=SourceFetchPolicy(rate_limit_per_domain_per_minute=1),
+        health_manager=health_manager,
     )
     executor = ToolExecutor(registry)
 
@@ -589,6 +755,7 @@ def test_source_probe_tool_returns_rate_limit_error_without_fetching() -> None:
     assert seen_urls == ["https://example.com/first.xml"]
     assert probe.result.output["ok"] is False
     assert probe.result.output["error"]["error_type"] == "rate_limited"
+    assert health_manager.get("probe").consecutive_failures == 0
 
 
 def test_source_fetch_official_blog_tool_fetches_marked_feed() -> None:

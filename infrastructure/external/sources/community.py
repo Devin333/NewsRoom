@@ -6,34 +6,34 @@ from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
 from typing import Any, Callable
-from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
 from urllib.request import Request
 
 from infrastructure.external.sources.models import RawSourceItem, SourceDefinition, SourceError
 from infrastructure.external.sources.diagnostics import (
-    SourceFetchResponseMetadata,
+    SourceFetchResponseMetadataContext,
     attach_response_metadata_to_error,
     attach_response_metadata_to_items,
     response_metadata_from_http_response,
+    source_fetch_response_scope,
 )
 from infrastructure.external.sources.feed import FeedConnector
 from infrastructure.external.sources.fetch_policy import (
     DomainRateLimiter,
-    RobotsDisallowedError,
     SourceFetchPolicy,
-    TooManyRedirectsError,
-    UnsupportedContentTypeError,
     effective_fetch_policy,
     ensure_robots_allowed,
     ensure_supported_content_type,
-    fetch_attempts,
     open_request_with_fetch_policy,
-    rate_limited_source_error,
     run_with_fetch_retries,
 )
 from infrastructure.external.sources.metadata import source_item_metadata
-from infrastructure.external.sources.errors import classify_source_exception
+from infrastructure.external.sources.errors import (
+    SourceErrorContext,
+    build_source_error,
+    rate_limited_source_error,
+    source_error_from_exception,
+)
 
 
 FetchText = Callable[[str], str]
@@ -56,8 +56,9 @@ class _JsonCommunityConnector:
         self._rate_limiter = rate_limiter or DomainRateLimiter()
         self._uses_default_fetch = fetch_text is None
         self._fetch_text = fetch_text or self._default_fetch_text
-        self._last_response_metadata: SourceFetchResponseMetadata | None = None
+        self._response_metadata_context = SourceFetchResponseMetadataContext()
 
+    @source_fetch_response_scope
     def _fetch_json_items(
         self,
         source: SourceDefinition,
@@ -69,7 +70,6 @@ class _JsonCommunityConnector:
         empty_error_message: str,
     ) -> tuple[list[RawSourceItem], list[SourceError]]:
         policy = effective_fetch_policy(self.fetch_policy, source)
-        self._last_response_metadata = None
         try:
             rate_limit = self._rate_limiter.reserve(
                 url,
@@ -79,17 +79,23 @@ class _JsonCommunityConnector:
                 return [], [rate_limited_source_error(source, rate_limit, url=url)]
             payload = run_with_fetch_retries(lambda: self._fetch_source_text(url, policy), policy)
         except Exception as exc:
-            error = _exception_source_error(source, exc, phase="fetch")
-            return [], [attach_response_metadata_to_error(error, self._last_response_metadata)]
-        response_metadata = self._last_response_metadata
+            error = source_error_from_exception(
+                source,
+                exc,
+                context=SourceErrorContext(phase="fetch"),
+            )
+            return [], [attach_response_metadata_to_error(error, self._response_metadata_context.get())]
+        response_metadata = self._response_metadata_context.get()
         if not payload.strip():
             return [], [
                 attach_response_metadata_to_error(
-                    _source_error(
+                    build_source_error(
                         source,
                         "empty_source_response",
                         "community API returned an empty response",
-                        metadata={"phase": "fetch", "retryable": True, "source_health_affecting": True},
+                        context=SourceErrorContext(phase="fetch"),
+                        retryable=True,
+                        source_health_affecting=True,
                     ),
                     response_metadata,
                 )
@@ -97,17 +103,23 @@ class _JsonCommunityConnector:
         try:
             items = parser(source, payload, limit=limit)
         except Exception as exc:
-            error = _exception_source_error(source, exc, phase="parse")
+            error = source_error_from_exception(
+                source,
+                exc,
+                context=SourceErrorContext(phase="parse"),
+            )
             return [], [attach_response_metadata_to_error(error, response_metadata)]
         items = attach_response_metadata_to_items(items, response_metadata)
         if not items:
             return [], [
                 attach_response_metadata_to_error(
-                    _source_error(
+                    build_source_error(
                         source,
                         empty_error_type,
                         empty_error_message,
-                        metadata={"phase": "parse", "retryable": False, "source_health_affecting": False},
+                        context=SourceErrorContext(phase="parse"),
+                        retryable=False,
+                        source_health_affecting=False,
                     ),
                     response_metadata,
                 )
@@ -124,8 +136,9 @@ class _JsonCommunityConnector:
             },
         )
         with open_request_with_fetch_policy(request, policy) as response:
-            self._last_response_metadata = response_metadata_from_http_response(response, url=url)
-            ensure_supported_content_type(self._last_response_metadata.content_type, JSON_CONTENT_TYPES)
+            response_metadata = response_metadata_from_http_response(response, url=url)
+            self._response_metadata_context.set(response_metadata)
+            ensure_supported_content_type(response_metadata.content_type, JSON_CONTENT_TYPES)
             body = response.read(policy.max_bytes + 1)
         if len(body) > policy.max_bytes:
             raise ValueError(f"source response exceeds max_bytes: {policy.max_bytes}")
@@ -168,16 +181,14 @@ class StackOverflowConnector(_JsonCommunityConnector):
         tagged = _stackoverflow_tagged(source, tag=tag)
         if not tagged:
             return [], [
-                _source_error(
+                build_source_error(
                     source,
                     "invalid_source_config",
                     "Stack Overflow source requires metadata.tagged or metadata.tag",
-                    metadata={
-                        "phase": "fetch",
-                        "retryable": False,
-                        "source_health_affecting": False,
-                        "operator_action_required": True,
-                    },
+                    context=SourceErrorContext(phase="fetch"),
+                    retryable=False,
+                    source_health_affecting=False,
+                    operator_action_required=True,
                 )
             ]
         return self._fetch_json_items(
@@ -459,53 +470,6 @@ def _raw_item(
         tags=[tag for tag in tags if tag],
         language=source.language,
         metadata=source_item_metadata(source, extra=extra),
-    )
-
-
-def _source_error(
-    source: SourceDefinition,
-    error_type: str,
-    error_message: str,
-    *,
-    metadata: dict[str, object] | None = None,
-) -> SourceError:
-    return SourceError(
-        source_id=source.source_id,
-        source_name=source.name,
-        error_type=error_type,
-        error_message=error_message,
-        url=source.url,
-        metadata=metadata or {},
-    )
-
-
-def _exception_source_error(source: SourceDefinition, exc: Exception, *, phase: str) -> SourceError:
-    classification = classify_source_exception(exc, phase=phase)
-    metadata: dict[str, object] = {
-        "phase": phase,
-        "original_exception_type": type(exc).__name__,
-        "retryable": classification.retryable,
-        "source_health_affecting": classification.source_health_affecting,
-    }
-    if isinstance(exc, UnsupportedContentTypeError):
-        metadata["content_type"] = exc.content_type
-        metadata["supported_content_types"] = list(exc.supported_content_types)
-    if isinstance(exc, TooManyRedirectsError):
-        metadata["redirect_url"] = exc.url
-        metadata["max_redirects"] = exc.max_redirects
-    if isinstance(exc, RobotsDisallowedError):
-        metadata["robots_url"] = exc.robots_url
-        metadata["user_agent"] = exc.user_agent
-    if isinstance(exc, HTTPError):
-        metadata["status_code"] = exc.code
-    attempts = fetch_attempts(exc)
-    if attempts is not None:
-        metadata["attempts"] = attempts
-    return _source_error(
-        source,
-        classification.error_type,
-        str(exc),
-        metadata=metadata,
     )
 
 

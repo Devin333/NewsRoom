@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from collections import defaultdict, deque
-from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta, timezone as _tz
-from math import ceil
+from dataclasses import dataclass, field
+from datetime import datetime, timezone as _tz
 from time import perf_counter
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.error import HTTPError
 
 from business.foundation.models.source import (
     SourceDefinition,
@@ -24,6 +21,16 @@ from business.layers.signal.source_health.manager import BasicSourceHealthManage
 from business.layers.signal.source_processing.error_metadata import (
     SourceErrorMetadataInput,
     source_error_metadata,
+)
+from business.layers.signal.source_processing.error_taxonomy import (
+    SourceTaxonomyExtension,
+    classify_source_exception,
+    effective_source_retryable,
+)
+from business.layers.signal.source_tool_runtime import (
+    SourceRateLimiter,
+    effective_source_fetch_policy,
+    source_rate_limited_error,
 )
 
 
@@ -105,13 +112,15 @@ class SourceHealthChecker:
         *,
         fetch_policy: SourceFetchPolicy | None = None,
         probe_fetcher: ProbeFetcher | None = None,
-        rate_limiter: Any | None = None,
+        rate_limiter: SourceRateLimiter | None = None,
     ) -> None:
         self.source_registry = source_registry
         self.health_manager = health_manager
-        self.fetch_policy = _source_fetch_policy(fetch_policy, default=SourceFetchPolicy(max_bytes=128_000))
+        if fetch_policy is not None and not isinstance(fetch_policy, SourceFetchPolicy):
+            raise TypeError("SourceHealthChecker.fetch_policy must be a business SourceFetchPolicy")
+        self.fetch_policy = fetch_policy or SourceFetchPolicy(max_bytes=128_000)
         self.probe_fetcher = probe_fetcher or _missing_probe_fetcher
-        self.rate_limiter = rate_limiter or SourceDomainRateLimiter()
+        self.rate_limiter = rate_limiter
 
     def run(
         self,
@@ -189,7 +198,7 @@ class SourceHealthChecker:
                 ],
             )
 
-        policy = effective_fetch_policy(self.fetch_policy, source)
+        policy = effective_source_fetch_policy(self.fetch_policy, source)
         rate_limit_error = _rate_limit_error(source, policy, self.rate_limiter)
         if rate_limit_error is not None:
             health = self.health_manager.get(
@@ -314,53 +323,6 @@ class SourceHealthChecker:
         )
 
 
-@dataclass(frozen=True)
-class SourceRateLimitDecision:
-    allowed: bool
-    domain: str
-    limit_per_minute: int | None
-    window_seconds: int = 60
-    retry_after_seconds: int | None = None
-
-
-class SourceDomainRateLimiter:
-    def __init__(self, *, now: Callable[[], datetime] | None = None) -> None:
-        self._now = now or (lambda: datetime.now(UTC))
-        self._requests: dict[str, deque[datetime]] = defaultdict(deque)
-
-    def reserve(self, url: str, *, limit_per_minute: int | None) -> SourceRateLimitDecision:
-        domain = _domain_from_url(url)
-        if limit_per_minute is None:
-            return SourceRateLimitDecision(allowed=True, domain=domain, limit_per_minute=None)
-        if limit_per_minute < 1:
-            raise ValueError("limit_per_minute must be at least 1")
-
-        now = self._current_time()
-        window_start = now - timedelta(seconds=60)
-        bucket = self._requests[domain]
-        while bucket and bucket[0] <= window_start:
-            bucket.popleft()
-
-        if len(bucket) >= limit_per_minute:
-            retry_at = bucket[0] + timedelta(seconds=60)
-            retry_after = max(1, ceil((retry_at - now).total_seconds()))
-            return SourceRateLimitDecision(
-                allowed=False,
-                domain=domain,
-                limit_per_minute=limit_per_minute,
-                retry_after_seconds=retry_after,
-            )
-
-        bucket.append(now)
-        return SourceRateLimitDecision(allowed=True, domain=domain, limit_per_minute=limit_per_minute)
-
-    def _current_time(self) -> datetime:
-        current = self._now()
-        if current.tzinfo is None:
-            return current.replace(tzinfo=UTC)
-        return current.astimezone(UTC)
-
-
 def _missing_probe_fetcher(source: SourceDefinition, policy: SourceFetchPolicy) -> ProbeObservation:
     raise RuntimeError("source health probe_fetcher is required")
 
@@ -406,7 +368,12 @@ def _event(event_type: str, source: SourceDefinition, **metadata: Any) -> Source
 
 
 def _exception_source_error(source: SourceDefinition, exc: Exception) -> SourceError:
-    error_type, retryable, health_affecting = _classify_probe_exception(exc)
+    classification = classify_source_exception(
+        exc,
+        phase="probe",
+        extension=SourceTaxonomyExtension(invalid_config_keywords=("source url",)),
+        effective_retryable=effective_source_retryable(exc),
+    )
     extra: dict[str, Any] = {}
     if isinstance(exc, HTTPError):
         extra["status_code"] = exc.code
@@ -426,16 +393,17 @@ def _exception_source_error(source: SourceDefinition, exc: Exception) -> SourceE
     return SourceError(
         source_id=source.source_id,
         source_name=source.name,
-        error_type=error_type,
+        error_type=classification.error_type,
         error_message=str(exc),
         url=source.url,
-        retryable=retryable,
+        retryable=classification.retryable,
         metadata=source_error_metadata(
             SourceErrorMetadataInput(
                 phase="probe",
-                retryable=retryable,
-                source_health_affecting=health_affecting,
-                workflow_blocking=False,
+                retryable=classification.retryable,
+                source_health_affecting=classification.source_health_affecting,
+                workflow_blocking=classification.workflow_blocking,
+                operator_action_required=classification.operator_action_required,
                 original_exception_type=type(exc).__name__,
                 extra=extra,
             )
@@ -446,106 +414,29 @@ def _exception_source_error(source: SourceDefinition, exc: Exception) -> SourceE
 def _rate_limit_error(
     source: SourceDefinition,
     policy: SourceFetchPolicy,
-    rate_limiter: Any,
+    rate_limiter: SourceRateLimiter | None,
 ) -> SourceError | None:
+    if policy.rate_limit_per_domain_per_minute is None:
+        return None
+    if rate_limiter is None:
+        raise RuntimeError(
+            "source rate limiter adapter is required when rate limiting is enabled"
+        )
     decision = rate_limiter.reserve(
         source.url,
         limit_per_minute=policy.rate_limit_per_domain_per_minute,
     )
     if decision.allowed:
         return None
-    return SourceError(
-        source_id=source.source_id,
-        source_name=source.name,
-        error_type="rate_limited",
-        error_message=f"source fetch rate limit reached for domain: {decision.domain}",
+    return source_rate_limited_error(
+        source,
+        decision,
         url=source.url,
-        retryable=True,
-        metadata=source_error_metadata(
-            SourceErrorMetadataInput(
-                phase="fetch",
-                retryable=True,
-                source_health_affecting=False,
-                workflow_blocking=False,
-                extra={
-                    "domain": decision.domain,
-                    "limit_per_minute": decision.limit_per_minute,
-                    "window_seconds": getattr(decision, "window_seconds", 60),
-                    "retry_after_seconds": decision.retry_after_seconds,
-                },
-            )
-        ),
     )
 
 
 def _source_type(source: SourceDefinition) -> SourceType:
     return SourceType(source.source_type)
-
-
-def effective_fetch_policy(policy: SourceFetchPolicy, source: SourceDefinition) -> SourceFetchPolicy:
-    user_agent = source.user_agent or policy.user_agent
-    return replace(
-        policy,
-        respect_robots=policy.respect_robots and source.respect_robots,
-        user_agent=user_agent,
-    )
-
-
-def _classify_probe_exception(exc: Exception) -> tuple[str, bool, bool]:
-    exception_type = type(exc).__name__
-    if exception_type == "UnsupportedContentTypeError":
-        return "unsupported_content_type", False, False
-    if exception_type == "TooManyRedirectsError":
-        return "too_many_redirects", False, False
-    if exception_type == "RobotsDisallowedError":
-        return "robots_disallowed", False, False
-    if _is_invalid_source_config(exc):
-        return "invalid_source_config", False, False
-    if isinstance(exc, HTTPError):
-        if 400 <= exc.code < 500:
-            return "fetch_http_4xx", exc.code in {408, 409, 425, 429}, True
-        if exc.code >= 500:
-            return "fetch_http_5xx", True, True
-        return "fetch_connection_error", True, True
-    if _is_timeout_exception(exc):
-        return "fetch_timeout", True, True
-    if isinstance(exc, ValueError) and "max_bytes" in str(exc):
-        return "max_bytes_exceeded", False, False
-    return "fetch_connection_error", True, True
-
-def _is_invalid_source_config(exc: Exception) -> bool:
-    if not isinstance(exc, ValueError):
-        return False
-    return "source url" in str(exc).casefold()
-
-
-def _source_fetch_policy(policy: Any | None, *, default: SourceFetchPolicy) -> SourceFetchPolicy:
-    if policy is None:
-        return default
-    if isinstance(policy, SourceFetchPolicy):
-        return policy
-    return SourceFetchPolicy(
-        timeout_seconds=policy.timeout_seconds,
-        max_bytes=policy.max_bytes,
-        max_redirects=policy.max_redirects,
-        user_agent=policy.user_agent,
-        respect_robots=policy.respect_robots,
-        rate_limit_per_domain_per_minute=policy.rate_limit_per_domain_per_minute,
-        allowed_domains=tuple(getattr(policy, "allowed_domains", ()) or ()),
-        retry_times=policy.retry_times,
-        retry_on_status_codes=tuple(policy.retry_on_status_codes),
-    )
-
-
-def _is_timeout_exception(exc: Exception) -> bool:
-    if isinstance(exc, TimeoutError):
-        return True
-    if isinstance(exc, URLError):
-        reason = getattr(exc, "reason", None)
-        if isinstance(reason, TimeoutError):
-            return True
-        return "timed out" in str(reason).casefold() or "timeout" in str(reason).casefold()
-    return False
 
 
 def _elapsed_ms(start: float) -> float:
@@ -554,8 +445,3 @@ def _elapsed_ms(start: float) -> float:
 
 def _dt(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z") if value else None
-
-
-def _domain_from_url(url: str) -> str:
-    parsed = urlsplit(url)
-    return (parsed.hostname or parsed.netloc or url).casefold()

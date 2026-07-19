@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from enum import Enum
 from typing import Any
 
-from business.foundation.primitives import canonicalize_url
+from business.foundation.primitives.source_ref import source_url_read_aliases
 
 
 CLAIM_SUPPORT_TOKEN_OVERLAP_THRESHOLD = 0.75
@@ -375,18 +376,21 @@ class EditorReview:
 def citation_check(report: dict[str, Any], evidence_bundle: AnalysisEvidenceBundle) -> CitationCheckResult:
     support_matrix = support_matrix_for(report, evidence_bundle)
     cited_urls = sorted(_collect_cited_urls(report))
-    known_urls = {_canonical_url_or_raw(url) for url in evidence_bundle.source_urls}
-    publishable_urls = {
-        _canonical_url_or_raw(url)
+    known_url_aliases = _source_url_alias_index(evidence_bundle.source_urls)
+    publishable_url_aliases = _source_url_alias_index(
+        url
         for item in evidence_bundle.items
         if item.publishable
         for url in item.source_urls
         if url
-    }
-    unknown_urls = sorted(url for url in cited_urls if _canonical_url_or_raw(url) not in known_urls)
+    )
+    unknown_urls = sorted(
+        url for url in cited_urls if not _source_url_matches(url, known_url_aliases)
+    )
     unsupported_urls = sorted(
         url for url in cited_urls
-        if _canonical_url_or_raw(url) in known_urls and _canonical_url_or_raw(url) not in publishable_urls
+        if _source_url_matches(url, known_url_aliases)
+        and not _source_url_matches(url, publishable_url_aliases)
     )
     missing_section_sources = _missing_section_sources(report)
     unsupported_claims = [str(claim) for claim in support_matrix.unsupported_claims]
@@ -613,8 +617,8 @@ def _section_results(
     missing_section_sources: list[str],
     support_matrix: SupportMatrix,
 ) -> list[CitationSectionResult]:
-    unknown_set = {_canonical_url_or_raw(url) for url in unknown_urls}
-    unsupported_set = {_canonical_url_or_raw(url) for url in unsupported_urls}
+    unknown_aliases = _source_url_alias_index(unknown_urls)
+    unsupported_aliases = _source_url_alias_index(unsupported_urls)
     missing_titles = set(missing_section_sources)
     unsupported_by_section: dict[str, list[str]] = {}
     for claim in support_matrix.unsupported_claims:
@@ -626,11 +630,13 @@ def _section_results(
         urls = _section_sources(section)
         issue_codes: list[str] = []
         details: dict[str, list[str]] = {}
-        section_unknown = [url for url in urls if _canonical_url_or_raw(url) in unknown_set]
+        section_unknown = [url for url in urls if _source_url_matches(url, unknown_aliases)]
         if section_unknown:
             issue_codes.append("unknown_urls")
             details["unknown_urls"] = section_unknown
-        section_unsupported = [url for url in urls if _canonical_url_or_raw(url) in unsupported_set]
+        section_unsupported = [
+            url for url in urls if _source_url_matches(url, unsupported_aliases)
+        ]
         if section_unsupported:
             issue_codes.append("unsupported_urls")
             details["unsupported_urls"] = section_unsupported
@@ -719,11 +725,15 @@ def _is_operational_source_note(title: str, content: str) -> bool:
     return title_normalized in {"source notes", "sources", "methodology"} or content_normalized.startswith("built from ")
 
 
-def _canonical_url_or_raw(url: str) -> str:
-    try:
-        return canonicalize_url(url)
-    except Exception:
-        return url.strip()
+def _source_url_alias_index(urls: Iterable[str]) -> set[str]:
+    aliases: set[str] = set()
+    for url in urls:
+        aliases.update(source_url_read_aliases(url))
+    return aliases
+
+
+def _source_url_matches(url: str, aliases: set[str]) -> bool:
+    return not aliases.isdisjoint(source_url_read_aliases(url))
 
 
 def _stable_items(items: list[AnalysisEvidenceItem]) -> list[AnalysisEvidenceItem]:

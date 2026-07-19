@@ -7,6 +7,9 @@ from typing import Any, Callable
 
 import psycopg
 
+from business.foundation.models.source_error_normalization import (
+    normalize_source_errors,
+)
 from infrastructure.storage.postgres.dsn import normalize_dsn
 
 from infrastructure.external.sources.models import SourceError, SourceHealth, SourceHealthStatus
@@ -616,21 +619,22 @@ def _source_error_from_payload(value: Any) -> SourceError | None:
     payload = _dict_or_none(value)
     if not payload:
         return None
-    occurred_at = _datetime_or_none(payload.get("occurred_at"))
-    kwargs: dict[str, Any] = {
-        "source_id": str(payload.get("source_id") or ""),
-        "source_name": payload.get("source_name"),
-        "error_type": str(payload.get("error_type") or "unknown"),
-        "error_message": str(payload.get("error_message") or ""),
-        "url": payload.get("url"),
-        "retryable": payload.get("retryable"),
-        "request_ref": payload.get("request_ref"),
-        "response_ref": payload.get("response_ref"),
-        "metadata": _dict_or_empty(payload.get("metadata")),
-    }
-    if occurred_at is not None:
-        kwargs["occurred_at"] = occurred_at
-    return SourceError(**kwargs)
+    normalized = normalize_source_errors(
+        [payload],
+        context="postgres source health last_error",
+    )[0]
+    return SourceError(
+        source_id=normalized.source_id,
+        source_name=normalized.source_name,
+        error_type=normalized.error_type,
+        error_message=normalized.error_message,
+        url=normalized.url,
+        retryable=normalized.retryable,
+        request_ref=normalized.request_ref,
+        response_ref=normalized.response_ref,
+        occurred_at=normalized.occurred_at,
+        metadata=dict(normalized.metadata),
+    )
 
 
 def _dict_or_none(value: Any) -> dict[str, Any] | None:

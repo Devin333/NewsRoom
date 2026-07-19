@@ -1,0 +1,35 @@
+{
+  "artifact_type": "source_error",
+  "error": {
+    "error_message": "timed out",
+    "error_type": "fetch_timeout",
+    "metadata": {
+      "nested": {
+        "attempts": [
+          1,
+          2
+        ]
+      },
+      "request_id": "legacy-request-id",
+      "retryable": "false"
+    },
+    "occurred_at": "2026-07-19T16:30:00+08:00",
+    "request_ref": {
+      "artifact_id": "request-ref"
+    },
+    "response_ref": {
+      "artifact_id": "response-ref"
+    },
+    "source_id": "rss-source",
+    "source_name": "RSS Source",
+    "url": "https://example.com/News/?topic=AI"
+  },
+  "error_id": "legacy-fetch-timeout",
+  "request_ref": {
+    "artifact_id": "request-ref"
+  },
+  "response_ref": {
+    "artifact_id": "response-ref"
+  },
+  "source_id": "rss-source"
+}

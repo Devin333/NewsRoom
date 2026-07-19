@@ -9,19 +9,19 @@ from business.foundation.models.source import (
 )
 from business.layers.signal.source_health import ProbeObservation
 from infrastructure.external.sources.fetch_policy import (
-    SourceFetchPolicy as InfraSourceFetchPolicy,
     ensure_robots_allowed,
     open_request_with_fetch_policy,
     run_with_fetch_retries,
 )
+from interfaces.services.source_mapping import to_infrastructure_fetch_policy
 
 
 def default_source_health_probe(source: SourceDefinition, policy: BusinessSourceFetchPolicy) -> ProbeObservation:
     _ensure_http_url(source.url)
-    infra_policy = _infra_fetch_policy(policy)
-    ensure_robots_allowed(source.url, infra_policy)
+    infra_policy = to_infrastructure_fetch_policy(policy)
 
     def fetch() -> ProbeObservation:
+        ensure_robots_allowed(source.url, infra_policy)
         request = Request(
             source.url,
             headers={
@@ -44,21 +44,6 @@ def default_source_health_probe(source: SourceDefinition, policy: BusinessSource
         )
 
     return run_with_fetch_retries(fetch, infra_policy)
-
-
-def _infra_fetch_policy(policy: BusinessSourceFetchPolicy | InfraSourceFetchPolicy) -> InfraSourceFetchPolicy:
-    if isinstance(policy, InfraSourceFetchPolicy):
-        return policy
-    return InfraSourceFetchPolicy(
-        timeout_seconds=policy.timeout_seconds,
-        max_bytes=policy.max_bytes,
-        max_redirects=policy.max_redirects,
-        user_agent=policy.user_agent,
-        respect_robots=policy.respect_robots,
-        rate_limit_per_domain_per_minute=policy.rate_limit_per_domain_per_minute,
-        retry_times=policy.retry_times,
-        retry_on_status_codes=tuple(policy.retry_on_status_codes),
-    )
 
 
 def _ensure_http_url(url: str) -> None:

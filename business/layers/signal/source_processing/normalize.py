@@ -13,8 +13,8 @@ from business.foundation.models.source import (
     SourceReliability,
     SourceType,
 )
+from business.foundation.primitives.source_ref import canonicalize_url
 from business.layers.signal.source_processing.language import detect_language
-from business.layers.signal.source_processing.url_normalization import canonicalize_url
 
 
 FUTURE_PUBLISHED_AT_TOLERANCE = timedelta(minutes=5)

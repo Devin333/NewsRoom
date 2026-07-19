@@ -1,0 +1,62 @@
+{
+  "business_context": {
+    "agent_id": null,
+    "request_id": null,
+    "run_id": "legacy-source-run",
+    "step_id": null,
+    "task_id": null,
+    "tool_call_id": null,
+    "workflow_id": null
+  },
+  "causation_id": null,
+  "content_checksum": "sha256:25830a37a93522eb30666acfa9a0e6b318d8172fb3b283cd4bbe81301b8e1b00",
+  "content_type": "application/json",
+  "correlation_id": null,
+  "data_schema": "io.newsroom.source.error.v1",
+  "envelope_schema": "newsroom.event-envelope/v2",
+  "event_id": "event-source-error-legacy",
+  "event_type": "source_error_recorded",
+  "extensions": {},
+  "observed_at": "2026-07-19T08:30:00Z",
+  "occurred_at": "2026-07-19T08:30:00Z",
+  "payload": {
+    "error": {
+      "error_message": "timed out",
+      "error_type": "fetch_timeout",
+      "metadata": {
+        "nested": {
+          "attempts": [
+            1,
+            2
+          ]
+        },
+        "request_id": "legacy-request-id",
+        "retryable": "false"
+      },
+      "occurred_at": "2026-07-19T16:30:00+08:00",
+      "request_ref": {
+        "artifact_id": "request-ref"
+      },
+      "response_ref": {
+        "artifact_id": "response-ref"
+      },
+      "source_id": "rss-source",
+      "source_name": "RSS Source",
+      "url": "https://example.com/News/?topic=AI"
+    }
+  },
+  "payload_ref": null,
+  "producer": {
+    "component": "source-runtime",
+    "instance_id": null,
+    "version": "1"
+  },
+  "record_checksum": "sha256:c7be57bca50a1a6a5bd881c5258a26472e2c498f9e98351c4b41048ef6d56445",
+  "security_classification": "internal",
+  "source": "business.signal.source",
+  "stream_id": "source-error-stream",
+  "stream_sequence": 1,
+  "subject": null,
+  "tenant_id": null,
+  "trace": null
+}

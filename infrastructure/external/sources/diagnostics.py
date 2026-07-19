@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import ItemsView
+from collections.abc import Callable, ItemsView, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import wraps
 from typing import Any
 
 from infrastructure.external.sources.models import RawSourceItem, SourceError
@@ -24,6 +27,40 @@ class SourceFetchResponseMetadata:
             "url": self.url,
             "headers": dict(self.headers or {}),
         }
+
+
+class SourceFetchResponseMetadataContext:
+    """Keep transport diagnostics local to one connector invocation context."""
+
+    def __init__(self) -> None:
+        self._value: ContextVar[SourceFetchResponseMetadata | None] = ContextVar(
+            "source_fetch_response_metadata",
+            default=None,
+        )
+
+    @contextmanager
+    def scope(self) -> Iterator[None]:
+        token = self._value.set(None)
+        try:
+            yield
+        finally:
+            self._value.reset(token)
+
+    def get(self) -> SourceFetchResponseMetadata | None:
+        return self._value.get()
+
+    def set(self, value: SourceFetchResponseMetadata) -> None:
+        self._value.set(value)
+
+
+def source_fetch_response_scope(method: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(method)
+    def scoped(connector: Any, *args: Any, **kwargs: Any) -> Any:
+        context = connector._response_metadata_context
+        with context.scope():
+            return method(connector, *args, **kwargs)
+
+    return scoped
 
 
 def response_metadata_from_http_response(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone as _tz
+from threading import RLock
 UTC = _tz.utc
 from typing import Protocol
 
@@ -66,6 +67,7 @@ class BasicSourceHealthManager:
         self._health_store = health_store
         self._health: dict[str, SourceHealth] = {}
         self._events: dict[str, list[_HealthEvent]] = {}
+        self._lock = RLock()
 
     def get(
         self,
@@ -74,20 +76,21 @@ class BasicSourceHealthManager:
         source_name: str | None = None,
         url: str | None = None,
     ) -> SourceHealth:
-        health = self._health.get(source_id)
-        if health is None and self._health_store is not None:
-            health = self._health_store.get_source_health(source_id)
-        health = health or SourceHealth(source_id=source_id)
-        stats = self._window_stats(source_id, now=self._now())
-        if stats is not None:
-            health = _with_window_stats(health, stats)
-        health = _with_source_context(health, source_name=source_name, url=url)
-        if source_name is not None or url is not None:
-            self._health[source_id] = health
-            self._persist_health(health)
-        else:
-            self._health[source_id] = health
-        return health
+        with self._lock:
+            health = self._health.get(source_id)
+            if health is None and self._health_store is not None:
+                health = self._health_store.get_source_health(source_id)
+            health = health or SourceHealth(source_id=source_id)
+            stats = self._window_stats(source_id, now=self._now())
+            if stats is not None:
+                health = _with_window_stats(health, stats)
+            health = _with_source_context(health, source_name=source_name, url=url)
+            if source_name is not None or url is not None:
+                self._health[source_id] = health
+                self._persist_health(health)
+            else:
+                self._health[source_id] = health
+            return health
 
     def fetch_decision(
         self,
@@ -98,37 +101,38 @@ class BasicSourceHealthManager:
         min_interval_seconds: int | None = None,
         now: datetime | None = None,
     ) -> SourceFetchDecision:
-        health = self.get(source_id, source_name=source_name, url=url)
-        current_time = _as_utc(now or self._now())
-        if health.status == SourceHealthStatus.DISABLED:
-            return SourceFetchDecision(
-                should_fetch=False,
-                health=health,
-                skip_reason="disabled",
-            )
-        if (
-            health.status == SourceHealthStatus.DOWN
-            and health.cooldown_until is not None
-            and _as_utc(health.cooldown_until) > current_time
-        ):
-            return SourceFetchDecision(
-                should_fetch=False,
-                health=health,
-                skip_reason="cooldown",
-                cooldown_until=health.cooldown_until,
-            )
-        if min_interval_seconds is not None and min_interval_seconds > 0 and health.last_success_at:
-            next_fetch_at = _as_utc(health.last_success_at) + timedelta(
-                seconds=min_interval_seconds
-            )
-            if next_fetch_at > current_time:
+        with self._lock:
+            health = self.get(source_id, source_name=source_name, url=url)
+            current_time = _as_utc(now or self._now())
+            if health.status == SourceHealthStatus.DISABLED:
                 return SourceFetchDecision(
                     should_fetch=False,
                     health=health,
-                    skip_reason="fetch_interval",
-                    next_fetch_at=next_fetch_at,
+                    skip_reason="disabled",
                 )
-        return SourceFetchDecision(should_fetch=True, health=health)
+            if (
+                health.status == SourceHealthStatus.DOWN
+                and health.cooldown_until is not None
+                and _as_utc(health.cooldown_until) > current_time
+            ):
+                return SourceFetchDecision(
+                    should_fetch=False,
+                    health=health,
+                    skip_reason="cooldown",
+                    cooldown_until=health.cooldown_until,
+                )
+            if min_interval_seconds is not None and min_interval_seconds > 0 and health.last_success_at:
+                next_fetch_at = _as_utc(health.last_success_at) + timedelta(
+                    seconds=min_interval_seconds
+                )
+                if next_fetch_at > current_time:
+                    return SourceFetchDecision(
+                        should_fetch=False,
+                        health=health,
+                        skip_reason="fetch_interval",
+                        next_fetch_at=next_fetch_at,
+                    )
+            return SourceFetchDecision(should_fetch=True, health=health)
 
     def should_skip(
         self,
@@ -153,12 +157,13 @@ class BasicSourceHealthManager:
         ).should_fetch
 
     def should_probe(self, source_id: str) -> bool:
-        health = self.get(source_id)
-        return (
-            health.status == SourceHealthStatus.DOWN
-            and health.cooldown_until is not None
-            and health.cooldown_until <= self._now()
-        )
+        with self._lock:
+            health = self.get(source_id)
+            return (
+                health.status == SourceHealthStatus.DOWN
+                and health.cooldown_until is not None
+                and health.cooldown_until <= self._now()
+            )
 
     def record_success(
         self,
@@ -168,28 +173,29 @@ class BasicSourceHealthManager:
         source_name: str | None = None,
         url: str | None = None,
     ) -> SourceHealth:
-        previous = self.get(source_id)
-        now = self._now()
-        had_events = bool(self._events.get(source_id))
-        stats = self._record_event(source_id, succeeded=True, latency_ms=latency_ms, now=now)
-        if not had_events:
-            stats = _merge_persisted_stats(previous, stats, now=now)
-        health = SourceHealth(
-            source_id=source_id,
-            source_name=source_name or previous.source_name,
-            url=url or previous.url,
-            status=SourceHealthStatus.HEALTHY,
-            consecutive_failures=0,
-            success_count_24h=stats.success_count_24h,
-            failure_count_24h=stats.failure_count_24h,
-            avg_latency_ms_24h=stats.avg_latency_ms_24h,
-            last_success_at=now,
-            last_failure_at=previous.last_failure_at,
-            metadata=dict(previous.metadata),
-        )
-        self._health[source_id] = health
-        self._persist_health(health)
-        return health
+        with self._lock:
+            previous = self.get(source_id)
+            now = self._now()
+            had_events = bool(self._events.get(source_id))
+            stats = self._record_event(source_id, succeeded=True, latency_ms=latency_ms, now=now)
+            if not had_events:
+                stats = _merge_persisted_stats(previous, stats, now=now)
+            health = SourceHealth(
+                source_id=source_id,
+                source_name=source_name or previous.source_name,
+                url=url or previous.url,
+                status=SourceHealthStatus.HEALTHY,
+                consecutive_failures=0,
+                success_count_24h=stats.success_count_24h,
+                failure_count_24h=stats.failure_count_24h,
+                avg_latency_ms_24h=stats.avg_latency_ms_24h,
+                last_success_at=now,
+                last_failure_at=previous.last_failure_at,
+                metadata=dict(previous.metadata),
+            )
+            self._health[source_id] = health
+            self._persist_health(health)
+            return health
 
     def record_disabled(
         self,
@@ -199,39 +205,40 @@ class BasicSourceHealthManager:
         source_name: str | None = None,
         url: str | None = None,
     ) -> SourceHealth:
-        previous = self.get(source_id)
-        error = SourceError(
-            source_id=source_id,
-            source_name=source_name or previous.source_name,
-            error_type="source_disabled",
-            error_message=reason or "source is disabled",
-            url=url or previous.url,
-            retryable=False,
-            metadata=source_error_metadata(
-                SourceErrorMetadataInput(
-                    phase="health",
-                    retryable=False,
-                    source_health_affecting=False,
-                    workflow_blocking=False,
-                    operator_action_required=True,
-                )
-            ),
-        )
-        health = SourceHealth(
-            source_id=source_id,
-            source_name=source_name or previous.source_name,
-            url=url or previous.url,
-            status=SourceHealthStatus.DISABLED,
-            consecutive_failures=0,
-            success_count_24h=previous.success_count_24h,
-            failure_count_24h=previous.failure_count_24h,
-            avg_latency_ms_24h=previous.avg_latency_ms_24h,
-            last_error=error,
-            metadata={**previous.metadata, "disabled_reason": reason or "source is disabled"},
-        )
-        self._health[source_id] = health
-        self._persist_health(health)
-        return health
+        with self._lock:
+            previous = self.get(source_id)
+            error = SourceError(
+                source_id=source_id,
+                source_name=source_name or previous.source_name,
+                error_type="source_disabled",
+                error_message=reason or "source is disabled",
+                url=url or previous.url,
+                retryable=False,
+                metadata=source_error_metadata(
+                    SourceErrorMetadataInput(
+                        phase="health",
+                        retryable=False,
+                        source_health_affecting=False,
+                        workflow_blocking=False,
+                        operator_action_required=True,
+                    )
+                ),
+            )
+            health = SourceHealth(
+                source_id=source_id,
+                source_name=source_name or previous.source_name,
+                url=url or previous.url,
+                status=SourceHealthStatus.DISABLED,
+                consecutive_failures=0,
+                success_count_24h=previous.success_count_24h,
+                failure_count_24h=previous.failure_count_24h,
+                avg_latency_ms_24h=previous.avg_latency_ms_24h,
+                last_error=error,
+                metadata={**previous.metadata, "disabled_reason": reason or "source is disabled"},
+            )
+            self._health[source_id] = health
+            self._persist_health(health)
+            return health
 
     def record_failure(
         self,
@@ -242,40 +249,41 @@ class BasicSourceHealthManager:
         source_name: str | None = None,
         url: str | None = None,
     ) -> SourceHealth:
-        previous = self.get(source_id)
-        failures = previous.consecutive_failures + 1
-        now = self._now()
-        had_events = bool(self._events.get(source_id))
-        stats = self._record_event(source_id, succeeded=False, latency_ms=latency_ms, now=now)
-        if not had_events:
-            stats = _merge_persisted_stats(previous, stats, now=now)
-        if failures >= self.failure_threshold:
-            status = SourceHealthStatus.DOWN
-            cooldown_until = now + timedelta(seconds=self.cooldown_seconds)
-        elif failures >= self.degraded_threshold:
-            status = SourceHealthStatus.DEGRADED
-            cooldown_until = None
-        else:
-            status = SourceHealthStatus.HEALTHY
-            cooldown_until = None
-        health = SourceHealth(
-            source_id=source_id,
-            source_name=source_name or error.source_name or previous.source_name,
-            url=url or error.url or previous.url,
-            status=status,
-            consecutive_failures=failures,
-            success_count_24h=stats.success_count_24h,
-            failure_count_24h=stats.failure_count_24h,
-            avg_latency_ms_24h=stats.avg_latency_ms_24h,
-            last_success_at=previous.last_success_at,
-            last_failure_at=now,
-            cooldown_until=cooldown_until,
-            last_error=error,
-            metadata=dict(previous.metadata),
-        )
-        self._health[source_id] = health
-        self._persist_health(health)
-        return health
+        with self._lock:
+            previous = self.get(source_id)
+            failures = previous.consecutive_failures + 1
+            now = self._now()
+            had_events = bool(self._events.get(source_id))
+            stats = self._record_event(source_id, succeeded=False, latency_ms=latency_ms, now=now)
+            if not had_events:
+                stats = _merge_persisted_stats(previous, stats, now=now)
+            if failures >= self.failure_threshold:
+                status = SourceHealthStatus.DOWN
+                cooldown_until = now + timedelta(seconds=self.cooldown_seconds)
+            elif failures >= self.degraded_threshold:
+                status = SourceHealthStatus.DEGRADED
+                cooldown_until = None
+            else:
+                status = SourceHealthStatus.HEALTHY
+                cooldown_until = None
+            health = SourceHealth(
+                source_id=source_id,
+                source_name=source_name or error.source_name or previous.source_name,
+                url=url or error.url or previous.url,
+                status=status,
+                consecutive_failures=failures,
+                success_count_24h=stats.success_count_24h,
+                failure_count_24h=stats.failure_count_24h,
+                avg_latency_ms_24h=stats.avg_latency_ms_24h,
+                last_success_at=previous.last_success_at,
+                last_failure_at=now,
+                cooldown_until=cooldown_until,
+                last_error=error,
+                metadata=dict(previous.metadata),
+            )
+            self._health[source_id] = health
+            self._persist_health(health)
+            return health
 
     def _record_event(
         self,

@@ -1,0 +1,60 @@
+{
+  "applied_upcasters": [],
+  "checkpoint_checksum": "sha256:18f204012dd85a3cff88a4351e6a34c67977b0524817ad8d52b5500f851fc7c7",
+  "checkpoint_id": "checkpoint-source-error-legacy",
+  "history_checksum": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "last_event_id": "event-source-error-legacy",
+  "last_sequence": 1,
+  "mode": "rebuild_state",
+  "parent_checkpoint_id": null,
+  "reducer_id": "source-error",
+  "reducer_version": "1",
+  "runtime_version": "1",
+  "schema_catalog_version": "1",
+  "source_high_watermark": 1,
+  "source_stream_id": "source-error-stream",
+  "state": {
+    "source_errors": [
+      {
+        "error_message": "timed out",
+        "error_type": "fetch_timeout",
+        "metadata": {
+          "nested": {
+            "attempts": [
+              1,
+              2
+            ]
+          },
+          "request_id": "legacy-request-id",
+          "retryable": "false"
+        },
+        "occurred_at": "2026-07-19T16:30:00+08:00",
+        "request_ref": {
+          "artifact_id": "request-ref"
+        },
+        "response_ref": {
+          "artifact_id": "response-ref"
+        },
+        "source_id": "rss-source",
+        "source_name": "RSS Source",
+        "url": "https://example.com/News/?topic=AI"
+      }
+    ]
+  },
+  "tenant_id": null,
+  "verification_state": null,
+  "versions": [
+    {
+      "component": "replay_runtime",
+      "version": "1"
+    },
+    {
+      "component": "schema_catalog",
+      "version": "1"
+    },
+    {
+      "component": "reducer:source-error",
+      "version": "1"
+    }
+  ]
+}

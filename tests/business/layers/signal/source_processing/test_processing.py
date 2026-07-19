@@ -37,7 +37,8 @@ from business.layers.signal.source_processing.fallback import (
     SourceSelectionFallbackInput,
 )
 from business.layers.signal.source_processing.governance import SourceGovernancePolicy
-from business.layers.signal.source_processing.normalize import canonicalize_url, normalize_text
+from business.foundation.primitives.source_ref import canonicalize_url
+from business.layers.signal.source_processing.normalize import normalize_text
 
 
 def _raw_item(

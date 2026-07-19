@@ -1,0 +1,44 @@
+{
+  "applied_upcasters": [],
+  "checkpoint_checksum": "sha256:531a9f5e14e63237091e2ac9bfb53b9f227940431b1b42366fca2a5584d373ea",
+  "checkpoint_id": "checkpoint-source-legacy",
+  "history_checksum": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "last_event_id": "event-source-legacy",
+  "last_sequence": 1,
+  "mode": "rebuild_state",
+  "parent_checkpoint_id": null,
+  "reducer_id": "source-identity",
+  "reducer_version": "1",
+  "runtime_version": "1",
+  "schema_catalog_version": "1",
+  "source_high_watermark": 1,
+  "source_stream_id": "source-stream-legacy",
+  "state": {
+    "source_items": [
+      {
+        "artifact_ref": {
+          "artifact_id": "legacy-source-item-artifact"
+        },
+        "canonical_url": "https://example.com/News/?topic=AI",
+        "canonical_url_hash": "legacy-url-hash",
+        "source_item_id": "legacy-source-item"
+      }
+    ]
+  },
+  "tenant_id": null,
+  "verification_state": null,
+  "versions": [
+    {
+      "component": "replay_runtime",
+      "version": "1"
+    },
+    {
+      "component": "schema_catalog",
+      "version": "1"
+    },
+    {
+      "component": "reducer:source-identity",
+      "version": "1"
+    }
+  ]
+}

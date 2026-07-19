@@ -3,17 +3,22 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone as _tz
-UTC = _tz.utc
 from math import ceil
+from threading import Lock
 from typing import Any, Callable, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from infrastructure.external.sources.models import SourceDefinition, SourceError
+from infrastructure.external.sources.models import SourceDefinition
 
 
+UTC = _tz.utc
+
+_SOURCE_DOMAIN_ALIASES = {
+    "export.arxiv.org": "arxiv.org",
+}
 Now = Callable[[], datetime]
 T = TypeVar("T")
 DEFAULT_RETRY_ON_STATUS_CODES = (429, 500, 502, 503, 504)
@@ -85,13 +90,40 @@ class RateLimitDecision:
     retry_after_seconds: int | None = None
 
 
+class SourceRateLimitExceededError(ValueError):
+    def __init__(self, url: str, decision: RateLimitDecision) -> None:
+        if decision.allowed:
+            raise ValueError("SourceRateLimitExceededError requires a denied decision")
+        self.url = url
+        self.decision = decision
+        self.domain = decision.domain
+        self.limit_per_minute = decision.limit_per_minute
+        self.window_seconds = decision.window_seconds
+        self.retry_after_seconds = decision.retry_after_seconds
+        super().__init__(f"source fetch rate limit reached for domain: {decision.domain}")
+
+
+@dataclass(frozen=True)
+class SourceFetchRetryDecision:
+    attempts: int
+    max_attempts: int
+    retryable: bool
+    should_retry: bool
+    status_code: int | None = None
+
+    @property
+    def remaining_attempts(self) -> int:
+        return max(0, self.max_attempts - self.attempts)
+
+
 class DomainRateLimiter:
     def __init__(self, *, now: Now | None = None) -> None:
         self._now = now or (lambda: datetime.now(UTC))
         self._requests: dict[str, deque[datetime]] = defaultdict(deque)
+        self._lock = Lock()
 
     def reserve(self, url: str, *, limit_per_minute: int | None) -> RateLimitDecision:
-        domain = _domain_from_url(url)
+        domain = source_domain_key(url)
         if limit_per_minute is None:
             return RateLimitDecision(allowed=True, domain=domain, limit_per_minute=None)
         if limit_per_minute < 1:
@@ -99,53 +131,29 @@ class DomainRateLimiter:
 
         now = self._current_time()
         window_start = now - timedelta(seconds=60)
-        bucket = self._requests[domain]
-        while bucket and bucket[0] <= window_start:
-            bucket.popleft()
+        with self._lock:
+            bucket = self._requests[domain]
+            while bucket and bucket[0] <= window_start:
+                bucket.popleft()
 
-        if len(bucket) >= limit_per_minute:
-            retry_at = bucket[0] + timedelta(seconds=60)
-            retry_after = max(1, ceil((retry_at - now).total_seconds()))
-            return RateLimitDecision(
-                allowed=False,
-                domain=domain,
-                limit_per_minute=limit_per_minute,
-                retry_after_seconds=retry_after,
-            )
+            if len(bucket) >= limit_per_minute:
+                retry_at = bucket[0] + timedelta(seconds=60)
+                retry_after = max(1, ceil((retry_at - now).total_seconds()))
+                return RateLimitDecision(
+                    allowed=False,
+                    domain=domain,
+                    limit_per_minute=limit_per_minute,
+                    retry_after_seconds=retry_after,
+                )
 
-        bucket.append(now)
-        return RateLimitDecision(allowed=True, domain=domain, limit_per_minute=limit_per_minute)
+            bucket.append(now)
+            return RateLimitDecision(allowed=True, domain=domain, limit_per_minute=limit_per_minute)
 
     def _current_time(self) -> datetime:
         current = self._now()
         if current.tzinfo is None:
             return current.replace(tzinfo=UTC)
         return current.astimezone(UTC)
-
-
-def rate_limited_source_error(
-    source: SourceDefinition,
-    decision: RateLimitDecision,
-    *,
-    url: str,
-) -> SourceError:
-    return SourceError(
-        source_id=source.source_id,
-        source_name=source.name,
-        error_type="rate_limited",
-        error_message=f"source fetch rate limit reached for domain: {decision.domain}",
-        url=url,
-        retryable=True,
-        metadata={
-            "phase": "fetch",
-            "retryable": True,
-            "source_health_affecting": False,
-            "domain": decision.domain,
-            "limit_per_minute": decision.limit_per_minute,
-            "window_seconds": decision.window_seconds,
-            "retry_after_seconds": decision.retry_after_seconds,
-        },
-    )
 
 
 def run_with_fetch_retries(operation: Callable[[], T], policy: SourceFetchPolicy) -> T:
@@ -155,26 +163,53 @@ def run_with_fetch_retries(operation: Callable[[], T], policy: SourceFetchPolicy
         try:
             return operation()
         except Exception as exc:
-            _set_attempts(exc, attempts)
-            if attempts > policy.retry_times or not is_retryable_fetch_exception(exc, policy):
+            decision = decide_source_fetch_retry(exc, policy, attempts=attempts)
+            _set_retry_state(exc, decision)
+            if not decision.should_retry:
                 raise
 
 
-def is_retryable_fetch_exception(exc: Exception, policy: SourceFetchPolicy) -> bool:
+def decide_source_fetch_retry(
+    exc: Exception,
+    policy: SourceFetchPolicy,
+    *,
+    attempts: int = 1,
+) -> SourceFetchRetryDecision:
+    if attempts < 1:
+        raise ValueError("attempts must be at least 1")
+    max_attempts = policy.retry_times + 1
+    status_code = exc.code if isinstance(exc, HTTPError) else None
     if isinstance(exc, HTTPError):
-        return exc.code in policy.retry_on_status_codes
-    if _is_timeout_exception(exc):
-        return True
-    if isinstance(exc, URLError):
-        return True
-    if isinstance(exc, ValueError):
-        return False
-    return True
+        retryable = exc.code in policy.retry_on_status_codes
+    elif _is_timeout_exception(exc):
+        retryable = True
+    elif isinstance(exc, URLError):
+        retryable = True
+    elif isinstance(exc, ValueError):
+        retryable = False
+    else:
+        retryable = True
+    return SourceFetchRetryDecision(
+        attempts=attempts,
+        max_attempts=max_attempts,
+        retryable=retryable,
+        should_retry=retryable and attempts < max_attempts,
+        status_code=status_code,
+    )
+
+
+def is_retryable_fetch_exception(exc: Exception, policy: SourceFetchPolicy) -> bool:
+    return decide_source_fetch_retry(exc, policy).retryable
 
 
 def fetch_attempts(exc: Exception) -> int | None:
     attempts = getattr(exc, "source_fetch_attempts", None)
     return attempts if isinstance(attempts, int) else None
+
+
+def fetch_retry_decision(exc: Exception) -> SourceFetchRetryDecision | None:
+    decision = getattr(exc, "source_fetch_retry_decision", None)
+    return decision if isinstance(decision, SourceFetchRetryDecision) else None
 
 
 def ensure_supported_content_type(
@@ -243,9 +278,11 @@ class _RedirectLimitHandler(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _set_attempts(exc: Exception, attempts: int) -> None:
+def _set_retry_state(exc: Exception, decision: SourceFetchRetryDecision) -> None:
     try:
-        setattr(exc, "source_fetch_attempts", attempts)
+        setattr(exc, "source_fetch_attempts", decision.attempts)
+        setattr(exc, "source_fetch_retryable", decision.retryable)
+        setattr(exc, "source_fetch_retry_decision", decision)
     except Exception:
         pass
 
@@ -261,9 +298,18 @@ def _is_timeout_exception(exc: Exception) -> bool:
     return False
 
 
-def _domain_from_url(url: str) -> str:
-    parsed = urlsplit(url)
-    return (parsed.hostname or parsed.netloc or url).casefold()
+def source_domain_key(url: str) -> str:
+    value = str(url).strip()
+    try:
+        parsed = urlsplit(value)
+        domain = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise ValueError(f"invalid source URL for rate limiting: {url}") from exc
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc or not domain:
+        raise ValueError(f"source rate-limit URL must use http or https with a hostname: {url}")
+    normalized_domain = domain.casefold()
+    return _SOURCE_DOMAIN_ALIASES.get(normalized_domain, normalized_domain)
 
 
 def _robots_url_for(url: str) -> str | None:

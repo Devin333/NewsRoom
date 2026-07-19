@@ -1,0 +1,18 @@
+{
+  "paper_id": "paper-legacy-url",
+  "title": "Persisted Source URL Compatibility",
+  "authors": [
+    "Ada Lovelace"
+  ],
+  "abstract": "A persisted Research paper card used to verify URL compatibility.",
+  "source_url": "https://example.com/research/paper?Topic=AI&UTM_Source=legacy",
+  "pdf_url": "https://example.com/research/paper.pdf",
+  "code_url": "https://github.com/NewsRoom/Runtime",
+  "github_repo": "https://github.com/NewsRoom/Runtime/",
+  "metadata": {
+    "canonical_url_hash": "legacy-paper-card-url-hash",
+    "artifact_ref": {
+      "artifact_id": "research-paper-card-legacy"
+    }
+  }
+}

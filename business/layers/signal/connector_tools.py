@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from business.foundation import SourceReliability, SourceType
@@ -198,22 +197,9 @@ def _limit(value: Any) -> int:
 
 
 def _raw_source_item_to_dict(item: Any) -> dict[str, Any]:
-    return {
-        "source_item_id": item.source_item_id,
-        "source_id": item.source_id,
-        "source_name": item.source_name,
-        "source_type": _enum_value(item.source_type),
-        "title": item.title,
-        "url": item.url,
-        "fetched_at": _dt(item.fetched_at),
-        "published_at": _dt(item.published_at),
-        "summary": item.summary,
-        "raw_content": item.raw_content,
-        "authors": list(item.authors),
-        "tags": list(item.tags),
-        "language": item.language,
-        "metadata": dict(item.metadata),
-    }
+    if not hasattr(item, "to_dict"):
+        raise TypeError("Source connector items must expose to_dict()")
+    return dict(item.to_dict())
 
 
 def _source_type(value: Any, fallback: SourceType) -> SourceType:
@@ -228,14 +214,6 @@ def _source_reliability(value: Any) -> SourceReliability:
         return SourceReliability(str(getattr(value, "value", value)).strip().casefold())
     except ValueError:
         return SourceReliability.UNKNOWN
-
-
-def _enum_value(value: Any) -> str:
-    return str(getattr(value, "value", value))
-
-
-def _dt(value: datetime | None) -> str | None:
-    return value.isoformat().replace("+00:00", "Z") if value else None
 
 
 __all__ = [

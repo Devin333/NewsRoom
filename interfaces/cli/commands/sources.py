@@ -4,7 +4,7 @@ import argparse
 import json
 
 from interfaces.cli.commands.dispatch import CommandHandler, call_handler
-from interfaces.services.source_service import SourceApplicationService
+from interfaces.services.source_runtime import build_source_runtime_composition
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -350,7 +350,7 @@ def source_priorities(args: argparse.Namespace) -> int:
 
 
 def _source_service():
-    return SourceApplicationService()
+    return build_source_runtime_composition().source_service
 
 
 def _print_source_fetch_result(payload: dict) -> None:

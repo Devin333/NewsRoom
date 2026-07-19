@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Event, Lock
 
 from business.foundation.models.source import SourceError, SourceHealth, SourceHealthStatus
 from business.layers.signal.source_health import BasicSourceHealthManager
@@ -17,6 +19,27 @@ class FakeHealthStore:
     def update_source_health(self, health: SourceHealth) -> None:
         self.records[health.source_id] = health
         self.saved.append(health)
+
+
+class BlockingHealthStore(FakeHealthStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first_update_started = Event()
+        self.release_first_update = Event()
+        self.second_update_started = Event()
+        self._update_count = 0
+        self._update_lock = Lock()
+
+    def update_source_health(self, health: SourceHealth) -> None:
+        with self._update_lock:
+            self._update_count += 1
+            update_count = self._update_count
+        if update_count == 1:
+            self.first_update_started.set()
+            assert self.release_first_update.wait(timeout=2)
+        else:
+            self.second_update_started.set()
+        super().update_source_health(health)
 
 
 def test_health_manager_records_success() -> None:
@@ -278,3 +301,26 @@ def test_health_manager_merges_persisted_window_counts_on_first_event() -> None:
     assert health.failure_count_24h == 1
     assert health.avg_latency_ms_24h == 37.5
     assert health.metadata == {"owner": "ops"}
+
+
+def test_health_manager_serializes_concurrent_read_modify_write_updates() -> None:
+    store = BlockingHealthStore()
+    manager = BasicSourceHealthManager(health_store=store)
+    error = SourceError(
+        source_id="source",
+        error_type="fetch_timeout",
+        error_message="timeout",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(manager.record_failure, "source", error)
+        assert store.first_update_started.wait(timeout=2)
+        second = executor.submit(manager.record_failure, "source", error)
+        assert store.second_update_started.wait(timeout=0.1) is False
+        store.release_first_update.set()
+        first_result = first.result(timeout=2)
+        second_result = second.result(timeout=2)
+
+    assert first_result.consecutive_failures == 1
+    assert second_result.consecutive_failures == 2
+    assert manager.get("source").failure_count_24h == 2
