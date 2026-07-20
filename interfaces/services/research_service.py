@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any, Protocol
@@ -9,9 +11,17 @@ from business.research.application import (
     AnalyzePaperRequest,
     AskPaperUseCase,
     ResearchActorScope,
+    ResearchRunDispositionReconciler,
+    classify_research_run_record,
+    research_identity_scope_ref,
 )
 from business.research.domain import stable_research_id
+from business.research.ports.artifact_publication import (
+    ResearchArtifactDiagnosticReader,
+)
 from business.research.ports.run_store import (
+    ResearchRunDiagnosticStore,
+    ResearchRunDisposition,
     ResearchRunRecord,
     ResearchRunStore,
     ResearchRunStoreConflictError,
@@ -20,6 +30,9 @@ from business.research.ports.run_store import (
 )
 from business.research.rag import ResearchRetrievalGoal
 from interfaces.models import ActorContext
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -113,15 +126,20 @@ class InMemoryResearchRunStore:
     def save(self, record: ResearchRunRecord) -> None:
         if not isinstance(record, ResearchRunRecord):
             raise TypeError("record must be ResearchRunRecord")
+        classified = classify_research_run_record(
+            record,
+            require_publication_authority=None,
+            schema_version=record.schema_version,
+        )
         with self._lock:
             existing = self._records_by_run_id.get(record.run_id)
             if existing is not None:
-                if existing != record:
+                if existing != classified:
                     raise ResearchRunStoreConflictError(
                         reason=ResearchRunStoreReason.IDENTITY_CONFLICT,
                     )
                 return
-            self._records_by_run_id[record.run_id] = record
+            self._records_by_run_id[record.run_id] = classified
             run_ids = self._run_ids_by_paper_id.setdefault(record.paper_id, [])
             if record.run_id not in run_ids:
                 run_ids.append(record.run_id)
@@ -133,9 +151,11 @@ class InMemoryResearchRunStore:
     def get_latest_by_paper_id(self, paper_id: str) -> ResearchRunRecord | None:
         with self._lock:
             run_ids = self._run_ids_by_paper_id.get(paper_id) or []
-            if not run_ids:
-                return None
-            return self._records_by_run_id.get(run_ids[-1])
+            for run_id in reversed(run_ids):
+                record = self._records_by_run_id.get(run_id)
+                if record is not None and record.accepted:
+                    return record
+            return None
 
     def list_by_paper_id(self, paper_id: str) -> list[ResearchRunRecord]:
         with self._lock:
@@ -143,7 +163,42 @@ class InMemoryResearchRunStore:
             return [
                 self._records_by_run_id[run_id]
                 for run_id in run_ids
-                if run_id in self._records_by_run_id
+                if (
+                    run_id in self._records_by_run_id
+                    and self._records_by_run_id[run_id].accepted
+                )
+            ]
+
+    def get_diagnostic_by_run_id(
+        self,
+        run_id: str,
+        *,
+        identity_scope_ref: str,
+    ) -> ResearchRunRecord | None:
+        with self._lock:
+            record = self._records_by_run_id.get(run_id)
+            if record is None or record.identity_scope_ref != identity_scope_ref:
+                return None
+            return record
+
+    def list_quarantined_by_paper_id(
+        self,
+        paper_id: str,
+        *,
+        identity_scope_ref: str,
+    ) -> list[ResearchRunRecord]:
+        with self._lock:
+            return [
+                self._records_by_run_id[run_id]
+                for run_id in reversed(
+                    self._run_ids_by_paper_id.get(paper_id) or []
+                )
+                if (
+                    run_id in self._records_by_run_id
+                    and self._records_by_run_id[run_id].quarantined
+                    and self._records_by_run_id[run_id].identity_scope_ref
+                    == identity_scope_ref
+                )
             ]
 
 
@@ -155,11 +210,25 @@ class ResearchApplicationService:
         ask_use_case: AskPaperUseCase | None = None,
         rag_ask_use_case: ResearchRagAskUseCase | None = None,
         run_store: ResearchRunStore | None = None,
+        run_reconciler: ResearchRunDispositionReconciler | None = None,
+        diagnostic_artifact_reader: ResearchArtifactDiagnosticReader | None = None,
     ) -> None:
         self._analyze_use_case = analyze_use_case or _UnconfiguredAnalyzeUseCase()
         self._ask_use_case = ask_use_case or AskPaperUseCase()
         self._rag_ask_use_case = rag_ask_use_case or _UnconfiguredRagAskUseCase()
         self._run_store = run_store or _DEFAULT_RESEARCH_RUN_STORE
+        self._run_reconciler = run_reconciler
+        if diagnostic_artifact_reader is not None and not isinstance(
+            diagnostic_artifact_reader,
+            ResearchArtifactDiagnosticReader,
+        ):
+            raise TypeError(
+                "diagnostic_artifact_reader must implement "
+                "ResearchArtifactDiagnosticReader"
+            )
+        self._diagnostic_artifact_reader = diagnostic_artifact_reader
+        if self._run_reconciler is not None:
+            self._run_reconciler.reconcile_pending()
 
     def analyze_paper(self, command: ResearchAnalyzeInput) -> dict[str, Any]:
         paper_id = _require_text(command.paper_id, "paperId")
@@ -183,27 +252,47 @@ class ResearchApplicationService:
         )
         try:
             result = self._analyze_use_case.analyze(request)
-        except ResearchServiceError:
+        except ResearchServiceError as exc:
+            try:
+                self._reconcile_failed_run(request, actor_scope)
+            except Exception as recovery_error:
+                _record_recovery_failure(exc, recovery_error)
+                raise exc from recovery_error
             raise
         except ValueError as exc:
-            raise ResearchServiceError("invalid_request", str(exc), status_code=400, user_action_required=True) from exc
-        except Exception as exc:
+            try:
+                recovered = self._reconcile_failed_run(request, actor_scope)
+            except Exception as recovery_error:
+                service_error = _research_runtime_service_error(exc)
+                _record_recovery_failure(service_error, recovery_error)
+                raise service_error from recovery_error
+            if recovered is not None:
+                raise _research_runtime_service_error(exc) from exc
             raise ResearchServiceError(
-                "research_run_failed",
-                "research run failed",
-                status_code=500,
-                details={"error_type": type(exc).__name__},
-                retryable=True,
+                "invalid_request",
+                str(exc),
+                status_code=400,
+                user_action_required=True,
             ) from exc
+        except Exception as exc:
+            service_error = _research_runtime_service_error(exc)
+            try:
+                self._reconcile_failed_run(request, actor_scope)
+            except Exception as recovery_error:
+                _record_recovery_failure(service_error, recovery_error)
+                raise service_error from recovery_error
+            raise service_error from exc
 
         record = ResearchRunRecord(run_id=run_id, paper_id=paper_id, result=result)
         try:
             self._run_store.save(record)
         except ResearchRunStoreError as exc:
             raise _run_store_service_error(exc, operation="save") from None
-        self._ensure_run_succeeded(record)
-        self._ensure_quality_passed(record)
-        return self._analyze_response(record)
+        stored = self._run_store.get_by_run_id(run_id) or record
+        self._ensure_run_succeeded(stored)
+        self._ensure_quality_passed(stored)
+        self._ensure_run_accepted(stored)
+        return self._analyze_response(stored)
 
     def get_analysis(
         self,
@@ -390,9 +479,28 @@ class ResearchApplicationService:
         normalized_run_id = _require_text(run_id, "runId")
         actor_scope = _resolve_actor_input(self._ask_use_case, actor)
         try:
-            record = self._run_store.get_by_run_id(normalized_run_id)
+            if isinstance(self._run_store, ResearchRunDiagnosticStore):
+                record = self._run_store.get_diagnostic_by_run_id(
+                    normalized_run_id,
+                    identity_scope_ref=research_identity_scope_ref(
+                        actor_scope.to_metadata()
+                    ),
+                )
+            else:
+                record = self._run_store.get_by_run_id(normalized_run_id)
         except ResearchRunStoreError as exc:
             raise _run_store_service_error(exc, operation="read_by_run") from None
+        if record is None and isinstance(self._run_store, ResearchRunDiagnosticStore):
+            unscoped = self._run_store.get_by_run_id(normalized_run_id)
+            if unscoped is not None:
+                _ensure_record_visible_to_actor(unscoped, actor_scope)
+        if record is None and self._run_reconciler is not None:
+            record = self._run_reconciler.reconcile_run(
+                normalized_run_id,
+                identity_scope_ref=research_identity_scope_ref(
+                    actor_scope.to_metadata()
+                ),
+            )
         if record is None:
             raise ResearchServiceError(
                 "research_run_failed",
@@ -414,6 +522,91 @@ class ResearchApplicationService:
             },
         }
 
+    def read_diagnostic_artifact(
+        self,
+        run_id: str,
+        artifact_ref: str,
+        *,
+        actor: ResearchActorInput | None = None,
+    ) -> dict[str, Any]:
+        """Read one quarantined artifact through the scoped application path.
+
+        The method is intentionally not part of the normal paper/latest query
+        surface.  It requires an exact quarantined run record, the caller's
+        identity scope, the record's subject scope, and a ref already carried
+        by that record before invoking the injected read-only adapter.
+        """
+
+        normalized_run_id = _require_text(run_id, "runId")
+        normalized_ref = _require_text(artifact_ref, "artifactRef")
+        actor_scope = _resolve_actor_input(self._ask_use_case, actor)
+        identity_scope_ref = research_identity_scope_ref(actor_scope.to_metadata())
+        try:
+            if isinstance(self._run_store, ResearchRunDiagnosticStore):
+                record = self._run_store.get_diagnostic_by_run_id(
+                    normalized_run_id,
+                    identity_scope_ref=identity_scope_ref,
+                )
+            else:
+                record = None
+        except ResearchRunStoreError as exc:
+            raise _run_store_service_error(
+                exc,
+                operation="read_by_run",
+            ) from None
+        if record is None:
+            try:
+                unscoped = self._run_store.get_by_run_id(normalized_run_id)
+            except ResearchRunStoreError as exc:
+                raise _run_store_service_error(
+                    exc,
+                    operation="read_by_run",
+                ) from None
+            if unscoped is not None:
+                _ensure_record_visible_to_actor(unscoped, actor_scope)
+            raise _diagnostic_artifact_not_found(normalized_run_id)
+        _ensure_record_visible_to_actor(record, actor_scope)
+        if record.disposition is not ResearchRunDisposition.QUARANTINE:
+            raise _diagnostic_artifact_not_found(normalized_run_id)
+        if normalized_ref not in _artifact_refs(record.result).values():
+            raise _diagnostic_artifact_not_found(normalized_run_id)
+        subject_scope_ref = record.subject_scope_ref
+        if not isinstance(subject_scope_ref, str) or not subject_scope_ref:
+            raise _diagnostic_artifact_not_found(normalized_run_id)
+        reader = self._diagnostic_artifact_reader
+        if reader is None:
+            raise ResearchServiceError(
+                "research_run_failed",
+                "Research diagnostic artifact reader is not configured",
+                status_code=503,
+                retryable=False,
+                user_action_required=True,
+            )
+        try:
+            payload = reader.read_diagnostic_artifact(
+                normalized_ref,
+                identity_scope_ref=identity_scope_ref,
+                subject_scope_ref=subject_scope_ref,
+            )
+        except ResearchServiceError:
+            raise
+        except Exception as exc:
+            raise ResearchServiceError(
+                "research_run_failed",
+                "Research diagnostic artifact could not be read",
+                status_code=500,
+                details={"error_type": type(exc).__name__},
+                retryable=False,
+            ) from exc
+        if not isinstance(payload, Mapping):
+            raise ResearchServiceError(
+                "research_run_failed",
+                "Research diagnostic artifact is invalid",
+                status_code=500,
+                retryable=False,
+            )
+        return dict(payload)
+
     def _record_for_paper(
         self,
         paper_id: str,
@@ -429,7 +622,10 @@ class ResearchApplicationService:
                 operation="list_by_paper",
             ) from None
         for record in records:
-            if _record_visible_to_actor(record, actor_scope):
+            if (
+                record.disposition is ResearchRunDisposition.ACCEPTED
+                and _record_visible_to_actor(record, actor_scope)
+            ):
                 return record
         raise ResearchServiceError(
             "paper_not_found",
@@ -440,7 +636,13 @@ class ResearchApplicationService:
 
     def _ensure_run_succeeded(self, record: ResearchRunRecord) -> None:
         status = _result_status(record.result)
-        if status in {"failed", "halted", "cancelled"}:
+        if status in {
+            "failed",
+            "halted",
+            "cancelled",
+            "blocked",
+            "waiting_approval",
+        }:
             raise ResearchServiceError(
                 "research_run_failed",
                 f"research run {record.run_id} ended with status {status}",
@@ -451,7 +653,7 @@ class ResearchApplicationService:
 
     def _ensure_quality_passed(self, record: ResearchRunRecord) -> None:
         quality = getattr(record.result, "quality", None)
-        if quality is None or bool(getattr(quality, "passed", True)):
+        if quality is not None and getattr(quality, "passed", None) is True:
             return
         raise ResearchServiceError(
             "quality_gate_failed",
@@ -463,6 +665,34 @@ class ResearchApplicationService:
                 "gateFailures": _quality_gate_failures(quality),
             },
             user_action_required=True,
+        )
+
+    def _ensure_run_accepted(self, record: ResearchRunRecord) -> None:
+        if record.disposition is ResearchRunDisposition.ACCEPTED:
+            return
+        raise ResearchServiceError(
+            "research_run_failed",
+            f"research run {record.run_id} was quarantined",
+            status_code=500,
+            details={
+                "runId": record.run_id,
+                "status": _result_status(record.result),
+            },
+            retryable=False,
+        )
+
+    def _reconcile_failed_run(
+        self,
+        request: AnalyzePaperRequest,
+        actor_scope: ResearchActorScope,
+    ) -> ResearchRunRecord | None:
+        if self._run_reconciler is None:
+            return None
+        return self._run_reconciler.reconcile_failed_run(
+            request,
+            identity_scope_ref=research_identity_scope_ref(
+                actor_scope.to_metadata()
+            ),
         )
 
     def _analyze_response(self, record: ResearchRunRecord) -> dict[str, Any]:
@@ -623,6 +853,15 @@ def _research_actor_forbidden() -> ResearchActorAuthorizationError:
         "forbidden",
         "Research actor scope does not match the authenticated principal",
         status_code=403,
+        user_action_required=True,
+    )
+
+
+def _diagnostic_artifact_not_found(run_id: str) -> ResearchServiceError:
+    return ResearchServiceError(
+        "research_run_failed",
+        f"research diagnostic artifact not found: {run_id}",
+        status_code=404,
         user_action_required=True,
     )
 
@@ -849,6 +1088,36 @@ def _run_store_service_error(
             "reason": error.reason_code,
         },
         retryable=error.retryable,
+    )
+
+
+def _research_runtime_service_error(error: Exception) -> ResearchServiceError:
+    return ResearchServiceError(
+        "research_run_failed",
+        "research run failed",
+        status_code=500,
+        details={"error_type": type(error).__name__},
+        retryable=True,
+    )
+
+
+def _record_recovery_failure(
+    primary_error: ResearchServiceError,
+    recovery_error: Exception,
+) -> None:
+    """Surface failed diagnostic persistence without changing the API shape."""
+
+    primary_error.add_note(
+        "Research failed-run diagnostics could not be durably reconciled: "
+        f"{type(recovery_error).__name__}"
+    )
+    LOGGER.error(
+        "Research failed-run diagnostic reconciliation failed",
+        exc_info=(
+            type(recovery_error),
+            recovery_error,
+            recovery_error.__traceback__,
+        ),
     )
 
 

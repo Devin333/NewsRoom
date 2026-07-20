@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
 from framework.harness.workflow.step import HarnessStepSpec
 from framework.shared.json import to_jsonable
 
@@ -49,6 +50,7 @@ class HarnessWorkflowSpec:
     terminal_policies: dict[str, Any] = field(default_factory=dict)
     routing_rules: tuple[HarnessRoutingRule, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    terminal_side_effect_policy: HarnessTerminalSideEffectPolicy | dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         workflow_id = str(self.workflow_id).strip()
@@ -70,9 +72,30 @@ class HarnessWorkflowSpec:
         for rule in self.routing_rules:
             if rule.from_step not in step_ids or rule.to_step not in step_ids:
                 raise HarnessValidationError("routing rules must reference declared steps")
+        terminal_policies = dict(self.terminal_policies)
+        embedded_policy = terminal_policies.get("side_effect")
+        explicit_policy = self.terminal_side_effect_policy
+        if explicit_policy is not None and not isinstance(
+            explicit_policy,
+            HarnessTerminalSideEffectPolicy,
+        ):
+            explicit_policy = HarnessTerminalSideEffectPolicy.from_dict(explicit_policy)
+        if embedded_policy is not None:
+            if isinstance(embedded_policy, HarnessTerminalSideEffectPolicy):
+                parsed_embedded = embedded_policy
+            elif isinstance(embedded_policy, dict):
+                parsed_embedded = HarnessTerminalSideEffectPolicy.from_dict(embedded_policy)
+            else:
+                raise HarnessValidationError("terminal side-effect policy must be an object")
+            if explicit_policy is not None and explicit_policy != parsed_embedded:
+                raise HarnessValidationError("terminal side-effect policy declarations conflict")
+            explicit_policy = parsed_embedded
+        if explicit_policy is not None:
+            terminal_policies["side_effect"] = explicit_policy.to_dict()
         object.__setattr__(self, "workflow_id", workflow_id)
         object.__setattr__(self, "entry_step_id", entry_step_id)
-        object.__setattr__(self, "terminal_policies", dict(self.terminal_policies))
+        object.__setattr__(self, "terminal_policies", terminal_policies)
+        object.__setattr__(self, "terminal_side_effect_policy", explicit_policy)
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     @property

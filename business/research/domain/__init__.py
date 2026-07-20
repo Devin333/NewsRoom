@@ -44,6 +44,18 @@ from business.research.domain.reader_repair import (
     ReaderRepairSkillCandidateSeed,
     ReaderRepairStrategy,
 )
+from business.research.domain.run_disposition import (
+    REQUIRED_ACCEPTED_ARTIFACT_TYPES,
+    ResearchRunDisposition,
+    ResearchRunDispositionDecision,
+    ResearchRunDispositionReason,
+    apply_research_run_disposition,
+    derive_research_run_disposition,
+    disposition_claim_matches,
+    research_event_tenant_id,
+    research_identity_scope_ref,
+    research_subject_scope_ref,
+)
 
 __all__ = [
     "CandidateReview",
@@ -69,6 +81,10 @@ __all__ = [
     "ReaderRepairResult",
     "ReaderRepairSkillCandidateSeed",
     "ReaderRepairStrategy",
+    "REQUIRED_ACCEPTED_ARTIFACT_TYPES",
+    "ResearchRunDisposition",
+    "ResearchRunDispositionDecision",
+    "ResearchRunDispositionReason",
     "ResearchAnalysis",
     "ResearchClaim",
     "ResearchDocument",
@@ -87,5 +103,11 @@ __all__ = [
     "SourceScopedValue",
     "ThreeMinuteRead",
     "compute_star_growth",
+    "derive_research_run_disposition",
+    "apply_research_run_disposition",
+    "disposition_claim_matches",
+    "research_event_tenant_id",
+    "research_identity_scope_ref",
+    "research_subject_scope_ref",
     "stable_research_id",
 ]

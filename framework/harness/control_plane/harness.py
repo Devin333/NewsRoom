@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable, Iterable
 
@@ -79,6 +79,18 @@ from framework.harness.quality.verdict import (
     quality_verdict_evidence,
     verification_evidence,
 )
+from framework.harness.side_effects import (
+    HarnessSideEffectApprovalRequest,
+    HarnessSideEffectApprovalResolver,
+    HarnessSideEffectDecision,
+    HarnessSideEffectDisposition,
+    HarnessSideEffectHandlerBinding,
+    HarnessSideEffectIntent,
+    HarnessSideEffectOrigin,
+    HarnessSideEffectOutcome,
+    HarnessSideEffectRegistry,
+    HarnessSideEffectStorePort,
+)
 from framework.harness.workflow.step import HarnessStepSpec
 from framework.harness.workflow.spec import HarnessRouteKind
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
@@ -93,7 +105,21 @@ _ACTIVITY_RESULT_METADATA_KEYS = frozenset(
         "worker_result",
         "error_ref",
         "approval_granted",
+        "approval_evidence_ref",
+        "side_effect_decision_ref",
+        "side_effect_effect_ref",
+        "side_effect_intent_ref",
+        "side_effect_outcome_ref",
+        "side_effect_disposition",
     }
+)
+_SIDE_EFFECT_STATE_REF_KEYS = (
+    "approval_evidence_ref",
+    "side_effect_effect_ref",
+    "side_effect_intent_ref",
+    "side_effect_decision_ref",
+    "side_effect_outcome_ref",
+    "side_effect_disposition",
 )
 
 if TYPE_CHECKING:
@@ -107,10 +133,31 @@ class HarnessRunResult:
     events: tuple[HarnessEvent, ...]
     worker_results: dict[str, HarnessWorkerResult]
     quality_verdicts: dict[str, HarnessQualityVerdict]
+    side_effect_outcomes: dict[str, HarnessSideEffectOutcome] = field(default_factory=dict)
 
     @property
     def succeeded(self) -> bool:
         return self.state.status == HarnessRunStatus.SUCCEEDED
+
+
+@dataclass(frozen=True)
+class _PreparedSideEffect:
+    slot: str
+    intent: HarnessSideEffectIntent
+    authorization: HarnessSideEffectDecision
+    binding: HarnessSideEffectHandlerBinding
+    prepare: bool
+
+
+@dataclass(frozen=True)
+class _PendingCompletionDecision:
+    decision_type: HarnessDecisionType
+    step_id: str | None
+    authorization_projection: Mapping[str, Any]
+    command_ordinal: int
+    causation_id: str
+    decided_at: Any
+    history_cutoff_id: str | None
 
 
 class InMemoryHarnessEventPort:
@@ -316,6 +363,9 @@ class HarnessControlPlane:
         plan_gates: tuple[DeterministicGate, ...] | None = None,
         verify_gates: tuple[DeterministicGate, ...] | None = None,
         gate_registry: DeterministicGateRegistry | None = None,
+        side_effect_registry: HarnessSideEffectRegistry | None = None,
+        side_effect_store: HarnessSideEffectStorePort | None = None,
+        approval_evidence_resolver: HarnessSideEffectApprovalResolver | None = None,
     ) -> None:
         if event_port is None:
             raise HarnessValidationError(
@@ -331,6 +381,14 @@ class HarnessControlPlane:
         self.plan_gates = plan_gates or default_plan_gates()
         self.verify_gates = verify_gates or default_verify_gates()
         self.gate_registry = gate_registry if gate_registry is not None else DeterministicGateRegistry()
+        if side_effect_registry is not None and not isinstance(
+            side_effect_registry,
+            HarnessSideEffectRegistry,
+        ):
+            raise HarnessValidationError("side_effect_registry must be HarnessSideEffectRegistry")
+        self.side_effect_registry = side_effect_registry or HarnessSideEffectRegistry()
+        self.side_effect_store = side_effect_store
+        self.approval_evidence_resolver = approval_evidence_resolver
         self._iterable_workers: dict[str, list[HarnessWorkerResult]] = {}
         self._committed_events: list[HarnessEvent] = []
         self._state_versions: dict[str, int] = {}
@@ -339,6 +397,14 @@ class HarnessControlPlane:
         self._recovered_gate_results: tuple[HarnessGateResult, ...] = ()
         self._recovered_quality_verdict: HarnessQualityVerdict | None = None
         self._gate_bindings_by_run: dict[str, dict[str, tuple[GateBinding, ...]]] = {}
+        self._side_effect_bindings_by_run: dict[
+            str,
+            dict[str, HarnessSideEffectHandlerBinding],
+        ] = {}
+        self._terminal_side_effect_bindings: dict[str, HarnessSideEffectHandlerBinding] = {}
+        self._side_effect_intents: dict[str, dict[str, HarnessSideEffectIntent]] = {}
+        self._side_effect_outcomes: dict[str, dict[str, HarnessSideEffectOutcome]] = {}
+        self._pending_completion_decisions: dict[str, _PendingCompletionDecision] = {}
         self._prepared_run_specs: dict[str, str] = {}
 
     def _prepare_run_spec(self, run_spec: HarnessRunSpec) -> None:
@@ -406,7 +472,62 @@ class HarnessControlPlane:
                     },
                 )
 
+        side_effect_bindings: dict[str, HarnessSideEffectHandlerBinding] = {}
+        for step in run_spec.workflow.steps:
+            if step.side_effect_handler is None:
+                continue
+            side_effect_bindings[step.step_id] = self.side_effect_registry.resolve(
+                step.side_effect_handler,
+                origin=HarnessSideEffectOrigin.WORKER.value,
+            )
+        terminal_policy = run_spec.workflow.terminal_side_effect_policy
+        if terminal_policy is not None:
+            terminal_binding = self.side_effect_registry.resolve(
+                terminal_policy.handler,
+                kind=terminal_policy.kind,
+                origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,
+            )
+            allowed_attempts = run_spec.budget.max_retries_per_step + 1
+            if terminal_policy.retry_limit > allowed_attempts:
+                raise HarnessValidationError(
+                    "terminal side-effect retry limit exceeds the run retry budget",
+                    code="terminal_side_effect_retry_limit_exceeded",
+                    details={
+                        "code": "terminal_side_effect_retry_limit_exceeded",
+                        "retry_limit": terminal_policy.retry_limit,
+                        "allowed_attempts": allowed_attempts,
+                    },
+                )
+            self._terminal_side_effect_bindings[run_spec.run_id] = terminal_binding
+        if (side_effect_bindings or terminal_policy is not None) and self.side_effect_store is None:
+            raise HarnessValidationError(
+                "declared side effects require an injected durable side-effect store",
+                code="side_effect_store_missing",
+                details={"code": "side_effect_store_missing"},
+            )
+        if side_effect_bindings or terminal_policy is not None:
+            for field_name in ("identity_scope_ref", "subject_scope_ref"):
+                scope_ref = run_spec.metadata.get(field_name)
+                if not _is_checksum_ref(scope_ref):
+                    raise HarnessValidationError(
+                        "declared side effects require authoritative checksum scope refs",
+                        code="side_effect_scope_missing",
+                        details={"code": "side_effect_scope_missing", "scope": field_name},
+                    )
+        approval_required = any(
+            step.side_effect_handler is not None
+            and step.metadata.get("approval_required") is True
+            for step in run_spec.workflow.steps
+        ) or bool(terminal_policy is not None and terminal_policy.requires_approval)
+        if approval_required and self.approval_evidence_resolver is None:
+            raise HarnessValidationError(
+                "declared side-effect approval policy requires an evidence resolver",
+                code="side_effect_approval_resolver_missing",
+                details={"code": "side_effect_approval_resolver_missing"},
+            )
+
         self._gate_bindings_by_run[run_spec.run_id] = bindings
+        self._side_effect_bindings_by_run[run_spec.run_id] = side_effect_bindings
         self._prepared_run_specs[run_spec.run_id] = spec_ref
 
     def initialize(self, run_spec: HarnessRunSpec) -> HarnessState:
@@ -458,6 +579,7 @@ class HarnessControlPlane:
         *,
         approved: bool,
         reason: str | None = None,
+        approval_ref: str | None = None,
     ) -> HarnessRunResult:
         """Durably resume or cancel one approval-waiting Harness projection."""
 
@@ -515,6 +637,7 @@ class HarnessControlPlane:
                 replay_activity=replay_activity,
             )
             transition_time = _next_transition_time(state)
+            self._quarantine_prepared_side_effects(state)
             cancelled = transition_step(
                 state,
                 step_id,
@@ -548,6 +671,16 @@ class HarnessControlPlane:
                 transition_kind="approval_cancel",
             )
             return self._result(cancelled, decisions=[decision])
+
+        step_spec = _get_step_spec(state, step_id)
+        if step_spec.side_effect_handler is not None and (
+            not isinstance(approval_ref, str) or not approval_ref.strip()
+        ):
+            raise HarnessValidationError(
+                "effectful approval resume requires an opaque durable approval ref",
+                code="side_effect_approval_ref_required",
+                details={"code": "side_effect_approval_ref_required", "step_id": step_id},
+            )
 
         # Recovery may have only an integrity summary for the worker activity.
         # Prove the complete recorded result is available before committing any
@@ -592,7 +725,14 @@ class HarnessControlPlane:
             resumed,
             step_id,
             HarnessStepStatus.RUNNING,
-            metadata={"approval_granted": True},
+            metadata={
+                "approval_granted": True,
+                **(
+                    {}
+                    if approval_ref is None
+                    else {"approval_evidence_ref": approval_ref.strip()}
+                ),
+            },
             current_step_id=step_id,
             at=transition_time,
         )
@@ -638,6 +778,9 @@ class HarnessControlPlane:
         quality_verdict = initial_quality_verdict
 
         while state.status not in _run_loop_stop_statuses():
+            pending_completion = self._pending_completion_decisions.get(
+                state.run_spec.run_id
+            )
             replay_activity = _resolve_replay_activity_binding(
                 self.event_port,
                 state,
@@ -649,6 +792,16 @@ class HarnessControlPlane:
                 expected_activity=(
                     None if replay_activity is None else replay_activity[0]
                 ),
+                command_ordinal=(
+                    None
+                    if pending_completion is None
+                    else pending_completion.command_ordinal
+                ),
+                causation_id=(
+                    None
+                    if pending_completion is None
+                    else pending_completion.causation_id
+                ),
             )
             decision = self.scheduler.next_decision(
                 state,
@@ -656,11 +809,75 @@ class HarnessControlPlane:
                 quality_verdict=quality_verdict,
                 gate_results=gate_results,
             )
-            self._record_decision(
-                decision,
+            if pending_completion is not None:
+                if (
+                    decision.decision_type is not pending_completion.decision_type
+                    or decision.step_id != pending_completion.step_id
+                ):
+                    raise EventReplayMismatchError(
+                        sequence=pending_completion.command_ordinal,
+                        reason="dangling side-effect decision conflicts with recovered scheduler state",
+                    )
+                decision = replace(decision, decided_at=pending_completion.decided_at)
+            prepared_side_effect = self._prepare_completion_side_effect(
+                state,
+                decision=decision,
                 decision_input=decision_input,
-                replay_activity=replay_activity,
+                worker_result=worker_result,
+                gate_results=gate_results,
+                quality_verdict=quality_verdict,
             )
+            if prepared_side_effect is not None:
+                authorization_projection = _side_effect_authorization_projection(
+                    prepared_side_effect.authorization
+                )
+                decision = replace(
+                    decision,
+                    payload={
+                        **decision.payload,
+                        "side_effect_authorization": authorization_projection,
+                    },
+                )
+                decision_input = self._decision_input(
+                    state,
+                    gate_results=gate_results,
+                    quality_verdict=quality_verdict,
+                    expected_activity=(
+                        None if replay_activity is None else replay_activity[0]
+                    ),
+                    side_effect_authorization=authorization_projection,
+                    command_ordinal=(
+                        None
+                        if pending_completion is None
+                        else pending_completion.command_ordinal
+                    ),
+                    causation_id=(
+                        None
+                        if pending_completion is None
+                        else pending_completion.causation_id
+                    ),
+                )
+            if pending_completion is not None:
+                if prepared_side_effect is None or (
+                    normalize_canonical_json(
+                        authorization_projection,
+                        path="$.harness_side_effect_authorization.recomputed",
+                    )
+                    != normalize_canonical_json(
+                        pending_completion.authorization_projection,
+                        path="$.harness_side_effect_authorization.recorded",
+                    )
+                ):
+                    raise EventReplayMismatchError(
+                        sequence=pending_completion.command_ordinal,
+                        reason="dangling side-effect authorization cannot be reconstructed exactly",
+                    )
+            else:
+                self._record_decision(
+                    decision,
+                    decision_input=decision_input,
+                    replay_activity=replay_activity,
+                )
             decisions.append(decision)
 
             if decision.decision_type == HarnessDecisionType.START_STEP:
@@ -682,7 +899,27 @@ class HarnessControlPlane:
                 if quality_verdict is not None:
                     quality_verdicts[decision.step_id or ""] = quality_verdict
             elif decision.decision_type == HarnessDecisionType.COMPLETE_STEP:
-                state = self._complete_step(state, decision, worker_result)
+                try:
+                    state = self._complete_step(
+                        state,
+                        decision,
+                        worker_result,
+                        gate_results=gate_results,
+                        quality_verdict=quality_verdict,
+                        prepared_side_effect=prepared_side_effect,
+                    )
+                except HarnessValidationError as exc:
+                    if exc.code != "effect_retry_exhausted":
+                        raise
+                    state, failure_decision = self._fail_side_effect_completion(
+                        state,
+                        completion_decision=decision,
+                        prepared_side_effect=prepared_side_effect,
+                        gate_results=gate_results,
+                        quality_verdict=quality_verdict,
+                        replay_activity=replay_activity,
+                    )
+                    decisions.append(failure_decision)
                 gate_results = ()
             elif decision.decision_type == HarnessDecisionType.ROUTE_TO_STEP:
                 state = self._route_to_step(state, decision)
@@ -708,7 +945,26 @@ class HarnessControlPlane:
                 state = self._wait_for_approval(state, decision)
                 gate_results = ()
             elif decision.decision_type == HarnessDecisionType.COMPLETE_RUN:
-                state = self._finish_run(state, HarnessRunStatus.SUCCEEDED, decision)
+                try:
+                    state = self._complete_terminal_side_effect(
+                        state,
+                        decision,
+                        prepared_side_effect=prepared_side_effect,
+                    )
+                except HarnessValidationError as exc:
+                    if exc.code != "effect_retry_exhausted":
+                        raise
+                    state, failure_decision = self._fail_side_effect_completion(
+                        state,
+                        completion_decision=decision,
+                        prepared_side_effect=prepared_side_effect,
+                        gate_results=gate_results,
+                        quality_verdict=quality_verdict,
+                        replay_activity=replay_activity,
+                    )
+                    decisions.append(failure_decision)
+                else:
+                    state = self._finish_run(state, HarnessRunStatus.SUCCEEDED, decision)
             elif decision.decision_type == HarnessDecisionType.FAIL_RUN:
                 state = self._finish_run(state, HarnessRunStatus.FAILED, decision)
             elif decision.decision_type == HarnessDecisionType.HALT_RUN:
@@ -719,6 +975,9 @@ class HarnessControlPlane:
                 state = self._finish_run(state, HarnessRunStatus.CANCELLED, decision)
             else:
                 state = self._finish_run(state, HarnessRunStatus.FAILED, decision)
+
+            if pending_completion is not None:
+                self._pending_completion_decisions.pop(state.run_spec.run_id, None)
 
         return self._result(
             state,
@@ -1181,15 +1440,43 @@ class HarnessControlPlane:
         state: HarnessState,
         decision: HarnessDecision,
         worker_result: HarnessWorkerResult | None,
+        *,
+        gate_results: tuple[HarnessGateResult, ...],
+        quality_verdict: HarnessQualityVerdict | None,
+        prepared_side_effect: _PreparedSideEffect | None,
     ) -> HarnessState:
         step_id = _require_step(decision)
+        del gate_results, quality_verdict
+        side_effect_outcome = (
+            None
+            if prepared_side_effect is None
+            else self._execute_prepared_side_effect(prepared_side_effect)
+        )
         previous = state
         transition_time = _next_transition_time(previous)
+        side_effect_metadata: dict[str, Any] = {}
+        if side_effect_outcome is not None:
+            assert prepared_side_effect is not None
+            side_effect_metadata = {
+                "approval_evidence_ref": (
+                    prepared_side_effect.authorization.approval_evidence_ref
+                ),
+                "side_effect_effect_ref": checksum_for(side_effect_outcome.effect_id),
+                "side_effect_intent_ref": self._side_effect_intents[
+                    state.run_spec.run_id
+                ][step_id].checksum,
+                "side_effect_decision_ref": side_effect_outcome.decision_ref,
+                "side_effect_outcome_ref": side_effect_outcome.checksum,
+                "side_effect_disposition": side_effect_outcome.disposition.value,
+            }
         state = transition_step(
             state,
             step_id,
             HarnessStepStatus.SUCCEEDED,
-            metadata={"worker_result": worker_result.to_dict() if worker_result is not None else None},
+            metadata={
+                "worker_result": worker_result.to_dict() if worker_result is not None else None,
+                **side_effect_metadata,
+            },
             current_step_id=step_id,
             at=transition_time,
         )
@@ -1213,6 +1500,332 @@ class HarnessControlPlane:
         if previous.status != state.status:
             self._record_state_change(previous, state, transition_kind="verify_complete")
         return state
+
+    def _prepare_completion_side_effect(
+        self,
+        state: HarnessState,
+        *,
+        decision: HarnessDecision,
+        decision_input: Mapping[str, Any],
+        worker_result: HarnessWorkerResult | None,
+        gate_results: tuple[HarnessGateResult, ...],
+        quality_verdict: HarnessQualityVerdict | None,
+    ) -> _PreparedSideEffect | None:
+        if decision.decision_type is HarnessDecisionType.COMPLETE_STEP:
+            step_id = _require_step(decision)
+            return self._prepare_worker_side_effect(
+                state,
+                scheduler_decision=decision,
+                decision_input=decision_input,
+                step_id=step_id,
+                worker_result=worker_result,
+                gate_results=gate_results,
+                quality_verdict=quality_verdict,
+            )
+        if decision.decision_type is HarnessDecisionType.COMPLETE_RUN:
+            return self._prepare_terminal_side_effect(
+                state,
+                scheduler_decision=decision,
+                decision_input=decision_input,
+            )
+        return None
+
+    def _prepare_worker_side_effect(
+        self,
+        state: HarnessState,
+        *,
+        scheduler_decision: HarnessDecision,
+        decision_input: Mapping[str, Any],
+        step_id: str,
+        worker_result: HarnessWorkerResult | None,
+        gate_results: tuple[HarnessGateResult, ...],
+        quality_verdict: HarnessQualityVerdict | None,
+    ) -> _PreparedSideEffect | None:
+        step_spec = _get_step_spec(state, step_id)
+        declared_binding = self._side_effect_bindings_by_run.get(
+            state.run_spec.run_id,
+            {},
+        ).get(step_id)
+        intent = None if worker_result is None else worker_result.effect_intent
+        if declared_binding is None:
+            if intent is not None:
+                raise HarnessValidationError(
+                    "worker returned a side-effect intent for an undeclared step",
+                    code="undeclared_side_effect_intent",
+                    details={"code": "undeclared_side_effect_intent", "step_id": step_id},
+                )
+            return None
+        if worker_result is None or intent is None:
+            raise HarnessValidationError(
+                "declared side-effect step requires one typed worker intent",
+                code="side_effect_intent_missing",
+                details={"code": "side_effect_intent_missing", "step_id": step_id},
+            )
+        if not gate_results or any(not result.passed for result in gate_results):
+            raise HarnessValidationError(
+                "side-effect authorization requires passing deterministic gate evidence",
+                code="side_effect_gate_evidence_missing",
+                details={"code": "side_effect_gate_evidence_missing", "step_id": step_id},
+            )
+        if quality_verdict is not None and not quality_verdict.passed:
+            raise HarnessValidationError(
+                "side-effect authorization requires a passing aggregate verdict",
+                code="side_effect_verdict_failed",
+                details={"code": "side_effect_verdict_failed", "step_id": step_id},
+            )
+        bound_intent = self._bind_worker_side_effect_intent(
+            state,
+            step_id=step_id,
+            worker_result=worker_result,
+            intent=intent,
+            binding=declared_binding,
+        )
+        authorization = self._build_worker_side_effect_decision(
+            state,
+            step_id=step_id,
+            intent=bound_intent,
+            binding=declared_binding,
+            gate_results=gate_results,
+            quality_verdict=quality_verdict,
+            decision_input=decision_input,
+            decided_at=scheduler_decision.decided_at,
+        )
+        return _PreparedSideEffect(
+            slot=step_id,
+            intent=bound_intent,
+            authorization=authorization,
+            binding=declared_binding,
+            prepare=True,
+        )
+
+    def _bind_worker_side_effect_intent(
+        self,
+        state: HarnessState,
+        *,
+        step_id: str,
+        worker_result: HarnessWorkerResult,
+        intent: HarnessSideEffectIntent,
+        binding: HarnessSideEffectHandlerBinding,
+    ) -> HarnessSideEffectIntent:
+        step_state = get_step_state(state, step_id)
+        if (
+            intent.origin is not HarnessSideEffectOrigin.WORKER
+            or intent.run_id != state.run_spec.run_id
+            or intent.step_id != step_id
+            or intent.attempt != step_state.attempts
+        ):
+            raise HarnessValidationError(
+                "worker side-effect intent does not match run, step, and attempt identity",
+                code="side_effect_intent_identity_mismatch",
+                details={"code": "side_effect_intent_identity_mismatch", "step_id": step_id},
+            )
+        expected_identity_scope = _expected_identity_scope_ref(state, step_id)
+        expected_subject_scope = _expected_subject_scope_ref(state)
+        if expected_identity_scope is not None and intent.identity_scope_ref != expected_identity_scope:
+            raise HarnessValidationError(
+                "worker side-effect intent identity scope mismatch",
+                code="side_effect_scope_mismatch",
+                details={"code": "side_effect_scope_mismatch", "scope": "identity"},
+            )
+        if expected_subject_scope is not None and intent.subject_scope_ref != expected_subject_scope:
+            raise HarnessValidationError(
+                "worker side-effect intent subject scope mismatch",
+                code="side_effect_scope_mismatch",
+                details={"code": "side_effect_scope_mismatch", "scope": "subject"},
+            )
+        if intent.kind != binding.kind:
+            raise HarnessValidationError(
+                "worker side-effect intent kind conflicts with workflow declaration",
+                code="side_effect_handler_kind_mismatch",
+            )
+        if intent.handler != binding.reference:
+            raise HarnessValidationError(
+                "worker side-effect intent handler conflicts with workflow declaration",
+                code="side_effect_handler_mismatch",
+            )
+        worker_result_ref = worker_result.candidate_result_ref
+        candidate_checksum = checksum_for(
+            {
+                "worker_result_ref": worker_result_ref,
+                "payload": intent.payload,
+                "candidate_refs": intent.candidate_refs,
+                "atomic_group": intent.atomic_group,
+            }
+        )
+        return replace(
+            intent,
+            worker_result_ref=worker_result_ref,
+            source_intent_ref=intent.checksum,
+            candidate_checksum=candidate_checksum,
+            checksum=None,
+        )
+
+    def _build_worker_side_effect_decision(
+        self,
+        state: HarnessState,
+        *,
+        step_id: str,
+        intent: HarnessSideEffectIntent,
+        binding: HarnessSideEffectHandlerBinding,
+        gate_results: tuple[HarnessGateResult, ...],
+        quality_verdict: HarnessQualityVerdict | None,
+        decision_input: Mapping[str, Any],
+        decided_at: Any,
+    ) -> HarnessSideEffectDecision:
+        step_spec = _get_step_spec(state, step_id)
+        step_state = get_step_state(state, step_id)
+        approval_ref = self._resolve_worker_side_effect_approval(
+            state,
+            step_id=step_id,
+            intent=intent,
+        )
+        budget = self._budget_snapshot(state, None)
+        gate_refs, gate_result_refs = _side_effect_gate_refs(gate_results)
+        allowed_attempts = min(
+            step_spec.retry_policy.effective_max_attempts,
+            state.run_spec.budget.max_retries_per_step + 1,
+        )
+        decision_identity = {
+            "intent_ref": intent.checksum,
+            "handler": str(binding.reference),
+            "gate_result_refs": gate_result_refs,
+            "approval_evidence_ref": approval_ref,
+            "budget_ref": checksum_for(budget.to_dict()),
+            "command_ordinal": int(decision_input["command_ordinal"]),
+            "causation_id": str(decision_input["causation_id"]),
+        }
+        return HarnessSideEffectDecision(
+            decision_id=f"harness-side-effect-decision:{checksum_for(decision_identity).removeprefix('sha256:')}",
+            intent_ref=intent.checksum,
+            effect_id=intent.effect_id,
+            kind=intent.kind,
+            origin=intent.origin,
+            run_id=intent.run_id,
+            handler=binding.reference,
+            identity_scope_ref=intent.identity_scope_ref,
+            subject_scope_ref=intent.subject_scope_ref,
+            atomic_group=intent.atomic_group,
+            idempotency_key=intent.idempotency_key,
+            command_ordinal=int(decision_input["command_ordinal"]),
+            causation_id=str(decision_input["causation_id"]),
+            disposition=HarnessSideEffectDisposition.PREPARED,
+            step_id=step_id,
+            attempt=step_state.attempts,
+            worker_result_ref=intent.worker_result_ref,
+            gate_refs=gate_refs,
+            gate_result_refs=gate_result_refs,
+            aggregate_verdict_ref=_side_effect_aggregate_verdict_ref(
+                gate_results,
+                gate_result_refs=gate_result_refs,
+                quality_verdict=quality_verdict,
+            ),
+            approval_evidence_ref=approval_ref,
+            budget_ref=checksum_for(budget.to_dict()),
+            effect_attempt=1,
+            effect_attempt_limit=allowed_attempts,
+            decided_at=decided_at,
+        )
+
+    def _resolve_worker_side_effect_approval(
+        self,
+        state: HarnessState,
+        *,
+        step_id: str,
+        intent: HarnessSideEffectIntent,
+    ) -> str:
+        step_spec = _get_step_spec(state, step_id)
+        if step_spec.metadata.get("approval_required") is not True:
+            return checksum_for(
+                {
+                    "policy": "not_required",
+                    "step_id": step_id,
+                    "handler": str(step_spec.side_effect_handler),
+                    "version": "1",
+                }
+            )
+        step_state = get_step_state(state, step_id)
+        approval_ref = step_state.metadata.get("approval_evidence_ref")
+        if not isinstance(approval_ref, str) or not approval_ref.strip():
+            raise HarnessValidationError(
+                "effectful step has no durable approval evidence ref",
+                code="side_effect_approval_missing",
+            )
+        if self.approval_evidence_resolver is None:
+            raise HarnessValidationError(
+                "effectful step requires an injected approval evidence resolver",
+                code="side_effect_approval_resolver_missing",
+            )
+        evidence = self.approval_evidence_resolver.resolve(
+            HarnessSideEffectApprovalRequest(
+                run_id=state.run_spec.run_id,
+                step_id=step_id,
+                attempt=step_state.attempts,
+                effect_id=intent.effect_id,
+                candidate_checksum=intent.candidate_checksum,
+                identity_scope_ref=intent.identity_scope_ref,
+                subject_scope_ref=intent.subject_scope_ref,
+                decision_version="1",
+            ),
+            approval_ref=approval_ref,
+        )
+        return evidence.approval_ref
+
+    def _execute_prepared_side_effect(
+        self,
+        prepared: _PreparedSideEffect,
+    ) -> HarnessSideEffectOutcome:
+        outcome = self._commit_authorized_side_effect(
+            prepared.intent,
+            prepared.authorization,
+            binding=prepared.binding,
+            prepare=prepared.prepare,
+        )
+        run_id = prepared.intent.run_id
+        self._side_effect_intents.setdefault(run_id, {})[prepared.slot] = prepared.intent
+        self._side_effect_outcomes.setdefault(run_id, {})[prepared.slot] = outcome
+        return outcome
+
+    def _commit_authorized_side_effect(
+        self,
+        intent: HarnessSideEffectIntent,
+        authorization: HarnessSideEffectDecision,
+        *,
+        binding: HarnessSideEffectHandlerBinding,
+        prepare: bool,
+    ) -> HarnessSideEffectOutcome:
+        if self.side_effect_store is None:  # pragma: no cover - preflight enforces this
+            raise HarnessValidationError("side-effect store is unavailable")
+        committed_decision = self.side_effect_store.put_decision(authorization)
+        if committed_decision != authorization:
+            raise HarnessValidationError("side-effect store returned a conflicting authorization")
+        existing = self.side_effect_store.get_outcome(
+            effect_id=intent.effect_id,
+            identity_scope_ref=intent.identity_scope_ref,
+            subject_scope_ref=intent.subject_scope_ref,
+            idempotency_key=intent.idempotency_key,
+        )
+        if existing is None:
+            self.side_effect_store.reserve_attempt(authorization)
+            handler_method = getattr(binding.handler, "prepare", None) if prepare else None
+            if not callable(handler_method):
+                handler_method = binding.handler.commit
+            outcome = handler_method(intent, authorization)
+            if not isinstance(outcome, HarnessSideEffectOutcome):
+                raise HarnessValidationError("side-effect handler returned an invalid outcome")
+            self.side_effect_store.put_outcome(outcome)
+        resolved = self.side_effect_store.get_outcome(
+            effect_id=intent.effect_id,
+            identity_scope_ref=intent.identity_scope_ref,
+            subject_scope_ref=intent.subject_scope_ref,
+            idempotency_key=intent.idempotency_key,
+        )
+        if resolved is None:
+            raise HarnessValidationError(
+                "side-effect outcome is not durably readable",
+                code="side_effect_outcome_missing",
+            )
+        _validate_side_effect_outcome(intent, authorization, resolved)
+        return resolved
 
     def _route_to_step(self, state: HarnessState, decision: HarnessDecision) -> HarnessState:
         target_step_id = decision.target_step_id or state.run_spec.workflow.entry_step_id
@@ -1462,9 +2075,286 @@ class HarnessControlPlane:
             )
         return state
 
+    def _prepare_terminal_side_effect(
+        self,
+        state: HarnessState,
+        *,
+        scheduler_decision: HarnessDecision,
+        decision_input: Mapping[str, Any],
+    ) -> _PreparedSideEffect | None:
+        policy = state.run_spec.workflow.terminal_side_effect_policy
+        if policy is None:
+            return None
+        binding = self._terminal_side_effect_bindings.get(state.run_spec.run_id)
+        if binding is None:
+            raise HarnessValidationError(
+                "terminal side-effect handler binding is unavailable",
+                code="terminal_side_effect_policy_missing",
+            )
+        if any(step.status is not HarnessStepStatus.SUCCEEDED for step in state.step_states):
+            raise HarnessValidationError(
+                "terminal side effect requires every step outcome to be durable and successful",
+                code="terminal_side_effect_steps_incomplete",
+            )
+        run_id = state.run_spec.run_id
+        state_checksum = HarnessStateProjection.from_state(state).checksum
+        completion_input_ref = checksum_for(decision_input)
+        identity_scope_ref = _expected_identity_scope_ref(state, state.current_step_id)
+        subject_scope_ref = _expected_subject_scope_ref(state)
+        if identity_scope_ref is None or subject_scope_ref is None:
+            raise HarnessValidationError(
+                "terminal side effect has no authoritative scope refs",
+                code="side_effect_scope_missing",
+            )
+        prepared = self._durable_prepared_outcomes(state)
+        atomic_groups = {outcome.atomic_group for outcome in prepared}
+        if len(atomic_groups) > 1:
+            raise HarnessValidationError(
+                "terminal publication cannot combine conflicting atomic groups",
+                code="side_effect_atomic_group_mismatch",
+            )
+        candidate_refs = tuple(
+            ref
+            for outcome in prepared
+            for ref in outcome.candidate_refs
+        )
+        effect_identity = {
+            "run_id": run_id,
+            "policy": policy.reference,
+            "state_checksum": state_checksum,
+            "completion_input_ref": completion_input_ref,
+        }
+        intent = HarnessSideEffectIntent(
+            effect_id=f"harness-terminal-effect:{checksum_for(effect_identity).removeprefix('sha256:')}",
+            kind=policy.kind,
+            run_id=run_id,
+            origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL,
+            atomic_group=(
+                prepared[0].atomic_group
+                if prepared
+                else f"terminal:{checksum_for({'run_id': run_id}).removeprefix('sha256:')}"
+            ),
+            identity_scope_ref=identity_scope_ref,
+            subject_scope_ref=subject_scope_ref,
+            terminal_action="complete_run",
+            state_checksum=state_checksum,
+            completion_input_ref=completion_input_ref,
+            handler=policy.handler,
+            payload={
+                "prepared_outcome_refs": [outcome.checksum for outcome in prepared],
+                "history_cutoff": self._terminal_history_cutoff(run_id),
+            },
+            candidate_refs=candidate_refs,
+        )
+        approval_ref = policy.not_required_evidence_ref
+        if policy.requires_approval:
+            configured_ref = state.run_spec.metadata.get("terminal_approval_evidence_ref")
+            if not isinstance(configured_ref, str) or not configured_ref.strip():
+                raise HarnessValidationError(
+                    "terminal side effect requires durable approval evidence",
+                    code="side_effect_approval_missing",
+                )
+            if self.approval_evidence_resolver is None:
+                raise HarnessValidationError(
+                    "terminal side effect requires an approval evidence resolver",
+                    code="side_effect_approval_resolver_missing",
+                )
+            evidence = self.approval_evidence_resolver.resolve(
+                HarnessSideEffectApprovalRequest(
+                    run_id=run_id,
+                    step_id="__terminal__",
+                    attempt=1,
+                    effect_id=intent.effect_id,
+                    candidate_checksum=completion_input_ref,
+                    identity_scope_ref=identity_scope_ref,
+                    subject_scope_ref=subject_scope_ref,
+                    decision_version=policy.version,
+                ),
+                approval_ref=configured_ref,
+            )
+            approval_ref = evidence.approval_ref
+        assert approval_ref is not None
+        gate_refs, gate_result_refs, aggregate_verdict_ref = _side_effect_gate_refs_from_history(
+            self._committed_events,
+            run_id=run_id,
+        )
+        if policy.inherited_gate_refs:
+            required = set(policy.inherited_gate_refs)
+            if not required.issubset(set(gate_refs)):
+                raise HarnessValidationError(
+                    "terminal side-effect policy gate evidence is incomplete",
+                    code="terminal_side_effect_gate_evidence_missing",
+                    details={
+                        "code": "terminal_side_effect_gate_evidence_missing",
+                        "missing": sorted(required.difference(gate_refs)),
+                    },
+                )
+        budget_ref = checksum_for(self._budget_snapshot(state, None).to_dict())
+        authorization = HarnessSideEffectDecision(
+            decision_id=f"harness-side-effect-decision:{checksum_for({'intent_ref': intent.checksum, 'policy': policy.reference, 'budget_ref': budget_ref}).removeprefix('sha256:')}",
+            intent_ref=intent.checksum,
+            effect_id=intent.effect_id,
+            kind=intent.kind,
+            origin=intent.origin,
+            run_id=run_id,
+            handler=binding.reference,
+            identity_scope_ref=intent.identity_scope_ref,
+            subject_scope_ref=intent.subject_scope_ref,
+            atomic_group=intent.atomic_group,
+            idempotency_key=intent.idempotency_key,
+            command_ordinal=int(decision_input["command_ordinal"]),
+            causation_id=str(decision_input["causation_id"]),
+            disposition=HarnessSideEffectDisposition.ACCEPTED,
+            terminal_action="complete_run",
+            terminal_state_ref=state_checksum,
+            gate_refs=gate_refs,
+            gate_result_refs=gate_result_refs,
+            aggregate_verdict_ref=aggregate_verdict_ref,
+            approval_evidence_ref=approval_ref,
+            budget_ref=budget_ref,
+            effect_attempt=1,
+            effect_attempt_limit=policy.retry_limit,
+            decision_version=policy.version,
+            decided_at=scheduler_decision.decided_at,
+        )
+        return _PreparedSideEffect(
+            slot="__terminal__",
+            intent=intent,
+            authorization=authorization,
+            binding=binding,
+            prepare=False,
+        )
+
+    def _terminal_history_cutoff(self, run_id: str) -> str | None:
+        pending = self._pending_completion_decisions.get(run_id)
+        if pending is not None and pending.decision_type is HarnessDecisionType.COMPLETE_RUN:
+            return pending.history_cutoff_id
+        return None if not self._committed_events else self._committed_events[-1].event_id
+
+    def _complete_terminal_side_effect(
+        self,
+        state: HarnessState,
+        decision: HarnessDecision,
+        *,
+        prepared_side_effect: _PreparedSideEffect | None,
+    ) -> HarnessState:
+        policy = state.run_spec.workflow.terminal_side_effect_policy
+        if policy is None:
+            if prepared_side_effect is not None:
+                raise HarnessValidationError("legacy workflow cannot execute a terminal side effect")
+            return state
+        if prepared_side_effect is None or prepared_side_effect.slot != "__terminal__":
+            raise HarnessValidationError(
+                "terminal completion is missing its recorded side-effect authorization",
+                code="terminal_side_effect_policy_missing",
+            )
+        del decision
+        self._execute_prepared_side_effect(prepared_side_effect)
+        return state
+
+    def _fail_side_effect_completion(
+        self,
+        state: HarnessState,
+        *,
+        completion_decision: HarnessDecision,
+        prepared_side_effect: _PreparedSideEffect | None,
+        gate_results: tuple[HarnessGateResult, ...],
+        quality_verdict: HarnessQualityVerdict | None,
+        replay_activity: tuple[ReplayActivityDescriptor, PayloadReference] | None,
+    ) -> tuple[HarnessState, HarnessDecision]:
+        if prepared_side_effect is None:
+            raise HarnessValidationError(
+                "side-effect retry exhaustion has no matching authorization",
+                code="side_effect_authorization_missing",
+            )
+        failure = {
+            "code": "effect_retry_exhausted",
+            "effect_ref": checksum_for(prepared_side_effect.intent.effect_id),
+        }
+        failure_decision = HarnessDecision(
+            decision_type=HarnessDecisionType.FAIL_RUN,
+            run_id=state.run_spec.run_id,
+            step_id=state.current_step_id,
+            reason="side-effect failure: effect_retry_exhausted",
+            payload={"side_effect_failure": failure},
+            decided_at=completion_decision.decided_at,
+        )
+        decision_input = self._decision_input(
+            state,
+            gate_results=gate_results,
+            quality_verdict=quality_verdict,
+            expected_activity=(
+                None if replay_activity is None else replay_activity[0]
+            ),
+            side_effect_failure=failure,
+        )
+        self._record_decision(
+            failure_decision,
+            decision_input=decision_input,
+            replay_activity=replay_activity,
+        )
+        self._quarantine_prepared_side_effects(state)
+        return (
+            self._finish_run(state, HarnessRunStatus.FAILED, failure_decision),
+            failure_decision,
+        )
+
+    def _durable_prepared_outcomes(
+        self,
+        state: HarnessState,
+    ) -> tuple[HarnessSideEffectOutcome, ...]:
+        if self.side_effect_store is None:
+            return ()
+        outcomes: list[tuple[int, HarnessSideEffectOutcome]] = []
+        for decision in self.side_effect_store.list_decisions(run_id=state.run_spec.run_id):
+            if decision.origin is not HarnessSideEffectOrigin.WORKER:
+                continue
+            outcome = self.side_effect_store.get_outcome(
+                effect_id=decision.effect_id,
+                identity_scope_ref=decision.identity_scope_ref,
+                subject_scope_ref=decision.subject_scope_ref,
+                idempotency_key=decision.idempotency_key,
+            )
+            if outcome is None:
+                continue
+            if outcome.disposition is HarnessSideEffectDisposition.PREPARED:
+                outcomes.append((decision.command_ordinal, outcome))
+        return tuple(
+            outcome
+            for _, outcome in sorted(
+                outcomes,
+                key=lambda item: (item[0], item[1].outcome_id),
+            )
+        )
+
+    def _quarantine_prepared_side_effects(self, state: HarnessState) -> None:
+        if self.side_effect_store is None:
+            return
+        run_id = state.run_spec.run_id
+        for decision in self.side_effect_store.list_decisions(run_id=run_id):
+            outcome = self.side_effect_store.get_outcome(
+                effect_id=decision.effect_id,
+                identity_scope_ref=decision.identity_scope_ref,
+                subject_scope_ref=decision.subject_scope_ref,
+                idempotency_key=decision.idempotency_key,
+            )
+            if outcome is None or outcome.disposition is not HarnessSideEffectDisposition.PREPARED:
+                continue
+            quarantined = self.side_effect_store.set_disposition(
+                effect_id=decision.effect_id,
+                disposition=HarnessSideEffectDisposition.QUARANTINE,
+                identity_scope_ref=decision.identity_scope_ref,
+                subject_scope_ref=decision.subject_scope_ref,
+            )
+            if quarantined is not None:
+                slot = decision.step_id or "__terminal__"
+                self._side_effect_outcomes.setdefault(run_id, {})[slot] = quarantined
+
     def _finish_run(self, state: HarnessState, status: HarnessRunStatus, decision: HarnessDecision) -> HarnessState:
         previous = state
         transition_time = _next_transition_time(previous)
+        if status is not HarnessRunStatus.SUCCEEDED:
+            self._quarantine_prepared_side_effects(state)
         if status == HarnessRunStatus.HALTED and decision.step_id:
             self._record_phase(
                 state,
@@ -1490,10 +2380,21 @@ class HarnessControlPlane:
             )
             if candidate is not state:
                 state = candidate
+        terminal_metadata: dict[str, Any] = {}
+        terminal_outcome = self._side_effect_outcomes.get(state.run_spec.run_id, {}).get(
+            "__terminal__"
+        )
+        if status is HarnessRunStatus.SUCCEEDED and terminal_outcome is not None:
+            terminal_metadata = {
+                "terminal_side_effect_effect_ref": checksum_for(terminal_outcome.effect_id),
+                "terminal_side_effect_decision_ref": terminal_outcome.decision_ref,
+                "terminal_side_effect_outcome_ref": terminal_outcome.checksum,
+                "terminal_side_effect_disposition": terminal_outcome.disposition.value,
+            }
         state = transition_run(
             state,
             status,
-            metadata={"terminal_reason": decision.reason},
+            metadata={"terminal_reason": decision.reason, **terminal_metadata},
             at=transition_time,
         )
         transition_kind = _terminal_transition_kind(status, decision)
@@ -1875,7 +2776,7 @@ class HarnessControlPlane:
         evaluation_state: HarnessState,
         worker_result: HarnessWorkerResult,
     ) -> tuple[tuple[HarnessGateResult, ...], HarnessQualityVerdict] | None:
-        expected_state_ref = checksum_for(state.to_dict())
+        expected_state_ref = HarnessStateProjection.from_state(state).checksum
         expected_references = tuple(
             reference
             for reference, _ in self._verify_gate_entries(evaluation_state, step_id)
@@ -2040,10 +2941,18 @@ class HarnessControlPlane:
         quality_verdict: HarnessQualityVerdict | None,
         expected_activity: ReplayActivityDescriptor | None,
         approval_outcome: str | None = None,
+        side_effect_authorization: Mapping[str, Any] | None = None,
+        side_effect_failure: Mapping[str, Any] | None = None,
+        command_ordinal: int | None = None,
+        causation_id: str | None = None,
     ) -> Mapping[str, Any]:
         run_id = state.run_spec.run_id
-        ordinal = self._decision_indexes.get(run_id, 0)
-        causation_id = (
+        ordinal = (
+            self._decision_indexes.get(run_id, 0)
+            if command_ordinal is None
+            else command_ordinal
+        )
+        resolved_causation_id = causation_id or (
             self._committed_events[-1].event_id
             if self._committed_events
             else f"harness-run:{run_id}"
@@ -2051,12 +2960,83 @@ class HarnessControlPlane:
         return harness_decision_input_snapshot(
             state=state,
             command_ordinal=ordinal,
-            causation_id=str(causation_id),
+            causation_id=str(resolved_causation_id),
             gate_results=gate_results,
             quality_verdict=quality_verdict,
             expected_activity=expected_activity,
             approval_outcome=approval_outcome,
+            side_effect_authorization=side_effect_authorization,
+            side_effect_failure=side_effect_failure,
+            side_effect_state_refs=self._decision_side_effect_state_refs(state),
         )
+
+    def _decision_side_effect_state_refs(
+        self,
+        state: HarnessState,
+    ) -> Mapping[str, Any] | None:
+        """Resolve successful worker-effect refs from the durable authority store.
+
+        Safe transition projections intentionally omit raw side-effect metadata.
+        Decision inputs still carry the bounded refs, so a restarted control
+        plane must reconstruct them from the immutable decision/outcome pair
+        before deriving the next terminal completion input.
+        """
+
+        step_id = state.current_step_id
+        if step_id is None:
+            return None
+        step_state = get_step_state(state, step_id)
+        if step_state.status is not HarnessStepStatus.SUCCEEDED:
+            # A dangling COMPLETE_STEP decision is created before the step
+            # becomes successful; including its store record would change the
+            # original decision input during recovery.
+            return None
+        declared = self._side_effect_bindings_by_run.get(state.run_spec.run_id, {}).get(step_id)
+        if declared is None:
+            return None
+
+        metadata = step_state.metadata
+        refs = _canonical_side_effect_state_refs(metadata)
+        if self.side_effect_store is None:
+            return refs or None
+
+        decisions = tuple(
+            decision
+            for decision in self.side_effect_store.list_decisions(run_id=state.run_spec.run_id)
+            if decision.origin is HarnessSideEffectOrigin.WORKER
+            and decision.step_id == step_id
+            and decision.attempt == step_state.attempts
+        )
+        if len(decisions) > 1:
+            raise EventStoreCorruptionError(
+                "multiple worker side-effect decisions match one successful step attempt"
+            )
+        if not decisions:
+            return refs or None
+        decision = decisions[0]
+        outcome = self.side_effect_store.get_outcome(
+            effect_id=decision.effect_id,
+            identity_scope_ref=decision.identity_scope_ref,
+            subject_scope_ref=decision.subject_scope_ref,
+            idempotency_key=decision.idempotency_key,
+        )
+        if outcome is None:
+            raise EventIncompleteHistoryError(
+                "successful side-effect step is missing its durable outcome"
+            )
+        durable_refs = _canonical_side_effect_state_refs({
+            "approval_evidence_ref": decision.approval_evidence_ref,
+            "side_effect_effect_ref": checksum_for(decision.effect_id),
+            "side_effect_intent_ref": decision.intent_ref,
+            "side_effect_decision_ref": decision.checksum,
+            "side_effect_outcome_ref": outcome.checksum,
+            "side_effect_disposition": outcome.disposition.value,
+        })
+        if any(durable_refs.get(key) != value for key, value in refs.items()):
+            raise EventStoreCorruptionError(
+                "successful step side-effect refs conflict with durable authority"
+            )
+        return durable_refs
 
     def _record_phase(
         self,
@@ -2414,8 +3394,13 @@ class HarnessControlPlane:
         self._decision_indexes[run_spec.run_id] = sum(
             1
             for event in history
-            if event.event_type == HarnessEventType.DECISION_RECORDED
+            if _is_scheduler_decision_event(event)
         )
+        pending_completion = _pending_completion_from_history(history)
+        if pending_completion is None:
+            self._pending_completion_decisions.pop(run_spec.run_id, None)
+        else:
+            self._pending_completion_decisions[run_spec.run_id] = pending_completion
         return recovery
 
     def _commit_transition(
@@ -2503,7 +3488,253 @@ class HarnessControlPlane:
                 for key, value in (quality_verdicts or {}).items()
                 if key
             },
+            side_effect_outcomes=dict(self._side_effect_outcomes.get(run_id, {})),
         )
+
+
+def _side_effect_gate_refs(
+    gate_results: tuple[HarnessGateResult, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    references: list[str] = []
+    result_refs: list[str] = []
+    for result in gate_results:
+        evidence = gate_result_evidence(result)
+        reference = evidence.get("reference")
+        result_ref = evidence.get("result_ref")
+        if not isinstance(reference, str) or not reference.strip():
+            raise HarnessValidationError("side-effect gate evidence is missing an exact reference")
+        if not _is_checksum_ref(result_ref):
+            raise HarnessValidationError("side-effect gate evidence is missing its result ref")
+        references.append(reference)
+        result_refs.append(result_ref)
+    return tuple(references), tuple(result_refs)
+
+
+def _side_effect_aggregate_verdict_ref(
+    gate_results: tuple[HarnessGateResult, ...],
+    *,
+    gate_result_refs: tuple[str, ...],
+    quality_verdict: HarnessQualityVerdict | None,
+) -> str:
+    if quality_verdict is not None:
+        return checksum_for(quality_verdict.to_dict())
+    return checksum_for(
+        {
+            "gate_result_refs": list(gate_result_refs),
+            "passed": bool(gate_results) and all(result.passed for result in gate_results),
+        }
+    )
+
+
+def _side_effect_authorization_projection(
+    authorization: HarnessSideEffectDecision,
+) -> dict[str, Any]:
+    # Keep only the refs needed to identify and scope the authorization.  The
+    # complete decision (including atomic-group and persisted attempt ledger)
+    # is recoverable from the side-effect store through ``decision_ref``;
+    # duplicating those long checksums in every deterministic history record
+    # can exceed the canonical event extension budget.
+    return {
+        "origin": authorization.origin.value,
+        "effect_ref": checksum_for(authorization.effect_id),
+        "intent_ref": authorization.intent_ref,
+        "identity_scope_ref": authorization.identity_scope_ref,
+        "subject_scope_ref": authorization.subject_scope_ref,
+        "approval_evidence_ref": authorization.approval_evidence_ref,
+        "decision_ref": authorization.checksum,
+        "disposition": authorization.disposition.value,
+        "idempotency_ref": checksum_for(authorization.idempotency_key),
+    }
+
+
+def _canonical_side_effect_state_refs(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value[key]
+        for key in _SIDE_EFFECT_STATE_REF_KEYS
+        if value.get(key) is not None
+    }
+
+
+def _side_effect_gate_refs_from_history(
+    events: list[HarnessEvent],
+    *,
+    run_id: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], str]:
+    references: list[str] = []
+    result_refs: list[str] = []
+    aggregate: list[dict[str, Any]] = []
+    for event in events:
+        if event.run_id != run_id or event.event_type is not HarnessEventType.GATE_EVALUATED:
+            continue
+        payload = event.payload
+        details = payload.get("details")
+        harness_gate = details.get("harness_gate") if isinstance(details, Mapping) else None
+        reference = (
+            harness_gate.get("reference")
+            if isinstance(harness_gate, Mapping)
+            else payload.get("reference")
+        )
+        result_ref = (
+            harness_gate.get("result_ref")
+            if isinstance(harness_gate, Mapping)
+            else payload.get("result_ref")
+        )
+        passed = payload.get("passed")
+        if isinstance(reference, str) and reference.strip() and _is_checksum_ref(result_ref):
+            if not isinstance(passed, bool):
+                raise HarnessValidationError("recorded terminal gate evidence has no verdict")
+            if reference not in references:
+                references.append(reference)
+            if result_ref not in result_refs:
+                result_refs.append(result_ref)
+            aggregate.append(
+                {"reference": reference, "result_ref": result_ref, "passed": passed}
+            )
+    if not aggregate or any(not item["passed"] for item in aggregate):
+        raise HarnessValidationError(
+            "terminal side-effect authorization requires complete passing gate history",
+            code="terminal_side_effect_gate_evidence_missing",
+        )
+    return tuple(references), tuple(result_refs), checksum_for({"gate_evidence": aggregate})
+
+
+def _expected_identity_scope_ref(state: HarnessState, step_id: str | None) -> str | None:
+    value = state.run_spec.metadata.get("identity_scope_ref")
+    if _is_checksum_ref(value):
+        if step_id is not None:
+            activity_scope = get_step_state(state, step_id).metadata.get(
+                "activity_identity_scope_ref"
+            )
+            if activity_scope is not None and activity_scope != value:
+                raise HarnessValidationError(
+                    "worker activity identity scope conflicts with run authority scope",
+                    code="side_effect_scope_mismatch",
+                )
+        return value
+    return None
+
+
+def _expected_subject_scope_ref(state: HarnessState) -> str | None:
+    value = state.run_spec.metadata.get("subject_scope_ref")
+    if _is_checksum_ref(value):
+        return value
+    return None
+
+
+def _validate_side_effect_outcome(
+    intent: HarnessSideEffectIntent,
+    authorization: HarnessSideEffectDecision,
+    outcome: HarnessSideEffectOutcome,
+) -> None:
+    if (
+        outcome.effect_id != intent.effect_id
+        or outcome.decision_ref != authorization.checksum
+        or outcome.run_id != intent.run_id
+        or outcome.kind != intent.kind
+        or outcome.handler != authorization.handler
+        or outcome.idempotency_key != intent.idempotency_key
+        or outcome.identity_scope_ref != intent.identity_scope_ref
+        or outcome.subject_scope_ref != intent.subject_scope_ref
+        or outcome.atomic_group != intent.atomic_group
+        or outcome.disposition is not authorization.disposition
+        or outcome.checksum is None
+    ):
+        raise HarnessValidationError(
+            "durable side-effect outcome conflicts with authorization",
+            code="side_effect_outcome_mismatch",
+        )
+
+
+def _is_scheduler_decision_event(event: HarnessEvent) -> bool:
+    if event.event_type is not HarnessEventType.DECISION_RECORDED:
+        return False
+    if event.metadata.get("projection_kind") in {
+        "side_effect_authorization",
+        "side_effect_outcome",
+    }:
+        return False
+    history = event.deterministic_history
+    if isinstance(history, Mapping):
+        commands = history.get("commands")
+        if isinstance(commands, list | tuple):
+            return bool(commands)
+    return True
+
+
+def _pending_completion_from_history(
+    history: tuple[HarnessEvent, ...],
+) -> _PendingCompletionDecision | None:
+    last_transition_index = -1
+    for index, event in enumerate(history):
+        if event.event_type is HarnessEventType.TRANSITION_COMMITTED:
+            last_transition_index = index
+    candidates: list[_PendingCompletionDecision] = []
+    for index, event in enumerate(
+        history[last_transition_index + 1 :],
+        start=last_transition_index + 1,
+    ):
+        if not _is_scheduler_decision_event(event):
+            continue
+        payload = event.payload
+        raw_decision_payload = payload.get("payload")
+        authorization = None
+        if isinstance(raw_decision_payload, Mapping):
+            authorization = raw_decision_payload.get("side_effect_authorization")
+        safe_decision_payload = payload.get("decision_payload")
+        if authorization is None and isinstance(safe_decision_payload, Mapping):
+            authorization = safe_decision_payload.get("side_effect_authorization")
+        history_value = event.deterministic_history
+        handler_input = (
+            history_value.get("handler_input")
+            if isinstance(history_value, Mapping)
+            else None
+        )
+        current_policy = (
+            handler_input.get("current_step_policy")
+            if isinstance(handler_input, Mapping)
+            else None
+        )
+        if authorization is None and isinstance(current_policy, Mapping):
+            authorization = current_policy.get("side_effect_authorization")
+        if authorization is None:
+            continue
+        if not isinstance(authorization, Mapping) or not isinstance(handler_input, Mapping):
+            raise EventStoreCorruptionError(
+                "dangling side-effect decision evidence is incomplete"
+            )
+        try:
+            decision_type = HarnessDecisionType(payload.get("decision_type"))
+            command_ordinal = int(handler_input["command_ordinal"])
+            causation_id = str(handler_input["causation_id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EventStoreCorruptionError(
+                "dangling side-effect decision identity is invalid"
+            ) from exc
+        if decision_type not in {
+            HarnessDecisionType.COMPLETE_STEP,
+            HarnessDecisionType.COMPLETE_RUN,
+        }:
+            raise EventStoreCorruptionError(
+                "side-effect authorization is attached to a non-completion decision"
+            )
+        candidates.append(
+            _PendingCompletionDecision(
+                decision_type=decision_type,
+                step_id=event.step_id,
+                authorization_projection=dict(authorization),
+                command_ordinal=command_ordinal,
+                causation_id=causation_id,
+                decided_at=event.occurred_at,
+                history_cutoff_id=(
+                    None if index == 0 else history[index - 1].event_id
+                ),
+            )
+        )
+    if len(candidates) > 1:
+        raise EventStoreCorruptionError(
+            "multiple dangling side-effect completion decisions are ambiguous"
+        )
+    return None if not candidates else candidates[0]
 
 
 def _gate_reference(gate: DeterministicGate) -> str:
@@ -2590,6 +3821,7 @@ def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
             diagnostics=payload.get("diagnostics", {}),
             metrics=payload.get("metrics", {}),
             error=payload.get("error"),
+            effect_intent=payload.get("effect_intent"),
         )
     except (TypeError, ValueError, HarnessValidationError) as exc:
         if isinstance(exc, HarnessValidationError):

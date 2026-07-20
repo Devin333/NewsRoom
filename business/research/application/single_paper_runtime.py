@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from framework.artifacts.paths import validate_artifact_path_segment
+from framework.events.canonical import checksum_for
 from framework.harness import (
     ArtifactPort,
-    ArtifactRef,
     ArtifactWriteRequest,
     ContextAssembler,
     ContextBudget,
@@ -16,6 +18,7 @@ from framework.harness import (
     HarnessBudget,
     HarnessControlPlane,
     HarnessEvent,
+    HarnessEventType,
     HarnessTransitionPort,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -23,6 +26,16 @@ from framework.harness import (
     HarnessTranscript,
     HarnessWorkerResult,
     HarnessWorkerStatus,
+    HarnessValidationError,
+    HarnessSideEffectDecision,
+    HarnessSideEffectDisposition,
+    HarnessSideEffectHandlerBinding,
+    HarnessSideEffectIntent,
+    HarnessSideEffectOrigin,
+    HarnessSideEffectOutcome,
+    HarnessSideEffectRegistry,
+    HarnessSideEffectStorePort,
+    InMemoryHarnessSideEffectStore,
     RunBoundArtifactPort,
     RAGBudget,
     RAGContextPack,
@@ -31,6 +44,7 @@ from framework.harness import (
     transcript_entry_from_event,
 )
 from framework.shared.json import to_jsonable
+from framework.shared.time import utc_now
 
 from business.research.application.ask_paper import AskPaperUseCase, ResearchActorScope
 from business.research.benchmark.models import ResearchScore
@@ -47,6 +61,8 @@ from business.research.domain import (
     ResearchQualityResult,
     ResearchReaderPayload,
     ThreeMinuteRead,
+    research_identity_scope_ref,
+    research_subject_scope_ref,
     stable_research_id,
 )
 from business.research.paper_card import PaperCardBuilder, ResearchPaperCard
@@ -64,6 +80,14 @@ from business.research.workflows import (
     build_paper_analysis_gate_registry,
     build_paper_analysis_workflow_spec,
 )
+from business.research.ports.artifact_publication import (
+    RESEARCH_ARTIFACT_EFFECT_KIND,
+    RESEARCH_ARTIFACT_HANDLER_REF,
+    RESEARCH_ARTIFACT_SCHEMA_VERSION,
+)
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -75,6 +99,34 @@ class AnalyzePaperRequest:
     options: dict[str, Any] = field(default_factory=dict)
     tenant_id: str | None = None
     memory_namespace: str | None = None
+
+
+def build_research_harness_run_spec(
+    request: AnalyzePaperRequest,
+    *,
+    created_at: datetime,
+) -> HarnessRunSpec:
+    """Build the canonical run specification used by execution and recovery."""
+
+    actor_metadata = _request_actor_metadata(request)
+    return HarnessRunSpec(
+        run_id=request.run_id,
+        workflow=build_paper_analysis_workflow_spec(),
+        inputs={
+            "paper_id": request.paper_id,
+            "source_ref": request.source_ref,
+            **actor_metadata,
+        },
+        budget=_budget_from_options(request.options),
+        metadata={
+            "research_runtime": "single_paper",
+            "paper_id": request.paper_id,
+            "identity_scope_ref": research_identity_scope_ref(actor_metadata),
+            "subject_scope_ref": research_subject_scope_ref(request.paper_id),
+            **actor_metadata,
+        },
+        created_at=created_at,
+    )
 
 
 @dataclass(frozen=True)
@@ -138,6 +190,80 @@ class ResearchAnalysisResult:
             include_deterministic_history=True
         )
         return payload
+
+    @classmethod
+    def from_durable_failure(
+        cls,
+        *,
+        request: AnalyzePaperRequest,
+        events: tuple[HarnessEvent, ...],
+        harness_status: str,
+    ) -> "ResearchAnalysisResult":
+        """Project a raised run into a scoped, non-published diagnostic result."""
+
+        if not events or any(event.run_id != request.run_id for event in events):
+            raise ValueError("durable failure history is missing or run-mismatched")
+        if sum(
+            event.event_type is HarnessEventType.RUN_CREATED for event in events
+        ) != 1:
+            raise ValueError("durable failure history must contain one run creation")
+        actor_scope = AskPaperUseCase().resolve_actor_scope(
+            tenant_id=request.tenant_id,
+            user_id=request.user_id,
+            memory_namespace=request.memory_namespace,
+        )
+        actor_metadata = actor_scope.to_metadata()
+        quality = ResearchQualityResult(
+            result_id=stable_research_id(
+                "quality",
+                request.run_id,
+                "durable_runtime_failure",
+            ),
+            target_id=request.paper_id,
+            target_type="summary",
+            passed=False,
+            score=0.0,
+            gate_results=[
+                GateResult.fail(
+                    "ResearchRuntimeCompletionGate",
+                    "runtime raised after durable run creation",
+                )
+            ],
+        )
+        return cls(
+            run_id=request.run_id,
+            status=HarnessRunStatus.FAILED.value,
+            analysis=None,
+            quality=quality,
+            paper_card=None,
+            reader_payload=None,
+            rag_context=None,
+            reader_issue=None,
+            artifact_refs={},
+            trace=HarnessTrace(
+                run_id=request.run_id,
+                events=events,
+                metadata={"paper_id": request.paper_id, **actor_metadata},
+            ),
+            transcript=_transcript_from_events(
+                request.run_id,
+                events,
+                metadata=actor_metadata,
+                research_rag_context=None,
+                rag_context_pack=None,
+            ),
+            context_snapshot=None,
+            context_envelope=None,
+            compression_records=[],
+            skill_experience_refs=[],
+            actor_scope=actor_scope,
+            diagnostics={
+                "harness_status": harness_status,
+                "terminal_reason": "runtime_exception_after_durable_run",
+                "durable_history_cutoff": events[-1].event_id,
+                "recovered_from_durable_history": True,
+            },
+        )
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ResearchAnalysisResult":
@@ -514,6 +640,44 @@ def _result_optional_text(value: Any, field_name: str) -> str | None:
     return value
 
 
+@dataclass(frozen=True, slots=True)
+class _ResearchWorkerDependencies:
+    source_provider: Any
+    document_compiler: Any
+    llm_worker: Any
+    github_repository: Any
+    rag_runtime: Any
+    taxonomy_registry: TaxonomyRegistry
+    quality_gate: ResearchQualityGate
+    evidence_builder: ResearchEvidenceBuilder
+    reader_builder: ReaderPayloadBuilder
+    paper_card_builder: PaperCardBuilder
+    reader_issue_detector: ReaderIssueDetector
+    rag_policy_builder: ResearchRAGPolicyBuilder
+    citation_verifier: CitationVerifier
+
+
+def _bind_research_worker(
+    worker: Callable[..., HarnessWorkerResult],
+    dependencies: _ResearchWorkerDependencies,
+    workspace: "_ResearchRunWorkspace",
+) -> Callable[[dict[str, Any]], HarnessWorkerResult]:
+    def invoke(task: dict[str, Any]) -> HarnessWorkerResult:
+        return worker(dependencies, task, workspace)
+
+    return invoke
+
+
+def _bind_research_workspace_worker(
+    worker: Callable[..., HarnessWorkerResult],
+    workspace: "_ResearchRunWorkspace",
+) -> Callable[[dict[str, Any]], HarnessWorkerResult]:
+    def invoke(task: dict[str, Any]) -> HarnessWorkerResult:
+        return worker(task, workspace)
+
+    return invoke
+
+
 class ResearchSinglePaperRuntime:
     def __init__(
         self,
@@ -525,9 +689,14 @@ class ResearchSinglePaperRuntime:
         rag_runtime: Any,
         artifact_port: ArtifactPort,
         event_port_factory: Callable[[str], HarnessTransitionPort],
+        scoped_event_port_factory: (
+            Callable[[str, Mapping[str, Any]], HarnessTransitionPort] | None
+        ) = None,
         taxonomy_registry: TaxonomyRegistry | None = None,
         context_assembler: ContextAssembler | None = None,
         quality_gate: ResearchQualityGate | None = None,
+        side_effect_store: HarnessSideEffectStorePort | None = None,
+        artifact_handler_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.source_provider = source_provider
         self.document_compiler = document_compiler
@@ -537,9 +706,20 @@ class ResearchSinglePaperRuntime:
         self.artifact_port = artifact_port
         if not callable(event_port_factory):
             raise TypeError("event_port_factory must be callable")
+        if scoped_event_port_factory is not None and not callable(
+            scoped_event_port_factory
+        ):
+            raise TypeError("scoped_event_port_factory must be callable")
         self.event_port_factory = event_port_factory
+        self.scoped_event_port_factory = scoped_event_port_factory
         self.taxonomy_registry = taxonomy_registry or TaxonomyRegistry.default()
         self.context_assembler = context_assembler
+        self.side_effect_store = side_effect_store or InMemoryHarnessSideEffectStore()
+        if not isinstance(self.side_effect_store, HarnessSideEffectStorePort):
+            raise TypeError("side_effect_store must implement HarnessSideEffectStorePort")
+        if artifact_handler_factory is not None and not callable(artifact_handler_factory):
+            raise TypeError("artifact_handler_factory must be callable")
+        self.artifact_handler_factory = artifact_handler_factory
         self.ask_use_case = AskPaperUseCase()
         self.quality_gate = quality_gate or ResearchQualityGate()
         self.evidence_builder = ResearchEvidenceBuilder()
@@ -577,32 +757,106 @@ class ResearchSinglePaperRuntime:
             request=request,
             context_assembler=self.context_assembler or ContextAssembler(),
         )
-        event_port = self.event_port_factory(run_id)
-        if not isinstance(event_port, HarnessTransitionPort):
-            raise TypeError("event_port_factory must return HarnessTransitionPort")
-        workflow = build_paper_analysis_workflow_spec()
         actor_metadata = _request_actor_metadata(request)
-        run_spec = HarnessRunSpec(
-            run_id=run_id,
-            workflow=workflow,
-            inputs={
-                "paper_id": request.paper_id,
-                "source_ref": request.source_ref,
-                **actor_metadata,
-            },
-            budget=_budget_from_options(request.options),
-            metadata={
-                "research_runtime": "single_paper",
-                "paper_id": request.paper_id,
-                **actor_metadata,
-            },
+        event_port = (
+            self.event_port_factory(run_id)
+            if self.scoped_event_port_factory is None
+            else self.scoped_event_port_factory(run_id, actor_metadata)
+        )
+        if not isinstance(event_port, HarnessTransitionPort):
+            raise TypeError("event port factory must return HarnessTransitionPort")
+        identity_scope_ref = research_identity_scope_ref(actor_metadata)
+        subject_scope_ref = research_subject_scope_ref(request.paper_id)
+        run_spec = build_research_harness_run_spec(
+            request,
+            created_at=_research_run_created_at(event_port, run_id),
+        )
+        terminal_payload_factory = lambda cutoff: self._terminal_artifact_payloads(
+            event_port,
+            workspace,
+            run_id,
+            cutoff,
+            actor_metadata,
+        )
+        candidate_payload_factory = lambda intent: self._candidate_artifact_payloads(
+            workspace,
+            intent,
+        )
+        if self.artifact_handler_factory is None:
+            artifact_handler = _CompatibilityResearchArtifactBundleHandler(
+                artifact_port=self.artifact_port,
+                side_effect_store=self.side_effect_store,
+                terminal_payload_factory=terminal_payload_factory,
+                candidate_payload_factory=candidate_payload_factory,
+            )
+        else:
+            artifact_handler = self.artifact_handler_factory(
+                artifact_port=self.artifact_port,
+                side_effect_store=self.side_effect_store,
+                terminal_payload_factory=terminal_payload_factory,
+                candidate_payload_factory=candidate_payload_factory,
+            )
+        side_effect_registry = HarnessSideEffectRegistry(
+            (
+                HarnessSideEffectHandlerBinding(
+                    reference=RESEARCH_ARTIFACT_HANDLER_REF,
+                    kind=RESEARCH_ARTIFACT_EFFECT_KIND,
+                    handler=artifact_handler,
+                    supports_origins=(
+                        HarnessSideEffectOrigin.WORKER.value,
+                        HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,
+                    ),
+                ),
+            )
         )
         control_plane = HarnessControlPlane(
             event_port=event_port,
             worker_registry=self._worker_registry(workspace),
             gate_registry=self.gate_registry,
+            side_effect_registry=side_effect_registry,
+            side_effect_store=self.side_effect_store,
         )
-        harness_result = control_plane.run(run_spec)
+        # The control plane persists quarantine before this lifecycle hook
+        # removes owned hidden candidates. Preserve a primary worker or
+        # handler failure if cleanup itself encounters a secondary I/O error.
+        cleanup_candidates = getattr(artifact_handler, "cleanup_candidates", None)
+        try:
+            harness_result = control_plane.run(run_spec)
+        except Exception as primary_error:
+            if callable(cleanup_candidates):
+                try:
+                    cleanup_candidates(run_id)
+                except Exception as cleanup_error:
+                    primary_error.add_note(
+                        "Research candidate cleanup failed: "
+                        f"{type(cleanup_error).__name__}"
+                    )
+                    LOGGER.error(
+                        "Research candidate cleanup failed after a primary run error",
+                        exc_info=(
+                            type(cleanup_error),
+                            cleanup_error,
+                            cleanup_error.__traceback__,
+                        ),
+                    )
+            raise
+        else:
+            if callable(cleanup_candidates):
+                cleanup_candidates(run_id)
+        terminal_outcome = harness_result.side_effect_outcomes.get("__terminal__")
+        if (
+            workspace.analysis is None
+            and harness_result.state.status is HarnessRunStatus.SUCCEEDED
+            and terminal_outcome is not None
+            and terminal_outcome.disposition is HarnessSideEffectDisposition.ACCEPTED
+        ):
+            return self._recover_published_result(
+                request=request,
+                actor_metadata=actor_metadata,
+                event_port=event_port,
+                outcome=terminal_outcome,
+                events=harness_result.events,
+            )
         trace = HarnessTrace(
             run_id=run_id,
             events=harness_result.events,
@@ -616,17 +870,21 @@ class ResearchSinglePaperRuntime:
             rag_context_pack=workspace.rag_context_pack,
         )
         artifacts = dict(workspace.artifact_refs)
-        if harness_result.state.status == HarnessRunStatus.SUCCEEDED and trace.events:
-            artifacts["harness-trace"] = self._write_artifact(
-                "harness-trace",
-                trace.to_dict(),
-                metadata={"run_id": run_id, **actor_metadata},
-            ).ref
-            artifacts["harness-transcript"] = self._write_artifact(
-                "harness-transcript",
-                transcript.to_dict(),
-                metadata={"run_id": run_id, **actor_metadata},
-            ).ref
+        if (
+            harness_result.state.status == HarnessRunStatus.SUCCEEDED
+            and terminal_outcome is not None
+            and terminal_outcome.disposition is HarnessSideEffectDisposition.ACCEPTED
+        ):
+            published = terminal_outcome.metadata.get("artifact_refs")
+            if isinstance(published, Mapping):
+                artifacts.update(
+                    {
+                        str(key): str(value)
+                        for key, value in published.items()
+                        if isinstance(key, str) and isinstance(value, str)
+                    }
+                )
+        workspace.artifact_refs = dict(artifacts)
         quality = workspace.quality or ResearchQualityResult(
             result_id=stable_research_id("quality", run_id, "halted"),
             target_id=request.paper_id,
@@ -642,6 +900,19 @@ class ResearchSinglePaperRuntime:
             "gate_failures": _gate_failures(harness_result.events),
             "research_diagnostics": list(workspace.diagnostics),
         }
+        if terminal_outcome is not None:
+            diagnostics.update(
+                {
+                    "terminal_side_effect_outcome_ref": terminal_outcome.checksum,
+                    "publication_authority_ref": terminal_outcome.decision_ref,
+                    "terminal_history_cutoff": terminal_outcome.metadata.get(
+                        "history_cutoff"
+                    ),
+                    "artifact_evidence_ref": checksum_for(
+                        {"artifact_refs": dict(artifacts)}
+                    ),
+                }
+            )
         return ResearchAnalysisResult(
             run_id=run_id,
             status=harness_result.state.status.value,
@@ -666,21 +937,231 @@ class ResearchSinglePaperRuntime:
             diagnostics=diagnostics,
         )
 
-    def _worker_registry(self, workspace: "_ResearchRunWorkspace") -> dict[str, Any]:
-        return {
-            "load_paper_source": lambda task: self._load_paper_source(task, workspace),
-            "compile_document": lambda task: self._compile_document(task, workspace),
-            "run_research_rag": lambda task: self._run_research_rag(task, workspace),
-            "build_evidence_pack": lambda task: self._build_evidence_pack(task, workspace),
-            "analyze_structure": lambda task: self._analyze_structure(task, workspace),
-            "analyze_contribution": lambda task: self._analyze_contribution(task, workspace),
-            "analyze_experiments": lambda task: self._analyze_experiments(task, workspace),
-            "verify_claims": lambda task: self._verify_claims(task, workspace),
-            "quality_gate": lambda task: self._quality_gate(task, workspace),
-            "build_reader_payload": lambda task: self._build_reader_payload(task, workspace),
-            "build_paper_card": lambda task: self._build_paper_card(task, workspace),
-            "publish_artifacts": lambda task: self._publish_artifacts(task, workspace),
+    def _recover_published_result(
+        self,
+        *,
+        request: AnalyzePaperRequest,
+        actor_metadata: Mapping[str, Any],
+        event_port: HarnessTransitionPort,
+        outcome: HarnessSideEffectOutcome,
+        events: tuple[HarnessEvent, ...],
+    ) -> ResearchAnalysisResult:
+        """Rehydrate a terminally published run without invoking workers.
+
+        A crash can occur after the terminal manifest is visible but before
+        the application has rebuilt its in-memory workspace.  Artifact reads
+        remain subject to the normal accepted-run resolver; this method only
+        projects already-authorized bytes back into the domain result.
+        """
+
+        raw_refs = outcome.metadata.get("artifact_refs")
+        if not isinstance(raw_refs, Mapping):
+            raise HarnessValidationError(
+                "terminal publication outcome has no artifact refs",
+                code="research_recovery_artifact_refs_missing",
+            )
+        artifact_refs = {
+            str(key): str(value)
+            for key, value in raw_refs.items()
+            if isinstance(key, str) and isinstance(value, str)
         }
+
+        def payload(artifact_type: str, *, required: bool = False) -> dict[str, Any] | None:
+            ref = artifact_refs.get(artifact_type)
+            if ref is None:
+                if required:
+                    raise HarnessValidationError(
+                        f"terminal publication is missing {artifact_type}",
+                        code="research_recovery_artifact_missing",
+                    )
+                return None
+            envelope = self.artifact_port.read_artifact(ref)
+            if envelope.get("artifact_type") != artifact_type:
+                raise HarnessValidationError(
+                    f"terminal publication artifact identity mismatch: {artifact_type}",
+                    code="research_recovery_artifact_identity_mismatch",
+                )
+            value = envelope.get("payload")
+            if not isinstance(value, Mapping):
+                raise HarnessValidationError(
+                    f"terminal publication artifact payload is invalid: {artifact_type}",
+                    code="research_recovery_artifact_payload_invalid",
+                )
+            return dict(value)
+
+        analysis = payload("research-analysis", required=True)
+        quality = payload("research-quality-result", required=True)
+        trace = HarnessTrace(
+            run_id=request.run_id,
+            events=events,
+            metadata={"paper_id": request.paper_id, **dict(actor_metadata)},
+        )
+        transcript = _transcript_from_events(
+            request.run_id,
+            events,
+            metadata=actor_metadata,
+            research_rag_context=None,
+            rag_context_pack=None,
+        )
+        compression = payload("research-context-compression-records") or {}
+        compression_records = compression.get("records", [])
+        if not isinstance(compression_records, list):
+            raise HarnessValidationError(
+                "terminal publication compression records are invalid",
+                code="research_recovery_compression_invalid",
+            )
+        result = ResearchAnalysisResult.from_dict(
+            {
+                "run_id": request.run_id,
+                "status": HarnessRunStatus.SUCCEEDED.value,
+                "analysis": analysis,
+                "quality": quality,
+                "paper_card": payload("research-paper-card"),
+                "reader_payload": payload("research-reader-payload"),
+                "rag_context": payload("research-rag-context-pack"),
+                "reader_issue": payload("reader-issue"),
+                "artifact_refs": artifact_refs,
+                "trace": trace.to_dict(include_deterministic_history=True),
+                "transcript": transcript.to_dict(),
+                "context_snapshot": payload("research-context-snapshot"),
+                "context_envelope": None,
+                "compression_records": compression_records,
+                "skill_experience_refs": [],
+                "actor_scope": self.ask_use_case.resolve_actor_scope(
+                    tenant_id=request.tenant_id,
+                    user_id=request.user_id,
+                    memory_namespace=request.memory_namespace,
+                ).to_metadata(),
+                "diagnostics": {
+                    "harness_status": HarnessRunStatus.SUCCEEDED.value,
+                    "publication_authority_ref": outcome.decision_ref,
+                    "terminal_side_effect_outcome_ref": outcome.checksum,
+                    "terminal_history_cutoff": outcome.metadata.get("history_cutoff"),
+                    "artifact_evidence_ref": outcome.metadata.get(
+                        "artifact_evidence_ref"
+                    ),
+                    "recovered_from_durable_publication": True,
+                },
+                "trace_ref": f"harness-trace://{request.run_id}",
+                "reader_payload_ref": artifact_refs.get("research-reader-payload"),
+            }
+        )
+        if result.analysis is None or not result.quality.passed:
+            raise HarnessValidationError(
+                "terminal publication did not contain an accepted Research result",
+                code="research_recovery_result_not_accepted",
+            )
+        return result
+
+    def _terminal_artifact_payloads(
+        self,
+        event_port: HarnessTransitionPort,
+        workspace: "_ResearchRunWorkspace",
+        run_id: str,
+        cutoff: str | None,
+        actor_metadata: Mapping[str, Any],
+    ) -> tuple[ArtifactWriteRequest, ...]:
+        """Build trace/transcript candidates from committed history only.
+
+        The cutoff is supplied by the controller-terminal intent.  It keeps
+        the publication payload independent from the decision/outcome that
+        will reference it, while the complete event history remains the
+        replay source.
+        """
+
+        events = list(event_port.read_history(run_id))
+        if cutoff is not None:
+            indexes = [index for index, event in enumerate(events) if event.event_id == cutoff]
+            if len(indexes) != 1:
+                raise HarnessValidationError(
+                    "terminal artifact history cutoff is not present in committed history"
+                )
+            events = events[: indexes[0] + 1]
+        trace = HarnessTrace(
+            run_id=run_id,
+            events=events,
+            metadata={"paper_id": workspace.request.paper_id, **dict(actor_metadata)},
+        )
+        transcript = _transcript_from_events(
+            run_id,
+            events,
+            metadata=actor_metadata,
+            research_rag_context=workspace.research_rag_context,
+            rag_context_pack=workspace.rag_context_pack,
+        )
+        metadata = {"run_id": run_id, **dict(actor_metadata)}
+        return (
+            ArtifactWriteRequest(
+                artifact_type="harness-trace",
+                payload=trace.to_dict(),
+                metadata=metadata,
+            ),
+            ArtifactWriteRequest(
+                artifact_type="harness-transcript",
+                payload=transcript.to_dict(),
+                metadata=metadata,
+            ),
+        )
+
+    @staticmethod
+    def _candidate_artifact_payloads(
+        workspace: "_ResearchRunWorkspace",
+        intent: HarnessSideEffectIntent,
+    ) -> tuple[ArtifactWriteRequest, ...]:
+        bundle_ref = intent.payload.get("bundle_ref")
+        if not isinstance(bundle_ref, str):
+            raise HarnessValidationError("Research artifact intent has no bundle ref")
+        requests = workspace.pending_artifact_bundles.get(bundle_ref)
+        if requests is None:
+            raise HarnessValidationError(
+                "Research artifact candidate bundle is unavailable",
+                code="research_artifact_candidate_missing",
+            )
+        return requests
+
+    def _worker_registry(self, workspace: "_ResearchRunWorkspace") -> dict[str, Any]:
+        dependencies = _ResearchWorkerDependencies(
+            source_provider=self.source_provider,
+            document_compiler=self.document_compiler,
+            llm_worker=self.llm_worker,
+            github_repository=self.github_repository,
+            rag_runtime=self.rag_runtime,
+            taxonomy_registry=self.taxonomy_registry,
+            quality_gate=self.quality_gate,
+            evidence_builder=self.evidence_builder,
+            reader_builder=self.reader_builder,
+            paper_card_builder=self.paper_card_builder,
+            reader_issue_detector=self.reader_issue_detector,
+            rag_policy_builder=self.rag_policy_builder,
+            citation_verifier=self.citation_verifier,
+        )
+        worker_type = type(self)
+        registry = {
+            "load_paper_source": worker_type._load_paper_source,
+            "compile_document": worker_type._compile_document,
+            "run_research_rag": worker_type._run_research_rag,
+            "build_evidence_pack": worker_type._build_evidence_pack,
+            "analyze_structure": worker_type._analyze_structure,
+            "analyze_contribution": worker_type._analyze_contribution,
+            "analyze_experiments": worker_type._analyze_experiments,
+            "verify_claims": worker_type._verify_claims,
+            "quality_gate": worker_type._quality_gate,
+            "build_reader_payload": worker_type._build_reader_payload,
+            "build_paper_card": worker_type._build_paper_card,
+        }
+        bound_registry = {
+            worker_name: _bind_research_worker(
+                worker,
+                dependencies,
+                workspace,
+            )
+            for worker_name, worker in registry.items()
+        }
+        bound_registry["publish_artifacts"] = _bind_research_workspace_worker(
+            worker_type._publish_artifacts,
+            workspace,
+        )
+        return bound_registry
 
     def _load_paper_source(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
         paper = self.source_provider.fetch_paper(workspace.request.source_ref)
@@ -1033,20 +1514,48 @@ class ResearchSinglePaperRuntime:
             }
         )
 
-    def _publish_artifacts(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
+    @staticmethod
+    def _publish_artifacts(task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
+        members: list[dict[str, Any]] = []
+        actor_metadata = _request_actor_metadata(workspace.request)
+
+        def add_member(
+            artifact_type: str,
+            payload: Mapping[str, Any],
+            *,
+            metadata: Mapping[str, Any] | None = None,
+        ) -> None:
+            workspace.planned_artifact_refs[artifact_type] = (
+                f"artifact://{workspace.request.run_id}/{artifact_type}"
+            )
+            members.append(
+                ArtifactWriteRequest(
+                    artifact_type=artifact_type,
+                    payload=dict(payload),
+                    metadata={
+                        "run_id": workspace.request.run_id,
+                        **actor_metadata,
+                        **dict(metadata or {}),
+                    },
+                ).to_dict()
+            )
+
         if workspace.analysis:
-            workspace.artifact_refs["research-analysis"] = self._write_artifact("research-analysis", workspace.analysis.to_dict()).ref
+            add_member("research-analysis", workspace.analysis.to_dict())
         if workspace.reader_payload:
-            workspace.artifact_refs["research-reader-payload"] = self._write_artifact("research-reader-payload", workspace.reader_payload.to_dict()).ref
+            add_member("research-reader-payload", workspace.reader_payload.to_dict())
         if workspace.paper_card:
-            workspace.artifact_refs["research-paper-card"] = self._write_artifact("research-paper-card", workspace.paper_card.to_dict()).ref
+            add_member("research-paper-card", workspace.paper_card.to_dict())
         if workspace.quality:
-            workspace.artifact_refs["research-quality-result"] = self._write_artifact("research-quality-result", workspace.quality.to_dict()).ref
+            add_member("research-quality-result", workspace.quality.to_dict())
         if workspace.research_rag_context:
-            workspace.artifact_refs["research-rag-context-pack"] = self._write_artifact("research-rag-context-pack", workspace.research_rag_context.to_dict()).ref
+            add_member(
+                "research-rag-context-pack",
+                workspace.research_rag_context.to_dict(),
+            )
         if workspace.reader_issue:
-            workspace.artifact_refs["reader-issue"] = self._write_artifact("reader-issue", workspace.reader_issue.to_dict()).ref
-        workspace.context_envelope = self._assemble_context(workspace)
+            add_member("reader-issue", workspace.reader_issue.to_dict())
+        workspace.context_envelope = ResearchSinglePaperRuntime._assemble_context(workspace)
         workspace.context_snapshot = workspace.context_assembler.snapshot_store.load(
             workspace.context_envelope.snapshot_ref or ""
         )
@@ -1057,24 +1566,99 @@ class ResearchSinglePaperRuntime:
                 if event.get("event_type") == "context_compression_recorded"
             ]
         )
-        workspace.artifact_refs["research-context-snapshot"] = self._write_artifact(
+        add_member(
             "research-context-snapshot",
             workspace.context_snapshot.to_dict(),
-        ).ref
-        workspace.artifact_refs["research-context-compression-records"] = self._write_artifact(
+        )
+        add_member(
             "research-context-compression-records",
             {"records": list(workspace.compression_records)},
-        ).ref
+        )
         if workspace.research_rag_context and workspace.research_rag_context.gap_report.missing_information:
-            workspace.artifact_refs["research-rag-gap-report"] = self._write_artifact(
+            add_member(
                 "research-rag-gap-report",
                 workspace.research_rag_context.gap_report.to_dict(),
-            ).ref
-        skill_experience = self._record_skill_experience(workspace)
+            )
+        skill_experience = ResearchSinglePaperRuntime._record_skill_experience(workspace)
         workspace.skill_experience_refs.append(skill_experience.experience_id)
-        return _ok({"artifact_refs": dict(workspace.artifact_refs), "skill_experience_refs": list(workspace.skill_experience_refs)})
+        bundle_ref = checksum_for(
+            {
+                "schema_version": RESEARCH_ARTIFACT_SCHEMA_VERSION,
+                "run_id": workspace.request.run_id,
+                "paper_id": workspace.request.paper_id,
+                "members": members,
+            }
+        )
+        requests = tuple(
+            ArtifactWriteRequest(
+                artifact_type=str(member["artifact_type"]),
+                payload=dict(member["payload"]),
+                media_type=str(member["media_type"]),
+                metadata=dict(member["metadata"]),
+            )
+            for member in members
+        )
+        workspace.pending_artifact_bundles[bundle_ref] = requests
+        member_refs = [
+            {
+                "artifact_type": request.artifact_type,
+                "request_ref": checksum_for(request.to_dict()),
+            }
+            for request in requests
+        ]
+        activity = task.get("harness_activity")
+        if not isinstance(activity, Mapping):
+            raise HarnessValidationError(
+                "publish_artifacts requires a Harness activity identity"
+            )
+        attempt = activity.get("attempt")
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            raise HarnessValidationError(
+                "publish_artifacts Harness activity attempt is invalid"
+            )
+        effect_digest = checksum_for(
+            {
+                "run_id": workspace.request.run_id,
+                "step_id": "publish_artifacts",
+                "attempt": attempt,
+                "bundle_ref": bundle_ref,
+            }
+        ).removeprefix("sha256:")
+        intent = HarnessSideEffectIntent(
+            effect_id=f"research-artifact-effect:{effect_digest}",
+            kind=RESEARCH_ARTIFACT_EFFECT_KIND,
+            run_id=workspace.request.run_id,
+            origin=HarnessSideEffectOrigin.WORKER,
+            atomic_group=f"research-artifacts:{effect_digest}",
+            identity_scope_ref=research_identity_scope_ref(actor_metadata),
+            subject_scope_ref=research_subject_scope_ref(workspace.request.paper_id),
+            attempt=attempt,
+            step_id="publish_artifacts",
+            worker_result_ref=(
+                f"worker-result://{workspace.request.run_id}/publish_artifacts/{attempt}"
+            ),
+            candidate_checksum=bundle_ref,
+            handler=RESEARCH_ARTIFACT_HANDLER_REF,
+            payload={
+                "schema_version": RESEARCH_ARTIFACT_SCHEMA_VERSION,
+                "run_id": workspace.request.run_id,
+                "paper_id": workspace.request.paper_id,
+                "bundle_ref": bundle_ref,
+                "member_refs": member_refs,
+            },
+            retention_until=None,
+        )
+        return _ok(
+            {
+                "artifact_bundle_ref": bundle_ref,
+                "artifact_types": [member["artifact_type"] for member in members],
+                "skill_experience_refs": list(workspace.skill_experience_refs),
+            },
+            effect_intent=intent,
+        )
 
-    def _assemble_context(self, workspace: "_ResearchRunWorkspace") -> ContextEnvelope:
+    @staticmethod
+    def _assemble_context(workspace: "_ResearchRunWorkspace") -> ContextEnvelope:
         source_refs = []
         if workspace.research_rag_context:
             source_refs = list(workspace.research_rag_context.source_refs)
@@ -1093,7 +1677,7 @@ class ResearchSinglePaperRuntime:
                 "current_task_ref": "task://publish_artifacts",
                 "current_instruction": "Publish verified Research artifacts only after deterministic gates pass.",
                 "source_refs": source_refs,
-                "artifact_refs": tuple(workspace.artifact_refs.values()),
+                "artifact_refs": tuple(workspace.planned_artifact_refs.values()),
                 "evidence_refs": tuple(workspace.evidence_pack.evidence_ids if workspace.evidence_pack else ()),
                 "allowed_tools": ("retrieval.search", "retrieval.read_source"),
                 "allowed_memory_namespaces": (
@@ -1118,7 +1702,8 @@ class ResearchSinglePaperRuntime:
             }
         )
 
-    def _record_skill_experience(self, workspace: "_ResearchRunWorkspace") -> SkillExperience:
+    @staticmethod
+    def _record_skill_experience(workspace: "_ResearchRunWorkspace") -> SkillExperience:
         research_quality_score = workspace.quality.score if workspace.quality else 0.0
         return SkillExperience(
             experience_id=stable_research_id("skill_experience", workspace.request.run_id, workspace.request.paper_id),
@@ -1129,7 +1714,7 @@ class ResearchSinglePaperRuntime:
             domain="research",
             task_type="paper_analysis",
             input_refs=[workspace.request.source_ref],
-            output_refs=list(workspace.artifact_refs.values()),
+            output_refs=list(workspace.planned_artifact_refs.values()),
             transcript_refs=[f"harness-transcript://{workspace.request.run_id}"],
             gate_results=[result.to_dict() for result in workspace.claim_gate_results],
             score=research_quality_score,
@@ -1143,18 +1728,6 @@ class ResearchSinglePaperRuntime:
             summary="Single-paper Research analysis experience recorded for offline skill evolution.",
             metadata={"skill_promotion_triggered": False, "package_hash": "sha256:fake-research-skill"},
         )
-
-    def _write_artifact(
-        self,
-        artifact_type: str,
-        payload: dict[str, Any],
-        *,
-        metadata: dict[str, Any] | None = None,
-    ) -> ArtifactRef:
-        return self.artifact_port.write_artifact(
-            ArtifactWriteRequest(artifact_type=artifact_type, payload=payload, metadata=metadata or {})
-        )
-
 
 @dataclass
 class _ResearchRunWorkspace:
@@ -1182,11 +1755,203 @@ class _ResearchRunWorkspace:
     score_gate_results: list[GateResult] = field(default_factory=list)
     llm_candidate_warnings: list[str] = field(default_factory=list)
     artifact_refs: dict[str, str] = field(default_factory=dict)
+    planned_artifact_refs: dict[str, str] = field(default_factory=dict)
+    pending_artifact_bundles: dict[str, tuple[ArtifactWriteRequest, ...]] = field(
+        default_factory=dict
+    )
     context_snapshot: ContextSnapshot | None = None
     context_envelope: ContextEnvelope | None = None
     compression_records: list[dict[str, Any]] = field(default_factory=list)
     skill_experience_refs: list[str] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
+
+
+class _CompatibilityResearchArtifactBundleHandler:
+    """Test-only adapter for simple in-memory ``ArtifactPort`` fakes.
+
+    Production composition always injects the filesystem handler.  Keeping
+    this small adapter local preserves existing unit-test ports without
+    granting any worker direct access to their commit method.
+    """
+
+    def __init__(
+        self,
+        *,
+        artifact_port: ArtifactPort,
+        side_effect_store: HarnessSideEffectStorePort,
+        terminal_payload_factory: Callable[[str | None], tuple[ArtifactWriteRequest, ...]],
+        candidate_payload_factory: Callable[
+            [HarnessSideEffectIntent], tuple[ArtifactWriteRequest, ...]
+        ],
+    ) -> None:
+        self._artifact_port = artifact_port
+        self._side_effect_store = side_effect_store
+        self._terminal_payload_factory = terminal_payload_factory
+        self._candidate_payload_factory = candidate_payload_factory
+        self._prepared: dict[str, tuple[tuple[ArtifactWriteRequest, ...], HarnessSideEffectOutcome]] = {}
+
+    def prepare(
+        self,
+        intent: HarnessSideEffectIntent,
+        authorization: HarnessSideEffectDecision,
+    ) -> HarnessSideEffectOutcome:
+        _validate_compat_authority(
+            intent,
+            authorization,
+            origin=HarnessSideEffectOrigin.WORKER,
+            disposition=HarnessSideEffectDisposition.PREPARED,
+        )
+        requests = list(self._candidate_payload_factory(intent))
+        if not requests or not all(
+            isinstance(request, ArtifactWriteRequest) for request in requests
+        ):
+            raise HarnessValidationError("Research artifact bundle requires members")
+        committed_at = utc_now()
+        candidate_refs = tuple(
+            f"artifact-candidate://{intent.run_id}/{intent.effect_id.rsplit(':', 1)[-1]}/{request.artifact_type}"
+            for request in requests
+        )
+        outcome = HarnessSideEffectOutcome(
+            outcome_id=f"research-artifact-prepared:{intent.effect_id.rsplit(':', 1)[-1]}",
+            effect_id=intent.effect_id,
+            decision_ref=authorization.checksum,
+            run_id=intent.run_id,
+            kind=intent.kind,
+            handler=authorization.handler,
+            idempotency_key=intent.idempotency_key,
+            identity_scope_ref=intent.identity_scope_ref,
+            subject_scope_ref=intent.subject_scope_ref,
+            atomic_group=intent.atomic_group,
+            disposition=HarnessSideEffectDisposition.PREPARED,
+            candidate_refs=candidate_refs,
+            result_ref=checksum_for(
+                {"members": [request.to_dict() for request in requests]}
+            ),
+            reason_code="prepared_test_fake",
+            committed_at=committed_at,
+            retention_until=committed_at + timedelta(hours=1),
+            metadata={
+                "test_only": True,
+                "members": [request.to_dict() for request in requests],
+            },
+        )
+        assert outcome.checksum is not None
+        self._prepared[outcome.checksum] = (tuple(requests), outcome)
+        return outcome
+
+    def commit(
+        self,
+        intent: HarnessSideEffectIntent,
+        authorization: HarnessSideEffectDecision,
+    ) -> HarnessSideEffectOutcome:
+        _validate_compat_authority(
+            intent,
+            authorization,
+            origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL,
+            disposition=HarnessSideEffectDisposition.ACCEPTED,
+        )
+        prepared_refs = intent.payload.get("prepared_outcome_refs")
+        if not isinstance(prepared_refs, (list, tuple)):
+            raise HarnessValidationError("terminal Research intent requires prepared outcomes")
+        prepared = [
+            self._prepared[ref]
+            for ref in prepared_refs
+            if isinstance(ref, str) and ref in self._prepared
+        ]
+        if len(prepared) != len(prepared_refs):
+            raise HarnessValidationError("terminal Research prepared outcome is unavailable")
+        requests = [request for group, _ in prepared for request in group]
+        cutoff = intent.payload.get("history_cutoff")
+        requests.extend(
+            self._terminal_payload_factory(
+                cutoff if isinstance(cutoff, str) else None
+            )
+        )
+        refs = [self._artifact_port.write_artifact(request) for request in requests]
+        artifact_refs = {ref.artifact_type: ref.ref for ref in refs}
+        committed_at = utc_now()
+        return HarnessSideEffectOutcome(
+            outcome_id=f"research-artifact-published:{intent.effect_id.rsplit(':', 1)[-1]}",
+            effect_id=intent.effect_id,
+            decision_ref=authorization.checksum,
+            run_id=intent.run_id,
+            kind=intent.kind,
+            handler=authorization.handler,
+            idempotency_key=intent.idempotency_key,
+            identity_scope_ref=intent.identity_scope_ref,
+            subject_scope_ref=intent.subject_scope_ref,
+            atomic_group=intent.atomic_group,
+            disposition=HarnessSideEffectDisposition.ACCEPTED,
+            candidate_refs=tuple(
+                ref
+                for _, outcome in prepared
+                for ref in outcome.candidate_refs
+            ),
+            public_refs=tuple(ref.ref for ref in refs),
+            result_ref=checksum_for(
+                {
+                    "artifact_refs": artifact_refs,
+                    "authority": authorization.checksum,
+                    "history_cutoff": cutoff,
+                }
+            ),
+            reason_code="published_test_fake",
+            committed_at=committed_at,
+            metadata={
+                "test_only": True,
+                "artifact_refs": artifact_refs,
+                "publication_authority_ref": authorization.checksum,
+                "history_cutoff": cutoff,
+            },
+        )
+
+
+def _validate_compat_authority(
+    intent: HarnessSideEffectIntent,
+    authorization: HarnessSideEffectDecision,
+    *,
+    origin: HarnessSideEffectOrigin,
+    disposition: HarnessSideEffectDisposition,
+) -> None:
+    if (
+        intent.origin is not origin
+        or authorization.origin is not origin
+        or authorization.disposition is not disposition
+        or authorization.intent_ref != intent.checksum
+        or authorization.effect_id != intent.effect_id
+        or authorization.run_id != intent.run_id
+        or authorization.identity_scope_ref != intent.identity_scope_ref
+        or authorization.subject_scope_ref != intent.subject_scope_ref
+        or authorization.atomic_group != intent.atomic_group
+    ):
+        raise HarnessValidationError("Research artifact authority does not match intent")
+
+
+def _research_run_created_at(
+    event_port: HarnessTransitionPort,
+    run_id: str,
+) -> datetime:
+    """Reuse the durable run identity timestamp during crash recovery."""
+
+    history = event_port.read_history(run_id)
+    if not history:
+        return utc_now()
+    created = tuple(
+        event
+        for event in history
+        if event.event_type is HarnessEventType.RUN_CREATED
+    )
+    if len(created) != 1:
+        raise HarnessValidationError(
+            "Research durable history must contain one RUN_CREATED event",
+            code="research_run_created_event_invalid",
+            details={
+                "code": "research_run_created_event_invalid",
+                "run_id": run_id,
+                "count": len(created),
+            },
+        )
+    return created[0].occurred_at
 
 
 def _budget_from_options(options: dict[str, Any]) -> HarnessBudget:
@@ -1230,8 +1995,16 @@ def _rag_max_replans_from_options(options: dict[str, Any]) -> int:
     return value
 
 
-def _ok(output: dict[str, Any]) -> HarnessWorkerResult:
-    return HarnessWorkerResult(status=HarnessWorkerStatus.SUCCEEDED, output=output)
+def _ok(
+    output: dict[str, Any],
+    *,
+    effect_intent: HarnessSideEffectIntent | None = None,
+) -> HarnessWorkerResult:
+    return HarnessWorkerResult(
+        status=HarnessWorkerStatus.SUCCEEDED,
+        output=output,
+        effect_intent=effect_intent,
+    )
 
 
 def _failed(error: str) -> HarnessWorkerResult:
@@ -1464,4 +2237,5 @@ __all__ = [
     "AnalyzePaperRequest",
     "ResearchAnalysisResult",
     "ResearchSinglePaperRuntime",
+    "build_research_harness_run_spec",
 ]

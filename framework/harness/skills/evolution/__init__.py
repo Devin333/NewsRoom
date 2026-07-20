@@ -1,6 +1,23 @@
 from __future__ import annotations
 
 from framework.harness.skills.evolution.candidate import InMemorySkillCandidateStore, SkillPatchApplier
+from framework.harness.skills.evolution.authority import (
+    InMemorySkillReleaseAuthorityResolver,
+    ResolvedSkillReleaseAuthorization,
+    SKILL_RELEASE_AUTHORITY_SCHEMA,
+    SKILL_RELEASE_EFFECT_KIND,
+    SKILL_RELEASE_EVIDENCE_SCHEMA,
+    SKILL_RELEASE_HANDLER,
+    SkillReleaseAuthorization,
+    SkillReleaseAuthorityResolver,
+    skill_candidate_ref,
+    skill_evaluation_ref,
+    skill_package_hash,
+    skill_promotion_decision_ref,
+    skill_promotion_gate_ref,
+    skill_release_evidence_payload,
+    skill_rollback_plan_ref,
+)
 from framework.harness.skills.evolution.evaluator import SkillEvalReplayRunner, SkillSandboxTrialRunner, SkillStaticValidator
 from framework.harness.skills.evolution.experience import InMemorySkillExperienceStore
 from framework.harness.skills.evolution.fake import FakeSkillEvolutionPort
@@ -57,6 +74,7 @@ from framework.harness.skills.evolution.release import VersionedSkillReleaseRegi
 
 __all__ = [
     "FakeSkillEvolutionPort",
+    "InMemorySkillReleaseAuthorityResolver",
     "InMemorySkillCandidateStore",
     "InMemorySkillExperienceStore",
     "RejectedSkillCandidate",
@@ -97,6 +115,8 @@ __all__ = [
     "SkillQualityGateRetentionGate",
     "SkillRegressionGate",
     "SkillRelease",
+    "SkillReleaseAuthorization",
+    "SkillReleaseAuthorityResolver",
     "SkillRollbackPlan",
     "SkillSandboxTrialRunner",
     "SkillSchemaCompatibilityGate",
@@ -106,6 +126,18 @@ __all__ = [
     "SkillEvolutionPort",
     "SkillVersionRef",
     "VersionedSkillReleaseRegistry",
+    "ResolvedSkillReleaseAuthorization",
+    "SKILL_RELEASE_AUTHORITY_SCHEMA",
+    "SKILL_RELEASE_EFFECT_KIND",
+    "SKILL_RELEASE_EVIDENCE_SCHEMA",
+    "SKILL_RELEASE_HANDLER",
     "attach_promotion_decision",
     "ensure_jsonable_skill_model",
+    "skill_candidate_ref",
+    "skill_evaluation_ref",
+    "skill_package_hash",
+    "skill_promotion_decision_ref",
+    "skill_promotion_gate_ref",
+    "skill_release_evidence_payload",
+    "skill_rollback_plan_ref",
 ]

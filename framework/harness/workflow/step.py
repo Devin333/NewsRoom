@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.side_effects.models import HarnessSideEffectHandlerReference
 from framework.shared.json import to_jsonable
 
 
@@ -73,6 +74,7 @@ class HarnessStepSpec:
     retry_policy: HarnessRetryPolicy = field(default_factory=HarnessRetryPolicy)
     quality_gate: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    side_effect_handler: HarnessSideEffectHandlerReference | str | dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         step_id = str(self.step_id).strip()
@@ -89,10 +91,20 @@ class HarnessStepSpec:
             not isinstance(self.quality_gate, str) or not self.quality_gate.strip()
         ):
             raise HarnessValidationError("quality_gate must be a non-blank string")
+        if self.side_effect_handler is not None:
+            object.__setattr__(
+                self,
+                "side_effect_handler",
+                HarnessSideEffectHandlerReference.parse(self.side_effect_handler),
+            )
         object.__setattr__(self, "metadata", dict(self.metadata))
 
+    @property
+    def side_effect_ref(self) -> HarnessSideEffectHandlerReference | None:
+        return self.side_effect_handler
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "step_id": self.step_id,
             "worker_type": self.worker_type.value,
             "input_keys": list(self.input_keys),
@@ -101,6 +113,9 @@ class HarnessStepSpec:
             "quality_gate": self.quality_gate,
             "metadata": to_jsonable(self.metadata),
         }
+        if self.side_effect_handler is not None:
+            payload["side_effect_handler"] = self.side_effect_handler.to_dict()
+        return payload
 
 
 __all__ = ["HarnessRetryPolicy", "HarnessStepSpec", "HarnessWorkerType"]

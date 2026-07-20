@@ -55,6 +55,10 @@ def test_from_env_builds_immutable_defaults_without_creating_storage(
     assert settings.rag.max_context_items == 8
     assert settings.rag.max_context_tokens == 4_096
     assert settings.rag.max_worker_calls == 16
+    assert settings.run_store.write_schema_version == "v2"
+    assert settings.run_store.supported_schema_versions == ("v1", "v2")
+    assert settings.run_store.rollback_schema_versions == ("v1", "v2")
+    assert settings.run_store.reconciliation_max_runs == 100
     assert not settings.artifact.root.exists()
     assert not settings.research_root.exists()
 
@@ -107,6 +111,10 @@ def test_from_env_normalizes_all_research_configuration_groups(tmp_path: Path) -
         "NEWS_RESEARCH_RAG_MAX_WORKER_CALLS": "6",
         "NEWS_RESEARCH_ARTIFACT_MAX_BYTES": "24000000",
         "NEWS_RESEARCH_RUN_RECORD_MAX_BYTES": "25000000",
+        "NEWS_RESEARCH_RUN_WRITE_SCHEMA_VERSION": "v2",
+        "NEWS_RESEARCH_RUN_SUPPORTED_SCHEMA_VERSIONS": "v1,v2",
+        "NEWS_RESEARCH_RUN_ROLLBACK_SCHEMA_VERSIONS": "v1,v2",
+        "NEWS_RESEARCH_RUN_RECONCILIATION_MAX_RUNS": "17",
     }
 
     settings = ResearchRuntimeSettings.from_env(env, cwd=tmp_path)
@@ -133,6 +141,10 @@ def test_from_env_normalizes_all_research_configuration_groups(tmp_path: Path) -
     assert settings.rag.max_replans == 2
     assert settings.artifact.max_bytes == 24_000_000
     assert settings.run_store.max_record_bytes == 25_000_000
+    assert settings.run_store.write_schema_version == "v2"
+    assert settings.run_store.supported_schema_versions == ("v1", "v2")
+    assert settings.run_store.rollback_schema_versions == ("v1", "v2")
+    assert settings.run_store.reconciliation_max_runs == 17
 
 
 def test_from_env_uses_existing_shared_llm_artifact_and_parser_names(
@@ -292,6 +304,41 @@ def test_from_env_rejects_unsupported_option_sets(
 
     assert exc_info.value.capabilities == (capability,)
     assert value not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "capability"),
+    [
+        (
+            {"NEWS_RESEARCH_RUN_WRITE_SCHEMA_VERSION": "v2", "NEWS_RESEARCH_RUN_SUPPORTED_SCHEMA_VERSIONS": "v2"},
+            "research.storage.run_store",
+        ),
+        (
+            {"NEWS_RESEARCH_RUN_WRITE_SCHEMA_VERSION": "v2", "NEWS_RESEARCH_RUN_ROLLBACK_SCHEMA_VERSIONS": "v1"},
+            "research.storage.run_store",
+        ),
+        (
+            {"NEWS_RESEARCH_RUN_WRITE_SCHEMA_VERSION": "v3"},
+            "research.storage.run_store",
+        ),
+        (
+            {"NEWS_RESEARCH_RUN_SUPPORTED_SCHEMA_VERSIONS": "v1,v1"},
+            "research.storage.run_store",
+        ),
+    ],
+)
+def test_v2_writer_rejects_non_dual_reader_or_rollback_target(
+    tmp_path: Path,
+    overrides: dict[str, str],
+    capability: str,
+) -> None:
+    with pytest.raises(ResearchConfigurationError) as exc_info:
+        ResearchRuntimeSettings.from_env(
+            {**_minimum_env(), **overrides},
+            cwd=tmp_path,
+        )
+
+    assert exc_info.value.capabilities == (capability,)
 
 
 def test_from_env_rejects_existing_non_directory_storage_root(tmp_path: Path) -> None:

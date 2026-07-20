@@ -42,6 +42,13 @@ def test_skill_evolution_bypass_tokens_only_appear_in_guardrails() -> None:
 
 def test_skill_evolution_models_require_harness_promotion_authority() -> None:
     model_source = (SKILL_EVOLUTION_ROOT / "models.py").read_text(encoding="utf-8")
+    authority_source = (SKILL_EVOLUTION_ROOT / "authority.py").read_text(encoding="utf-8")
+    release_source = (SKILL_EVOLUTION_ROOT / "release.py").read_text(encoding="utf-8")
 
     assert 'decided_by: str = "harness"' in model_source
     assert 'decided_by=\'harness\'' in model_source
+    assert "release_authorization_ref" in model_source
+    assert "HarnessSideEffectStorePort" in authority_source
+    assert "skill_release_side_effect_decision_missing" in authority_source
+    assert "authorization_ref = release.release_authorization_ref" in release_source
+    assert "self.authority_resolver.resolve(authorization_ref)" in release_source

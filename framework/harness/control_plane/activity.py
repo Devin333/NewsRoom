@@ -418,6 +418,7 @@ def _worker_result_from_dict(value: Mapping[str, Any]) -> HarnessWorkerResult:
     artifacts = value.get("artifacts", ())
     diagnostics = value.get("diagnostics", {})
     metrics = value.get("metrics", {})
+    effect_intent = value.get("effect_intent")
     if not isinstance(output, Mapping):
         raise HarnessValidationError("worker result output must be an object")
     if not isinstance(artifacts, list | tuple):
@@ -434,6 +435,7 @@ def _worker_result_from_dict(value: Mapping[str, Any]) -> HarnessWorkerResult:
         diagnostics=dict(diagnostics),
         metrics=dict(metrics),
         error=None if error is None else str(error),
+        effect_intent=effect_intent,
     )
 
 

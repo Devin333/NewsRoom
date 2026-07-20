@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from framework.harness.skills.evolution.authority import SkillReleaseAuthorityResolver
 from framework.harness.skills.evolution.models import (
     SkillCandidate,
     SkillEvaluationResult,
@@ -102,4 +103,5 @@ __all__ = [
     "SkillExperienceStorePort",
     "SkillOptimizerWorkerPort",
     "SkillPromotionPort",
+    "SkillReleaseAuthorityResolver",
 ]

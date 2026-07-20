@@ -23,13 +23,17 @@ class FakeMCPToolPort:
         if not decision.allowed:
             return HarnessWorkerResult(
                 status="failed",
-                output={"policy_decision": decision.to_dict()},
+                output={"policy_observation": decision.to_dict()},
                 diagnostics={"audit_ref": audit_ref},
                 error=decision.reason,
             )
         return HarnessWorkerResult(
             status="succeeded",
-            output={"tool_name": request.tool_name, "result": {"ok": True}, "policy_decision": decision.to_dict()},
+            output={
+                "tool_name": request.tool_name,
+                "result": {"ok": True},
+                "policy_observation": decision.to_dict(),
+            },
             diagnostics={"audit_ref": audit_ref},
         )
 

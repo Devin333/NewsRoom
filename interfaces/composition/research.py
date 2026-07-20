@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+import json
+import re
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
+from pathlib import Path
 from threading import Condition, Lock
 from typing import Any
 
@@ -10,11 +13,22 @@ from business.research.application.ask_paper import AskPaperUseCase
 from business.research.application.bounded_document_rag import (
     BoundedDocumentRAGRuntime,
 )
+from business.research.application.run_disposition import (
+    ResearchRunDispositionReconciler,
+    classify_research_run_record,
+)
 from business.research.application.single_paper_runtime import (
+    AnalyzePaperRequest,
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
+    build_research_harness_run_spec,
 )
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
+from business.research.domain import (
+    research_event_tenant_id,
+    research_identity_scope_ref,
+    research_subject_scope_ref,
+)
 from business.research.document.cascade_parser import (
     CascadeDocumentParser,
     PyMuPDFTextDocumentParser,
@@ -22,11 +36,30 @@ from business.research.document.cascade_parser import (
 from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
 from business.research.document.marker_pdf_parser import MarkerPdfDocumentParser
 from business.research.document.mineru_pdf_parser import MinerUPdfDocumentParser
+from business.research.ports.artifact_publication import (
+    RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION,
+    RESEARCH_ARTIFACT_MANIFEST_VERSION,
+    ResearchArtifactDiagnosticClaim,
+    ResearchArtifactReadClaim,
+    ResearchArtifactReadResolution,
+)
 from business.research.ports.chunk_store import ChunkStorePort
 from framework.llm.clients.openai_compatible import (
     LLMRetryPolicy,
     OpenAICompatibleClient,
     OpenAICompatibleConfig,
+)
+from framework.events.canonical import checksum_for
+from framework.harness import (
+    HarnessEvent,
+    HarnessEventType,
+    HarnessSideEffectDisposition,
+    HarnessSideEffectOrigin,
+    HarnessSideEffectOutcome,
+    HarnessSideEffectStorePort,
+    HarnessTrace,
+    HarnessTranscript,
+    transcript_entry_from_event,
 )
 from framework.harness.ports import HarnessTransitionPort
 from infrastructure.external.sources.arxiv import (
@@ -36,6 +69,7 @@ from infrastructure.external.sources.arxiv import (
 from infrastructure.external.sources.fetch_policy import SourceFetchPolicy
 from infrastructure.external.sources.github import GithubConnector
 from infrastructure.research.artifact_port import FilesystemHarnessArtifactPort
+from infrastructure.research.artifact_publication import ResearchArtifactBundleHandler
 from infrastructure.research.candidate_worker import (
     StructuredResearchCandidateWorker,
 )
@@ -44,6 +78,8 @@ from infrastructure.research.document_compiler import (
 )
 from infrastructure.research.filesystem_run_store import (
     FilesystemResearchRunStore,
+    RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+    RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
 )
 from infrastructure.research.github_repository import (
     GithubResearchRepositoryAdapter,
@@ -51,6 +87,7 @@ from infrastructure.research.github_repository import (
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.storage.events.factory import durable_event_storage_from_env
+from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
 from interfaces.composition.research_errors import (
     ResearchCapability,
     ResearchCompositionError,
@@ -487,6 +524,374 @@ class _UnavailableResearchRunStore:
         raise _research_service_error(self._error)
 
 
+class _DurableResearchRunRecoverySource:
+    """Rebuild a missing run disposition from immutable publication evidence."""
+
+    def __init__(
+        self,
+        *,
+        artifact_port: FilesystemHarnessArtifactPort,
+        run_store: Any,
+        side_effect_store: HarnessSideEffectStorePort,
+        scoped_event_port_factory: Callable[
+            [str, Mapping[str, Any]],
+            HarnessTransitionPort,
+        ],
+    ) -> None:
+        if not isinstance(artifact_port, FilesystemHarnessArtifactPort):
+            raise TypeError("artifact_port must be FilesystemHarnessArtifactPort")
+        if not isinstance(side_effect_store, HarnessSideEffectStorePort):
+            raise TypeError("side_effect_store must implement HarnessSideEffectStorePort")
+        if not callable(scoped_event_port_factory):
+            raise TypeError("scoped_event_port_factory must be callable")
+        self._artifact_root = Path(artifact_port.root)
+        self._manifest_reader = artifact_port.manager.read_run_manifest
+        self._run_store = run_store
+        self._side_effect_store = side_effect_store
+        self._scoped_event_port_factory = scoped_event_port_factory
+        # This port is retained only by the recovery reader.  Its resolver is
+        # deliberately diagnostic: normal artifact reads remain bound to the
+        # accepted run resolver installed on the production port.
+        self._diagnostic_artifact_reader = FilesystemHarnessArtifactPort(
+            artifact_port.root,
+            artifact_manager=artifact_port.manager,
+            artifact_store=artifact_port.store,
+            max_write_bytes=artifact_port.max_write_bytes,
+            accepted_run_resolver=lambda *_args: True,
+        )
+
+    def list_pending_run_ids(self, *, limit: int) -> tuple[str, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        try:
+            candidates = sorted(self._artifact_root.iterdir(), key=lambda path: path.name)
+        except FileNotFoundError:
+            return ()
+        pending: list[str] = []
+        for candidate in candidates:
+            if len(pending) >= limit:
+                break
+            if candidate.is_symlink() or not candidate.is_dir():
+                continue
+            try:
+                manifest = self._manifest_reader(candidate.name)
+            except FileNotFoundError:
+                continue
+            if not _is_recoverable_research_manifest(manifest):
+                continue
+            if self._run_store.get_by_run_id(candidate.name) is None:
+                pending.append(candidate.name)
+        return tuple(pending)
+
+    def load_recovery_record(self, run_id: str) -> ResearchRunRecord | None:
+        manifest = self._manifest_reader(run_id)
+        if not _is_recoverable_research_manifest(manifest):
+            return None
+
+        identity_scope_ref = _required_checksum(
+            manifest.get("identity_scope_ref"),
+            "manifest identity scope",
+        )
+        subject_scope_ref = _required_checksum(
+            manifest.get("subject_scope_ref"),
+            "manifest subject scope",
+        )
+        authority_ref = _required_checksum(
+            manifest.get("publication_authority_ref"),
+            "manifest publication authority",
+        )
+        artifact_evidence_ref = _required_checksum(
+            manifest.get("artifact_evidence_ref"),
+            "manifest artifact evidence",
+        )
+        outcome_ref = _required_checksum(
+            manifest.get("terminal_side_effect_outcome_ref"),
+            "manifest terminal outcome",
+        )
+        raw_outcome = manifest.get("terminal_side_effect_outcome")
+        if not isinstance(raw_outcome, Mapping):
+            raise ValueError("Research recovery manifest has no terminal outcome")
+        outcome = HarnessSideEffectOutcome.from_dict(raw_outcome)
+        if (
+            outcome.checksum != outcome_ref
+            or outcome.run_id != run_id
+            or outcome.decision_ref != authority_ref
+            or outcome.identity_scope_ref != identity_scope_ref
+            or outcome.subject_scope_ref != subject_scope_ref
+            or outcome.disposition is not HarnessSideEffectDisposition.ACCEPTED
+        ):
+            raise ValueError("Research recovery terminal outcome conflicts with manifest")
+
+        decision = self._side_effect_store.get_decision(authority_ref)
+        if (
+            decision is None
+            or decision.checksum != authority_ref
+            or decision.run_id != run_id
+            or decision.origin is not HarnessSideEffectOrigin.CONTROLLER_TERMINAL
+            or decision.identity_scope_ref != identity_scope_ref
+            or decision.subject_scope_ref != subject_scope_ref
+            or decision.disposition is not HarnessSideEffectDisposition.ACCEPTED
+        ):
+            raise ValueError("Research recovery publication decision is unavailable")
+        stored_outcome = self._side_effect_store.get_outcome(
+            effect_id=outcome.effect_id,
+            identity_scope_ref=identity_scope_ref,
+            subject_scope_ref=subject_scope_ref,
+            idempotency_key=outcome.idempotency_key,
+        )
+        if stored_outcome is None or stored_outcome.checksum != outcome_ref:
+            raise ValueError("Research recovery publication outcome is unavailable")
+
+        artifact_refs = _recovery_artifact_refs(outcome, run_id=run_id)
+        if checksum_for({"artifact_refs": artifact_refs}) != artifact_evidence_ref:
+            raise ValueError("Research recovery artifact evidence checksum is invalid")
+        payloads = {
+            artifact_type: self._read_recovery_artifact(
+                artifact_type=artifact_type,
+                ref=ref,
+            )
+            for artifact_type, ref in artifact_refs.items()
+        }
+        analysis = _required_artifact_payload(payloads, "research-analysis")
+        quality = _required_artifact_payload(payloads, "research-quality-result")
+        published_trace = HarnessTrace.from_dict(
+            _required_artifact_payload(payloads, "harness-trace")
+        )
+        published_transcript = HarnessTranscript.from_dict(
+            _required_artifact_payload(payloads, "harness-transcript")
+        )
+        paper_id = _required_text(analysis.get("paper_id"), "Research paper id")
+        if quality.get("target_id") != paper_id:
+            raise ValueError("Research recovery quality target conflicts with paper")
+
+        actor_metadata = _recovery_actor_metadata(published_trace.metadata)
+        if research_identity_scope_ref(actor_metadata) != identity_scope_ref:
+            raise ValueError("Research recovery actor scope conflicts with publication")
+        if research_subject_scope_ref(paper_id) != subject_scope_ref:
+            raise ValueError("Research recovery paper scope conflicts with publication")
+        for artifact_type, envelope in payloads.items():
+            metadata = envelope.get("metadata")
+            if not isinstance(metadata, Mapping):
+                raise ValueError(
+                    f"Research recovery artifact metadata is invalid: {artifact_type}"
+                )
+            if research_identity_scope_ref(metadata) != identity_scope_ref:
+                raise ValueError(
+                    f"Research recovery artifact scope conflicts: {artifact_type}"
+                )
+
+        event_port = self._scoped_event_port_factory(run_id, actor_metadata)
+        history = event_port.read_history(run_id)
+        if not isinstance(history, tuple) or not all(
+            isinstance(event, HarnessEvent) and event.run_id == run_id
+            for event in history
+        ):
+            raise ValueError("Research recovery event history is invalid")
+        cutoff = _required_text(
+            outcome.metadata.get("history_cutoff"),
+            "Research terminal history cutoff",
+        )
+        cutoff_indexes = [
+            index for index, event in enumerate(history) if event.event_id == cutoff
+        ]
+        if len(cutoff_indexes) != 1:
+            raise ValueError("Research recovery history cutoff is not unique")
+        cutoff_index = cutoff_indexes[0]
+        if tuple(published_trace.events) != history[: cutoff_index + 1]:
+            raise ValueError("Research published trace conflicts with durable history")
+        if [entry.entry_id for entry in published_transcript.entries()] != [
+            event.event_id for event in history[: cutoff_index + 1]
+        ]:
+            raise ValueError("Research published transcript conflicts with durable history")
+        _validate_terminal_publication_history(
+            history,
+            cutoff_index=cutoff_index,
+            authority_ref=authority_ref,
+            identity_scope_ref=identity_scope_ref,
+            subject_scope_ref=subject_scope_ref,
+        )
+
+        status = _terminal_history_status(history)
+        # A finalized manifest can become durable immediately before the
+        # controller commits COMPLETE_RUN.  It is not an accepted run yet,
+        # and persisting that transient state as quarantine would make the
+        # immutable run id impossible to accept after the next recovery pass.
+        if status != "succeeded":
+            return None
+        trace = HarnessTrace(
+            run_id=run_id,
+            events=history,
+            metadata=dict(published_trace.metadata),
+        )
+        transcript = HarnessTranscript(run_id, published_transcript.entries())
+        for index, event in enumerate(
+            history[cutoff_index + 1 :],
+            start=cutoff_index + 1,
+        ):
+            entry = transcript_entry_from_event(event, phase_index=index)
+            transcript.append(
+                replace(
+                    entry,
+                    metadata={**entry.metadata, **actor_metadata},
+                )
+            )
+
+        optional = {
+            "analysis": analysis,
+            "paper_card": _optional_artifact_payload(
+                payloads,
+                "research-paper-card",
+            ),
+            "reader_payload": _optional_artifact_payload(
+                payloads,
+                "research-reader-payload",
+            ),
+            "rag_context": _optional_artifact_payload(
+                payloads,
+                "research-rag-context-pack",
+            ),
+            "reader_issue": _optional_artifact_payload(payloads, "reader-issue"),
+            "context_snapshot": _optional_artifact_payload(
+                payloads,
+                "research-context-snapshot",
+            ),
+        }
+        compression = _optional_artifact_payload(
+            payloads,
+            "research-context-compression-records",
+        )
+        compression_records = [] if compression is None else compression.get("records")
+        if not isinstance(compression_records, list):
+            raise ValueError("Research recovery compression records are invalid")
+        result = ResearchAnalysisResult.from_dict(
+            {
+                "run_id": run_id,
+                "status": status,
+                **optional,
+                "quality": quality,
+                "artifact_refs": artifact_refs,
+                "trace": trace.to_dict(include_deterministic_history=True),
+                "transcript": transcript.to_dict(),
+                "context_envelope": None,
+                "compression_records": compression_records,
+                "skill_experience_refs": [],
+                "actor_scope": actor_metadata,
+                "diagnostics": {
+                    "harness_status": status,
+                    "publication_authority_ref": authority_ref,
+                    "terminal_side_effect_outcome_ref": outcome_ref,
+                    "terminal_history_cutoff": cutoff,
+                    "artifact_evidence_ref": artifact_evidence_ref,
+                    "recovered_from_durable_publication": True,
+                },
+                "trace_ref": f"harness-trace://{run_id}",
+                "reader_payload_ref": artifact_refs.get(
+                    "research-reader-payload"
+                ),
+            }
+        )
+        return ResearchRunRecord(
+            run_id=run_id,
+            paper_id=paper_id,
+            result=result,
+            identity_scope_ref=identity_scope_ref,
+            subject_scope_ref=subject_scope_ref,
+            publication_authority_ref=authority_ref,
+            artifact_evidence_ref=artifact_evidence_ref,
+            schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+        )
+
+    def load_failure_record(
+        self,
+        request: AnalyzePaperRequest,
+    ) -> ResearchRunRecord | None:
+        """Rebuild a raised run from history without resuming workers or effects."""
+
+        if not isinstance(request, AnalyzePaperRequest):
+            raise TypeError("request must be AnalyzePaperRequest")
+        try:
+            manifest = self._manifest_reader(request.run_id)
+        except FileNotFoundError:
+            manifest = None
+        if manifest is not None and _is_recoverable_research_manifest(manifest):
+            recovered = self.load_recovery_record(request.run_id)
+            if recovered is not None:
+                return recovered
+            # The publication is durable but the terminal success transition
+            # is not.  Treat this as an in-flight failure diagnostic below;
+            # startup reconciliation will defer it until COMPLETE_RUN exists.
+        actor_metadata = {
+            "memory_namespace": request.memory_namespace,
+            **(
+                {"tenant_id": request.tenant_id}
+                if request.tenant_id is not None
+                else {}
+            ),
+            **(
+                {"user_id": request.user_id}
+                if request.user_id is not None
+                else {}
+            ),
+        }
+        if not isinstance(actor_metadata["memory_namespace"], str) or not str(
+            actor_metadata["memory_namespace"]
+        ).strip():
+            raise ValueError("Research failure recovery actor scope is incomplete")
+
+        event_port = self._scoped_event_port_factory(request.run_id, actor_metadata)
+        history = event_port.read_history(request.run_id)
+        if not history:
+            return None
+        if not isinstance(history, tuple) or any(
+            not isinstance(event, HarnessEvent) or event.run_id != request.run_id
+            for event in history
+        ):
+            raise ValueError("Research failure recovery event history is invalid")
+        created = tuple(
+            event
+            for event in history
+            if event.event_type is HarnessEventType.RUN_CREATED
+        )
+        if not created:
+            return None
+        if len(created) != 1:
+            raise ValueError("Research failure recovery run creation is ambiguous")
+
+        run_spec = build_research_harness_run_spec(
+            request,
+            created_at=created[0].occurred_at,
+        )
+        recovery = event_port.recover(run_spec)
+        if recovery.state is None:
+            return None
+        result = ResearchAnalysisResult.from_durable_failure(
+            request=request,
+            events=history,
+            harness_status=recovery.state.status.value,
+        )
+        return ResearchRunRecord(
+            run_id=request.run_id,
+            paper_id=request.paper_id,
+            result=result,
+            identity_scope_ref=research_identity_scope_ref(actor_metadata),
+            subject_scope_ref=research_subject_scope_ref(request.paper_id),
+            schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+        )
+
+    def _read_recovery_artifact(
+        self,
+        *,
+        artifact_type: str,
+        ref: str,
+    ) -> dict[str, Any]:
+        envelope = self._diagnostic_artifact_reader.read_artifact(ref)
+        if envelope.get("artifact_type") != artifact_type:
+            raise ValueError(
+                f"Research recovery artifact identity conflicts: {artifact_type}"
+            )
+        return envelope
+
+
 def _unavailable_composition(
     error: ResearchCompositionError,
     *,
@@ -680,15 +1085,28 @@ def _build_configured_composition(
                 max_write_bytes=settings.artifact.max_bytes,
             ),
         )
+        side_effect_store = _compose_component(
+            ResearchCapability.ARTIFACT,
+            lambda: SQLiteHarnessSideEffectStore(
+                settings.research_root / "harness-side-effects.sqlite3"
+            ),
+        )
+        owned_resources.append(side_effect_store)
         run_store = _compose_component(
             ResearchCapability.RUN_STORE,
             lambda: FilesystemResearchRunStore(
                 settings.run_store.root,
                 result_decoder=ResearchAnalysisResult.from_dict,
                 max_record_bytes=settings.run_store.max_record_bytes,
+                write_schema_version=_research_run_store_schema_version(
+                    settings.run_store.write_schema_version
+                ),
+                supported_schema_versions=tuple(
+                    _research_run_store_schema_version(version)
+                    for version in settings.run_store.supported_schema_versions
+                ),
             ),
         )
-
         durable_events = _compose_component(
             ResearchCapability.EVENT_LOG,
             lambda: durable_event_storage_from_env(
@@ -710,6 +1128,41 @@ def _build_configured_composition(
                 tenant_id=_RESEARCH_EVENT_TENANT_ID,
             )
 
+        def scoped_event_port_factory(
+            _run_id: str,
+            actor_metadata: Mapping[str, Any],
+        ) -> HarnessTransitionPort:
+            return durable_events.create_harness_transition_port(
+                tenant_id=research_event_tenant_id(actor_metadata),
+            )
+
+        recovery_source = _DurableResearchRunRecoverySource(
+            artifact_port=artifact_port,
+            run_store=run_store,
+            side_effect_store=side_effect_store,
+            scoped_event_port_factory=scoped_event_port_factory,
+        )
+        run_reconciler = ResearchRunDispositionReconciler(
+            run_store=run_store,
+            recovery_source=recovery_source,
+            max_runs=settings.run_store.reconciliation_max_runs,
+        )
+        artifact_port.set_accepted_run_resolver(
+            lambda claim: (
+                _resolve_research_artifact_run(
+                    run_store,
+                    claim=claim,
+                    reconciler=run_reconciler,
+                )
+            )
+        )
+        artifact_port.set_diagnostic_run_resolver(
+            lambda claim: _research_artifact_diagnostic_is_authorized(
+                run_store,
+                claim=claim,
+            )
+        )
+
         # Validate secure activity storage at composition time. This keeps a
         # missing encryption capability on the typed unavailable path rather
         # than failing the first production request after startup.
@@ -726,6 +1179,9 @@ def _build_configured_composition(
             rag_runtime=rag_runtime,
             artifact_port=artifact_port,
             event_port_factory=event_port_factory,
+            scoped_event_port_factory=scoped_event_port_factory,
+            side_effect_store=side_effect_store,
+            artifact_handler_factory=ResearchArtifactBundleHandler,
         )
         ask_use_case = AskPaperUseCase()
         rag_ask_provider = _PaperRagUseCaseProvider(ask_use_case)
@@ -735,6 +1191,8 @@ def _build_configured_composition(
             ask_use_case=ask_use_case,
             rag_ask_use_case=rag_ask_provider,
             run_store=run_store,
+            run_reconciler=run_reconciler,
+            diagnostic_artifact_reader=artifact_port,
         )
         return ResearchRuntimeComposition(
             settings=settings,
@@ -746,6 +1204,337 @@ def _build_configured_composition(
         for resource in reversed(owned_resources):
             _close_quietly(resource)
         raise
+
+
+def _research_artifact_run_is_accepted(
+    run_store: Any,
+    *,
+    claim: ResearchArtifactReadClaim,
+    reconciler: ResearchRunDispositionReconciler | None = None,
+) -> bool:
+    return _resolve_research_artifact_run(
+        run_store,
+        claim=claim,
+        reconciler=reconciler,
+    ).accepted
+
+
+def _resolve_research_artifact_run(
+    run_store: Any,
+    *,
+    claim: ResearchArtifactReadClaim,
+    reconciler: ResearchRunDispositionReconciler | None = None,
+) -> ResearchArtifactReadResolution:
+    if not isinstance(claim, ResearchArtifactReadClaim):
+        return ResearchArtifactReadResolution(accepted=False)
+    record = run_store.get_by_run_id(claim.run_id)
+    if record is None and reconciler is not None:
+        record = reconciler.reconcile_run(
+            claim.run_id,
+            identity_scope_ref=claim.identity_scope_ref,
+        )
+    if record is None:
+        return ResearchArtifactReadResolution(accepted=False)
+    record_schema = getattr(record, "schema_version", None)
+    if record_schema not in {
+        RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+        RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+    }:
+        return ResearchArtifactReadResolution(accepted=False)
+    try:
+        classified = classify_research_run_record(
+            record,
+            require_publication_authority=(
+                record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+            ),
+            schema_version=record_schema,
+            legacy_identity_scope_ref=(
+                getattr(record, "identity_scope_ref", None)
+                if record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION
+                else None
+            ),
+        )
+    except (TypeError, ValueError):
+        return ResearchArtifactReadResolution(accepted=False)
+    disposition = getattr(classified, "disposition", None)
+    disposition_value = getattr(disposition, "value", disposition)
+    result = getattr(classified, "result", None)
+    artifact_refs = _research_result_field(result, "artifact_refs")
+    diagnostics = _research_result_field(result, "diagnostics")
+    if not isinstance(artifact_refs, Mapping) or not isinstance(diagnostics, Mapping):
+        return ResearchArtifactReadResolution(accepted=False)
+    record_identity_scope_ref = getattr(classified, "identity_scope_ref", None)
+    record_subject_scope_ref = getattr(classified, "subject_scope_ref", None)
+    record_authority_ref = getattr(classified, "publication_authority_ref", None)
+    common_matches = (
+        disposition_value == "accepted"
+        and getattr(classified, "run_id", None) == claim.run_id
+        and isinstance(record_identity_scope_ref, str)
+        and bool(record_identity_scope_ref)
+        and isinstance(record_subject_scope_ref, str)
+        and bool(record_subject_scope_ref)
+        and getattr(classified, "artifact_evidence_ref", None)
+        == claim.artifact_evidence_ref
+        and tuple(
+            sorted((str(key), str(value)) for key, value in artifact_refs.items())
+        )
+        == claim.artifact_refs
+        and (
+            claim.terminal_side_effect_outcome_ref is None
+            or diagnostics.get("terminal_side_effect_outcome_ref")
+            == claim.terminal_side_effect_outcome_ref
+        )
+    )
+    if not common_matches:
+        return ResearchArtifactReadResolution(accepted=False)
+
+    if claim.schema_version == RESEARCH_ARTIFACT_MANIFEST_VERSION:
+        exact_v2_evidence = (
+            record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+            and record_identity_scope_ref == claim.identity_scope_ref
+            and record_subject_scope_ref == claim.subject_scope_ref
+            and record_authority_ref == claim.publication_authority_ref
+        )
+        if not exact_v2_evidence:
+            return ResearchArtifactReadResolution(accepted=False)
+    elif claim.schema_version == RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION:
+        if record_schema != RESEARCH_RUN_RECORD_SCHEMA_VERSION:
+            return ResearchArtifactReadResolution(accepted=False)
+        if (
+            claim.identity_scope_ref is not None
+            and claim.identity_scope_ref != record_identity_scope_ref
+        ):
+            return ResearchArtifactReadResolution(accepted=False)
+        if (
+            claim.subject_scope_ref is not None
+            and claim.subject_scope_ref != record_subject_scope_ref
+        ):
+            return ResearchArtifactReadResolution(accepted=False)
+        if (
+            claim.publication_authority_ref is not None
+            and claim.publication_authority_ref != record_authority_ref
+        ):
+            return ResearchArtifactReadResolution(accepted=False)
+    else:
+        return ResearchArtifactReadResolution(accepted=False)
+    return ResearchArtifactReadResolution(
+        accepted=True,
+        identity_scope_ref=record_identity_scope_ref,
+    )
+
+
+def _research_artifact_diagnostic_is_authorized(
+    run_store: Any,
+    *,
+    claim: ResearchArtifactDiagnosticClaim,
+) -> bool:
+    if not isinstance(claim, ResearchArtifactDiagnosticClaim):
+        return False
+    getter = getattr(run_store, "get_diagnostic_by_run_id", None)
+    if not callable(getter) or claim.subject_scope_ref is None:
+        return False
+    record = getter(
+        claim.run_id,
+        identity_scope_ref=claim.identity_scope_ref,
+    )
+    if record is None or not getattr(record, "quarantined", False):
+        return False
+    result = getattr(record, "result", None)
+    artifact_refs = _research_result_field(result, "artifact_refs")
+    if not isinstance(artifact_refs, Mapping):
+        return False
+    expected_ref = f"artifact://{claim.run_id}/{claim.artifact_type}"
+    record_schema = getattr(record, "schema_version", None)
+    expected_manifest_schema = (
+        RESEARCH_ARTIFACT_LEGACY_MANIFEST_VERSION
+        if record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION
+        else RESEARCH_ARTIFACT_MANIFEST_VERSION
+        if record_schema == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+        else None
+    )
+    return (
+        getattr(record, "run_id", None) == claim.run_id
+        and getattr(record, "identity_scope_ref", None)
+        == claim.identity_scope_ref
+        and getattr(record, "subject_scope_ref", None)
+        == claim.subject_scope_ref
+        and getattr(record, "artifact_reference_disposition", None)
+        == claim.disposition
+        and claim.schema_version == expected_manifest_schema
+        and artifact_refs.get(claim.artifact_type) == expected_ref
+    )
+
+
+def _research_result_field(result: Any, name: str) -> Any:
+    if isinstance(result, Mapping):
+        return result.get(name)
+    return getattr(result, name, None)
+
+
+def _research_run_store_schema_version(version: str) -> str:
+    normalized = str(version or "").strip().lower()
+    if normalized == "v1":
+        return RESEARCH_RUN_RECORD_SCHEMA_VERSION
+    if normalized == "v2":
+        return RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+    raise ResearchRuntimeUnavailableError(
+        (ResearchCapability.RUN_STORE,),
+        retryable=False,
+    )
+
+
+def _is_recoverable_research_manifest(manifest: Mapping[str, Any]) -> bool:
+    return (
+        isinstance(manifest, Mapping)
+        and manifest.get("run_type") == "research"
+        and manifest.get("publication_schema_version")
+        == "newsroom.research-artifact-manifest/v2"
+        and isinstance(manifest.get("run_id"), str)
+    )
+
+
+def _required_checksum(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
+    ):
+        raise ValueError(f"{label} is invalid")
+    return value
+
+
+def _required_text(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} is missing")
+    return value
+
+
+def _recovery_artifact_refs(
+    outcome: HarnessSideEffectOutcome,
+    *,
+    run_id: str,
+) -> dict[str, str]:
+    raw = outcome.metadata.get("artifact_refs")
+    if not isinstance(raw, Mapping) or not raw:
+        raise ValueError("Research terminal outcome has no artifact refs")
+    refs: dict[str, str] = {}
+    for artifact_type, ref in raw.items():
+        if not isinstance(artifact_type, str) or not artifact_type.strip():
+            raise ValueError("Research terminal artifact type is invalid")
+        expected = f"artifact://{run_id}/{artifact_type}"
+        if ref != expected:
+            raise ValueError("Research terminal artifact ref is not run bound")
+        refs[artifact_type] = ref
+    if not {
+        "research-analysis",
+        "research-quality-result",
+        "harness-trace",
+        "harness-transcript",
+    }.issubset(refs):
+        raise ValueError("Research terminal artifact group is incomplete")
+    if set(outcome.public_refs) != set(refs.values()):
+        raise ValueError("Research terminal public refs conflict with artifact map")
+    return refs
+
+
+def _required_artifact_payload(
+    payloads: Mapping[str, Mapping[str, Any]],
+    artifact_type: str,
+) -> dict[str, Any]:
+    envelope = payloads.get(artifact_type)
+    if not isinstance(envelope, Mapping):
+        raise ValueError(f"Research recovery artifact is missing: {artifact_type}")
+    payload = envelope.get("payload")
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"Research recovery artifact payload is invalid: {artifact_type}")
+    return dict(payload)
+
+
+def _optional_artifact_payload(
+    payloads: Mapping[str, Mapping[str, Any]],
+    artifact_type: str,
+) -> dict[str, Any] | None:
+    envelope = payloads.get(artifact_type)
+    if envelope is None:
+        return None
+    return _required_artifact_payload(payloads, artifact_type)
+
+
+def _recovery_actor_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(metadata, Mapping):
+        raise ValueError("Research recovery trace metadata is invalid")
+    result = {
+        key: metadata.get(key)
+        for key in ("tenant_id", "user_id", "memory_namespace")
+        if key in metadata
+    }
+    if not isinstance(result.get("memory_namespace"), str) or not str(
+        result["memory_namespace"]
+    ).strip():
+        raise ValueError("Research recovery actor scope is incomplete")
+    return result
+
+
+def _validate_terminal_publication_history(
+    history: tuple[HarnessEvent, ...],
+    *,
+    cutoff_index: int,
+    authority_ref: str,
+    identity_scope_ref: str,
+    subject_scope_ref: str,
+) -> None:
+    decisions: list[tuple[int, Mapping[str, Any]]] = []
+    for index, event in enumerate(history[cutoff_index + 1 :], start=cutoff_index + 1):
+        if event.event_type is not HarnessEventType.DECISION_RECORDED:
+            continue
+        if event.payload.get("decision_type") != "complete_run":
+            continue
+        payload = event.payload.get("payload")
+        authorization = payload.get("side_effect_authorization") if isinstance(payload, Mapping) else None
+        if isinstance(authorization, Mapping):
+            decisions.append((index, authorization))
+    if len(decisions) != 1:
+        raise ValueError("Research terminal completion decision is not unique")
+    decision_index, authorization = decisions[0]
+    if (
+        authorization.get("origin") != HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value
+        or authorization.get("decision_ref") != authority_ref
+        or authorization.get("identity_scope_ref") != identity_scope_ref
+        or authorization.get("subject_scope_ref") != subject_scope_ref
+        or authorization.get("disposition") != HarnessSideEffectDisposition.ACCEPTED.value
+    ):
+        raise ValueError("Research terminal completion authority conflicts")
+    success_transitions = [
+        event
+        for event in history[decision_index + 1 :]
+        if (
+            event.event_type is HarnessEventType.TRANSITION_COMMITTED
+            and event.payload.get("transition_kind") == "success"
+            and isinstance(event.payload.get("state"), Mapping)
+            and event.payload["state"].get("status") == "succeeded"
+        )
+    ]
+    # Zero is the recoverable publication-before-COMPLETE_RUN window; the
+    # caller defers it without writing a run record. Multiple successes are
+    # ambiguous and cannot be used as acceptance evidence.
+    if len(success_transitions) > 1:
+        raise ValueError("Research terminal success transition is ambiguous")
+
+
+def _terminal_history_status(history: tuple[HarnessEvent, ...]) -> str:
+    transitions = [
+        event
+        for event in history
+        if event.event_type is HarnessEventType.TRANSITION_COMMITTED
+    ]
+    if not transitions:
+        raise ValueError("Research recovery has no durable state transition")
+    state = transitions[-1].payload.get("state")
+    if not isinstance(state, Mapping):
+        raise ValueError("Research recovery terminal state is invalid")
+    status = state.get("status")
+    if not isinstance(status, str) or not status.strip():
+        raise ValueError("Research recovery terminal status is invalid")
+    return status
 
 
 def _research_source_policy(

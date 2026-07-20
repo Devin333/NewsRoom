@@ -2,7 +2,26 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from framework.events.canonical import checksum_for
+from framework.harness.side_effects import HarnessTerminalSideEffectPolicy
 from framework.harness.workflow import HarnessRoutingRule, HarnessStepSpec, HarnessWorkerType, HarnessWorkflowSpec
+
+from business.research.ports.artifact_publication import (
+    RESEARCH_ARTIFACT_EFFECT_KIND,
+    RESEARCH_ARTIFACT_HANDLER_REF,
+)
+
+
+RESEARCH_ARTIFACT_TERMINAL_POLICY_ID = "research.artifact.publication"
+RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION = "1"
+RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF = checksum_for(
+    {
+        "policy": "not_required",
+        "handler": RESEARCH_ARTIFACT_HANDLER_REF,
+        "policy_id": RESEARCH_ARTIFACT_TERMINAL_POLICY_ID,
+        "version": RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION,
+    }
+)
 
 
 def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
@@ -88,6 +107,17 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
             worker_type=HarnessWorkerType.ARTIFACT,
             input_keys=("reader_payload", "paper_card", "research_quality"),
             output_key="artifact_refs",
+            side_effect_handler=RESEARCH_ARTIFACT_HANDLER_REF,
+            metadata={
+                "output_schema": {
+                    "required": ["artifact_bundle_ref", "artifact_types"],
+                    "properties": {
+                        "artifact_bundle_ref": {"type": "string"},
+                        "artifact_types": {"type": "array"},
+                    },
+                },
+                "approval_required": False,
+            },
         ),
     )
     return HarnessWorkflowSpec(
@@ -96,7 +126,20 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
         entry_step_id="load_paper_source",
         routing_rules=_linear_routes(step.step_id for step in steps),
         terminal_policies={"publish_requires_verify": True},
-        metadata={"scope": "stage_5_modeling_only"},
+        terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
+            policy_id=RESEARCH_ARTIFACT_TERMINAL_POLICY_ID,
+            version=RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION,
+            handler=RESEARCH_ARTIFACT_HANDLER_REF,
+            kind=RESEARCH_ARTIFACT_EFFECT_KIND,
+            requires_approval=False,
+            # One initial terminal attempt plus one bounded recovery attempt
+            # closes the crash window after manifest visibility but before
+            # the durable outcome is read back.
+            retry_limit=2,
+            not_required_evidence_ref=RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF,
+            inherited_gate_refs=("ResearchQualityGate@1",),
+        ),
+        metadata={"scope": "harness_side_effect_authority"},
     )
 
 
@@ -105,4 +148,9 @@ def _linear_routes(step_ids: Iterable[str]) -> tuple[HarnessRoutingRule, ...]:
     return tuple(HarnessRoutingRule(from_step=left, to_step=right) for left, right in zip(ids, ids[1:]))
 
 
-__all__ = ["build_paper_analysis_workflow_spec"]
+__all__ = [
+    "RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF",
+    "RESEARCH_ARTIFACT_TERMINAL_POLICY_ID",
+    "RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION",
+    "build_paper_analysis_workflow_spec",
+]

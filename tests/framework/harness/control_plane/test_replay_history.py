@@ -40,6 +40,7 @@ from framework.harness.control_plane.state import (
     HarnessState,
     HarnessStepStatus,
 )
+from framework.harness.side_effects import HarnessTerminalSideEffectPolicy
 from framework.harness.workflow.spec import (
     HarnessRouteKind,
     HarnessRoutingRule,
@@ -72,6 +73,53 @@ def _state() -> HarnessState:
         created_at=NOW,
     )
     return HarnessState.initial(run_spec)
+
+
+def test_terminal_side_effect_policy_uses_bounded_decision_projection() -> None:
+    policy = HarnessTerminalSideEffectPolicy(
+        policy_id="research.publication",
+        version="1",
+        handler="research.artifact.bundle@1",
+        kind="research.artifact.bundle",
+        requires_approval=False,
+        retry_limit=1,
+        not_required_evidence_ref=checksum_for("not-required"),
+        inherited_gate_refs=("ResearchQualityGate@1",),
+    )
+    state = HarnessState.initial(
+        HarnessRunSpec(
+            run_id="run-terminal-policy-projection",
+            workflow=HarnessWorkflowSpec(
+                workflow_id="terminal-policy-projection",
+                steps=(
+                    HarnessStepSpec(step_id="collect", worker_type="llm"),
+                    HarnessStepSpec(step_id="publish", worker_type="artifact"),
+                    HarnessStepSpec(step_id="cleanup", worker_type="script"),
+                ),
+                entry_step_id="collect",
+                terminal_side_effect_policy=policy,
+            ),
+            created_at=NOW,
+        )
+    )
+
+    snapshot = harness_decision_input_snapshot(
+        state=state,
+        command_ordinal=0,
+        causation_id="harness-run:run-terminal-policy-projection",
+    )
+    projection = snapshot["current_step_policy"]["terminal_side_effect_policy"]
+
+    assert projection == {
+        "reference": policy.reference,
+        "checksum": checksum_for(policy.to_dict()),
+        "handler": policy.handler.to_dict(),
+        "kind": policy.kind,
+    }
+    assert len(canonical_json_bytes(projection)) < len(
+        canonical_json_bytes(policy.to_dict())
+    )
+    assert snapshot["step_order"] == ("collect", "publish")
 
 
 def _event(

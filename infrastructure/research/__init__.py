@@ -3,6 +3,15 @@ from infrastructure.research.artifact_port import (
     ArtifactWriteConflictError,
     FilesystemHarnessArtifactPort,
 )
+from infrastructure.research.artifact_publication import (
+    RESEARCH_ARTIFACT_EFFECT_KIND,
+    RESEARCH_ARTIFACT_HANDLER_ID,
+    RESEARCH_ARTIFACT_HANDLER_REF,
+    RESEARCH_ARTIFACT_HANDLER_VERSION,
+    RESEARCH_ARTIFACT_MANIFEST_VERSION,
+    RESEARCH_ARTIFACT_SCHEMA_VERSION,
+    ResearchArtifactBundleHandler,
+)
 from infrastructure.research.candidate_worker import (
     CANDIDATE_TASK_SCHEMAS,
     ResearchCandidateContractError,
@@ -41,6 +50,12 @@ from infrastructure.research.source_provider import (
 __all__ = [
     "ArtifactRunBindingError",
     "ArtifactWriteConflictError",
+    "RESEARCH_ARTIFACT_EFFECT_KIND",
+    "RESEARCH_ARTIFACT_HANDLER_ID",
+    "RESEARCH_ARTIFACT_HANDLER_REF",
+    "RESEARCH_ARTIFACT_HANDLER_VERSION",
+    "RESEARCH_ARTIFACT_MANIFEST_VERSION",
+    "RESEARCH_ARTIFACT_SCHEMA_VERSION",
     "ArxivResearchSourceProvider",
     "CANDIDATE_TASK_SCHEMAS",
     "DEFAULT_RESEARCH_RUN_RECORD_MAX_BYTES",
@@ -48,6 +63,7 @@ __all__ = [
     "GithubResearchRepositoryAdapter",
     "FilesystemHarnessArtifactPort",
     "ResearchAdapterError",
+    "ResearchArtifactBundleHandler",
     "ResearchCandidateContractError",
     "ResearchCandidateError",
     "ResearchCandidateEvidenceScopeError",

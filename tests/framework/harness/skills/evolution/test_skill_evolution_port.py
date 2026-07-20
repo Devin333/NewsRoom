@@ -36,3 +36,16 @@ def test_rejected_skill_promotion_decision_cannot_release() -> None:
 
     with pytest.raises(HarnessValidationError):
         evolution.promote_candidate(decision)
+
+
+def test_caller_created_approved_decision_cannot_release() -> None:
+    evolution = FakeSkillEvolutionPort()
+    candidate = evolution.propose_candidate({"skill_id": "reader.repair"})
+    decision = SkillPromotionDecision(candidate_id=candidate.candidate_id, status="approved")
+
+    with pytest.raises(HarnessValidationError):
+        evolution.promote_candidate(decision)
+
+    assert evolution.releases == {}
+    assert evolution.release_registry.version_history == {}
+    assert evolution.active_versions == {}

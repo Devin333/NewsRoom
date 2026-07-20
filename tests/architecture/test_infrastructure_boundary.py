@@ -34,7 +34,14 @@ ALLOWED_BUSINESS_IMPORTS = {
         "business.research.ports.document_compiler",
         "business.research.ports.document_parser",
     },
+    "infrastructure/research/artifact_publication.py": {
+        "business.research.ports.artifact_publication",
+    },
+    "infrastructure/research/artifact_port.py": {
+        "business.research.ports.artifact_publication",
+    },
     "infrastructure/research/filesystem_run_store.py": {
+        "business.research.domain.run_disposition",
         "business.research.ports.run_store",
     },
     "infrastructure/research/github_repository.py": {
@@ -61,6 +68,12 @@ SOURCE_STORAGE_BUSINESS_IMPORTS = {
 }
 
 RESEARCH_ADAPTER_BUSINESS_IMPORTS = {
+    "infrastructure/research/artifact_port.py": {
+        "business.research.ports.artifact_publication",
+    },
+    "infrastructure/research/artifact_publication.py": {
+        "business.research.ports.artifact_publication",
+    },
     "infrastructure/research/document_compiler.py": {
         "business.research.domain.common",
         "business.research.domain.document",
@@ -69,6 +82,7 @@ RESEARCH_ADAPTER_BUSINESS_IMPORTS = {
         "business.research.ports.document_parser",
     },
     "infrastructure/research/filesystem_run_store.py": {
+        "business.research.domain.run_disposition",
         "business.research.ports.run_store",
     },
     "infrastructure/research/github_repository.py": {

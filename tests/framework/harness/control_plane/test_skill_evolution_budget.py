@@ -48,7 +48,7 @@ def test_worker_result_contract_rejects_skill_promotion_fields() -> None:
         HarnessWorkerResult(status="succeeded", output={"active": True})
 
 
-def test_fake_skill_optimizer_promote_output_does_not_publish() -> None:
+def test_fake_skill_optimizer_promotion_aliases_are_rejected_before_publish() -> None:
     workflow = HarnessWorkflowSpec(
         workflow_id="skill-no-publish",
         steps=(
@@ -60,7 +60,7 @@ def test_fake_skill_optimizer_promote_output_does_not_publish() -> None:
         ),
         entry_step_id="optimize",
     )
-    result = HarnessControlPlane(
+    control_plane = HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
         worker_registry={
             "optimize": lambda task: LeakySkillOptimizerResult(
@@ -75,8 +75,11 @@ def test_fake_skill_optimizer_promote_output_does_not_publish() -> None:
                 },
             )
         }
-    ).run(
-        HarnessRunSpec(
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        control_plane.run(
+            HarnessRunSpec(
             run_id="run-skill-no-publish",
             workflow=workflow,
             budget=HarnessBudget(
@@ -90,12 +93,11 @@ def test_fake_skill_optimizer_promote_output_does_not_publish() -> None:
                 max_eval_cases=1,
                 max_sandbox_runs=1,
             ),
+            )
         )
-    )
 
-    assert result.state.status == HarnessRunStatus.SUCCEEDED
-    assert result.state.metadata.get("promoted_skill") is None
-    assert result.state.metadata.get("published_skill") is None
+    assert captured.value.code == "worker_decision_field_rejected"
+    assert captured.value.details["forbidden_paths"] == ["output.promote", "output.release"]
 
 
 def test_skill_evolution_budget_exhaustion_halts_run() -> None:

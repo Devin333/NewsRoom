@@ -1350,11 +1350,115 @@ def _decision_payload_projection(value: Any) -> dict[str, Any]:
         projected["gate_results"] = _gate_result_projections(gate_results)
     if "quality_verdict" in value:
         projected["quality_verdict_ref"] = _value_ref(value.get("quality_verdict"))
+    if "side_effect_authorization" in value:
+        authorization = _safe_side_effect_authorization_projection(
+            value.get("side_effect_authorization")
+        )
+        projected["value_ref"] = authorization["decision_ref"]
+    if "side_effect_failure" in value:
+        failure = _safe_side_effect_failure_projection(
+            value.get("side_effect_failure")
+        )
+        projected["value_ref"] = failure["effect_ref"]
     worker_value = value.get("worker_result", value)
     if any(key in value for key in ("worker_result", "status", "output", "diagnostics", "metrics", "error")):
         projected["worker_result_ref"] = _value_ref(worker_value)
     projected["decision_payload_ref"] = _value_ref(value)
     return projected
+
+
+def _safe_side_effect_authorization_projection(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError("side-effect authorization projection must be an object")
+    compact = {
+        "origin",
+        "effect_ref",
+        "intent_ref",
+        "identity_scope_ref",
+        "subject_scope_ref",
+        "approval_evidence_ref",
+        "decision_ref",
+        "disposition",
+        "idempotency_ref",
+    }
+    legacy = compact | {
+        "kind",
+        "aggregate_verdict_ref",
+        "atomic_group_ref",
+        "effect_attempt",
+        "effect_attempt_limit",
+    }
+    fields = set(value)
+    if fields != compact and fields != legacy:
+        raise HarnessValidationError("side-effect authorization projection fields are invalid")
+    for field_name in (
+        "effect_ref",
+        "intent_ref",
+        "identity_scope_ref",
+        "subject_scope_ref",
+        "approval_evidence_ref",
+        "decision_ref",
+        "idempotency_ref",
+    ):
+        if not _valid_checksum_ref(value.get(field_name)):
+            raise HarnessValidationError(
+                f"side-effect authorization {field_name} must be a sha256 reference"
+            )
+    if fields == legacy:
+        if not _valid_checksum_ref(value.get("atomic_group_ref")):
+            raise HarnessValidationError(
+                "side-effect authorization atomic_group_ref must be a sha256 reference"
+            )
+        aggregate_verdict_ref = value.get("aggregate_verdict_ref")
+        if aggregate_verdict_ref is not None and not _valid_checksum_ref(
+            aggregate_verdict_ref
+        ):
+            raise HarnessValidationError(
+                "side-effect authorization aggregate_verdict_ref must be a sha256 reference"
+            )
+        for field_name in ("effect_attempt", "effect_attempt_limit"):
+            item = value.get(field_name)
+            if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+                raise HarnessValidationError(
+                    f"side-effect authorization {field_name} is invalid"
+                )
+        if (
+            value["effect_attempt"] < 1
+            or value["effect_attempt_limit"] < value["effect_attempt"]
+        ):
+            raise HarnessValidationError(
+                "side-effect authorization attempt range is invalid"
+            )
+        if not isinstance(value.get("kind"), str) or not value["kind"].strip():
+            raise HarnessValidationError("side-effect authorization kind is invalid")
+    if value.get("origin") not in {"worker", "controller_terminal"}:
+        raise HarnessValidationError("side-effect authorization origin is invalid")
+    if value.get("disposition") not in {"candidate", "prepared", "quarantine", "accepted"}:
+        raise HarnessValidationError("side-effect authorization disposition is invalid")
+    return {key: thaw_canonical_json(value[key]) for key in sorted(fields)}
+
+
+def _safe_side_effect_failure_projection(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError("side-effect failure projection must be an object")
+    if set(value) != {"code", "effect_ref"}:
+        raise HarnessValidationError("side-effect failure projection fields are invalid")
+    code = value.get("code")
+    if not isinstance(code, str) or not code.strip():
+        raise HarnessValidationError("side-effect failure code is invalid")
+    effect_ref = value.get("effect_ref")
+    if not _valid_checksum_ref(effect_ref):
+        raise HarnessValidationError("side-effect failure effect_ref must be a sha256 reference")
+    return {"code": code.strip(), "effect_ref": effect_ref}
+
+
+def _valid_checksum_ref(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(
+        character in "0123456789abcdef" for character in digest
+    )
 
 
 def _gate_result_projections(value: Any) -> list[dict[str, Any]]:
@@ -1633,7 +1737,11 @@ def _worker_result_from_recorded_activity(
         "metrics",
         "error",
     }
-    if not isinstance(payload, Mapping) or set(payload) != expected_fields:
+    actual_fields = set(payload) if isinstance(payload, Mapping) else set()
+    if not isinstance(payload, Mapping) or actual_fields not in {
+        frozenset(expected_fields),
+        frozenset((*expected_fields, "effect_intent")),
+    }:
         raise ReplayActivityCorruptionError(
             "recorded Harness worker result payload is invalid"
         )
@@ -1661,6 +1769,7 @@ def _worker_result_from_recorded_activity(
             diagnostics=dict(diagnostics),
             metrics=dict(metrics),
             error=error,
+            effect_intent=payload.get("effect_intent"),
         )
     except (HarnessValidationError, TypeError, ValueError) as exc:
         raise ReplayActivityCorruptionError(

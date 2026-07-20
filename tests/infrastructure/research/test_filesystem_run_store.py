@@ -15,11 +15,14 @@ import pytest
 import infrastructure.research.diagnostics as diagnostics_module
 import infrastructure.research.filesystem_run_store as run_store_module
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
+from business.research.application.run_disposition import research_identity_scope_ref
 from business.research.application.single_paper_runtime import (
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
 )
 from business.research.ports.run_store import (
+    ResearchRunDisposition,
+    ResearchRunDispositionReason,
     ResearchRunRecord,
     ResearchRunStore,
     ResearchRunStoreConflictError,
@@ -31,7 +34,9 @@ from business.research.ports.run_store import (
 )
 from infrastructure.research.filesystem_run_store import (
     RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION,
+    RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2,
     RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+    RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
     FilesystemResearchRunStore,
 )
 from infrastructure.research.diagnostics import (
@@ -71,6 +76,9 @@ class _StoredResult:
             },
             "artifact_refs": {
                 "research-analysis": f"artifact://{self.run_id}/analysis",
+                "research-quality-result": f"artifact://{self.run_id}/quality",
+                "harness-trace": f"artifact://{self.run_id}/trace",
+                "harness-transcript": f"artifact://{self.run_id}/transcript",
             },
             "trace": {
                 "run_id": self.run_id,
@@ -80,6 +88,7 @@ class _StoredResult:
                 "run_id": self.run_id,
                 "entries": [{"phase": "VERIFY"}],
             },
+            "actor_scope": {"memory_namespace": "research.public"},
             "trace_ref": f"harness-trace://{self.run_id}",
         }
 
@@ -136,6 +145,66 @@ def _save_in_process(root: str, run_id: str, barrier: Any) -> None:
     )
     barrier.wait(timeout=20)
     store.save(_record(run_id))
+
+
+def _identity_decoder(value: dict[str, Any]) -> dict[str, Any]:
+    return dict(value)
+
+
+def _disposition_result(
+    run_id: str,
+    *,
+    paper_id: str = "paper-disposition",
+    status: str = "succeeded",
+    quality_passed: bool = True,
+    authority_ref: str | None = None,
+    scope: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    actor_scope = scope or {"memory_namespace": "research.public"}
+    diagnostics: dict[str, Any] = {}
+    if authority_ref is not None:
+        diagnostics["publication_authority_ref"] = authority_ref
+    return {
+        "run_id": run_id,
+        "status": status,
+        "analysis": {"paper_id": paper_id, "summary": run_id},
+        "quality": {"target_id": paper_id, "passed": quality_passed},
+        "artifact_refs": {
+            "research-analysis": f"artifact://{run_id}/research-analysis",
+            "research-quality-result": f"artifact://{run_id}/research-quality-result",
+            "harness-trace": f"artifact://{run_id}/harness-trace",
+            "harness-transcript": f"artifact://{run_id}/harness-transcript",
+        },
+        "actor_scope": dict(actor_scope),
+        "trace": {"run_id": run_id, "metadata": dict(actor_scope)},
+        "transcript": {"run_id": run_id, "entries": []},
+        "diagnostics": diagnostics,
+        "trace_ref": f"harness-trace://{run_id}",
+    }
+
+
+def _disposition_record(
+    run_id: str,
+    *,
+    paper_id: str = "paper-disposition",
+    status: str = "succeeded",
+    quality_passed: bool = True,
+    authority_ref: str | None = None,
+    scope: dict[str, str] | None = None,
+) -> ResearchRunRecord:
+    return ResearchRunRecord(
+        run_id=run_id,
+        paper_id=paper_id,
+        result=_disposition_result(
+            run_id,
+            paper_id=paper_id,
+            status=status,
+            quality_passed=quality_passed,
+            authority_ref=authority_ref,
+            scope=scope,
+        ),
+        publication_authority_ref=authority_ref,
+    )
 
 
 def test_run_store_port_and_errors_have_stable_sanitized_contract(
@@ -1006,6 +1075,332 @@ def test_diagnostic_logging_failure_never_replaces_storage_outcome(
     store.save(_record("run-log-failure"))
 
     assert store._get_by_run_id("run-log-failure") == _record("run-log-failure")
+
+
+def test_v2_writer_requires_dual_reader_and_persists_explicit_disposition(
+    tmp_path: Path,
+) -> None:
+    authority_ref = "sha256:" + "a" * 64
+    with pytest.raises(ResearchRunStoreValidationError) as incompatible:
+        FilesystemResearchRunStore(
+            tmp_path / "invalid",
+            result_decoder=_identity_decoder,
+            write_schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+            supported_schema_versions=(RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,),
+        )
+    assert incompatible.value.reason is ResearchRunStoreReason.SCHEMA_UNSUPPORTED
+
+    store = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+        write_schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+    )
+    store.save(_disposition_record("run-v2", authority_ref=authority_ref))
+
+    record = store.get_by_run_id("run-v2")
+    assert record is not None
+    assert record.disposition is ResearchRunDisposition.ACCEPTED
+    assert record.publication_authority_ref == authority_ref
+    state = _read_json(_record_path(store, "run-v2"))
+    assert state["schema_version"] == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+    assert set(state) == run_store_module._RECORD_V2_FIELDS
+    assert state["disposition"] == "accepted"
+    index = _read_json(_index_path(store, "paper-disposition"))
+    assert index["schema_version"] == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2
+    assert set(index) == run_store_module._INDEX_V2_FIELDS
+    assert index["run_id"] == "run-v2"
+
+
+def test_new_quarantine_cannot_shadow_accepted_latest_after_restart(
+    tmp_path: Path,
+) -> None:
+    authority_ref = "sha256:" + "b" * 64
+    v1 = FilesystemResearchRunStore(tmp_path, result_decoder=_identity_decoder)
+    accepted = _disposition_record("run-accepted")
+    v1.save(accepted)
+    accepted_bytes = _record_path(v1, accepted.run_id).read_bytes()
+
+    v2 = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+        write_schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+    )
+    halted = _disposition_record(
+        "run-halted",
+        status="halted",
+        quality_passed=False,
+        authority_ref=authority_ref,
+    )
+    v2.save(halted)
+
+    latest = v2.get_latest_by_paper_id("paper-disposition")
+    assert latest is not None and latest.run_id == accepted.run_id
+    assert [item.run_id for item in v2.list_by_paper_id("paper-disposition")] == [
+        accepted.run_id
+    ]
+    diagnostic = v2.get_by_run_id(halted.run_id)
+    assert diagnostic is not None and diagnostic.quarantined
+    scope_ref = research_identity_scope_ref(
+        {"memory_namespace": "research.public"}
+    )
+    assert v2.get_diagnostic_by_run_id(
+        halted.run_id,
+        identity_scope_ref=scope_ref,
+    ) == diagnostic
+    assert v2.get_diagnostic_by_run_id(
+        halted.run_id,
+        identity_scope_ref="sha256:" + "c" * 64,
+    ) is None
+    assert [
+        item.run_id
+        for item in v2.list_quarantined_by_paper_id(
+            "paper-disposition",
+            identity_scope_ref=scope_ref,
+        )
+    ] == [halted.run_id]
+
+    reopened = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+    )
+    assert reopened.get_latest_by_paper_id("paper-disposition").run_id == accepted.run_id
+    assert _record_path(reopened, accepted.run_id).read_bytes() == accepted_bytes
+
+
+@pytest.mark.parametrize(
+    ("status", "quality_passed"),
+    [("halted", False), ("succeeded", False)],
+)
+def test_failure_only_paper_has_diagnostics_but_no_latest_index(
+    tmp_path: Path,
+    status: str,
+    quality_passed: bool,
+) -> None:
+    authority_ref = "sha256:" + "d" * 64
+    paper_id = f"paper-{status}-{quality_passed}"
+    store = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+        write_schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+    )
+    store.save(
+        _disposition_record(
+            "run-failed",
+            paper_id=paper_id,
+            status=status,
+            quality_passed=quality_passed,
+            authority_ref=authority_ref,
+        )
+    )
+
+    assert store.get_latest_by_paper_id(paper_id) is None
+    assert store.list_by_paper_id(paper_id) == []
+    assert not _index_path(store, paper_id).exists()
+    assert store.get_by_run_id("run-failed").quarantined
+
+
+def test_concurrent_accepted_and_quarantine_writers_keep_accepted_index(
+    tmp_path: Path,
+) -> None:
+    authority_ref = "sha256:" + "e" * 64
+    stores = [
+        FilesystemResearchRunStore(
+            tmp_path,
+            result_decoder=_identity_decoder,
+            write_schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+        )
+        for _ in range(2)
+    ]
+    records = [
+        _disposition_record(
+            f"run-{index}",
+            status="succeeded" if index % 2 == 0 else "halted",
+            quality_passed=index % 2 == 0,
+            authority_ref=authority_ref,
+        )
+        for index in range(12)
+    ]
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [
+            executor.submit(stores[index % 2].save, record)
+            for index, record in enumerate(records)
+        ]
+        for future in futures:
+            future.result(timeout=20)
+
+    accepted_run_ids = {
+        record.run_id for index, record in enumerate(records) if index % 2 == 0
+    }
+    latest = stores[0].get_latest_by_paper_id("paper-disposition")
+    assert latest is not None and latest.run_id in accepted_run_ids
+    assert {
+        record.run_id for record in stores[0].list_by_paper_id("paper-disposition")
+    } == accepted_run_ids
+
+
+def test_v1_missing_scope_is_classified_as_quarantine_without_rewriting_bytes(
+    tmp_path: Path,
+) -> None:
+    store = FilesystemResearchRunStore(tmp_path, result_decoder=_identity_decoder)
+    result = _disposition_result("run-unscoped")
+    result.pop("actor_scope")
+    result["trace"].pop("metadata")
+    record = ResearchRunRecord(
+        run_id="run-unscoped",
+        paper_id="paper-disposition",
+        result=result,
+    )
+    store.save(record)
+    original = _record_path(store, record.run_id).read_bytes()
+
+    reopened = FilesystemResearchRunStore(tmp_path, result_decoder=_identity_decoder)
+    diagnostic = reopened.get_by_run_id(record.run_id)
+    assert diagnostic is not None and diagnostic.quarantined
+    assert diagnostic.disposition_reason == "identity_scope_missing"
+    assert (
+        diagnostic.artifact_reference_disposition
+        == ResearchRunDispositionReason.LEGACY_QUARANTINED.value
+    )
+    assert reopened.get_latest_by_paper_id(record.paper_id) is None
+    assert _record_path(reopened, record.run_id).read_bytes() == original
+
+
+def test_v1_single_scope_root_binding_accepts_missing_scope_without_rewrite(
+    tmp_path: Path,
+) -> None:
+    scope_ref = research_identity_scope_ref(
+        {"tenant_id": "tenant-a", "memory_namespace": "research:tenant-a"}
+    )
+    result = _disposition_result("run-root-bound")
+    result.pop("actor_scope")
+    result["trace"].pop("metadata")
+    record = ResearchRunRecord(
+        run_id="run-root-bound",
+        paper_id="paper-disposition",
+        result=result,
+    )
+    writer = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+        legacy_identity_scope_ref=scope_ref,
+    )
+    writer.save(record)
+    original = _record_path(writer, record.run_id).read_bytes()
+
+    unbound = FilesystemResearchRunStore(tmp_path, result_decoder=_identity_decoder)
+    unbound_record = unbound.get_by_run_id(record.run_id)
+    assert unbound_record is not None and unbound_record.quarantined
+    assert unbound.get_latest_by_paper_id(record.paper_id) is None
+
+    rebound = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+        legacy_identity_scope_ref=scope_ref,
+    )
+    rebound_record = rebound.get_by_run_id(record.run_id)
+    assert rebound_record is not None and rebound_record.accepted
+    assert rebound_record.identity_scope_ref == scope_ref
+    assert rebound.get_latest_by_paper_id(record.paper_id).run_id == record.run_id
+    assert _record_path(rebound, record.run_id).read_bytes() == original
+
+
+def test_v1_root_binding_conflict_quarantines_and_removes_legacy_latest(
+    tmp_path: Path,
+) -> None:
+    writer = FilesystemResearchRunStore(tmp_path, result_decoder=_identity_decoder)
+    record = _disposition_record(
+        "run-scope-conflict",
+        scope={"memory_namespace": "research:scope-a"},
+    )
+    writer.save(record)
+    original = _record_path(writer, record.run_id).read_bytes()
+    assert writer.get_latest_by_paper_id(record.paper_id) is not None
+
+    conflicting_scope_ref = research_identity_scope_ref(
+        {"memory_namespace": "research:scope-b"}
+    )
+    reopened = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+        legacy_identity_scope_ref=conflicting_scope_ref,
+    )
+    diagnostic = reopened.get_by_run_id(record.run_id)
+    assert diagnostic is not None and diagnostic.quarantined
+    assert diagnostic.disposition_reason == "identity_scope_conflict"
+    assert reopened.get_latest_by_paper_id(record.paper_id) is None
+    assert not _index_path(reopened, record.paper_id).exists()
+    assert _record_path(reopened, record.run_id).read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("disposition", "unknown"),
+        ("disposition_reason", "quality_not_passed"),
+        ("identity_scope_ref", "sha256:" + "1" * 64),
+        ("subject_scope_ref", "sha256:" + "2" * 64),
+        ("publication_authority_ref", "sha256:" + "3" * 64),
+        ("artifact_evidence_ref", "sha256:" + "4" * 64),
+    ],
+)
+def test_v2_disposition_metadata_tamper_is_rejected_after_checksum_reseal(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    authority_ref = "sha256:" + "f" * 64
+    store = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+        write_schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+    )
+    record = _disposition_record("run-v2-tamper", authority_ref=authority_ref)
+    store.save(record)
+    path = _record_path(store, record.run_id)
+    state = _read_json(path)
+    state[field] = value
+    state["checksum"] = run_store_module._state_checksum(
+        {key: item for key, item in state.items() if key != "checksum"}
+    )
+    _write_json(path, state)
+
+    with pytest.raises(ResearchRunStoreCorruptionError) as corrupted:
+        store.get_by_run_id(record.run_id)
+    assert corrupted.value.reason is ResearchRunStoreReason.CONTENT_INVALID
+
+
+def test_mixed_v1_quarantine_and_v2_accepted_repairs_latest_without_v1_rewrite(
+    tmp_path: Path,
+) -> None:
+    legacy = FilesystemResearchRunStore(tmp_path, result_decoder=_identity_decoder)
+    legacy_result = _disposition_result("run-v1-quarantine")
+    legacy_result.pop("actor_scope")
+    legacy_result["trace"].pop("metadata")
+    legacy_record = ResearchRunRecord(
+        run_id="run-v1-quarantine",
+        paper_id="paper-disposition",
+        result=legacy_result,
+    )
+    legacy.save(legacy_record)
+    legacy_bytes = _record_path(legacy, legacy_record.run_id).read_bytes()
+
+    authority_ref = "sha256:" + "9" * 64
+    writer = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=_identity_decoder,
+        write_schema_version=RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+    )
+    accepted = _disposition_record("run-v2-accepted", authority_ref=authority_ref)
+    writer.save(accepted)
+
+    reopened = FilesystemResearchRunStore(tmp_path, result_decoder=_identity_decoder)
+    latest = reopened.get_latest_by_paper_id("paper-disposition")
+    assert latest is not None and latest.run_id == accepted.run_id
+    assert [record.run_id for record in reopened.list_by_paper_id("paper-disposition")] == [
+        accepted.run_id
+    ]
+    assert reopened.get_by_run_id(legacy_record.run_id).quarantined
+    assert _record_path(reopened, legacy_record.run_id).read_bytes() == legacy_bytes
 
 
 def _research_persistence_records(caplog):

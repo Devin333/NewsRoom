@@ -630,6 +630,7 @@ class SkillPromotionDecision:
     required_release_version: str | None = None
     gate_results: tuple[dict[str, Any], ...] = ()
     approval_ref: str | None = None
+    release_authorization_ref: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     decided_at: Any = field(default_factory=utc_now)
 
@@ -641,6 +642,11 @@ class SkillPromotionDecision:
         object.__setattr__(self, "status", SkillPromotionStatus(self.status))
         object.__setattr__(self, "reasons", tuple(str(reason) for reason in self.reasons))
         object.__setattr__(self, "gate_results", tuple(dict(result) for result in self.gate_results))
+        object.__setattr__(
+            self,
+            "release_authorization_ref",
+            _optional_sha256_ref(self.release_authorization_ref, "release_authorization_ref"),
+        )
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     @property
@@ -648,7 +654,7 @@ class SkillPromotionDecision:
         return self.status in {SkillPromotionStatus.PROMOTE, SkillPromotionStatus.APPROVED}
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "candidate_id": self.candidate_id,
             "status": self.status.value,
             "decided_by": self.decided_by,
@@ -659,6 +665,9 @@ class SkillPromotionDecision:
             "metadata": to_jsonable(self.metadata),
             "decided_at": format_datetime(self.decided_at),
         }
+        if self.release_authorization_ref is not None:
+            payload["release_authorization_ref"] = self.release_authorization_ref
+        return payload
 
 
 @dataclass(frozen=True)
@@ -668,6 +677,8 @@ class SkillRollbackPlan:
     triggers: tuple[str, ...]
     fallback_action: str = "halt_skill_use"
     rollback_transcript_ref: str | None = None
+    release_authorization_ref: str | None = None
+    side_effect_decision_ref: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -678,10 +689,22 @@ class SkillRollbackPlan:
         if self.previous_version is not None and not isinstance(self.previous_version, SkillVersionRef):
             raise HarnessValidationError("previous_version must be SkillVersionRef")
         object.__setattr__(self, "triggers", tuple(str(trigger) for trigger in self.triggers))
+        object.__setattr__(
+            self,
+            "release_authorization_ref",
+            _optional_sha256_ref(self.release_authorization_ref, "release_authorization_ref"),
+        )
+        object.__setattr__(
+            self,
+            "side_effect_decision_ref",
+            _optional_sha256_ref(self.side_effect_decision_ref, "side_effect_decision_ref"),
+        )
+        if (self.release_authorization_ref is None) != (self.side_effect_decision_ref is None):
+            raise HarnessValidationError("rollback authority refs must be provided together")
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "release_id": self.release_id,
             "previous_version": self.previous_version.to_dict() if self.previous_version else None,
             "triggers": list(self.triggers),
@@ -689,6 +712,10 @@ class SkillRollbackPlan:
             "rollback_transcript_ref": self.rollback_transcript_ref,
             "metadata": to_jsonable(self.metadata),
         }
+        if self.release_authorization_ref is not None:
+            payload["release_authorization_ref"] = self.release_authorization_ref
+            payload["side_effect_decision_ref"] = self.side_effect_decision_ref
+        return payload
 
 
 @dataclass(frozen=True)
@@ -700,6 +727,9 @@ class SkillRelease:
     promotion_decision: SkillPromotionDecision | None = None
     release_notes_ref: str | None = None
     transcript_refs: tuple[str, ...] = ()
+    release_authorization_ref: str | None = None
+    side_effect_decision_ref: str | None = None
+    idempotency_key: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     released_at: Any = field(default_factory=utc_now)
 
@@ -713,10 +743,29 @@ class SkillRelease:
         if not isinstance(self.rollback_plan, SkillRollbackPlan):
             raise HarnessValidationError("rollback_plan must be SkillRollbackPlan")
         object.__setattr__(self, "transcript_refs", tuple(str(ref) for ref in self.transcript_refs))
+        object.__setattr__(
+            self,
+            "release_authorization_ref",
+            _optional_sha256_ref(self.release_authorization_ref, "release_authorization_ref"),
+        )
+        object.__setattr__(
+            self,
+            "side_effect_decision_ref",
+            _optional_sha256_ref(self.side_effect_decision_ref, "side_effect_decision_ref"),
+        )
+        binding_values = (
+            self.release_authorization_ref,
+            self.side_effect_decision_ref,
+            self.idempotency_key,
+        )
+        if any(value is not None for value in binding_values) and not all(
+            isinstance(value, str) and value.strip() for value in binding_values
+        ):
+            raise HarnessValidationError("release authority fields must be provided together")
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "release_id": self.release_id,
             "candidate_id": self.candidate_id,
             "version": self.version.to_dict(),
@@ -727,10 +776,26 @@ class SkillRelease:
             "metadata": to_jsonable(self.metadata),
             "released_at": format_datetime(self.released_at),
         }
+        if self.release_authorization_ref is not None:
+            payload["release_authorization_ref"] = self.release_authorization_ref
+            payload["side_effect_decision_ref"] = self.side_effect_decision_ref
+            payload["idempotency_key"] = self.idempotency_key
+        return payload
 
 
 def ensure_jsonable_skill_model(value: Any) -> None:
     stable_json_dumps(to_jsonable(value))
+
+
+def _optional_sha256_ref(value: str | None, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        raise HarnessValidationError(f"{field_name} must be a sha256 reference")
+    digest = value.removeprefix("sha256:")
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise HarnessValidationError(f"{field_name} must be a sha256 reference")
+    return value
 
 
 __all__ = [

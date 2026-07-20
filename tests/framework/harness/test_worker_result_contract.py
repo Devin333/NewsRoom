@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+from framework.events.canonical import checksum_for
 from framework.harness import (
     FORBIDDEN_WORKER_RESULT_KEYS,
     HarnessValidationError,
+    HarnessSideEffectIntent,
     HarnessWorkerResult,
 )
 
@@ -46,8 +48,58 @@ def test_worker_result_allows_observations_and_completed_domain_facts() -> None:
             "quality_observation": {"score": 0.9},
             "authorization_observation": {"requested_tools": ["search"]},
             "memory_write_candidate": {"namespace": "research.private"},
-            "published": True,
+            "publication_observation": {"published": True},
         },
     )
 
     assert result.output["quality_observation"] == {"score": 0.9}
+
+
+@pytest.mark.parametrize(
+    "channel",
+    ("output", "diagnostics", "metrics"),
+)
+def test_worker_result_rejects_nested_decision_aliases_in_all_untyped_channels(channel: str) -> None:
+    with pytest.raises(HarnessValidationError) as captured:
+        HarnessWorkerResult(
+            status="succeeded",
+            **{channel: {"nested": {"published": True}}},
+        )
+
+    assert captured.value.code == "worker_decision_field_rejected"
+    assert captured.value.details["forbidden_paths"] == [f"{channel}.nested.published"]
+
+
+def test_worker_result_artifact_refs_are_strict_candidate_strings() -> None:
+    with pytest.raises(HarnessValidationError, match="artifact refs"):
+        HarnessWorkerResult(status="succeeded", artifacts=(object(),))  # type: ignore[arg-type]
+
+    result = HarnessWorkerResult(status="succeeded", artifacts=("candidate://run/a",))
+    assert result.artifacts == ("candidate://run/a",)
+
+
+def test_typed_intent_payload_is_opaque_candidate_data() -> None:
+    intent = HarnessSideEffectIntent(
+        effect_id="effect-1",
+        kind="artifact",
+        run_id="run-1",
+        origin="worker",
+        atomic_group="group-1",
+        identity_scope_ref=checksum_for({"tenant_id": "tenant-1"}),
+        subject_scope_ref=checksum_for({"paper_id": "paper-1"}),
+        step_id="publish",
+        worker_result_ref=checksum_for({"worker": 1}),
+        candidate_checksum=checksum_for({"candidate": 1}),
+        handler="research.artifact@1",
+        payload={"published": "domain fact allowed by typed intent schema"},
+    )
+
+    result = HarnessWorkerResult(status="succeeded", effect_intent=intent)
+
+    assert result.effect_intent == intent
+    assert result.to_dict()["effect_intent"]["payload"]["published"].startswith("domain fact")
+
+
+def test_worker_result_rejects_multiple_intents_instead_of_coercing_a_list() -> None:
+    with pytest.raises(HarnessValidationError, match="typed HarnessSideEffectIntent"):
+        HarnessWorkerResult(status="succeeded", effect_intent=[])  # type: ignore[arg-type]

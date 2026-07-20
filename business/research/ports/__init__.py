@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from business.research.code_repository.ports import GithubRepositoryPort
+from business.research.ports.artifact_publication import (
+    ResearchArtifactDiagnosticClaim,
+    ResearchArtifactDiagnosticReader,
+    ResearchArtifactReadClaim,
+    ResearchArtifactReadResolution,
+)
 from business.research.ports.artifact_store import ResearchArtifactStorePort
 from business.research.ports.document_compiler import DocumentCompilerPort
 from business.research.ports.field_embedding_index import (
@@ -20,6 +26,9 @@ from business.research.ports.repositories import (
 )
 from business.research.ports.retrieval import ResearchRetrievalProjectionPort
 from business.research.ports.run_store import (
+    ResearchRunDiagnosticStore,
+    ResearchRunDisposition,
+    ResearchRunDispositionReason,
     ResearchRunRecord,
     ResearchRunStore,
     ResearchRunStoreConflictError,
@@ -45,10 +54,17 @@ __all__ = [
     "ReaderRepairMemoryVersion",
     "ReadingSessionRepository",
     "ResearchArtifactStorePort",
+    "ResearchArtifactDiagnosticClaim",
+    "ResearchArtifactDiagnosticReader",
+    "ResearchArtifactReadClaim",
+    "ResearchArtifactReadResolution",
     "ResearchCandidateWorkerPort",
     "ResearchMemoryPort",
     "ResearchPaperRepository",
     "ResearchRetrievalProjectionPort",
+    "ResearchRunDiagnosticStore",
+    "ResearchRunDisposition",
+    "ResearchRunDispositionReason",
     "ResearchRunRecord",
     "ResearchRunStore",
     "ResearchRunStoreConflictError",

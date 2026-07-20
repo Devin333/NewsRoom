@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+import io
+import urllib.error
+import urllib.parse
+
+import pytest
 from fastapi.testclient import TestClient
 
 from interfaces.api import create_app
-from interfaces.services.research_service import InMemoryResearchRunStore, ResearchApplicationService
-from tests.interfaces.research_fixtures import FakeAnalyzeUseCase, make_research_result
+from interfaces.sdk import NewsApiError, NewsClient
+from interfaces.services.research_service import (
+    InMemoryResearchRunStore,
+    ResearchAnalyzeInput,
+    ResearchApplicationService,
+)
+from business.research.ports.run_store import ResearchRunRecord
+from infrastructure.research.filesystem_run_store import FilesystemResearchRunStore
+from tests.interfaces.research_fixtures import (
+    FakeAnalyzeUseCase,
+    FakeResearchAnalysisResult,
+    make_research_result,
+)
 
 
 def _client(*, result=None):
@@ -181,6 +197,154 @@ def test_research_reader_analysis_ask_and_trace_endpoints_return_research_payloa
     assert trace.json()["data"]["trace"]["events"][0]["event_type"] == "phase_started"
 
 
+def test_research_http_mcp_sdk_shapes_survive_filesystem_reconstruction(
+    tmp_path,
+) -> None:
+    """All public read surfaces project the same reconstructed accepted run."""
+
+    paper_id = "paper-surface-reconstruction"
+    accepted_run_id = "run-surface-accepted"
+    failed_run_id = "run-surface-quarantine"
+    store = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=FakeResearchAnalysisResult.from_dict,
+    )
+    accepted = make_research_result(
+        run_id=accepted_run_id,
+        paper_id=paper_id,
+    )
+    ResearchApplicationService(
+        analyze_use_case=FakeAnalyzeUseCase(accepted),
+        run_store=store,
+    ).analyze_paper(
+        # The public scope keeps this matrix compatible with every transport's
+        # default actor while the failed run remains available by run id only.
+        ResearchAnalyzeInput(
+            run_id=accepted_run_id,
+            paper_id=paper_id,
+            source_url="https://arxiv.org/abs/2606.00123",
+        )
+    )
+    failed = make_research_result(
+        run_id=failed_run_id,
+        paper_id=paper_id,
+        status="halted",
+        quality_passed=False,
+    )
+    store.save(
+        ResearchRunRecord(
+            run_id=failed_run_id,
+            paper_id=paper_id,
+            result=failed,
+        )
+    )
+
+    # Reconstruct the service from durable run records; no accepted result is
+    # carried over in memory.
+    reopened_store = FilesystemResearchRunStore(
+        tmp_path,
+        result_decoder=FakeResearchAnalysisResult.from_dict,
+    )
+    service = ResearchApplicationService(
+        run_store=reopened_store,
+        rag_ask_use_case=_SurfaceRagAskUseCase(),
+    )
+    client = TestClient(
+        create_app(
+            research_service_factory=lambda: service,
+            audit_emitter_factory=None,
+        )
+    )
+
+    http_analysis = client.get(
+        f"/api/v1/research/papers/{paper_id}/analysis"
+    )
+    http_reader = client.get(f"/api/v1/research/papers/{paper_id}/reader")
+    http_ask = client.post(
+        f"/api/v1/research/papers/{paper_id}/ask",
+        json={"question": "What is the method?"},
+    )
+    http_rag_ask = client.post(
+        f"/api/v1/research/papers/{paper_id}/rag-ask",
+        json={
+            "question": "Which evidence supports the method?",
+            "sectionIndex": 1,
+            "limit": 3,
+            "generate": True,
+        },
+    )
+    http_trace = client.get(
+        f"/api/v1/research/runs/{failed_run_id}/trace"
+    )
+
+    assert http_analysis.status_code == 200
+    assert http_reader.status_code == 200
+    assert http_ask.status_code == 200
+    assert http_rag_ask.status_code == 200
+    assert http_trace.status_code == 200
+    assert http_analysis.json()["data"]["runId"] == accepted_run_id
+    assert http_reader.json()["data"]["metadata"]["runId"] == accepted_run_id
+    assert http_ask.json()["data"]["metadata"]["runId"] == accepted_run_id
+    assert http_rag_ask.json()["data"] == {
+        "mode": "chunk_rag",
+        "paper_id": paper_id,
+        "trace": {"run_id": "rag-run"},
+    }
+    assert http_trace.json()["data"]["runId"] == failed_run_id
+    assert http_trace.json()["data"]["status"] == "halted"
+    assert "diagnostics" in http_trace.json()["data"]["metadata"]
+
+    # The HTTP MCP adapter uses the same application service and must retain
+    # the read payload shape, including trace metadata for quarantine runs.
+    mcp_analysis = client.post(
+        "/api/v1/mcp/tools/news.research.paper_analysis/call",
+        json={"arguments": {"paper_id": paper_id}},
+    )
+    mcp_reader = client.post(
+        "/api/v1/mcp/tools/news.research.reader/call",
+        json={"arguments": {"paper_id": paper_id}},
+    )
+    mcp_ask = client.post(
+        "/api/v1/mcp/tools/news.research.ask/call",
+        json={
+            "arguments": {
+                "paper_id": paper_id,
+                "question": "What is the method?",
+            }
+        },
+    )
+    mcp_trace = client.post(
+        "/api/v1/mcp/tools/news.research.trace/call",
+        json={"arguments": {"run_id": failed_run_id}},
+    )
+    for response in (mcp_analysis, mcp_reader, mcp_ask, mcp_trace):
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert response.json()["data"]["success"] is True
+    assert mcp_analysis.json()["data"]["data"] == http_analysis.json()["data"]
+    assert mcp_reader.json()["data"]["data"] == http_reader.json()["data"]
+    assert mcp_ask.json()["data"]["data"] == http_ask.json()["data"]
+    assert mcp_trace.json()["data"]["data"] == http_trace.json()["data"]
+
+    # The SDK consumes the ordinary HTTP envelope and retains the same data
+    # and typed error contracts after reconstruction.
+    sdk = NewsClient(
+        "http://testserver",
+        opener=_TestClientOpener(client),
+    )
+    assert sdk.research.analysis(paper_id) == http_analysis.json()["data"]
+    assert sdk.research.reader(paper_id) == http_reader.json()["data"]
+    assert sdk.research.ask(
+        paper_id,
+        question="What is the method?",
+    ) == http_ask.json()["data"]
+    assert sdk.research.trace(failed_run_id) == http_trace.json()["data"]
+    with pytest.raises(NewsApiError) as missing:
+        sdk.research.analysis("missing-surface-paper")
+    assert missing.value.code == "paper_not_found"
+    assert missing.value.status_code == 404
+
+
 def test_research_api_returns_stable_error_codes_without_tracebacks() -> None:
     client = _client(result=make_research_result(quality_passed=False))
 
@@ -288,3 +452,55 @@ class _CapturingResearchService:
             "evidenceRefs": [f"paper://{paper_id}/sec-method"],
             "confidence": 1.0,
         }
+
+
+class _SurfaceRagAskUseCase:
+    def rag_ask(self, paper_id, _question, **_kwargs):
+        return {
+            "mode": "chunk_rag",
+            "paper_id": paper_id,
+            "trace": {"run_id": "rag-run"},
+        }
+
+
+class _SdkResponse:
+    status = 200
+
+    def __init__(self, response) -> None:
+        self.status = response.status_code
+        self._body = response.content
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class _TestClientOpener:
+    def __init__(self, client: TestClient) -> None:
+        self.client = client
+
+    def __call__(self, request, _timeout):
+        parsed = urllib.parse.urlsplit(request.full_url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        response = self.client.request(
+            request.get_method(),
+            path,
+            headers=dict(request.header_items()),
+            content=request.data,
+        )
+        if response.status_code >= 400:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                response.status_code,
+                "HTTP error",
+                hdrs=None,
+                fp=io.BytesIO(response.content),
+            )
+        return _SdkResponse(response)

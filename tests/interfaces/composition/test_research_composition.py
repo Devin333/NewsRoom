@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from threading import Event, Thread
@@ -14,11 +15,14 @@ from business.research.application.bounded_document_rag import (
     BoundedDocumentRAGRuntime,
 )
 from business.research.application.single_paper_runtime import (
+    AnalyzePaperRequest,
     ResearchSinglePaperRuntime,
+    _ResearchRunWorkspace,
 )
 from business.research.document.cascade_parser import CascadeDocumentParser
 from business.research.document.chunk_storage import PaperChunkStoreAdapter
 from business.research.document.latex_compiler import ArxivLatexDocumentCompiler
+from framework.harness import ContextAssembler
 from framework.harness.control_plane.durable_events import (
     DurableHarnessTransitionPort,
 )
@@ -28,6 +32,7 @@ from infrastructure.external.sources.arxiv import (
 )
 from infrastructure.external.sources.github import GithubConnector
 from infrastructure.research.artifact_port import FilesystemHarnessArtifactPort
+from infrastructure.research.artifact_publication import ResearchArtifactBundleHandler
 from infrastructure.research.candidate_worker import (
     StructuredResearchCandidateWorker,
 )
@@ -42,6 +47,7 @@ from infrastructure.research.github_repository import (
 )
 from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
+from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
 from interfaces.composition.research import (
     ResearchRuntimeComposition,
     ResearchRuntimeProvider,
@@ -278,6 +284,12 @@ def test_valid_settings_compose_full_durable_production_graph(
         assert isinstance(service._analyze_use_case, AnalyzePaperUseCase)
         assert isinstance(service._run_store, FilesystemResearchRunStore)
         assert service._run_store.root == settings.run_store.root
+        assert service._run_store.write_schema_version.endswith(".v2")
+        assert service._run_store.supported_schema_versions == (
+            "newsroom.research_run_record.v1",
+            "newsroom.research_run_record.v2",
+        )
+        assert service._run_reconciler is not None
 
         runtime = service._analyze_use_case._runtime
         assert isinstance(runtime, ResearchSinglePaperRuntime)
@@ -303,9 +315,41 @@ def test_valid_settings_compose_full_durable_production_graph(
         )
         assert isinstance(runtime.artifact_port, FilesystemHarnessArtifactPort)
         assert runtime.artifact_port.root == settings.artifact.root
+        assert service._diagnostic_artifact_reader is runtime.artifact_port
+        assert runtime.artifact_port._diagnostic_run_resolver is not None
         assert isinstance(
             runtime.event_port_factory("research-object-graph"),
             DurableHarnessTransitionPort,
+        )
+
+        candidate_workspace = _ResearchRunWorkspace(
+            request=AnalyzePaperRequest(
+                run_id="candidate-object-graph",
+                paper_id="paper-candidate-object-graph",
+                source_ref="https://arxiv.org/abs/2606.00001",
+            ),
+            context_assembler=ContextAssembler(),
+        )
+        publish_worker = runtime._worker_registry(candidate_workspace)[
+            "publish_artifacts"
+        ]
+        closure = inspect.getclosurevars(publish_worker)
+        assert "self" not in closure.nonlocals
+        reachable = (
+            tuple(closure.globals.values())
+            + tuple(closure.nonlocals.values())
+            + tuple(publish_worker.__defaults__ or ())
+        )
+        assert not any(
+            isinstance(
+                value,
+                (
+                    FilesystemHarnessArtifactPort,
+                    ResearchArtifactBundleHandler,
+                    SQLiteHarnessSideEffectStore,
+                ),
+            )
+            for value in reachable
         )
 
         source_runtime = composition.source_runtime_provider.get()

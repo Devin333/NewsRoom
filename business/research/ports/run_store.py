@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
+
+from business.research.domain.run_disposition import (
+    ResearchRunDisposition,
+    ResearchRunDispositionReason,
+)
 
 
 class ResearchRunStoreReason(str, Enum):
@@ -83,6 +88,51 @@ class ResearchRunRecord:
     run_id: str
     paper_id: str
     result: Any
+    disposition: ResearchRunDisposition | str | None = field(
+        default=None,
+        compare=False,
+    )
+    disposition_reason: str | None = field(default=None, compare=False)
+    identity_scope_ref: str | None = field(default=None, compare=False)
+    subject_scope_ref: str | None = field(default=None, compare=False)
+    publication_authority_ref: str | None = field(default=None, compare=False)
+    artifact_evidence_ref: str | None = field(default=None, compare=False)
+    schema_version: str | None = field(default=None, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.disposition is not None:
+            object.__setattr__(
+                self,
+                "disposition",
+                ResearchRunDisposition(self.disposition),
+            )
+
+    @property
+    def accepted(self) -> bool:
+        return self.disposition is ResearchRunDisposition.ACCEPTED
+
+    @property
+    def quarantined(self) -> bool:
+        return self.disposition is ResearchRunDisposition.QUARANTINE
+
+    @property
+    def artifact_reference_disposition(self) -> str:
+        """Visibility marker for refs carried by this run record.
+
+        Historical v1 runs could write canonical-looking refs before the run
+        was accepted. They remain inspectable only through a scoped diagnostic
+        read and are never represented as ordinary accepted refs.
+        """
+
+        if (
+            self.quarantined
+            and isinstance(self.schema_version, str)
+            and self.schema_version.endswith(".v1")
+        ):
+            return ResearchRunDispositionReason.LEGACY_QUARANTINED.value
+        if self.disposition is None:
+            return ResearchRunDisposition.QUARANTINE.value
+        return self.disposition.value
 
 
 @runtime_checkable
@@ -96,8 +146,30 @@ class ResearchRunStore(Protocol):
     def list_by_paper_id(self, paper_id: str) -> list[ResearchRunRecord]: ...
 
 
+@runtime_checkable
+class ResearchRunDiagnosticStore(Protocol):
+    """Explicit scope-bound access to non-canonical run diagnostics."""
+
+    def get_diagnostic_by_run_id(
+        self,
+        run_id: str,
+        *,
+        identity_scope_ref: str,
+    ) -> ResearchRunRecord | None: ...
+
+    def list_quarantined_by_paper_id(
+        self,
+        paper_id: str,
+        *,
+        identity_scope_ref: str,
+    ) -> list[ResearchRunRecord]: ...
+
+
 __all__ = [
     "ResearchRunRecord",
+    "ResearchRunDiagnosticStore",
+    "ResearchRunDisposition",
+    "ResearchRunDispositionReason",
     "ResearchRunStore",
     "ResearchRunStoreConflictError",
     "ResearchRunStoreCorruptionError",

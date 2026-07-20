@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from business.research.ports.run_store import (
+    ResearchRunDisposition,
+    ResearchRunDiagnosticStore,
     ResearchRunRecord,
     ResearchRunStoreConflictError,
     ResearchRunStoreCorruptionError,
@@ -26,11 +28,18 @@ from business.research.ports.run_store import (
     ResearchRunStoreUnavailableError,
     ResearchRunStoreValidationError,
 )
+from business.research.domain.run_disposition import (
+    apply_research_run_disposition,
+    derive_research_run_disposition,
+    disposition_claim_matches,
+)
 from infrastructure.research.diagnostics import emit_research_persistence_diagnostic
 
 
 RESEARCH_RUN_RECORD_SCHEMA_VERSION = "newsroom.research_run_record.v1"
 RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION = "newsroom.research_run_latest_index.v1"
+RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2 = "newsroom.research_run_record.v2"
+RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2 = "newsroom.research_run_latest_index.v2"
 DEFAULT_RESEARCH_RUN_RECORD_MAX_BYTES = 16_777_216
 
 _LATEST_INDEX_MAX_BYTES = 65_536
@@ -60,6 +69,22 @@ _INDEX_FIELDS = {
     "record_checksum",
     "checksum",
 }
+_RECORD_V2_FIELDS = _RECORD_FIELDS | {
+    "disposition",
+    "disposition_reason",
+    "identity_scope_ref",
+    "subject_scope_ref",
+    "publication_authority_ref",
+    "artifact_evidence_ref",
+}
+_INDEX_V2_FIELDS = _INDEX_FIELDS | {
+    "disposition",
+    "disposition_reason",
+    "identity_scope_ref",
+    "subject_scope_ref",
+    "publication_authority_ref",
+    "artifact_evidence_ref",
+}
 _RESULT_PAPER_ID_PATHS = (
     ("analysis", "paper_id"),
     ("quality", "target_id"),
@@ -85,6 +110,13 @@ class _PersistedRecord:
     result: dict[str, Any]
     result_checksum: str
     checksum: str
+    schema_version: str = RESEARCH_RUN_RECORD_SCHEMA_VERSION
+    disposition: ResearchRunDisposition = ResearchRunDisposition.QUARANTINE
+    disposition_reason: str = ""
+    identity_scope_ref: str | None = None
+    subject_scope_ref: str | None = None
+    publication_authority_ref: str | None = None
+    artifact_evidence_ref: str | None = None
 
     @property
     def commit_key(self) -> tuple[int, str, str]:
@@ -99,9 +131,16 @@ class _PersistedIndex:
     committed_at: str
     record_checksum: str
     checksum: str
+    schema_version: str = RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION
+    disposition: ResearchRunDisposition = ResearchRunDisposition.QUARANTINE
+    disposition_reason: str = ""
+    identity_scope_ref: str | None = None
+    subject_scope_ref: str | None = None
+    publication_authority_ref: str | None = None
+    artifact_evidence_ref: str | None = None
 
 
-class FilesystemResearchRunStore:
+class FilesystemResearchRunStore(ResearchRunDiagnosticStore):
     """Single-host, checksum-verified storage for complete Research results."""
 
     def __init__(
@@ -110,10 +149,35 @@ class FilesystemResearchRunStore:
         *,
         result_decoder: ResearchResultDecoder,
         max_record_bytes: int = DEFAULT_RESEARCH_RUN_RECORD_MAX_BYTES,
+        write_schema_version: str = RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+        supported_schema_versions: tuple[str, ...] = (
+            RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+            RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+        ),
+        legacy_identity_scope_ref: str | None = None,
     ) -> None:
         self._root = _validated_root(root)
         self._result_decoder = _validated_decoder(result_decoder)
         self._max_record_bytes = _validated_max_bytes(max_record_bytes)
+        self._write_schema_version = _validated_schema_version(write_schema_version)
+        self._supported_schema_versions = _validated_schema_versions(
+            supported_schema_versions
+        )
+        self._legacy_identity_scope_ref = _validated_optional_checksum(
+            legacy_identity_scope_ref
+        )
+        if self._write_schema_version not in self._supported_schema_versions:
+            raise ResearchRunStoreValidationError(
+                ResearchRunStoreReason.SCHEMA_UNSUPPORTED
+            )
+        if (
+            self._write_schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+            and RESEARCH_RUN_RECORD_SCHEMA_VERSION
+            not in self._supported_schema_versions
+        ):
+            raise ResearchRunStoreValidationError(
+                ResearchRunStoreReason.SCHEMA_UNSUPPORTED
+            )
         self._records_root = self._root / "records"
         self._latest_root = self._root / "latest"
         self._lock_path = self._root / ".research-run-store.lock"
@@ -137,6 +201,18 @@ class FilesystemResearchRunStore:
     @property
     def max_record_bytes(self) -> int:
         return self._max_record_bytes
+
+    @property
+    def write_schema_version(self) -> str:
+        return self._write_schema_version
+
+    @property
+    def supported_schema_versions(self) -> tuple[str, ...]:
+        return self._supported_schema_versions
+
+    @property
+    def legacy_identity_scope_ref(self) -> str | None:
+        return self._legacy_identity_scope_ref
 
     def save(self, record: ResearchRunRecord) -> None:
         run_id = record.run_id if isinstance(record, ResearchRunRecord) else None
@@ -179,6 +255,30 @@ class FilesystemResearchRunStore:
             paper_id=paper_id,
             result_checksum=result_checksum,
         )
+        classified = _classify_record(
+            ResearchRunRecord(
+                run_id=run_id,
+                paper_id=paper_id,
+                result=result,
+                disposition=record.disposition,
+                disposition_reason=record.disposition_reason,
+                identity_scope_ref=record.identity_scope_ref,
+                subject_scope_ref=record.subject_scope_ref,
+                publication_authority_ref=record.publication_authority_ref,
+                artifact_evidence_ref=record.artifact_evidence_ref,
+                schema_version=self._write_schema_version,
+            ),
+            require_publication_authority=(
+                self._write_schema_version
+                == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+            ),
+            schema_version=self._write_schema_version,
+            legacy_identity_scope_ref=(
+                self._legacy_identity_scope_ref
+                if self._write_schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION
+                else None
+            ),
+        )
 
         with self._operation_lock():
             current_index = self._read_index(paper_id)
@@ -199,6 +299,11 @@ class FilesystemResearchRunStore:
                     raise ResearchRunStoreConflictError(
                         ResearchRunStoreReason.IDENTITY_CONFLICT
                     )
+                if existing.schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2:
+                    if _persisted_record_disposition_projection(existing) != _record_disposition_projection(classified):
+                        raise ResearchRunStoreConflictError(
+                            ResearchRunStoreReason.IDENTITY_CONFLICT
+                        )
                 committed = existing
             else:
                 generation = 1 + max(
@@ -215,6 +320,7 @@ class FilesystemResearchRunStore:
                     generation=generation,
                     result=result,
                     result_checksum=result_checksum,
+                    classified=classified,
                 )
                 records.append(committed)
 
@@ -327,9 +433,47 @@ class FilesystemResearchRunStore:
             )
             matching = sorted(
                 (
+                record
+                for record in records
+                    if (
+                        record.paper_id == expected_paper_id
+                        and record.disposition is ResearchRunDisposition.ACCEPTED
+                    )
+                ),
+                key=lambda record: record.commit_key,
+                reverse=True,
+            )
+        return [self._decode_record(record) for record in matching]
+
+    def get_diagnostic_by_run_id(
+        self,
+        run_id: str,
+        *,
+        identity_scope_ref: str,
+    ) -> ResearchRunRecord | None:
+        record = self.get_by_run_id(run_id)
+        if record is None or record.identity_scope_ref != identity_scope_ref:
+            return None
+        return record
+
+    def list_quarantined_by_paper_id(
+        self,
+        paper_id: str,
+        *,
+        identity_scope_ref: str,
+    ) -> list[ResearchRunRecord]:
+        expected_paper_id = _validated_identity(paper_id)
+        with self._operation_lock():
+            records = self._scan_records()
+            matching = sorted(
+                (
                     record
                     for record in records
-                    if record.paper_id == expected_paper_id
+                    if (
+                        record.paper_id == expected_paper_id
+                        and record.disposition is ResearchRunDisposition.QUARANTINE
+                        and record.identity_scope_ref == identity_scope_ref
+                    )
                 ),
                 key=lambda record: record.commit_key,
                 reverse=True,
@@ -356,9 +500,10 @@ class FilesystemResearchRunStore:
         generation: int,
         result: dict[str, Any],
         result_checksum: str,
+        classified: ResearchRunRecord,
     ) -> _PersistedRecord:
         unsigned = {
-            "schema_version": RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+            "schema_version": self._write_schema_version,
             "run_id": run_id,
             "paper_id": paper_id,
             "commit_generation": generation,
@@ -366,6 +511,8 @@ class FilesystemResearchRunStore:
             "result": result,
             "result_checksum": result_checksum,
         }
+        if self._write_schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2:
+            unsigned.update(_record_disposition_projection(classified))
         state = {**unsigned, "checksum": _state_checksum(unsigned)}
         encoded = _encoded_json(
             state,
@@ -423,12 +570,18 @@ class FilesystemResearchRunStore:
         state = _read_json_file(path, max_bytes=self._max_record_bytes)
         if state is None:
             return None
-        if set(state) != _RECORD_FIELDS:
-            raise ResearchRunStoreCorruptionError(ResearchRunStoreReason.SCHEMA_INVALID)
-        if state.get("schema_version") != RESEARCH_RUN_RECORD_SCHEMA_VERSION:
+        schema_version = state.get("schema_version")
+        if schema_version not in self._supported_schema_versions:
             raise ResearchRunStoreCorruptionError(
                 ResearchRunStoreReason.SCHEMA_UNSUPPORTED
             )
+        expected_fields = (
+            _RECORD_FIELDS
+            if schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION
+            else _RECORD_V2_FIELDS
+        )
+        if set(state) != expected_fields:
+            raise ResearchRunStoreCorruptionError(ResearchRunStoreReason.SCHEMA_INVALID)
 
         run_id = _corrupt_identity(state.get("run_id"))
         paper_id = _corrupt_identity(state.get("paper_id"))
@@ -457,11 +610,64 @@ class FilesystemResearchRunStore:
                 ResearchRunStoreReason.CHECKSUM_INVALID
             )
         checksum = _corrupt_checksum(state.get("checksum"))
-        unsigned = {key: state[key] for key in _RECORD_FIELDS - {"checksum"}}
+        unsigned = {key: state[key] for key in expected_fields - {"checksum"}}
         if not _constant_time_equal(checksum, _state_checksum(unsigned)):
             raise ResearchRunStoreCorruptionError(
                 ResearchRunStoreReason.CHECKSUM_INVALID
             )
+        try:
+            explicit = ResearchRunRecord(
+                run_id=run_id,
+                paper_id=paper_id,
+                result=result,
+                disposition=(
+                    state.get("disposition")
+                    if schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+                    else None
+                ),
+                disposition_reason=(
+                    state.get("disposition_reason")
+                    if schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+                    else None
+                ),
+                identity_scope_ref=(
+                    state.get("identity_scope_ref")
+                    if schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+                    else None
+                ),
+                subject_scope_ref=(
+                    state.get("subject_scope_ref")
+                    if schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+                    else None
+                ),
+                publication_authority_ref=(
+                    state.get("publication_authority_ref")
+                    if schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+                    else None
+                ),
+                artifact_evidence_ref=(
+                    state.get("artifact_evidence_ref")
+                    if schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+                    else None
+                ),
+                schema_version=schema_version,
+            )
+            classified = _classify_record(
+                explicit,
+                require_publication_authority=(
+                    schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+                ),
+                schema_version=schema_version,
+                legacy_identity_scope_ref=(
+                    self._legacy_identity_scope_ref
+                    if schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION
+                    else None
+                ),
+            )
+        except (ResearchRunStoreValidationError, TypeError, ValueError):
+            raise ResearchRunStoreCorruptionError(
+                ResearchRunStoreReason.CONTENT_INVALID
+            ) from None
         return _PersistedRecord(
             run_id=run_id,
             paper_id=paper_id,
@@ -470,6 +676,14 @@ class FilesystemResearchRunStore:
             result=result,
             result_checksum=result_checksum,
             checksum=checksum,
+            schema_version=schema_version,
+            disposition=classified.disposition
+            or ResearchRunDisposition.QUARANTINE,
+            disposition_reason=classified.disposition_reason or "",
+            identity_scope_ref=classified.identity_scope_ref,
+            subject_scope_ref=classified.subject_scope_ref,
+            publication_authority_ref=classified.publication_authority_ref,
+            artifact_evidence_ref=classified.artifact_evidence_ref,
         )
 
     def _read_index(self, paper_id: str) -> _PersistedIndex | None:
@@ -478,12 +692,21 @@ class FilesystemResearchRunStore:
         state = _read_json_file(path, max_bytes=_LATEST_INDEX_MAX_BYTES)
         if state is None:
             return None
-        if set(state) != _INDEX_FIELDS:
-            raise ResearchRunStoreCorruptionError(ResearchRunStoreReason.SCHEMA_INVALID)
-        if state.get("schema_version") != RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION:
+        schema_version = state.get("schema_version")
+        if schema_version not in {
+            RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION,
+            RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2,
+        }:
             raise ResearchRunStoreCorruptionError(
                 ResearchRunStoreReason.SCHEMA_UNSUPPORTED
             )
+        expected_fields = (
+            _INDEX_FIELDS
+            if schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION
+            else _INDEX_V2_FIELDS
+        )
+        if set(state) != expected_fields:
+            raise ResearchRunStoreCorruptionError(ResearchRunStoreReason.SCHEMA_INVALID)
         stored_paper_id = _corrupt_identity(state.get("paper_id"))
         run_id = _corrupt_identity(state.get("run_id"))
         if stored_paper_id != paper_id or path.name != _hashed_filename(paper_id):
@@ -494,11 +717,37 @@ class FilesystemResearchRunStore:
         committed_at = _corrupt_timestamp(state.get("committed_at"))
         record_checksum = _corrupt_checksum(state.get("record_checksum"))
         checksum = _corrupt_checksum(state.get("checksum"))
-        unsigned = {key: state[key] for key in _INDEX_FIELDS - {"checksum"}}
+        unsigned = {key: state[key] for key in expected_fields - {"checksum"}}
         if not _constant_time_equal(checksum, _state_checksum(unsigned)):
             raise ResearchRunStoreCorruptionError(
                 ResearchRunStoreReason.CHECKSUM_INVALID
             )
+        try:
+            disposition = (
+                ResearchRunDisposition(state["disposition"])
+                if schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2
+                else ResearchRunDisposition.ACCEPTED
+            )
+        except (KeyError, TypeError, ValueError):
+            raise ResearchRunStoreCorruptionError(
+                ResearchRunStoreReason.CONTENT_INVALID
+            ) from None
+        if disposition is not ResearchRunDisposition.ACCEPTED:
+            raise ResearchRunStoreCorruptionError(
+                ResearchRunStoreReason.CONTENT_INVALID
+            )
+        if schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2:
+            if state.get("disposition_reason") != "accepted":
+                raise ResearchRunStoreCorruptionError(
+                    ResearchRunStoreReason.CONTENT_INVALID
+                )
+            for field_name in (
+                "identity_scope_ref",
+                "subject_scope_ref",
+                "publication_authority_ref",
+                "artifact_evidence_ref",
+            ):
+                _corrupt_checksum(state.get(field_name))
         return _PersistedIndex(
             paper_id=stored_paper_id,
             run_id=run_id,
@@ -506,6 +755,33 @@ class FilesystemResearchRunStore:
             committed_at=committed_at,
             record_checksum=record_checksum,
             checksum=checksum,
+            schema_version=schema_version,
+            disposition=disposition,
+            disposition_reason=(
+                str(state.get("disposition_reason") or "")
+                if schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2
+                else "accepted"
+            ),
+            identity_scope_ref=(
+                state.get("identity_scope_ref")
+                if schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2
+                else None
+            ),
+            subject_scope_ref=(
+                state.get("subject_scope_ref")
+                if schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2
+                else None
+            ),
+            publication_authority_ref=(
+                state.get("publication_authority_ref")
+                if schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2
+                else None
+            ),
+            artifact_evidence_ref=(
+                state.get("artifact_evidence_ref")
+                if schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2
+                else None
+            ),
         )
 
     def _synchronize_latest_index(
@@ -515,12 +791,15 @@ class FilesystemResearchRunStore:
         records: list[_PersistedRecord],
         current: _PersistedIndex | None,
     ) -> _PersistedRecord | None:
-        matching = [record for record in records if record.paper_id == paper_id]
+        matching = [
+            record
+            for record in records
+            if record.paper_id == paper_id
+            and record.disposition is ResearchRunDisposition.ACCEPTED
+        ]
         if not matching:
             if current is not None:
-                raise ResearchRunStoreCorruptionError(
-                    ResearchRunStoreReason.IDENTITY_MISMATCH
-                )
+                self._remove_index(paper_id)
             return None
         latest = max(matching, key=lambda item: item.commit_key)
         if current is not None and _index_matches_record(current, latest):
@@ -534,14 +813,25 @@ class FilesystemResearchRunStore:
         return latest
 
     def _write_index(self, record: _PersistedRecord) -> None:
+        if record.disposition is not ResearchRunDisposition.ACCEPTED:
+            raise ResearchRunStoreValidationError(
+                ResearchRunStoreReason.INVALID_RECORD
+            )
+        index_schema = (
+            RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2
+            if record.schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2
+            else RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION
+        )
         unsigned = {
-            "schema_version": RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION,
+            "schema_version": index_schema,
             "paper_id": record.paper_id,
             "run_id": record.run_id,
             "commit_generation": record.commit_generation,
             "committed_at": record.committed_at,
             "record_checksum": record.checksum,
         }
+        if index_schema == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2:
+            unsigned.update(_persisted_record_disposition_projection(record))
         state = {**unsigned, "checksum": _state_checksum(unsigned)}
         encoded = _encoded_json(
             state,
@@ -549,6 +839,31 @@ class FilesystemResearchRunStore:
             too_large_reason=ResearchRunStoreReason.SERIALIZATION_FAILED,
         )
         _write_atomic(self._index_path(record.paper_id), encoded)
+
+    def _remove_index(self, paper_id: str) -> None:
+        path = self._index_path(paper_id)
+        _assert_descendant(self._root, path)
+        try:
+            inspected = path.lstat()
+        except FileNotFoundError:
+            return
+        except OSError:
+            raise ResearchRunStoreUnavailableError(
+                ResearchRunStoreReason.ATOMIC_COMMIT_FAILED
+            ) from None
+        if not stat.S_ISREG(inspected.st_mode):
+            raise ResearchRunStoreCorruptionError(
+                ResearchRunStoreReason.CONTENT_INVALID
+            )
+        try:
+            path.unlink()
+            _fsync_directory(path.parent)
+        except FileNotFoundError:
+            return
+        except OSError:
+            raise ResearchRunStoreUnavailableError(
+                ResearchRunStoreReason.ATOMIC_COMMIT_FAILED
+            ) from None
 
     def _decode_record(self, persisted: _PersistedRecord) -> ResearchRunRecord:
         try:
@@ -582,6 +897,13 @@ class FilesystemResearchRunStore:
             run_id=persisted.run_id,
             paper_id=persisted.paper_id,
             result=result,
+            disposition=persisted.disposition,
+            disposition_reason=persisted.disposition_reason,
+            identity_scope_ref=persisted.identity_scope_ref,
+            subject_scope_ref=persisted.subject_scope_ref,
+            publication_authority_ref=persisted.publication_authority_ref,
+            artifact_evidence_ref=persisted.artifact_evidence_ref,
+            schema_version=persisted.schema_version,
         )
 
     def _validate_result_before_save(
@@ -631,6 +953,47 @@ class FilesystemResearchRunStore:
         return path
 
 
+def _classify_record(
+    record: ResearchRunRecord,
+    *,
+    require_publication_authority: bool,
+    schema_version: str,
+    legacy_identity_scope_ref: str | None,
+) -> ResearchRunRecord:
+    effective_legacy_scope = legacy_identity_scope_ref
+    if (
+        effective_legacy_scope is None
+        and schema_version == RESEARCH_RUN_RECORD_SCHEMA_VERSION
+    ):
+        effective_legacy_scope = record.identity_scope_ref
+    decision = derive_research_run_disposition(
+        record.result,
+        run_id=record.run_id,
+        paper_id=record.paper_id,
+        identity_scope_ref=record.identity_scope_ref,
+        subject_scope_ref=record.subject_scope_ref,
+        publication_authority_ref=record.publication_authority_ref,
+        artifact_evidence_ref=record.artifact_evidence_ref,
+        legacy_identity_scope_ref=effective_legacy_scope,
+        require_publication_authority=require_publication_authority,
+    )
+    if not disposition_claim_matches(
+        decision,
+        disposition=record.disposition,
+        disposition_reason=record.disposition_reason,
+        identity_scope_ref=record.identity_scope_ref,
+        subject_scope_ref=record.subject_scope_ref,
+        publication_authority_ref=record.publication_authority_ref,
+        artifact_evidence_ref=record.artifact_evidence_ref,
+    ):
+        raise ResearchRunStoreValidationError(ResearchRunStoreReason.INVALID_RECORD)
+    return apply_research_run_disposition(
+        record,
+        decision,
+        schema_version=schema_version,
+    )
+
+
 def _validated_root(value: str | os.PathLike[str]) -> Path:
     try:
         raw = os.fspath(value)
@@ -668,6 +1031,39 @@ def _validated_max_bytes(value: Any) -> int:
         or value < _MIN_RECORD_BYTES
         or value > _MAX_RECORD_BYTES
     ):
+        raise ResearchRunStoreValidationError(
+            ResearchRunStoreReason.INVALID_CONFIGURATION
+        )
+    return value
+
+
+def _validated_schema_version(value: Any) -> str:
+    if value not in {
+        RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+        RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+    }:
+        raise ResearchRunStoreValidationError(ResearchRunStoreReason.SCHEMA_UNSUPPORTED)
+    return str(value)
+
+
+def _validated_schema_versions(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, (tuple, list)) or not value:
+        raise ResearchRunStoreValidationError(ResearchRunStoreReason.SCHEMA_UNSUPPORTED)
+    versions = tuple(_validated_schema_version(item) for item in value)
+    if len(set(versions)) != len(versions):
+        raise ResearchRunStoreValidationError(ResearchRunStoreReason.SCHEMA_UNSUPPORTED)
+    if set(versions) != {
+        RESEARCH_RUN_RECORD_SCHEMA_VERSION,
+        RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2,
+    }:
+        raise ResearchRunStoreValidationError(ResearchRunStoreReason.SCHEMA_UNSUPPORTED)
+    return versions
+
+
+def _validated_optional_checksum(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or _CHECKSUM.fullmatch(value) is None:
         raise ResearchRunStoreValidationError(
             ResearchRunStoreReason.INVALID_CONFIGURATION
         )
@@ -813,7 +1209,44 @@ def _index_matches_record(
         and index.commit_generation == record.commit_generation
         and index.committed_at == record.committed_at
         and _constant_time_equal(index.record_checksum, record.checksum)
+        and index.disposition is record.disposition
+        and (
+            index.schema_version == RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION
+            or (
+                index.identity_scope_ref == record.identity_scope_ref
+                and index.subject_scope_ref == record.subject_scope_ref
+                and index.publication_authority_ref
+                == record.publication_authority_ref
+                and index.artifact_evidence_ref == record.artifact_evidence_ref
+            )
+        )
     )
+
+
+def _record_disposition_projection(record: ResearchRunRecord) -> dict[str, Any]:
+    if record.disposition is None:
+        raise ResearchRunStoreValidationError(ResearchRunStoreReason.INVALID_RECORD)
+    return {
+        "disposition": record.disposition.value,
+        "disposition_reason": str(record.disposition_reason or ""),
+        "identity_scope_ref": record.identity_scope_ref,
+        "subject_scope_ref": record.subject_scope_ref,
+        "publication_authority_ref": record.publication_authority_ref,
+        "artifact_evidence_ref": record.artifact_evidence_ref,
+    }
+
+
+def _persisted_record_disposition_projection(
+    record: _PersistedRecord,
+) -> dict[str, Any]:
+    return {
+        "disposition": record.disposition.value,
+        "disposition_reason": record.disposition_reason,
+        "identity_scope_ref": record.identity_scope_ref,
+        "subject_scope_ref": record.subject_scope_ref,
+        "publication_authority_ref": record.publication_authority_ref,
+        "artifact_evidence_ref": record.artifact_evidence_ref,
+    }
 
 
 def _hashed_filename(identity: str) -> str:
@@ -1163,6 +1596,8 @@ __all__ = [
     "DEFAULT_RESEARCH_RUN_RECORD_MAX_BYTES",
     "FilesystemResearchRunStore",
     "RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION",
+    "RESEARCH_RUN_LATEST_INDEX_SCHEMA_VERSION_V2",
     "RESEARCH_RUN_RECORD_SCHEMA_VERSION",
+    "RESEARCH_RUN_RECORD_SCHEMA_VERSION_V2",
     "ResearchResultDecoder",
 ]

@@ -39,6 +39,7 @@ from framework.harness.control_plane.transition import (
     HARNESS_TRANSITION_DATA_SCHEMA,
     HARNESS_TRANSITION_EVENT_TYPE,
     HarnessTransitionCommitted,
+    HarnessStateProjection,
     workflow_checksum,
     workflow_version,
 )
@@ -135,8 +136,12 @@ def harness_decision_input_snapshot(
     quality_verdict: Any | None = None,
     expected_activity: ReplayActivityDescriptor | None = None,
     approval_outcome: str | None = None,
+    side_effect_authorization: Mapping[str, Any] | None = None,
+    side_effect_failure: Mapping[str, Any] | None = None,
+    side_effect_state_refs: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     workflow = state.run_spec.workflow
+    terminal_policy = workflow.terminal_side_effect_policy
     current_step = next(
         (
             step
@@ -158,6 +163,24 @@ def harness_decision_input_snapshot(
             ),
             **current_step.retry_policy.to_dict(),
         }
+        if current_step.side_effect_handler is not None:
+            current_policy["side_effect_handler"] = current_step.side_effect_handler.to_dict()
+    if terminal_policy is not None:
+        # Keep the durable decision projection bounded.  The complete policy
+        # remains part of the workflow checksum and is reconstructed from the
+        # caller's exact workflow spec during recovery; embedding its full
+        # serialization here can push canonical event extensions over the
+        # 8 KiB limit when a side-effect decision is also present.
+        current_policy["terminal_side_effect_policy"] = {
+            "reference": terminal_policy.reference,
+            "checksum": checksum_for(terminal_policy.to_dict()),
+            "handler": terminal_policy.handler.to_dict(),
+            "kind": terminal_policy.kind,
+        }
+    if side_effect_authorization is not None:
+        current_policy["side_effect_authorization"] = dict(side_effect_authorization)
+    if side_effect_failure is not None:
+        current_policy["side_effect_failure"] = dict(side_effect_failure)
     current_routing_rules = tuple(
         rule
         for rule in workflow.routing_rules
@@ -181,30 +204,37 @@ def harness_decision_input_snapshot(
         "workflow_version": workflow_version(state.run_spec),
         "workflow_checksum": workflow_checksum(state.run_spec),
         "entry_step_id": workflow.entry_step_id,
-        "step_order": workflow.step_ids,
+        "step_order": _decision_step_order(
+            workflow.step_ids,
+            current_step_id=state.current_step_id,
+            bounded=terminal_policy is not None,
+        ),
         "current_step_policy": current_policy,
         "routing_rules": tuple(rule.to_dict() for rule in current_routing_rules),
-        "before_state_checksum": checksum_for(state.to_dict()),
+        # Decision replay must bind to the same canonical state projection
+        # that is persisted in Harness transitions.  The full in-memory state
+        # may contain raw worker/effect metadata which the safe durable
+        # projection intentionally omits; hashing it here would make a
+        # restarted run produce a different completion input.
+        "before_state_checksum": HarnessStateProjection.from_state(state).checksum,
         "run_status": state.status.value,
         "current_step_id": state.current_step_id,
         "turn_count": state.turn_count,
         "replan_count": state.replan_count,
         "worker_call_count": state.worker_call_count,
         "step_states": tuple(
-            {
-                "step_id": step.step_id,
-                "status": step.status.value,
-                "attempts": step.attempts,
-                "replans": step.replans,
-                "approval_granted": bool(
-                    step.metadata.get("approval_granted")
-                ),
-            }
+            _decision_step_state_projection(step, side_effect_state_refs=side_effect_state_refs)
             for step in state.step_states
             if step.step_id == state.current_step_id
         ),
         "budget": state.run_spec.budget.to_dict(),
-        "gate_results": tuple(_gate_decision_evidence(result) for result in gate_results),
+        "gate_results": tuple(
+            _gate_decision_evidence(
+                result,
+                bounded=terminal_policy is not None,
+            )
+            for result in gate_results
+        ),
         "quality_verdict": (
             None if quality_verdict is None else quality_verdict.to_dict()
         ),
@@ -219,8 +249,73 @@ def harness_decision_input_snapshot(
     return _decision_input(snapshot)
 
 
-def _gate_decision_evidence(result: Any) -> Mapping[str, Any]:
-    return gate_result_evidence(result)
+def _decision_step_state_projection(
+    step: Any,
+    *,
+    side_effect_state_refs: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    projection = {
+        "step_id": step.step_id,
+        "status": step.status.value,
+        "attempts": step.attempts,
+        "replans": step.replans,
+        "approval_granted": bool(step.metadata.get("approval_granted")),
+    }
+    for key in (
+        "approval_evidence_ref",
+        "side_effect_effect_ref",
+        "side_effect_intent_ref",
+        "side_effect_decision_ref",
+        "side_effect_outcome_ref",
+        "side_effect_disposition",
+    ):
+        value = (
+            side_effect_state_refs.get(key)
+            if side_effect_state_refs is not None and key in side_effect_state_refs
+            else step.metadata.get(key)
+        )
+        if value is not None:
+            projection[key] = value
+    return projection
+
+
+def _gate_decision_evidence(
+    result: Any,
+    *,
+    bounded: bool,
+) -> Mapping[str, Any]:
+    evidence = gate_result_evidence(result)
+    if not bounded:
+        return evidence
+    # The canonical GATE_EVALUATED event retains the complete reason/score
+    # evidence.  Scheduler replay needs only the exact input/result identity
+    # and verdict; keeping those fields here avoids duplicating verbose gate
+    # diagnostics in every decision extension.
+    return {
+        key: evidence[key]
+        for key in (
+            "gate",
+            "passed",
+            "reference",
+            "input_ref",
+            "result_ref",
+        )
+    }
+
+
+def _decision_step_order(
+    step_ids: Sequence[str],
+    *,
+    current_step_id: str | None,
+    bounded: bool,
+) -> tuple[str, ...]:
+    order = tuple(str(step_id) for step_id in step_ids)
+    if not bounded or current_step_id not in order:
+        return order
+    index = order.index(current_step_id)
+    # Current plus immediate fallback successor is sufficient for the replay
+    # kernel.  Explicit routing rules remain projected independently.
+    return order[index : index + 2]
 
 
 def harness_event_history(event: HarnessEvent, *, data_schema: str) -> DeterministicHistoryRecord:
@@ -329,6 +424,21 @@ def harness_decision_kernel(
     verdict = value.get("quality_verdict")
     worker = _resolved_worker_semantics(activity_result)
     approval_outcome = value["approval_outcome"]
+
+    side_effect_failure = policy.get("side_effect_failure")
+    if isinstance(side_effect_failure, Mapping):
+        code = str(side_effect_failure.get("code") or "side_effect_failure")
+        failure = {"code": code}
+        effect_ref = side_effect_failure.get("effect_ref")
+        if effect_ref is not None:
+            failure["effect_ref"] = effect_ref
+        return {
+            "decision_type": "fail_run",
+            "step_id": step_id,
+            "target_step_id": None,
+            "reason": f"side-effect failure: {code}",
+            "payload": {"side_effect_failure": failure},
+        }
 
     decision_type: str
     target: str | None = None
@@ -451,6 +561,19 @@ def harness_decision_kernel(
     else:
         decision_type = "fail_run"
         reason = "unsupported step status: " + str(step_status)
+    side_effect_authorization = policy.get("side_effect_authorization")
+    if side_effect_authorization is not None:
+        if decision_type not in {"complete_step", "complete_run"} or not isinstance(
+            side_effect_authorization,
+            Mapping,
+        ):
+            raise ValueError(
+                "side-effect authorization is only valid for completion decisions"
+            )
+        payload = {
+            **payload,
+            "side_effect_authorization": dict(side_effect_authorization),
+        }
     return {
         "decision_type": decision_type,
         "step_id": step_id,
@@ -575,6 +698,7 @@ def _semantic_decision_projection(
             "approval_outcome",
             "backoff_seconds",
             "budget_exhausted",
+            "side_effect_failure",
         ):
             if key in payload:
                 safe_payload[key] = payload[key]

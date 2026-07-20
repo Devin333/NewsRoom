@@ -25,6 +25,7 @@ _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.:/-]*$")
 _ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _COLLECTION_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _PARSER_BACKENDS = {"marker", "mineru", "pymupdf"}
+_RESEARCH_RUN_SCHEMA_VERSIONS = ("v1", "v2")
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +215,10 @@ class ResearchArtifactSettings:
 class ResearchRunStoreSettings:
     root: Path
     max_record_bytes: int
+    write_schema_version: str = "v2"
+    supported_schema_versions: tuple[str, ...] = _RESEARCH_RUN_SCHEMA_VERSIONS
+    rollback_schema_versions: tuple[str, ...] = _RESEARCH_RUN_SCHEMA_VERSIONS
+    reconciliation_max_runs: int = 100
 
     def __post_init__(self) -> None:
         _directory_root(self.root, "research.storage.run_store_root")
@@ -223,6 +228,35 @@ class ResearchRunStoreSettings:
             1_024,
             536_870_912,
         )
+        write_version = _research_run_schema_version(
+            self.write_schema_version,
+            "research.storage.run_store",
+        )
+        supported = _research_run_schema_versions(
+            self.supported_schema_versions,
+            "research.storage.run_store",
+        )
+        rollback = _research_run_schema_versions(
+            self.rollback_schema_versions,
+            "research.storage.run_store",
+        )
+        if write_version not in supported:
+            _invalid("research.storage.run_store")
+        if write_version == "v2":
+            required = set(_RESEARCH_RUN_SCHEMA_VERSIONS)
+            if set(supported) != required:
+                _invalid("research.storage.run_store")
+            if set(rollback) != required:
+                _invalid("research.storage.run_store")
+        _bounded_int(
+            self.reconciliation_max_runs,
+            "research.storage.run_store",
+            1,
+            10_000,
+        )
+        object.__setattr__(self, "write_schema_version", write_version)
+        object.__setattr__(self, "supported_schema_versions", supported)
+        object.__setattr__(self, "rollback_schema_versions", rollback)
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,6 +541,33 @@ class ResearchRuntimeSettings:
                     16_777_216,
                     capability="research.storage.run_record_max_bytes",
                 ),
+                write_schema_version=_first_text(
+                    values,
+                    ("NEWS_RESEARCH_RUN_WRITE_SCHEMA_VERSION",),
+                    "v2",
+                ),
+                supported_schema_versions=_research_run_schema_versions_from_text(
+                    _first_text(
+                        values,
+                        ("NEWS_RESEARCH_RUN_SUPPORTED_SCHEMA_VERSIONS",),
+                        "v1,v2",
+                    ),
+                    "research.storage.run_store",
+                ),
+                rollback_schema_versions=_research_run_schema_versions_from_text(
+                    _first_text(
+                        values,
+                        ("NEWS_RESEARCH_RUN_ROLLBACK_SCHEMA_VERSIONS",),
+                        "v1,v2",
+                    ),
+                    "research.storage.run_store",
+                ),
+                reconciliation_max_runs=_env_int(
+                    values,
+                    "NEWS_RESEARCH_RUN_RECONCILIATION_MAX_RUNS",
+                    100,
+                    capability="research.storage.run_store",
+                ),
             ),
         )
         if not _secret_is_present(values, settings.llm.api_key_env):
@@ -663,6 +724,40 @@ def _parser_backends(value: str) -> tuple[str, ...]:
     if len(value) > 256:
         _invalid("research.parser.backends")
     return tuple(part.strip().lower() for part in value.split(",") if part.strip())
+
+
+def _research_run_schema_version(value: str, capability: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _RESEARCH_RUN_SCHEMA_VERSIONS:
+        _invalid(capability)
+    return normalized
+
+
+def _research_run_schema_versions(
+    value: tuple[str, ...],
+    capability: str,
+) -> tuple[str, ...]:
+    if not isinstance(value, tuple) or not value:
+        _invalid(capability)
+    normalized = tuple(
+        _research_run_schema_version(item, capability)
+        for item in value
+    )
+    if len(normalized) != len(set(normalized)):
+        _invalid(capability)
+    return normalized
+
+
+def _research_run_schema_versions_from_text(
+    value: str,
+    capability: str,
+) -> tuple[str, ...]:
+    if len(value) > 64:
+        _invalid(capability)
+    return _research_run_schema_versions(
+        tuple(part.strip() for part in value.split(",") if part.strip()),
+        capability,
+    )
 
 
 def _identifier(value: str, capability: str, *, max_length: int) -> str:
