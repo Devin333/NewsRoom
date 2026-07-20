@@ -1,10 +1,10 @@
 # 阶段 20A：Harness 副作用授权与 Research 发布一致性闭环 PRD
 
-> Document status: READY_FOR_IMPLEMENTATION
+> Document status: FINAL
 >
-> Implementation status: IN_PROGRESS（当前工作树快照，不代表已发布）
+> Implementation status: IMPLEMENTED
 >
-> Version: v1.2
+> Version: v1.3
 >
 > Priority: P1（控制权、数据可见性与恢复正确性）
 >
@@ -12,7 +12,11 @@
 >
 > OpenSpec: `harness-side-effect-authority-closure`
 >
-> Baseline: `HEAD 14ce76bf` 加当前 dirty working tree；当前任务台账为 `49/51`，未提交修改不作为发布证据
+> Implementation commit: `7caadd86`（实现代码提交时的 task ledger 为 `49/51`）
+>
+> Documentation/evidence closure: 本次文档提交将当前 task ledger 收口为 `51/51`
+>
+> Baseline: parent `14ce76bf`；实现已按 staged-only tree 提交；当前 change 保持未归档，文档收口后的任务台账为 `51/51`
 >
 > Last updated: 2026-07-20
 
@@ -45,10 +49,10 @@ Research 的 artifact、trace、transcript 和 run record 必须遵循同一条�
 | control plane 已接入 preflight binding、worker/controller-terminal authorization 与 decision/outcome ordering | `framework/harness/control_plane/harness.py:475-530,822-960,1446-1587` | focused authority/recovery/store 与完整 Harness 已通过；mandatory smoke 为 `1427 passed` |
 | durable recovery 已覆盖 dangling decision、SQLite restart、scope mismatch 和 terminal retry exhaustion | `tests/framework/harness/control_plane/test_side_effect_authority.py:361-1025`；`tests/framework/harness/control_plane/test_side_effect_durable_recovery.py:209-512` | 原 terminal parity blocker 已修复；stale MCP fake caller 已迁移为 observation，完整 Harness 为 `492 passed` |
 | Research worker 已改为 typed bundle intent，handler 在 hidden candidate path prepare，并由 terminal intent 提交单一 manifest 可见性 | `business/research/application/single_paper_runtime.py:1213-1352`；`infrastructure/research/artifact_publication.py:81-378`；`tests/business/research/integration/test_research_artifact_publication.py` | artifact/publication focused matrix 已通过；VERIFY 失败、Nth-member 失败、effect-id 幂等和 cleanup 隔离均有回归 |
-| workflow 与 composition 已绑定 exact handler、terminal policy、SQLite side-effect store、v2 run store 和 reconciler | `business/research/workflows/paper_analysis_workflow.py:106-136`；`interfaces/composition/research.py:527-1195` | dual reader/v2 writer、startup/lazy reconciliation 和 scope-bound diagnostic reader 已接入；部署顺序与 staged release 仍待交付门禁 |
+| workflow 与 composition 已绑定 exact handler、terminal policy、SQLite side-effect store、v2 run store 和 reconciler | `business/research/workflows/paper_analysis_workflow.py:106-136`；`interfaces/composition/research.py:527-1195` | dual reader/v2 writer、startup/lazy reconciliation 和 scope-bound diagnostic reader 已接入；部署顺序与 staged-only release 门禁已有验证证据 |
 | skill release contract 已有 provenance resolver，且 fake/registry 标记为非生产 | `framework/harness/skills/evolution/authority.py:36-174`；`framework/harness/skills/evolution/release.py:24-82` | 只计入 contract evidence，不宣称生产 release store 已接入 |
-| Research disposition/store 合同与 recovery composition 已落地 | `business/research/application/run_disposition.py:94-260`；`infrastructure/research/filesystem_run_store.py:143-215`；`interfaces/services/research_service.py:229-700`；`interfaces/composition/research.py:527-1195` | v1/v2 strict reader、legacy quarantine、accepted-only latest、startup/lazy recovery 和异常落库 focused matrix 已通过；仍需 broad/smoke/staged release evidence |
-| OpenSpec change 当前已完成实现任务主体，交付任务仍开放 | `openspec/changes/harness-side-effect-authority-closure/evidence.md:231-520`；`tasks.md:1-71` | `49/51` 是当前工作树进度，不是 release 状态 |
+| Research disposition/store 合同与 recovery composition 已落地 | `business/research/application/run_disposition.py:94-260`；`infrastructure/research/filesystem_run_store.py:143-215`；`interfaces/services/research_service.py:229-700`；`interfaces/composition/research.py:527-1195` | v1/v2 strict reader、legacy quarantine、accepted-only latest、startup/lazy recovery 和异常落库已通过 focused、broad、smoke 与 staged-only 验证 |
+| OpenSpec change 已完成实现与交付门禁 | `openspec/changes/harness-side-effect-authority-closure/evidence.md`；`tasks.md:1-71`；实现 commit `7caadd86` 与本次文档/evidence closure | 当前台账 `51/51`；staged-only candidate、strict、compile/smoke、ownership 审计均已完成；baseline Research change 已归档，当前 change 按流程待归档 |
 
 本 PRD 不接管 `framework/events/schema/catalog.py`、generic Tool/Workflow、Redis worker queue、MCP/OpenAPI 或其他 active change 的 ownership。它们只通过既有 port、projection 和事件契约协作。
 
@@ -326,7 +330,7 @@ git diff --check
 
 真实 Redis/Postgres/Qdrant、live arXiv/LLM 和 live credential E2E 不在本 PRD 的本地门禁内，必须在发布记录中明确标注为 residual external-service limit。
 
-当前可重放的 working-tree evidence 包括 Harness authority/skill/replay `173 passed`、完整 Harness `492 passed`、Research/store/artifact/composition `383 passed, 2 skipped`、HTTP/MCP/SDK `51 passed`、recorded transport `2 passed`、相关 architecture `17 passed`，以及四项 failure-recovery regression `4 passed`。baseline 已按顺序归档，OpenSpec strict 全仓 `510/510`，mandatory smoke `1427 passed, 23 deselected`。当前仅 staged-only release 和最终提交 evidence 未完成，因此尚不能转为 implemented。
+最终 evidence 包括 Harness authority/skill/replay `173 passed`、完整 Harness `492 passed`、Research/store/artifact/composition `383 passed, 2 skipped`、HTTP/MCP/SDK `51 passed`、recorded transport `2 passed`、相关 architecture `17 passed`，以及四项 failure-recovery regression `4 passed`。其中 2 个 skip 是 Windows symlink privilege 限制，`23 deselected` 是仓库默认的 `live_research_e2e` 标记；baseline 已按顺序归档，工作树 OpenSpec strict 全仓 `510/510`；隔离 staged-only tree OpenSpec `183/183`、focused `122 passed`、mandatory smoke `1427 passed`，Source validation 零错误/警告。实现提交为 `7caadd86`。
 
 ## 11. 发布、迁移与回滚
 
@@ -338,7 +342,9 @@ git diff --check
 4. 发布 Harness decision/outcome/recovery contract，先在 shadow/fake handler 验证，再绑定 Research handler。
 5. 切换 Research hidden preparation 和 controller-terminal publication；停用 worker EXECUTE 的 canonical writes。
 6. 完成 accepted-only latest、trace/transcript atomic visibility、reconciler 和 restart 验证。
-7. 最后完成 skill release authority 的生产 composition 资格审查；contract fake 不可替代该门禁。
+7. 本 change 不包含 skill release authority 的 production composition；后续 owner 接入时必须单独完成资格审查，contract fake 不可替代该门禁。
+
+以下顺序是已验证的迁移约束；`IMPLEMENTED` 表示代码与本地门禁完成，不代表 live external-service deployment 已完成。
 
 ### 11.2 回滚原则
 
@@ -348,7 +354,7 @@ git diff --check
 - accepted record 不因回滚降级为 quarantine；需要修复时写入新的 scoped diagnostic 或 accepted replacement。
 - 删除 legacy/compat 前必须通过仓内 import、动态入口、公共 API、持久化回放和外部 consumer 审计。
 
-## 12. 风险与未决问题
+## 12. 风险、残余限制与后续 owner
 
 | 风险/问题 | 处理门 |
 | --- | --- |
@@ -371,22 +377,22 @@ git diff --check
 - [x] v1/v2 dual reader 在 v2 writer 前部署并验证，rollback target 仍可读取两种版本。
 - [x] ordinary run 和伪造 skill promotion 对 active/release/history 的写入为 `0`；合法 authority 路径幂等。
 - [x] architecture/import boundary、focused suites、compile、mandatory smoke、strict OpenSpec validation 和 diff check 全部通过。
-- [x] `evidence.md` 区分 committed evidence、当前 dirty worktree、fake-only contract 和 residual external-service limit。
-- [ ] 只在 staged-only candidate 中加入 change-owned paths；不混入 Event schema、generic Tool/Workflow、Redis、MCP/OpenAPI 或其他用户修改。
-- [ ] 完成后将本 PRD metadata 更新为 `IMPLEMENTED`，写入实现 commit、迁移顺序、回滚演练和最终测试结果；未满足任一项时保持 `IN_PROGRESS` 或 `BLOCKED`。
+- [x] `evidence.md` 区分 committed evidence、实现提交之外的 working-tree 修改、fake-only contract 和 residual external-service limit。
+- [x] 只在 staged-only candidate 中加入 change-owned paths；不混入 Event schema、generic Tool/Workflow、Redis、MCP/OpenAPI 或其他用户修改。
+- [x] 完成后将本 PRD metadata 更新为 `IMPLEMENTED`，写入实现 commit、迁移顺序、回滚演练和最终测试结果；未满足任一项时保持 `IN_PROGRESS` 或 `BLOCKED`。
 
 ## 14. OpenSpec 追踪
 
 | PRD 需求 | OpenSpec 范围 | 当前状态 |
 | --- | --- | --- |
-| HAR-001 | tasks `1.1`, `2.4` | contract 与 control-plane focused evidence 已通过；broad gate 仍开放 |
-| HAR-002/003/004/005/006 | tasks `3.1-3.9` | focused authority/recovery/store evidence 已通过；全量交付门禁仍开放 |
-| RES-001 | tasks `4.1-4.9` | v1/v2 strict reader、legacy quarantine、accepted-only latest、异常 recovery 与 startup/lazy reconciliation 已有 focused evidence；交付门禁仍开放 |
-| RES-002/003 | tasks `5.1-5.7` | hidden preparation、terminal atomic publication、Nth-member rollback、outcome read-back 和 worker capability isolation 已有 focused evidence；交付门禁仍开放 |
-| SKL-001 | tasks `1.5`, `6.1-6.4` | contract focused evidence；生产 composition 未声明 |
-| 发布与交付 | tasks `7.1-7.7` | `7.1-7.4/7.6` 已完成；accountable finalization 与 staged-only release 未完成 |
+| HAR-001 | tasks `1.1`, `2.4` | contract、control-plane focused、完整 Harness 与 staged-only 门禁均已通过 |
+| HAR-002/003/004/005/006 | tasks `3.1-3.9` | authority/recovery/store focused、完整 Harness、mandatory smoke 与 staged-only 门禁均已通过 |
+| RES-001 | tasks `4.1-4.9` | v1/v2 strict reader、legacy quarantine、accepted-only latest、异常 recovery 与 startup/lazy reconciliation 已通过 focused、broad、smoke 与 staged-only 验证 |
+| RES-002/003 | tasks `5.1-5.7` | hidden preparation、terminal atomic publication、Nth-member rollback、outcome read-back 和 worker capability isolation 已通过 focused、broad、smoke 与 staged-only 验证 |
+| SKL-001 | tasks `1.5`, `6.1-6.4` | 本 PRD 的 provenance authority contract 已完成；production release-store composition 明确属于后续 owner，不是本 change 的未完成项 |
+| 发布与交付 | tasks `7.1-7.7` | 全部完成；实现代码由 `7caadd86` 提交，`51/51` tasks/evidence/PRD 状态由本次后续文档提交闭合 |
 
-OpenSpec 当前 `tasks.md` 的勾选数为 `49/51`。该数字用于说明本次文档快照，不得替代提交、测试日志或生产部署证据。
+OpenSpec 当前 `tasks.md` 的勾选数为 `51/51`。HAR-001..006、RES-001..003 与 SKL-001 是本 change 对 HAR-008/009 的局部分解；canonical accountable mapping 见 `tasks.md:7.5` 与 `evidence.md:14`。实现证据以 commit `7caadd86`、staged-only tree 与 `evidence.md` 为准。
 
 ## 15. 参考来源
 

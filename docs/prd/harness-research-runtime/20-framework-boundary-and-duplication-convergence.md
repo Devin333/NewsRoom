@@ -12,15 +12,15 @@
 >
 > Source audit: 2026-07-18 审查基线为 tracked HEAD `e1cd72f3` + 当时 dirty/untracked working tree（包含未跟踪的 `infrastructure/research/`）；该 commit 只标识 tracked baseline，不是完整可重放快照
 >
-> PRD revision input baseline: parent tracked HEAD `cacb7089`（包含 Research 文档闭环）；Research implementation `12ed843a`；`harness-side-effect-authority-closure` proposal 与当前 dirty implementation ledger；历史审查快照、已交付实现与其他并行改动必须分开解释
+> PRD revision input baseline: parent tracked HEAD `cacb7089`（包含 Research 文档闭环）；Research implementation `12ed843a`；`harness-side-effect-authority-closure` implementation `7caadd86` 与 `51/51` evidence ledger；历史审查快照、已交付实现与其他并行改动必须分开解释
 >
 > Existing OpenSpec owners: 已归档的 `research-runtime-production-composition`、`framework-runtime-safety-hardening`、`durable-event-runtime`
 >
 > Completed OpenSpec slice: `harness-deterministic-gate-enforcement`（ARCHIVED；implementation `017a227e`；archive `2026-07-18-harness-deterministic-gate-enforcement`）
 >
-> Active OpenSpec slices: `source-policy-contract-convergence`（IN_PROGRESS）与 `harness-side-effect-authority-closure`（当前 dirty ledger `49/51`；`research-runtime-production-composition` 已先完成 `46/46` 并归档；唯一进度台账见第 1.1 节，其他章节不得复制任务数字作为完成证据）
+> Active OpenSpec slices: `source-policy-contract-convergence`（IN_PROGRESS）与尚待后续归档的 `harness-side-effect-authority-closure`（implementation commit `7caadd86` 在代码提交时为 `49/51`，当前文档/evidence ledger 为 `51/51`；`research-runtime-production-composition` 已先完成 `46/46` 并归档；唯一进度台账见第 1.1 节，其他章节不得复制任务数字作为完成证据）
 >
-> Focused PRD: `20a-harness-side-effect-authority-closure.md` 承接 HAR-008..009；proposal/design/specs/tasks 齐全且 strict validation 通过，当前未完成项仍不得宣称 production complete
+> Focused PRD: `20a-harness-side-effect-authority-closure.md` 承接 HAR-008..009；proposal/design/specs/tasks 齐全且 strict validation 通过，实现由 `7caadd86` 完成，文档/evidence 闭环由本次文档提交完成；其完成状态不扩张为 generic Tool/Memory 或 production skill release 已接入
 >
 > Depends on: 阶段 1/2 Harness authority、阶段 8/9 legacy deletion rules、阶段 19 durable gate-event contract，以及上述 active changes 的明确 file ownership
 >
@@ -54,7 +54,7 @@ NewsRoom 当前最需要的不是增加新的 framework abstraction，而是让�
 
 上述历史数字来自审查会话记录，仓库中没有保存完整 suite 选择命令与原始日志；尤其 7 个 `infrastructure/research -> business` imports 位于当时未跟踪文件中，不能由 `e1cd72f3` 单独重放。因此这些数字只作为问题发现基线，不作为任何切片的 release evidence；可重放结论必须引用 committed regression、OpenSpec `evidence.md` 或当前重新执行的命令结果。
 
-截至 2026-07-20，本 PRD 定稿时获得以下验证证据；其中 Research delivery 行来自隔离 staged-only candidate，其余行来自标明的当前 dirty working tree：
+截至 2026-07-20，本 PRD 定稿时获得以下验证证据；其中 Research delivery 行来自隔离 staged-only candidate，其余 Source/审查基线行来自已标明日期的当时 dirty working tree：
 
 | 当前检查 | 结果 | 结论边界 |
 | --- | --- | --- |
@@ -93,13 +93,13 @@ HAR/Research side-effect 修复前 focused baseline 使用：
 
 上述结果不替代各实施切片的完整 focused tests、mandatory smoke 或真实 backend contract gate。
 
-以下是本 PRD 内唯一的实施进度台账，`as_of_parent_head=cacb7089`、`as_of_research_implementation=12ed843a`、`as_of_date=2026-07-20`。`task ledger` 不替代 committed implementation、测试日志或 `evidence.md`；第 14、17、21 节只引用本表，不再复制任务数字。
+以下是本 PRD 内唯一的实施进度台账，`as_of_parent_head=cacb7089`、`as_of_research_implementation=12ed843a`、`as_of_harness_implementation=7caadd86`、`as_of_date=2026-07-20`。`task ledger` 不替代 committed implementation、测试日志或 `evidence.md`；第 14、17、21 节只引用本表，不再复制任务数字。
 
 | Active change | Committed evidence baseline | Current task ledger | Open tasks / blocker | 解释 |
 | --- | --- | --- | --- | --- |
 | `source-policy-contract-convergence` | implementation `372027ac`；URL、limiter/retry、taxonomy、mapper 与兼容读取已有 core evidence | `38/41` | `3.7`、`3.10`、`7.5` | Research/entry/Harness composition 与 release/operator evidence 尚未全部闭环，不能宣称 change complete |
 | `research-runtime-production-composition` | implementation `12ed843a`；tree `d433ca469a0f...`；staged-only candidate `59a92c90` 与 final commit tree 相同；`95` delivered paths | `46/46` | change 内 implementation task 无开放项；已同步主规格并归档到 `2026-07-19-research-runtime-production-composition`；U7 live provider qualification、U9 operator release evidence 和外部 owner 的 `RES-007` 仍开放 | `RES-001..006`、`RES-008..011` 已交付；阶段 20 仍有 Tool、Quality、Workflow、Source、legacy 等切片，不能据此宣称 umbrella complete |
-| `harness-side-effect-authority-closure` | proposal/design/delta specs/tasks strict-valid；Harness authority/recovery、skill authority、Research disposition、artifact publication、v2 composition 与 transport 已有 focused/broad/smoke evidence，结果仍来自当前 dirty working tree | `49/51` | 仅 accountable finalization 与 staged-only release evidence 开放；v1/v2 reader 先于 v2 writer 的 gate 与 dual-reader rollback target 已验证 | 只承接 HAR-008..009；真实生产切口限于 Research artifact、terminal trace/transcript 与 run disposition，generic Tool/Memory 与 production skill release 不得由 fake contract 冒充已接入 |
+| `harness-side-effect-authority-closure` | proposal/design/delta specs/tasks strict-valid；Harness authority/recovery、skill authority、Research disposition、artifact publication、v2 composition 与 transport 已通过 focused/broad/staged-only smoke；实现 commit `7caadd86`，文档/evidence 随后收口 | `51/51` | change 内实现与交付任务无开放项；v1/v2 reader 先于 v2 writer 的 gate 与 dual-reader rollback target 已验证，后续只需按普通流程归档 change | 只承接 HAR-008..009；真实生产切口限于 Research artifact、terminal trace/transcript 与 run disposition，generic Tool/Memory 与 production skill release 不得由 fake contract 冒充已接入 |
 
 现有 Harness 在 `PLAN -> EXECUTE -> VERIFY`、`max_turns`、`max_replans`、retry budget 和 durable transition 方面有明确实现与测试。本阶段不替换这套状态机，只修复 VERIFY authority 和外围 composition/contract 漂移。
 
@@ -577,7 +577,7 @@ QLT-002 的差异分类由 Analysis Quality domain owner 与 Architecture owner 
 
 | 顺序 | Change | Requirements | 说明 |
 | --- | --- | --- | --- |
-| 1 | `harness-side-effect-authority-closure`（IN_PROGRESS） | HAR-008..009 | proposal/design/specs/tasks 已齐全且 strict-valid；当前 dirty ledger 为 `49/51`，Harness authority/recovery、skill authority、Research disposition、artifact publication、production v2/reconciler、历史 manifest、跨接口与 broad/smoke 门禁已有 evidence，仅 staged-only finalization 开放。真实 cutover 限于 Research artifact/terminal diagnostics/run disposition；不重造 gate/state machine，不宣称 generic Tool/Memory 或 production skill release 已接入。baseline Research change 已先归档 |
+| 1 | `harness-side-effect-authority-closure`（COMPLETE / UNARCHIVED） | HAR-008..009 | proposal/design/specs/tasks strict-valid，当前 `51/51`；实现 commit `7caadd86` 加后续文档/evidence closure 已覆盖 Harness authority/recovery、skill authority、Research disposition、artifact publication、production v2/reconciler、历史 manifest、跨接口与 staged-only broad/smoke 门禁。真实 cutover 限于 Research artifact/terminal diagnostics/run disposition；不重造 gate/state machine，不宣称 generic Tool/Memory 或 production skill release 已接入。baseline Research change 已先归档 |
 | 2 | `tool-governance-canonicalization` | TOOL-001..003、005..007 | P1/P2；消费 `framework-runtime-safety-hardening` 已验收的 TOOL-004 unique registration contract，不并行修改 registry ownership |
 | 3 | Conditional `harness-source-tool-composition` | SRC-002 Harness integration evidence | 仅当 U2 确认 Harness 应支持 Source tools 时创建；接入唯一 ToolRegistry/ToolPort 与同一 Source provider。若能力明确不支持，则在 Source change 中记录经批准的 capability decision，不创建空 registry/fake path；SRC-002 仍由 Source change accountable |
 | 4 | `analysis-quality-contract-convergence` | QLT-001..005 | 先 parity，后 production cutover，再删旧算法 |
@@ -667,10 +667,10 @@ P1A2、P1B、P1C 可以在 file ownership 不冲突时并行；P2A-core 与 P2B 
 | --- | --- | --- | --- | --- | --- |
 | H1 Worker score 形成 verdict/route | 架构边界 | 同一 worker 输出跨越 candidate 与 deterministic decision，两条路径没有独立领域输入 | HAR-001、004；`framework/harness` | archived gate change；worker score matrix 中 route 不变 | 已收敛基线，保留回归 |
 | H2 named gate 未解析仍成功 | 架构边界 | workflow 已声明 gate，跳过执行不是“无 gate”变体 | HAR-002、003、006、007；gate registry | archived gate change；unknown gate 时 `worker_calls=0` | 已收敛基线，保留回归 |
-| H3 nested/alternate worker decision alias 可进入结果 | 架构边界 | executable decision 的 authority 不会因字段嵌套或换成 `published/promote/release` 就变成领域事实；不同 ingress 无独立策略输入 | HAR-008；versioned reserved-path matrix + typed intent parser | `harness-side-effect-authority-closure`；direct/nested/channel matrix + stable path oracle | typed contract 已有 focused evidence；端到端 control-plane 验收仍开放 |
-| H4 ARTIFACT worker 在 VERIFY 前直写 canonical store | 架构边界/职责泄漏 | candidate preparation 与 canonical publication 是两个生命周期；事后 gate 无法撤销外部写入，不是 artifact adapter 变体 | HAR-009；Harness exact handler/outcome contract + Research prepare/terminal handlers | 同 change；gate/approval/budget failure handler=0、prepared-step visibility=0、Nth/terminal member failure visibility=0 | hidden preparation、terminal atomic publication、v2/reconciler、focused/broad/smoke evidence 已完成；staged-only release 待完成 |
+| H3 nested/alternate worker decision alias 可进入结果 | 架构边界 | executable decision 的 authority 不会因字段嵌套或换成 `published/promote/release` 就变成领域事实；不同 ingress 无独立策略输入 | HAR-008；versioned reserved-path matrix + typed intent parser | `harness-side-effect-authority-closure`；direct/nested/channel matrix + stable path oracle | typed contract 与端到端 control-plane 验收已完成；implementation `7caadd86` |
+| H4 ARTIFACT worker 在 VERIFY 前直写 canonical store | 架构边界/职责泄漏 | candidate preparation 与 canonical publication 是两个生命周期；事后 gate 无法撤销外部写入，不是 artifact adapter 变体 | HAR-009；Harness exact handler/outcome contract + Research prepare/terminal handlers | 同 change；gate/approval/budget failure handler=0、prepared-step visibility=0、Nth/terminal member failure visibility=0 | hidden preparation、terminal atomic publication、v2/reconciler、focused/broad/smoke 与 staged-only release evidence 已完成；implementation `7caadd86` |
 | R1 默认 Research 进入 unconfigured/in-memory path | 功能重复/竞争路径 | 默认入口与显式 runtime 接收相同请求，却只有前者永久 503 且不可持久化 | RES-001、002、008、011；已落地的 `interfaces/composition/research.py` composition root | Research change；configured object graph + restart read + six-surface recorded parity | `12ed843a` 已交付，staged-only candidate 与 final commit tree 一致；保留 regression，U7 live provider readiness 仍单独未确认 |
-| R2 failed run 可覆盖 latest，terminal artifacts 晚于 durable success | 持久化边界/竞争可见性 | by-run diagnostics 与 accepted latest 是明确不同读模型；把所有 record 放进一个 latest/list 并让 normal service 取首条不是有意的存储 backend 差异 | HAR-009；Research v2 disposition、accepted-only latest/list、controller-terminal publication | 同 change；accepted-then-failed 的 `get_analysis/get_reader/ask_paper` 同进程与重启回归、mixed v1/v2、success-before-terminal-artifact crash oracle | disposition/latest、terminal publication、production v2 writer/reconciler、历史 manifest 与跨接口 evidence 已完成；staged-only release 待完成 |
+| R2 failed run 可覆盖 latest，terminal artifacts 晚于 durable success | 持久化边界/竞争可见性 | by-run diagnostics 与 accepted latest 是明确不同读模型；把所有 record 放进一个 latest/list 并让 normal service 取首条不是有意的存储 backend 差异 | HAR-009；Research v2 disposition、accepted-only latest/list、controller-terminal publication | 同 change；accepted-then-failed 的 `get_analysis/get_reader/ask_paper` 同进程与重启回归、mixed v1/v2、success-before-terminal-artifact crash oracle | disposition/latest、terminal publication、production v2 writer/reconciler、历史 manifest、跨接口与 staged-only release evidence 已完成；implementation `7caadd86` |
 | T1 Tool/Worker approval DTO 竞争 | 重复代码 | 字段、状态和持久化用途相同，差异来自复制后的 backend 漂移 | TOOL-001..003；`framework/workers/approval` | Tool change；InMemory/LocalJson 及本切片新增 store 的 type/state contract | 已确认 |
 | T2 四处 tool risk classifier | 功能重复 | 输入均为同一 ToolDefinition，调用入口不应改变 authorization | TOOL-004..007；framework Tool policy | Safety change 验证唯一注册，Tool change 验证全 inventory risk matrix | 已确认 |
 | B1 Research/Harness adapter ownership 漂移 | 依赖拓扑 | application 组装 concrete controller 与 hexagonal port 不是领域变体；外层 workflow 与 bounded RAG session 是 parent/child contract，不是两个平行 controller | RES-003、004、009、010；Research ports + interface composition | Research change；recorded workflow/session identity、AST/import graph、MCP dependency acyclic | `12ed843a` 已收敛，保留边界与 replay regression |

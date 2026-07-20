@@ -2,7 +2,7 @@
 
 ## 1. Status and accountability
 
-This file is the implementation evidence ledger for `harness-side-effect-authority-closure`. HAR-008 and HAR-009 remain open until accountable task `7.5` is complete. Supporting task checkboxes record implemented slices; they are not independent requirement owners.
+This file is the implementation evidence ledger for `harness-side-effect-authority-closure`. HAR-008 and HAR-009 are closed by accountable task `7.5`; supporting task checkboxes are evidence links, not independent requirement owners.
 
 - Parent specification commit: `14ce76bf`.
 - Implementation baseline date: `2026-07-20` (`+08:00`).
@@ -182,8 +182,8 @@ passed`; the earlier partial-pair import failures no longer reproduce.
 
 Research terminal publication, broad cross-surface suites, mandatory smoke, and
 deployment/rollback evidence are recorded in sections 8-13. Staged-only
-verification remains open until task 7.7. Skill provenance evidence is recorded
-in section 7.
+verification and commit evidence are recorded in sections 15-16. Skill
+provenance evidence is recorded in section 7.
 
 ## 7. Skill release authority evidence
 
@@ -401,8 +401,8 @@ The task 7.2 broad commands produced:
   symlink tests when Windows cannot create a link. The 524 warnings are existing
   FastAPI startup-event deprecations plus two Qdrant version-probe warnings.
 
-Tasks `7.5` and `7.7` remain open until evidence accountability and staged-only
-commit are completed.
+Tasks `7.5` and `7.7` are completed by the accountability map in section 14 and
+the isolated candidate/commit evidence in sections 15-16.
 
 ## 11. Baseline archive, deployment, and rollback order
 
@@ -531,3 +531,19 @@ The 23 deselections and 22 warnings have the same configured live-E2E and
 FastAPI-deprecation causes recorded in section 13. The temporary verification
 commit/worktree is not a release commit and is removed after evidence capture.
 The only subsequent candidate change is this evidence record itself.
+
+## 16. Implementation commit and ownership verification
+
+The isolated candidate was committed as `7caadd86` with 85 paths and the message
+`feat(harness): enforce side-effect authority and research publication`.
+Immediately before commit, `git diff --cached --check` passed and the staged path
+scan returned no Event catalog, generic Tool/Workflow, Redis worker, OpenAPI,
+shared interface, `scripts/dev.py`, or generated paths. The only MCP file was the
+documented internal fake caller migration; the only mixed file was
+`tests/architecture/test_skill_evolution_boundary.py`, whose unrelated `Path`
+import cleanup remained unstaged.
+
+After commit, all pre-existing user/active-change modifications remain in the
+working tree and outside `7caadd86`. The implementation commit contains the
+baseline archive atomically with its archive destination and synchronized main
+specs, so it does not leave a deletion-only OpenSpec state.
