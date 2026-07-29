@@ -91,6 +91,8 @@ def test_supplied_checksum_mismatch_and_simulated_collision_fail_closed() -> Non
             edges=first.edges,
             entry_node_ids=first.entry_node_ids,
             terminal_node_ids=first.terminal_node_ids,
+            input_keys=first.input_keys,
+            terminal_output_keys=first.terminal_output_keys,
             checksum="sha256:" + "0" * 64,
         )
     assert captured.value.code == "graph_checksum_mismatch"

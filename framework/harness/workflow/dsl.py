@@ -452,6 +452,7 @@ class HarnessGraphSpec:
     graph_id: str
     root: HarnessGraphExpression
     compensations: tuple[CompensationBinding, ...] = ()
+    input_keys: tuple[str, ...] = ()
     terminal_output_keys: tuple[str, ...] = ()
     schema_version: str = HARNESS_GRAPH_DSL_SCHEMA
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -468,6 +469,12 @@ class HarnessGraphSpec:
         output_keys = tuple(
             required_text(item, "graph.terminal_output_keys") for item in self.terminal_output_keys
         )
+        input_keys = tuple(required_text(item, "graph.input_keys") for item in self.input_keys)
+        if len(set(input_keys)) != len(input_keys):
+            raise HarnessValidationError(
+                "input_keys must not contain duplicates",
+                code="duplicate_graph_input_key",
+            )
         if len(set(output_keys)) != len(output_keys):
             raise HarnessValidationError(
                 "terminal_output_keys must not contain duplicates",
@@ -487,6 +494,7 @@ class HarnessGraphSpec:
             )
         object.__setattr__(self, "graph_id", graph_id)
         object.__setattr__(self, "compensations", compensations)
+        object.__setattr__(self, "input_keys", input_keys)
         object.__setattr__(self, "terminal_output_keys", output_keys)
         object.__setattr__(self, "metadata", metadata)
 
@@ -496,6 +504,7 @@ class HarnessGraphSpec:
             "graph_id": self.graph_id,
             "root": self.root.to_dict(),
             "compensations": [binding.to_dict() for binding in self.compensations],
+            "input_keys": list(self.input_keys),
             "terminal_output_keys": list(self.terminal_output_keys),
             "metadata": thaw_json(self.metadata),
         }
@@ -509,6 +518,7 @@ class HarnessGraphSpec:
                 "graph_id",
                 "root",
                 "compensations",
+                "input_keys",
                 "terminal_output_keys",
                 "metadata",
             },
@@ -520,6 +530,7 @@ class HarnessGraphSpec:
             graph_id=value["graph_id"],
             root=expression_from_dict(value["root"]),
             compensations=tuple(_compensation_from_dict(item) for item in raw_compensations),
+            input_keys=tuple(_array(value["input_keys"], "graph.input_keys")),
             terminal_output_keys=tuple(
                 _array(value["terminal_output_keys"], "graph.terminal_output_keys")
             ),

@@ -1,9 +1,9 @@
 ## 1. Baseline, Dependencies, and Golden Fixtures
 
 - [ ] 1.1 Verify the required canonical event/replay contracts from `durable-event-runtime`, attempt termination/idempotency/fencing contracts from `framework-runtime-safety-hardening`, and side-effect decision/outcome contracts from `harness-side-effect-authority-closure`; record exact dependency versions and block unsafe fallbacks.
-- [ ] 1.2 Inventory all production and test callers of `HarnessWorkflowSpec`, `HarnessScheduler`, `HarnessState.current_step_id`, `HarnessRunStatus`, routing rules, checkpoints, replay, and run inspection, and classify each caller by migration phase.
-- [ ] 1.3 Capture canonical golden fixtures for the current linear Research workflow, conditional routes, retry/replan/repair, approval wait, side-effect publication, durable history, checkpoint, and final business result.
-- [ ] 1.4 Add baseline assertions that current Research Workers and Gates do not own workflow routing and that no new graph module imports `business`, `interfaces`, or `infrastructure`.
+- [x] 1.2 Inventory all production and test callers of `HarnessWorkflowSpec`, `HarnessScheduler`, `HarnessState.current_step_id`, `HarnessRunStatus`, routing rules, checkpoints, replay, and run inspection, and classify each caller by migration phase.
+- [x] 1.3 Capture canonical golden fixtures for the current linear Research workflow, conditional routes, retry/replan/repair, approval wait, side-effect publication, durable history, checkpoint, and final business result.
+- [x] 1.4 Add baseline assertions that current Research Workers and Gates do not own workflow routing and that no new graph module imports `business`, `interfaces`, or `infrastructure`.
 - [x] 1.5 Define the v2 graph/state/decision/event schema version registry and the bounded v1 reader/upcaster support window before implementation begins.
 
 ## 2. Graph DSL and Normalized Contracts
@@ -16,13 +16,13 @@
 
 ## 3. Graph Compiler and Preflight Validation
 
-- [ ] 3.1 Implement DSL lowering into normalized executable and control nodes, compiling Sequence to dependency edges and retaining explicit Choice, fork, join, loop guard, and Wait control points.
-- [ ] 3.2 Implement deterministic compilation of legacy ordered steps, entry step, routing rules, retry/repair bindings, gates, and side-effect policies into normalized Graph IR.
-- [ ] 3.3 Add structural validation for unique identities, valid endpoints, entry/terminal reachability, fork/join pairing, and cycles allowed only through Bounded-Loop.
-- [ ] 3.4 Add semantic validation for Choice priority/default, restricted condition paths/operators, positive loop bounds, Wait correlation/scope, and exact compensation binding.
-- [ ] 3.5 Add dataflow validation for reachable input producers, branch-scoped outputs, shared-write conflict rejection, explicit deterministic merge contracts, and terminal output availability.
+- [x] 3.1 Implement DSL lowering into normalized executable and control nodes, compiling Sequence to dependency edges and retaining explicit Choice, fork, join, loop guard, and Wait control points.
+- [x] 3.2 Implement deterministic compilation of legacy ordered steps, entry step, routing rules, retry/repair bindings, gates, and side-effect policies into normalized Graph IR.
+- [x] 3.3 Add structural validation for unique identities, valid endpoints, entry/terminal reachability, fork/join pairing, and cycles allowed only through Bounded-Loop.
+- [x] 3.4 Add semantic validation for Choice priority/default, restricted condition paths/operators, positive loop bounds, Wait correlation/scope, and exact compensation binding.
+- [x] 3.5 Add dataflow validation for reachable input producers, branch-scoped outputs, shared-write conflict rejection, explicit deterministic merge contracts, and terminal output availability.
 - [ ] 3.6 Add registry validation for exact Worker type, Gate, Side Effect Handler, Compensation Handler, activity contract, and terminal policy references before `RUN_CREATED`.
-- [ ] 3.7 Add graph size/depth/node-activation policy validation and a deterministic preflight benchmark fixture for at least 1,000 nodes and 5,000 edges.
+- [x] 3.7 Add graph size/depth/node-activation policy validation and a deterministic preflight benchmark fixture for at least 1,000 nodes and 5,000 edges.
 - [ ] 3.8 Add invalid-graph fixtures proving preflight records no run creation, Worker activity, side effect, or partial graph state.
 
 ## 4. Graph State, Node Identity, and Status Projection

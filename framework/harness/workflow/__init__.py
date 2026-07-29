@@ -12,6 +12,10 @@ from framework.harness.workflow.conditions import (
     condition_from_legacy_dict,
     evaluate_condition,
 )
+from framework.harness.workflow.compiler import (
+    HarnessGraphCompileResult,
+    HarnessWorkflowGraphCompiler,
+)
 from framework.harness.workflow.dsl import (
     BoundedLoop,
     Choice,
@@ -73,6 +77,7 @@ from framework.harness.workflow.versioning import (
     HARNESS_GRAPH_RUNTIME_VERSION,
     HARNESS_GRAPH_STATE_SCHEMA,
     HARNESS_STEP_LIFECYCLE_VERSION,
+    HARNESS_WORKER_ACTIVITY_SCHEMA,
     LEGACY_CHECKPOINT_SCHEMA,
     LEGACY_DECISION_SCHEMA,
     LEGACY_STATE_SCHEMA,
@@ -81,6 +86,16 @@ from framework.harness.workflow.versioning import (
     HarnessGraphContractKind,
     HarnessGraphSchemaRegistration,
     HarnessGraphSchemaRegistry,
+)
+from framework.harness.workflow.validation import (
+    HarnessGraphDiagnostic,
+    HarnessGraphPreflight,
+    HarnessGraphPreflightPolicy,
+    HarnessGraphRegistrySnapshot,
+    HarnessGraphValidationPhase,
+    HarnessGraphValidationResult,
+    HarnessPreparedGraph,
+    graph_contract_references,
 )
 
 __all__ = [
@@ -109,6 +124,7 @@ __all__ = [
     "HARNESS_GRAPH_RUNTIME_VERSION",
     "HARNESS_GRAPH_STATE_SCHEMA",
     "HARNESS_STEP_LIFECYCLE_VERSION",
+    "HARNESS_WORKER_ACTIVITY_SCHEMA",
     "HarnessBranch",
     "HarnessCompensationReference",
     "HarnessCondition",
@@ -116,6 +132,7 @@ __all__ = [
     "HarnessContractReference",
     "HarnessControlNode",
     "HarnessExecutableNode",
+    "HarnessGraphCompileResult",
     "HarnessGraphChecksumRegistry",
     "HarnessGraphContractKind",
     "HarnessGraphEdge",
@@ -123,13 +140,20 @@ __all__ = [
     "HarnessGraphExpression",
     "HarnessGraphNode",
     "HarnessGraphNodeKind",
+    "HarnessGraphDiagnostic",
+    "HarnessGraphPreflight",
+    "HarnessGraphPreflightPolicy",
+    "HarnessGraphRegistrySnapshot",
     "HarnessGraphSchemaRegistration",
     "HarnessGraphSchemaRegistry",
+    "HarnessGraphValidationPhase",
+    "HarnessGraphValidationResult",
     "HarnessGraphSpec",
     "HarnessJoinContract",
     "HarnessLoopContract",
     "HarnessMergeContract",
     "HarnessMergeKind",
+    "HarnessPreparedGraph",
     "HarnessRetryPolicy",
     "HarnessRouteKind",
     "HarnessRoutingRule",
@@ -137,6 +161,7 @@ __all__ = [
     "HarnessWorkerType",
     "HarnessWorkflowSpec",
     "HarnessWorkflowContractReader",
+    "HarnessWorkflowGraphCompiler",
     "HarnessWaitContract",
     "HarnessTerminalSideEffectPolicy",
     "LEGACY_CHECKPOINT_SCHEMA",
@@ -162,4 +187,5 @@ __all__ = [
     "evaluate_condition",
     "expression_from_dict",
     "graph_node_from_dict",
+    "graph_contract_references",
 ]

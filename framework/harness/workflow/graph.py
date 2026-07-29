@@ -848,6 +848,8 @@ class NormalizedHarnessGraph:
     edges: tuple[HarnessGraphEdge, ...]
     entry_node_ids: tuple[str, ...]
     terminal_node_ids: tuple[str, ...]
+    input_keys: tuple[str, ...] = ()
+    terminal_output_keys: tuple[str, ...] = ()
     compensation_refs: tuple[HarnessCompensationReference, ...] = ()
     terminal_policy_ref: HarnessContractReference | None = None
     schema_version: str = NORMALIZED_HARNESS_GRAPH_SCHEMA
@@ -953,6 +955,24 @@ class NormalizedHarnessGraph:
                 )
             ),
         )
+        object.__setattr__(
+            self,
+            "input_keys",
+            tuple(sorted(_text_tuple(self.input_keys, "graph.input_keys", allow_empty=True))),
+        )
+        object.__setattr__(
+            self,
+            "terminal_output_keys",
+            tuple(
+                sorted(
+                    _text_tuple(
+                        self.terminal_output_keys,
+                        "graph.terminal_output_keys",
+                        allow_empty=True,
+                    )
+                )
+            ),
+        )
         object.__setattr__(self, "compensation_refs", compensation_refs)
         calculated = canonical_checksum(self.checksum_projection())
         if self.checksum is not None and self.checksum != calculated:
@@ -976,6 +996,8 @@ class NormalizedHarnessGraph:
             "edges": [edge.to_dict() for edge in self.edges],
             "entry_node_ids": list(self.entry_node_ids),
             "terminal_node_ids": list(self.terminal_node_ids),
+            "input_keys": list(self.input_keys),
+            "terminal_output_keys": list(self.terminal_output_keys),
             "compensation_refs": [reference.to_dict() for reference in self.compensation_refs],
             "terminal_policy_ref": (
                 None if self.terminal_policy_ref is None else self.terminal_policy_ref.to_dict()
@@ -1001,6 +1023,8 @@ class NormalizedHarnessGraph:
                 "edges",
                 "entry_node_ids",
                 "terminal_node_ids",
+                "input_keys",
+                "terminal_output_keys",
                 "compensation_refs",
                 "terminal_policy_ref",
                 "checksum",
@@ -1028,6 +1052,10 @@ class NormalizedHarnessGraph:
             ),
             terminal_node_ids=tuple(
                 _array(value["terminal_node_ids"], "normalized_graph.terminal_node_ids")
+            ),
+            input_keys=tuple(_array(value["input_keys"], "normalized_graph.input_keys")),
+            terminal_output_keys=tuple(
+                _array(value["terminal_output_keys"], "normalized_graph.terminal_output_keys")
             ),
             compensation_refs=tuple(
                 HarnessCompensationReference.from_dict(item)

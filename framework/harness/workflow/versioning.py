@@ -23,6 +23,7 @@ HARNESS_STEP_LIFECYCLE_VERSION = "newsroom.harness-step-lifecycle/v1"
 HARNESS_GRAPH_REDUCER_VERSION = "newsroom.harness-graph-state-reducer/v1"
 HARNESS_GRAPH_CONTROL_POLICY_VERSION = "newsroom.harness-graph-control-policy/v1"
 HARNESS_GRAPH_MERGE_VERSION = "newsroom.harness-graph-merge/v1"
+HARNESS_WORKER_ACTIVITY_SCHEMA = "newsroom.harness-worker-activity/v1"
 
 LEGACY_WORKFLOW_SCHEMA = "newsroom.harness-workflow-legacy/v1"
 LEGACY_STATE_SCHEMA = "newsroom.harness-state-legacy/v1"
@@ -292,6 +293,7 @@ __all__ = [
     "HARNESS_GRAPH_RUNTIME_VERSION",
     "HARNESS_GRAPH_STATE_SCHEMA",
     "HARNESS_STEP_LIFECYCLE_VERSION",
+    "HARNESS_WORKER_ACTIVITY_SCHEMA",
     "LEGACY_CHECKPOINT_SCHEMA",
     "LEGACY_DECISION_SCHEMA",
     "LEGACY_STATE_SCHEMA",
