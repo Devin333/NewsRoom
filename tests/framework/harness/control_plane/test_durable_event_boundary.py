@@ -523,7 +523,10 @@ def test_authoritative_transition_projects_status_and_transcript_phase() -> None
     runtime = CanonicalRecordingRuntime()
     port = _durable_port(runtime)
     run_spec = _run_spec("run-transition-read-model")
-    state = HarnessControlPlane(event_port=port).initialize(run_spec)
+    state = HarnessControlPlane(
+        event_port=port,
+        worker_registry=_default_worker_registry(),
+    ).initialize(run_spec)
     run_time = state.updated_at + timedelta(microseconds=1)
     running = transition_run(state, "running", at=run_time)
     port.commit_transition(
@@ -565,7 +568,10 @@ def test_read_models_reject_integrity_valid_semantically_invalid_transition() ->
     runtime = CanonicalRecordingRuntime()
     port = _durable_port(runtime)
     run_spec = _run_spec("run-invalid-transition-read-model")
-    initial = HarnessControlPlane(event_port=port).initialize(run_spec)
+    initial = HarnessControlPlane(
+        event_port=port,
+        worker_registry=_default_worker_registry(),
+    ).initialize(run_spec)
     transition_time = initial.updated_at + timedelta(microseconds=1)
     running = transition_run(initial, "running", at=transition_time)
     port.commit_transition(
@@ -616,7 +622,10 @@ def test_read_models_reject_transition_with_conflicting_expected_stream_head() -
     runtime = CanonicalRecordingRuntime()
     port = _durable_port(runtime)
     run_spec = _run_spec("run-invalid-transition-head")
-    HarnessControlPlane(event_port=port).initialize(run_spec)
+    HarnessControlPlane(
+        event_port=port,
+        worker_registry=_default_worker_registry(),
+    ).initialize(run_spec)
     raw = next(
         event.to_dict()
         for event in runtime.events
@@ -887,7 +896,10 @@ def test_initialize_uncertain_retry_reuses_run_spec_identity() -> None:
 
     runtime = CanonicalRecordingRuntime(fail_after=fail_after)
     port = _durable_port(runtime)
-    control_plane = HarnessControlPlane(event_port=port)
+    control_plane = HarnessControlPlane(
+        event_port=port,
+        worker_registry=_default_worker_registry(),
+    )
     run_spec = _run_spec("run-initialize-retry")
 
     with pytest.raises(EventStoreUnavailableError, match="uncertain"):
@@ -1588,11 +1600,13 @@ def test_recovery_commits_missing_replan_exit_without_reincrementing_budget() ->
         HarnessControlPlane(
             event_port=build_port(),
             plan_gates=(gate,),
+            worker_registry=_default_worker_registry(),
         ).run(run_spec)
 
     recovered = HarnessControlPlane(
         event_port=build_port(),
         plan_gates=(gate,),
+        worker_registry=_default_worker_registry(),
     ).recover_and_run(run_spec)
     transition_kinds = [
         event.payload.get("transition_kind")
@@ -2649,6 +2663,15 @@ def test_replan_decision_commits_before_replanning_projection() -> None:
         and event.payload.get("transition_kind") == "replan_entry",
     )
     assert decision_index < transition_index < state_index < entry_index < exit_index
+
+
+def _default_worker_registry() -> dict[str, Callable[[dict], HarnessWorkerResult]]:
+    return {
+        "collect": lambda task: HarnessWorkerResult(
+            status="succeeded",
+            output=dict(task),
+        )
+    }
 
 
 def _run_spec(run_id: str, *, approval_required: bool = False) -> HarnessRunSpec:

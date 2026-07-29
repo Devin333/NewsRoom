@@ -130,11 +130,15 @@ class _CompilerContext:
             rules_by_source[rule.from_step].append(rule)
 
         for index, source_id in enumerate(ordered_ids):
-            default_target = ordered_ids[index + 1] if index + 1 < len(ordered_ids) else None
+            default_target = (
+                ordered_ids[index + 1] if index + 1 < len(ordered_ids) else None
+            )
             rules = _effective_legacy_rules(tuple(rules_by_source.get(source_id, ())))
             if not rules:
                 if default_target is not None:
-                    self._add_edge(source_id, default_target, HarnessGraphEdgeKind.DEPENDENCY)
+                    self._add_edge(
+                        source_id, default_target, HarnessGraphEdgeKind.DEPENDENCY
+                    )
                 continue
             if len(rules) == 1 and _is_unconditional_legacy_rule(rules[0]):
                 self._add_edge(
@@ -184,14 +188,23 @@ class _CompilerContext:
         if isinstance(expression, StepRef):
             step = self._step(expression.step_id)
             self._add_executable(step.step_id, expression.node_id or expression.step_id)
-            return _Fragment((expression.node_id or expression.step_id,), (expression.node_id or expression.step_id,))
+            return _Fragment(
+                (expression.node_id or expression.step_id,),
+                (expression.node_id or expression.step_id,),
+            )
         if isinstance(expression, Sequence):
-            fragments = tuple(self._compile_expression(child) for child in expression.children)
+            fragments = tuple(
+                self._compile_expression(child) for child in expression.children
+            )
             for left, right in zip(fragments, fragments[1:]):
                 for source_id in left.terminal_node_ids:
                     for target_id in right.entry_node_ids:
-                        self._add_edge(source_id, target_id, HarnessGraphEdgeKind.DEPENDENCY)
-            return _Fragment(fragments[0].entry_node_ids, fragments[-1].terminal_node_ids)
+                        self._add_edge(
+                            source_id, target_id, HarnessGraphEdgeKind.DEPENDENCY
+                        )
+            return _Fragment(
+                fragments[0].entry_node_ids, fragments[-1].terminal_node_ids
+            )
         if isinstance(expression, Choice):
             return self._compile_choice(expression)
         if isinstance(expression, ParallelAll):
@@ -235,7 +248,8 @@ class _CompilerContext:
                     entry_node_ids=fragment.entry_node_ids,
                     terminal_node_ids=fragment.terminal_node_ids,
                     priority=branch.priority,
-                    output_namespace=branch.output_namespace or f"choice.{expression.choice_id}.{branch.branch_id}",
+                    output_namespace=branch.output_namespace
+                    or f"choice.{expression.choice_id}.{branch.branch_id}",
                     condition=branch.condition,
                     is_default=branch.is_default,
                 )
@@ -247,7 +261,9 @@ class _CompilerContext:
         )
         for branch, fragment in compiled:
             edge_kind = (
-                HarnessGraphEdgeKind.DEFAULT if branch.is_default else HarnessGraphEdgeKind.CHOICE
+                HarnessGraphEdgeKind.DEFAULT
+                if branch.is_default
+                else HarnessGraphEdgeKind.CHOICE
             )
             for target_id in fragment.entry_node_ids:
                 self._add_edge(
@@ -269,7 +285,8 @@ class _CompilerContext:
 
     def _compile_parallel_all(self, expression: ParallelAll) -> _Fragment:
         compiled = tuple(
-            (branch, self._compile_expression(branch.child)) for branch in expression.branches
+            (branch, self._compile_expression(branch.child))
+            for branch in expression.branches
         )
         branches = tuple(
             HarnessBranch(
@@ -301,7 +318,9 @@ class _CompilerContext:
             node_kind=HarnessGraphNodeKind.JOIN_ALL,
             join=HarnessJoinContract(
                 fork_node_id=expression.fork_id,
-                required_branch_ids=tuple(branch.branch_id for branch in expression.branches),
+                required_branch_ids=tuple(
+                    branch.branch_id for branch in expression.branches
+                ),
                 failure_policy=expression.failure_policy.value,
                 merge_ref=merge_ref,
             ),
@@ -325,7 +344,8 @@ class _CompilerContext:
 
     def _compile_parallel_any(self, expression: ParallelAny) -> _Fragment:
         compiled = tuple(
-            (branch, self._compile_expression(branch.child)) for branch in expression.branches
+            (branch, self._compile_expression(branch.child))
+            for branch in expression.branches
         )
         branches = tuple(
             HarnessBranch(
@@ -349,7 +369,9 @@ class _CompilerContext:
             node_kind=HarnessGraphNodeKind.JOIN_ANY,
             join=HarnessJoinContract(
                 fork_node_id=expression.fork_id,
-                required_branch_ids=tuple(branch.branch_id for branch in expression.branches),
+                required_branch_ids=tuple(
+                    branch.branch_id for branch in expression.branches
+                ),
                 failure_policy=expression.failure_policy.value,
                 winner_policy="first_verified_success_by_stream_sequence",
             ),
@@ -482,7 +504,9 @@ class _CompilerContext:
             self._add_edge(
                 choice_id,
                 target_id,
-                HarnessGraphEdgeKind.DEFAULT if branch.is_default else HarnessGraphEdgeKind.CHOICE,
+                HarnessGraphEdgeKind.DEFAULT
+                if branch.is_default
+                else HarnessGraphEdgeKind.CHOICE,
                 priority=branch.priority,
                 condition=branch.condition,
                 branch_id=branch.branch_id,
@@ -544,7 +568,7 @@ class _CompilerContext:
         step = self._step(step_id)
         step_version = str(step.metadata.get("step_version", "1"))
         worker_version = str(step.metadata.get("worker_version", "1"))
-        worker_id = str(step.metadata.get("worker_id", step.worker_type.value))
+        worker_id = str(step.metadata.get("worker_id", step.step_id))
         activity_value = str(
             step.metadata.get(
                 "activity_contract_version",
@@ -676,11 +700,11 @@ class _CompilerContext:
 
     def _forward_terminal_node_ids(self) -> tuple[str, ...]:
         ignored = {HarnessGraphEdgeKind.REPAIR, HarnessGraphEdgeKind.COMPENSATION}
-        outgoing = {edge.source_id for edge in self.edges if edge.edge_kind not in ignored}
+        outgoing = {
+            edge.source_id for edge in self.edges if edge.edge_kind not in ignored
+        }
         terminals = tuple(
-            node.node_id
-            for node in self.nodes
-            if node.node_id not in outgoing
+            node.node_id for node in self.nodes if node.node_id not in outgoing
         )
         if not terminals:
             raise HarnessValidationError(
@@ -698,14 +722,21 @@ class _CompilerContext:
         input_keys: tuple[str, ...],
         terminal_output_keys: tuple[str, ...],
     ) -> NormalizedHarnessGraph:
+        terminal_policy = self.workflow.terminal_side_effect_policy
         terminal_policy_ref = None
-        if self.workflow.terminal_side_effect_policy is not None:
-            policy = self.workflow.terminal_side_effect_policy
+        if terminal_policy is not None:
+            policy = terminal_policy
             terminal_policy_ref = HarnessContractReference(
                 HarnessContractKind.TERMINAL_POLICY,
                 policy.policy_id,
                 policy.version,
             )
+            for gate_ref in policy.inherited_gate_refs:
+                _reference_from_text(
+                    HarnessContractKind.GATE,
+                    gate_ref,
+                    field_name="terminal_policy.inherited_gate_refs",
+                )
         return NormalizedHarnessGraph(
             graph_id=graph_id,
             workflow_id=self.workflow.workflow_id,
@@ -723,6 +754,7 @@ class _CompilerContext:
             terminal_output_keys=terminal_output_keys,
             compensation_refs=tuple(self.compensation_refs),
             terminal_policy_ref=terminal_policy_ref,
+            terminal_policy=terminal_policy,
         )
 
     def _legacy_input_keys(self) -> tuple[str, ...]:
@@ -755,7 +787,8 @@ class _CompilerContext:
         terminal_steps = {
             node.step_id
             for node in self.nodes
-            if isinstance(node, HarnessExecutableNode) and node.node_id in terminal_node_ids
+            if isinstance(node, HarnessExecutableNode)
+            and node.node_id in terminal_node_ids
         }
         return tuple(
             sorted(
@@ -829,7 +862,9 @@ def _legacy_rule_condition(rule: HarnessRoutingRule) -> HarnessCondition | None:
                 code="legacy_route_condition_missing",
                 details={"from_step": rule.from_step, "to_step": rule.to_step},
             )
-        return predicates[0] if len(predicates) == 1 else ConditionAll(tuple(predicates))
+        return (
+            predicates[0] if len(predicates) == 1 else ConditionAll(tuple(predicates))
+        )
     return condition_from_legacy_dict(rule.condition)
 
 
@@ -848,7 +883,9 @@ def _reference_from_text(
     if allow_schema_version and "/v" in text:
         contract_id, version_number = text.rsplit("/v", maxsplit=1)
         if contract_id and version_number.isdigit() and int(version_number) > 0:
-            return HarnessContractReference(kind, contract_id, f"v{version_number}"), False
+            return HarnessContractReference(
+                kind, contract_id, f"v{version_number}"
+            ), False
     if inferred_version is not None and text:
         return HarnessContractReference(kind, text, inferred_version), True
     raise HarnessValidationError(

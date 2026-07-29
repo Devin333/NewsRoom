@@ -112,7 +112,9 @@ def test_every_graph_dsl_construct_round_trips_canonically() -> None:
                     signal_version="1",
                     tenant_scope_path="graph.inputs.tenant_id",
                     identity_scope_path="graph.inputs.actor_id",
-                    timeout_policy=WaitTimeoutPolicy(action="route", target_node_id="manual_review"),
+                    timeout_policy=WaitTimeoutPolicy(
+                        action="route", target_node_id="manual_review"
+                    ),
                 ),
             ),
         ),
@@ -135,6 +137,21 @@ def test_every_graph_dsl_construct_round_trips_canonically() -> None:
     assert payload["schema_version"] == HARNESS_GRAPH_DSL_SCHEMA
     assert restored == graph
     assert restored.to_dict() == payload
+
+
+def test_pre_input_contract_graph_spec_defaults_missing_input_keys() -> None:
+    graph = HarnessGraphSpec(
+        graph_id="pre-input-contract",
+        root=StepRef("one"),
+        terminal_output_keys=("result",),
+    )
+    payload = graph.to_dict()
+    payload.pop("input_keys")
+
+    restored = HarnessGraphSpec.from_dict(payload)
+
+    assert restored.input_keys == ()
+    assert restored.terminal_output_keys == ("result",)
 
 
 def test_dsl_deep_freezes_nested_json_and_rejects_unsupported_values() -> None:

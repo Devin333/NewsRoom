@@ -29,7 +29,9 @@ from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowS
 from framework.harness.workflow.step import HarnessRetryPolicy, HarnessStepSpec
 
 
-def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_workers() -> None:
+def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_workers() -> (
+    None
+):
     workflow = HarnessWorkflowSpec(
         workflow_id="legacy-linear",
         workflow_version="3",
@@ -47,9 +49,15 @@ def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_
     assert first.declaration_mode == "legacy"
     assert first.graph == second.graph
     assert first.graph.checksum == second.graph.checksum
-    assert [node.node_id for node in first.graph.nodes] == ["analyze", "collect", "report"]
+    assert [node.node_id for node in first.graph.nodes] == [
+        "analyze",
+        "collect",
+        "report",
+    ]
     assert all(isinstance(node, HarnessExecutableNode) for node in first.graph.nodes)
-    assert {(edge.source_id, edge.target_id, edge.edge_kind) for edge in first.graph.edges} == {
+    assert {
+        (edge.source_id, edge.target_id, edge.edge_kind) for edge in first.graph.edges
+    } == {
         ("collect", "analyze", HarnessGraphEdgeKind.DEPENDENCY),
         ("analyze", "report", HarnessGraphEdgeKind.DEPENDENCY),
     }
@@ -57,7 +65,9 @@ def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_
     assert first.graph.terminal_node_ids == ("report",)
 
 
-def test_legacy_conditional_routes_lower_to_one_explicit_choice_with_stable_priority() -> None:
+def test_legacy_conditional_routes_lower_to_one_explicit_choice_with_stable_priority() -> (
+    None
+):
     workflow = HarnessWorkflowSpec(
         workflow_id="legacy-choice",
         steps=_steps("classify", "accepted", "repair", "finish"),
@@ -134,8 +144,12 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
                                     fork_id="all-fork",
                                     join_id="all-join",
                                     branches=(
-                                        ParallelBranch("left", StepRef("left"), "all.left"),
-                                        ParallelBranch("right", StepRef("right"), "all.right"),
+                                        ParallelBranch(
+                                            "left", StepRef("left"), "all.left"
+                                        ),
+                                        ParallelBranch(
+                                            "right", StepRef("right"), "all.right"
+                                        ),
                                     ),
                                     merge_ref="merge.all@2",
                                 ),
@@ -148,8 +162,12 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
                                     fork_id="any-fork",
                                     join_id="any-join",
                                     branches=(
-                                        ParallelBranch("fast", StepRef("fast"), "any.fast"),
-                                        ParallelBranch("slow", StepRef("slow"), "any.slow"),
+                                        ParallelBranch(
+                                            "fast", StepRef("fast"), "any.fast"
+                                        ),
+                                        ParallelBranch(
+                                            "slow", StepRef("slow"), "any.slow"
+                                        ),
                                     ),
                                 ),
                                 priority=1,
@@ -183,7 +201,9 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
                                 0,
                                 condition=_passed(),
                             ),
-                            ChoiceBranch("fallback", StepRef("fallback"), 1, is_default=True),
+                            ChoiceBranch(
+                                "fallback", StepRef("fallback"), 1, is_default=True
+                            ),
                         ),
                     ),
                     StepRef("publish"),
@@ -224,9 +244,13 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
     assert graph.terminal_node_ids == ("publish",)
     assert graph.terminal_policy_ref is not None
     assert graph.terminal_policy_ref.exact_ref == "publication@4"
+    assert graph.terminal_policy == workflow.terminal_side_effect_policy
+    assert graph.terminal_policy.handler_ref.handler_id == "publication.commit"
     assert graph.compensation_refs[0].handler_ref.exact_ref == "publication.retract@1"
     assert any(edge.edge_kind == HarnessGraphEdgeKind.LOOP_BACK for edge in graph.edges)
-    assert any(edge.edge_kind == HarnessGraphEdgeKind.COMPENSATION for edge in graph.edges)
+    assert any(
+        edge.edge_kind == HarnessGraphEdgeKind.COMPENSATION for edge in graph.edges
+    )
 
 
 def test_compiler_retains_retry_repair_and_marks_inferred_legacy_versions() -> None:

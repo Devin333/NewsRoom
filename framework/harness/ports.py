@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from framework.harness.artifacts.ports import ArtifactRef, ArtifactWriteRequest
 from framework.harness.context.models import ContextEnvelope
+from framework.harness.control_plane.activity import HARNESS_ACTIVITY_CONTRACT
 from framework.harness.control_plane.event import HarnessEvent
 from framework.harness.control_plane.trace import HarnessTrace
 from framework.harness.mcp.policy import MCPToolDefinition, MCPToolRequest
@@ -96,6 +97,7 @@ class HarnessTransitionPort(HarnessEventPort, Protocol):
         attempt: int,
         activity_type: str,
         inputs: dict[str, Any],
+        contract_version: str = HARNESS_ACTIVITY_CONTRACT,
         worker_version: str = "1",
     ) -> HarnessActivity:
         """Create an activity using the port-owned authoritative identity scope."""

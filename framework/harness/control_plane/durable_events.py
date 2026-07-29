@@ -60,6 +60,7 @@ from framework.harness.control_plane.replay_history import (
     harness_transition_history,
 )
 from framework.harness.control_plane.activity import (
+    HARNESS_ACTIVITY_CONTRACT,
     HARNESS_ACTIVITY_EXTENSION,
     HarnessActivity,
     harness_activity_input_checksum,
@@ -488,6 +489,7 @@ class DurableHarnessEventPort:
         attempt: int,
         activity_type: str,
         inputs: Mapping[str, Any],
+        contract_version: str = HARNESS_ACTIVITY_CONTRACT,
         worker_version: str = "1",
     ) -> HarnessActivity:
         self.require_activity_storage()
@@ -498,6 +500,7 @@ class DurableHarnessEventPort:
             activity_type=activity_type,
             inputs=inputs,
             identity_scope_ref=self._adapter.identity_scope_ref,
+            contract_version=contract_version,
             worker_version=worker_version,
         )
 

@@ -19,10 +19,14 @@ from framework.events.errors import (
 from framework.events.runtime.activities import ReplayActivityDescriptor
 from framework.events.runtime.history import DeterministicHistoryRecord
 from framework.harness.control_plane.activity import (
+    HARNESS_ACTIVITY_CONTRACT,
     HarnessActivity,
     validate_activity_call_marker,
 )
-from framework.harness.control_plane.decision import HarnessDecision, HarnessDecisionType
+from framework.harness.control_plane.decision import (
+    HarnessDecision,
+    HarnessDecisionType,
+)
 from framework.harness.control_plane.durable_events import (
     HarnessRecovery,
     HarnessTransitionCommit,
@@ -56,7 +60,6 @@ from framework.harness.control_plane.state import (
     HarnessRunSpec,
     HarnessRunStatus,
     HarnessState,
-    HarnessStepState,
     HarnessStepStatus,
 )
 from framework.harness.control_plane.transitions import (
@@ -91,8 +94,28 @@ from framework.harness.side_effects import (
     HarnessSideEffectRegistry,
     HarnessSideEffectStorePort,
 )
-from framework.harness.workflow.step import HarnessStepSpec
+from framework.harness.workflow.binding_authority import (
+    HarnessActivityCapabilities,
+    HarnessActivityContractBinding,
+    HarnessRuntimeBindingAuthority,
+    HarnessWorkerBinding,
+)
+from framework.harness.workflow.graph import (
+    HarnessContractKind,
+    HarnessContractReference,
+    HarnessExecutableNode,
+    NormalizedHarnessGraph,
+)
+from framework.harness.workflow.runtime_resolution import (
+    HarnessGraphRuntimeResolver,
+    HarnessResolvedRuntimeBindings,
+)
+from framework.harness.workflow.step import HarnessStepSpec, HarnessWorkerType
 from framework.harness.workflow.spec import HarnessRouteKind
+from framework.harness.workflow.validation import (
+    HarnessGraphPreflight,
+    HarnessGraphPreflightPolicy,
+)
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 
 WorkerCallable = Callable[[dict[str, Any]], HarnessWorkerResult]
@@ -133,7 +156,9 @@ class HarnessRunResult:
     events: tuple[HarnessEvent, ...]
     worker_results: dict[str, HarnessWorkerResult]
     quality_verdicts: dict[str, HarnessQualityVerdict]
-    side_effect_outcomes: dict[str, HarnessSideEffectOutcome] = field(default_factory=dict)
+    side_effect_outcomes: dict[str, HarnessSideEffectOutcome] = field(
+        default_factory=dict
+    )
 
     @property
     def succeeded(self) -> bool:
@@ -160,6 +185,31 @@ class _PendingCompletionDecision:
     history_cutoff_id: str | None
 
 
+@dataclass(slots=True)
+class _WorkerImplementationAdapter:
+    worker_id: str
+    worker_version: str
+    worker_type: HarnessWorkerType
+    delegate: object
+    _queued_results: list[HarnessWorkerResult] | None = field(default=None, init=False)
+
+    def execute(self, task: dict[str, Any]) -> HarnessWorkerResult:
+        return _invoke_worker_delegate(self, task)
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivityImplementationAdapter:
+    activity_contract_id: str
+    activity_contract_version: str
+    event_port: Any
+    capabilities: HarnessActivityCapabilities = HarnessActivityCapabilities(
+        stable_idempotency=True,
+    )
+
+    def dispatch(self, request: dict[str, Any]) -> HarnessActivity:
+        return self.event_port.create_activity(**request)
+
+
 class InMemoryHarnessEventPort:
     """Explicit test-only sink; production composition must use a durable port."""
 
@@ -169,6 +219,7 @@ class InMemoryHarnessEventPort:
         self.states: dict[str, HarnessState] = {}
         self.worker_results: dict[str, dict[str, HarnessWorkerResult]] = {}
         self.activity_results: dict[str, HarnessWorkerResult] = {}
+        self.created_activities: list[HarnessActivity] = []
 
     def record(self, event: HarnessEvent) -> HarnessEvent:
         self.events.append(event)
@@ -182,16 +233,20 @@ class InMemoryHarnessEventPort:
         attempt: int,
         activity_type: str,
         inputs: dict[str, Any],
+        contract_version: str = HARNESS_ACTIVITY_CONTRACT,
         worker_version: str = "1",
     ) -> HarnessActivity:
-        return HarnessActivity.for_worker_call(
+        activity = HarnessActivity.for_worker_call(
             run_id=run_id,
             step_id=step_id,
             attempt=attempt,
             activity_type=activity_type,
             inputs=inputs,
+            contract_version=contract_version,
             worker_version=worker_version,
         )
+        self.created_activities.append(activity)
+        return activity
 
     def commit_transition(
         self,
@@ -264,7 +319,9 @@ class InMemoryHarnessEventPort:
 
     def recover(self, run_spec: HarnessRunSpec) -> HarnessRecovery:
         state = self.states.get(run_spec.run_id)
-        if state is not None and run_spec_checksum(state.run_spec) != run_spec_checksum(run_spec):
+        if state is not None and run_spec_checksum(state.run_spec) != run_spec_checksum(
+            run_spec
+        ):
             raise EventReplayMismatchError(
                 sequence=len(self.events),
                 reason="Harness run specification checksum mismatch",
@@ -359,13 +416,16 @@ class HarnessControlPlane:
         *,
         scheduler: HarnessScheduler | None = None,
         event_port: HarnessTransitionPort | None = None,
-        worker_registry: dict[str, WorkerCallable | Iterable[HarnessWorkerResult]] | None = None,
+        worker_registry: dict[str, WorkerCallable | Iterable[HarnessWorkerResult]]
+        | None = None,
         plan_gates: tuple[DeterministicGate, ...] | None = None,
         verify_gates: tuple[DeterministicGate, ...] | None = None,
         gate_registry: DeterministicGateRegistry | None = None,
         side_effect_registry: HarnessSideEffectRegistry | None = None,
         side_effect_store: HarnessSideEffectStorePort | None = None,
         approval_evidence_resolver: HarnessSideEffectApprovalResolver | None = None,
+        runtime_binding_authority: HarnessRuntimeBindingAuthority | None = None,
+        graph_preflight: HarnessGraphPreflight | None = None,
     ) -> None:
         if event_port is None:
             raise HarnessValidationError(
@@ -380,16 +440,35 @@ class HarnessControlPlane:
         self.worker_registry = dict(worker_registry or {})
         self.plan_gates = plan_gates or default_plan_gates()
         self.verify_gates = verify_gates or default_verify_gates()
-        self.gate_registry = gate_registry if gate_registry is not None else DeterministicGateRegistry()
+        self.gate_registry = (
+            gate_registry if gate_registry is not None else DeterministicGateRegistry()
+        )
         if side_effect_registry is not None and not isinstance(
             side_effect_registry,
             HarnessSideEffectRegistry,
         ):
-            raise HarnessValidationError("side_effect_registry must be HarnessSideEffectRegistry")
+            raise HarnessValidationError(
+                "side_effect_registry must be HarnessSideEffectRegistry"
+            )
         self.side_effect_registry = side_effect_registry or HarnessSideEffectRegistry()
         self.side_effect_store = side_effect_store
         self.approval_evidence_resolver = approval_evidence_resolver
-        self._iterable_workers: dict[str, list[HarnessWorkerResult]] = {}
+        if runtime_binding_authority is not None and not isinstance(
+            runtime_binding_authority,
+            HarnessRuntimeBindingAuthority,
+        ):
+            raise TypeError(
+                "runtime_binding_authority must be HarnessRuntimeBindingAuthority"
+            )
+        if graph_preflight is not None and not isinstance(
+            graph_preflight,
+            HarnessGraphPreflight,
+        ):
+            raise TypeError("graph_preflight must be HarnessGraphPreflight")
+        self.runtime_binding_authority = runtime_binding_authority
+        self.graph_preflight = graph_preflight or HarnessGraphPreflight(
+            policy=HarnessGraphPreflightPolicy(),
+        )
         self._committed_events: list[HarnessEvent] = []
         self._state_versions: dict[str, int] = {}
         self._decision_indexes: dict[str, int] = {}
@@ -401,10 +480,19 @@ class HarnessControlPlane:
             str,
             dict[str, HarnessSideEffectHandlerBinding],
         ] = {}
-        self._terminal_side_effect_bindings: dict[str, HarnessSideEffectHandlerBinding] = {}
+        self._terminal_side_effect_bindings: dict[
+            str, HarnessSideEffectHandlerBinding
+        ] = {}
         self._side_effect_intents: dict[str, dict[str, HarnessSideEffectIntent]] = {}
         self._side_effect_outcomes: dict[str, dict[str, HarnessSideEffectOutcome]] = {}
         self._pending_completion_decisions: dict[str, _PendingCompletionDecision] = {}
+        self._prepared_graphs: dict[str, NormalizedHarnessGraph] = {}
+        self._resolved_graph_bindings: dict[
+            str,
+            HarnessResolvedRuntimeBindings,
+        ] = {}
+        self._worker_bindings_by_run: dict[str, dict[str, HarnessWorkerBinding]] = {}
+        self._activity_contract_versions_by_run: dict[str, dict[str, str]] = {}
         self._prepared_run_specs: dict[str, str] = {}
 
     def _prepare_run_spec(self, run_spec: HarnessRunSpec) -> None:
@@ -420,44 +508,7 @@ class HarnessControlPlane:
                 )
             return
 
-        # Plan gates are also committed and replayed, so moving aliases must be
-        # rejected before RUN_CREATED even though they are not workflow-bound.
-        for gate in self.plan_gates:
-            _gate_reference(gate)
-
-        mandatory_by_reference: dict[str, DeterministicGate] = {}
-        for gate in self.verify_gates:
-            reference = _gate_reference(gate)
-            previous = mandatory_by_reference.get(reference)
-            if previous is not None and previous is not gate:
-                raise HarnessValidationError(
-                    "mandatory verify gates contain conflicting implementations for one exact reference",
-                    code="conflicting_mandatory_gate_reference",
-                    details={"code": "conflicting_mandatory_gate_reference", "reference": reference},
-                )
-            mandatory_by_reference[reference] = gate
-
-        bindings: dict[str, tuple[GateBinding, ...]] = {}
         steps_by_id = {step.step_id: step for step in run_spec.workflow.steps}
-        for step in run_spec.workflow.steps:
-            if step.quality_gate is None:
-                bindings[step.step_id] = ()
-                continue
-            step_bindings = self.gate_registry.bindings_for(step.quality_gate)
-            for binding in step_bindings:
-                mandatory = mandatory_by_reference.get(str(binding.reference))
-                if mandatory is not None and mandatory is not binding.gate:
-                    raise HarnessValidationError(
-                        "declared and mandatory gates conflict for one exact reference",
-                        code="conflicting_gate_implementation",
-                        details={
-                            "code": "conflicting_gate_implementation",
-                            "reference": str(binding.reference),
-                            "step_id": step.step_id,
-                        },
-                    )
-            bindings[step.step_id] = step_bindings
-
         for rule in run_spec.workflow.routing_rules:
             if rule.kind != HarnessRouteKind.ON_VERDICT:
                 continue
@@ -472,21 +523,107 @@ class HarnessControlPlane:
                     },
                 )
 
+        compile_result = self.graph_preflight.compiler.compile(run_spec.workflow)
+        graph = compile_result.graph
+        self.graph_preflight.validate_static(graph).raise_if_invalid()
+        authority = self.runtime_binding_authority or self._legacy_runtime_authority(
+            run_spec.workflow,
+            graph,
+        )
+        resolved = HarnessGraphRuntimeResolver(authority).resolve(
+            run_spec.workflow,
+            graph,
+        )
+        validation = self.graph_preflight.validate(
+            graph,
+            registry=resolved.registry_snapshot,
+        )
+        validation.raise_if_invalid()
+
+        # Plan gates are also committed and replayed, so moving aliases must be
+        # rejected before RUN_CREATED even though they are not workflow-bound.
+        for gate in self.plan_gates:
+            _gate_reference(gate)
+
+        mandatory_by_reference: dict[str, DeterministicGate] = {}
+        for gate in self.verify_gates:
+            reference = _gate_reference(gate)
+            previous = mandatory_by_reference.get(reference)
+            if previous is not None and previous is not gate:
+                raise HarnessValidationError(
+                    "mandatory verify gates contain conflicting implementations for one exact reference",
+                    code="conflicting_mandatory_gate_reference",
+                    details={
+                        "code": "conflicting_mandatory_gate_reference",
+                        "reference": reference,
+                    },
+                )
+            mandatory_by_reference[reference] = gate
+
+        bindings: dict[str, tuple[GateBinding, ...]] = {}
+        worker_bindings: dict[str, HarnessWorkerBinding] = {}
+        activity_contract_versions: dict[str, str] = {}
         side_effect_bindings: dict[str, HarnessSideEffectHandlerBinding] = {}
-        for step in run_spec.workflow.steps:
-            if step.side_effect_handler is None:
+        for node in graph.nodes:
+            if not isinstance(node, HarnessExecutableNode):
                 continue
-            side_effect_bindings[step.step_id] = self.side_effect_registry.resolve(
-                step.side_effect_handler,
-                origin=HarnessSideEffectOrigin.WORKER.value,
+            step = steps_by_id[node.step_id]
+            step_bindings = resolved.gates_by_node[node.node_id]
+            for binding in step_bindings:
+                mandatory = mandatory_by_reference.get(str(binding.reference))
+                if mandatory is not None and mandatory is not binding.gate:
+                    raise HarnessValidationError(
+                        "declared and mandatory gates conflict for one exact reference",
+                        code="conflicting_gate_implementation",
+                        details={
+                            "code": "conflicting_gate_implementation",
+                            "reference": str(binding.reference),
+                            "step_id": step.step_id,
+                        },
+                    )
+            _bind_step_value(
+                bindings,
+                step.step_id,
+                step_bindings,
+                code="ambiguous_step_gate_binding",
             )
+            _bind_step_value(
+                worker_bindings,
+                step.step_id,
+                resolved.workers_by_node[node.node_id],
+                code="ambiguous_step_worker_binding",
+            )
+            activity_contract_version = str(
+                step.metadata.get(
+                    "activity_contract_version",
+                    HARNESS_ACTIVITY_CONTRACT,
+                )
+            )
+            _bind_step_value(
+                activity_contract_versions,
+                step.step_id,
+                activity_contract_version,
+                code="ambiguous_step_activity_binding",
+            )
+            side_effect_binding = resolved.side_effects_by_node.get(node.node_id)
+            if side_effect_binding is not None:
+                _bind_step_value(
+                    side_effect_bindings,
+                    step.step_id,
+                    side_effect_binding,
+                    code="ambiguous_step_side_effect_binding",
+                )
+        for step in run_spec.workflow.steps:
+            bindings.setdefault(step.step_id, ())
+
         terminal_policy = run_spec.workflow.terminal_side_effect_policy
+        terminal_binding = resolved.terminal_side_effect
         if terminal_policy is not None:
-            terminal_binding = self.side_effect_registry.resolve(
-                terminal_policy.handler,
-                kind=terminal_policy.kind,
-                origin=HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value,
-            )
+            if terminal_binding is None:
+                raise HarnessValidationError(
+                    "terminal side-effect binding was not resolved during graph preflight",
+                    code="terminal_side_effect_binding_missing",
+                )
             allowed_attempts = run_spec.budget.max_retries_per_step + 1
             if terminal_policy.retry_limit > allowed_attempts:
                 raise HarnessValidationError(
@@ -498,8 +635,9 @@ class HarnessControlPlane:
                         "allowed_attempts": allowed_attempts,
                     },
                 )
-            self._terminal_side_effect_bindings[run_spec.run_id] = terminal_binding
-        if (side_effect_bindings or terminal_policy is not None) and self.side_effect_store is None:
+        if (
+            side_effect_bindings or terminal_policy is not None
+        ) and self.side_effect_store is None:
             raise HarnessValidationError(
                 "declared side effects require an injected durable side-effect store",
                 code="side_effect_store_missing",
@@ -512,7 +650,10 @@ class HarnessControlPlane:
                     raise HarnessValidationError(
                         "declared side effects require authoritative checksum scope refs",
                         code="side_effect_scope_missing",
-                        details={"code": "side_effect_scope_missing", "scope": field_name},
+                        details={
+                            "code": "side_effect_scope_missing",
+                            "scope": field_name,
+                        },
                     )
         approval_required = any(
             step.side_effect_handler is not None
@@ -526,9 +667,92 @@ class HarnessControlPlane:
                 details={"code": "side_effect_approval_resolver_missing"},
             )
 
+        if run_spec.workflow.graph is not None:
+            raise HarnessValidationError(
+                "explicit Graph execution is unavailable until graph-aware state and scheduler cutover",
+                code="graph_runtime_not_active",
+                details={
+                    "code": "graph_runtime_not_active",
+                    "graph_checksum": graph.checksum,
+                },
+            )
+
         self._gate_bindings_by_run[run_spec.run_id] = bindings
         self._side_effect_bindings_by_run[run_spec.run_id] = side_effect_bindings
+        if terminal_binding is not None:
+            self._terminal_side_effect_bindings[run_spec.run_id] = terminal_binding
+        self._prepared_graphs[run_spec.run_id] = graph
+        self._resolved_graph_bindings[run_spec.run_id] = resolved
+        self._worker_bindings_by_run[run_spec.run_id] = worker_bindings
+        self._activity_contract_versions_by_run[run_spec.run_id] = (
+            activity_contract_versions
+        )
         self._prepared_run_specs[run_spec.run_id] = spec_ref
+
+    def _legacy_runtime_authority(
+        self,
+        workflow,
+        graph: NormalizedHarnessGraph,
+    ) -> HarnessRuntimeBindingAuthority:
+        steps_by_id = {step.step_id: step for step in workflow.steps}
+        worker_bindings: dict[HarnessContractReference, HarnessWorkerBinding] = {}
+        activity_bindings: dict[
+            HarnessContractReference,
+            HarnessActivityContractBinding,
+        ] = {}
+        default_activity_ref = HarnessContractReference(
+            HarnessContractKind.ACTIVITY,
+            HARNESS_ACTIVITY_CONTRACT.rsplit("/", maxsplit=1)[0],
+            HARNESS_ACTIVITY_CONTRACT.rsplit("/", maxsplit=1)[1],
+        )
+        for node in graph.nodes:
+            if not isinstance(node, HarnessExecutableNode):
+                continue
+            step = steps_by_id[node.step_id]
+            delegate = self.worker_registry.get(step.step_id)
+            if delegate is None:
+                delegate = self.worker_registry.get(step.worker_type.value)
+            if delegate is not None:
+                adapter = _WorkerImplementationAdapter(
+                    worker_id=node.worker_ref.contract_id,
+                    worker_version=node.worker_ref.version,
+                    worker_type=step.worker_type,
+                    delegate=delegate,
+                )
+                binding = HarnessWorkerBinding(
+                    node.worker_ref,
+                    step.worker_type,
+                    adapter,
+                )
+                existing = worker_bindings.get(node.worker_ref)
+                if (
+                    existing is not None
+                    and existing.implementation.delegate is not delegate
+                ):
+                    raise HarnessValidationError(
+                        "one exact worker reference resolves to multiple implementations",
+                        code="ambiguous_runtime_worker_binding",
+                        details={"reference": node.worker_ref.exact_ref},
+                    )
+                worker_bindings[node.worker_ref] = binding
+            if node.activity_ref == default_activity_ref:
+                activity_bindings.setdefault(
+                    node.activity_ref,
+                    HarnessActivityContractBinding(
+                        node.activity_ref,
+                        _ActivityImplementationAdapter(
+                            activity_contract_id=node.activity_ref.contract_id,
+                            activity_contract_version=node.activity_ref.version,
+                            event_port=self.event_port,
+                        ),
+                    ),
+                )
+        return HarnessRuntimeBindingAuthority(
+            workers=tuple(worker_bindings.values()),
+            activities=tuple(activity_bindings.values()),
+            gate_registry=self.gate_registry,
+            side_effect_registry=self.side_effect_registry,
+        )
 
     def initialize(self, run_spec: HarnessRunSpec) -> HarnessState:
         self._prepare_run_spec(run_spec)
@@ -609,7 +833,9 @@ class HarnessControlPlane:
             raise HarnessValidationError("Harness run is not waiting for approval")
         step_id = state.current_step_id
         if step_id is None:
-            raise HarnessValidationError("approval-waiting Harness run requires current_step_id")
+            raise HarnessValidationError(
+                "approval-waiting Harness run requires current_step_id"
+            )
         if not approved:
             decision = HarnessDecision(
                 decision_type=HarnessDecisionType.CANCEL_RUN,
@@ -679,7 +905,10 @@ class HarnessControlPlane:
             raise HarnessValidationError(
                 "effectful approval resume requires an opaque durable approval ref",
                 code="side_effect_approval_ref_required",
-                details={"code": "side_effect_approval_ref_required", "step_id": step_id},
+                details={
+                    "code": "side_effect_approval_ref_required",
+                    "step_id": step_id,
+                },
             )
 
         # Recovery may have only an integrity summary for the worker activity.
@@ -705,9 +934,7 @@ class HarnessControlPlane:
             state,
             gate_results=(),
             quality_verdict=None,
-            expected_activity=(
-                None if replay_activity is None else replay_activity[0]
-            ),
+            expected_activity=(None if replay_activity is None else replay_activity[0]),
             approval_outcome="approved",
         )
         self._record_decision(
@@ -895,7 +1122,9 @@ class HarnessControlPlane:
                 gate_results = ()
                 quality_verdict = None
             elif decision.decision_type == HarnessDecisionType.VERIFY_STEP:
-                state, gate_results, quality_verdict = self._verify_step(state, decision, worker_result)
+                state, gate_results, quality_verdict = self._verify_step(
+                    state, decision, worker_result
+                )
                 if quality_verdict is not None:
                     quality_verdicts[decision.step_id or ""] = quality_verdict
             elif decision.decision_type == HarnessDecisionType.COMPLETE_STEP:
@@ -964,7 +1193,9 @@ class HarnessControlPlane:
                     )
                     decisions.append(failure_decision)
                 else:
-                    state = self._finish_run(state, HarnessRunStatus.SUCCEEDED, decision)
+                    state = self._finish_run(
+                        state, HarnessRunStatus.SUCCEEDED, decision
+                    )
             elif decision.decision_type == HarnessDecisionType.FAIL_RUN:
                 state = self._finish_run(state, HarnessRunStatus.FAILED, decision)
             elif decision.decision_type == HarnessDecisionType.HALT_RUN:
@@ -986,7 +1217,9 @@ class HarnessControlPlane:
             quality_verdicts=quality_verdicts,
         )
 
-    def _start_run(self, state: HarnessState, decision: HarnessDecision) -> HarnessState:
+    def _start_run(
+        self, state: HarnessState, decision: HarnessDecision
+    ) -> HarnessState:
         if state.status == HarnessRunStatus.CREATED:
             previous = state
             transition_time = _next_transition_time(state)
@@ -1048,7 +1281,9 @@ class HarnessControlPlane:
             (),
             boundary=HarnessPhaseBoundary.ENTRY,
         )
-        gate_results = self._evaluate_gates(self.plan_gates, state, step_id, worker_result=None, quality_verdict=None)
+        gate_results = self._evaluate_gates(
+            self.plan_gates, state, step_id, worker_result=None, quality_verdict=None
+        )
         state = self._commit_plan_exit(
             state,
             step_id=step_id,
@@ -1114,12 +1349,26 @@ class HarnessControlPlane:
         step_spec = _get_step_spec(state, step_id)
         step_state = get_step_state(state, step_id)
         task = self._worker_task(step_spec, state)
+        contract_version = self._activity_contract_versions_by_run.get(
+            state.run_spec.run_id,
+            {},
+        ).get(step_id)
+        if contract_version is None:
+            raise HarnessValidationError(
+                "activity contract binding is unavailable",
+                code="unknown_runtime_activity_binding",
+                details={
+                    "code": "unknown_runtime_activity_binding",
+                    "step_id": step_id,
+                },
+            )
         activity = self.event_port.create_activity(
             run_id=state.run_spec.run_id,
             step_id=step_id,
             attempt=step_state.attempts + 1,
             activity_type=step_spec.worker_type.value,
             inputs=task,
+            contract_version=contract_version,
             worker_version=str(step_spec.metadata.get("worker_version", "1")),
         )
         activity_metadata = {
@@ -1137,7 +1386,11 @@ class HarnessControlPlane:
             )
         previous = state
         transition_time = _next_transition_time(previous)
-        if state.status in {HarnessRunStatus.PLANNING, HarnessRunStatus.RUNNING, HarnessRunStatus.EXECUTING}:
+        if state.status in {
+            HarnessRunStatus.PLANNING,
+            HarnessRunStatus.RUNNING,
+            HarnessRunStatus.EXECUTING,
+        }:
             if state.status != HarnessRunStatus.EXECUTING:
                 state = transition_run(
                     state,
@@ -1167,8 +1420,16 @@ class HarnessControlPlane:
         )
         if previous.status != state.status:
             self._record_state_change(previous, state, transition_kind="execute_entry")
-        self._record_step_change(previous, state, step_id, transition_kind="execute_entry")
-        self._record_phase(state, HarnessPhase.EXECUTE, step_id, (), boundary=HarnessPhaseBoundary.ENTRY)
+        self._record_step_change(
+            previous, state, step_id, transition_kind="execute_entry"
+        )
+        self._record_phase(
+            state,
+            HarnessPhase.EXECUTE,
+            step_id,
+            (),
+            boundary=HarnessPhaseBoundary.ENTRY,
+        )
 
         started_at = _next_transition_time(state)
         worker_result = self.event_port.accept_activity(
@@ -1283,7 +1544,9 @@ class HarnessControlPlane:
             state,
             replace(
                 get_step_state(state, step_id),
-                output_ref=step_spec.output_key if worker_result.status == HarnessWorkerStatus.SUCCEEDED else None,
+                output_ref=step_spec.output_key
+                if worker_result.status == HarnessWorkerStatus.SUCCEEDED
+                else None,
                 error=worker_result.error,
                 metadata={
                     **get_step_state(state, step_id).metadata,
@@ -1343,7 +1606,9 @@ class HarnessControlPlane:
         state: HarnessState,
         decision: HarnessDecision,
         worker_result: HarnessWorkerResult | None,
-    ) -> tuple[HarnessState, tuple[HarnessGateResult, ...], HarnessQualityVerdict | None]:
+    ) -> tuple[
+        HarnessState, tuple[HarnessGateResult, ...], HarnessQualityVerdict | None
+    ]:
         step_id = _require_step(decision)
         previous = state
         transition_time = _next_transition_time(previous)
@@ -1382,8 +1647,12 @@ class HarnessControlPlane:
         )
         if previous.status != state.status:
             self._record_state_change(previous, state, transition_kind="verify_entry")
-        self._record_step_change(previous, state, step_id, transition_kind="verify_entry")
-        self._record_phase(state, HarnessPhase.VERIFY, step_id, (), boundary=HarnessPhaseBoundary.ENTRY)
+        self._record_step_change(
+            previous, state, step_id, transition_kind="verify_entry"
+        )
+        self._record_phase(
+            state, HarnessPhase.VERIFY, step_id, (), boundary=HarnessPhaseBoundary.ENTRY
+        )
         gate_entries = self._verify_gate_entries(state, step_id)
         gate_results = self._evaluate_gates(
             tuple(gate for _, gate in gate_entries),
@@ -1474,7 +1743,9 @@ class HarnessControlPlane:
             step_id,
             HarnessStepStatus.SUCCEEDED,
             metadata={
-                "worker_result": worker_result.to_dict() if worker_result is not None else None,
+                "worker_result": worker_result.to_dict()
+                if worker_result is not None
+                else None,
                 **side_effect_metadata,
             },
             current_step_id=step_id,
@@ -1496,9 +1767,13 @@ class HarnessControlPlane:
             activity=_activity_for_state_step(state, step_id),
             activity_result_event_id=_activity_result_event_id(state, step_id),
         )
-        self._record_step_change(previous, state, step_id, transition_kind="step_success")
+        self._record_step_change(
+            previous, state, step_id, transition_kind="step_success"
+        )
         if previous.status != state.status:
-            self._record_state_change(previous, state, transition_kind="verify_complete")
+            self._record_state_change(
+                previous, state, transition_kind="verify_complete"
+            )
         return state
 
     def _prepare_completion_side_effect(
@@ -1541,7 +1816,6 @@ class HarnessControlPlane:
         gate_results: tuple[HarnessGateResult, ...],
         quality_verdict: HarnessQualityVerdict | None,
     ) -> _PreparedSideEffect | None:
-        step_spec = _get_step_spec(state, step_id)
         declared_binding = self._side_effect_bindings_by_run.get(
             state.run_spec.run_id,
             {},
@@ -1552,7 +1826,10 @@ class HarnessControlPlane:
                 raise HarnessValidationError(
                     "worker returned a side-effect intent for an undeclared step",
                     code="undeclared_side_effect_intent",
-                    details={"code": "undeclared_side_effect_intent", "step_id": step_id},
+                    details={
+                        "code": "undeclared_side_effect_intent",
+                        "step_id": step_id,
+                    },
                 )
             return None
         if worker_result is None or intent is None:
@@ -1565,7 +1842,10 @@ class HarnessControlPlane:
             raise HarnessValidationError(
                 "side-effect authorization requires passing deterministic gate evidence",
                 code="side_effect_gate_evidence_missing",
-                details={"code": "side_effect_gate_evidence_missing", "step_id": step_id},
+                details={
+                    "code": "side_effect_gate_evidence_missing",
+                    "step_id": step_id,
+                },
             )
         if quality_verdict is not None and not quality_verdict.passed:
             raise HarnessValidationError(
@@ -1617,17 +1897,26 @@ class HarnessControlPlane:
             raise HarnessValidationError(
                 "worker side-effect intent does not match run, step, and attempt identity",
                 code="side_effect_intent_identity_mismatch",
-                details={"code": "side_effect_intent_identity_mismatch", "step_id": step_id},
+                details={
+                    "code": "side_effect_intent_identity_mismatch",
+                    "step_id": step_id,
+                },
             )
         expected_identity_scope = _expected_identity_scope_ref(state, step_id)
         expected_subject_scope = _expected_subject_scope_ref(state)
-        if expected_identity_scope is not None and intent.identity_scope_ref != expected_identity_scope:
+        if (
+            expected_identity_scope is not None
+            and intent.identity_scope_ref != expected_identity_scope
+        ):
             raise HarnessValidationError(
                 "worker side-effect intent identity scope mismatch",
                 code="side_effect_scope_mismatch",
                 details={"code": "side_effect_scope_mismatch", "scope": "identity"},
             )
-        if expected_subject_scope is not None and intent.subject_scope_ref != expected_subject_scope:
+        if (
+            expected_subject_scope is not None
+            and intent.subject_scope_ref != expected_subject_scope
+        ):
             raise HarnessValidationError(
                 "worker side-effect intent subject scope mismatch",
                 code="side_effect_scope_mismatch",
@@ -1781,7 +2070,9 @@ class HarnessControlPlane:
             prepare=prepared.prepare,
         )
         run_id = prepared.intent.run_id
-        self._side_effect_intents.setdefault(run_id, {})[prepared.slot] = prepared.intent
+        self._side_effect_intents.setdefault(run_id, {})[prepared.slot] = (
+            prepared.intent
+        )
         self._side_effect_outcomes.setdefault(run_id, {})[prepared.slot] = outcome
         return outcome
 
@@ -1797,7 +2088,9 @@ class HarnessControlPlane:
             raise HarnessValidationError("side-effect store is unavailable")
         committed_decision = self.side_effect_store.put_decision(authorization)
         if committed_decision != authorization:
-            raise HarnessValidationError("side-effect store returned a conflicting authorization")
+            raise HarnessValidationError(
+                "side-effect store returned a conflicting authorization"
+            )
         existing = self.side_effect_store.get_outcome(
             effect_id=intent.effect_id,
             identity_scope_ref=intent.identity_scope_ref,
@@ -1806,12 +2099,16 @@ class HarnessControlPlane:
         )
         if existing is None:
             self.side_effect_store.reserve_attempt(authorization)
-            handler_method = getattr(binding.handler, "prepare", None) if prepare else None
+            handler_method = (
+                getattr(binding.handler, "prepare", None) if prepare else None
+            )
             if not callable(handler_method):
                 handler_method = binding.handler.commit
             outcome = handler_method(intent, authorization)
             if not isinstance(outcome, HarnessSideEffectOutcome):
-                raise HarnessValidationError("side-effect handler returned an invalid outcome")
+                raise HarnessValidationError(
+                    "side-effect handler returned an invalid outcome"
+                )
             self.side_effect_store.put_outcome(outcome)
         resolved = self.side_effect_store.get_outcome(
             effect_id=intent.effect_id,
@@ -1827,8 +2124,12 @@ class HarnessControlPlane:
         _validate_side_effect_outcome(intent, authorization, resolved)
         return resolved
 
-    def _route_to_step(self, state: HarnessState, decision: HarnessDecision) -> HarnessState:
-        target_step_id = decision.target_step_id or state.run_spec.workflow.entry_step_id
+    def _route_to_step(
+        self, state: HarnessState, decision: HarnessDecision
+    ) -> HarnessState:
+        target_step_id = (
+            decision.target_step_id or state.run_spec.workflow.entry_step_id
+        )
         previous = state
         transition_time = _next_transition_time(previous)
         if state.status in {HarnessRunStatus.EXECUTING, HarnessRunStatus.VERIFYING}:
@@ -1867,7 +2168,9 @@ class HarnessControlPlane:
         )
         if previous.status != state.status:
             self._record_state_change(previous, state, transition_kind="route_to_step")
-        if get_step_state(previous, target_step_id) != get_step_state(state, target_step_id):
+        if get_step_state(previous, target_step_id) != get_step_state(
+            state, target_step_id
+        ):
             self._record_step_change(
                 previous,
                 state,
@@ -1876,7 +2179,9 @@ class HarnessControlPlane:
             )
         return state
 
-    def _route_to_repair(self, state: HarnessState, decision: HarnessDecision) -> HarnessState:
+    def _route_to_repair(
+        self, state: HarnessState, decision: HarnessDecision
+    ) -> HarnessState:
         previous = state
         transition_time = _next_transition_time(previous)
         if decision.step_id:
@@ -1890,7 +2195,9 @@ class HarnessControlPlane:
                 state = candidate
         if state.status in {HarnessRunStatus.EXECUTING, HarnessRunStatus.VERIFYING}:
             state = transition_run(state, HarnessRunStatus.RUNNING, at=transition_time)
-        target_step_id = decision.target_step_id or state.run_spec.workflow.entry_step_id
+        target_step_id = (
+            decision.target_step_id or state.run_spec.workflow.entry_step_id
+        )
         target = get_step_state(state, target_step_id)
         if target.status != HarnessStepStatus.PENDING:
             target = replace(
@@ -1925,15 +2232,21 @@ class HarnessControlPlane:
             decision=decision,
         )
         if previous.status != state.status:
-            self._record_state_change(previous, state, transition_kind="route_to_repair")
-        if decision.step_id and get_step_state(previous, decision.step_id) != get_step_state(state, decision.step_id):
+            self._record_state_change(
+                previous, state, transition_kind="route_to_repair"
+            )
+        if decision.step_id and get_step_state(
+            previous, decision.step_id
+        ) != get_step_state(state, decision.step_id):
             self._record_step_change(
                 previous,
                 state,
                 decision.step_id,
                 transition_kind="route_to_repair",
             )
-        if get_step_state(previous, target_step_id) != get_step_state(state, target_step_id):
+        if get_step_state(previous, target_step_id) != get_step_state(
+            state, target_step_id
+        ):
             self._record_step_change(
                 previous,
                 state,
@@ -1942,7 +2255,9 @@ class HarnessControlPlane:
             )
         return state
 
-    def _retry_step(self, state: HarnessState, decision: HarnessDecision) -> HarnessState:
+    def _retry_step(
+        self, state: HarnessState, decision: HarnessDecision
+    ) -> HarnessState:
         step_id = _require_step(decision)
         previous = state
         transition_time = _next_transition_time(previous)
@@ -1972,7 +2287,9 @@ class HarnessControlPlane:
             self._record_state_change(previous, state, transition_kind="retry")
         return state
 
-    def _replan_step(self, state: HarnessState, decision: HarnessDecision) -> HarnessState:
+    def _replan_step(
+        self, state: HarnessState, decision: HarnessDecision
+    ) -> HarnessState:
         step_id = _require_step(decision)
         previous = state
         transition_time = _next_transition_time(previous)
@@ -2003,7 +2320,9 @@ class HarnessControlPlane:
         if previous.status != state.status:
             self._record_state_change(previous, state, transition_kind="replan")
         self._record_step_change(previous, state, step_id, transition_kind="replan")
-        self._record_phase(state, HarnessPhase.REPLAN, step_id, (), boundary=HarnessPhaseBoundary.ENTRY)
+        self._record_phase(
+            state, HarnessPhase.REPLAN, step_id, (), boundary=HarnessPhaseBoundary.ENTRY
+        )
         return self._commit_replan_exit(
             state,
             step_id=step_id,
@@ -2036,11 +2355,17 @@ class HarnessControlPlane:
             )
         return state
 
-    def _wait_for_approval(self, state: HarnessState, decision: HarnessDecision) -> HarnessState:
+    def _wait_for_approval(
+        self, state: HarnessState, decision: HarnessDecision
+    ) -> HarnessState:
         step_id = _require_step(decision)
         previous = state
         transition_time = _next_transition_time(previous)
-        if state.status in {HarnessRunStatus.RUNNING, HarnessRunStatus.EXECUTING, HarnessRunStatus.VERIFYING}:
+        if state.status in {
+            HarnessRunStatus.RUNNING,
+            HarnessRunStatus.EXECUTING,
+            HarnessRunStatus.VERIFYING,
+        }:
             state = transition_run(
                 state,
                 HarnessRunStatus.WAITING_APPROVAL,
@@ -2065,8 +2390,13 @@ class HarnessControlPlane:
             activity_result_event_id=_activity_result_event_id(state, step_id),
         )
         if previous.status != state.status:
-            self._record_state_change(previous, state, transition_kind="wait_for_approval")
-        if get_step_state(previous, step_id).status != get_step_state(state, step_id).status:
+            self._record_state_change(
+                previous, state, transition_kind="wait_for_approval"
+            )
+        if (
+            get_step_state(previous, step_id).status
+            != get_step_state(state, step_id).status
+        ):
             self._record_step_change(
                 previous,
                 state,
@@ -2091,7 +2421,9 @@ class HarnessControlPlane:
                 "terminal side-effect handler binding is unavailable",
                 code="terminal_side_effect_policy_missing",
             )
-        if any(step.status is not HarnessStepStatus.SUCCEEDED for step in state.step_states):
+        if any(
+            step.status is not HarnessStepStatus.SUCCEEDED for step in state.step_states
+        ):
             raise HarnessValidationError(
                 "terminal side effect requires every step outcome to be durable and successful",
                 code="terminal_side_effect_steps_incomplete",
@@ -2114,9 +2446,7 @@ class HarnessControlPlane:
                 code="side_effect_atomic_group_mismatch",
             )
         candidate_refs = tuple(
-            ref
-            for outcome in prepared
-            for ref in outcome.candidate_refs
+            ref for outcome in prepared for ref in outcome.candidate_refs
         )
         effect_identity = {
             "run_id": run_id,
@@ -2148,7 +2478,9 @@ class HarnessControlPlane:
         )
         approval_ref = policy.not_required_evidence_ref
         if policy.requires_approval:
-            configured_ref = state.run_spec.metadata.get("terminal_approval_evidence_ref")
+            configured_ref = state.run_spec.metadata.get(
+                "terminal_approval_evidence_ref"
+            )
             if not isinstance(configured_ref, str) or not configured_ref.strip():
                 raise HarnessValidationError(
                     "terminal side effect requires durable approval evidence",
@@ -2174,9 +2506,11 @@ class HarnessControlPlane:
             )
             approval_ref = evidence.approval_ref
         assert approval_ref is not None
-        gate_refs, gate_result_refs, aggregate_verdict_ref = _side_effect_gate_refs_from_history(
-            self._committed_events,
-            run_id=run_id,
+        gate_refs, gate_result_refs, aggregate_verdict_ref = (
+            _side_effect_gate_refs_from_history(
+                self._committed_events,
+                run_id=run_id,
+            )
         )
         if policy.inherited_gate_refs:
             required = set(policy.inherited_gate_refs)
@@ -2227,9 +2561,14 @@ class HarnessControlPlane:
 
     def _terminal_history_cutoff(self, run_id: str) -> str | None:
         pending = self._pending_completion_decisions.get(run_id)
-        if pending is not None and pending.decision_type is HarnessDecisionType.COMPLETE_RUN:
+        if (
+            pending is not None
+            and pending.decision_type is HarnessDecisionType.COMPLETE_RUN
+        ):
             return pending.history_cutoff_id
-        return None if not self._committed_events else self._committed_events[-1].event_id
+        return (
+            None if not self._committed_events else self._committed_events[-1].event_id
+        )
 
     def _complete_terminal_side_effect(
         self,
@@ -2241,7 +2580,9 @@ class HarnessControlPlane:
         policy = state.run_spec.workflow.terminal_side_effect_policy
         if policy is None:
             if prepared_side_effect is not None:
-                raise HarnessValidationError("legacy workflow cannot execute a terminal side effect")
+                raise HarnessValidationError(
+                    "legacy workflow cannot execute a terminal side effect"
+                )
             return state
         if prepared_side_effect is None or prepared_side_effect.slot != "__terminal__":
             raise HarnessValidationError(
@@ -2283,9 +2624,7 @@ class HarnessControlPlane:
             state,
             gate_results=gate_results,
             quality_verdict=quality_verdict,
-            expected_activity=(
-                None if replay_activity is None else replay_activity[0]
-            ),
+            expected_activity=(None if replay_activity is None else replay_activity[0]),
             side_effect_failure=failure,
         )
         self._record_decision(
@@ -2306,7 +2645,9 @@ class HarnessControlPlane:
         if self.side_effect_store is None:
             return ()
         outcomes: list[tuple[int, HarnessSideEffectOutcome]] = []
-        for decision in self.side_effect_store.list_decisions(run_id=state.run_spec.run_id):
+        for decision in self.side_effect_store.list_decisions(
+            run_id=state.run_spec.run_id
+        ):
             if decision.origin is not HarnessSideEffectOrigin.WORKER:
                 continue
             outcome = self.side_effect_store.get_outcome(
@@ -2338,7 +2679,10 @@ class HarnessControlPlane:
                 subject_scope_ref=decision.subject_scope_ref,
                 idempotency_key=decision.idempotency_key,
             )
-            if outcome is None or outcome.disposition is not HarnessSideEffectDisposition.PREPARED:
+            if (
+                outcome is None
+                or outcome.disposition is not HarnessSideEffectDisposition.PREPARED
+            ):
                 continue
             quarantined = self.side_effect_store.set_disposition(
                 effect_id=decision.effect_id,
@@ -2350,7 +2694,9 @@ class HarnessControlPlane:
                 slot = decision.step_id or "__terminal__"
                 self._side_effect_outcomes.setdefault(run_id, {})[slot] = quarantined
 
-    def _finish_run(self, state: HarnessState, status: HarnessRunStatus, decision: HarnessDecision) -> HarnessState:
+    def _finish_run(
+        self, state: HarnessState, status: HarnessRunStatus, decision: HarnessDecision
+    ) -> HarnessState:
         previous = state
         transition_time = _next_transition_time(previous)
         if status is not HarnessRunStatus.SUCCEEDED:
@@ -2381,12 +2727,14 @@ class HarnessControlPlane:
             if candidate is not state:
                 state = candidate
         terminal_metadata: dict[str, Any] = {}
-        terminal_outcome = self._side_effect_outcomes.get(state.run_spec.run_id, {}).get(
-            "__terminal__"
-        )
+        terminal_outcome = self._side_effect_outcomes.get(
+            state.run_spec.run_id, {}
+        ).get("__terminal__")
         if status is HarnessRunStatus.SUCCEEDED and terminal_outcome is not None:
             terminal_metadata = {
-                "terminal_side_effect_effect_ref": checksum_for(terminal_outcome.effect_id),
+                "terminal_side_effect_effect_ref": checksum_for(
+                    terminal_outcome.effect_id
+                ),
                 "terminal_side_effect_decision_ref": terminal_outcome.decision_ref,
                 "terminal_side_effect_outcome_ref": terminal_outcome.checksum,
                 "terminal_side_effect_disposition": terminal_outcome.disposition.value,
@@ -2415,7 +2763,9 @@ class HarnessControlPlane:
                 else _activity_result_event_id(state, decision.step_id)
             ),
         )
-        if decision.step_id and get_step_state(previous, decision.step_id) != get_step_state(state, decision.step_id):
+        if decision.step_id and get_step_state(
+            previous, decision.step_id
+        ) != get_step_state(state, decision.step_id):
             self._record_step_change(
                 previous,
                 state,
@@ -2459,7 +2809,9 @@ class HarnessControlPlane:
         )
         references = gate_references or tuple(_gate_reference(gate) for gate in gates)
         if len(references) != len(gates):
-            raise HarnessValidationError("gate references must match gate implementations")
+            raise HarnessValidationError(
+                "gate references must match gate implementations"
+            )
         results = tuple(
             self._evaluate_gate(
                 gate,
@@ -2561,7 +2913,6 @@ class HarnessControlPlane:
         state: HarnessState,
         worker_result: HarnessWorkerResult | None,
     ) -> HarnessBudgetSnapshot:
-        output = worker_result.output if worker_result is not None else {}
         return HarnessBudgetSnapshot.from_budget(
             state.run_spec.budget,
             turns_used=state.turn_count,
@@ -2586,7 +2937,9 @@ class HarnessControlPlane:
             "step_id": step_spec.step_id,
             "worker_type": step_spec.worker_type.value,
             "inputs": {
-                key: prior_outputs[key] if key in prior_outputs else state.run_spec.inputs.get(key)
+                key: prior_outputs[key]
+                if key in prior_outputs
+                else state.run_spec.inputs.get(key)
                 for key in step_spec.input_keys
             },
             "metadata": step_spec.metadata,
@@ -2601,7 +2954,6 @@ class HarnessControlPlane:
         activity: HarnessActivity | None = None,
         started_at=None,
     ) -> HarnessWorkerResult:
-        worker = self.worker_registry.get(step_spec.step_id) or self.worker_registry.get(step_spec.worker_type.value)
         task = dict(task or self._worker_task(step_spec, state))
         call_payload = dict(task)
         started_at = started_at or _next_transition_time(state)
@@ -2624,50 +2976,28 @@ class HarnessControlPlane:
             )
         )
         execution_task = _task_with_activity(task, activity)
-        if worker is None:
-            return HarnessWorkerResult(
-                status=HarnessWorkerStatus.SUCCEEDED,
-                output={},
+        binding = self._worker_bindings_by_run.get(
+            state.run_spec.run_id,
+            {},
+        ).get(step_spec.step_id)
+        if binding is None:
+            raise HarnessValidationError(
+                "exact worker binding is unavailable",
+                code="unknown_runtime_worker_binding",
+                details={
+                    "code": "unknown_runtime_worker_binding",
+                    "step_id": step_spec.step_id,
+                    "worker_type": step_spec.worker_type.value,
+                },
             )
-        if callable(worker):
-            return _coerce_worker_result(worker(execution_task))
-        execute = getattr(worker, "execute", None)
-        if callable(execute):
-            return _coerce_worker_result(execute(execution_task))
-        if step_spec.worker_type.value == "llm":
-            generate = getattr(worker, "generate", None)
-            if callable(generate):
-                return _coerce_worker_result(generate(execution_task))
-        if step_spec.worker_type.value == "skill":
-            run_skill = getattr(worker, "run_skill", None)
-            if callable(run_skill):
-                return _coerce_worker_result(
-                    run_skill(
-                        str(execution_task.get("skill_name", execution_task["step_id"])),
-                        dict(execution_task.get("inputs", {})),
-                        dict(execution_task.get("context", {})),
-                    )
-                )
-        if step_spec.worker_type.value == "subagent":
-            run_subagent = getattr(worker, "run_subagent", None)
-            if callable(run_subagent):
-                return _coerce_worker_result(
-                    run_subagent(
-                        str(execution_task.get("subagent_id", execution_task["step_id"])),
-                        dict(execution_task),
-                        dict(execution_task.get("budget", {})),
-                    )
-                )
-        try:
-            queued = self._iterable_workers.setdefault(step_spec.step_id, list(worker))
-        except TypeError as exc:
-            raise HarnessValidationError("worker registry value must be callable, a Harness worker port, or result iterable") from exc
-        if not queued:
-            return HarnessWorkerResult(
-                status=HarnessWorkerStatus.FAILED,
-                error="fake worker queue is exhausted",
+        worker = binding.implementation
+        if not callable(getattr(worker, "execute", None)):
+            raise HarnessValidationError(
+                "resolved worker binding does not expose execute(task)",
+                code="invalid_runtime_contract_implementation",
+                details={"reference": binding.reference.exact_ref},
             )
-        return _coerce_worker_result(queued.pop(0))
+        return _coerce_worker_result(worker.execute(execution_task))
 
     def _quality_verdict(
         self,
@@ -2725,10 +3055,16 @@ class HarnessControlPlane:
         found_verify_entry = False
         for event in reversed(history[:transition_index]):
             if event.event_type == HarnessEventType.TRANSITION_COMMITTED:
-                if event.payload.get("transition_kind") == HarnessTransitionKind.VERIFY_ENTRY.value:
+                if (
+                    event.payload.get("transition_kind")
+                    == HarnessTransitionKind.VERIFY_ENTRY.value
+                ):
                     found_verify_entry = True
                 break
-            if event.event_type == HarnessEventType.GATE_EVALUATED and event.step_id == step_id:
+            if (
+                event.event_type == HarnessEventType.GATE_EVALUATED
+                and event.step_id == step_id
+            ):
                 recorded_events.append(event)
         if not found_verify_entry:
             raise EventIncompleteHistoryError(
@@ -2884,11 +3220,9 @@ class HarnessControlPlane:
                 gate_results,
                 declared_gate_reference=_get_step_spec(state, step_id).quality_gate,
             )
-            if (
-                expected_verdict is None
-                or quality_verdict_evidence(verdict)
-                != quality_verdict_evidence(expected_verdict)
-            ):
+            if expected_verdict is None or quality_verdict_evidence(
+                verdict
+            ) != quality_verdict_evidence(expected_verdict):
                 raise EventStoreCorruptionError(
                     "recorded Harness quality verdict conflicts with gate evidence"
                 )
@@ -2914,9 +3248,7 @@ class HarnessControlPlane:
             decision_input=decision_input,
             decision=decision,
             causation_id=str(decision_input["causation_id"]),
-            expected_activity=(
-                None if replay_activity is None else replay_activity[0]
-            ),
+            expected_activity=(None if replay_activity is None else replay_activity[0]),
             recorded_activity_ref=(
                 None if replay_activity is None else replay_activity[1]
             ),
@@ -2991,7 +3323,9 @@ class HarnessControlPlane:
             # becomes successful; including its store record would change the
             # original decision input during recovery.
             return None
-        declared = self._side_effect_bindings_by_run.get(state.run_spec.run_id, {}).get(step_id)
+        declared = self._side_effect_bindings_by_run.get(state.run_spec.run_id, {}).get(
+            step_id
+        )
         if declared is None:
             return None
 
@@ -3002,7 +3336,9 @@ class HarnessControlPlane:
 
         decisions = tuple(
             decision
-            for decision in self.side_effect_store.list_decisions(run_id=state.run_spec.run_id)
+            for decision in self.side_effect_store.list_decisions(
+                run_id=state.run_spec.run_id
+            )
             if decision.origin is HarnessSideEffectOrigin.WORKER
             and decision.step_id == step_id
             and decision.attempt == step_state.attempts
@@ -3024,14 +3360,16 @@ class HarnessControlPlane:
             raise EventIncompleteHistoryError(
                 "successful side-effect step is missing its durable outcome"
             )
-        durable_refs = _canonical_side_effect_state_refs({
-            "approval_evidence_ref": decision.approval_evidence_ref,
-            "side_effect_effect_ref": checksum_for(decision.effect_id),
-            "side_effect_intent_ref": decision.intent_ref,
-            "side_effect_decision_ref": decision.checksum,
-            "side_effect_outcome_ref": outcome.checksum,
-            "side_effect_disposition": outcome.disposition.value,
-        })
+        durable_refs = _canonical_side_effect_state_refs(
+            {
+                "approval_evidence_ref": decision.approval_evidence_ref,
+                "side_effect_effect_ref": checksum_for(decision.effect_id),
+                "side_effect_intent_ref": decision.intent_ref,
+                "side_effect_decision_ref": decision.checksum,
+                "side_effect_outcome_ref": outcome.checksum,
+                "side_effect_disposition": outcome.disposition.value,
+            }
+        )
         if any(durable_refs.get(key) != value for key, value in refs.items()):
             raise EventStoreCorruptionError(
                 "successful step side-effect refs conflict with durable authority"
@@ -3052,7 +3390,10 @@ class HarnessControlPlane:
             step_id=step_id,
             boundary=boundary,
             gate_results=tuple(result.to_dict() for result in gate_results),
-            metadata={"turn_count": state.turn_count, "worker_call_count": state.worker_call_count},
+            metadata={
+                "turn_count": state.turn_count,
+                "worker_call_count": state.worker_call_count,
+            },
         )
         self._record_event(
             HarnessEvent(
@@ -3128,7 +3469,9 @@ class HarnessControlPlane:
             or committed.step_id != event.step_id
             or committed.event_type != event.event_type
         ):
-            raise HarnessValidationError("Harness event_port returned a conflicting committed projection")
+            raise HarnessValidationError(
+                "Harness event_port returned a conflicting committed projection"
+            )
         self._committed_events.append(committed)
         return committed
 
@@ -3392,9 +3735,7 @@ class HarnessControlPlane:
             )
         self._committed_events = list(history)
         self._decision_indexes[run_spec.run_id] = sum(
-            1
-            for event in history
-            if _is_scheduler_decision_event(event)
+            1 for event in history if _is_scheduler_decision_event(event)
         )
         pending_completion = _pending_completion_from_history(history)
         if pending_completion is None:
@@ -3477,16 +3818,14 @@ class HarnessControlPlane:
         return HarnessRunResult(
             state=state,
             decisions=tuple(decisions),
-            events=tuple(event for event in self._committed_events if event.run_id == run_id),
+            events=tuple(
+                event for event in self._committed_events if event.run_id == run_id
+            ),
             worker_results={
-                key: value
-                for key, value in all_worker_results.items()
-                if key
+                key: value for key, value in all_worker_results.items() if key
             },
             quality_verdicts={
-                key: value
-                for key, value in (quality_verdicts or {}).items()
-                if key
+                key: value for key, value in (quality_verdicts or {}).items() if key
             },
             side_effect_outcomes=dict(self._side_effect_outcomes.get(run_id, {})),
         )
@@ -3502,9 +3841,13 @@ def _side_effect_gate_refs(
         reference = evidence.get("reference")
         result_ref = evidence.get("result_ref")
         if not isinstance(reference, str) or not reference.strip():
-            raise HarnessValidationError("side-effect gate evidence is missing an exact reference")
+            raise HarnessValidationError(
+                "side-effect gate evidence is missing an exact reference"
+            )
         if not _is_checksum_ref(result_ref):
-            raise HarnessValidationError("side-effect gate evidence is missing its result ref")
+            raise HarnessValidationError(
+                "side-effect gate evidence is missing its result ref"
+            )
         references.append(reference)
         result_refs.append(result_ref)
     return tuple(references), tuple(result_refs)
@@ -3521,7 +3864,8 @@ def _side_effect_aggregate_verdict_ref(
     return checksum_for(
         {
             "gate_result_refs": list(gate_result_refs),
-            "passed": bool(gate_results) and all(result.passed for result in gate_results),
+            "passed": bool(gate_results)
+            and all(result.passed for result in gate_results),
         }
     )
 
@@ -3564,11 +3908,16 @@ def _side_effect_gate_refs_from_history(
     result_refs: list[str] = []
     aggregate: list[dict[str, Any]] = []
     for event in events:
-        if event.run_id != run_id or event.event_type is not HarnessEventType.GATE_EVALUATED:
+        if (
+            event.run_id != run_id
+            or event.event_type is not HarnessEventType.GATE_EVALUATED
+        ):
             continue
         payload = event.payload
         details = payload.get("details")
-        harness_gate = details.get("harness_gate") if isinstance(details, Mapping) else None
+        harness_gate = (
+            details.get("harness_gate") if isinstance(details, Mapping) else None
+        )
         reference = (
             harness_gate.get("reference")
             if isinstance(harness_gate, Mapping)
@@ -3580,9 +3929,15 @@ def _side_effect_gate_refs_from_history(
             else payload.get("result_ref")
         )
         passed = payload.get("passed")
-        if isinstance(reference, str) and reference.strip() and _is_checksum_ref(result_ref):
+        if (
+            isinstance(reference, str)
+            and reference.strip()
+            and _is_checksum_ref(result_ref)
+        ):
             if not isinstance(passed, bool):
-                raise HarnessValidationError("recorded terminal gate evidence has no verdict")
+                raise HarnessValidationError(
+                    "recorded terminal gate evidence has no verdict"
+                )
             if reference not in references:
                 references.append(reference)
             if result_ref not in result_refs:
@@ -3595,10 +3950,16 @@ def _side_effect_gate_refs_from_history(
             "terminal side-effect authorization requires complete passing gate history",
             code="terminal_side_effect_gate_evidence_missing",
         )
-    return tuple(references), tuple(result_refs), checksum_for({"gate_evidence": aggregate})
+    return (
+        tuple(references),
+        tuple(result_refs),
+        checksum_for({"gate_evidence": aggregate}),
+    )
 
 
-def _expected_identity_scope_ref(state: HarnessState, step_id: str | None) -> str | None:
+def _expected_identity_scope_ref(
+    state: HarnessState, step_id: str | None
+) -> str | None:
     value = state.run_spec.metadata.get("identity_scope_ref")
     if _is_checksum_ref(value):
         if step_id is not None:
@@ -3698,7 +4059,9 @@ def _pending_completion_from_history(
             authorization = current_policy.get("side_effect_authorization")
         if authorization is None:
             continue
-        if not isinstance(authorization, Mapping) or not isinstance(handler_input, Mapping):
+        if not isinstance(authorization, Mapping) or not isinstance(
+            handler_input, Mapping
+        ):
             raise EventStoreCorruptionError(
                 "dangling side-effect decision evidence is incomplete"
             )
@@ -3725,9 +4088,7 @@ def _pending_completion_from_history(
                 command_ordinal=command_ordinal,
                 causation_id=causation_id,
                 decided_at=event.occurred_at,
-                history_cutoff_id=(
-                    None if index == 0 else history[index - 1].event_id
-                ),
+                history_cutoff_id=(None if index == 0 else history[index - 1].event_id),
             )
         )
     if len(candidates) > 1:
@@ -3765,10 +4126,14 @@ def _gate_input_ref(context: GateContext, reference: str) -> str:
             "step_spec": context.step_spec.to_dict(),
             "step_state": step_state,
             "worker_result": (
-                None if context.worker_result is None else context.worker_result.to_dict()
+                None
+                if context.worker_result is None
+                else context.worker_result.to_dict()
             ),
             "quality_verdict": (
-                None if context.quality_verdict is None else context.quality_verdict.to_dict()
+                None
+                if context.quality_verdict is None
+                else context.quality_verdict.to_dict()
             ),
             "budget": None if context.budget is None else context.budget.to_dict(),
         }
@@ -3806,6 +4171,73 @@ def _is_valid_gate_result(result: HarnessGateResult) -> bool:
     return True
 
 
+def _bind_step_value(
+    bindings: dict[str, Any],
+    step_id: str,
+    value: Any,
+    *,
+    code: str,
+) -> None:
+    if step_id in bindings and bindings[step_id] != value:
+        raise HarnessValidationError(
+            "one workflow step resolves to conflicting graph runtime bindings",
+            code=code,
+            details={"code": code, "step_id": step_id},
+        )
+    bindings[step_id] = value
+
+
+def _invoke_worker_delegate(
+    adapter: _WorkerImplementationAdapter,
+    task: dict[str, Any],
+) -> HarnessWorkerResult:
+    delegate = adapter.delegate
+    if callable(delegate):
+        return _coerce_worker_result(delegate(task))
+    execute = getattr(delegate, "execute", None)
+    if callable(execute):
+        return _coerce_worker_result(execute(task))
+    if adapter.worker_type is HarnessWorkerType.LLM:
+        generate = getattr(delegate, "generate", None)
+        if callable(generate):
+            return _coerce_worker_result(generate(task))
+    if adapter.worker_type is HarnessWorkerType.SKILL:
+        run_skill = getattr(delegate, "run_skill", None)
+        if callable(run_skill):
+            return _coerce_worker_result(
+                run_skill(
+                    str(task.get("skill_name", task["step_id"])),
+                    dict(task.get("inputs", {})),
+                    dict(task.get("context", {})),
+                )
+            )
+    if adapter.worker_type is HarnessWorkerType.SUBAGENT:
+        run_subagent = getattr(delegate, "run_subagent", None)
+        if callable(run_subagent):
+            return _coerce_worker_result(
+                run_subagent(
+                    str(task.get("subagent_id", task["step_id"])),
+                    dict(task),
+                    dict(task.get("budget", {})),
+                )
+            )
+    if adapter._queued_results is None:
+        try:
+            adapter._queued_results = list(delegate)
+        except TypeError as exc:
+            raise HarnessValidationError(
+                "worker registry value must be callable, a Harness worker port, or result iterable",
+                code="invalid_runtime_worker_implementation",
+                details={"reference": f"{adapter.worker_id}@{adapter.worker_version}"},
+            ) from exc
+    if not adapter._queued_results:
+        return HarnessWorkerResult(
+            status=HarnessWorkerStatus.FAILED,
+            error="fake worker queue is exhausted",
+        )
+    return _coerce_worker_result(adapter._queued_results.pop(0))
+
+
 def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
     to_dict = getattr(value, "to_dict", None)
     payload = to_dict() if callable(to_dict) else value
@@ -3826,14 +4258,18 @@ def _coerce_worker_result(value: Any) -> HarnessWorkerResult:
     except (TypeError, ValueError, HarnessValidationError) as exc:
         if isinstance(exc, HarnessValidationError):
             raise
-        raise HarnessValidationError("worker returned an invalid result contract") from exc
+        raise HarnessValidationError(
+            "worker returned an invalid result contract"
+        ) from exc
 
 
 def _is_checksum_ref(value: Any) -> bool:
     if not isinstance(value, str) or not value.startswith("sha256:"):
         return False
     digest = value.removeprefix("sha256:")
-    return len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
+    return len(digest) == 64 and all(
+        character in "0123456789abcdef" for character in digest
+    )
 
 
 def _gate_result_from_recorded_event(
@@ -3844,7 +4280,9 @@ def _gate_result_from_recorded_event(
 ) -> HarnessGateResult:
     payload = event.payload
     details = payload.get("details")
-    if isinstance(details, Mapping) and isinstance(details.get("harness_gate"), Mapping):
+    if isinstance(details, Mapping) and isinstance(
+        details.get("harness_gate"), Mapping
+    ):
         result = HarnessGateResult(
             gate_name=str(payload.get("gate") or ""),
             passed=payload.get("passed"),
@@ -3866,10 +4304,7 @@ def _gate_result_from_recorded_event(
             or not isinstance(payload.get("passed"), bool)
             or (
                 score is not None
-                and (
-                    not isinstance(score, int | float)
-                    or isinstance(score, bool)
-                )
+                and (not isinstance(score, int | float) or isinstance(score, bool))
             )
         ):
             raise EventIncompleteHistoryError(
@@ -3970,7 +4405,11 @@ def _halt_current_step(
     step_state = get_step_state(state, step_id)
     if step_state.status == HarnessStepStatus.HALTED:
         return state
-    if step_state.status in {HarnessStepStatus.SUCCEEDED, HarnessStepStatus.FAILED, HarnessStepStatus.SKIPPED}:
+    if step_state.status in {
+        HarnessStepStatus.SUCCEEDED,
+        HarnessStepStatus.FAILED,
+        HarnessStepStatus.SKIPPED,
+    }:
         return state
     return transition_step(
         state,
@@ -3992,7 +4431,11 @@ def _fail_current_step(
     step_state = get_step_state(state, step_id)
     if step_state.status == HarnessStepStatus.FAILED:
         return state
-    if step_state.status in {HarnessStepStatus.SUCCEEDED, HarnessStepStatus.SKIPPED, HarnessStepStatus.HALTED}:
+    if step_state.status in {
+        HarnessStepStatus.SUCCEEDED,
+        HarnessStepStatus.SKIPPED,
+        HarnessStepStatus.HALTED,
+    }:
         return state
     return transition_step(
         state,
@@ -4012,7 +4455,11 @@ def _merge_outputs(
     if worker_result is None:
         return state
     step_spec = _get_step_spec(state, step_id)
-    outputs = dict(state.metadata.get("outputs", {})) if isinstance(state.metadata.get("outputs", {}), dict) else {}
+    outputs = (
+        dict(state.metadata.get("outputs", {}))
+        if isinstance(state.metadata.get("outputs", {}), dict)
+        else {}
+    )
     if step_spec.output_key:
         outputs[step_spec.output_key] = worker_result.output
     plan_keys = set(state.metadata.get("plan_keys", ()))
@@ -4036,19 +4483,28 @@ def _merge_outputs(
     )
 
 
-def _evolution_usage(state: HarnessState, worker_result: HarnessWorkerResult) -> dict[str, int]:
+def _evolution_usage(
+    state: HarnessState, worker_result: HarnessWorkerResult
+) -> dict[str, int]:
     output = worker_result.output
     return {
-        "evolution_epochs_used": int(state.metadata.get("evolution_epochs_used", 0)) + int(output.get("evolution_epochs", 0)),
-        "candidates_used": int(state.metadata.get("candidates_used", 0)) + int(output.get("candidate_count", 0)),
-        "patch_operations_used": int(state.metadata.get("patch_operations_used", 0)) + int(output.get("patch_operations", 0)),
-        "eval_cases_used": int(state.metadata.get("eval_cases_used", 0)) + int(output.get("eval_cases", 0)),
-        "sandbox_runs_used": int(state.metadata.get("sandbox_runs_used", 0)) + int(output.get("sandbox_runs", 0)),
+        "evolution_epochs_used": int(state.metadata.get("evolution_epochs_used", 0))
+        + int(output.get("evolution_epochs", 0)),
+        "candidates_used": int(state.metadata.get("candidates_used", 0))
+        + int(output.get("candidate_count", 0)),
+        "patch_operations_used": int(state.metadata.get("patch_operations_used", 0))
+        + int(output.get("patch_operations", 0)),
+        "eval_cases_used": int(state.metadata.get("eval_cases_used", 0))
+        + int(output.get("eval_cases", 0)),
+        "sandbox_runs_used": int(state.metadata.get("sandbox_runs_used", 0))
+        + int(output.get("sandbox_runs", 0)),
     }
 
 
 def _run_loop_stop_statuses() -> frozenset[HarnessRunStatus]:
-    return terminal_run_statuses().union({HarnessRunStatus.WAITING_APPROVAL, HarnessRunStatus.BLOCKED})
+    return terminal_run_statuses().union(
+        {HarnessRunStatus.WAITING_APPROVAL, HarnessRunStatus.BLOCKED}
+    )
 
 
 def _coerce_output_sequence(value: Any) -> tuple[str, ...]:
@@ -4096,7 +4552,9 @@ def _activity_for_state_step(
             run_id=state.run_spec.run_id,
             step_id=step_id,
             attempt=int(metadata.get("activity_attempt", step.attempts)),
-            activity_type=str(metadata.get("activity_type", step_spec.worker_type.value)),
+            activity_type=str(
+                metadata.get("activity_type", step_spec.worker_type.value)
+            ),
             contract_version=str(metadata.get("activity_contract_version")),
             idempotency_key=str(metadata.get("activity_idempotency_key")),
             input_checksum=str(metadata.get("activity_input_checksum")),
@@ -4205,6 +4663,8 @@ def _validate_recovered_gate_results(
             sequence=transition.stream_sequence or transition.state_version,
             reason="Harness deterministic gate result conflicts with durable history",
         )
+
+
 def _phase_entry_evaluation_state(
     recovery: HarnessRecovery,
     *,
@@ -4220,9 +4680,7 @@ def _phase_entry_evaluation_state(
             "Harness phase exit does not follow its committed entry transition"
         )
     entry_state = entry.state.restore(recovery.state.run_spec)
-    hydrated_steps = {
-        step.step_id: step for step in recovery.state.step_states
-    }
+    hydrated_steps = {step.step_id: step for step in recovery.state.step_states}
     return replace(
         entry_state,
         step_states=tuple(

@@ -147,7 +147,9 @@ class Choice:
     def __post_init__(self) -> None:
         choice_id = required_text(self.choice_id, "choice.choice_id")
         branches = tuple(self.branches)
-        if not branches or not all(isinstance(branch, ChoiceBranch) for branch in branches):
+        if not branches or not all(
+            isinstance(branch, ChoiceBranch) for branch in branches
+        ):
             raise HarnessValidationError(
                 "choice must contain ChoiceBranch values",
                 code="invalid_choice_branches",
@@ -173,7 +175,9 @@ class ParallelBranch:
     def __post_init__(self) -> None:
         branch_id = required_text(self.branch_id, "parallel_branch.branch_id")
         _expression(self.child, "parallel_branch.child")
-        namespace = required_text(self.output_namespace, "parallel_branch.output_namespace")
+        namespace = required_text(
+            self.output_namespace, "parallel_branch.output_namespace"
+        )
         object.__setattr__(self, "branch_id", branch_id)
         object.__setattr__(self, "output_namespace", namespace)
 
@@ -203,7 +207,9 @@ class ParallelAll:
         object.__setattr__(self, "fork_id", fork_id)
         object.__setattr__(self, "join_id", join_id)
         object.__setattr__(self, "branches", branches)
-        object.__setattr__(self, "failure_policy", ParallelAllFailurePolicy(self.failure_policy))
+        object.__setattr__(
+            self, "failure_policy", ParallelAllFailurePolicy(self.failure_policy)
+        )
         object.__setattr__(self, "merge_ref", merge_ref)
 
     def to_dict(self) -> dict[str, Any]:
@@ -228,8 +234,12 @@ class ParallelAny:
     failure_policy: ParallelAnyFailurePolicy | str = ParallelAnyFailurePolicy.FAIL_ALL
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "fork_id", required_text(self.fork_id, "parallel_any.fork_id"))
-        object.__setattr__(self, "join_id", required_text(self.join_id, "parallel_any.join_id"))
+        object.__setattr__(
+            self, "fork_id", required_text(self.fork_id, "parallel_any.fork_id")
+        )
+        object.__setattr__(
+            self, "join_id", required_text(self.join_id, "parallel_any.join_id")
+        )
         object.__setattr__(
             self,
             "branches",
@@ -240,7 +250,9 @@ class ParallelAny:
             "cancellation_policy",
             ParallelAnyCancellationPolicy(self.cancellation_policy),
         )
-        object.__setattr__(self, "failure_policy", ParallelAnyFailurePolicy(self.failure_policy))
+        object.__setattr__(
+            self, "failure_policy", ParallelAnyFailurePolicy(self.failure_policy)
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -270,7 +282,9 @@ class BoundedLoop:
                 "loop condition must be a HarnessCondition",
                 code="invalid_loop_condition",
             )
-        if not isinstance(self.max_iterations, int) or isinstance(self.max_iterations, bool):
+        if not isinstance(self.max_iterations, int) or isinstance(
+            self.max_iterations, bool
+        ):
             raise HarnessValidationError(
                 "loop max_iterations must be an integer",
                 code="invalid_loop_bound",
@@ -288,7 +302,9 @@ class BoundedLoop:
             "condition": self.condition.to_dict(),
             "max_iterations": self.max_iterations,
             "exit": None if self.exit is None else self.exit.to_dict(),
-            "exhaustion": None if self.exhaustion is None else self.exhaustion.to_dict(),
+            "exhaustion": None
+            if self.exhaustion is None
+            else self.exhaustion.to_dict(),
         }
 
 
@@ -346,7 +362,9 @@ class Wait:
                 "wait timeout_policy must be WaitTimeoutPolicy",
                 code="invalid_wait_timeout_policy",
             )
-        deadline_path = optional_text(self.deadline_input_path, "wait.deadline_input_path")
+        deadline_path = optional_text(
+            self.deadline_input_path, "wait.deadline_input_path"
+        )
         if kind == WaitKind.TIMER and deadline_path is None:
             raise HarnessValidationError(
                 "timer wait requires deadline_input_path",
@@ -356,7 +374,9 @@ class Wait:
         object.__setattr__(self, "wait_id", wait_id)
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "correlation", correlation)
-        object.__setattr__(self, "signal_type", required_text(self.signal_type, "wait.signal_type"))
+        object.__setattr__(
+            self, "signal_type", required_text(self.signal_type, "wait.signal_type")
+        )
         object.__setattr__(
             self,
             "signal_version",
@@ -414,7 +434,9 @@ class CompensationBinding:
         object.__setattr__(
             self,
             "compensation_step_id",
-            required_text(self.compensation_step_id, "compensation.compensation_step_id"),
+            required_text(
+                self.compensation_step_id, "compensation.compensation_step_id"
+            ),
         )
         object.__setattr__(
             self,
@@ -429,7 +451,9 @@ class CompensationBinding:
                 "compensation.activity_contract_ref",
             ),
         )
-        object.__setattr__(self, "scope", required_text(self.scope, "compensation.scope"))
+        object.__setattr__(
+            self, "scope", required_text(self.scope, "compensation.scope")
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -467,9 +491,12 @@ class HarnessGraphSpec:
                 code="invalid_compensation_contract",
             )
         output_keys = tuple(
-            required_text(item, "graph.terminal_output_keys") for item in self.terminal_output_keys
+            required_text(item, "graph.terminal_output_keys")
+            for item in self.terminal_output_keys
         )
-        input_keys = tuple(required_text(item, "graph.input_keys") for item in self.input_keys)
+        input_keys = tuple(
+            required_text(item, "graph.input_keys") for item in self.input_keys
+        )
         if len(set(input_keys)) != len(input_keys):
             raise HarnessValidationError(
                 "input_keys must not contain duplicates",
@@ -511,8 +538,10 @@ class HarnessGraphSpec:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "HarnessGraphSpec":
+        payload = dict(value)
+        payload.setdefault("input_keys", ())
         _exact_keys(
-            value,
+            payload,
             {
                 "schema_version",
                 "graph_id",
@@ -524,17 +553,25 @@ class HarnessGraphSpec:
             },
             "graph",
         )
-        raw_compensations = _array(value["compensations"], "graph.compensations")
+        raw_compensations = _array(
+            payload["compensations"],
+            "graph.compensations",
+        )
         return cls(
-            schema_version=value["schema_version"],
-            graph_id=value["graph_id"],
-            root=expression_from_dict(value["root"]),
-            compensations=tuple(_compensation_from_dict(item) for item in raw_compensations),
-            input_keys=tuple(_array(value["input_keys"], "graph.input_keys")),
-            terminal_output_keys=tuple(
-                _array(value["terminal_output_keys"], "graph.terminal_output_keys")
+            schema_version=payload["schema_version"],
+            graph_id=payload["graph_id"],
+            root=expression_from_dict(payload["root"]),
+            compensations=tuple(
+                _compensation_from_dict(item) for item in raw_compensations
             ),
-            metadata=value["metadata"],
+            input_keys=tuple(_array(payload["input_keys"], "graph.input_keys")),
+            terminal_output_keys=tuple(
+                _array(
+                    payload["terminal_output_keys"],
+                    "graph.terminal_output_keys",
+                )
+            ),
+            metadata=payload["metadata"],
         )
 
 
@@ -592,7 +629,15 @@ def expression_from_dict(value: Mapping[str, Any]) -> HarnessGraphExpression:
     if kind == "bounded_loop":
         _exact_keys(
             value,
-            {"kind", "loop_id", "body", "condition", "max_iterations", "exit", "exhaustion"},
+            {
+                "kind",
+                "loop_id",
+                "body",
+                "condition",
+                "max_iterations",
+                "exit",
+                "exhaustion",
+            },
             "bounded_loop expression",
         )
         return BoundedLoop(
@@ -633,7 +678,9 @@ def expression_from_dict(value: Mapping[str, Any]) -> HarnessGraphExpression:
             signal_version=value["signal_version"],
             tenant_scope_path=value["tenant_scope_path"],
             identity_scope_path=value["identity_scope_path"],
-            timeout_policy=None if timeout is None else _wait_timeout_from_dict(timeout),
+            timeout_policy=None
+            if timeout is None
+            else _wait_timeout_from_dict(timeout),
             deadline_input_path=value["deadline_input_path"],
         )
     raise HarnessValidationError(
@@ -646,7 +693,14 @@ def expression_from_dict(value: Mapping[str, Any]) -> HarnessGraphExpression:
 def _choice_branch_from_dict(value: Mapping[str, Any]) -> ChoiceBranch:
     _exact_keys(
         value,
-        {"branch_id", "child", "priority", "condition", "is_default", "output_namespace"},
+        {
+            "branch_id",
+            "child",
+            "priority",
+            "condition",
+            "is_default",
+            "output_namespace",
+        },
         "choice branch",
     )
     return ChoiceBranch(
@@ -654,7 +708,9 @@ def _choice_branch_from_dict(value: Mapping[str, Any]) -> ChoiceBranch:
         child=expression_from_dict(value["child"]),
         priority=value["priority"],
         condition=(
-            None if value["condition"] is None else condition_from_dict(value["condition"])
+            None
+            if value["condition"] is None
+            else condition_from_dict(value["condition"])
         ),
         is_default=value["is_default"],
         output_namespace=value["output_namespace"],
@@ -672,7 +728,9 @@ def _parallel_branch_from_dict(value: Mapping[str, Any]) -> ParallelBranch:
 
 def _wait_timeout_from_dict(value: Mapping[str, Any]) -> WaitTimeoutPolicy:
     _exact_keys(value, {"action", "target_node_id"}, "wait timeout")
-    return WaitTimeoutPolicy(action=value["action"], target_node_id=value["target_node_id"])
+    return WaitTimeoutPolicy(
+        action=value["action"], target_node_id=value["target_node_id"]
+    )
 
 
 def _compensation_from_dict(value: Mapping[str, Any]) -> CompensationBinding:
@@ -699,7 +757,10 @@ def _compensation_from_dict(value: Mapping[str, Any]) -> CompensationBinding:
 
 
 def _expression(value: Any, field_name: str) -> HarnessGraphExpression:
-    if not isinstance(value, StepRef | Sequence | Choice | ParallelAll | ParallelAny | BoundedLoop | Wait):
+    if not isinstance(
+        value,
+        StepRef | Sequence | Choice | ParallelAll | ParallelAny | BoundedLoop | Wait,
+    ):
         raise HarnessValidationError(
             f"{field_name} must be a graph expression",
             code="invalid_graph_expression",
@@ -730,7 +791,9 @@ def _parallel_branches(
     field_name: str,
 ) -> tuple[ParallelBranch, ...]:
     branches = tuple(values)
-    if not branches or not all(isinstance(branch, ParallelBranch) for branch in branches):
+    if not branches or not all(
+        isinstance(branch, ParallelBranch) for branch in branches
+    ):
         raise HarnessValidationError(
             f"{field_name} must contain ParallelBranch values",
             code="invalid_parallel_branches",
@@ -743,7 +806,9 @@ def _is_condition(value: Any) -> bool:
 
 
 def _array(value: Any, field_name: str) -> tuple[Any, ...]:
-    if not isinstance(value, SequenceCollection) or isinstance(value, (str, bytes, bytearray)):
+    if not isinstance(value, SequenceCollection) or isinstance(
+        value, (str, bytes, bytearray)
+    ):
         raise HarnessValidationError(
             f"{field_name} must be an array",
             code="invalid_graph_contract",

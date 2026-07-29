@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.workflow.graph import (
+    HarnessContractKind,
     HarnessContractReference,
     HarnessControlNode,
     HarnessExecutableNode,
@@ -53,7 +54,9 @@ class HarnessGraphRegistrySnapshot:
         return {
             "references": [reference.to_dict() for reference in self.references],
             "parallel_safe_activity_refs": list(self.parallel_safe_activity_refs),
-            "compensation_safe_activity_refs": list(self.compensation_safe_activity_refs),
+            "compensation_safe_activity_refs": list(
+                self.compensation_safe_activity_refs
+            ),
         }
 
 
@@ -63,6 +66,19 @@ def graph_contract_references(
     references: set[HarnessContractReference] = {graph.workflow_ref}
     if graph.terminal_policy_ref is not None:
         references.add(graph.terminal_policy_ref)
+    if graph.terminal_policy is not None:
+        policy = graph.terminal_policy
+        references.add(
+            HarnessContractReference(
+                HarnessContractKind.SIDE_EFFECT,
+                policy.handler.handler_id,
+                policy.handler.version,
+            )
+        )
+        references.update(
+            _exact_contract_reference(HarnessContractKind.GATE, reference)
+            for reference in policy.inherited_gate_refs
+        )
     for node in graph.nodes:
         if isinstance(node, HarnessExecutableNode):
             references.update(
@@ -111,7 +127,10 @@ def validate_registry(
         safe = set(registry.parallel_safe_activity_refs)
         parallel_node_ids = _parallel_executable_node_ids(graph)
         for node in graph.nodes:
-            if not isinstance(node, HarnessExecutableNode) or node.node_id not in parallel_node_ids:
+            if (
+                not isinstance(node, HarnessExecutableNode)
+                or node.node_id not in parallel_node_ids
+            ):
                 continue
             if node.activity_ref.exact_ref in safe:
                 continue
@@ -151,6 +170,20 @@ def _stable_text_tuple(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(sorted(set(normalized_values)))
 
 
+def _exact_contract_reference(
+    kind: HarnessContractKind,
+    value: str,
+) -> HarnessContractReference:
+    if not isinstance(value, str) or value.count("@") != 1:
+        raise HarnessValidationError(
+            "graph runtime reference must use exact '<id>@<version>' form",
+            code="graph_inexact_version_reference",
+            details={"contract_kind": kind.value, "reference": str(value)},
+        )
+    contract_id, version = value.rsplit("@", maxsplit=1)
+    return HarnessContractReference(kind, contract_id, version)
+
+
 def _parallel_executable_node_ids(graph: NormalizedHarnessGraph) -> set[str]:
     nodes_by_id = {node.node_id: node for node in graph.nodes}
     joins_by_fork = {
@@ -158,7 +191,8 @@ def _parallel_executable_node_ids(graph: NormalizedHarnessGraph) -> set[str]:
         for node in graph.nodes
         if isinstance(node, HarnessControlNode)
         and node.join is not None
-        and node.node_kind in {HarnessGraphNodeKind.JOIN_ALL, HarnessGraphNodeKind.JOIN_ANY}
+        and node.node_kind
+        in {HarnessGraphNodeKind.JOIN_ALL, HarnessGraphNodeKind.JOIN_ANY}
     }
     adjacency: dict[str, list[str]] = defaultdict(list)
     for edge in graph.edges:

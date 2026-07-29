@@ -33,8 +33,19 @@ _WAIT_VALUE_PATH_PREFIXES = (
 )
 
 
-def validate_semantics(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagnostic, ...]:
+def validate_semantics(
+    graph: NormalizedHarnessGraph,
+) -> tuple[HarnessGraphDiagnostic, ...]:
     diagnostics: list[HarnessGraphDiagnostic] = []
+    if graph.terminal_policy_ref is not None and graph.terminal_policy is None:
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "terminal_policy_snapshot_missing",
+                "terminal policy reference lacks the immutable policy snapshot required for execution",
+                details={"reference": graph.terminal_policy_ref.exact_ref},
+            )
+        )
     nodes_by_id = {node.node_id: node for node in graph.nodes}
     diagnostics.extend(_validate_controls(graph, nodes_by_id))
     diagnostics.extend(_validate_edges(graph))
@@ -53,7 +64,10 @@ def _validate_controls(
             continue
         if node.node_kind == HarnessGraphNodeKind.CHOICE:
             diagnostics.extend(_validate_choice(node))
-        if node.node_kind in {HarnessGraphNodeKind.FORK_ALL, HarnessGraphNodeKind.FORK_ANY}:
+        if node.node_kind in {
+            HarnessGraphNodeKind.FORK_ALL,
+            HarnessGraphNodeKind.FORK_ANY,
+        }:
             diagnostics.extend(_validate_parallel_fork(node))
         if node.node_kind == HarnessGraphNodeKind.JOIN_ALL and node.join is not None:
             if node.join.failure_policy not in {"fail_fast", "wait_all", "compensate"}:
@@ -97,10 +111,15 @@ def _validate_controls(
                         details={"max_iterations": node.loop.max_iterations},
                     )
                 )
-            diagnostics.extend(_validate_condition(node.loop.condition, node_id=node.node_id))
+            diagnostics.extend(
+                _validate_condition(node.loop.condition, node_id=node.node_id)
+            )
         if node.node_kind == HarnessGraphNodeKind.WAIT and node.wait is not None:
             diagnostics.extend(_validate_wait(node))
-            if node.wait.kind == WaitKind.TIMER and node.wait.deadline_input_path is None:
+            if (
+                node.wait.kind == WaitKind.TIMER
+                and node.wait.deadline_input_path is None
+            ):
                 diagnostics.append(
                     diagnostic(
                         HarnessGraphValidationPhase.SEMANTIC,
@@ -217,15 +236,19 @@ def _correlation_sources(
 
 
 def _is_structural_path(path: str, prefixes: tuple[str, ...]) -> bool:
-    if path != path.strip() or path.startswith(".") or path.endswith(".") or ".." in path:
+    if (
+        path != path.strip()
+        or path.startswith(".")
+        or path.endswith(".")
+        or ".." in path
+    ):
         return False
     for prefix in prefixes:
         if not path.startswith(prefix):
             continue
         suffix = path.removeprefix(prefix)
         return bool(suffix) and all(
-            segment and segment == segment.strip()
-            for segment in suffix.split(".")
+            segment and segment == segment.strip() for segment in suffix.split(".")
         )
     return False
 
@@ -287,11 +310,15 @@ def _validate_choice(node: HarnessControlNode) -> tuple[HarnessGraphDiagnostic, 
                 )
             )
         if branch.condition is not None:
-            diagnostics.extend(_validate_condition(branch.condition, node_id=node.node_id))
+            diagnostics.extend(
+                _validate_condition(branch.condition, node_id=node.node_id)
+            )
     return tuple(diagnostics)
 
 
-def _validate_parallel_fork(node: HarnessControlNode) -> tuple[HarnessGraphDiagnostic, ...]:
+def _validate_parallel_fork(
+    node: HarnessControlNode,
+) -> tuple[HarnessGraphDiagnostic, ...]:
     diagnostics: list[HarnessGraphDiagnostic] = []
     branch_ids = Counter(branch.branch_id for branch in node.branches)
     namespaces = Counter(branch.output_namespace for branch in node.branches)
@@ -318,7 +345,9 @@ def _validate_parallel_fork(node: HarnessControlNode) -> tuple[HarnessGraphDiagn
     return tuple(diagnostics)
 
 
-def _validate_edges(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagnostic, ...]:
+def _validate_edges(
+    graph: NormalizedHarnessGraph,
+) -> tuple[HarnessGraphDiagnostic, ...]:
     diagnostics: list[HarnessGraphDiagnostic] = []
     for edge in graph.edges:
         if edge.edge_kind == HarnessGraphEdgeKind.CHOICE and edge.condition is None:
@@ -330,7 +359,10 @@ def _validate_edges(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagnost
                     edge_id=edge.edge_id,
                 )
             )
-        if edge.edge_kind == HarnessGraphEdgeKind.DEFAULT and edge.condition is not None:
+        if (
+            edge.edge_kind == HarnessGraphEdgeKind.DEFAULT
+            and edge.condition is not None
+        ):
             diagnostics.append(
                 diagnostic(
                     HarnessGraphValidationPhase.SEMANTIC,
@@ -340,13 +372,19 @@ def _validate_edges(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagnost
                 )
             )
         if edge.condition is not None:
-            diagnostics.extend(_validate_condition(edge.condition, edge_id=edge.edge_id))
-        if edge.edge_kind in {
-            HarnessGraphEdgeKind.FORK_BRANCH,
-            HarnessGraphEdgeKind.JOIN,
-            HarnessGraphEdgeKind.CHOICE,
-            HarnessGraphEdgeKind.DEFAULT,
-        } and edge.branch_id is None:
+            diagnostics.extend(
+                _validate_condition(edge.condition, edge_id=edge.edge_id)
+            )
+        if (
+            edge.edge_kind
+            in {
+                HarnessGraphEdgeKind.FORK_BRANCH,
+                HarnessGraphEdgeKind.JOIN,
+                HarnessGraphEdgeKind.CHOICE,
+                HarnessGraphEdgeKind.DEFAULT,
+            }
+            and edge.branch_id is None
+        ):
             diagnostics.append(
                 diagnostic(
                     HarnessGraphValidationPhase.SEMANTIC,
@@ -355,12 +393,16 @@ def _validate_edges(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagnost
                     edge_id=edge.edge_id,
                 )
             )
-        if edge.edge_kind in {
-            HarnessGraphEdgeKind.LOOP_BODY,
-            HarnessGraphEdgeKind.LOOP_BACK,
-            HarnessGraphEdgeKind.LOOP_EXIT,
-            HarnessGraphEdgeKind.LOOP_EXHAUSTED,
-        } and edge.loop_id is None:
+        if (
+            edge.edge_kind
+            in {
+                HarnessGraphEdgeKind.LOOP_BODY,
+                HarnessGraphEdgeKind.LOOP_BACK,
+                HarnessGraphEdgeKind.LOOP_EXIT,
+                HarnessGraphEdgeKind.LOOP_EXHAUSTED,
+            }
+            and edge.loop_id is None
+        ):
             diagnostics.append(
                 diagnostic(
                     HarnessGraphValidationPhase.SEMANTIC,
@@ -395,7 +437,10 @@ def _validate_compensations(
     for reference in graph.compensation_refs:
         origin = nodes_by_id.get(reference.for_node_id)
         compensation = nodes_by_id.get(reference.compensation_node_id)
-        if not isinstance(origin, HarnessExecutableNode) or origin.side_effect_ref is None:
+        if (
+            not isinstance(origin, HarnessExecutableNode)
+            or origin.side_effect_ref is None
+        ):
             diagnostics.append(
                 diagnostic(
                     HarnessGraphValidationPhase.SEMANTIC,
@@ -477,7 +522,9 @@ def _validate_compensations(
                     "compensation edge must resolve to exactly one binding",
                     edge_id=edge.edge_id,
                     details={
-                        "binding_ids": sorted(reference.binding_id for reference in matches),
+                        "binding_ids": sorted(
+                            reference.binding_id for reference in matches
+                        ),
                     },
                 )
             )
@@ -587,7 +634,9 @@ def _validate_condition(
         return tuple(diagnostics)
     if isinstance(condition, ConditionAll | ConditionAny):
         for child in condition.conditions:
-            diagnostics.extend(_validate_condition(child, node_id=node_id, edge_id=edge_id))
+            diagnostics.extend(
+                _validate_condition(child, node_id=node_id, edge_id=edge_id)
+            )
     return tuple(diagnostics)
 
 

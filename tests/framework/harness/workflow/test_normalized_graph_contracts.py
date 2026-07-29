@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
+from framework.harness.workflow.canonical import canonical_checksum
 from framework.harness.workflow.graph import (
     HarnessContractKind,
     HarnessContractReference,
@@ -28,7 +30,9 @@ from framework.harness.workflow.versioning import (
 )
 
 
-def test_normalized_graph_round_trip_and_checksum_are_stable_under_input_permutation() -> None:
+def test_normalized_graph_round_trip_and_checksum_are_stable_under_input_permutation() -> (
+    None
+):
     collect = _executable("collect", 0, worker_version="1")
     finish = HarnessControlNode(
         node_id="finish",
@@ -113,6 +117,44 @@ def test_supplied_checksum_mismatch_and_simulated_collision_fail_closed() -> Non
     assert captured.value.code == "graph_checksum_collision"
 
 
+def test_legacy_normalized_graph_shape_is_verified_before_bounded_upcast() -> None:
+    graph = _graph(
+        nodes=(
+            _executable("collect", 0, worker_version="1"),
+            HarnessControlNode("finish", "terminal", 1),
+        ),
+        edges=(_edge(),),
+    )
+    payload = graph.to_dict()
+    payload.pop("input_keys")
+    payload.pop("terminal_output_keys")
+    payload.pop("terminal_policy")
+    payload["checksum"] = canonical_checksum(
+        {key: value for key, value in payload.items() if key != "checksum"}
+    )
+
+    restored = NormalizedHarnessGraph.from_dict(payload)
+
+    assert restored.input_keys == ()
+    assert restored.terminal_output_keys == ()
+    assert restored.terminal_policy is None
+    assert restored.checksum != payload["checksum"]
+
+
+def test_terminal_policy_handler_and_inherited_gates_participate_in_checksum() -> None:
+    base = _graph_with_terminal_policy(_terminal_policy())
+    changed_handler = _graph_with_terminal_policy(
+        _terminal_policy(handler="publication.commit@3")
+    )
+    changed_gate = _graph_with_terminal_policy(
+        _terminal_policy(inherited_gate_refs=("quality@2",))
+    )
+
+    assert base.checksum != changed_handler.checksum
+    assert base.checksum != changed_gate.checksum
+    assert NormalizedHarnessGraph.from_dict(base.to_dict()) == base
+
+
 def test_schema_registry_reads_legacy_but_never_executes_it() -> None:
     registry = DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY
 
@@ -122,7 +164,9 @@ def test_schema_registry_reads_legacy_but_never_executes_it() -> None:
     )
     assert LEGACY_STATE_SCHEMA in state_registration.legacy_upcast_sources
     with pytest.raises(HarnessValidationError) as captured:
-        registry.require_executable(HarnessGraphContractKind.GRAPH_STATE, LEGACY_STATE_SCHEMA)
+        registry.require_executable(
+            HarnessGraphContractKind.GRAPH_STATE, LEGACY_STATE_SCHEMA
+        )
     assert captured.value.code == "graph_schema_not_executable"
 
     graph_registration = registry.require_executable(
@@ -131,7 +175,9 @@ def test_schema_registry_reads_legacy_but_never_executes_it() -> None:
     )
     assert graph_registration.writer_schema == NORMALIZED_HARNESS_GRAPH_SCHEMA
     assert registry.to_dict()["runtime_version"] == HARNESS_GRAPH_RUNTIME_VERSION
-    assert registry.registration_for("graph_dsl").writer_schema == HARNESS_GRAPH_DSL_SCHEMA
+    assert (
+        registry.registration_for("graph_dsl").writer_schema == HARNESS_GRAPH_DSL_SCHEMA
+    )
 
 
 def test_code_schema_registry_matches_locked_openspec_evidence() -> None:
@@ -158,10 +204,9 @@ def test_code_schema_registry_matches_locked_openspec_evidence() -> None:
     assert {
         item["event_type"]: item["data_schema"] for item in evidence["graph_events"]
     } == dict(HARNESS_GRAPH_EVENT_SCHEMAS)
-    assert (
-        DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.registration_for("graph_event").writer_schemas
-        == tuple(HARNESS_GRAPH_EVENT_SCHEMAS.values())
-    )
+    assert DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.registration_for(
+        "graph_event"
+    ).writer_schemas == tuple(HARNESS_GRAPH_EVENT_SCHEMAS.values())
 
 
 def test_unknown_schema_and_inexact_reference_fail_closed() -> None:
@@ -189,13 +234,58 @@ def _graph(*, nodes, edges) -> NormalizedHarnessGraph:
     )
 
 
-def _executable(node_id: str, order: int, *, worker_version: str) -> HarnessExecutableNode:
+def _graph_with_terminal_policy(
+    policy: HarnessTerminalSideEffectPolicy,
+) -> NormalizedHarnessGraph:
+    return NormalizedHarnessGraph(
+        graph_id="research-terminal-graph",
+        workflow_id="research",
+        workflow_version="1",
+        workflow_ref=_ref(HarnessContractKind.WORKFLOW, "research", "1"),
+        nodes=(
+            _executable("collect", 0, worker_version="1"),
+            HarnessControlNode("finish", "terminal", 1),
+        ),
+        edges=(_edge(),),
+        entry_node_ids=("collect",),
+        terminal_node_ids=("finish",),
+        terminal_policy_ref=_ref(
+            HarnessContractKind.TERMINAL_POLICY,
+            policy.policy_id,
+            policy.version,
+        ),
+        terminal_policy=policy,
+    )
+
+
+def _terminal_policy(
+    *,
+    handler: str = "publication.commit@2",
+    inherited_gate_refs: tuple[str, ...] = ("quality@1",),
+) -> HarnessTerminalSideEffectPolicy:
+    return HarnessTerminalSideEffectPolicy(
+        policy_id="publication",
+        version="4",
+        handler=handler,
+        kind="publication",
+        requires_approval=False,
+        retry_limit=1,
+        not_required_evidence_ref="sha256:" + "a" * 64,
+        inherited_gate_refs=inherited_gate_refs,
+    )
+
+
+def _executable(
+    node_id: str, order: int, *, worker_version: str
+) -> HarnessExecutableNode:
     return HarnessExecutableNode(
         node_id=node_id,
         step_id=node_id,
         declaration_order=order,
         step_ref=_ref(HarnessContractKind.STEP, f"research.{node_id}", "1"),
-        worker_ref=_ref(HarnessContractKind.WORKER, f"research.{node_id}", worker_version),
+        worker_ref=_ref(
+            HarnessContractKind.WORKER, f"research.{node_id}", worker_version
+        ),
         activity_ref=_ref(HarnessContractKind.ACTIVITY, "harness.worker", "1"),
         gate_refs=(_ref(HarnessContractKind.GATE, "candidate-schema", "1"),),
         input_keys=("paper",),

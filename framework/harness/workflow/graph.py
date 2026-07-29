@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Any, TypeAlias
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.side_effects.models import HarnessTerminalSideEffectPolicy
 from framework.harness.workflow.canonical import (
     canonical_checksum,
     freeze_json,
@@ -81,8 +82,12 @@ class HarnessContractReference:
     version: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "contract_kind", HarnessContractKind(self.contract_kind))
-        object.__setattr__(self, "contract_id", required_text(self.contract_id, "contract_ref.id"))
+        object.__setattr__(
+            self, "contract_kind", HarnessContractKind(self.contract_kind)
+        )
+        object.__setattr__(
+            self, "contract_id", required_text(self.contract_id, "contract_ref.id")
+        )
         version = required_text(self.version, "contract_ref.version")
         if version.lower() in {"current", "default", "latest", "stable"}:
             raise HarnessValidationError(
@@ -105,7 +110,9 @@ class HarnessContractReference:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "HarnessContractReference":
-        _exact_keys(value, {"contract_kind", "contract_id", "version"}, "contract reference")
+        _exact_keys(
+            value, {"contract_kind", "contract_id", "version"}, "contract reference"
+        )
         return cls(
             contract_kind=value["contract_kind"],
             contract_id=value["contract_id"],
@@ -124,16 +131,22 @@ class HarnessBranch:
     is_default: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "branch_id", required_text(self.branch_id, "branch.branch_id"))
+        object.__setattr__(
+            self, "branch_id", required_text(self.branch_id, "branch.branch_id")
+        )
         object.__setattr__(
             self,
             "entry_node_ids",
-            _text_tuple(self.entry_node_ids, "branch.entry_node_ids", allow_empty=False),
+            _text_tuple(
+                self.entry_node_ids, "branch.entry_node_ids", allow_empty=False
+            ),
         )
         object.__setattr__(
             self,
             "terminal_node_ids",
-            _text_tuple(self.terminal_node_ids, "branch.terminal_node_ids", allow_empty=False),
+            _text_tuple(
+                self.terminal_node_ids, "branch.terminal_node_ids", allow_empty=False
+            ),
         )
         if not isinstance(self.priority, int) or isinstance(self.priority, bool):
             raise HarnessValidationError(
@@ -181,14 +194,18 @@ class HarnessBranch:
         )
         return cls(
             branch_id=value["branch_id"],
-            entry_node_ids=tuple(_array(value["entry_node_ids"], "branch.entry_node_ids")),
+            entry_node_ids=tuple(
+                _array(value["entry_node_ids"], "branch.entry_node_ids")
+            ),
             terminal_node_ids=tuple(
                 _array(value["terminal_node_ids"], "branch.terminal_node_ids")
             ),
             priority=value["priority"],
             output_namespace=value["output_namespace"],
             condition=(
-                None if value["condition"] is None else condition_from_dict(value["condition"])
+                None
+                if value["condition"] is None
+                else condition_from_dict(value["condition"])
             ),
             is_default=value["is_default"],
         )
@@ -211,7 +228,9 @@ class HarnessJoinContract:
         object.__setattr__(
             self,
             "required_branch_ids",
-            _text_tuple(self.required_branch_ids, "join.required_branch_ids", allow_empty=False),
+            _text_tuple(
+                self.required_branch_ids, "join.required_branch_ids", allow_empty=False
+            ),
         )
         object.__setattr__(
             self,
@@ -224,7 +243,9 @@ class HarnessJoinContract:
             optional_text(self.winner_policy, "join.winner_policy"),
         )
         if self.merge_ref is not None:
-            _require_reference_kind(self.merge_ref, HarnessContractKind.MERGE, "join.merge_ref")
+            _require_reference_kind(
+                self.merge_ref, HarnessContractKind.MERGE, "join.merge_ref"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -239,7 +260,13 @@ class HarnessJoinContract:
     def from_dict(cls, value: Mapping[str, Any]) -> "HarnessJoinContract":
         _exact_keys(
             value,
-            {"fork_node_id", "required_branch_ids", "failure_policy", "winner_policy", "merge_ref"},
+            {
+                "fork_node_id",
+                "required_branch_ids",
+                "failure_policy",
+                "winner_policy",
+                "merge_ref",
+            },
             "join contract",
         )
         return cls(
@@ -270,7 +297,9 @@ class HarnessLoopContract:
         object.__setattr__(
             self,
             "body_entry_node_ids",
-            _text_tuple(self.body_entry_node_ids, "loop.body_entry_node_ids", allow_empty=False),
+            _text_tuple(
+                self.body_entry_node_ids, "loop.body_entry_node_ids", allow_empty=False
+            ),
         )
         object.__setattr__(
             self,
@@ -286,7 +315,9 @@ class HarnessLoopContract:
                 "loop contract condition must be a HarnessCondition",
                 code="invalid_loop_condition",
             )
-        if not isinstance(self.max_iterations, int) or isinstance(self.max_iterations, bool):
+        if not isinstance(self.max_iterations, int) or isinstance(
+            self.max_iterations, bool
+        ):
             raise HarnessValidationError(
                 "loop max_iterations must be an integer",
                 code="invalid_loop_bound",
@@ -368,7 +399,9 @@ class HarnessWaitContract:
                 code="wait_correlation_missing",
             )
         object.__setattr__(self, "correlation", correlation)
-        object.__setattr__(self, "signal_type", required_text(self.signal_type, "wait.signal_type"))
+        object.__setattr__(
+            self, "signal_type", required_text(self.signal_type, "wait.signal_type")
+        )
         object.__setattr__(
             self,
             "signal_version",
@@ -467,7 +500,9 @@ class HarnessMergeContract:
             "merge.input_branch_ids",
             allow_empty=False,
         )
-        output_keys = _text_tuple(self.output_keys, "merge.output_keys", allow_empty=False)
+        output_keys = _text_tuple(
+            self.output_keys, "merge.output_keys", allow_empty=False
+        )
         aggregation_node_id = optional_text(
             self.aggregation_node_id,
             "merge.aggregation_node_id",
@@ -478,7 +513,9 @@ class HarnessMergeContract:
                     "pure merge requires merge_ref and forbids aggregation_node_id",
                     code="invalid_merge_contract",
                 )
-            _require_reference_kind(self.merge_ref, HarnessContractKind.MERGE, "merge.merge_ref")
+            _require_reference_kind(
+                self.merge_ref, HarnessContractKind.MERGE, "merge.merge_ref"
+            )
         elif self.merge_ref is not None or aggregation_node_id is None:
             raise HarnessValidationError(
                 "aggregation-step merge requires aggregation_node_id and forbids merge_ref",
@@ -549,7 +586,9 @@ class HarnessCompensationReference:
         object.__setattr__(
             self,
             "compensation_node_id",
-            required_text(self.compensation_node_id, "compensation.compensation_node_id"),
+            required_text(
+                self.compensation_node_id, "compensation.compensation_node_id"
+            ),
         )
         _require_reference_kind(
             self.handler_ref,
@@ -561,7 +600,9 @@ class HarnessCompensationReference:
             HarnessContractKind.ACTIVITY,
             "compensation.activity_ref",
         )
-        object.__setattr__(self, "scope", required_text(self.scope, "compensation.scope"))
+        object.__setattr__(
+            self, "scope", required_text(self.scope, "compensation.scope")
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -619,19 +660,29 @@ class HarnessExecutableNode:
         object.__setattr__(self, "node_id", required_text(self.node_id, "node.node_id"))
         object.__setattr__(self, "step_id", required_text(self.step_id, "node.step_id"))
         _declaration_order(self.declaration_order)
-        _require_reference_kind(self.step_ref, HarnessContractKind.STEP, "node.step_ref")
-        _require_reference_kind(self.worker_ref, HarnessContractKind.WORKER, "node.worker_ref")
-        _require_reference_kind(self.activity_ref, HarnessContractKind.ACTIVITY, "node.activity_ref")
+        _require_reference_kind(
+            self.step_ref, HarnessContractKind.STEP, "node.step_ref"
+        )
+        _require_reference_kind(
+            self.worker_ref, HarnessContractKind.WORKER, "node.worker_ref"
+        )
+        _require_reference_kind(
+            self.activity_ref, HarnessContractKind.ACTIVITY, "node.activity_ref"
+        )
         gate_refs = tuple(self.gate_refs)
         for reference in gate_refs:
-            _require_reference_kind(reference, HarnessContractKind.GATE, "node.gate_refs")
+            _require_reference_kind(
+                reference, HarnessContractKind.GATE, "node.gate_refs"
+            )
         if self.side_effect_ref is not None:
             _require_reference_kind(
                 self.side_effect_ref,
                 HarnessContractKind.SIDE_EFFECT,
                 "node.side_effect_ref",
             )
-        object.__setattr__(self, "gate_refs", tuple(sorted(gate_refs, key=lambda ref: ref.exact_ref)))
+        object.__setattr__(
+            self, "gate_refs", tuple(sorted(gate_refs, key=lambda ref: ref.exact_ref))
+        )
         object.__setattr__(
             self,
             "input_keys",
@@ -744,7 +795,9 @@ class HarnessControlNode:
         object.__setattr__(
             self,
             "branches",
-            tuple(sorted(branches, key=lambda branch: (branch.priority, branch.branch_id))),
+            tuple(
+                sorted(branches, key=lambda branch: (branch.priority, branch.branch_id))
+            ),
         )
         object.__setattr__(self, "metadata", metadata)
 
@@ -778,8 +831,12 @@ class HarnessGraphEdge:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "edge_id", required_text(self.edge_id, "edge.edge_id"))
-        object.__setattr__(self, "source_id", required_text(self.source_id, "edge.source_id"))
-        object.__setattr__(self, "target_id", required_text(self.target_id, "edge.target_id"))
+        object.__setattr__(
+            self, "source_id", required_text(self.source_id, "edge.source_id")
+        )
+        object.__setattr__(
+            self, "target_id", required_text(self.target_id, "edge.target_id")
+        )
         object.__setattr__(self, "edge_kind", HarnessGraphEdgeKind(self.edge_kind))
         if not isinstance(self.priority, int) or isinstance(self.priority, bool):
             raise HarnessValidationError(
@@ -793,7 +850,9 @@ class HarnessGraphEdge:
                 code="invalid_edge_condition",
                 details={"edge_id": self.edge_id},
             )
-        object.__setattr__(self, "branch_id", optional_text(self.branch_id, "edge.branch_id"))
+        object.__setattr__(
+            self, "branch_id", optional_text(self.branch_id, "edge.branch_id")
+        )
         object.__setattr__(self, "loop_id", optional_text(self.loop_id, "edge.loop_id"))
 
     def to_dict(self) -> dict[str, Any]:
@@ -831,7 +890,9 @@ class HarnessGraphEdge:
             edge_kind=value["edge_kind"],
             priority=value["priority"],
             condition=(
-                None if value["condition"] is None else condition_from_dict(value["condition"])
+                None
+                if value["condition"] is None
+                else condition_from_dict(value["condition"])
             ),
             branch_id=value["branch_id"],
             loop_id=value["loop_id"],
@@ -852,6 +913,7 @@ class NormalizedHarnessGraph:
     terminal_output_keys: tuple[str, ...] = ()
     compensation_refs: tuple[HarnessCompensationReference, ...] = ()
     terminal_policy_ref: HarnessContractReference | None = None
+    terminal_policy: HarnessTerminalSideEffectPolicy | None = None
     schema_version: str = NORMALIZED_HARNESS_GRAPH_SCHEMA
     compiler_version: str = HARNESS_GRAPH_COMPILER_VERSION
     condition_policy_version: str = HARNESS_CONDITION_POLICY_VERSION
@@ -860,19 +922,27 @@ class NormalizedHarnessGraph:
     def __post_init__(self) -> None:
         graph_id = required_text(self.graph_id, "graph.graph_id")
         workflow_id = required_text(self.workflow_id, "graph.workflow_id")
-        workflow_version = required_text(self.workflow_version, "graph.workflow_version")
+        workflow_version = required_text(
+            self.workflow_version, "graph.workflow_version"
+        )
         _require_reference_kind(
             self.workflow_ref,
             HarnessContractKind.WORKFLOW,
             "graph.workflow_ref",
         )
-        if self.workflow_ref.contract_id != workflow_id or self.workflow_ref.version != workflow_version:
+        if (
+            self.workflow_ref.contract_id != workflow_id
+            or self.workflow_ref.version != workflow_version
+        ):
             raise HarnessValidationError(
                 "workflow_ref must match workflow_id and workflow_version",
                 code="graph_workflow_reference_mismatch",
             )
         nodes = tuple(self.nodes)
-        if not nodes or not all(isinstance(node, HarnessExecutableNode | HarnessControlNode) for node in nodes):
+        if not nodes or not all(
+            isinstance(node, HarnessExecutableNode | HarnessControlNode)
+            for node in nodes
+        ):
             raise HarnessValidationError(
                 "normalized graph must contain graph nodes",
                 code="invalid_normalized_graph_nodes",
@@ -898,6 +968,33 @@ class NormalizedHarnessGraph:
                 HarnessContractKind.TERMINAL_POLICY,
                 "graph.terminal_policy_ref",
             )
+        if self.terminal_policy is not None:
+            if not isinstance(
+                self.terminal_policy,
+                HarnessTerminalSideEffectPolicy,
+            ):
+                raise HarnessValidationError(
+                    "normalized graph terminal policy is invalid",
+                    code="invalid_terminal_policy_contract",
+                )
+            expected_terminal_ref = HarnessContractReference(
+                HarnessContractKind.TERMINAL_POLICY,
+                self.terminal_policy.policy_id,
+                self.terminal_policy.version,
+            )
+            if self.terminal_policy_ref != expected_terminal_ref:
+                raise HarnessValidationError(
+                    "terminal policy snapshot does not match its exact reference",
+                    code="terminal_policy_reference_mismatch",
+                    details={
+                        "expected": expected_terminal_ref.exact_ref,
+                        "actual": (
+                            None
+                            if self.terminal_policy_ref is None
+                            else self.terminal_policy_ref.exact_ref
+                        ),
+                    },
+                )
         if self.schema_version != NORMALIZED_HARNESS_GRAPH_SCHEMA:
             raise HarnessValidationError(
                 "unsupported normalized graph schema",
@@ -914,9 +1011,13 @@ class NormalizedHarnessGraph:
             raise HarnessValidationError(
                 "unsupported graph condition policy version",
                 code="unsupported_condition_policy",
-                details={"condition_policy_version": str(self.condition_policy_version)},
+                details={
+                    "condition_policy_version": str(self.condition_policy_version)
+                },
             )
-        nodes = tuple(sorted(nodes, key=lambda node: (node.node_id, node.node_kind.value)))
+        nodes = tuple(
+            sorted(nodes, key=lambda node: (node.node_id, node.node_kind.value))
+        )
         edges = tuple(
             sorted(
                 edges,
@@ -940,7 +1041,13 @@ class NormalizedHarnessGraph:
         object.__setattr__(
             self,
             "entry_node_ids",
-            tuple(sorted(_text_tuple(self.entry_node_ids, "graph.entry_node_ids", allow_empty=False))),
+            tuple(
+                sorted(
+                    _text_tuple(
+                        self.entry_node_ids, "graph.entry_node_ids", allow_empty=False
+                    )
+                )
+            ),
         )
         object.__setattr__(
             self,
@@ -958,7 +1065,11 @@ class NormalizedHarnessGraph:
         object.__setattr__(
             self,
             "input_keys",
-            tuple(sorted(_text_tuple(self.input_keys, "graph.input_keys", allow_empty=True))),
+            tuple(
+                sorted(
+                    _text_tuple(self.input_keys, "graph.input_keys", allow_empty=True)
+                )
+            ),
         )
         object.__setattr__(
             self,
@@ -998,9 +1109,16 @@ class NormalizedHarnessGraph:
             "terminal_node_ids": list(self.terminal_node_ids),
             "input_keys": list(self.input_keys),
             "terminal_output_keys": list(self.terminal_output_keys),
-            "compensation_refs": [reference.to_dict() for reference in self.compensation_refs],
+            "compensation_refs": [
+                reference.to_dict() for reference in self.compensation_refs
+            ],
             "terminal_policy_ref": (
-                None if self.terminal_policy_ref is None else self.terminal_policy_ref.to_dict()
+                None
+                if self.terminal_policy_ref is None
+                else self.terminal_policy_ref.to_dict()
+            ),
+            "terminal_policy": (
+                None if self.terminal_policy is None else self.terminal_policy.to_dict()
             ),
         }
 
@@ -1009,67 +1127,113 @@ class NormalizedHarnessGraph:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "NormalizedHarnessGraph":
+        payload = dict(value)
+        expected_fields = {
+            "schema_version",
+            "compiler_version",
+            "condition_policy_version",
+            "graph_id",
+            "workflow_id",
+            "workflow_version",
+            "workflow_ref",
+            "nodes",
+            "edges",
+            "entry_node_ids",
+            "terminal_node_ids",
+            "input_keys",
+            "terminal_output_keys",
+            "compensation_refs",
+            "terminal_policy_ref",
+            "terminal_policy",
+            "checksum",
+        }
+        missing_fields = expected_fields.difference(payload)
+        legacy_missing_fields = (
+            {"terminal_policy"},
+            {"input_keys", "terminal_output_keys", "terminal_policy"},
+        )
+        if missing_fields in legacy_missing_fields:
+            _exact_keys(
+                payload,
+                expected_fields.difference(missing_fields),
+                "legacy normalized graph",
+            )
+            supplied_checksum = payload["checksum"]
+            legacy_projection = {
+                key: item for key, item in payload.items() if key != "checksum"
+            }
+            expected_checksum = canonical_checksum(legacy_projection)
+            if supplied_checksum != expected_checksum:
+                raise HarnessValidationError(
+                    "legacy normalized graph checksum does not match canonical content",
+                    code="graph_checksum_mismatch",
+                    details={
+                        "expected": expected_checksum,
+                        "actual": str(supplied_checksum),
+                    },
+                )
+            payload.setdefault("input_keys", ())
+            payload.setdefault("terminal_output_keys", ())
+            payload["terminal_policy"] = None
+            payload["checksum"] = None
         _exact_keys(
-            value,
-            {
-                "schema_version",
-                "compiler_version",
-                "condition_policy_version",
-                "graph_id",
-                "workflow_id",
-                "workflow_version",
-                "workflow_ref",
-                "nodes",
-                "edges",
-                "entry_node_ids",
-                "terminal_node_ids",
-                "input_keys",
-                "terminal_output_keys",
-                "compensation_refs",
-                "terminal_policy_ref",
-                "checksum",
-            },
+            payload,
+            expected_fields,
             "normalized graph",
         )
         return cls(
-            schema_version=value["schema_version"],
-            compiler_version=value["compiler_version"],
-            condition_policy_version=value["condition_policy_version"],
-            graph_id=value["graph_id"],
-            workflow_id=value["workflow_id"],
-            workflow_version=value["workflow_version"],
-            workflow_ref=HarnessContractReference.from_dict(value["workflow_ref"]),
+            schema_version=payload["schema_version"],
+            compiler_version=payload["compiler_version"],
+            condition_policy_version=payload["condition_policy_version"],
+            graph_id=payload["graph_id"],
+            workflow_id=payload["workflow_id"],
+            workflow_version=payload["workflow_version"],
+            workflow_ref=HarnessContractReference.from_dict(payload["workflow_ref"]),
             nodes=tuple(
                 graph_node_from_dict(item)
-                for item in _array(value["nodes"], "normalized_graph.nodes")
+                for item in _array(payload["nodes"], "normalized_graph.nodes")
             ),
             edges=tuple(
                 HarnessGraphEdge.from_dict(item)
-                for item in _array(value["edges"], "normalized_graph.edges")
+                for item in _array(payload["edges"], "normalized_graph.edges")
             ),
             entry_node_ids=tuple(
-                _array(value["entry_node_ids"], "normalized_graph.entry_node_ids")
+                _array(payload["entry_node_ids"], "normalized_graph.entry_node_ids")
             ),
             terminal_node_ids=tuple(
-                _array(value["terminal_node_ids"], "normalized_graph.terminal_node_ids")
+                _array(
+                    payload["terminal_node_ids"], "normalized_graph.terminal_node_ids"
+                )
             ),
-            input_keys=tuple(_array(value["input_keys"], "normalized_graph.input_keys")),
+            input_keys=tuple(
+                _array(payload["input_keys"], "normalized_graph.input_keys")
+            ),
             terminal_output_keys=tuple(
-                _array(value["terminal_output_keys"], "normalized_graph.terminal_output_keys")
+                _array(
+                    payload["terminal_output_keys"],
+                    "normalized_graph.terminal_output_keys",
+                )
             ),
             compensation_refs=tuple(
                 HarnessCompensationReference.from_dict(item)
                 for item in _array(
-                    value["compensation_refs"],
+                    payload["compensation_refs"],
                     "normalized_graph.compensation_refs",
                 )
             ),
             terminal_policy_ref=(
                 None
-                if value["terminal_policy_ref"] is None
-                else HarnessContractReference.from_dict(value["terminal_policy_ref"])
+                if payload["terminal_policy_ref"] is None
+                else HarnessContractReference.from_dict(payload["terminal_policy_ref"])
             ),
-            checksum=value["checksum"],
+            terminal_policy=(
+                None
+                if payload["terminal_policy"] is None
+                else HarnessTerminalSideEffectPolicy.from_dict(
+                    payload["terminal_policy"]
+                )
+            ),
+            checksum=payload["checksum"],
         )
 
 
@@ -1142,10 +1306,18 @@ def graph_node_from_dict(value: Mapping[str, Any]) -> HarnessGraphNode:
             HarnessBranch.from_dict(item)
             for item in _array(value["branches"], "node.branches")
         ),
-        join=None if value["join"] is None else HarnessJoinContract.from_dict(value["join"]),
-        loop=None if value["loop"] is None else HarnessLoopContract.from_dict(value["loop"]),
-        wait=None if value["wait"] is None else HarnessWaitContract.from_dict(value["wait"]),
-        merge=None if value["merge"] is None else HarnessMergeContract.from_dict(value["merge"]),
+        join=None
+        if value["join"] is None
+        else HarnessJoinContract.from_dict(value["join"]),
+        loop=None
+        if value["loop"] is None
+        else HarnessLoopContract.from_dict(value["loop"]),
+        wait=None
+        if value["wait"] is None
+        else HarnessWaitContract.from_dict(value["wait"]),
+        merge=None
+        if value["merge"] is None
+        else HarnessMergeContract.from_dict(value["merge"]),
         metadata=value["metadata"],
     )
 
@@ -1157,7 +1329,9 @@ class HarnessGraphChecksumRegistry:
     def register(self, graph: NormalizedHarnessGraph) -> None:
         if not isinstance(graph, NormalizedHarnessGraph):
             raise TypeError("graph must be NormalizedHarnessGraph")
-        projection = freeze_json(graph.checksum_projection(), "graph.checksum_projection")
+        projection = freeze_json(
+            graph.checksum_projection(), "graph.checksum_projection"
+        )
         existing = self._by_checksum.get(graph.checksum)
         if existing is not None and existing != projection:
             raise HarnessValidationError(
@@ -1178,7 +1352,9 @@ class HarnessGraphChecksumRegistry:
             ) from exc
         thawed = thaw_json(projection)
         if not isinstance(thawed, dict):
-            raise AssertionError("registered graph projection did not thaw to an object")
+            raise AssertionError(
+                "registered graph projection did not thaw to an object"
+            )
         return thawed
 
 
@@ -1187,7 +1363,10 @@ def _require_reference_kind(
     expected: HarnessContractKind,
     field_name: str,
 ) -> HarnessContractReference:
-    if not isinstance(value, HarnessContractReference) or value.contract_kind != expected:
+    if (
+        not isinstance(value, HarnessContractReference)
+        or value.contract_kind != expected
+    ):
         raise HarnessValidationError(
             f"{field_name} must be a {expected.value} contract reference",
             code="invalid_graph_contract_reference",

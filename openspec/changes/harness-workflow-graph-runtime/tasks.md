@@ -21,9 +21,9 @@
 - [x] 3.3 Add structural validation for unique identities, valid endpoints, entry/terminal reachability, fork/join pairing, and cycles allowed only through Bounded-Loop.
 - [x] 3.4 Add semantic validation for Choice priority/default, restricted condition paths/operators, positive loop bounds, Wait correlation/scope, and exact compensation binding.
 - [x] 3.5 Add dataflow validation for reachable input producers, branch-scoped outputs, shared-write conflict rejection, explicit deterministic merge contracts, and terminal output availability.
-- [ ] 3.6 Add registry validation for exact Worker type, Gate, Side Effect Handler, Compensation Handler, activity contract, and terminal policy references before `RUN_CREATED`.
+- [x] 3.6 Add registry validation for exact Worker type, Gate, Side Effect Handler, Compensation Handler, activity contract, and terminal policy references before `RUN_CREATED`.
 - [x] 3.7 Add graph size/depth/node-activation policy validation and a deterministic preflight benchmark fixture for at least 1,000 nodes and 5,000 edges.
-- [ ] 3.8 Add invalid-graph fixtures proving preflight records no run creation, Worker activity, side effect, or partial graph state.
+- [x] 3.8 Add invalid-graph fixtures proving preflight records no run creation, Worker activity, side effect, or partial graph state.
 
 ## 4. Graph State, Node Identity, and Status Projection
 

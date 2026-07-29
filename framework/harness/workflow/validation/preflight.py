@@ -78,18 +78,45 @@ class HarnessGraphPreflight:
             raise TypeError("graph must be NormalizedHarnessGraph")
         if not isinstance(registry, HarnessGraphRegistrySnapshot):
             raise TypeError("registry must be HarnessGraphRegistrySnapshot")
-        DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.require_executable(
-            HarnessGraphContractKind.NORMALIZED_GRAPH,
-            graph.schema_version,
-        )
-        if graph.schema_version != NORMALIZED_HARNESS_GRAPH_SCHEMA:
-            raise AssertionError("schema registry accepted an unexpected normalized graph schema")
+        self._require_executable_schema(graph)
         diagnostics: list[HarnessGraphDiagnostic] = []
         diagnostics.extend(validate_structure(graph))
         diagnostics.extend(validate_semantics(graph))
         diagnostics.extend(validate_dataflow(graph))
         diagnostics.extend(validate_registry(graph, registry, self.policy))
         diagnostics.extend(validate_policy(graph, self.policy))
+        return self._result(graph, diagnostics)
+
+    def validate_static(
+        self,
+        graph: NormalizedHarnessGraph,
+    ) -> HarnessGraphValidationResult:
+        if not isinstance(graph, NormalizedHarnessGraph):
+            raise TypeError("graph must be NormalizedHarnessGraph")
+        self._require_executable_schema(graph)
+        diagnostics: list[HarnessGraphDiagnostic] = []
+        diagnostics.extend(validate_structure(graph))
+        diagnostics.extend(validate_semantics(graph))
+        diagnostics.extend(validate_dataflow(graph))
+        diagnostics.extend(validate_policy(graph, self.policy))
+        return self._result(graph, diagnostics)
+
+    @staticmethod
+    def _require_executable_schema(graph: NormalizedHarnessGraph) -> None:
+        DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY.require_executable(
+            HarnessGraphContractKind.NORMALIZED_GRAPH,
+            graph.schema_version,
+        )
+        if graph.schema_version != NORMALIZED_HARNESS_GRAPH_SCHEMA:
+            raise AssertionError(
+                "schema registry accepted an unexpected normalized graph schema"
+            )
+
+    def _result(
+        self,
+        graph: NormalizedHarnessGraph,
+        diagnostics: list[HarnessGraphDiagnostic],
+    ) -> HarnessGraphValidationResult:
         ordered = tuple(sorted(diagnostics, key=lambda item: item.sort_key))
         truncated = len(ordered) > self.policy.max_diagnostics
         if truncated:

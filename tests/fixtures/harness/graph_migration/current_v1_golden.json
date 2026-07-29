@@ -192,7 +192,7 @@
     "worker_steps": ["collect", "report"]
   },
   "linear_research_workflow": {
-    "compiled_graph_checksum": "sha256:8b49eea1fb2702ea03bce20aee464b290305875ff58e75b0d5e83b9b932246d2",
+    "compiled_graph_checksum": "sha256:0a5d54b072d61e6dd380d8df48bc68b720c733e218bde2fee50cf9823f6c54e8",
     "entry_step_id": "load_paper_source",
     "route_pairs": [
       ["load_paper_source", "compile_document"],
