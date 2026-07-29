@@ -144,26 +144,6 @@ def _activation_upper_bound(graph: NormalizedHarnessGraph) -> int:
         and node.loop is not None
         and node.loop.max_iterations > 0
     )
-    loop_bodies = {
-        node.node_id: _loop_body_node_ids(graph, node)
-        for node in loops
-    }
-    total = 0
-    for node in graph.nodes:
-        activations = 1
-        for loop_node in loops:
-            if node.node_id in loop_bodies[loop_node.node_id]:
-                activations *= loop_node.loop.max_iterations
-        total += activations
-    return total
-
-
-def _loop_body_node_ids(
-    graph: NormalizedHarnessGraph,
-    loop_node: HarnessControlNode,
-) -> frozenset[str]:
-    if loop_node.loop is None:
-        return frozenset()
     node_ids = {node.node_id for node in graph.nodes}
     adjacency: dict[str, list[str]] = defaultdict(list)
     ignored = {
@@ -179,6 +159,25 @@ def _loop_body_node_ids(
         ):
             continue
         adjacency[edge.source_id].append(edge.target_id)
+    loop_bodies = {
+        node.node_id: _loop_body_node_ids(node_ids, adjacency, node)
+        for node in loops
+    }
+    activation_factors = {node_id: 1 for node_id in node_ids}
+    for loop_node in loops:
+        activation_factors[loop_node.node_id] *= loop_node.loop.max_iterations + 1
+        for node_id in loop_bodies[loop_node.node_id]:
+            activation_factors[node_id] *= loop_node.loop.max_iterations
+    return sum(activation_factors[node.node_id] for node in graph.nodes)
+
+
+def _loop_body_node_ids(
+    node_ids: set[str],
+    adjacency: dict[str, list[str]],
+    loop_node: HarnessControlNode,
+) -> frozenset[str]:
+    if loop_node.loop is None:
+        return frozenset()
     visited: set[str] = set()
     queue = deque(sorted(loop_node.loop.body_entry_node_ids))
     while queue:

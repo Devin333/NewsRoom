@@ -154,7 +154,18 @@ def _validate_wait(node: HarnessControlNode) -> tuple[HarnessGraphDiagnostic, ..
             )
         )
 
-    for correlation_path, source in _correlation_sources(wait.correlation):
+    correlation_sources = _correlation_sources(wait.correlation)
+    if not correlation_sources:
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "invalid_wait_correlation_source",
+                "Wait correlation must contain at least one structural source path",
+                node_id=node.node_id,
+                path="wait.correlation",
+            )
+        )
+    for correlation_path, source in correlation_sources:
         if _is_structural_path(source, _WAIT_VALUE_PATH_PREFIXES):
             continue
         diagnostics.append(
@@ -206,7 +217,17 @@ def _correlation_sources(
 
 
 def _is_structural_path(path: str, prefixes: tuple[str, ...]) -> bool:
-    return any(path.startswith(prefix) and len(path) > len(prefix) for prefix in prefixes)
+    if path != path.strip() or path.startswith(".") or path.endswith(".") or ".." in path:
+        return False
+    for prefix in prefixes:
+        if not path.startswith(prefix):
+            continue
+        suffix = path.removeprefix(prefix)
+        return bool(suffix) and all(
+            segment and segment == segment.strip()
+            for segment in suffix.split(".")
+        )
+    return False
 
 
 def _validate_choice(node: HarnessControlNode) -> tuple[HarnessGraphDiagnostic, ...]:
@@ -446,7 +467,20 @@ def _validate_compensations(
             if reference.for_node_id == edge.source_id
             and reference.compensation_node_id == edge.target_id
         )
-        if matches:
+        if len(matches) == 1:
+            continue
+        if len(matches) > 1:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "ambiguous_compensation_edge_binding",
+                    "compensation edge must resolve to exactly one binding",
+                    edge_id=edge.edge_id,
+                    details={
+                        "binding_ids": sorted(reference.binding_id for reference in matches),
+                    },
+                )
+            )
             continue
         diagnostics.append(
             diagnostic(
@@ -497,12 +531,27 @@ def _validate_repair_edges(
         )
 
     for source_id, repair_step_id in sorted(expected_targets.items()):
-        if any(
-            edge.source_id == source_id
-            and isinstance(nodes_by_id.get(edge.target_id), HarnessExecutableNode)
-            and nodes_by_id[edge.target_id].step_id == repair_step_id
+        matching_edges = tuple(
+            edge
             for edge in repair_edges
-        ):
+            if (
+                edge.source_id == source_id
+                and isinstance(nodes_by_id.get(edge.target_id), HarnessExecutableNode)
+                and nodes_by_id[edge.target_id].step_id == repair_step_id
+            )
+        )
+        if len(matching_edges) == 1:
+            continue
+        if len(matching_edges) > 1:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "duplicate_repair_edge",
+                    "retry policy repair target resolves to more than one graph edge",
+                    node_id=source_id,
+                    details={"repair_step_id": repair_step_id},
+                )
+            )
             continue
         diagnostics.append(
             diagnostic(

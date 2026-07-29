@@ -97,6 +97,12 @@ def validate_structure(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagn
 
     adjacency = _adjacency(graph, include_loop_back=True)
     reachable = _reachable(graph.entry_node_ids, adjacency)
+    forward_adjacency = _adjacency(
+        graph,
+        include_loop_back=True,
+        include_auxiliary=False,
+    )
+    forward_reachable = _reachable(graph.entry_node_ids, forward_adjacency)
     for node_id in sorted(unique_node_ids.difference(reachable)):
         diagnostics.append(
             diagnostic(
@@ -107,7 +113,7 @@ def validate_structure(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagn
             )
         )
     for terminal_id in graph.terminal_node_ids:
-        if terminal_id in unique_node_ids and terminal_id not in reachable:
+        if terminal_id in unique_node_ids and terminal_id not in forward_reachable:
             diagnostics.append(
                 diagnostic(
                     HarnessGraphValidationPhase.STRUCTURAL,
@@ -117,11 +123,6 @@ def validate_structure(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagn
                 )
             )
 
-    forward_adjacency = _adjacency(
-        graph,
-        include_loop_back=True,
-        include_auxiliary=False,
-    )
     reverse = _reverse_adjacency(forward_adjacency)
     can_reach_terminal = _reachable(graph.terminal_node_ids, reverse)
     for entry_id in graph.entry_node_ids:

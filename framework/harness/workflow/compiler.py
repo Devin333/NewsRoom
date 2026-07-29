@@ -726,14 +726,22 @@ class _CompilerContext:
         )
 
     def _legacy_input_keys(self) -> tuple[str, ...]:
+        active_step_ids = {
+            node.step_id
+            for node in self.nodes
+            if isinstance(node, HarnessExecutableNode)
+        }
         produced = {
-            step.output_key for step in self.workflow.steps if step.output_key is not None
+            step.output_key
+            for step in self.workflow.steps
+            if step.step_id in active_step_ids and step.output_key is not None
         }
         return tuple(
             sorted(
                 {
                     input_key
                     for step in self.workflow.steps
+                    if step.step_id in active_step_ids
                     for input_key in step.input_keys
                     if input_key not in produced
                 }

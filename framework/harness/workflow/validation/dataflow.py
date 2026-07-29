@@ -47,6 +47,8 @@ def validate_dataflow(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagno
         indegree[edge.target_id] += 1
     ready = deque(sorted(node_id for node_id, count in indegree.items() if count == 0))
     available_after: dict[str, frozenset[str]] = {}
+    produced_after: dict[str, frozenset[str]] = {}
+    ancestors_after: dict[str, frozenset[str]] = {}
     graph_inputs = frozenset(graph.input_keys)
     while ready:
         node_id = ready.popleft()
@@ -54,15 +56,23 @@ def validate_dataflow(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagno
         predecessor_ids = sorted(set(predecessors.get(node_id, ())))
         if predecessor_ids and all(item in available_after for item in predecessor_ids):
             predecessor_values = tuple(available_after[item] for item in predecessor_ids)
+            predecessor_produced = tuple(produced_after[item] for item in predecessor_ids)
             if (
                 isinstance(node, HarnessControlNode)
                 and node.node_kind == HarnessGraphNodeKind.JOIN_ALL
             ):
                 available_before = frozenset().union(*predecessor_values)
+                produced_before = frozenset().union(*predecessor_produced)
             else:
                 available_before = frozenset.intersection(*predecessor_values)
+                produced_before = frozenset.intersection(*predecessor_produced)
+            ancestors_before = frozenset(predecessor_ids).union(
+                *(ancestors_after[item] for item in predecessor_ids)
+            )
         else:
             available_before = graph_inputs
+            produced_before = frozenset()
+            ancestors_before = frozenset()
         produced: frozenset[str] = frozenset()
         if isinstance(node, HarnessExecutableNode):
             missing = sorted(set(node.input_keys).difference(available_before))
@@ -78,9 +88,22 @@ def validate_dataflow(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagno
                 )
             produced = frozenset(node.output_keys)
             diagnostics.extend(_validate_shared_output_declaration(node))
-        elif isinstance(node, HarnessControlNode) and node.merge is not None:
-            produced = frozenset(node.merge.output_keys)
+        elif isinstance(node, HarnessControlNode):
+            if node.wait is not None:
+                diagnostics.extend(
+                    _validate_wait_sources(
+                        node,
+                        graph_inputs=graph_inputs,
+                        produced_before=produced_before,
+                        ancestors_before=ancestors_before,
+                        nodes_by_id=nodes_by_id,
+                    )
+                )
+            if node.merge is not None:
+                produced = frozenset(node.merge.output_keys)
         available_after[node_id] = available_before.union(produced)
+        produced_after[node_id] = produced_before.union(produced)
+        ancestors_after[node_id] = ancestors_before
         for target_id in sorted(outgoing.get(node_id, ())):
             indegree[target_id] -= 1
             if indegree[target_id] == 0:
@@ -102,6 +125,132 @@ def validate_dataflow(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagno
 
     diagnostics.extend(_validate_parallel_shared_writes(graph, nodes_by_id))
     return tuple(diagnostics)
+
+
+def _validate_wait_sources(
+    node: HarnessControlNode,
+    *,
+    graph_inputs: frozenset[str],
+    produced_before: frozenset[str],
+    ancestors_before: frozenset[str],
+    nodes_by_id: dict[str, HarnessExecutableNode | HarnessControlNode],
+) -> tuple[HarnessGraphDiagnostic, ...]:
+    if node.wait is None:
+        return ()
+    sources = {
+        node.wait.tenant_scope_path,
+        node.wait.identity_scope_path,
+        *(
+            source
+            for source in _nested_string_values(node.wait.correlation)
+            if isinstance(source, str)
+        ),
+    }
+    if node.wait.deadline_input_path is not None:
+        sources.add(node.wait.deadline_input_path)
+
+    diagnostics: list[HarnessGraphDiagnostic] = []
+    for source in sorted(sources):
+        if source.startswith("graph.inputs."):
+            key = _top_level_key(source, "graph.inputs.")
+            if key not in graph_inputs:
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.DATAFLOW,
+                        "unreachable_wait_input_source",
+                        "Wait source does not resolve to a declared graph input",
+                        node_id=node.node_id,
+                        path=source,
+                        details={"input_key": key},
+                    )
+                )
+            continue
+        if source.startswith("graph.outputs."):
+            key = _top_level_key(source, "graph.outputs.")
+            if key not in produced_before:
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.DATAFLOW,
+                        "unreachable_wait_output_source",
+                        "Wait source is not produced on every reachable upstream path",
+                        node_id=node.node_id,
+                        path=source,
+                        details={"output_key": key},
+                    )
+                )
+            continue
+        if source.startswith("node.outputs."):
+            resolved = _resolve_node_output_source(
+                source,
+                nodes_by_id=nodes_by_id,
+            )
+            if resolved is None:
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.DATAFLOW,
+                        "unresolved_wait_node_output_source",
+                        "Wait source does not resolve to an exact node output",
+                        node_id=node.node_id,
+                        path=source,
+                    )
+                )
+                continue
+            producer_id, output_key = resolved
+            if producer_id not in ancestors_before:
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.DATAFLOW,
+                        "unreachable_wait_node_output_source",
+                        "Wait node output source is not an upstream producer",
+                        node_id=node.node_id,
+                        path=source,
+                        details={
+                            "producer_node_id": producer_id,
+                            "output_key": output_key,
+                        },
+                    )
+                )
+    return tuple(diagnostics)
+
+
+def _nested_string_values(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, Mapping):
+        return ()
+    return tuple(
+        source
+        for _, child in sorted(value.items(), key=lambda item: str(item[0]))
+        for source in _nested_string_values(child)
+    )
+
+
+def _top_level_key(path: str, prefix: str) -> str:
+    return path.removeprefix(prefix).split(".", maxsplit=1)[0]
+
+
+def _resolve_node_output_source(
+    source: str,
+    *,
+    nodes_by_id: dict[str, HarnessExecutableNode | HarnessControlNode],
+) -> tuple[str, str] | None:
+    value = source.removeprefix("node.outputs.")
+    matches = sorted(
+        (
+            node_id
+            for node_id in nodes_by_id
+            if value.startswith(f"{node_id}.")
+        ),
+        key=lambda node_id: (-len(node_id), node_id),
+    )
+    if not matches:
+        return None
+    producer_id = matches[0]
+    output_key = value.removeprefix(f"{producer_id}.").split(".", maxsplit=1)[0]
+    producer = nodes_by_id[producer_id]
+    if not isinstance(producer, HarnessExecutableNode) or output_key not in producer.output_keys:
+        return None
+    return producer_id, output_key
 
 
 def _validate_shared_output_declaration(
