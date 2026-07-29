@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 
 from framework.harness.workflow.conditions import (
     ConditionAll,
@@ -24,12 +25,21 @@ from framework.harness.workflow.validation.models import (
 from framework.harness.workflow.versioning import HARNESS_CONDITION_POLICY_VERSION
 
 
+_WAIT_SCOPE_PATH_PREFIX = "graph.inputs."
+_WAIT_VALUE_PATH_PREFIXES = (
+    "graph.inputs.",
+    "graph.outputs.",
+    "node.outputs.",
+)
+
+
 def validate_semantics(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagnostic, ...]:
     diagnostics: list[HarnessGraphDiagnostic] = []
     nodes_by_id = {node.node_id: node for node in graph.nodes}
     diagnostics.extend(_validate_controls(graph, nodes_by_id))
     diagnostics.extend(_validate_edges(graph))
     diagnostics.extend(_validate_compensations(graph, nodes_by_id))
+    diagnostics.extend(_validate_repair_edges(graph, nodes_by_id))
     return tuple(diagnostics)
 
 
@@ -89,6 +99,7 @@ def _validate_controls(
                 )
             diagnostics.extend(_validate_condition(node.loop.condition, node_id=node.node_id))
         if node.node_kind == HarnessGraphNodeKind.WAIT and node.wait is not None:
+            diagnostics.extend(_validate_wait(node))
             if node.wait.kind == WaitKind.TIMER and node.wait.deadline_input_path is None:
                 diagnostics.append(
                     diagnostic(
@@ -111,6 +122,91 @@ def _validate_controls(
                         )
                     )
     return tuple(diagnostics)
+
+
+def _validate_wait(node: HarnessControlNode) -> tuple[HarnessGraphDiagnostic, ...]:
+    if node.wait is None:
+        return ()
+    diagnostics: list[HarnessGraphDiagnostic] = []
+    wait = node.wait
+    for field_name, path, code in (
+        (
+            "tenant_scope_path",
+            wait.tenant_scope_path,
+            "invalid_wait_tenant_scope_path",
+        ),
+        (
+            "identity_scope_path",
+            wait.identity_scope_path,
+            "invalid_wait_identity_scope_path",
+        ),
+    ):
+        if _is_structural_path(path, (_WAIT_SCOPE_PATH_PREFIX,)):
+            continue
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                code,
+                "Wait authorization scope must come from immutable graph inputs",
+                node_id=node.node_id,
+                path=path,
+                details={"field": field_name},
+            )
+        )
+
+    for correlation_path, source in _correlation_sources(wait.correlation):
+        if _is_structural_path(source, _WAIT_VALUE_PATH_PREFIXES):
+            continue
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "invalid_wait_correlation_source",
+                "Wait correlation must use a restricted structural source path",
+                node_id=node.node_id,
+                path=correlation_path,
+                details={"source": source},
+            )
+        )
+
+    if wait.deadline_input_path is not None and not _is_structural_path(
+        wait.deadline_input_path,
+        _WAIT_VALUE_PATH_PREFIXES,
+    ):
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "invalid_wait_deadline_path",
+                "Wait deadline must use a restricted structural source path",
+                node_id=node.node_id,
+                path=wait.deadline_input_path,
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _correlation_sources(
+    value: object,
+    *,
+    path: str = "wait.correlation",
+) -> tuple[tuple[str, str], ...]:
+    if isinstance(value, Mapping):
+        items = value.items()
+    else:
+        return ((path, str(value)),)
+    sources: list[tuple[str, str]] = []
+    for key, child in sorted(items, key=lambda item: str(item[0])):
+        child_path = f"{path}.{key}"
+        if isinstance(child, str):
+            sources.append((child_path, child))
+        elif isinstance(child, Mapping):
+            sources.extend(_correlation_sources(child, path=child_path))
+        else:
+            sources.append((child_path, str(child)))
+    return tuple(sources)
+
+
+def _is_structural_path(path: str, prefixes: tuple[str, ...]) -> bool:
+    return any(path.startswith(prefix) and len(path) > len(prefix) for prefix in prefixes)
 
 
 def _validate_choice(node: HarnessControlNode) -> tuple[HarnessGraphDiagnostic, ...]:
@@ -261,6 +357,11 @@ def _validate_compensations(
 ) -> tuple[HarnessGraphDiagnostic, ...]:
     diagnostics: list[HarnessGraphDiagnostic] = []
     binding_ids = Counter(reference.binding_id for reference in graph.compensation_refs)
+    compensation_edges = tuple(
+        edge
+        for edge in graph.edges
+        if edge.edge_kind == HarnessGraphEdgeKind.COMPENSATION
+    )
     for binding_id in sorted(item for item, count in binding_ids.items() if count > 1):
         diagnostics.append(
             diagnostic(
@@ -312,6 +413,106 @@ def _validate_compensations(
                     details={"scope": reference.scope},
                 )
             )
+        matching_edges = tuple(
+            edge
+            for edge in compensation_edges
+            if edge.source_id == reference.for_node_id
+            and edge.target_id == reference.compensation_node_id
+        )
+        if not matching_edges:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "missing_compensation_edge",
+                    "compensation binding requires one exact graph edge",
+                    node_id=reference.for_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+        elif len(matching_edges) > 1:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "duplicate_compensation_edge",
+                    "compensation binding resolves to more than one graph edge",
+                    node_id=reference.for_node_id,
+                    details={"binding_id": reference.binding_id},
+                )
+            )
+    for edge in compensation_edges:
+        matches = tuple(
+            reference
+            for reference in graph.compensation_refs
+            if reference.for_node_id == edge.source_id
+            and reference.compensation_node_id == edge.target_id
+        )
+        if matches:
+            continue
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "unbound_compensation_edge",
+                "compensation edge has no exact compensation binding",
+                edge_id=edge.edge_id,
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_repair_edges(
+    graph: NormalizedHarnessGraph,
+    nodes_by_id: dict[str, HarnessExecutableNode | HarnessControlNode],
+) -> tuple[HarnessGraphDiagnostic, ...]:
+    diagnostics: list[HarnessGraphDiagnostic] = []
+    repair_edges = tuple(
+        edge for edge in graph.edges if edge.edge_kind == HarnessGraphEdgeKind.REPAIR
+    )
+    expected_targets: dict[str, str] = {}
+    for node in graph.nodes:
+        if not isinstance(node, HarnessExecutableNode):
+            continue
+        retry_policy = node.metadata.get("retry_policy", {})
+        if not isinstance(retry_policy, Mapping):
+            continue
+        repair_step_id = retry_policy.get("repair_step_id")
+        if isinstance(repair_step_id, str) and repair_step_id.strip():
+            expected_targets[node.node_id] = repair_step_id.strip()
+
+    for edge in repair_edges:
+        expected_step_id = expected_targets.get(edge.source_id)
+        target = nodes_by_id.get(edge.target_id)
+        if (
+            expected_step_id is not None
+            and isinstance(target, HarnessExecutableNode)
+            and target.step_id == expected_step_id
+        ):
+            continue
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "unbound_repair_edge",
+                "repair edge does not match the source node retry policy",
+                edge_id=edge.edge_id,
+            )
+        )
+
+    for source_id, repair_step_id in sorted(expected_targets.items()):
+        if any(
+            edge.source_id == source_id
+            and isinstance(nodes_by_id.get(edge.target_id), HarnessExecutableNode)
+            and nodes_by_id[edge.target_id].step_id == repair_step_id
+            for edge in repair_edges
+        ):
+            continue
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "missing_repair_edge",
+                "retry policy repair target has no exact graph edge",
+                node_id=source_id,
+                details={"repair_step_id": repair_step_id},
+            )
+        )
     return tuple(diagnostics)
 
 

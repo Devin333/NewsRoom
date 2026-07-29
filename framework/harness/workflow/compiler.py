@@ -131,7 +131,7 @@ class _CompilerContext:
 
         for index, source_id in enumerate(ordered_ids):
             default_target = ordered_ids[index + 1] if index + 1 < len(ordered_ids) else None
-            rules = tuple(rules_by_source.get(source_id, ()))
+            rules = _effective_legacy_rules(tuple(rules_by_source.get(source_id, ())))
             if not rules:
                 if default_target is not None:
                     self._add_edge(source_id, default_target, HarnessGraphEdgeKind.DEPENDENCY)
@@ -147,6 +147,7 @@ class _CompilerContext:
             self._compile_legacy_choice(source_id, rules, default_target)
 
         self._compile_repair_edges()
+        self._prune_unreachable_legacy_nodes()
         terminal_ids = self._forward_terminal_node_ids()
         return self._build_graph(
             graph_id=f"{self.workflow.workflow_id}:legacy",
@@ -155,6 +156,29 @@ class _CompilerContext:
             input_keys=self._legacy_input_keys(),
             terminal_output_keys=self._legacy_terminal_output_keys(terminal_ids),
         )
+
+    def _prune_unreachable_legacy_nodes(self) -> None:
+        adjacency: dict[str, list[str]] = defaultdict(list)
+        for edge in self.edges:
+            adjacency[edge.source_id].append(edge.target_id)
+        reachable: set[str] = set()
+        pending = [self.workflow.entry_step_id]
+        while pending:
+            node_id = pending.pop()
+            if node_id in reachable:
+                continue
+            reachable.add(node_id)
+            pending.extend(
+                target_id
+                for target_id in sorted(adjacency.get(node_id, ()), reverse=True)
+                if target_id not in reachable
+            )
+        self.nodes = [node for node in self.nodes if node.node_id in reachable]
+        self.edges = [
+            edge
+            for edge in self.edges
+            if edge.source_id in reachable and edge.target_id in reachable
+        ]
 
     def _compile_expression(self, expression: HarnessGraphExpression) -> _Fragment:
         if isinstance(expression, StepRef):
@@ -738,6 +762,15 @@ class _CompilerContext:
 
 def _is_unconditional_legacy_rule(rule: HarnessRoutingRule) -> bool:
     return rule.kind == HarnessRouteKind.ALWAYS and not rule.condition
+
+
+def _effective_legacy_rules(
+    rules: tuple[HarnessRoutingRule, ...],
+) -> tuple[HarnessRoutingRule, ...]:
+    for index, rule in enumerate(rules):
+        if _is_unconditional_legacy_rule(rule):
+            return rules[: index + 1]
+    return rules
 
 
 def _legacy_rule_condition(rule: HarnessRoutingRule) -> HarnessCondition | None:

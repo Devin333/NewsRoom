@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -135,17 +136,60 @@ def _graph_depth(graph: NormalizedHarnessGraph) -> int:
 
 
 def _activation_upper_bound(graph: NormalizedHarnessGraph) -> int:
-    total = len(graph.nodes)
+    loops = tuple(
+        node
+        for node in graph.nodes
+        if isinstance(node, HarnessControlNode)
+        and node.node_kind == HarnessGraphNodeKind.LOOP_GUARD
+        and node.loop is not None
+        and node.loop.max_iterations > 0
+    )
+    loop_bodies = {
+        node.node_id: _loop_body_node_ids(graph, node)
+        for node in loops
+    }
+    total = 0
     for node in graph.nodes:
-        if not isinstance(node, HarnessControlNode) or node.node_kind != HarnessGraphNodeKind.LOOP_GUARD:
-            continue
-        if node.loop is None or node.loop.max_iterations < 1:
-            continue
-        body_size = len(
-            set(node.loop.body_entry_node_ids).union(node.loop.body_terminal_node_ids)
-        )
-        total += (node.loop.max_iterations - 1) * max(body_size, 1)
+        activations = 1
+        for loop_node in loops:
+            if node.node_id in loop_bodies[loop_node.node_id]:
+                activations *= loop_node.loop.max_iterations
+        total += activations
     return total
+
+
+def _loop_body_node_ids(
+    graph: NormalizedHarnessGraph,
+    loop_node: HarnessControlNode,
+) -> frozenset[str]:
+    if loop_node.loop is None:
+        return frozenset()
+    node_ids = {node.node_id for node in graph.nodes}
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    ignored = {
+        HarnessGraphEdgeKind.LOOP_BACK,
+        HarnessGraphEdgeKind.REPAIR,
+        HarnessGraphEdgeKind.COMPENSATION,
+    }
+    for edge in graph.edges:
+        if (
+            edge.edge_kind in ignored
+            or edge.source_id not in node_ids
+            or edge.target_id not in node_ids
+        ):
+            continue
+        adjacency[edge.source_id].append(edge.target_id)
+    visited: set[str] = set()
+    queue = deque(sorted(loop_node.loop.body_entry_node_ids))
+    while queue:
+        node_id = queue.popleft()
+        if node_id == loop_node.node_id or node_id not in node_ids or node_id in visited:
+            continue
+        visited.add(node_id)
+        for target_id in sorted(adjacency.get(node_id, ())):
+            if target_id not in visited and target_id != loop_node.node_id:
+                queue.append(target_id)
+    return frozenset(visited)
 
 
 __all__ = ["HarnessGraphPreflightPolicy", "validate_policy"]

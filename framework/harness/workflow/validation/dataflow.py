@@ -53,9 +53,14 @@ def validate_dataflow(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagno
         node = nodes_by_id[node_id]
         predecessor_ids = sorted(set(predecessors.get(node_id, ())))
         if predecessor_ids and all(item in available_after for item in predecessor_ids):
-            available_before = frozenset.intersection(
-                *(available_after[item] for item in predecessor_ids)
-            )
+            predecessor_values = tuple(available_after[item] for item in predecessor_ids)
+            if (
+                isinstance(node, HarnessControlNode)
+                and node.node_kind == HarnessGraphNodeKind.JOIN_ALL
+            ):
+                available_before = frozenset().union(*predecessor_values)
+            else:
+                available_before = frozenset.intersection(*predecessor_values)
         else:
             available_before = graph_inputs
         produced: frozenset[str] = frozenset()
@@ -157,12 +162,7 @@ def _validate_parallel_shared_writes(
                 node = nodes_by_id.get(node_id)
                 if not isinstance(node, HarnessExecutableNode):
                     continue
-                step_metadata = node.metadata.get("step_metadata", {})
-                if not isinstance(step_metadata, Mapping):
-                    continue
-                for output_key in _string_sequence(
-                    step_metadata.get("shared_output_keys", ())
-                ):
+                for output_key in node.output_keys:
                     writes_by_key[output_key].add(branch.branch_id)
         merge_declared = join.join is not None and join.join.merge_ref is not None
         for output_key, branches in sorted(writes_by_key.items()):

@@ -41,6 +41,7 @@
       "tests/framework/harness/test_serialization.py",
       "tests/framework/harness/workflow/test_graph_compiler.py",
       "tests/framework/harness/workflow/test_graph_preflight.py",
+      "tests/framework/harness/workflow/test_graph_preflight_regressions.py",
       "tests/framework/harness/workflow/test_workflow_contract_reader.py"
     ],
     "B_scheduler_and_sequence_choice_cutover": [
