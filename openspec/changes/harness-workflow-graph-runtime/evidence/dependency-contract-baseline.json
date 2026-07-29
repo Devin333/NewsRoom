@@ -1,0 +1,398 @@
+{
+  "schema": "newsroom.harness-graph-dependency-baseline/v1",
+  "captured_at": "2026-07-29",
+  "scope": [
+    "harness-workflow-graph-runtime:1.1",
+    "harness-workflow-graph-runtime:1.5-dependencies"
+  ],
+  "repository": {
+    "branch": "main",
+    "head": "46a9a2ea51305a03400b690f7002380ad2fbe34a",
+    "tree": "e504b8be194187564792f52b11559cb83d53bc12",
+    "working_tree_clean": false,
+    "release_identity_rule": "Committed Git identities are release identities; uncommitted file hashes are diagnostic fingerprints only."
+  },
+  "overall_disposition": {
+    "contract_fixture_compiler_reducer_development": "allowed",
+    "sequence_choice_shadow_and_equivalence_development": "allowed",
+    "v2_production_write_authority": "not_authorized_by_this_baseline",
+    "parallel_wait_compensation_production_cutover": "blocked",
+    "legacy_authority_deletion": "blocked"
+  },
+  "dependencies": [
+    {
+      "change": "durable-event-runtime",
+      "openspec": {
+        "status": "in-progress",
+        "completed_tasks": 52,
+        "total_tasks": 55,
+        "open_tasks": [
+          "9.5",
+          "10.4",
+          "10.5"
+        ]
+      },
+      "versions": {
+        "verified_candidate_commit": "89594289fd3e967633c3ed22e750ed72126631df",
+        "latest_dependency_evidence_commit": "d5897b1980312d6414fb7670a769dae5b4e8f091",
+        "integrated_repository_baseline": "46a9a2ea51305a03400b690f7002380ad2fbe34a"
+      },
+      "contracts": [
+        {
+          "kind": "event_envelope",
+          "id": "newsroom.event-envelope/v2",
+          "status": "satisfied",
+          "source": "framework/events/canonical.py"
+        },
+        {
+          "kind": "event_data_schema",
+          "id": "newsroom.harness-event/v1",
+          "status": "satisfied_for_v1_history",
+          "source": "framework/events/schema/catalog.py"
+        },
+        {
+          "kind": "transition_data_schema",
+          "id": "newsroom.harness-transition/v1",
+          "status": "satisfied_for_v1_transitions",
+          "source": "framework/harness/control_plane/transition.py"
+        },
+        {
+          "kind": "state_projection_schema",
+          "id": "newsroom.harness-state-projection/v1",
+          "status": "satisfied_for_v1_state",
+          "source": "framework/harness/control_plane/transition.py"
+        },
+        {
+          "kind": "reducer",
+          "id": "newsroom.harness-state-reducer/v1",
+          "status": "satisfied",
+          "source": "framework/harness/control_plane/transition.py"
+        },
+        {
+          "kind": "control_policy",
+          "id": "newsroom.harness-control-policy/v1",
+          "status": "satisfied",
+          "source": "framework/harness/control_plane/transition.py"
+        },
+        {
+          "kind": "activity_contract",
+          "id": "newsroom.harness-worker-activity/v1",
+          "status": "satisfied",
+          "source": "framework/harness/control_plane/activity.py"
+        },
+        {
+          "kind": "activity_result_schema",
+          "id": "newsroom.harness-activity-result/v1",
+          "status": "satisfied",
+          "source": "framework/harness/control_plane/activity.py"
+        },
+        {
+          "kind": "deterministic_history_schema",
+          "id": "newsroom.deterministic-history/v1",
+          "status": "satisfied",
+          "source": "framework/events/runtime/history.py"
+        },
+        {
+          "kind": "replay_activity_record_schema",
+          "id": "newsroom.replay-activity-record/v1",
+          "status": "satisfied",
+          "source": "framework/events/runtime/activities.py"
+        }
+      ],
+      "capabilities": {
+        "canonical_stored_event": true,
+        "store_assigned_per_stream_sequence": true,
+        "canonical_schema_catalog": true,
+        "exact_only_replay_version_registry": true,
+        "recorded_activity_result_reuse": true,
+        "live_activity_replay_fallback_forbidden": true,
+        "checkpoint_and_replay_ports": true
+      },
+      "release_blockers": [
+        "authority_trust_status=pending_external_activation",
+        "positive trust epoch is absent",
+        "governance, observer, and consumer-owner roots are absent",
+        "signed D/A/B/C compatibility chain is absent",
+        "independent rollback qualification is incomplete",
+        "final task 10.4 verification has not run after external qualification",
+        "final task 10.5 evidence and status update is open"
+      ],
+      "development_disposition": "allowed_against_exact_contracts",
+      "production_cutover_disposition": "blocked_for_parallel_wait_compensation_and_legacy_deletion"
+    },
+    {
+      "change": "framework-runtime-safety-hardening",
+      "openspec": {
+        "status": "in-progress",
+        "completed_tasks": 0,
+        "total_tasks": 38,
+        "open_tasks": "all"
+      },
+      "versions": {
+        "committed_release": null,
+        "public_attempt_contract_version": null,
+        "private_redis_lease_script_version": "v1",
+        "private_version_is_release_contract": false,
+        "candidate_kind": "uncommitted_working_tree"
+      },
+      "provisional_contract": {
+        "attempt_context_fields": [
+          "attempt_id",
+          "idempotency_key",
+          "fencing_token",
+          "deadline",
+          "cancel_event",
+          "budget"
+        ],
+        "attempt_outcome_fields": [
+          "timed_out",
+          "termination_confirmed",
+          "indeterminate"
+        ],
+        "leased_task_fields": [
+          "lease_id",
+          "fencing_token",
+          "attempt",
+          "lease_expires_at",
+          "effect_key"
+        ],
+        "source_fingerprints": [
+          {
+            "path": "framework/shared/attempts.py",
+            "sha256": "ebcb49b59dbb132bdf73ef418f07c10911b50c160d69adc2a6e973b3685332ec"
+          },
+          {
+            "path": "framework/tool/runtime/timeout.py",
+            "sha256": "b0af934473587ada428664ec89326c1f66198f685390e280c82194e624eadb9a"
+          },
+          {
+            "path": "framework/tool/runtime/executor.py",
+            "sha256": "20bc8fe196f0acbe8422b72dbde15d8053159ac29a7967f6e3db9687f39e5e62"
+          },
+          {
+            "path": "framework/workflow/runtime/step_invoker.py",
+            "sha256": "f859ae80f8530a322d355e45f740e4f2bbee350a52efa7e95f34fb07b2252061"
+          },
+          {
+            "path": "framework/workers/queue/base.py",
+            "sha256": "1ea6beec066bfa3536973c56be56ce9afe64df434db7784967bbbcd7a9444f70"
+          },
+          {
+            "path": "infrastructure/storage/workers/redis_queue.py",
+            "sha256": "0491607c4ba6101273e839276caee33ebf05aa5dcf7f41aa3ba366faeadeac20"
+          }
+        ]
+      },
+      "capabilities_observed_in_candidate": {
+        "cooperative_cancellation": true,
+        "termination_confirmation": true,
+        "indeterminate_timeout": true,
+        "stable_logical_idempotency_key": true,
+        "positive_fencing_generation": true,
+        "shared_total_attempt_budget": true,
+        "workflow_attempt_overlay": true,
+        "redis_lease_renewal_and_guarded_terminal_transition": true,
+        "worker_handler_attempt_context": true
+      },
+      "missing_release_contracts": [
+        "committed immutable dependency identity",
+        "exported exact attempt-safety contract version or committed API baseline",
+        "completed Tool, Workflow, Redis, Worker, error-boundary, and composition task evidence",
+        "strict validation, compile, mandatory smoke, and broad concurrency evidence",
+        "Harness activity capability declaration for termination, idempotency, fencing, and reconciliation"
+      ],
+      "development_disposition": "provisional_integration_and_tests_only",
+      "production_cutover_disposition": "hard_blocked"
+    },
+    {
+      "change": "harness-side-effect-authority-closure",
+      "openspec": {
+        "status": "complete",
+        "completed_tasks": 51,
+        "total_tasks": 51,
+        "open_tasks": []
+      },
+      "versions": {
+        "implementation_commit": "7caadd86ac037d574f31856ec8553503a70bc938",
+        "completion_evidence_commit": "46a9a2ea51305a03400b690f7002380ad2fbe34a"
+      },
+      "contracts": [
+        {
+          "kind": "side_effect_intent",
+          "id": "newsroom.harness-side-effect-intent/v1",
+          "status": "satisfied",
+          "source": "framework/harness/side_effects/models.py"
+        },
+        {
+          "kind": "side_effect_decision",
+          "id": "1",
+          "field": "decision_version",
+          "status": "satisfied",
+          "source": "framework/harness/side_effects/models.py"
+        },
+        {
+          "kind": "side_effect_outcome",
+          "id": "newsroom.harness-side-effect-outcome/v1",
+          "status": "satisfied",
+          "source": "framework/harness/side_effects/models.py"
+        },
+        {
+          "kind": "terminal_side_effect_policy",
+          "id": "newsroom.harness-terminal-side-effect-policy/v1",
+          "status": "satisfied",
+          "source": "framework/harness/side_effects/models.py"
+        },
+        {
+          "kind": "handler_binding",
+          "id": "<handler-id>@<version>",
+          "status": "satisfied_exact_only",
+          "moving_aliases_allowed": false,
+          "source": "framework/harness/side_effects/registry.py"
+        }
+      ],
+      "capabilities": {
+        "post_verify_durable_authorization": true,
+        "approval_identity_binding": true,
+        "stable_effect_idempotency": true,
+        "bounded_effect_attempts": true,
+        "durable_outcome_read_back": true,
+        "visibility_disposition_isolation": true,
+        "offline_replay_without_live_handler": true,
+        "single_host_sqlite_store": true
+      },
+      "graph_owned_gaps": [
+        "exact compensation binding and handler contract",
+        "compensation stack and outcome contract",
+        "canonical outcome event stream_sequence reference",
+        "reverse durable effect-commit ordering",
+        "parallel loser and terminal effect compensation integration"
+      ],
+      "development_disposition": "allowed",
+      "production_cutover_disposition": "original_effect_authority_satisfied_graph_compensation_not_yet_satisfied"
+    }
+  ],
+  "unsafe_fallback_policy": [
+    {
+      "id": "canonical_event_authority",
+      "rule": "A failed canonical append, graph decision, transition, or projection prevents state advancement and activity dispatch.",
+      "forbidden": [
+        "in-memory event authority",
+        "JSONL write authority",
+        "second event envelope",
+        "second event store",
+        "second stream sequence"
+      ]
+    },
+    {
+      "id": "offline_replay_only",
+      "rule": "Missing recorded nondeterministic outcomes fail with a typed history diagnostic.",
+      "forbidden": [
+        "live Worker replay",
+        "live LLM replay",
+        "live Tool or MCP replay",
+        "current clock reconstruction",
+        "live side-effect or compensation replay"
+      ]
+    },
+    {
+      "id": "exact_versions",
+      "rule": "Unknown, missing, ambiguous, or incompatible versions fail preflight or enter explicit quarantine.",
+      "forbidden_aliases": [
+        "current",
+        "default",
+        "latest",
+        "stable"
+      ]
+    },
+    {
+      "id": "attempt_safety",
+      "rule": "Physical concurrency and retries require explicit cancellation, termination, idempotency, fencing, and reconciliation evidence.",
+      "forbidden": [
+        "overlapping retry after unconfirmed termination",
+        "replacement branch effect after uncertain outcome",
+        "treating Future.cancel as termination confirmation"
+      ]
+    },
+    {
+      "id": "durable_wait",
+      "rule": "Production Wait requires durable scope-bound registration and inbox state.",
+      "forbidden": [
+        "process-memory wait authority",
+        "unscoped signal correlation",
+        "current wall-clock replay"
+      ]
+    },
+    {
+      "id": "side_effect_authority",
+      "rule": "Production effects require exact handler binding and durable decision/outcome read-back.",
+      "forbidden": [
+        "in-memory production side-effect store",
+        "worker-authorized effect",
+        "effect success before durable outcome verification"
+      ]
+    },
+    {
+      "id": "compensation_order",
+      "rule": "Compensation ordering uses canonical outcome event stream_sequence in reverse order.",
+      "forbidden": [
+        "timestamp ordering",
+        "thread completion ordering",
+        "static graph ordering",
+        "local row ordering"
+      ]
+    },
+    {
+      "id": "diagnostic_fallback",
+      "rule": "LocalRuntimeDiagnosticFallback may retain only bounded safe diagnostics and is never runtime authority."
+    }
+  ],
+  "verification": [
+    {
+      "selection": "durable_event_contract_replay",
+      "result": "passed",
+      "passed": 208,
+      "qualification_scope": "selected contract implementation only"
+    },
+    {
+      "selection": "side_effect_contract_authority_recovery",
+      "result": "passed",
+      "passed": 35,
+      "qualification_scope": "completed side-effect dependency contracts"
+    },
+    {
+      "selection": "runtime_safety_attempt_overlay_redis",
+      "result": "passed",
+      "passed": 22,
+      "qualification_scope": "uncommitted development candidate only"
+    },
+    {
+      "command": "openspec validate durable-event-runtime --strict",
+      "result": "passed"
+    },
+    {
+      "command": "openspec validate framework-runtime-safety-hardening --strict",
+      "result": "passed"
+    },
+    {
+      "command": "openspec validate harness-side-effect-authority-closure --strict",
+      "result": "passed"
+    },
+    {
+      "command": "openspec validate harness-workflow-graph-runtime --strict",
+      "result": "passed"
+    }
+  ],
+  "refresh_triggers": [
+    "repository HEAD changes before dependency pinning",
+    "dependency release identity changes",
+    "pinned schema, reducer, policy, activity, decision, or outcome version changes",
+    "Runtime Safety provisional source fingerprint changes",
+    "dependency OpenSpec completion status changes",
+    "Durable Event external authority or rollback qualification changes",
+    "production cutover disposition changes"
+  ],
+  "task_status": {
+    "task_1_1_checked": false,
+    "reason": "Runtime Safety has no committed exact dependency version and Durable Event production qualification remains incomplete."
+  }
+}
