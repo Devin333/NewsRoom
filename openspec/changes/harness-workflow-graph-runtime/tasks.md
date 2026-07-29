@@ -27,13 +27,13 @@
 
 ## 4. Graph State, Node Identity, and Status Projection
 
-- [ ] 4.1 Add `RunLifecycle`, `RunOutcome`, `HarnessNodeInstanceState`, join state, loop counter, Wait registration, compensation entry, and graph budget state models.
-- [ ] 4.2 Implement deterministic node-instance identity from run, graph checksum, node definition, branch path, iteration vector, and persisted activation ordinal.
-- [ ] 4.3 Implement immutable `HarnessGraphState` with stable ready/running/waiting/terminal projections, active activities, budget counters, graph reference, and last event sequence.
-- [ ] 4.4 Enforce state invariants preventing one node instance from occupying incompatible states or accepting activity/gate evidence from another instance or attempt.
-- [ ] 4.5 Implement canonical graph-state serialization and projection checksums covering every field that affects future scheduling decisions.
-- [ ] 4.6 Implement the documented v1 status-to-v2 lifecycle/outcome reader and bounded public legacy-status projection, including halted versus indeterminate evidence.
-- [ ] 4.7 Add state round-trip, deterministic identity, retry-versus-loop-instance, parallel-state, and compatibility projection tests.
+- [x] 4.1 Add `RunLifecycle`, `RunOutcome`, `HarnessNodeInstanceState`, join state, loop counter, Wait registration, compensation entry, and graph budget state models.
+- [x] 4.2 Implement deterministic node-instance identity from run, graph checksum, node definition, branch path, iteration vector, and persisted activation ordinal.
+- [x] 4.3 Implement immutable `HarnessGraphState` with stable ready/running/waiting/terminal projections, active activities, budget counters, graph reference, and last event sequence.
+- [x] 4.4 Enforce state invariants preventing one node instance from occupying incompatible states or accepting activity/gate evidence from another instance or attempt.
+- [x] 4.5 Implement canonical graph-state serialization and projection checksums covering every field that affects future scheduling decisions.
+- [x] 4.6 Implement the documented v1 status-to-v2 lifecycle/outcome reader and bounded public legacy-status projection, including halted versus indeterminate evidence.
+- [x] 4.7 Add state round-trip, deterministic identity, retry-versus-loop-instance, parallel-state, and compatibility projection tests.
 
 ## 5. Scheduler Decomposition and Pure Decision Logic
 
