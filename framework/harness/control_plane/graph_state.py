@@ -658,7 +658,7 @@ class HarnessNodeInstanceState:
                     "node evidence belongs to another node instance",
                     code="cross_node_evidence_rejected",
                 )
-            if evidence.attempt != self.attempt:
+            if evidence.attempt > self.attempt:
                 raise HarnessValidationError(
                     "node evidence belongs to another attempt",
                     code="cross_attempt_evidence_rejected",
@@ -1533,7 +1533,12 @@ class HarnessGraphState:
                     "active activity belongs to another attempt",
                     code="cross_attempt_activity_rejected",
                 )
-            if not node.is_running:
+            retains_uncertain_activity = (
+                node.status is HarnessNodeInstanceStatus.HALTED
+                and lifecycle is RunLifecycle.HALTED
+                and outcome is RunOutcome.INDETERMINATE
+            )
+            if not node.is_running and not retains_uncertain_activity:
                 raise HarnessValidationError(
                     "active activity requires a running node instance",
                     code="activity_node_state_mismatch",
@@ -1772,7 +1777,7 @@ class HarnessGraphState:
                 or loops
                 or waits
                 or compensations
-                or self.last_event_sequence != 0
+                or self.last_event_sequence not in {0, 1}
             ):
                 raise HarnessValidationError(
                     "created run cannot contain activated graph state",

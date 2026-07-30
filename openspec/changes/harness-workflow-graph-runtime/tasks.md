@@ -47,14 +47,14 @@
 
 ## 6. Graph-Aware Control Plane Foundation
 
-- [ ] 6.1 Update `HarnessControlPlane` initialization and preflight to pin one normalized graph and initialize graph-aware state before recording `RUN_CREATED`.
-- [ ] 6.2 Add generic decision validation and application for node activation, graph control transitions, node terminal transitions, run waiting/completion, and halt without embedding business routing logic.
-- [ ] 6.3 Preserve decision-before-transition durability and enforce projection checksum/version matching for every graph decision.
-- [ ] 6.4 Ensure activity dispatch occurs only after its causal decision commits and bind each activity to node instance, attempt, idempotency key, fencing generation, and exact contract version.
-- [ ] 6.5 Accept asynchronous activity results with duplicate-identical idempotency and reject stale, conflicting, cross-node, cross-attempt, cross-tenant, or cross-scope results.
-- [ ] 6.6 Add atomic budget reservation/consumption transitions so concurrent branches cannot overspend stale run-level counters.
-- [ ] 6.7 Implement recovery of committed-but-unprojected graph decisions and dispatched/completed activities without reconsulting a Worker or LLM.
-- [ ] 6.8 Add fail-closed behavior proving canonical event-store failure prevents projection advancement and external activity dispatch.
+- [x] 6.1 Update `HarnessControlPlane` initialization and preflight to pin one normalized graph and initialize graph-aware state before recording `RUN_CREATED`.
+- [x] 6.2 Add generic decision validation and application for node activation, graph control transitions, node terminal transitions, run waiting/completion, and halt without embedding business routing logic.
+- [x] 6.3 Preserve decision-before-transition durability and enforce projection checksum/version matching for every graph decision.
+- [x] 6.4 Ensure activity dispatch occurs only after its causal decision commits and bind each activity to node instance, attempt, idempotency key, fencing generation, and exact contract version.
+- [x] 6.5 Accept asynchronous activity results with duplicate-identical idempotency and reject stale, conflicting, cross-node, cross-attempt, cross-tenant, or cross-scope results.
+- [x] 6.6 Add atomic budget reservation/consumption transitions so concurrent branches cannot overspend stale run-level counters.
+- [x] 6.7 Implement recovery of committed-but-unprojected graph decisions and dispatched/completed activities without reconsulting a Worker or LLM.
+- [x] 6.8 Add fail-closed behavior proving canonical event-store failure prevents projection advancement and external activity dispatch.
 
 ## 7. Sequence and Choice Cutover
 

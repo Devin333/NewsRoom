@@ -49,13 +49,30 @@ from framework.harness.control_plane.gates import (
     default_plan_gates,
     default_verify_gates,
 )
+from framework.harness.control_plane.graph_application import (
+    HarnessGraphActivityDispatcherPort,
+    HarnessGraphControlPlaneRuntime,
+)
+from framework.harness.control_plane.graph_decision import HarnessGraphDecision
+from framework.harness.control_plane.graph_evaluator import (
+    HarnessGraphEvaluationContext,
+)
+from framework.harness.control_plane.graph_runtime import (
+    HarnessGraphActivityResult,
+    HarnessGraphTransitionPort,
+    InMemoryHarnessGraphTransitionPort,
+)
+from framework.harness.control_plane.graph_state import HarnessGraphState
 from framework.harness.control_plane.phase import (
     HarnessPhase,
     HarnessPhaseBoundary,
     HarnessPhaseRecord,
 )
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
-from framework.harness.control_plane.scheduler import HarnessScheduler
+from framework.harness.control_plane.scheduler import (
+    HarnessGraphStepSchedulingInput,
+    HarnessScheduler,
+)
 from framework.harness.control_plane.state import (
     HarnessRunSpec,
     HarnessRunStatus,
@@ -220,6 +237,7 @@ class InMemoryHarnessEventPort:
         self.worker_results: dict[str, dict[str, HarnessWorkerResult]] = {}
         self.activity_results: dict[str, HarnessWorkerResult] = {}
         self.created_activities: list[HarnessActivity] = []
+        self._graph_transition_port = InMemoryHarnessGraphTransitionPort()
 
     def record(self, event: HarnessEvent) -> HarnessEvent:
         self.events.append(event)
@@ -409,6 +427,27 @@ class InMemoryHarnessEventPort:
             self.events.append(projected)
         return projected
 
+    def initialize_graph(self, *args, **kwargs):
+        return self._graph_transition_port.initialize_graph(*args, **kwargs)
+
+    def commit_graph_decision(self, *args, **kwargs):
+        return self._graph_transition_port.commit_graph_decision(*args, **kwargs)
+
+    def commit_graph_projection(self, *args, **kwargs):
+        return self._graph_transition_port.commit_graph_projection(*args, **kwargs)
+
+    def commit_graph_activity_result(self, *args, **kwargs):
+        return self._graph_transition_port.commit_graph_activity_result(*args, **kwargs)
+
+    def recover_graph(self, run_id: str):
+        return self._graph_transition_port.recover_graph(run_id)
+
+    def activity_for(self, activity_id: str):
+        return self._graph_transition_port.activity_for(activity_id)
+
+    def mark_activity_dispatched(self, activity_id: str) -> None:
+        self._graph_transition_port.mark_activity_dispatched(activity_id)
+
 
 class HarnessControlPlane:
     def __init__(
@@ -426,6 +465,7 @@ class HarnessControlPlane:
         approval_evidence_resolver: HarnessSideEffectApprovalResolver | None = None,
         runtime_binding_authority: HarnessRuntimeBindingAuthority | None = None,
         graph_preflight: HarnessGraphPreflight | None = None,
+        graph_activity_dispatcher: HarnessGraphActivityDispatcherPort | None = None,
     ) -> None:
         if event_port is None:
             raise HarnessValidationError(
@@ -469,6 +509,18 @@ class HarnessControlPlane:
         self.graph_preflight = graph_preflight or HarnessGraphPreflight(
             policy=HarnessGraphPreflightPolicy(),
         )
+        graph_transition_port = (
+            event_port if isinstance(event_port, HarnessGraphTransitionPort) else None
+        )
+        self.graph_transition_port = graph_transition_port
+        self._graph_runtime = (
+            None
+            if graph_transition_port is None
+            else HarnessGraphControlPlaneRuntime(
+                graph_transition_port,
+                activity_dispatcher=graph_activity_dispatcher,
+            )
+        )
         self._committed_events: list[HarnessEvent] = []
         self._state_versions: dict[str, int] = {}
         self._decision_indexes: dict[str, int] = {}
@@ -494,6 +546,54 @@ class HarnessControlPlane:
         self._worker_bindings_by_run: dict[str, dict[str, HarnessWorkerBinding]] = {}
         self._activity_contract_versions_by_run: dict[str, dict[str, str]] = {}
         self._prepared_run_specs: dict[str, str] = {}
+
+    def _require_graph_runtime(self) -> HarnessGraphControlPlaneRuntime:
+        if self._graph_runtime is None:
+            raise HarnessValidationError(
+                "graph execution requires a durable graph transition port",
+                code="graph_transition_port_missing",
+            )
+        return self._graph_runtime
+
+    def _discard_prepared_graph_run(self, run_id: str) -> None:
+        for cache in (
+            self._gate_bindings_by_run,
+            self._side_effect_bindings_by_run,
+            self._terminal_side_effect_bindings,
+            self._prepared_graphs,
+            self._resolved_graph_bindings,
+            self._worker_bindings_by_run,
+            self._activity_contract_versions_by_run,
+            self._prepared_run_specs,
+        ):
+            cache.pop(run_id, None)
+
+    def _validate_prepared_graph_state(
+        self,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+    ) -> None:
+        if state.run_id != run_spec.run_id:
+            raise HarnessValidationError(
+                "graph state belongs to another run",
+                code="graph_control_state_run_mismatch",
+            )
+        if (
+            state.metadata.get("run_spec_checksum")
+            != self._prepared_run_specs[run_spec.run_id]
+        ):
+            raise HarnessValidationError(
+                "graph state does not match the current run specification",
+                code="graph_control_run_spec_mismatch",
+            )
+        if (
+            state.graph_ref.checksum
+            != self._prepared_graphs[run_spec.run_id].checksum
+        ):
+            raise HarnessValidationError(
+                "graph state does not match the pinned normalized graph",
+                code="graph_control_graph_mismatch",
+            )
 
     def _prepare_run_spec(self, run_spec: HarnessRunSpec) -> None:
         if not isinstance(run_spec, HarnessRunSpec):
@@ -667,16 +767,6 @@ class HarnessControlPlane:
                 details={"code": "side_effect_approval_resolver_missing"},
             )
 
-        if run_spec.workflow.graph is not None:
-            raise HarnessValidationError(
-                "explicit Graph execution is unavailable until graph-aware state and scheduler cutover",
-                code="graph_runtime_not_active",
-                details={
-                    "code": "graph_runtime_not_active",
-                    "graph_checksum": graph.checksum,
-                },
-            )
-
         self._gate_bindings_by_run[run_spec.run_id] = bindings
         self._side_effect_bindings_by_run[run_spec.run_id] = side_effect_bindings
         if terminal_binding is not None:
@@ -754,7 +844,12 @@ class HarnessControlPlane:
             side_effect_registry=self.side_effect_registry,
         )
 
-    def initialize(self, run_spec: HarnessRunSpec) -> HarnessState:
+    def initialize(
+        self,
+        run_spec: HarnessRunSpec,
+    ) -> HarnessState | HarnessGraphState:
+        if run_spec.workflow.graph is not None:
+            return self.initialize_graph(run_spec)
         self._prepare_run_spec(run_spec)
         recovery = self._restore_recovery(run_spec)
         if recovery.state is not None:
@@ -774,8 +869,123 @@ class HarnessControlPlane:
             occurred_at=run_spec.created_at,
         )
 
+    def initialize_graph(self, run_spec: HarnessRunSpec) -> HarnessGraphState:
+        if not isinstance(run_spec, HarnessRunSpec):
+            raise TypeError("run_spec must be HarnessRunSpec")
+        was_prepared = run_spec.run_id in self._prepared_run_specs
+        try:
+            self._prepare_run_spec(run_spec)
+            runtime = self._require_graph_runtime()
+            return runtime.initialize(
+                run_spec,
+                self._prepared_graphs[run_spec.run_id],
+                self.graph_preflight.policy,
+                run_spec_checksum=self._prepared_run_specs[run_spec.run_id],
+            )
+        except Exception:
+            if not was_prepared:
+                try:
+                    recovery = (
+                        None
+                        if self.graph_transition_port is None
+                        else self.graph_transition_port.recover_graph(run_spec.run_id)
+                    )
+                except Exception:
+                    recovery = None
+                if recovery is None or recovery.state is None:
+                    self._discard_prepared_graph_run(run_spec.run_id)
+            raise
+
+    def next_graph_decision(
+        self,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+        *,
+        graph_context: HarnessGraphEvaluationContext | None = None,
+        step_inputs: tuple[HarnessGraphStepSchedulingInput, ...] = (),
+    ) -> HarnessGraphDecision | None:
+        self._prepare_run_spec(run_spec)
+        self._validate_prepared_graph_state(run_spec, state)
+        decision = self.scheduler.next_decision(
+            state,
+            graph=self._prepared_graphs[run_spec.run_id],
+            graph_context=graph_context,
+            step_inputs=step_inputs,
+        )
+        if decision is not None and not isinstance(decision, HarnessGraphDecision):
+            raise HarnessValidationError(
+                "HarnessScheduler returned a non-graph decision for graph state",
+                code="graph_scheduler_decision_type_mismatch",
+            )
+        return decision
+
+    def apply_graph_decision(
+        self,
+        run_spec: HarnessRunSpec,
+        state: HarnessGraphState,
+        decision: HarnessGraphDecision,
+        *,
+        occurred_at,
+        activity_input_ref: str | None = None,
+        accepted_evidence_refs: tuple[str, ...] = (),
+    ) -> HarnessGraphState:
+        self._prepare_run_spec(run_spec)
+        self._validate_prepared_graph_state(run_spec, state)
+        return self._require_graph_runtime().apply_decision(
+            state,
+            self._prepared_graphs[run_spec.run_id],
+            decision,
+            run_spec_checksum=self._prepared_run_specs[run_spec.run_id],
+            occurred_at=occurred_at,
+            activity_input_ref=activity_input_ref,
+            accepted_evidence_refs=accepted_evidence_refs,
+        )
+
+    def accept_graph_activity_result(
+        self,
+        run_spec: HarnessRunSpec,
+        result: HarnessGraphActivityResult,
+        *,
+        occurred_at,
+    ) -> HarnessGraphState:
+        self._prepare_run_spec(run_spec)
+        runtime = self._require_graph_runtime()
+        activity = runtime.transition_port.activity_for(result.activity_id)
+        if activity is None or activity.run_id != run_spec.run_id:
+            raise HarnessValidationError(
+                "graph activity result belongs to another or unknown run",
+                code="graph_activity_result_run_mismatch",
+            )
+        state = runtime.accept_activity_result(
+            result,
+            graph=self._prepared_graphs[run_spec.run_id],
+            run_spec_checksum=self._prepared_run_specs[run_spec.run_id],
+            occurred_at=occurred_at,
+        )
+        if state.run_id != run_spec.run_id:
+            raise HarnessValidationError(
+                "graph activity result belongs to another run",
+                code="graph_activity_result_run_mismatch",
+            )
+        return state
+
+    def recover_graph(self, run_spec: HarnessRunSpec) -> HarnessGraphState:
+        self._prepare_run_spec(run_spec)
+        return self._require_graph_runtime().recover(
+            run_spec.run_id,
+            self._prepared_graphs[run_spec.run_id],
+            run_spec_checksum=self._prepared_run_specs[run_spec.run_id],
+        )
+
     def run(self, run_spec: HarnessRunSpec) -> HarnessRunResult:
+        if run_spec.workflow.graph is not None:
+            raise HarnessValidationError(
+                "explicit Graph execution awaits the Sequence/Choice cutover",
+                code="graph_execution_not_active",
+            )
         state = self.initialize(run_spec)
+        if not isinstance(state, HarnessState):  # pragma: no cover - guarded above
+            raise AssertionError("legacy run initialized graph state")
         recovery = self._restore_recovery(run_spec)
         return self._drive(
             state,
@@ -785,6 +995,11 @@ class HarnessControlPlane:
         )
 
     def recover_and_run(self, run_spec: HarnessRunSpec) -> HarnessRunResult:
+        if run_spec.workflow.graph is not None:
+            raise HarnessValidationError(
+                "explicit Graph execution awaits the Sequence/Choice cutover",
+                code="graph_execution_not_active",
+            )
         recovery = self._restore_recovery(run_spec)
         if recovery.state is None:
             raise EventIncompleteHistoryError(

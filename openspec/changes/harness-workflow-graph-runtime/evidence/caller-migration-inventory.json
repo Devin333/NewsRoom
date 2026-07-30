@@ -55,6 +55,7 @@
       "framework/harness/control_plane/transitions.py",
       "tests/framework/harness/control_plane/test_deterministic_gate_enforcement.py",
       "tests/framework/harness/control_plane/test_gates.py",
+      "tests/framework/harness/control_plane/test_graph_control_plane.py",
       "tests/framework/harness/control_plane/test_graph_evaluator.py",
       "tests/framework/harness/control_plane/test_graph_scheduler.py",
       "tests/framework/harness/control_plane/test_graph_state.py",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -211,6 +213,38 @@ def test_initial_graph_state_pins_graph_budget_and_empty_created_projection() ->
     assert state.projection_checksum == canonical_checksum(state.checksum_projection())
 
 
+def test_empty_created_projection_may_record_committed_creation_sequence() -> None:
+    state = HarnessGraphState.initial(
+        run_id="run-1",
+        graph_ref=_graph_ref(),
+        budgets=HarnessGraphBudgetState(
+            (HarnessBudgetCounterState("node_activations", 10),)
+        ),
+    )
+
+    committed = replace(state, last_event_sequence=1, projection_checksum=None)
+
+    assert committed.lifecycle is RunLifecycle.CREATED
+    assert committed.node_instances == ()
+    assert committed.last_event_sequence == 1
+    assert committed.projection_checksum != state.projection_checksum
+
+
+def test_empty_created_projection_rejects_sequence_after_creation() -> None:
+    state = HarnessGraphState.initial(
+        run_id="run-1",
+        graph_ref=_graph_ref(),
+        budgets=HarnessGraphBudgetState(
+            (HarnessBudgetCounterState("node_activations", 10),)
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        replace(state, last_event_sequence=2, projection_checksum=None)
+
+    assert captured.value.code == "invalid_created_run_projection"
+
+
 def test_node_identity_payload_rejects_tampered_instance_id() -> None:
     payload = _identity("collect", ordinal=0).to_dict()
     payload["instance_id"] = "hni_invalid"
@@ -260,6 +294,28 @@ def test_gate_or_activity_evidence_from_another_instance_or_attempt_is_rejected(
 
     assert cross_node.value.code == "cross_node_evidence_rejected"
     assert cross_attempt.value.code == "cross_attempt_evidence_rejected"
+
+
+def test_node_retains_evidence_from_completed_prior_attempt() -> None:
+    identity = _identity("analyze", ordinal=1)
+    evidence = HarnessAttemptEvidenceReference(
+        _sha("attempt-1-result"),
+        HarnessEvidenceKind.ACTIVITY_RESULT,
+        identity.instance_id,
+        1,
+        3,
+    )
+
+    node = _executable_node(
+        identity,
+        "running",
+        attempt=2,
+        evidence_refs=(evidence,),
+        last_event_sequence=3,
+    )
+
+    assert node.attempt == 2
+    assert node.evidence_refs == (evidence,)
 
 
 def test_attempt_evidence_round_trip_binds_exact_contract_and_payload() -> None:
@@ -348,6 +404,11 @@ def test_active_activity_must_match_running_node_and_current_attempt() -> None:
         step_status="waiting_approval",
         activation_sequence=2,
     )
+    halted = _executable_node(
+        _identity("halted", ordinal=2),
+        "halted",
+        attempt=1,
+    )
 
     with pytest.raises(HarnessValidationError) as cross_attempt:
         _minimal_state(
@@ -359,9 +420,15 @@ def test_active_activity_must_match_running_node_and_current_attempt() -> None:
             nodes=(waiting,),
             activities=(_activity(waiting.instance_id, attempt=1),),
         )
+    with pytest.raises(HarnessValidationError) as halted_in_running_run:
+        _minimal_state(
+            nodes=(halted,),
+            activities=(_activity(halted.instance_id, attempt=1),),
+        )
 
     assert cross_attempt.value.code == "cross_attempt_activity_rejected"
     assert wrong_status.value.code == "activity_node_state_mismatch"
+    assert halted_in_running_run.value.code == "activity_node_state_mismatch"
 
 
 def test_waiting_lifecycle_requires_only_unresolved_waiting_work() -> None:

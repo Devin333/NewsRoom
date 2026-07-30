@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.graph_state import HarnessGraphState
 from framework.harness.control_plane.harness import (
     HarnessControlPlane,
     InMemoryHarnessEventPort,
@@ -135,7 +136,7 @@ def test_invalid_graph_never_invokes_registered_terminal_side_effect() -> None:
     _assert_preflight_left_no_state(control_plane, event_port, run_id)
 
 
-def test_valid_explicit_graph_fails_closed_until_graph_runtime_cutover() -> None:
+def test_valid_explicit_graph_initializes_without_legacy_state_or_events() -> None:
     workflow = HarnessWorkflowSpec(
         workflow_id="explicit-not-active",
         steps=(HarnessStepSpec("first", "script"),),
@@ -154,11 +155,17 @@ def test_valid_explicit_graph_fails_closed_until_graph_runtime_cutover() -> None
         },
     )
 
-    with pytest.raises(HarnessValidationError) as captured:
-        control_plane.initialize(HarnessRunSpec(run_id=run_id, workflow=workflow))
+    state = control_plane.initialize(
+        HarnessRunSpec(run_id=run_id, workflow=workflow)
+    )
 
-    assert captured.value.code == "graph_runtime_not_active"
-    _assert_preflight_left_no_state(control_plane, event_port, run_id)
+    assert isinstance(state, HarnessGraphState)
+    assert state.graph_ref.checksum == control_plane._prepared_graphs[run_id].checksum
+    assert event_port.events == []
+    assert event_port.transitions == {}
+    assert event_port.states == {}
+    assert event_port.created_activities == []
+    assert control_plane.graph_transition_port.recover_graph(run_id).state == state
 
 
 def test_failed_preflight_does_not_poison_same_run_id_for_corrected_spec() -> None:
@@ -302,6 +309,8 @@ def _assert_preflight_left_no_state(
         "_terminal_side_effect_bindings",
     ):
         assert run_id not in getattr(control_plane, cache_name)
+    if control_plane.graph_transition_port is not None:
+        assert control_plane.graph_transition_port.recover_graph(run_id).state is None
 
 
 class _StaticCompiler:
