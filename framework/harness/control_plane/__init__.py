@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from framework.harness.control_plane.decision import HarnessDecision, HarnessDecisionType
+from framework.harness.control_plane.decision import (
+    HarnessDecision,
+    HarnessDecisionType,
+)
 from framework.harness.control_plane.activity import (
     HarnessActivity,
     HarnessActivityResultRecord,
@@ -38,6 +41,19 @@ from framework.harness.control_plane.gate_registry import (
     GateReference,
     GateRegistration,
 )
+from framework.harness.control_plane.graph_decision import (
+    HarnessGraphDecision,
+    HarnessGraphDecisionType,
+)
+from framework.harness.control_plane.graph_evaluator import (
+    GraphEvaluation,
+    HarnessAcceptedGraphObservation,
+    HarnessGraphCandidate,
+    HarnessGraphCandidateType,
+    HarnessGraphEvaluationContext,
+    HarnessGraphObservationType,
+    WorkflowGraphEvaluator,
+)
 from framework.harness.control_plane.graph_state import (
     HarnessActiveActivityState,
     HarnessAttemptEvidenceReference,
@@ -64,7 +80,11 @@ from framework.harness.control_plane.graph_state import (
     RunOutcome,
     project_public_legacy_status,
 )
-from framework.harness.control_plane.harness import HarnessControlPlane, HarnessRunResult, InMemoryHarnessEventPort
+from framework.harness.control_plane.harness import (
+    HarnessControlPlane,
+    HarnessRunResult,
+    InMemoryHarnessEventPort,
+)
 from framework.harness.control_plane.phase import (
     HarnessPhase,
     HarnessPhaseBoundary,
@@ -86,6 +106,18 @@ from framework.harness.control_plane.state import (
     HarnessState,
     HarnessStepState,
     HarnessStepStatus,
+)
+from framework.harness.control_plane.step_lifecycle import (
+    StepGateObservation,
+    StepLifecycleBindingMode,
+    StepLifecycleBudget,
+    StepLifecycleObservations,
+    StepLifecycleState,
+    StepLifecycleStateMachine,
+    StepLifecycleTransition,
+    StepLifecycleTransitionType,
+    StepQualityObservation,
+    StepWorkerObservation,
 )
 from framework.harness.control_plane.trace import HarnessTrace
 from framework.harness.control_plane.transcript import (
@@ -120,6 +152,8 @@ __all__ = [
     "GateBinding",
     "GateReference",
     "GateRegistration",
+    "GraphEvaluation",
+    "HarnessAcceptedGraphObservation",
     "HarnessBudgetSnapshot",
     "HarnessActivity",
     "HarnessActivityResultRecord",
@@ -139,6 +173,12 @@ __all__ = [
     "HarnessEvidenceKind",
     "HarnessGateResult",
     "HarnessGraphBudgetState",
+    "HarnessGraphCandidate",
+    "HarnessGraphCandidateType",
+    "HarnessGraphDecision",
+    "HarnessGraphDecisionType",
+    "HarnessGraphEvaluationContext",
+    "HarnessGraphObservationType",
     "HarnessGraphReference",
     "HarnessGraphState",
     "HarnessJoinKind",
@@ -185,7 +225,18 @@ __all__ = [
     "ScoreRangeGate",
     "SecureHarnessActivityStorePort",
     "SkillEvolutionBudgetGate",
+    "StepGateObservation",
+    "StepLifecycleBindingMode",
+    "StepLifecycleBudget",
+    "StepLifecycleObservations",
+    "StepLifecycleState",
+    "StepLifecycleStateMachine",
+    "StepLifecycleTransition",
+    "StepLifecycleTransitionType",
+    "StepQualityObservation",
+    "StepWorkerObservation",
     "ToolAllowlistGate",
+    "WorkflowGraphEvaluator",
     "assert_step_completion_allowed",
     "build_harness_history_verifier",
     "event_log_entry_from_harness_event",

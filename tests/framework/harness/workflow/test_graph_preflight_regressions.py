@@ -53,10 +53,14 @@ def test_wait_scope_and_correlation_sources_must_be_structural_graph_paths() -> 
     )
     graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
 
-    diagnostics = HarnessGraphPreflight().validate(
-        graph,
-        registry=_snapshot(graph),
-    ).diagnostics
+    diagnostics = (
+        HarnessGraphPreflight()
+        .validate(
+            graph,
+            registry=_snapshot(graph),
+        )
+        .diagnostics
+    )
     codes = {item.code for item in diagnostics}
 
     assert "invalid_wait_correlation_source" in codes
@@ -128,8 +132,14 @@ def test_wait_may_reference_reachable_verified_node_outputs() -> None:
 
     diagnostics = _validate(graph).diagnostics
 
-    assert not [item for item in diagnostics if item.code.startswith("unreachable_wait_")]
-    assert not [item for item in diagnostics if item.code == "unresolved_wait_node_output_source"]
+    assert not [
+        item for item in diagnostics if item.code.startswith("unreachable_wait_")
+    ]
+    assert not [
+        item
+        for item in diagnostics
+        if item.code == "unresolved_wait_node_output_source"
+    ]
 
 
 def test_wait_rejects_node_output_source_that_is_not_upstream() -> None:
@@ -214,7 +224,9 @@ def test_only_declared_loop_terminal_may_use_loop_back_edge() -> None:
             HarnessGraphEdge("loop-body", "loop", "body", "loop_body", loop_id="loop"),
             HarnessGraphEdge("body-back", "body", "loop", "loop_back", loop_id="loop"),
             HarnessGraphEdge("loop-exit", "loop", "exit", "loop_exit", loop_id="loop"),
-            HarnessGraphEdge("forged-back", "exit", "loop", "loop_back", loop_id="loop"),
+            HarnessGraphEdge(
+                "forged-back", "exit", "loop", "loop_back", loop_id="loop"
+            ),
         ),
         entry=("loop",),
         terminal=("exit",),
@@ -348,7 +360,9 @@ def test_compensation_binding_without_exact_edge_is_rejected() -> None:
         workflow_version="1",
         workflow_ref=_ref(HarnessContractKind.WORKFLOW, "manual", "1"),
         nodes=(origin, compensation),
-        edges=(HarnessGraphEdge("normal-edge", "origin", "compensation", "dependency"),),
+        edges=(
+            HarnessGraphEdge("normal-edge", "origin", "compensation", "dependency"),
+        ),
         entry_node_ids=("origin",),
         terminal_node_ids=("compensation",),
         compensation_refs=(binding,),
@@ -387,7 +401,9 @@ def test_retry_policy_rejects_multiple_repair_edges() -> None:
     assert "duplicate_repair_edge" in codes
 
 
-def test_parallel_duplicate_output_keys_require_explicit_merge_without_metadata_hint() -> None:
+def test_parallel_duplicate_output_keys_require_explicit_merge_without_metadata_hint() -> (
+    None
+):
     workflow = HarnessWorkflowSpec(
         workflow_id="parallel-duplicate-output",
         steps=(
@@ -481,10 +497,12 @@ def test_activation_bound_counts_every_node_in_each_loop_iteration() -> None:
         policy=HarnessGraphPreflightPolicy(max_node_activations=61)
     ).validate(graph, registry=_snapshot(graph))
     diagnostic = next(
-        item for item in result.diagnostics if item.code == "graph_activation_limit_exceeded"
+        item
+        for item in result.diagnostics
+        if item.code == "graph_activation_limit_exceeded"
     )
 
-    assert diagnostic.details["actual"] == 62
+    assert diagnostic.details["actual"] == 63
 
 
 def test_activation_bound_multiplies_nested_loop_iterations() -> None:
@@ -518,13 +536,17 @@ def test_activation_bound_multiplies_nested_loop_iterations() -> None:
         policy=HarnessGraphPreflightPolicy(max_node_activations=19)
     ).validate(graph, registry=_snapshot(graph))
     diagnostic = next(
-        item for item in result.diagnostics if item.code == "graph_activation_limit_exceeded"
+        item
+        for item in result.diagnostics
+        if item.code == "graph_activation_limit_exceeded"
     )
 
-    assert diagnostic.details["actual"] == 20
+    assert diagnostic.details["actual"] == 23
 
 
-def test_legacy_unconditional_jump_does_not_leave_dead_nodes_in_normalized_graph() -> None:
+def test_legacy_unconditional_jump_does_not_leave_dead_nodes_in_normalized_graph() -> (
+    None
+):
     workflow = HarnessWorkflowSpec(
         workflow_id="legacy-jump",
         steps=(

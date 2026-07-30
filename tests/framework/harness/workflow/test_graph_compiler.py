@@ -233,11 +233,13 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
     kinds = {node.node_id: node.node_kind for node in graph.nodes}
 
     assert kinds["route"] == HarnessGraphNodeKind.CHOICE
+    assert kinds["route:join"] == HarnessGraphNodeKind.CHOICE_JOIN
     assert kinds["all-fork"] == HarnessGraphNodeKind.FORK_ALL
     assert kinds["all-join"] == HarnessGraphNodeKind.JOIN_ALL
     assert kinds["any-fork"] == HarnessGraphNodeKind.FORK_ANY
     assert kinds["any-join"] == HarnessGraphNodeKind.JOIN_ANY
     assert kinds["bounded-loop"] == HarnessGraphNodeKind.LOOP_GUARD
+    assert kinds["bounded-loop:join"] == HarnessGraphNodeKind.LOOP_JOIN
     assert kinds["approval"] == HarnessGraphNodeKind.WAIT
     assert kinds["compensation:retract"] == HarnessGraphNodeKind.EXECUTABLE
     assert graph.entry_node_ids == ("start",)
@@ -248,6 +250,12 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
     assert graph.terminal_policy.handler_ref.handler_id == "publication.commit"
     assert graph.compensation_refs[0].handler_ref.exact_ref == "publication.retract@1"
     assert any(edge.edge_kind == HarnessGraphEdgeKind.LOOP_BACK for edge in graph.edges)
+    assert any(
+        edge.target_id == "route:join"
+        and edge.edge_kind == HarnessGraphEdgeKind.DEPENDENCY
+        and edge.branch_id is not None
+        for edge in graph.edges
+    )
     assert any(
         edge.edge_kind == HarnessGraphEdgeKind.COMPENSATION for edge in graph.edges
     )

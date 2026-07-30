@@ -380,6 +380,8 @@ class HarnessAttemptEvidenceReference:
     node_instance_id: str
     attempt: int
     event_sequence: int
+    contract_ref: HarnessContractReference | None = None
+    payload_ref: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -395,6 +397,46 @@ class HarnessAttemptEvidenceReference:
         )
         _nonnegative_int(self.attempt, "evidence.attempt")
         _nonnegative_int(self.event_sequence, "evidence.event_sequence")
+        if (self.contract_ref is None) != (self.payload_ref is None):
+            raise HarnessValidationError(
+                "evidence contract_ref and payload_ref must be declared together",
+                code="incomplete_evidence_binding",
+            )
+        if self.contract_ref is not None:
+            if not isinstance(self.contract_ref, HarnessContractReference):
+                raise TypeError(
+                    "evidence.contract_ref must be HarnessContractReference"
+                )
+            allowed_contract_kinds = {
+                HarnessEvidenceKind.ACTIVITY_RESULT: frozenset(
+                    {
+                        HarnessContractKind.STEP,
+                        HarnessContractKind.WORKER,
+                        HarnessContractKind.ACTIVITY,
+                    }
+                ),
+                HarnessEvidenceKind.GATE_RESULT: frozenset({HarnessContractKind.GATE}),
+                HarnessEvidenceKind.SIDE_EFFECT_OUTCOME: frozenset(
+                    {HarnessContractKind.SIDE_EFFECT}
+                ),
+            }.get(self.kind)
+            if (
+                allowed_contract_kinds is not None
+                and self.contract_ref.contract_kind not in allowed_contract_kinds
+            ):
+                raise HarnessValidationError(
+                    "evidence contract kind does not match its evidence kind",
+                    code="evidence_contract_kind_mismatch",
+                    details={
+                        "evidence_kind": self.kind.value,
+                        "contract_kind": self.contract_ref.contract_kind.value,
+                    },
+                )
+            object.__setattr__(
+                self,
+                "payload_ref",
+                _checksum(self.payload_ref, "evidence.payload_ref"),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -403,13 +445,25 @@ class HarnessAttemptEvidenceReference:
             "node_instance_id": self.node_instance_id,
             "attempt": self.attempt,
             "event_sequence": self.event_sequence,
+            "contract_ref": (
+                None if self.contract_ref is None else self.contract_ref.to_dict()
+            ),
+            "payload_ref": self.payload_ref,
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "HarnessAttemptEvidenceReference":
         _exact_keys(
             value,
-            {"evidence_ref", "kind", "node_instance_id", "attempt", "event_sequence"},
+            {
+                "evidence_ref",
+                "kind",
+                "node_instance_id",
+                "attempt",
+                "event_sequence",
+                "contract_ref",
+                "payload_ref",
+            },
             "attempt evidence reference",
         )
         return cls(
@@ -418,6 +472,12 @@ class HarnessAttemptEvidenceReference:
             node_instance_id=value["node_instance_id"],
             attempt=value["attempt"],
             event_sequence=value["event_sequence"],
+            contract_ref=(
+                None
+                if value["contract_ref"] is None
+                else HarnessContractReference.from_dict(value["contract_ref"])
+            ),
+            payload_ref=value["payload_ref"],
         )
 
 
@@ -2129,15 +2189,23 @@ def _validate_wait_node_status(
 ) -> None:
     allowed = {
         HarnessWaitStatus.REGISTERED: frozenset({HarnessNodeInstanceStatus.WAITING}),
-        HarnessWaitStatus.RESUMED: frozenset({HarnessNodeInstanceStatus.SUCCEEDED}),
+        HarnessWaitStatus.RESUMED: frozenset(
+            {
+                HarnessNodeInstanceStatus.WAITING,
+                HarnessNodeInstanceStatus.SUCCEEDED,
+            }
+        ),
         HarnessWaitStatus.TIMED_OUT: frozenset(
             {
+                HarnessNodeInstanceStatus.WAITING,
                 HarnessNodeInstanceStatus.SUCCEEDED,
                 HarnessNodeInstanceStatus.FAILED,
             }
         ),
         HarnessWaitStatus.CANCELLED: frozenset(
             {
+                HarnessNodeInstanceStatus.WAITING,
+                HarnessNodeInstanceStatus.CANCEL_REQUESTED,
                 HarnessNodeInstanceStatus.CANCELLED,
                 HarnessNodeInstanceStatus.HALTED,
             }

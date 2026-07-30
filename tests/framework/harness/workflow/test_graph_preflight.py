@@ -48,7 +48,29 @@ def test_valid_sequence_graph_passes_every_preflight_phase() -> None:
     assert prepared.graph.terminal_output_keys == ("report",)
 
 
-def test_structural_validation_reports_duplicate_endpoint_reachability_and_cycle_errors() -> None:
+def test_control_fact_declaration_requires_exact_deterministic_gate() -> None:
+    workflow = HarnessWorkflowSpec(
+        workflow_id="control-facts",
+        steps=(
+            HarnessStepSpec(
+                "classify",
+                "llm",
+                metadata={"control_fact_paths": ("classification",)},
+            ),
+        ),
+        entry_step_id="classify",
+        graph=HarnessGraphSpec("control-facts", StepRef("classify")),
+    )
+    graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
+
+    codes = {item.code for item in _preflight(graph).diagnostics}
+
+    assert "control_fact_gate_missing" in codes
+
+
+def test_structural_validation_reports_duplicate_endpoint_reachability_and_cycle_errors() -> (
+    None
+):
     one = _node("one", 0)
     duplicate = _node("one", 1)
     unreachable = _node("unreachable", 2)
@@ -76,7 +98,9 @@ def test_structural_validation_reports_duplicate_endpoint_reachability_and_cycle
     assert captured.value.code == "harness_graph_preflight_failed"
 
 
-def test_semantic_validation_rejects_choice_loop_wait_and_compensation_ambiguity() -> None:
+def test_semantic_validation_rejects_choice_loop_wait_and_compensation_ambiguity() -> (
+    None
+):
     target = _node("target", 4)
     choice = HarnessControlNode(
         node_id="choice",
@@ -116,7 +140,9 @@ def test_semantic_validation_rejects_choice_loop_wait_and_compensation_ambiguity
     graph = _normalized(
         nodes=(choice, loop, wait, target),
         edges=(
-            HarnessGraphEdge("choice-target", "choice", "target", "default", branch_id="a"),
+            HarnessGraphEdge(
+                "choice-target", "choice", "target", "default", branch_id="a"
+            ),
             HarnessGraphEdge("target-loop", "target", "loop", "dependency"),
             HarnessGraphEdge("loop-wait", "loop", "timer", "loop_exit", loop_id="loop"),
         ),
@@ -154,7 +180,9 @@ def test_structural_validation_requires_exact_fork_join_pairing() -> None:
     graph = _normalized(
         nodes=(fork, branch, join),
         edges=(
-            HarnessGraphEdge("fork-branch", "fork", "branch", "fork_branch", branch_id="a"),
+            HarnessGraphEdge(
+                "fork-branch", "fork", "branch", "fork_branch", branch_id="a"
+            ),
             HarnessGraphEdge("branch-join", "branch", "join", "join", branch_id="a"),
         ),
         entry=("fork",),
@@ -189,7 +217,9 @@ def test_declared_bounded_loop_is_the_only_cycle_accepted_by_structure() -> None
     assert "undeclared_graph_cycle" not in codes
 
 
-def test_compensation_requires_effectful_origin_instance_scope_and_safe_registry() -> None:
+def test_compensation_requires_effectful_origin_instance_scope_and_safe_registry() -> (
+    None
+):
     origin = _node("origin", 0)
     compensation = _node("compensation", 1)
     reference = HarnessCompensationReference(
@@ -206,7 +236,9 @@ def test_compensation_requires_effectful_origin_instance_scope_and_safe_registry
         workflow_version="1",
         workflow_ref=_ref("workflow", "manual", "1"),
         nodes=(origin, compensation),
-        edges=(HarnessGraphEdge("undo-edge", "origin", "compensation", "compensation"),),
+        edges=(
+            HarnessGraphEdge("undo-edge", "origin", "compensation", "compensation"),
+        ),
         entry_node_ids=("origin",),
         terminal_node_ids=("origin",),
         compensation_refs=(reference,),
@@ -252,7 +284,9 @@ def test_dataflow_requires_producer_on_every_path_and_terminal_outputs() -> None
     assert diagnostics["terminal_output_unavailable"].node_id == "finish"
 
 
-def test_parallel_shared_write_requires_explicit_merge_and_isolated_namespaces() -> None:
+def test_parallel_shared_write_requires_explicit_merge_and_isolated_namespaces() -> (
+    None
+):
     def workflow(merge_ref: str | None) -> HarnessWorkflowSpec:
         return HarnessWorkflowSpec(
             workflow_id=f"parallel-{merge_ref}",
@@ -286,7 +320,9 @@ def test_parallel_shared_write_requires_explicit_merge_and_isolated_namespaces()
         )
 
     without_merge = HarnessWorkflowGraphCompiler().compile(workflow(None)).graph
-    with_merge = HarnessWorkflowGraphCompiler().compile(workflow("shared.merge@1")).graph
+    with_merge = (
+        HarnessWorkflowGraphCompiler().compile(workflow("shared.merge@1")).graph
+    )
 
     assert "parallel_shared_write_conflict" in {
         item.code for item in _preflight(without_merge).diagnostics
@@ -296,7 +332,9 @@ def test_parallel_shared_write_requires_explicit_merge_and_isolated_namespaces()
     }
 
 
-def test_registry_requires_every_exact_reference_and_parallel_safety_capability() -> None:
+def test_registry_requires_every_exact_reference_and_parallel_safety_capability() -> (
+    None
+):
     workflow = HarnessWorkflowSpec(
         workflow_id="parallel-registry",
         steps=(HarnessStepSpec("left", "script"), HarnessStepSpec("right", "script")),

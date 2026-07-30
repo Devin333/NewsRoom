@@ -22,6 +22,7 @@ from framework.harness.workflow.graph import (
     HarnessControlNode,
     HarnessExecutableNode,
     HarnessGraphEdgeKind,
+    HarnessGraphNodeKind,
     NormalizedHarnessGraph,
 )
 from framework.harness.workflow.spec import HarnessWorkflowSpec
@@ -330,13 +331,22 @@ def _validate_terminal_gate_coverage(
             if indegree[successor] == 0:
                 queue.append(successor)
 
+    diagnostic_terminal_ids = tuple(
+        sorted(
+            {
+                leaf_id
+                for terminal_id in graph.terminal_node_ids
+                for leaf_id in _selection_terminal_leaves(graph, terminal_id)
+            }
+        )
+    )
     missing_by_terminal = {
         terminal_id: sorted(
             required_gate_refs.difference(
                 guaranteed_after.get(terminal_id, frozenset())
             )
         )
-        for terminal_id in graph.terminal_node_ids
+        for terminal_id in diagnostic_terminal_ids
         if not required_gate_refs.issubset(
             guaranteed_after.get(terminal_id, frozenset())
         )
@@ -347,6 +357,37 @@ def _validate_terminal_gate_coverage(
             "terminal policy inherited gates are not guaranteed on every terminal path",
             missing_by_terminal=missing_by_terminal,
         )
+
+
+def _selection_terminal_leaves(
+    graph: NormalizedHarnessGraph,
+    node_id: str,
+    *,
+    visited: frozenset[str] = frozenset(),
+) -> tuple[str, ...]:
+    if node_id in visited:
+        return (node_id,)
+    definition = next((node for node in graph.nodes if node.node_id == node_id), None)
+    if not isinstance(definition, HarnessControlNode) or definition.node_kind not in {
+        HarnessGraphNodeKind.CHOICE_JOIN,
+        HarnessGraphNodeKind.LOOP_JOIN,
+    }:
+        return (node_id,)
+    next_visited = visited.union({node_id})
+    return tuple(
+        sorted(
+            {
+                leaf_id
+                for branch in definition.branches
+                for terminal_id in branch.terminal_node_ids
+                for leaf_id in _selection_terminal_leaves(
+                    graph,
+                    terminal_id,
+                    visited=next_visited,
+                )
+            }
+        )
+    )
 
 
 def _gate_reference(binding: GateBinding) -> HarnessContractReference:

@@ -259,6 +259,13 @@ class _CompilerContext:
             node_kind=HarnessGraphNodeKind.CHOICE,
             branches=tuple(branches),
         )
+        choice_join_id = f"{expression.choice_id}:join"
+        self._add_control(
+            node_id=choice_join_id,
+            node_kind=HarnessGraphNodeKind.CHOICE_JOIN,
+            branches=tuple(branches),
+            metadata={"choice_node_id": expression.choice_id},
+        )
         for branch, fragment in compiled:
             edge_kind = (
                 HarnessGraphEdgeKind.DEFAULT
@@ -274,14 +281,14 @@ class _CompilerContext:
                     condition=branch.condition,
                     branch_id=branch.branch_id,
                 )
-        return _Fragment(
-            (expression.choice_id,),
-            tuple(
-                terminal
-                for _, fragment in compiled
-                for terminal in fragment.terminal_node_ids
-            ),
-        )
+            for terminal_id in fragment.terminal_node_ids:
+                self._add_edge(
+                    terminal_id,
+                    choice_join_id,
+                    HarnessGraphEdgeKind.DEPENDENCY,
+                    branch_id=branch.branch_id,
+                )
+        return _Fragment((expression.choice_id,), (choice_join_id,))
 
     def _compile_parallel_all(self, expression: ParallelAll) -> _Fragment:
         compiled = tuple(
@@ -421,6 +428,32 @@ class _CompilerContext:
                 ),
             ),
         )
+        loop_join_id = f"{expression.loop_id}:join"
+        loop_routes = [
+            HarnessBranch(
+                branch_id="exit",
+                entry_node_ids=exit_fragment.entry_node_ids,
+                terminal_node_ids=exit_fragment.terminal_node_ids,
+                priority=0,
+                output_namespace=f"loop.{expression.loop_id}.exit",
+            )
+        ]
+        if exhaustion is not None:
+            loop_routes.append(
+                HarnessBranch(
+                    branch_id="exhaustion",
+                    entry_node_ids=exhaustion.entry_node_ids,
+                    terminal_node_ids=exhaustion.terminal_node_ids,
+                    priority=1,
+                    output_namespace=f"loop.{expression.loop_id}.exhaustion",
+                )
+            )
+        self._add_control(
+            node_id=loop_join_id,
+            node_kind=HarnessGraphNodeKind.LOOP_JOIN,
+            branches=tuple(loop_routes),
+            metadata={"loop_node_id": expression.loop_id},
+        )
         for entry_id in body.entry_node_ids:
             self._add_edge(
                 expression.loop_id,
@@ -451,10 +484,16 @@ class _CompilerContext:
                     HarnessGraphEdgeKind.LOOP_EXHAUSTED,
                     loop_id=expression.loop_id,
                 )
-        terminals = list(exit_fragment.terminal_node_ids)
-        if exhaustion is not None:
-            terminals.extend(exhaustion.terminal_node_ids)
-        return _Fragment((expression.loop_id,), tuple(terminals))
+        for route in loop_routes:
+            for terminal_id in route.terminal_node_ids:
+                self._add_edge(
+                    terminal_id,
+                    loop_join_id,
+                    HarnessGraphEdgeKind.DEPENDENCY,
+                    branch_id=route.branch_id,
+                    loop_id=expression.loop_id,
+                )
+        return _Fragment((expression.loop_id,), (loop_join_id,))
 
     def _compile_legacy_choice(
         self,

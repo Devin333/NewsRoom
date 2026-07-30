@@ -23,7 +23,9 @@ _NON_FORWARD_EDGE_KINDS = frozenset(
 )
 
 
-def validate_structure(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagnostic, ...]:
+def validate_structure(
+    graph: NormalizedHarnessGraph,
+) -> tuple[HarnessGraphDiagnostic, ...]:
     diagnostics: list[HarnessGraphDiagnostic] = []
     node_ids = [node.node_id for node in graph.nodes]
     edge_ids = [edge.edge_id for edge in graph.edges]
@@ -153,6 +155,8 @@ def validate_structure(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagn
             )
 
     diagnostics.extend(_validate_loop_edges(graph))
+    diagnostics.extend(_validate_loop_join_pairs(graph))
+    diagnostics.extend(_validate_choice_join_pairs(graph))
     diagnostics.extend(_validate_fork_join_pairs(graph))
     if _contains_undeclared_cycle(graph, unique_node_ids):
         diagnostics.append(
@@ -206,7 +210,9 @@ def _validate_loop_edges(
             )
         elif edge.edge_kind == HarnessGraphEdgeKind.LOOP_BACK:
             code = "invalid_loop_back_edge"
-            message = "loop back edge must connect a declared body terminal to its loop guard"
+            message = (
+                "loop back edge must connect a declared body terminal to its loop guard"
+            )
             valid = edge.target_id == loop_node.node_id and edge.source_id in set(
                 loop.body_terminal_node_ids
             )
@@ -240,11 +246,16 @@ def _validate_fork_join_pairs(
 ) -> tuple[HarnessGraphDiagnostic, ...]:
     diagnostics: list[HarnessGraphDiagnostic] = []
     controls = {
-        node.node_id: node for node in graph.nodes if isinstance(node, HarnessControlNode)
+        node.node_id: node
+        for node in graph.nodes
+        if isinstance(node, HarnessControlNode)
     }
     referenced_forks: Counter[str] = Counter()
     for node in controls.values():
-        if node.node_kind not in {HarnessGraphNodeKind.JOIN_ALL, HarnessGraphNodeKind.JOIN_ANY}:
+        if node.node_kind not in {
+            HarnessGraphNodeKind.JOIN_ALL,
+            HarnessGraphNodeKind.JOIN_ANY,
+        }:
             continue
         if node.join is None:
             continue
@@ -279,13 +290,20 @@ def _validate_fork_join_pairs(
                     "fork and join branch identities differ",
                     node_id=node.node_id,
                     details={
-                        "missing_at_join": sorted(fork_branches.difference(join_branches)),
-                        "unknown_at_join": sorted(join_branches.difference(fork_branches)),
+                        "missing_at_join": sorted(
+                            fork_branches.difference(join_branches)
+                        ),
+                        "unknown_at_join": sorted(
+                            join_branches.difference(fork_branches)
+                        ),
                     },
                 )
             )
     for node in controls.values():
-        if node.node_kind not in {HarnessGraphNodeKind.FORK_ALL, HarnessGraphNodeKind.FORK_ANY}:
+        if node.node_kind not in {
+            HarnessGraphNodeKind.FORK_ALL,
+            HarnessGraphNodeKind.FORK_ANY,
+        }:
             continue
         count = referenced_forks[node.node_id]
         if count != 1:
@@ -299,6 +317,212 @@ def _validate_fork_join_pairs(
                 )
             )
     return tuple(diagnostics)
+
+
+def _validate_choice_join_pairs(
+    graph: NormalizedHarnessGraph,
+) -> tuple[HarnessGraphDiagnostic, ...]:
+    diagnostics: list[HarnessGraphDiagnostic] = []
+    controls = {
+        node.node_id: node
+        for node in graph.nodes
+        if isinstance(node, HarnessControlNode)
+    }
+    joins_by_choice: Counter[str] = Counter()
+    for join in controls.values():
+        if join.node_kind is not HarnessGraphNodeKind.CHOICE_JOIN:
+            continue
+        choice_node_id = join.metadata.get("choice_node_id")
+        choice = (
+            controls.get(choice_node_id) if isinstance(choice_node_id, str) else None
+        )
+        if choice is None or choice.node_kind is not HarnessGraphNodeKind.CHOICE:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "choice_join_selector_mismatch",
+                    "Choice join does not resolve to a Choice selector",
+                    node_id=join.node_id,
+                    details={"choice_node_id": choice_node_id},
+                )
+            )
+            continue
+        joins_by_choice[choice.node_id] += 1
+        if tuple(branch.to_dict() for branch in join.branches) != tuple(
+            branch.to_dict() for branch in choice.branches
+        ):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "choice_join_branch_mismatch",
+                    "Choice join branch contracts differ from their selector",
+                    node_id=join.node_id,
+                    details={"choice_node_id": choice.node_id},
+                )
+            )
+        expected_edges = {
+            (terminal_id, branch.branch_id)
+            for branch in choice.branches
+            for terminal_id in branch.terminal_node_ids
+        }
+        actual_edges = {
+            (edge.source_id, edge.branch_id)
+            for edge in graph.edges
+            if edge.target_id == join.node_id
+            and edge.edge_kind is HarnessGraphEdgeKind.DEPENDENCY
+        }
+        if actual_edges != expected_edges:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "choice_join_edge_mismatch",
+                    "Choice join dependencies do not cover its declared branch terminals",
+                    node_id=join.node_id,
+                    details={
+                        "missing": _edge_pair_details(
+                            expected_edges.difference(actual_edges)
+                        ),
+                        "unexpected": _edge_pair_details(
+                            actual_edges.difference(expected_edges)
+                        ),
+                    },
+                )
+            )
+    for choice in controls.values():
+        if choice.node_kind is not HarnessGraphNodeKind.CHOICE:
+            continue
+        if "legacy_source_step_id" in choice.metadata:
+            continue
+        if joins_by_choice[choice.node_id] != 1:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "choice_join_pair_count_invalid",
+                    "explicit Choice must have exactly one deterministic join",
+                    node_id=choice.node_id,
+                    details={"matching_joins": joins_by_choice[choice.node_id]},
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _validate_loop_join_pairs(
+    graph: NormalizedHarnessGraph,
+) -> tuple[HarnessGraphDiagnostic, ...]:
+    diagnostics: list[HarnessGraphDiagnostic] = []
+    controls = {
+        node.node_id: node
+        for node in graph.nodes
+        if isinstance(node, HarnessControlNode)
+    }
+    joins_by_loop: Counter[str] = Counter()
+    for join in controls.values():
+        if join.node_kind is not HarnessGraphNodeKind.LOOP_JOIN:
+            continue
+        loop_node_id = join.metadata.get("loop_node_id")
+        loop = controls.get(loop_node_id) if isinstance(loop_node_id, str) else None
+        if (
+            loop is None
+            or loop.node_kind is not HarnessGraphNodeKind.LOOP_GUARD
+            or loop.loop is None
+        ):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "loop_join_selector_mismatch",
+                    "Loop join does not resolve to a bounded Loop guard",
+                    node_id=join.node_id,
+                    details={"loop_node_id": loop_node_id},
+                )
+            )
+            continue
+        joins_by_loop[loop.node_id] += 1
+        branches = {branch.branch_id: branch for branch in join.branches}
+        expected_branch_ids = {"exit"}
+        if loop.loop.exhaustion_node_ids:
+            expected_branch_ids.add("exhaustion")
+        if set(branches) != expected_branch_ids:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "loop_join_branch_mismatch",
+                    "Loop join routes differ from the bounded Loop contract",
+                    node_id=join.node_id,
+                    details={
+                        "expected_branch_ids": sorted(expected_branch_ids),
+                        "actual_branch_ids": sorted(branches),
+                    },
+                )
+            )
+            continue
+        if set(branches["exit"].entry_node_ids) != set(loop.loop.exit_node_ids) or (
+            "exhaustion" in branches
+            and set(branches["exhaustion"].entry_node_ids)
+            != set(loop.loop.exhaustion_node_ids)
+        ):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "loop_join_branch_mismatch",
+                    "Loop join route entries differ from the bounded Loop contract",
+                    node_id=join.node_id,
+                )
+            )
+        expected_edges = {
+            (terminal_id, branch.branch_id)
+            for branch in branches.values()
+            for terminal_id in branch.terminal_node_ids
+        }
+        actual_edges = {
+            (edge.source_id, edge.branch_id)
+            for edge in graph.edges
+            if edge.target_id == join.node_id
+            and edge.edge_kind is HarnessGraphEdgeKind.DEPENDENCY
+            and edge.loop_id == loop.node_id
+        }
+        if actual_edges != expected_edges:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "loop_join_edge_mismatch",
+                    "Loop join dependencies do not cover its declared route terminals",
+                    node_id=join.node_id,
+                    details={
+                        "missing": _edge_pair_details(
+                            expected_edges.difference(actual_edges)
+                        ),
+                        "unexpected": _edge_pair_details(
+                            actual_edges.difference(expected_edges)
+                        ),
+                    },
+                )
+            )
+    for loop in controls.values():
+        if loop.node_kind is not HarnessGraphNodeKind.LOOP_GUARD:
+            continue
+        if joins_by_loop[loop.node_id] != 1:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.STRUCTURAL,
+                    "loop_join_pair_count_invalid",
+                    "bounded Loop must have exactly one deterministic exit join",
+                    node_id=loop.node_id,
+                    details={"matching_joins": joins_by_loop[loop.node_id]},
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _edge_pair_details(
+    values: set[tuple[str, str | None]],
+) -> list[dict[str, str | None]]:
+    return [
+        {"source_id": source_id, "branch_id": branch_id}
+        for source_id, branch_id in sorted(
+            values,
+            key=lambda item: (item[0], "" if item[1] is None else item[1]),
+        )
+    ]
 
 
 def _contains_undeclared_cycle(

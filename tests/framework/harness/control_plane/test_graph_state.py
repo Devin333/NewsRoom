@@ -262,6 +262,56 @@ def test_gate_or_activity_evidence_from_another_instance_or_attempt_is_rejected(
     assert cross_attempt.value.code == "cross_attempt_evidence_rejected"
 
 
+def test_attempt_evidence_round_trip_binds_exact_contract_and_payload() -> None:
+    identity = _identity("analyze", ordinal=1)
+    evidence = HarnessAttemptEvidenceReference(
+        _sha("gate-evidence"),
+        HarnessEvidenceKind.GATE_RESULT,
+        identity.instance_id,
+        1,
+        3,
+        contract_ref=HarnessContractReference(
+            HarnessContractKind.GATE,
+            "analysis.quality",
+            "1",
+        ),
+        payload_ref=_sha("gate-payload"),
+    )
+
+    assert HarnessAttemptEvidenceReference.from_dict(evidence.to_dict()) == evidence
+
+    with pytest.raises(HarnessValidationError) as incomplete:
+        HarnessAttemptEvidenceReference(
+            _sha("incomplete"),
+            HarnessEvidenceKind.GATE_RESULT,
+            identity.instance_id,
+            1,
+            3,
+            contract_ref=HarnessContractReference(
+                HarnessContractKind.GATE,
+                "analysis.quality",
+                "1",
+            ),
+        )
+    with pytest.raises(HarnessValidationError) as wrong_kind:
+        HarnessAttemptEvidenceReference(
+            _sha("wrong-kind"),
+            HarnessEvidenceKind.GATE_RESULT,
+            identity.instance_id,
+            1,
+            3,
+            contract_ref=HarnessContractReference(
+                HarnessContractKind.WORKER,
+                "analysis.worker",
+                "1",
+            ),
+            payload_ref=_sha("gate-payload"),
+        )
+
+    assert incomplete.value.code == "incomplete_evidence_binding"
+    assert wrong_kind.value.code == "evidence_contract_kind_mismatch"
+
+
 def test_node_evidence_cannot_advance_past_node_projection_sequence() -> None:
     identity = _identity("analyze", ordinal=1)
 

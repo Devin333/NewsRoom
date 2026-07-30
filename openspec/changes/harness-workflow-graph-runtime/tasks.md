@@ -37,8 +37,8 @@
 
 ## 5. Scheduler Decomposition and Pure Decision Logic
 
-- [ ] 5.1 Extract the current per-step PLAN/EXECUTE/VERIFY/retry/replan/repair/halt logic into a pure `StepLifecycleStateMachine` without changing existing golden behavior.
-- [ ] 5.2 Implement a pure `WorkflowGraphEvaluator` for Sequence readiness, deterministic Choice, fork/join facts, loop guard facts, Wait facts, compensation progress, and graph completion.
+- [x] 5.1 Extract the current per-step PLAN/EXECUTE/VERIFY/retry/replan/repair/halt logic into a pure `StepLifecycleStateMachine` without changing existing golden behavior.
+- [x] 5.2 Implement a pure `WorkflowGraphEvaluator` for Sequence readiness, deterministic Choice, fork/join facts, loop guard facts, Wait facts, compensation progress, and graph completion.
 - [ ] 5.3 Retain `HarnessScheduler` as the single public decision facade and implement the documented deterministic arbitration priority across safety, step, graph, activation, waiting, and completion decisions.
 - [ ] 5.4 Keep a single canonical decision per scheduler iteration and include pinned versions, input projection checksum, optional node-instance/attempt identity, stable reason code, and decision checksum.
 - [ ] 5.5 Add purity tests proving scheduler components perform no Worker, Gate, clock, random, network, store, or mutable-global access.

@@ -47,10 +47,71 @@ def validate_semantics(
             )
         )
     nodes_by_id = {node.node_id: node for node in graph.nodes}
+    diagnostics.extend(_validate_control_fact_contracts(graph))
     diagnostics.extend(_validate_controls(graph, nodes_by_id))
     diagnostics.extend(_validate_edges(graph))
     diagnostics.extend(_validate_compensations(graph, nodes_by_id))
     diagnostics.extend(_validate_repair_edges(graph, nodes_by_id))
+    return tuple(diagnostics)
+
+
+def _validate_control_fact_contracts(
+    graph: NormalizedHarnessGraph,
+) -> tuple[HarnessGraphDiagnostic, ...]:
+    diagnostics: list[HarnessGraphDiagnostic] = []
+    for node in graph.nodes:
+        if not isinstance(node, HarnessExecutableNode):
+            continue
+        step_metadata = node.metadata.get("step_metadata", {})
+        raw_paths = (
+            step_metadata.get("control_fact_paths", ())
+            if isinstance(step_metadata, Mapping)
+            else None
+        )
+        if raw_paths in ((), []):
+            continue
+        if isinstance(raw_paths, str) or not isinstance(raw_paths, tuple | list):
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "invalid_control_fact_contract",
+                    "control_fact_paths must be a non-empty array of relative paths",
+                    node_id=node.node_id,
+                )
+            )
+            continue
+        paths = tuple(str(item).strip() for item in raw_paths)
+        invalid = (
+            any(
+                not path or any(not segment for segment in path.split("."))
+                for path in paths
+            )
+            or len(paths) != len(set(paths))
+            or any(
+                right.startswith(f"{left}.")
+                for left in paths
+                for right in paths
+                if left != right
+            )
+        )
+        if invalid:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "invalid_control_fact_contract",
+                    "control fact paths must be unique, non-overlapping relative paths",
+                    node_id=node.node_id,
+                )
+            )
+        if not node.gate_refs:
+            diagnostics.append(
+                diagnostic(
+                    HarnessGraphValidationPhase.SEMANTIC,
+                    "control_fact_gate_missing",
+                    "routing control facts require an exact deterministic Gate binding",
+                    node_id=node.node_id,
+                )
+            )
     return tuple(diagnostics)
 
 

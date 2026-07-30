@@ -32,11 +32,13 @@ from framework.harness.workflow.versioning import (
 class HarnessGraphNodeKind(StrEnum):
     EXECUTABLE = "executable"
     CHOICE = "choice"
+    CHOICE_JOIN = "choice_join"
     FORK_ALL = "fork_all"
     FORK_ANY = "fork_any"
     JOIN_ALL = "join_all"
     JOIN_ANY = "join_any"
     LOOP_GUARD = "loop_guard"
+    LOOP_JOIN = "loop_join"
     WAIT = "wait"
     MERGE = "merge"
     TERMINAL = "terminal"
@@ -750,11 +752,13 @@ class HarnessControlNode:
             )
         expected_contract = {
             HarnessGraphNodeKind.CHOICE: "branches",
+            HarnessGraphNodeKind.CHOICE_JOIN: "branches",
             HarnessGraphNodeKind.FORK_ALL: "branches",
             HarnessGraphNodeKind.FORK_ANY: "branches",
             HarnessGraphNodeKind.JOIN_ALL: "join",
             HarnessGraphNodeKind.JOIN_ANY: "join",
             HarnessGraphNodeKind.LOOP_GUARD: "loop",
+            HarnessGraphNodeKind.LOOP_JOIN: "branches",
             HarnessGraphNodeKind.WAIT: "wait",
             HarnessGraphNodeKind.MERGE: "merge",
             HarnessGraphNodeKind.TERMINAL: None,
