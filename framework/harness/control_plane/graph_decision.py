@@ -99,6 +99,7 @@ _NODE_DEFINITION_DECISION_TYPES = frozenset(
 )
 _REQUIRED_STEP_BINDINGS = frozenset({"step", "worker", "activity"})
 _REQUIRED_COMPENSATION_BINDINGS = frozenset({"compensation", "activity"})
+_OPTIONAL_STEP_IDENTITY_DECISION_TYPES = frozenset({HarnessGraphDecisionType.HALT_RUN})
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,25 +346,32 @@ def _validate_decision_identity(
                 "node decision requires definition and instance identity",
                 code="graph_decision_identity_mismatch",
             )
+    has_step_identity = step_ref is not None or attempt is not None
     if decision_type in _STEP_DECISION_TYPES:
         if step_ref is None or attempt is None:
             raise HarnessValidationError(
                 "Step decision requires exact Step reference and attempt identity",
                 code="graph_decision_step_identity_missing",
             )
-        missing_bindings = _REQUIRED_STEP_BINDINGS.difference(binding_versions)
-        if missing_bindings:
+        if decision_type is HarnessGraphDecisionType.DISPATCH_ACTIVITY and attempt < 1:
             raise HarnessValidationError(
-                "Step decision is missing exact runtime bindings",
-                code="graph_decision_binding_missing",
-                details={"missing": sorted(missing_bindings)},
+                "Activity dispatch requires a positive target attempt",
+                code="invalid_graph_decision_attempt",
             )
-        if binding_versions["step"] != step_ref.exact_ref:
+        _validate_step_bindings(step_ref, binding_versions)
+    elif decision_type in _OPTIONAL_STEP_IDENTITY_DECISION_TYPES and has_step_identity:
+        if (
+            node_id is None
+            or node_instance_id is None
+            or step_ref is None
+            or attempt is None
+        ):
             raise HarnessValidationError(
-                "Step decision binding does not match step_ref",
-                code="graph_decision_binding_mismatch",
+                "Step-triggered run halt requires complete node and Step identity",
+                code="graph_decision_step_identity_missing",
             )
-    elif step_ref is not None or attempt is not None:
+        _validate_step_bindings(step_ref, binding_versions)
+    elif has_step_identity:
         raise HarnessValidationError(
             "graph control decision cannot carry Step attempt identity",
             code="graph_decision_identity_mismatch",
@@ -380,6 +388,24 @@ def _validate_decision_identity(
         raise HarnessValidationError(
             "node instance identity requires its definition identity",
             code="graph_decision_identity_mismatch",
+        )
+
+
+def _validate_step_bindings(
+    step_ref: HarnessContractReference,
+    binding_versions: Mapping[str, Any],
+) -> None:
+    missing_bindings = _REQUIRED_STEP_BINDINGS.difference(binding_versions)
+    if missing_bindings:
+        raise HarnessValidationError(
+            "Step decision is missing exact runtime bindings",
+            code="graph_decision_binding_missing",
+            details={"missing": sorted(missing_bindings)},
+        )
+    if binding_versions["step"] != step_ref.exact_ref:
+        raise HarnessValidationError(
+            "Step decision binding does not match step_ref",
+            code="graph_decision_binding_mismatch",
         )
 
 

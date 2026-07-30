@@ -18,6 +18,7 @@ from framework.harness.control_plane.policy import HarnessBudgetSnapshot
 from framework.harness.control_plane.state import HarnessStepState, HarnessStepStatus
 from framework.harness.quality.verdict import HarnessQualityVerdict
 from framework.harness.workflow.canonical import (
+    canonical_checksum,
     freeze_json,
     optional_text,
     required_text,
@@ -135,7 +136,7 @@ class StepLifecycleState:
                     "Graph-bound step_ref must reference a Step contract",
                     code="step_lifecycle_identity_mismatch",
                 )
-            if step_ref.contract_id != self.step_id:
+            if not _step_reference_matches_id(step_ref, self.step_id):
                 raise HarnessValidationError(
                     "Graph-bound step_ref does not match step_id",
                     code="step_lifecycle_identity_mismatch",
@@ -850,6 +851,36 @@ class StepLifecycleObservations:
             "approval_evidence": _evidence_dict(self.approval_evidence),
         }
 
+    def control_projection(self) -> dict[str, Any]:
+        """Return only accepted fields that may influence lifecycle control."""
+
+        return {
+            "binding_mode": self.binding_mode.value,
+            "node_instance_id": self.node_instance_id,
+            "attempt": self.attempt,
+            "last_event_sequence": self.last_event_sequence,
+            "worker_result": (
+                None
+                if self.worker_result is None
+                else {
+                    **self.worker_result.control_payload(),
+                    "accepted_evidence": _evidence_dict(
+                        self.worker_result.accepted_evidence
+                    ),
+                }
+            ),
+            "gate_results": [result.to_dict() for result in self.gate_results],
+            "quality_verdict": (
+                None if self.quality_verdict is None else self.quality_verdict.to_dict()
+            ),
+            "approval_granted": self.approval_granted,
+            "approval_evidence": _evidence_dict(self.approval_evidence),
+        }
+
+    @property
+    def control_checksum(self) -> str:
+        return canonical_checksum(self.control_projection())
+
 
 @dataclass(frozen=True, slots=True)
 class StepLifecycleTransition:
@@ -963,7 +994,7 @@ class StepLifecycleTransition:
                 )
             if (
                 step_ref.contract_kind is not HarnessContractKind.STEP
-                or step_ref.contract_id != step_id
+                or not _step_reference_matches_id(step_ref, step_id)
             ):
                 raise HarnessValidationError(
                     "Graph-bound transition step_ref does not match step_id",
@@ -1659,6 +1690,15 @@ def _evidence_dict(
     evidence: HarnessAttemptEvidenceReference | None,
 ) -> dict[str, Any] | None:
     return None if evidence is None else evidence.to_dict()
+
+
+def _step_reference_matches_id(
+    reference: HarnessContractReference,
+    step_id: str,
+) -> bool:
+    return reference.contract_id == step_id or reference.contract_id.endswith(
+        f":{step_id}"
+    )
 
 
 def _nonnegative_int(value: Any, field_name: str) -> None:

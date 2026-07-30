@@ -93,7 +93,10 @@ from framework.harness.control_plane.phase import (
 )
 from framework.harness.control_plane.policy import HarnessBudget, HarnessBudgetSnapshot
 from framework.harness.control_plane.routing import HarnessRoutingEvaluator
-from framework.harness.control_plane.scheduler import HarnessScheduler
+from framework.harness.control_plane.scheduler import (
+    HarnessGraphStepSchedulingInput,
+    HarnessScheduler,
+)
 from framework.harness.control_plane.replay_history import (
     HarnessReplayActivityResolver,
     build_harness_history_verifier,
@@ -181,6 +184,7 @@ __all__ = [
     "HarnessGraphObservationType",
     "HarnessGraphReference",
     "HarnessGraphState",
+    "HarnessGraphStepSchedulingInput",
     "HarnessJoinKind",
     "HarnessJoinState",
     "HarnessJoinStatus",

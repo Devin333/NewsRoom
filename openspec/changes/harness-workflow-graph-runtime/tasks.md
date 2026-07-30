@@ -39,11 +39,11 @@
 
 - [x] 5.1 Extract the current per-step PLAN/EXECUTE/VERIFY/retry/replan/repair/halt logic into a pure `StepLifecycleStateMachine` without changing existing golden behavior.
 - [x] 5.2 Implement a pure `WorkflowGraphEvaluator` for Sequence readiness, deterministic Choice, fork/join facts, loop guard facts, Wait facts, compensation progress, and graph completion.
-- [ ] 5.3 Retain `HarnessScheduler` as the single public decision facade and implement the documented deterministic arbitration priority across safety, step, graph, activation, waiting, and completion decisions.
-- [ ] 5.4 Keep a single canonical decision per scheduler iteration and include pinned versions, input projection checksum, optional node-instance/attempt identity, stable reason code, and decision checksum.
-- [ ] 5.5 Add purity tests proving scheduler components perform no Worker, Gate, clock, random, network, store, or mutable-global access.
-- [ ] 5.6 Add deterministic permutation tests proving unordered inputs, equal timestamps, and repeated evaluation cannot change decision identity or order.
-- [ ] 5.7 Add regression tests proving Worker route, winner, loop, verdict, compensation, approval, memory, and publication suggestions remain observational only.
+- [x] 5.3 Retain `HarnessScheduler` as the single public decision facade and implement the documented deterministic arbitration priority across safety, step, graph, activation, waiting, and completion decisions.
+- [x] 5.4 Keep a single canonical decision per scheduler iteration and include pinned versions, input projection checksum, optional node-instance/attempt identity, stable reason code, and decision checksum.
+- [x] 5.5 Add purity tests proving scheduler components perform no Worker, Gate, clock, random, network, store, or mutable-global access.
+- [x] 5.6 Add deterministic permutation tests proving unordered inputs, equal timestamps, and repeated evaluation cannot change decision identity or order.
+- [x] 5.7 Add regression tests proving Worker route, winner, loop, verdict, compensation, approval, memory, and publication suggestions remain observational only.
 
 ## 6. Graph-Aware Control Plane Foundation
 

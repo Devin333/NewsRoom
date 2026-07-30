@@ -166,6 +166,16 @@ def test_step_decision_requires_complete_exact_runtime_bindings() -> None:
     assert noncanonical_version.value.code == "graph_decision_inexact_version"
 
 
+def test_activity_dispatch_requires_positive_target_attempt() -> None:
+    with pytest.raises(HarnessValidationError) as captured:
+        _step_decision(decision_type="dispatch_activity", attempt=0)
+
+    valid = _step_decision(decision_type="dispatch_activity", attempt=1)
+
+    assert captured.value.code == "invalid_graph_decision_attempt"
+    assert valid.attempt == 1
+
+
 def test_compensation_schedule_requires_definition_and_exact_bindings() -> None:
     base = {
         "decision_type": "schedule_compensation",
@@ -198,9 +208,11 @@ def _step_decision(
     *,
     binding_versions=None,
     payload=None,
+    decision_type: str = "enter_step_phase",
+    attempt: int = 0,
 ) -> HarnessGraphDecision:
     return HarnessGraphDecision(
-        decision_type="enter_step_phase",
+        decision_type=decision_type,
         run_id="run-1",
         graph_ref=_graph_ref(),
         input_projection_checksum=_sha("state"),
@@ -209,7 +221,7 @@ def _step_decision(
         node_id="analyze",
         node_instance_id="hni-analyze",
         step_ref=_step_ref(),
-        attempt=0,
+        attempt=attempt,
         target_node_ids=("repair-first", "repair-second"),
         evidence_refs=(_sha("gate"), _sha("activity")),
         binding_versions=(
