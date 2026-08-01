@@ -53,7 +53,7 @@ FORBIDDEN_RESEARCH_IMPORT_PREFIXES = (
     "infrastructure.storage.postgres.repository",
     "infrastructure.storage.postgres.paper_chunk_repository",
     "infrastructure.storage.postgres.repair_memory_repository",
-    "framework.artifacts.stores",
+    "framework.agent.artifacts.stores",
     "interfaces.services.paper_rag_service",
     "interfaces.services.paper_rag_factory",
     "interfaces.services.paper_rag_transcript_store",

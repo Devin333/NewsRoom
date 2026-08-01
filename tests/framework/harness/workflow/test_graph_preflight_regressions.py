@@ -104,7 +104,14 @@ def test_wait_graph_input_sources_must_resolve_to_declared_inputs() -> None:
 def test_wait_may_reference_reachable_verified_node_outputs() -> None:
     workflow = HarnessWorkflowSpec(
         workflow_id="reachable-wait-output",
-        steps=(HarnessStepSpec("produce", "script", output_key="token"),),
+        steps=(
+            HarnessStepSpec(
+                "produce",
+                "script",
+                output_key="token",
+                metadata={"control_fact_paths": ("value",)},
+            ),
+        ),
         entry_step_id="produce",
         graph=HarnessGraphSpec(
             graph_id="reachable-wait-output",
@@ -115,8 +122,8 @@ def test_wait_may_reference_reachable_verified_node_outputs() -> None:
                         wait_id="approval",
                         kind="approval",
                         correlation={
-                            "graph": "graph.outputs.token",
-                            "node": "node.outputs.produce.token",
+                            "graph": "graph.outputs.token.value",
+                            "node": "node.outputs.produce.token.value",
                         },
                         signal_type="approval",
                         signal_version="1",
@@ -140,6 +147,48 @@ def test_wait_may_reference_reachable_verified_node_outputs() -> None:
         for item in diagnostics
         if item.code == "unresolved_wait_node_output_source"
     ]
+
+
+def test_wait_rejects_output_paths_not_exposed_as_control_facts() -> None:
+    workflow = HarnessWorkflowSpec(
+        workflow_id="unexposed-wait-output",
+        steps=(
+            HarnessStepSpec(
+                "produce",
+                "script",
+                output_key="token",
+                metadata={"control_fact_paths": ("allowed",)},
+            ),
+        ),
+        entry_step_id="produce",
+        graph=HarnessGraphSpec(
+            graph_id="unexposed-wait-output",
+            root=Sequence(
+                (
+                    StepRef("produce"),
+                    Wait(
+                        wait_id="approval",
+                        kind="approval",
+                        correlation={
+                            "graph": "graph.outputs.token.secret",
+                            "node": "node.outputs.produce.token.secret",
+                        },
+                        signal_type="approval",
+                        signal_version="1",
+                        tenant_scope_path="graph.inputs.tenant_id",
+                        identity_scope_path="graph.inputs.actor_id",
+                    ),
+                )
+            ),
+            input_keys=("tenant_id", "actor_id"),
+        ),
+    )
+    graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
+
+    codes = {item.code for item in _validate(graph).diagnostics}
+
+    assert "unexposed_wait_output_source" in codes
+    assert "unexposed_wait_node_output_source" in codes
 
 
 def test_wait_rejects_node_output_source_that_is_not_upstream() -> None:
@@ -371,6 +420,68 @@ def test_compensation_binding_without_exact_edge_is_rejected() -> None:
     codes = {item.code for item in _validate(graph).diagnostics}
 
     assert "missing_compensation_edge" in codes
+
+
+def test_compensation_origin_resolves_one_binding_and_bindings_are_acyclic() -> None:
+    def effectful(node_id: str, order: int) -> HarnessExecutableNode:
+        return replace(
+            _node(node_id, order),
+            side_effect_ref=_ref(
+                HarnessContractKind.SIDE_EFFECT,
+                f"effect.{node_id}",
+                "1",
+            ),
+        )
+
+    first = effectful("first", 0)
+    second = effectful("second", 1)
+    third = effectful("third", 2)
+    bindings = (
+        HarnessCompensationReference(
+            "first-to-second",
+            "first",
+            "second",
+            _ref(HarnessContractKind.COMPENSATION, "undo.first", "1"),
+            _ref(HarnessContractKind.ACTIVITY, "undo.first", "1"),
+            "node_instance",
+        ),
+        HarnessCompensationReference(
+            "first-to-third",
+            "first",
+            "third",
+            _ref(HarnessContractKind.COMPENSATION, "undo.first.alternate", "1"),
+            _ref(HarnessContractKind.ACTIVITY, "undo.first.alternate", "1"),
+            "node_instance",
+        ),
+        HarnessCompensationReference(
+            "second-to-first",
+            "second",
+            "first",
+            _ref(HarnessContractKind.COMPENSATION, "undo.second", "1"),
+            _ref(HarnessContractKind.ACTIVITY, "undo.second", "1"),
+            "node_instance",
+        ),
+    )
+    graph = NormalizedHarnessGraph(
+        graph_id="cyclic-compensation",
+        workflow_id="manual",
+        workflow_version="1",
+        workflow_ref=_ref(HarnessContractKind.WORKFLOW, "manual", "1"),
+        nodes=(first, second, third),
+        edges=(
+            HarnessGraphEdge("first-second", "first", "second", "compensation"),
+            HarnessGraphEdge("first-third", "first", "third", "compensation"),
+            HarnessGraphEdge("second-first", "second", "first", "compensation"),
+        ),
+        entry_node_ids=("first",),
+        terminal_node_ids=("first",),
+        compensation_refs=bindings,
+    )
+
+    codes = {item.code for item in _validate(graph).diagnostics}
+
+    assert "ambiguous_compensation_origin_binding" in codes
+    assert "cyclic_compensation_binding" in codes
 
 
 def test_retry_policy_rejects_multiple_repair_edges() -> None:

@@ -57,10 +57,15 @@ from framework.harness import (
     HarnessEventCanonicalAdapter,
     HarnessControlPlane,
     HarnessGateResult,
+    HarnessGraphDecisionType,
     HarnessRunSpec,
     HarnessStepSpec,
     HarnessWorkerResult,
     HarnessWorkflowSpec,
+)
+from framework.harness.control_plane.durable_events import (
+    HARNESS_GRAPH_DECISION_EVENT_TYPE,
+    HARNESS_GRAPH_PROJECTION_EVENT_TYPE,
 )
 from framework.harness.control_plane.replay_history import (
     build_harness_history_verifier,
@@ -90,10 +95,18 @@ class _VersionedSQLiteGate(DeterministicGate):
         )
 
 
-class _FailOnceBeforeTransitionRuntime:
-    def __init__(self, delegate: EventRuntime, transition_kind: str) -> None:
+class _FailOnceBeforeGraphCommitRuntime:
+    def __init__(
+        self,
+        delegate: EventRuntime,
+        *,
+        commit_event_type: str,
+        decision_type: HarnessGraphDecisionType,
+    ) -> None:
         self.delegate = delegate
-        self.transition_kind = transition_kind
+        self.commit_event_type = commit_event_type
+        self.decision_type = decision_type
+        self.decision_checksum: str | None = None
         self.failed = False
 
     def publish(
@@ -103,15 +116,30 @@ class _FailOnceBeforeTransitionRuntime:
         expected_last_sequence=None,
         unit_of_work=None,
     ):
-        if (
-            not self.failed
-            and event.event_type == "harness_transition_committed"
-            and event.payload is not None
-            and event.payload.get("transition_kind") == self.transition_kind
-        ):
+        commit = event.payload.get("commit", {}) if event.payload is not None else {}
+        decision = commit.get("decision", {})
+        is_target_decision = (
+            event.event_type == HARNESS_GRAPH_DECISION_EVENT_TYPE
+            and decision.get("decision_type") == self.decision_type.value
+        )
+        if is_target_decision:
+            self.decision_checksum = decision.get("decision_checksum")
+        is_target_projection = (
+            event.event_type == HARNESS_GRAPH_PROJECTION_EVENT_TYPE
+            and self.decision_checksum is not None
+            and commit.get("cause_checksum") == self.decision_checksum
+        )
+        should_fail = (
+            self.commit_event_type == HARNESS_GRAPH_DECISION_EVENT_TYPE
+            and is_target_decision
+        ) or (
+            self.commit_event_type == HARNESS_GRAPH_PROJECTION_EVENT_TYPE
+            and is_target_projection
+        )
+        if not self.failed and should_fail:
             self.failed = True
             raise EventStoreUnavailableError(
-                f"injected failure before {self.transition_kind} commit"
+                f"injected failure before {self.commit_event_type} commit"
             )
         return self.delegate.publish(
             event,
@@ -615,16 +643,15 @@ def test_sqlite_harness_history_verification_uses_recorded_decision_commands(
 
 
 @pytest.mark.parametrize(
-    ("failed_transition_kind", "expected_gate_calls"),
+    "failed_commit_event_type",
     (
-        ("verify_exit", 2),
-        ("step_success", 1),
+        HARNESS_GRAPH_DECISION_EVENT_TYPE,
+        HARNESS_GRAPH_PROJECTION_EVENT_TYPE,
     ),
 )
-def test_sqlite_recovery_respects_verify_commit_boundary(
+def test_sqlite_recovery_respects_graph_verify_commit_boundary(
     tmp_path,
-    failed_transition_kind: str,
-    expected_gate_calls: int,
+    failed_commit_event_type: str,
 ) -> None:
     secure_store = _activity_store(tmp_path)
     store = SQLiteEventStore(tmp_path / "events.sqlite3")
@@ -635,9 +662,10 @@ def test_sqlite_recovery_respects_verify_commit_boundary(
             secure_payload_store=secure_store,
         ),
     )
-    failing_runtime = _FailOnceBeforeTransitionRuntime(
+    failing_runtime = _FailOnceBeforeGraphCommitRuntime(
         runtime,
-        failed_transition_kind,
+        commit_event_type=failed_commit_event_type,
+        decision_type=HarnessGraphDecisionType.VERIFY_ACTIVITY_RESULT,
     )
     gate = _VersionedSQLiteGate()
     registration = GateRegistration(
@@ -645,7 +673,7 @@ def test_sqlite_recovery_respects_verify_commit_boundary(
         gate=gate,
     )
     run_spec = HarnessRunSpec(
-        run_id=f"run-sqlite-{failed_transition_kind}",
+        run_id=f"run-sqlite-{failed_commit_event_type}",
         workflow=HarnessWorkflowSpec(
             workflow_id="sqlite-verify-recovery",
             steps=(
@@ -674,15 +702,16 @@ def test_sqlite_recovery_respects_verify_commit_boundary(
             adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
         )
 
-    with pytest.raises(EventStoreUnavailableError, match=failed_transition_kind):
+    with pytest.raises(EventStoreUnavailableError, match=failed_commit_event_type):
         HarnessControlPlane(
             event_port=build_port(failing_runtime),
             worker_registry={"collect": worker},
             gate_registry=DeterministicGateRegistry((registration,)),
         ).run(run_spec)
 
+    recovered_port = build_port(runtime)
     recovered = HarnessControlPlane(
-        event_port=build_port(runtime),
+        event_port=recovered_port,
         worker_registry={"collect": worker},
         gate_registry=DeterministicGateRegistry((registration,)),
     ).recover_and_run(run_spec)
@@ -691,7 +720,11 @@ def test_sqlite_recovery_respects_verify_commit_boundary(
     assert recovered.succeeded is True
     assert recovered.quality_verdicts["collect"].score == 0.85
     assert worker_calls == 1
-    assert gate.calls == expected_gate_calls
+    assert gate.calls == 1
+    graph_recovery = recovered_port.recover_graph(run_spec.run_id)
+    assert graph_recovery.pending_decisions == ()
+    assert graph_recovery.pending_activity_results == ()
+    assert graph_recovery.pending_observations == ()
 
 
 def test_approval_restart_recovers_secure_worker_result_without_reinvocation(

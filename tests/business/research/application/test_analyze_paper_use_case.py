@@ -5,7 +5,7 @@ from collections.abc import Callable
 import pytest
 
 import business.research.application.single_paper_runtime as single_paper_runtime
-from framework.artifacts.paths import ArtifactPathError
+from framework.agent.artifacts.paths import ArtifactPathError
 from framework.harness import (
     FakeArtifactPort,
     HarnessEvent,
@@ -38,12 +38,6 @@ class _WriteOnlyHarnessTransitionPort:
     def create_activity(self, **kwargs):
         return self._delegate.create_activity(**kwargs)
 
-    def commit_transition(self, *args, **kwargs):
-        return self._delegate.commit_transition(*args, **kwargs)
-
-    def recover(self, *args, **kwargs):
-        return self._delegate.recover(*args, **kwargs)
-
     def read_history(self, *args, **kwargs):
         return self._delegate.read_history(*args, **kwargs)
 
@@ -53,11 +47,35 @@ class _WriteOnlyHarnessTransitionPort:
     def accept_activity(self, *args, **kwargs):
         return self._delegate.accept_activity(*args, **kwargs)
 
-    def resolve_replay_activity(self, *args, **kwargs):
-        return self._delegate.resolve_replay_activity(*args, **kwargs)
+    def resolve_graph_replay_activity(self, *args, **kwargs):
+        return self._delegate.resolve_graph_replay_activity(*args, **kwargs)
 
     def record_activity_result(self, *args, **kwargs):
         return self._delegate.record_activity_result(*args, **kwargs)
+
+    def initialize_graph(self, *args, **kwargs):
+        return self._delegate.initialize_graph(*args, **kwargs)
+
+    def commit_graph_decision(self, *args, **kwargs):
+        return self._delegate.commit_graph_decision(*args, **kwargs)
+
+    def commit_graph_projection(self, *args, **kwargs):
+        return self._delegate.commit_graph_projection(*args, **kwargs)
+
+    def commit_graph_activity_result(self, *args, **kwargs):
+        return self._delegate.commit_graph_activity_result(*args, **kwargs)
+
+    def commit_graph_observation(self, *args, **kwargs):
+        return self._delegate.commit_graph_observation(*args, **kwargs)
+
+    def recover_graph(self, *args, **kwargs):
+        return self._delegate.recover_graph(*args, **kwargs)
+
+    def activity_for(self, *args, **kwargs):
+        return self._delegate.activity_for(*args, **kwargs)
+
+    def mark_activity_dispatched(self, *args, **kwargs):
+        return self._delegate.mark_activity_dispatched(*args, **kwargs)
 
 
 def _use_case(
@@ -205,6 +223,6 @@ def test_missing_evidence_halts_after_replan_budget_is_exhausted() -> None:
     failure = next(
         failure
         for failure in result.diagnostics["gate_failures"]
-        if failure["gate"] == "SummaryEvidenceCoverageGate"
+        if failure["gate"] == "ClaimEvidenceGate"
     )
-    assert failure["details"]["harness_gate"]["reference"] == "SummaryEvidenceCoverageGate@1"
+    assert failure["details"]["harness_gate"]["reference"] == "ClaimEvidenceGate@1"

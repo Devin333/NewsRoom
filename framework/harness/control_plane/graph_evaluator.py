@@ -10,11 +10,13 @@ from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_state import (
+    HarnessBranchOutputReference,
     HarnessCompensationStatus,
     HarnessEvidenceKind,
     HarnessGraphReference,
     HarnessGraphState,
     HarnessJoinKind,
+    HarnessJoinState,
     HarnessJoinStatus,
     HarnessLoopIteration,
     HarnessLoopCounterState,
@@ -23,13 +25,23 @@ from framework.harness.control_plane.graph_state import (
     HarnessWaitStatus,
     RunLifecycle,
 )
+from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.workflow.canonical import (
     canonical_checksum,
+    exact_reference,
     freeze_json,
     required_text,
     thaw_json,
 )
-from framework.harness.workflow.conditions import evaluate_condition
+from framework.harness.workflow.conditions import (
+    ConditionAll,
+    ConditionAny,
+    ConditionPredicate,
+    HarnessCondition,
+    evaluate_condition,
+    resolve_condition_path,
+)
+from framework.harness.workflow.dsl import WaitKind, WaitTimeoutAction
 from framework.harness.workflow.graph import (
     HarnessControlNode,
     HarnessContractKind,
@@ -42,6 +54,14 @@ from framework.harness.workflow.graph import (
     NormalizedHarnessGraph,
 )
 from framework.harness.workflow.versioning import HARNESS_GRAPH_EVALUATOR_VERSION
+from framework.harness.waits.models import (
+    HarnessWaitApprovalEvidenceRecord,
+    HarnessWaitCancellationRecord,
+    HarnessWaitCauseKind,
+    HarnessWaitSignal,
+    HarnessWaitTimeoutRecord,
+    HarnessWaitTimerWakeRecord,
+)
 
 
 _CHECKSUM_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -68,6 +88,7 @@ class HarnessGraphCandidateType(StrEnum):
     SATISFY_JOIN = "satisfy_join"
     FAIL_JOIN = "fail_join"
     SELECT_PARALLEL_WINNER = "select_parallel_winner"
+    REQUEST_BRANCH_CANCEL = "request_branch_cancel"
     START_LOOP_ITERATION = "start_loop_iteration"
     EXIT_LOOP = "exit_loop"
     EXHAUST_LOOP = "exhaust_loop"
@@ -85,6 +106,11 @@ class HarnessGraphObservationType(StrEnum):
     WORKER_STATUS = "worker_status"
     QUALITY_VERDICT = "quality_verdict"
     GATE_RESULT = "gate_result"
+    APPROVAL = "approval"
+    SIDE_EFFECT_OUTCOME = "side_effect_outcome"
+    SIDE_EFFECT_FAILURE = "side_effect_failure"
+    MERGE_RESULT = "merge_result"
+    WAIT_CAUSE = "wait_cause"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,13 +134,23 @@ class HarnessAcceptedGraphObservation:
             self.node_instance_id,
             "graph_observation.node_instance_id",
         )
+        minimum_attempt = (
+            0
+            if observation_type
+            in {
+                HarnessGraphObservationType.GATE_RESULT,
+                HarnessGraphObservationType.MERGE_RESULT,
+                HarnessGraphObservationType.WAIT_CAUSE,
+            }
+            else 1
+        )
         if (
             not isinstance(self.attempt, int)
             or isinstance(self.attempt, bool)
-            or self.attempt < 1
+            or self.attempt < minimum_attempt
         ):
             raise HarnessValidationError(
-                "graph observation attempt must be positive",
+                "graph observation attempt is outside its allowed phase range",
                 code="invalid_graph_observation_attempt",
             )
         if (
@@ -178,6 +214,46 @@ class HarnessAcceptedGraphObservation:
                     code="graph_observation_contract_mismatch",
                 )
             _validate_gate_payload(payload)
+        elif observation_type is HarnessGraphObservationType.APPROVAL:
+            if self.contract_ref.contract_kind is not HarnessContractKind.STEP:
+                raise HarnessValidationError(
+                    "approval observation requires an exact Step reference",
+                    code="graph_observation_contract_mismatch",
+                )
+            _validate_approval_payload(payload)
+        elif observation_type is HarnessGraphObservationType.SIDE_EFFECT_OUTCOME:
+            if self.contract_ref.contract_kind is not HarnessContractKind.SIDE_EFFECT:
+                raise HarnessValidationError(
+                    "side-effect outcome requires an exact handler reference",
+                    code="graph_observation_contract_mismatch",
+                )
+            _validate_side_effect_outcome_payload(payload)
+            if evidence_ref != payload["outcome_ref"]:
+                raise HarnessValidationError(
+                    "side-effect outcome evidence must equal its durable outcome reference",
+                    code="graph_side_effect_outcome_evidence_mismatch",
+                )
+        elif observation_type is HarnessGraphObservationType.SIDE_EFFECT_FAILURE:
+            if self.contract_ref.contract_kind is not HarnessContractKind.SIDE_EFFECT:
+                raise HarnessValidationError(
+                    "side-effect failure requires an exact handler reference",
+                    code="graph_observation_contract_mismatch",
+                )
+            _validate_side_effect_failure_payload(payload)
+        elif observation_type is HarnessGraphObservationType.MERGE_RESULT:
+            if self.contract_ref.contract_kind is not HarnessContractKind.MERGE:
+                raise HarnessValidationError(
+                    "merge result requires an exact merge binding reference",
+                    code="graph_observation_contract_mismatch",
+                )
+            _validate_merge_result_payload(payload)
+        elif observation_type is HarnessGraphObservationType.WAIT_CAUSE:
+            if self.contract_ref.contract_kind is not HarnessContractKind.WAIT:
+                raise HarnessValidationError(
+                    "Wait cause requires an exact Wait signal schema reference",
+                    code="graph_observation_contract_mismatch",
+                )
+            _validate_wait_cause_payload(payload)
         if (
             observation_type is not HarnessGraphObservationType.VERIFIED_OUTPUT
             and control_fact_paths
@@ -514,15 +590,23 @@ class WorkflowGraphEvaluator:
         instances_by_scope = _instances_by_definition_scope(state.node_instances)
         candidates: list[HarnessGraphCandidate] = []
 
-        candidates.extend(
-            self._compensation_candidates(
-                graph,
-                state,
-                nodes_by_id,
-            )
+        terminal_observation = _terminal_observation_candidate(
+            state,
+            accepted_context,
         )
+        if terminal_observation is not None:
+            candidates.append(terminal_observation)
+
+        if terminal_observation is None:
+            candidates.extend(
+                self._compensation_candidates(
+                    graph,
+                    state,
+                    nodes_by_id,
+                )
+            )
         compensation_mode = _compensation_mode(state)
-        if not compensation_mode:
+        if terminal_observation is None and not compensation_mode:
             candidates.extend(self._join_candidates(graph, state, nodes_by_id))
             candidates.extend(
                 self._control_candidates(
@@ -580,11 +664,44 @@ class WorkflowGraphEvaluator:
     ) -> tuple[HarnessGraphCandidate, ...]:
         candidates: list[HarnessGraphCandidate] = []
         waits_by_node = {
-            item.node_instance_id: item for item in state.wait_registrations
+            node_instance_id: max(
+                registrations,
+                key=lambda item: (item.registered_sequence, item.wait_id),
+            )
+            for node_instance_id in {
+                item.node_instance_id for item in state.wait_registrations
+            }
+            for registrations in [
+                tuple(
+                    item
+                    for item in state.wait_registrations
+                    if item.node_instance_id == node_instance_id
+                )
+            ]
         }
         for instance in state.node_instances:
             definition = nodes_by_id[instance.identity.node_id]
             if definition.node_kind is HarnessGraphNodeKind.EXECUTABLE:
+                registration = waits_by_node.get(instance.instance_id)
+                if (
+                    registration is not None
+                    and registration.kind is WaitKind.APPROVAL
+                    and registration.status is HarnessWaitStatus.CANCELLED
+                    and instance.status is HarnessNodeInstanceStatus.WAITING
+                    and instance.step_status is HarnessStepStatus.WAITING_APPROVAL
+                ):
+                    candidates.append(
+                        HarnessGraphCandidate(
+                            HarnessGraphCandidateType.COMPLETE_RUN,
+                            "approval_cancelled",
+                            50,
+                            evidence_refs=(registration.resolution_event_ref,),
+                            payload={
+                                "outcome": "cancelled",
+                                "wait_id": registration.wait_id,
+                            },
+                        )
+                    )
                 continue
             if definition.node_kind in {
                 HarnessGraphNodeKind.JOIN_ALL,
@@ -593,9 +710,12 @@ class WorkflowGraphEvaluator:
                 continue
             if definition.node_kind is HarnessGraphNodeKind.WAIT:
                 candidate = self._wait_candidate(
+                    graph,
+                    state,
                     definition,
                     instance,
                     waits_by_node.get(instance.instance_id),
+                    context,
                 )
                 if candidate is not None:
                     candidates.append(candidate)
@@ -635,17 +755,21 @@ class WorkflowGraphEvaluator:
                 candidates.append(self._fork_candidate(graph, definition, instance))
             elif definition.node_kind is HarnessGraphNodeKind.LOOP_GUARD:
                 candidates.append(
-                    self._loop_candidate(definition, instance, state, context)
+                    self._loop_candidate(
+                        graph,
+                        definition,
+                        instance,
+                        state,
+                        context,
+                    )
                 )
             elif definition.node_kind is HarnessGraphNodeKind.MERGE:
                 candidates.append(
-                    HarnessGraphCandidate(
-                        HarnessGraphCandidateType.APPLY_MERGE,
-                        "merge_ready",
-                        30,
-                        node_id=definition.node_id,
-                        node_instance_id=instance.instance_id,
-                        payload=definition.merge.to_dict() if definition.merge else {},
+                    self._merge_candidate(
+                        graph,
+                        state,
+                        definition,
+                        instance,
                     )
                 )
             elif definition.node_kind is HarnessGraphNodeKind.TERMINAL:
@@ -659,6 +783,106 @@ class WorkflowGraphEvaluator:
                     )
                 )
         return tuple(candidates)
+
+    def _merge_candidate(
+        self,
+        graph: NormalizedHarnessGraph,
+        state: HarnessGraphState,
+        node: HarnessControlNode,
+        instance: HarnessNodeInstanceState,
+    ) -> HarnessGraphCandidate:
+        if node.merge is None:
+            raise HarnessValidationError(
+                "Merge node is missing its normalized contract",
+                code="graph_evaluator_merge_contract_missing",
+            )
+        join_instance, join_state, ordered = merge_branch_output_references(
+            graph,
+            state,
+            node,
+            branch_path=instance.identity.branch_path,
+            iteration_vector=instance.identity.iteration_vector,
+        )
+        input_projection = [item.to_dict() for item in ordered]
+        input_checksum = canonical_checksum(input_projection)
+        merge_ref = (
+            None if node.merge.merge_ref is None else node.merge.merge_ref.exact_ref
+        )
+        operation_id = canonical_checksum(
+            {
+                "run_id": state.run_id,
+                "graph_checksum": graph.checksum,
+                "merge_node_instance_id": instance.instance_id,
+                "merge_ref": merge_ref,
+                "input_checksum": input_checksum,
+            }
+        )
+        payload: dict[str, Any] = {
+            "merge": node.merge.to_dict(),
+            "join_node_instance_id": join_instance.instance_id,
+            "input_refs": input_projection,
+            "input_checksum": input_checksum,
+            "operation_id": operation_id,
+        }
+        aggregation_terminal_ref = None
+        if node.merge.aggregation_node_id is not None:
+            aggregation_instance = next(
+                (
+                    item
+                    for item in state.node_instances
+                    if item.identity.node_id == node.merge.aggregation_node_id
+                    and item.identity.branch_path == instance.identity.branch_path
+                    and item.identity.iteration_vector
+                    == instance.identity.iteration_vector
+                    and item.status is HarnessNodeInstanceStatus.SUCCEEDED
+                ),
+                None,
+            )
+            if aggregation_instance is None:
+                raise HarnessValidationError(
+                    "Merge marker lacks verified aggregation output",
+                    code="graph_merge_aggregation_evidence_missing",
+                )
+            payload["aggregation_node_instance_id"] = aggregation_instance.instance_id
+            aggregation_terminal_ref = _producer_completion_decision_ref(
+                aggregation_instance,
+                next(
+                    item
+                    for item in graph.nodes
+                    if item.node_id == aggregation_instance.identity.node_id
+                ),
+            )
+            payload["aggregation_terminal_ref"] = aggregation_terminal_ref
+            all_output_refs = thaw_json(aggregation_instance.output_refs)
+            payload["aggregation_output_refs"] = {
+                key: all_output_refs[key]
+                for key in node.merge.output_keys
+                if key in all_output_refs
+            }
+        return HarnessGraphCandidate(
+            HarnessGraphCandidateType.APPLY_MERGE,
+            "merge_ready",
+            30,
+            node_id=node.node_id,
+            node_instance_id=instance.instance_id,
+            evidence_refs=tuple(
+                sorted(
+                    {
+                        *(
+                            join_state.terminal_event_refs[branch_id]
+                            for branch_id in node.merge.input_branch_ids
+                        ),
+                        *(item.producer_terminal_ref for item in ordered),
+                        *(
+                            ()
+                            if aggregation_terminal_ref is None
+                            else (aggregation_terminal_ref,)
+                        ),
+                    }
+                )
+            ),
+            payload=payload,
+        )
 
     def _choice_candidate(
         self,
@@ -759,8 +983,6 @@ class WorkflowGraphEvaluator:
         candidates: list[HarnessGraphCandidate] = []
         instances_by_id = {item.instance_id: item for item in state.node_instances}
         for join_state in state.join_states:
-            if join_state.status is not HarnessJoinStatus.OPEN:
-                continue
             join_instance = instances_by_id[join_state.join_instance_id]
             definition = nodes_by_id[join_instance.identity.node_id]
             if (
@@ -771,11 +993,66 @@ class WorkflowGraphEvaluator:
                     "join state cannot resolve its normalized definition",
                     code="graph_evaluator_join_definition_mismatch",
                 )
+            if (
+                join_state.join_kind is HarnessJoinKind.ANY
+                and join_state.status is HarnessJoinStatus.SATISFIED
+                and join_state.winner_branch_id is not None
+            ):
+                fork = nodes_by_id.get(definition.join.fork_node_id)
+                cancellation_policy = (
+                    fork.metadata.get("cancellation_policy")
+                    if isinstance(fork, HarnessControlNode)
+                    else None
+                )
+                if cancellation_policy == "cancel_losers":
+                    parent_path = join_instance.identity.branch_path
+                    losers = tuple(
+                        sorted(
+                            (
+                                item
+                                for item in state.node_instances
+                                if not item.is_terminal
+                                and item.instance_id != join_instance.instance_id
+                                and item.status
+                                is not HarnessNodeInstanceStatus.CANCEL_REQUESTED
+                                and len(item.identity.branch_path) > len(parent_path)
+                                and item.identity.branch_path[: len(parent_path)]
+                                == parent_path
+                                and item.identity.branch_path[len(parent_path)]
+                                in join_state.required_branch_ids
+                                and item.identity.branch_path[len(parent_path)]
+                                != join_state.winner_branch_id
+                            ),
+                            key=lambda item: (
+                                item.identity.activation_ordinal,
+                                item.instance_id,
+                            ),
+                        )
+                    )
+                    winner_ref = join_state.terminal_event_refs[
+                        join_state.winner_branch_id
+                    ]
+                    candidates.extend(
+                        HarnessGraphCandidate(
+                            HarnessGraphCandidateType.REQUEST_BRANCH_CANCEL,
+                            "parallel_any_cancel_loser",
+                            5,
+                            node_id=item.identity.node_id,
+                            node_instance_id=item.instance_id,
+                            branch_id=item.identity.branch_path[len(parent_path)],
+                            evidence_refs=(winner_ref,),
+                            payload={
+                                "join_instance_id": join_instance.instance_id,
+                                "cancellation_policy": "cancel_losers",
+                                "winner_branch_id": join_state.winner_branch_id,
+                            },
+                        )
+                        for item in losers
+                    )
+                continue
+            if join_state.status is not HarnessJoinStatus.OPEN:
+                continue
             if join_state.join_kind is HarnessJoinKind.ALL:
-                if set(join_state.completed_branch_instances) != set(
-                    join_state.required_branch_ids
-                ):
-                    continue
                 failed_branches = tuple(
                     sorted(
                         branch_id
@@ -785,6 +1062,63 @@ class WorkflowGraphEvaluator:
                     )
                 )
                 evidence = tuple(join_state.terminal_event_refs.values())
+                if failed_branches and definition.join.failure_policy == "fail_fast":
+                    unfinished = _active_join_scope_instances(
+                        state,
+                        join_instance,
+                        join_state,
+                    )
+                    cancel_targets = tuple(
+                        item
+                        for item in unfinished
+                        if item.status is not HarnessNodeInstanceStatus.CANCEL_REQUESTED
+                    )
+                    if cancel_targets:
+                        parent_path = join_instance.identity.branch_path
+                        candidates.extend(
+                            HarnessGraphCandidate(
+                                HarnessGraphCandidateType.REQUEST_BRANCH_CANCEL,
+                                "parallel_all_fail_fast_cancel_sibling",
+                                5,
+                                node_id=item.identity.node_id,
+                                node_instance_id=item.instance_id,
+                                branch_id=item.identity.branch_path[len(parent_path)],
+                                evidence_refs=evidence,
+                                payload={
+                                    "join_instance_id": join_instance.instance_id,
+                                    "failure_policy": "fail_fast",
+                                    "failed_branch_ids": list(failed_branches),
+                                },
+                            )
+                            for item in cancel_targets
+                        )
+                        continue
+                    if unfinished:
+                        # A cancellation request is not a terminal outcome. The
+                        # Join remains open until every active attempt confirms
+                        # termination through a durable result.
+                        continue
+                    candidates.append(
+                        HarnessGraphCandidate(
+                            HarnessGraphCandidateType.FAIL_JOIN,
+                            "parallel_all_fail_fast_failure",
+                            10,
+                            node_id=definition.node_id,
+                            node_instance_id=join_state.join_instance_id,
+                            evidence_refs=evidence,
+                            payload={
+                                "failure_policy": "fail_fast",
+                                "failed_branch_ids": list(failed_branches),
+                            },
+                        )
+                    )
+                    continue
+                if set(join_state.completed_branch_instances) != set(
+                    join_state.required_branch_ids
+                ):
+                    continue
+                if _active_join_scope_instances(state, join_instance, join_state):
+                    continue
                 if failed_branches:
                     candidates.append(
                         HarnessGraphCandidate(
@@ -860,6 +1194,7 @@ class WorkflowGraphEvaluator:
 
     def _loop_candidate(
         self,
+        graph: NormalizedHarnessGraph,
         node: HarnessControlNode,
         instance: HarnessNodeInstanceState,
         state: HarnessGraphState,
@@ -873,7 +1208,7 @@ class WorkflowGraphEvaluator:
         counter = _loop_counter_for(instance, state.loop_counters)
         completed = 0 if counter is None else counter.completed_iterations
         condition_context = _condition_context(
-            None,
+            graph,
             state,
             node,
             instance,
@@ -943,9 +1278,12 @@ class WorkflowGraphEvaluator:
 
     def _wait_candidate(
         self,
+        graph: NormalizedHarnessGraph,
+        state: HarnessGraphState,
         node: HarnessGraphNode,
         instance: HarnessNodeInstanceState,
         registration,
+        context: HarnessGraphEvaluationContext,
     ) -> HarnessGraphCandidate | None:
         if not isinstance(node, HarnessControlNode) or node.wait is None:
             raise HarnessValidationError(
@@ -953,13 +1291,23 @@ class WorkflowGraphEvaluator:
                 code="graph_evaluator_wait_contract_missing",
             )
         if instance.status is HarnessNodeInstanceStatus.READY and registration is None:
+            registration_projection = _wait_registration_projection(
+                graph,
+                state,
+                node,
+                instance,
+                context,
+            )
             return HarnessGraphCandidate(
                 HarnessGraphCandidateType.REGISTER_WAIT,
                 "wait_registration_required",
                 20,
                 node_id=node.node_id,
                 node_instance_id=instance.instance_id,
-                payload=node.wait.to_dict(),
+                payload={
+                    "wait_contract": node.wait.to_dict(),
+                    "registration": registration_projection,
+                },
             )
         if (
             instance.status is not HarnessNodeInstanceStatus.WAITING
@@ -977,12 +1325,27 @@ class WorkflowGraphEvaluator:
                 payload={"wait_id": registration.wait_id, "resolution": "resumed"},
             )
         if registration.status is HarnessWaitStatus.TIMED_OUT:
+            timeout_policy = node.wait.timeout_policy
+            if (
+                timeout_policy is not None
+                and timeout_policy.action is WaitTimeoutAction.HALT
+            ):
+                return HarnessGraphCandidate(
+                    HarnessGraphCandidateType.HALT_RUN,
+                    "wait_timeout_halt",
+                    0,
+                    node_id=node.node_id,
+                    node_instance_id=instance.instance_id,
+                    evidence_refs=(registration.resolution_event_ref,),
+                    payload={"wait_id": registration.wait_id},
+                )
             targets = ()
             if (
-                node.wait.timeout_policy is not None
-                and node.wait.timeout_policy.target_node_id is not None
+                timeout_policy is not None
+                and timeout_policy.action is WaitTimeoutAction.ROUTE
+                and timeout_policy.target_node_id is not None
             ):
-                targets = (node.wait.timeout_policy.target_node_id,)
+                targets = (timeout_policy.target_node_id,)
             return HarnessGraphCandidate(
                 HarnessGraphCandidateType.RESUME_WAIT,
                 "wait_timeout_accepted",
@@ -994,14 +1357,20 @@ class WorkflowGraphEvaluator:
                 payload={"wait_id": registration.wait_id, "resolution": "timed_out"},
             )
         if registration.status is HarnessWaitStatus.CANCELLED:
+            approval_rejected = (
+                instance.metadata.get("wait_cause_kind")
+                == HarnessWaitCauseKind.APPROVAL.value
+                and instance.metadata.get("approval_granted") is False
+            )
             return HarnessGraphCandidate(
-                HarnessGraphCandidateType.HALT_RUN,
-                "wait_cancelled",
-                0,
-                node_id=node.node_id,
-                node_instance_id=instance.instance_id,
+                HarnessGraphCandidateType.COMPLETE_RUN,
+                "approval_cancelled" if approval_rejected else "wait_cancelled",
+                50,
                 evidence_refs=(registration.resolution_event_ref,),
-                payload={"wait_id": registration.wait_id},
+                payload={
+                    "wait_id": registration.wait_id,
+                    "outcome": "cancelled",
+                },
             )
         return None
 
@@ -1029,6 +1398,13 @@ class WorkflowGraphEvaluator:
             _selected_control_activation_candidates(
                 state,
                 nodes_by_id,
+                instances_by_scope,
+                outgoing,
+            )
+        )
+        candidates.extend(
+            _loop_back_activation_candidates(
+                state,
                 instances_by_scope,
                 outgoing,
             )
@@ -1119,25 +1495,15 @@ class WorkflowGraphEvaluator:
             )
             if not dependency_edges:
                 continue
-            eligible_scopes: (
-                set[tuple[tuple[str, ...], tuple[HarnessLoopIteration, ...]]] | None
-            ) = None
-            for edge in dependency_edges:
-                source_scopes = {
-                    _instance_scope(item)
-                    for item in instances_by_definition.get(edge.source_id, ())
-                    if item.status in _SUCCESSFUL_NODE_STATUSES
-                    and _edge_selected_for_instance(edge, item)
-                }
-                eligible_scopes = (
-                    source_scopes
-                    if eligible_scopes is None
-                    else eligible_scopes.intersection(source_scopes)
-                )
-            for scope in sorted(eligible_scopes or (), key=_scope_sort_key):
+            ready_edges_by_scope = _ready_dependency_edges_by_scope(
+                dependency_edges,
+                instances_by_definition,
+            )
+            for scope in sorted(ready_edges_by_scope, key=_scope_sort_key):
                 scoped_key = (node_id, *scope)
                 if scoped_key in instances_by_scope or scoped_key in already_selected:
                     continue
+                causal_edges = ready_edges_by_scope[scope]
                 candidates.append(
                     HarnessGraphCandidate(
                         HarnessGraphCandidateType.ACTIVATE_NODE,
@@ -1150,7 +1516,7 @@ class WorkflowGraphEvaluator:
                                 instances_by_definition,
                                 scope=scope,
                             )
-                            for edge in dependency_edges
+                            for edge in causal_edges
                         ),
                         payload=_scope_payload(scope),
                     )
@@ -1172,6 +1538,38 @@ class WorkflowGraphEvaluator:
             item for item in entries if item.status is HarnessCompensationStatus.PENDING
         )
         if pending:
+            budget = state.budgets.get("compensations")
+            if budget is None:
+                return (
+                    HarnessGraphCandidate(
+                        HarnessGraphCandidateType.HALT_RUN,
+                        "graph_budget_counter_missing",
+                        0,
+                        payload={
+                            "missing_counters": ["compensations"],
+                            "outcome": "compensation_failed",
+                            "manual_intervention_required": True,
+                        },
+                    ),
+                )
+            if budget.remaining <= 0:
+                return (
+                    HarnessGraphCandidate(
+                        HarnessGraphCandidateType.HALT_RUN,
+                        "compensation_budget_exhausted",
+                        0,
+                        evidence_refs=tuple(
+                            item.effect_outcome_ref for item in pending
+                        ),
+                        payload={
+                            "limit": budget.limit,
+                            "used": budget.used,
+                            "reserved": budget.reserved,
+                            "outcome": "compensation_failed",
+                            "manual_intervention_required": True,
+                        },
+                    ),
+                )
             entry = max(
                 pending,
                 key=lambda item: (item.effect_commit_sequence, item.entry_id),
@@ -1196,8 +1594,11 @@ class WorkflowGraphEvaluator:
                         "compensation_binding_missing",
                         0,
                         node_id=origin.identity.node_id,
-                        node_instance_id=origin.instance_id,
                         evidence_refs=(entry.effect_outcome_ref,),
+                        payload={
+                            "outcome": "indeterminate",
+                            "manual_intervention_required": True,
+                        },
                     ),
                 )
             return (
@@ -1218,24 +1619,48 @@ class WorkflowGraphEvaluator:
                     },
                 ),
             )
-        if any(
-            item.status
-            in {
-                HarnessCompensationStatus.FAILED,
-                HarnessCompensationStatus.INDETERMINATE,
-            }
+        indeterminate = tuple(
+            item
             for item in entries
-        ):
+            if item.status is HarnessCompensationStatus.INDETERMINATE
+        )
+        if indeterminate:
             return (
                 HarnessGraphCandidate(
                     HarnessGraphCandidateType.HALT_RUN,
-                    "compensation_failed_or_indeterminate",
+                    "compensation_outcome_indeterminate",
                     0,
                     evidence_refs=tuple(
                         item.outcome_ref
-                        for item in entries
+                        for item in indeterminate
                         if item.outcome_ref is not None
                     ),
+                    payload={
+                        "outcome": "indeterminate",
+                        "manual_intervention_required": True,
+                    },
+                ),
+            )
+        failed = tuple(
+            item
+            for item in entries
+            if item.status is HarnessCompensationStatus.FAILED
+        )
+        if failed:
+            return (
+                HarnessGraphCandidate(
+                    HarnessGraphCandidateType.HALT_RUN,
+                    "compensation_failed",
+                    0,
+                    evidence_refs=tuple(
+                        item.outcome_ref
+                        for item in failed
+                        if item.outcome_ref is not None
+                    ),
+                    payload={
+                        "outcome": "compensation_failed",
+                        "manual_intervention_required": True,
+                    },
                 ),
             )
         if entries and all(
@@ -1266,9 +1691,16 @@ class WorkflowGraphEvaluator:
         active = tuple(item for item in state.node_instances if not item.is_terminal)
         if active:
             if (
-                not any(item.is_ready or item.is_running for item in active)
+                not _has_runnable_or_running_work(state, active)
                 and any(item.is_waiting for item in active)
-                and any(item.unresolved for item in state.wait_registrations)
+                and (
+                    any(item.unresolved for item in state.wait_registrations)
+                    or any(
+                        item.node_kind is HarnessGraphNodeKind.EXECUTABLE
+                        and item.step_status is HarnessStepStatus.WAITING_APPROVAL
+                        for item in active
+                    )
+                )
             ):
                 return HarnessGraphCandidate(
                     HarnessGraphCandidateType.PROJECT_RUN_WAITING,
@@ -1294,7 +1726,336 @@ class WorkflowGraphEvaluator:
                 ),
                 payload={"outcome": "succeeded"},
             )
+        failed = tuple(
+            item
+            for item in state.node_instances
+            if item.status
+            in {
+                HarnessNodeInstanceStatus.FAILED,
+                HarnessNodeInstanceStatus.CANCELLED,
+                HarnessNodeInstanceStatus.HALTED,
+            }
+        )
+        if failed:
+            return HarnessGraphCandidate(
+                HarnessGraphCandidateType.COMPLETE_RUN,
+                "graph_terminal_failure",
+                60,
+                evidence_refs=tuple(
+                    canonical_checksum(item.to_dict()) for item in failed
+                ),
+                payload={"outcome": "failed"},
+            )
         return None
+
+
+def _has_runnable_or_running_work(
+    state: HarnessGraphState,
+    active: tuple[HarnessNodeInstanceState, ...],
+) -> bool:
+    passive_join_ids = {
+        item.join_instance_id
+        for item in state.join_states
+        if item.status is HarnessJoinStatus.OPEN
+    }
+    return any(
+        item.is_ready
+        or (item.is_running and item.instance_id not in passive_join_ids)
+        for item in active
+    )
+
+
+def merge_branch_output_references(
+    graph: NormalizedHarnessGraph,
+    state: HarnessGraphState,
+    merge_node: HarnessControlNode,
+    *,
+    branch_path: tuple[str, ...],
+    iteration_vector: tuple[HarnessLoopIteration, ...],
+) -> tuple[
+    HarnessNodeInstanceState,
+    HarnessJoinState,
+    tuple[HarnessBranchOutputReference, ...],
+]:
+    if merge_node.merge is None:
+        raise HarnessValidationError(
+            "Merge node is missing its normalized contract",
+            code="graph_evaluator_merge_contract_missing",
+        )
+    join_node_id = merge_node.metadata.get("join_node_id")
+    if not isinstance(join_node_id, str):
+        raise HarnessValidationError(
+            "Merge node is missing its paired Join identity",
+            code="graph_evaluator_merge_contract_missing",
+        )
+    join_instance = next(
+        (
+            item
+            for item in state.node_instances
+            if item.identity.node_id == join_node_id
+            and item.identity.branch_path == branch_path
+            and item.identity.iteration_vector == iteration_vector
+            and item.status is HarnessNodeInstanceStatus.SUCCEEDED
+        ),
+        None,
+    )
+    if join_instance is None:
+        raise HarnessValidationError(
+            "Merge activation lacks one successful paired Join instance",
+            code="graph_merge_join_evidence_missing",
+        )
+    join_state = next(
+        (
+            item
+            for item in state.join_states
+            if item.join_instance_id == join_instance.instance_id
+            and item.status is HarnessJoinStatus.SATISFIED
+        ),
+        None,
+    )
+    if join_state is None:
+        raise HarnessValidationError(
+            "Merge activation lacks satisfied Join evidence",
+            code="graph_merge_join_evidence_missing",
+        )
+    fork_instance = next(
+        (
+            item
+            for item in state.node_instances
+            if item.instance_id == join_state.fork_instance_id
+        ),
+        None,
+    )
+    if fork_instance is None:
+        raise HarnessValidationError(
+            "Merge activation lacks its durable Fork instance",
+            code="graph_merge_join_evidence_missing",
+        )
+    if (
+        fork_instance.status is not HarnessNodeInstanceStatus.SUCCEEDED
+        or fork_instance.identity.branch_path != branch_path
+        or fork_instance.identity.iteration_vector != iteration_vector
+    ):
+        raise HarnessValidationError(
+            "Merge activation does not match its paired Fork scope",
+            code="graph_merge_join_evidence_missing",
+        )
+    fork_definition = next(
+        (
+            item
+            for item in graph.nodes
+            if item.node_id == fork_instance.identity.node_id
+            and isinstance(item, HarnessControlNode)
+        ),
+        None,
+    )
+    if fork_definition is None:
+        raise HarnessValidationError(
+            "Merge activation cannot resolve its pinned Fork definition",
+            code="graph_merge_join_evidence_missing",
+        )
+    branches = {item.branch_id: item for item in fork_definition.branches}
+    definitions = {item.node_id: item for item in graph.nodes}
+    instances = {item.instance_id: item for item in state.node_instances}
+    references: list[HarnessBranchOutputReference] = []
+    for branch_id in merge_node.merge.input_branch_ids:
+        branch = branches.get(branch_id)
+        terminal_instance_id = join_state.completed_branch_instances.get(branch_id)
+        branch_terminal_ref = join_state.terminal_event_refs.get(branch_id)
+        branch_terminal = (
+            None
+            if not isinstance(terminal_instance_id, str)
+            else instances.get(terminal_instance_id)
+        )
+        branch_scope = (*fork_instance.identity.branch_path, branch_id)
+        if (
+            branch is None
+            or branch_terminal is None
+            or not isinstance(branch_terminal_ref, str)
+            or branch_terminal.status not in _SUCCESSFUL_NODE_STATUSES
+            or not _scope_has_prefix(
+                branch_terminal.identity.branch_path,
+                branch_scope,
+            )
+            or not _scope_has_prefix(
+                branch_terminal.identity.iteration_vector,
+                fork_instance.identity.iteration_vector,
+            )
+        ):
+            raise HarnessValidationError(
+                "Merge input cannot resolve one exact branch terminal",
+                code="graph_merge_input_missing",
+                details={"branch_id": branch_id},
+            )
+        branch_terminal_definition = definitions.get(branch_terminal.identity.node_id)
+        if branch_terminal_definition is None or (
+            _producer_completion_decision_ref(
+                branch_terminal,
+                branch_terminal_definition,
+            )
+            != branch_terminal_ref
+        ):
+            raise HarnessValidationError(
+                "Merge branch terminal does not match its durable decision",
+                code="graph_merge_input_reference_invalid",
+                details={"branch_id": branch_id},
+            )
+
+        producers = tuple(
+            item
+            for item in state.node_instances
+            if item.status in _SUCCESSFUL_NODE_STATUSES
+            and _scope_has_prefix(item.identity.branch_path, branch_scope)
+            and _scope_has_prefix(
+                item.identity.iteration_vector,
+                fork_instance.identity.iteration_vector,
+            )
+            and item.activation_sequence > fork_instance.last_event_sequence
+            and item.last_event_sequence <= join_state.last_event_sequence
+            and _declared_business_output_keys(definitions.get(item.identity.node_id))
+        )
+        for producer in producers:
+            definition = definitions.get(producer.identity.node_id)
+            if definition is None:  # pragma: no cover - filtered above
+                raise AssertionError("Merge producer definition disappeared")
+            producer_terminal_ref = _producer_terminal_or_effect_decision_ref(
+                producer,
+                definition,
+            )
+            for output_key in _declared_business_output_keys(definition):
+                payload_ref = producer.output_refs.get(output_key)
+                if not isinstance(payload_ref, str):
+                    raise HarnessValidationError(
+                        "Merge input requires exact payload references",
+                        code="graph_merge_input_reference_invalid",
+                        details={
+                            "branch_id": branch_id,
+                            "output_key": output_key,
+                            "producer_node_instance_id": producer.instance_id,
+                        },
+                    )
+                references.append(
+                    HarnessBranchOutputReference(
+                        branch_id=branch_id,
+                        output_namespace=branch.output_namespace,
+                        branch_priority=branch.priority,
+                        producer_node_id=producer.identity.node_id,
+                        producer_declaration_order=definition.declaration_order,
+                        producer_node_instance_id=producer.instance_id,
+                        producer_activation_ordinal=(
+                            producer.identity.activation_ordinal
+                        ),
+                        attempt=producer.attempt,
+                        iteration_vector=producer.identity.iteration_vector,
+                        output_key=output_key,
+                        payload_ref=payload_ref,
+                        producer_terminal_ref=producer_terminal_ref,
+                    )
+                )
+    return (
+        join_instance,
+        join_state,
+        tuple(sorted(references, key=lambda item: item.stable_order_key)),
+    )
+
+
+def _declared_business_output_keys(
+    definition: HarnessGraphNode | None,
+) -> tuple[str, ...]:
+    if isinstance(definition, HarnessExecutableNode):
+        output_keys = definition.output_keys
+    elif isinstance(definition, HarnessControlNode) and definition.merge is not None:
+        output_keys = definition.merge.output_keys
+    else:
+        return ()
+    return tuple(key for key in output_keys if key != "activity_result")
+
+
+def _producer_terminal_or_effect_decision_ref(
+    producer: HarnessNodeInstanceState,
+    definition: HarnessGraphNode,
+) -> str:
+    if isinstance(definition, HarnessExecutableNode):
+        if definition.side_effect_ref is not None:
+            effect_decision_ref = producer.metadata.get("side_effect_decision_ref")
+            if effect_decision_ref is not None:
+                return _checksum(
+                    effect_decision_ref,
+                    "merge_input.side_effect_decision_ref",
+                )
+        return _producer_completion_decision_ref(producer, definition)
+    if isinstance(definition, HarnessControlNode) and definition.merge is not None:
+        merge_result_ref = producer.metadata.get("merge_result_ref")
+        if merge_result_ref is not None:
+            return _checksum(merge_result_ref, "merge_input.merge_result_ref")
+        merge_decision_ref = producer.metadata.get("merge_decision_ref")
+        if merge_decision_ref is not None:
+            return _checksum(merge_decision_ref, "merge_input.merge_decision_ref")
+    raise HarnessValidationError(
+        "Merge input producer lacks a durable terminal or effect decision reference",
+        code="graph_merge_input_reference_invalid",
+        details={"producer_node_instance_id": producer.instance_id},
+    )
+
+
+def _producer_completion_decision_ref(
+    producer: HarnessNodeInstanceState,
+    definition: HarnessGraphNode,
+) -> str:
+    if isinstance(definition, HarnessExecutableNode):
+        if producer.metadata.get("last_decision_type") != "complete_node":
+            raise HarnessValidationError(
+                "Merge executable producer lacks its terminal decision",
+                code="graph_merge_input_reference_invalid",
+                details={"producer_node_instance_id": producer.instance_id},
+            )
+        reference = producer.metadata.get("last_decision_checksum")
+    elif isinstance(definition, HarnessControlNode) and definition.merge is not None:
+        reference = producer.metadata.get("merge_decision_ref")
+    else:
+        reference = producer.metadata.get("last_decision_checksum")
+    if reference is None:
+        raise HarnessValidationError(
+            "Merge input producer lacks its terminal decision reference",
+            code="graph_merge_input_reference_invalid",
+            details={"producer_node_instance_id": producer.instance_id},
+        )
+    return _checksum(reference, "merge_input.producer_terminal_ref")
+
+
+def _scope_has_prefix(
+    value: tuple[Any, ...],
+    prefix: tuple[Any, ...],
+) -> bool:
+    return len(value) >= len(prefix) and value[: len(prefix)] == prefix
+
+
+def _active_join_scope_instances(
+    state: HarnessGraphState,
+    join_instance: HarnessNodeInstanceState,
+    join_state: HarnessJoinState,
+) -> tuple[HarnessNodeInstanceState, ...]:
+    parent_path = join_instance.identity.branch_path
+    return tuple(
+        sorted(
+            (
+                item
+                for item in state.node_instances
+                if not item.is_terminal
+                and item.instance_id != join_instance.instance_id
+                and len(item.identity.branch_path) > len(parent_path)
+                and item.identity.branch_path[: len(parent_path)] == parent_path
+                and item.identity.branch_path[len(parent_path)]
+                in join_state.required_branch_ids
+                and item.identity.iteration_vector
+                == join_instance.identity.iteration_vector
+            ),
+            key=lambda item: (
+                item.identity.activation_ordinal,
+                item.instance_id,
+            ),
+        )
+    )
 
 
 def _instances_by_definition(
@@ -1351,7 +2112,6 @@ def _validate_accepted_observations(
     context: HarnessGraphEvaluationContext,
     nodes_by_id: Mapping[str, HarnessGraphNode],
 ) -> None:
-    del graph
     instances_by_id = {item.instance_id: item for item in state.node_instances}
     logical_identities: set[tuple[str, int, str, str]] = set()
     for observation in context.observations:
@@ -1385,6 +2145,7 @@ def _validate_accepted_observations(
         expected_contracts = _observation_contracts(
             observation.observation_type,
             definition,
+            graph=graph,
         )
         if observation.contract_ref not in expected_contracts:
             raise HarnessValidationError(
@@ -1401,6 +2162,14 @@ def _validate_accepted_observations(
             in {
                 HarnessGraphObservationType.VERIFIED_OUTPUT,
                 HarnessGraphObservationType.WORKER_STATUS,
+            }
+            else HarnessEvidenceKind.APPROVAL
+            if observation.observation_type is HarnessGraphObservationType.APPROVAL
+            else HarnessEvidenceKind.SIDE_EFFECT_OUTCOME
+            if observation.observation_type
+            in {
+                HarnessGraphObservationType.SIDE_EFFECT_OUTCOME,
+                HarnessGraphObservationType.SIDE_EFFECT_FAILURE,
             }
             else HarnessEvidenceKind.GATE_RESULT
         )
@@ -1483,28 +2252,13 @@ def _validate_accepted_observations(
             if reference in gate_results
             and gate_results[reference].payload.get("passed") is not True
         )
-        stale_gates = tuple(
-            reference
-            for reference in definition.gate_refs
-            if reference in gate_results
-            and gate_results[reference].event_sequence < observation.event_sequence
-        )
-        misbound_gates = tuple(
-            reference
-            for reference in definition.gate_refs
-            if reference in gate_results
-            and gate_results[reference].payload.get("input_ref")
-            != observation.payload_ref
-        )
-        if missing_gates or failed_gates or stale_gates or misbound_gates:
+        if missing_gates or failed_gates:
             raise HarnessValidationError(
                 "routing control facts lack successful deterministic Gate evidence",
                 code="unverified_graph_control_fact",
                 details={
                     "missing_gates": [item.exact_ref for item in missing_gates],
                     "failed_gates": [item.exact_ref for item in failed_gates],
-                    "stale_gates": [item.exact_ref for item in stale_gates],
-                    "misbound_gates": [item.exact_ref for item in misbound_gates],
                 },
             )
 
@@ -1512,11 +2266,31 @@ def _validate_accepted_observations(
 def _observation_contracts(
     observation_type: HarnessGraphObservationType,
     definition: HarnessExecutableNode,
+    *,
+    graph: NormalizedHarnessGraph | None = None,
 ) -> tuple[HarnessContractReference, ...]:
     if observation_type is HarnessGraphObservationType.VERIFIED_OUTPUT:
         return (definition.step_ref,)
     if observation_type is HarnessGraphObservationType.WORKER_STATUS:
         return (definition.worker_ref,)
+    if observation_type is HarnessGraphObservationType.APPROVAL:
+        return (definition.step_ref,)
+    if observation_type in {
+        HarnessGraphObservationType.SIDE_EFFECT_OUTCOME,
+        HarnessGraphObservationType.SIDE_EFFECT_FAILURE,
+    }:
+        references = []
+        if definition.side_effect_ref is not None:
+            references.append(definition.side_effect_ref)
+        if graph is not None and graph.terminal_policy is not None:
+            references.append(
+                HarnessContractReference(
+                    HarnessContractKind.SIDE_EFFECT,
+                    graph.terminal_policy.handler.handler_id,
+                    graph.terminal_policy.handler.version,
+                )
+            )
+        return tuple(references)
     return definition.gate_refs
 
 
@@ -1573,6 +2347,66 @@ def _edge_selected_for_instance(
         "resumed" if edge.edge_kind is HarnessGraphEdgeKind.WAIT_RESUME else "timed_out"
     )
     return resolution == expected
+
+
+def _ready_dependency_edges_by_scope(
+    edges: tuple[HarnessGraphEdge, ...],
+    instances_by_definition: Mapping[
+        str,
+        tuple[HarnessNodeInstanceState, ...],
+    ],
+) -> Mapping[
+    tuple[tuple[str, ...], tuple[HarnessLoopIteration, ...]],
+    tuple[HarnessGraphEdge, ...],
+]:
+    wait_edges = tuple(
+        edge
+        for edge in edges
+        if edge.edge_kind
+        in {
+            HarnessGraphEdgeKind.WAIT_RESUME,
+            HarnessGraphEdgeKind.WAIT_TIMEOUT,
+        }
+    )
+    selected_wait_edges: dict[
+        tuple[tuple[str, ...], tuple[HarnessLoopIteration, ...]],
+        list[HarnessGraphEdge],
+    ] = defaultdict(list)
+    for edge in wait_edges:
+        for source in instances_by_definition.get(edge.source_id, ()):
+            if (
+                source.status in _SUCCESSFUL_NODE_STATUSES
+                and _edge_selected_for_instance(edge, source)
+            ):
+                selected_wait_edges[_instance_scope(source)].append(edge)
+
+    ordinary_edges = tuple(edge for edge in edges if edge not in wait_edges)
+    ordinary_scopes: (
+        set[tuple[tuple[str, ...], tuple[HarnessLoopIteration, ...]]] | None
+    ) = None
+    for edge in ordinary_edges:
+        source_scopes = {
+            _instance_scope(item)
+            for item in instances_by_definition.get(edge.source_id, ())
+            if item.status in _SUCCESSFUL_NODE_STATUSES
+        }
+        ordinary_scopes = (
+            source_scopes
+            if ordinary_scopes is None
+            else ordinary_scopes.intersection(source_scopes)
+        )
+
+    ready: dict[
+        tuple[tuple[str, ...], tuple[HarnessLoopIteration, ...]],
+        tuple[HarnessGraphEdge, ...],
+    ] = {}
+    for scope in ordinary_scopes or ():
+        ready[scope] = ordinary_edges
+    for scope, selected in selected_wait_edges.items():
+        ready[scope] = tuple(
+            sorted(selected, key=lambda edge: (edge.priority, edge.edge_id))
+        )
+    return ready
 
 
 def _instance_scope(
@@ -1688,6 +2522,41 @@ def _selected_control_activation_candidates(
 ) -> tuple[HarnessGraphCandidate, ...]:
     candidates: list[HarnessGraphCandidate] = []
     for instance in state.node_instances:
+        if (
+            instance.status is HarnessNodeInstanceStatus.FAILED
+            and instance.metadata.get("last_decision_type") == "route_to_repair"
+        ):
+            raw_targets = instance.metadata.get("target_node_ids", ())
+            target_ids = (
+                tuple(raw_targets)
+                if isinstance(raw_targets, tuple | list)
+                and all(isinstance(item, str) for item in raw_targets)
+                else ()
+            )
+            declared_targets = {
+                edge.target_id
+                for edge in outgoing.get(instance.identity.node_id, ())
+                if edge.edge_kind is HarnessGraphEdgeKind.REPAIR
+            }
+            for target_id in sorted(set(target_ids).intersection(declared_targets)):
+                scope = _instance_scope(instance)
+                if (target_id, *scope) in instances_by_scope:
+                    continue
+                candidates.append(
+                    HarnessGraphCandidate(
+                        HarnessGraphCandidateType.ACTIVATE_NODE,
+                        "committed_repair_route_ready",
+                        40,
+                        node_id=target_id,
+                        evidence_refs=(canonical_checksum(instance.to_dict()),),
+                        payload={
+                            "repair_source_node_instance_id": instance.instance_id,
+                            "repair_source_node_id": instance.identity.node_id,
+                            **_scope_payload(scope),
+                        },
+                    )
+                )
+            continue
         if instance.status not in _SUCCESSFUL_NODE_STATUSES:
             continue
         definition = nodes_by_id[instance.identity.node_id]
@@ -1719,6 +2588,19 @@ def _selected_control_activation_candidates(
                     if edge.edge_kind is HarnessGraphEdgeKind.FORK_BRANCH
                     and edge.branch_id in opened_ids
                 )
+        elif definition.node_kind is HarnessGraphNodeKind.LOOP_GUARD:
+            route = instance.metadata.get("selected_loop_route_id")
+            edge_kind = {
+                "continue": HarnessGraphEdgeKind.LOOP_BODY,
+                "exit": HarnessGraphEdgeKind.LOOP_EXIT,
+                "exhaustion": HarnessGraphEdgeKind.LOOP_EXHAUSTED,
+            }.get(route)
+            if edge_kind is not None:
+                selected_edges = tuple(
+                    edge
+                    for edge in outgoing.get(definition.node_id, ())
+                    if edge.edge_kind is edge_kind
+                )
         for edge in sorted(
             selected_edges,
             key=lambda item: (
@@ -1728,10 +2610,30 @@ def _selected_control_activation_candidates(
                 item.edge_id,
             ),
         ):
-            branch_path = instance.identity.branch_path + (
-                () if edge.branch_id is None else (edge.branch_id,)
-            )
-            scope = (branch_path, instance.identity.iteration_vector)
+            if definition.node_kind is HarnessGraphNodeKind.LOOP_GUARD:
+                decision_payload = instance.metadata.get("decision_payload", {})
+                if not isinstance(decision_payload, Mapping):
+                    raise HarnessValidationError(
+                        "loop guard decision payload is invalid",
+                        code="graph_evaluator_loop_counter_mismatch",
+                    )
+                raw_branch_path = decision_payload.get("branch_path", ())
+                if not isinstance(raw_branch_path, tuple | list) or not all(
+                    isinstance(item, str) for item in raw_branch_path
+                ):
+                    raise HarnessValidationError(
+                        "loop guard branch scope is invalid",
+                        code="graph_evaluator_loop_counter_mismatch",
+                    )
+                scope = (
+                    tuple(raw_branch_path),
+                    _iteration_vector_from_payload(decision_payload),
+                )
+            else:
+                branch_path = instance.identity.branch_path + (
+                    () if edge.branch_id is None else (edge.branch_id,)
+                )
+                scope = (branch_path, instance.identity.iteration_vector)
             if (edge.target_id, *scope) in instances_by_scope:
                 continue
             candidates.append(
@@ -1745,6 +2647,84 @@ def _selected_control_activation_candidates(
                     payload={
                         "source_node_instance_id": instance.instance_id,
                         "source_node_id": definition.node_id,
+                        **_scope_payload(scope),
+                    },
+                )
+            )
+    return tuple(candidates)
+
+
+def _loop_back_activation_candidates(
+    state: HarnessGraphState,
+    instances_by_scope: Mapping[
+        tuple[
+            str,
+            tuple[str, ...],
+            tuple[HarnessLoopIteration, ...],
+        ],
+        tuple[HarnessNodeInstanceState, ...],
+    ],
+    outgoing: Mapping[str, list[HarnessGraphEdge]],
+) -> tuple[HarnessGraphCandidate, ...]:
+    candidates: list[HarnessGraphCandidate] = []
+    for instance in state.node_instances:
+        if (
+            instance.status not in _SUCCESSFUL_NODE_STATUSES
+            or not instance.identity.iteration_vector
+        ):
+            continue
+        for edge in outgoing.get(instance.identity.node_id, ()):
+            if edge.edge_kind is not HarnessGraphEdgeKind.LOOP_BACK:
+                continue
+            iteration = instance.identity.iteration_vector[-1]
+            if edge.loop_id is None or iteration.loop_id != edge.loop_id:
+                raise HarnessValidationError(
+                    "loop-back edge conflicts with the body iteration scope",
+                    code="graph_evaluator_loop_counter_mismatch",
+                )
+            parent_vector = instance.identity.iteration_vector[:-1]
+            scope = (instance.identity.branch_path, parent_vector)
+            counter = next(
+                (
+                    item
+                    for item in state.loop_counters
+                    if item.loop_id == edge.loop_id
+                    and item.branch_path == scope[0]
+                    and item.parent_iteration_vector == scope[1]
+                ),
+                None,
+            )
+            if (
+                counter is None
+                or counter.completed_iterations != iteration.iteration + 1
+            ):
+                continue
+            next_iteration_vector = (
+                *parent_vector,
+                HarnessLoopIteration(edge.loop_id, counter.completed_iterations),
+            )
+            if any(
+                item.identity.branch_path == instance.identity.branch_path
+                and item.identity.iteration_vector == next_iteration_vector
+                for item in state.node_instances
+            ):
+                continue
+            existing = instances_by_scope.get((edge.target_id, *scope), ())
+            if any(
+                item.activation_sequence > instance.last_event_sequence
+                for item in existing
+            ):
+                continue
+            candidates.append(
+                HarnessGraphCandidate(
+                    HarnessGraphCandidateType.ACTIVATE_NODE,
+                    "loop_iteration_completed",
+                    35,
+                    node_id=edge.target_id,
+                    evidence_refs=(canonical_checksum(instance.to_dict()),),
+                    payload={
+                        "loop_back_source_instance_id": instance.instance_id,
+                        "completed_iterations": counter.completed_iterations,
                         **_scope_payload(scope),
                     },
                 )
@@ -2022,14 +3002,20 @@ def _condition_context(
     instance: HarnessNodeInstanceState,
     context: HarnessGraphEvaluationContext,
 ) -> dict[str, Any]:
-    source_node_id = node.metadata.get("legacy_source_step_id")
-    if not isinstance(source_node_id, str):
-        source_node_id = _single_dependency_source(graph, node.node_id)
-    source_instance = _source_instance_for_control(
-        state,
-        source_node_id,
-        instance,
+    source_instance = (
+        _loop_condition_source(state, node, instance)
+        if node.loop is not None and _condition_requires_source(node.loop.condition)
+        else None
     )
+    if source_instance is None:
+        source_node_id = node.metadata.get("legacy_source_step_id")
+        if not isinstance(source_node_id, str):
+            source_node_id = _single_dependency_source(graph, node.node_id)
+        source_instance = _source_instance_for_control(
+            state,
+            source_node_id,
+            instance,
+        )
     source_observations = (
         ()
         if source_instance is None
@@ -2071,6 +3057,377 @@ def _condition_context(
             "outcome": state.outcome.value,
         },
     }
+
+
+def _wait_registration_projection(
+    graph: NormalizedHarnessGraph,
+    state: HarnessGraphState,
+    node: HarnessControlNode,
+    instance: HarnessNodeInstanceState,
+    context: HarnessGraphEvaluationContext,
+) -> dict[str, Any]:
+    if node.wait is None:
+        raise HarnessValidationError(
+            "Wait node is missing its normalized contract",
+            code="graph_evaluator_wait_contract_missing",
+        )
+    runtime_context = _wait_runtime_context(
+        graph,
+        state,
+        node,
+        instance,
+        context,
+    )
+    signal_schema_ref = exact_reference(
+        f"{node.wait.signal_type}@{node.wait.signal_version}",
+        "wait.signal_schema_ref",
+    )
+    try:
+        correlation = _resolve_wait_template(
+            thaw_json(node.wait.correlation),
+            runtime_context,
+            field_name="correlation",
+        )
+        tenant_scope = _resolve_wait_path(
+            node.wait.tenant_scope_path,
+            runtime_context,
+            field_name="tenant_scope",
+        )
+        identity_scope = _resolve_wait_path(
+            node.wait.identity_scope_path,
+            runtime_context,
+            field_name="identity_scope",
+        )
+        deadline_ref = None
+        if node.wait.deadline_input_path is not None:
+            deadline = _resolve_wait_path(
+                node.wait.deadline_input_path,
+                runtime_context,
+                field_name="deadline",
+            )
+            deadline_ref = _reference_or_checksum(deadline)
+        return {
+            "wait_id": node.wait.wait_id,
+            "kind": node.wait.kind.value,
+            "correlation_ref": canonical_checksum(correlation),
+            "tenant_scope_ref": _reference_or_checksum(tenant_scope),
+            "identity_scope_ref": _reference_or_checksum(identity_scope),
+            "signal_schema_ref": signal_schema_ref,
+            "deadline_ref": deadline_ref,
+            "resolved": True,
+        }
+    except HarnessValidationError as exc:
+        if exc.code != "wait_registration_source_missing":
+            raise
+        # Unit-level evaluator calls may omit live input observations. Keep the
+        # candidate deterministic, but the Control Plane rejects this marker
+        # before it can create an unsafe registration.
+        def unresolved(path: str) -> str:
+            return canonical_checksum({"unresolved_path": path})
+        return {
+            "wait_id": node.wait.wait_id,
+            "kind": node.wait.kind.value,
+            "correlation_ref": canonical_checksum(
+                {"unresolved_correlation": thaw_json(node.wait.correlation)}
+            ),
+            "tenant_scope_ref": unresolved(node.wait.tenant_scope_path),
+            "identity_scope_ref": unresolved(node.wait.identity_scope_path),
+            "signal_schema_ref": signal_schema_ref,
+            "deadline_ref": (
+                None
+                if node.wait.deadline_input_path is None
+                else unresolved(node.wait.deadline_input_path)
+            ),
+            "resolved": False,
+        }
+
+
+def _wait_runtime_context(
+    graph: NormalizedHarnessGraph,
+    state: HarnessGraphState,
+    node: HarnessControlNode,
+    instance: HarnessNodeInstanceState,
+    context: HarnessGraphEvaluationContext,
+) -> dict[str, Any]:
+    visible = _wait_visible_verified_outputs(
+        graph,
+        state,
+        node,
+        instance,
+        context,
+    )
+    by_definition: dict[str, tuple[HarnessNodeInstanceState, Mapping[str, Any], int]] = {}
+    for producer, payload, distance in visible:
+        previous = by_definition.get(producer.identity.node_id)
+        if previous is None or (
+            producer.identity.activation_ordinal,
+            producer.last_event_sequence,
+            producer.instance_id,
+        ) > (
+            previous[0].identity.activation_ordinal,
+            previous[0].last_event_sequence,
+            previous[0].instance_id,
+        ):
+            by_definition[producer.identity.node_id] = (
+                producer,
+                payload,
+                distance,
+            )
+
+    graph_outputs: dict[str, Any] = {}
+    output_candidates: dict[
+        str,
+        list[tuple[HarnessNodeInstanceState, Mapping[str, Any], int]],
+    ] = defaultdict(list)
+    for candidate in by_definition.values():
+        for key in candidate[1]:
+            output_candidates[str(key)].append(candidate)
+    for key, candidates in sorted(output_candidates.items()):
+        nearest = min(item[2] for item in candidates)
+        selected = tuple(item for item in candidates if item[2] == nearest)
+        if len(selected) != 1:
+            raise HarnessValidationError(
+                "Wait graph output has no unique scope-visible producer",
+                code="wait_output_source_ambiguous",
+                details={
+                    "wait_node_id": node.node_id,
+                    "output_key": key,
+                    "producer_node_instance_ids": sorted(
+                        item[0].instance_id for item in selected
+                    ),
+                },
+            )
+        graph_outputs[key] = thaw_json(selected[0][1][key])
+
+    node_outputs = {
+        node_id: thaw_json(payload)
+        for node_id, (_, payload, _) in sorted(by_definition.items())
+    }
+    return {
+        "graph": {
+            "inputs": thaw_json(context.inputs),
+            "outputs": graph_outputs,
+        },
+        "node": {"outputs": node_outputs},
+    }
+
+
+def _wait_visible_verified_outputs(
+    graph: NormalizedHarnessGraph,
+    state: HarnessGraphState,
+    node: HarnessControlNode,
+    instance: HarnessNodeInstanceState,
+    context: HarnessGraphEvaluationContext,
+) -> tuple[tuple[HarnessNodeInstanceState, Mapping[str, Any], int], ...]:
+    instances = {item.instance_id: item for item in state.node_instances}
+    definitions = {item.node_id: item for item in graph.nodes}
+    visible: list[tuple[HarnessNodeInstanceState, Mapping[str, Any], int]] = []
+    for observation in context.observations:
+        if (
+            observation.observation_type
+            is not HarnessGraphObservationType.VERIFIED_OUTPUT
+        ):
+            continue
+        producer = instances.get(observation.node_instance_id)
+        if (
+            producer is None
+            or producer.status not in _SUCCESSFUL_NODE_STATUSES
+            or producer.attempt != observation.attempt
+            or producer.identity.activation_ordinal
+            >= instance.identity.activation_ordinal
+            or not _wait_scope_compatible(
+                producer.identity.branch_path,
+                instance.identity.branch_path,
+            )
+            or not _wait_scope_compatible(
+                producer.identity.iteration_vector,
+                instance.identity.iteration_vector,
+            )
+        ):
+            continue
+        distance = _wait_graph_path_distance(
+            graph,
+            producer.identity.node_id,
+            node.node_id,
+        )
+        if distance is None:
+            continue
+        payload = thaw_json(observation.payload)
+        if not isinstance(payload, Mapping):
+            raise HarnessValidationError(
+                "Wait source observation payload must be an object",
+                code="invalid_graph_observation_payload",
+            )
+        definition = definitions.get(producer.identity.node_id)
+        if not isinstance(definition, HarnessExecutableNode):
+            raise HarnessValidationError(
+                "Wait verified output must belong to an executable producer",
+                code="wait_output_source_invalid",
+            )
+        visible.append(
+            (
+                producer,
+                _wait_output_projection(definition, payload),
+                distance,
+            )
+        )
+    return tuple(
+        sorted(
+            visible,
+            key=lambda item: (
+                item[2],
+                item[0].identity.activation_ordinal,
+                item[0].instance_id,
+            ),
+        )
+    )
+
+
+def _wait_output_projection(
+    definition: HarnessExecutableNode,
+    payload: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    if len(definition.output_keys) == 1:
+        return {definition.output_keys[0]: thaw_json(payload)}
+    projected = {
+        output_key: thaw_json(payload[output_key])
+        for output_key in definition.output_keys
+        if output_key in payload
+    }
+    if not projected:
+        raise HarnessValidationError(
+            "Wait verified output does not expose a declared output key",
+            code="wait_output_source_missing",
+            details={"producer_node_id": definition.node_id},
+        )
+    return projected
+
+
+def _resolve_wait_template(
+    value: Any,
+    context: Mapping[str, Any],
+    *,
+    field_name: str,
+) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _resolve_wait_template(
+                child,
+                context,
+                field_name=f"{field_name}.{key}",
+            )
+            for key, child in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, str):
+        return _resolve_wait_path(value, context, field_name=field_name)
+    raise HarnessValidationError(
+        "Wait correlation contains a non-structural runtime source",
+        code="invalid_wait_correlation_source",
+        details={"field": field_name},
+    )
+
+
+def _resolve_wait_path(
+    path: str,
+    context: Mapping[str, Any],
+    *,
+    field_name: str,
+) -> Any:
+    value = resolve_condition_path(path, context)
+    if value is None:
+        raise HarnessValidationError(
+            "Wait registration source is absent from accepted graph data",
+            code="wait_registration_source_missing",
+            details={"field": field_name, "path": path},
+        )
+    return value
+
+
+def _reference_or_checksum(value: Any) -> str:
+    if isinstance(value, str) and _CHECKSUM_PATTERN.fullmatch(value) is not None:
+        return value
+    return canonical_checksum(value)
+
+
+def _wait_graph_path_distance(
+    graph: NormalizedHarnessGraph,
+    source_id: str,
+    target_id: str,
+) -> int | None:
+    if source_id == target_id:
+        return 0
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    for edge in graph.edges:
+        adjacency[edge.source_id].append(edge.target_id)
+    frontier: list[tuple[str, int]] = [(source_id, 0)]
+    visited = {source_id}
+    while frontier:
+        current, distance = frontier.pop(0)
+        for target in sorted(adjacency.get(current, ())):
+            if target == target_id:
+                return distance + 1
+            if target in visited:
+                continue
+            visited.add(target)
+            frontier.append((target, distance + 1))
+    return None
+
+
+def _wait_scope_compatible(left: tuple[Any, ...], right: tuple[Any, ...]) -> bool:
+    common = min(len(left), len(right))
+    return left[:common] == right[:common]
+
+
+def _condition_requires_source(condition: HarnessCondition) -> bool:
+    if isinstance(condition, ConditionPredicate):
+        return condition.path.startswith(
+            (
+                "node.",
+                "worker_result.",
+                "quality_verdict.",
+                "gate_results.",
+            )
+        )
+    if isinstance(condition, ConditionAll | ConditionAny):
+        return any(_condition_requires_source(child) for child in condition.conditions)
+    raise TypeError("condition must be a HarnessCondition")
+
+
+def _loop_condition_source(
+    state: HarnessGraphState,
+    node: HarnessControlNode,
+    control_instance: HarnessNodeInstanceState,
+) -> HarnessNodeInstanceState | None:
+    if node.node_kind is not HarnessGraphNodeKind.LOOP_GUARD or node.loop is None:
+        return None
+    counter = _loop_counter_for(control_instance, state.loop_counters)
+    if counter is None or counter.completed_iterations == 0:
+        return None
+    previous_iteration = (
+        *control_instance.identity.iteration_vector,
+        HarnessLoopIteration(node.node_id, counter.completed_iterations - 1),
+    )
+    matches = tuple(
+        item
+        for item in state.node_instances
+        if item.identity.node_id in node.loop.body_terminal_node_ids
+        and item.identity.branch_path == control_instance.identity.branch_path
+        and item.identity.iteration_vector == previous_iteration
+        and item.status in _SUCCESSFUL_NODE_STATUSES
+    )
+    if len(matches) != 1:
+        raise HarnessValidationError(
+            "Loop continuation requires one exact prior-iteration terminal source",
+            code="graph_evaluator_loop_condition_source_ambiguous",
+            details={
+                "loop_node_id": node.node_id,
+                "completed_iterations": counter.completed_iterations,
+                "source_node_instance_ids": sorted(
+                    item.instance_id for item in matches
+                ),
+            },
+        )
+    return matches[0]
 
 
 def _source_instance_for_control(
@@ -2198,6 +3555,80 @@ def _compensation_mode(state: HarnessGraphState) -> bool:
     return state.metadata.get("execution_mode") == "compensating"
 
 
+def _terminal_observation_candidate(
+    state: HarnessGraphState,
+    context: HarnessGraphEvaluationContext,
+) -> HarnessGraphCandidate | None:
+    instances = {item.instance_id: item for item in state.node_instances}
+    failures = tuple(
+        observation
+        for observation in context.observations
+        if observation.observation_type
+        is HarnessGraphObservationType.SIDE_EFFECT_FAILURE
+        and observation.node_instance_id in instances
+        and instances[observation.node_instance_id].attempt == observation.attempt
+    )
+    if failures:
+        selected_failure = min(
+            failures,
+            key=lambda item: (
+                item.event_sequence,
+                item.node_instance_id,
+                item.observation_checksum,
+            ),
+        )
+        if (
+            selected_failure.payload.get("reason_code")
+            == "side_effect_attempt_indeterminate"
+        ):
+            return HarnessGraphCandidate(
+                HarnessGraphCandidateType.HALT_RUN,
+                "side_effect_attempt_indeterminate",
+                0,
+                node_id=selected_failure.node_id,
+                node_instance_id=selected_failure.node_instance_id,
+                evidence_refs=(selected_failure.evidence_ref,),
+                payload={
+                    "outcome": "indeterminate",
+                    "manual_intervention_required": True,
+                },
+            )
+        return HarnessGraphCandidate(
+            HarnessGraphCandidateType.COMPLETE_RUN,
+            "side_effect_retry_exhausted",
+            0,
+            evidence_refs=(selected_failure.evidence_ref,),
+            payload={"outcome": "failed"},
+        )
+    cancellations = tuple(
+        observation
+        for observation in context.observations
+        if observation.observation_type is HarnessGraphObservationType.APPROVAL
+        and observation.payload.get("approved") is False
+        and observation.node_instance_id in instances
+        and instances[observation.node_instance_id].status
+        is HarnessNodeInstanceStatus.WAITING
+        and instances[observation.node_instance_id].attempt == observation.attempt
+    )
+    if not cancellations:
+        return None
+    selected = min(
+        cancellations,
+        key=lambda item: (
+            item.event_sequence,
+            item.node_instance_id,
+            item.observation_checksum,
+        ),
+    )
+    return HarnessGraphCandidate(
+        HarnessGraphCandidateType.COMPLETE_RUN,
+        "approval_cancelled",
+        0,
+        evidence_refs=(selected.evidence_ref,),
+        payload={"outcome": "cancelled"},
+    )
+
+
 def _validate_status_payload(payload: Mapping[str, Any]) -> None:
     _exact_payload_keys(payload, {"status"}, "worker status")
     required_text(payload["status"], "graph_observation.payload.status")
@@ -2236,6 +3667,160 @@ def _validate_gate_payload(payload: Mapping[str, Any]) -> None:
         )
     _checksum(payload["input_ref"], "graph_observation.payload.input_ref")
     _checksum(payload["result_ref"], "graph_observation.payload.result_ref")
+    required_text(payload["reason_code"], "graph_observation.payload.reason_code")
+
+
+def _validate_approval_payload(payload: Mapping[str, Any]) -> None:
+    approved = payload.get("approved")
+    if not isinstance(approved, bool):
+        raise HarnessValidationError(
+            "approval observation requires a boolean approved value",
+            code="invalid_graph_observation_payload",
+        )
+    if approved:
+        _exact_payload_keys(payload, {"approved", "approval_ref"}, "approval")
+        _checksum(payload["approval_ref"], "graph_observation.payload.approval_ref")
+    else:
+        _exact_payload_keys(payload, {"approved", "reason_ref"}, "approval")
+        _checksum(payload["reason_ref"], "graph_observation.payload.reason_ref")
+
+
+def _validate_wait_cause_payload(payload: Mapping[str, Any]) -> None:
+    _exact_payload_keys(payload, {"cause_kind", "record"}, "Wait cause")
+    cause_kind = HarnessWaitCauseKind(payload["cause_kind"])
+    record = payload["record"]
+    if not isinstance(record, Mapping):
+        raise HarnessValidationError(
+            "Wait cause record must be an object",
+            code="invalid_graph_observation_payload",
+        )
+    if cause_kind is HarnessWaitCauseKind.SIGNAL:
+        HarnessWaitSignal.from_dict(record)
+    elif cause_kind is HarnessWaitCauseKind.TIMER:
+        HarnessWaitTimerWakeRecord.from_dict(record)
+    elif cause_kind is HarnessWaitCauseKind.TIMEOUT:
+        HarnessWaitTimeoutRecord.from_dict(record)
+    elif cause_kind is HarnessWaitCauseKind.APPROVAL:
+        HarnessWaitApprovalEvidenceRecord.from_dict(record)
+    elif cause_kind is HarnessWaitCauseKind.CANCELLATION:
+        HarnessWaitCancellationRecord.from_dict(record)
+    else:  # pragma: no cover - enum exhaustiveness guard
+        raise AssertionError(f"unsupported Wait cause kind: {cause_kind.value}")
+
+
+def _validate_side_effect_failure_payload(payload: Mapping[str, Any]) -> None:
+    _exact_payload_keys(
+        payload,
+        {
+            "decision_ref",
+            "failure_ref",
+            "reason_code",
+            "causal_graph_decision_checksum",
+        },
+        "side-effect failure",
+    )
+    _checksum(payload["decision_ref"], "graph_observation.payload.decision_ref")
+    _checksum(payload["failure_ref"], "graph_observation.payload.failure_ref")
+    _checksum(
+        payload["causal_graph_decision_checksum"],
+        "graph_observation.payload.causal_graph_decision_checksum",
+    )
+    required_text(
+        payload["reason_code"],
+        "graph_observation.payload.reason_code",
+    )
+
+
+def _validate_side_effect_outcome_payload(payload: Mapping[str, Any]) -> None:
+    _exact_payload_keys(
+        payload,
+        {
+            "scope",
+            "prepare_decision_ref",
+            "decision_ref",
+            "outcome_ref",
+            "effect_ref",
+            "disposition",
+        },
+        "side-effect outcome",
+    )
+    scope = required_text(payload["scope"], "graph_observation.payload.scope")
+    if scope not in {"node_instance", "terminal_run"}:
+        raise HarnessValidationError(
+            "side-effect outcome scope is unsupported",
+            code="invalid_graph_observation_payload",
+        )
+    for field_name in (
+        "prepare_decision_ref",
+        "decision_ref",
+        "outcome_ref",
+        "effect_ref",
+    ):
+        _checksum(
+            payload[field_name],
+            f"graph_observation.payload.{field_name}",
+        )
+    disposition = required_text(
+        payload["disposition"],
+        "graph_observation.payload.disposition",
+    )
+    if disposition not in {"prepared", "accepted"}:
+        raise HarnessValidationError(
+            "side-effect outcome disposition is not a successful forward disposition",
+            code="invalid_graph_observation_payload",
+        )
+
+
+def _validate_merge_result_payload(payload: Mapping[str, Any]) -> None:
+    _exact_payload_keys(
+        payload,
+        {
+            "operation_id",
+            "input_checksum",
+            "input_refs",
+            "succeeded",
+            "output_refs",
+            "outputs",
+            "reason_code",
+        },
+        "merge result",
+    )
+    _checksum(payload["operation_id"], "graph_observation.payload.operation_id")
+    _checksum(
+        payload["input_checksum"],
+        "graph_observation.payload.input_checksum",
+    )
+    if not isinstance(payload["succeeded"], bool):
+        raise HarnessValidationError(
+            "merge result succeeded value must be boolean",
+            code="invalid_graph_observation_payload",
+        )
+    input_refs = payload["input_refs"]
+    if not isinstance(input_refs, tuple):
+        raise HarnessValidationError(
+            "merge result input_refs must be an array",
+            code="invalid_graph_observation_payload",
+        )
+    if not all(isinstance(item, Mapping) for item in input_refs):
+        raise HarnessValidationError(
+            "merge result input reference must be an object",
+            code="invalid_graph_observation_payload",
+        )
+    output_refs = payload["output_refs"]
+    outputs = payload["outputs"]
+    if not isinstance(output_refs, Mapping) or not isinstance(outputs, Mapping):
+        raise HarnessValidationError(
+            "merge result outputs must be objects",
+            code="invalid_graph_observation_payload",
+        )
+    for key, reference in output_refs.items():
+        required_text(key, "graph_observation.payload.output_key")
+        _checksum(reference, "graph_observation.payload.output_ref")
+    if set(output_refs) != set(outputs):
+        raise HarnessValidationError(
+            "merge result output values and references must align",
+            code="invalid_graph_observation_payload",
+        )
     required_text(payload["reason_code"], "graph_observation.payload.reason_code")
 
 
@@ -2384,4 +3969,5 @@ __all__ = [
     "HarnessGraphEvaluationContext",
     "HarnessGraphObservationType",
     "WorkflowGraphEvaluator",
+    "merge_branch_output_references",
 ]

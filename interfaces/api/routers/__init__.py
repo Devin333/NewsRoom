@@ -9,6 +9,8 @@ from interfaces.api.routers import (
     entities,
     events,
     health,
+    harness_graph,
+    harness_waits,
     mcp,
     memory,
     projects,
@@ -41,5 +43,7 @@ def include_routers(api: FastAPI, *, services: ApiServices, helpers: ApiRouteHel
         mcp.create_router(services, helpers),
         schedules.create_router(services, helpers),
         approvals.create_router(services, helpers),
+        harness_graph.create_router(services, helpers),
+        harness_waits.create_router(services, helpers),
     ):
         api.include_router(router)

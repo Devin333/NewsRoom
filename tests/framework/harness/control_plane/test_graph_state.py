@@ -179,6 +179,7 @@ def test_projection_checksum_covers_every_future_scheduling_field_group() -> Non
         "join_states",
         "loop_counters",
         "wait_registrations",
+        "signal_inbox",
         "compensation_stack",
         "budgets",
         "last_event_sequence",
@@ -686,11 +687,23 @@ def test_activity_and_wait_bindings_reject_wrong_node_kinds() -> None:
     with pytest.raises(HarnessValidationError) as wait_error:
         _minimal_state(
             nodes=(executable_waiting,),
-            waits=(_wait_registration(executable_waiting.instance_id, sequence=1),),
+            waits=(
+                _wait_registration(
+                    executable_waiting.instance_id,
+                    sequence=1,
+                    kind="signal",
+                ),
+            ),
         )
+
+    legacy_approval = _minimal_state(
+        nodes=(executable_waiting,),
+        waits=(_wait_registration(executable_waiting.instance_id, sequence=1),),
+    )
 
     assert activity_error.value.code == "activity_node_kind_mismatch"
     assert wait_error.value.code == "wait_node_kind_mismatch"
+    assert legacy_approval.wait_registrations[0].kind.value == "approval"
 
 
 def test_active_activity_attempt_is_unique_and_sequence_bound_to_node() -> None:
@@ -933,6 +946,111 @@ def test_compensation_requires_exact_origin_effect_and_executable_state() -> Non
 
     assert missing_effect.value.code == "compensation_effect_evidence_mismatch"
     assert wrong_node_kind.value.code == "compensation_node_kind_mismatch"
+
+
+def test_compensating_node_requires_one_durable_compensation_entry() -> None:
+    orphan = _executable_node(
+        _identity("undo", ordinal=0),
+        "compensating",
+        attempt=0,
+        step_status="pending",
+        activation_sequence=1,
+        last_event_sequence=1,
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        _minimal_state(nodes=(orphan,))
+
+    assert captured.value.code == "compensation_node_entry_missing"
+
+
+def test_two_compensation_entries_cannot_own_one_compensating_node() -> None:
+    origin, compensation, entry = _running_compensation_projection()
+    second_identity = _identity("archive", ordinal=1)
+    second_effect_ref = _sha("archive-effect")
+    second_origin = _executable_node(
+        second_identity,
+        "succeeded",
+        attempt=1,
+        step_status="succeeded",
+        evidence_refs=(
+            HarnessAttemptEvidenceReference(
+                second_effect_ref,
+                HarnessEvidenceKind.SIDE_EFFECT_OUTCOME,
+                second_identity.instance_id,
+                1,
+                3,
+            ),
+        ),
+        activation_sequence=1,
+        last_event_sequence=3,
+    )
+    duplicate_assignment = HarnessCompensationEntry(
+        "undo-archive",
+        second_origin.instance_id,
+        second_effect_ref,
+        3,
+        _ref(HarnessContractKind.COMPENSATION, "archive.undo", "1"),
+        _ref(HarnessContractKind.ACTIVITY, "archive.undo.activity", "1"),
+        "undo-archive:run-1",
+        2,
+        status="running",
+        compensation_node_instance_id=compensation.instance_id,
+        last_event_sequence=4,
+    )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        _minimal_state(
+            nodes=(origin, second_origin, compensation),
+            compensations=(entry, duplicate_assignment),
+        )
+
+    assert captured.value.code == "duplicate_compensation_node_assignment"
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "compensation_entry_id",
+        "origin_node_instance_id",
+        "effect_outcome_ref",
+        "compensation_handler_ref",
+        "compensation_activity_ref",
+        "compensation_idempotency_key",
+        "compensation_fencing_generation",
+    ),
+)
+def test_compensation_node_metadata_must_match_exact_durable_entry(
+    field_name: str,
+) -> None:
+    origin, compensation, entry = _running_compensation_projection()
+    wrong_values = {
+        "compensation_entry_id": "another-entry",
+        "origin_node_instance_id": "another-origin",
+        "effect_outcome_ref": _sha("another-effect"),
+        "compensation_handler_ref": _ref(
+            HarnessContractKind.COMPENSATION,
+            "another.undo",
+            "1",
+        ).exact_ref,
+        "compensation_activity_ref": _ref(
+            HarnessContractKind.ACTIVITY,
+            "another.undo.activity",
+            "1",
+        ).exact_ref,
+        "compensation_idempotency_key": "another-idempotency-key",
+        "compensation_fencing_generation": entry.fencing_generation + 1,
+    }
+    metadata = dict(compensation.metadata)
+    metadata[field_name] = wrong_values[field_name]
+
+    with pytest.raises(HarnessValidationError) as captured:
+        _minimal_state(
+            nodes=(origin, replace(compensation, metadata=metadata)),
+            compensations=(entry,),
+        )
+
+    assert captured.value.code == "graph_compensation_binding_mismatch"
 
 
 def test_ready_nodes_count_toward_max_active_nodes() -> None:
@@ -1404,6 +1522,70 @@ def _minimal_state(
     )
 
 
+def _running_compensation_projection() -> tuple[
+    HarnessNodeInstanceState,
+    HarnessNodeInstanceState,
+    HarnessCompensationEntry,
+]:
+    origin_identity = _identity("publish", ordinal=0)
+    effect_ref = _sha("publication-effect")
+    origin = _executable_node(
+        origin_identity,
+        "succeeded",
+        attempt=1,
+        step_status="succeeded",
+        evidence_refs=(
+            HarnessAttemptEvidenceReference(
+                effect_ref,
+                HarnessEvidenceKind.SIDE_EFFECT_OUTCOME,
+                origin_identity.instance_id,
+                1,
+                2,
+            ),
+        ),
+        activation_sequence=1,
+        last_event_sequence=2,
+    )
+    compensation_identity = _identity("undo", ordinal=2)
+    handler_ref = _ref(HarnessContractKind.COMPENSATION, "publication.undo", "1")
+    activity_ref = _ref(
+        HarnessContractKind.ACTIVITY,
+        "publication.undo.activity",
+        "2",
+    )
+    entry = HarnessCompensationEntry(
+        "undo-publication",
+        origin.instance_id,
+        effect_ref,
+        2,
+        handler_ref,
+        activity_ref,
+        "undo-publication:run-1",
+        7,
+        status="running",
+        compensation_node_instance_id=compensation_identity.instance_id,
+        last_event_sequence=4,
+    )
+    compensation = _executable_node(
+        compensation_identity,
+        "compensating",
+        attempt=0,
+        step_status="pending",
+        activation_sequence=4,
+        last_event_sequence=4,
+        metadata={
+            "compensation_entry_id": entry.entry_id,
+            "origin_node_instance_id": entry.origin_node_instance_id,
+            "effect_outcome_ref": entry.effect_outcome_ref,
+            "compensation_handler_ref": entry.handler_ref.exact_ref,
+            "compensation_activity_ref": entry.activity_ref.exact_ref,
+            "compensation_idempotency_key": entry.idempotency_key,
+            "compensation_fencing_generation": entry.fencing_generation,
+        },
+    )
+    return origin, compensation, entry
+
+
 def _executable_node(
     identity: HarnessNodeInstanceIdentity,
     status: str,
@@ -1510,13 +1692,14 @@ def _wait_registration(
     *,
     sequence: int,
     wait_id: str = "approval-wait",
+    kind: str = "approval",
     status: str = "registered",
     resolution_event_ref: str | None = None,
 ) -> HarnessWaitRegistration:
     return HarnessWaitRegistration(
         wait_id,
         node_instance_id,
-        "approval",
+        kind,
         _sha("correlation"),
         _sha("tenant-scope"),
         _sha("identity-scope"),

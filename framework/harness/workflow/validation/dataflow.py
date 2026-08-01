@@ -50,6 +50,14 @@ def validate_dataflow(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagno
     produced_after: dict[str, frozenset[str]] = {}
     ancestors_after: dict[str, frozenset[str]] = {}
     graph_inputs = frozenset(graph.input_keys)
+    aggregation_inputs = {
+        node.merge.aggregation_node_id: str(node.metadata["branch_inputs_key"])
+        for node in graph.nodes
+        if isinstance(node, HarnessControlNode)
+        and node.merge is not None
+        and node.merge.aggregation_node_id is not None
+        and isinstance(node.metadata.get("branch_inputs_key"), str)
+    }
     while ready:
         node_id = ready.popleft()
         node = nodes_by_id[node_id]
@@ -75,7 +83,13 @@ def validate_dataflow(graph: NormalizedHarnessGraph) -> tuple[HarnessGraphDiagno
             ancestors_before = frozenset()
         produced: frozenset[str] = frozenset()
         if isinstance(node, HarnessExecutableNode):
-            missing = sorted(set(node.input_keys).difference(available_before))
+            synthetic_input = aggregation_inputs.get(node.node_id)
+            missing = sorted(
+                set(node.input_keys).difference(
+                    available_before
+                    | ({synthetic_input} if synthetic_input is not None else set())
+                )
+            )
             if missing:
                 diagnostics.append(
                     diagnostic(
@@ -178,6 +192,29 @@ def _validate_wait_sources(
                         details={"output_key": key},
                     )
                 )
+                continue
+            nested_path = _nested_output_path(source, "graph.outputs.")
+            producers = tuple(
+                producer
+                for producer_id, producer in nodes_by_id.items()
+                if producer_id in ancestors_before
+                and isinstance(producer, HarnessExecutableNode)
+                and key in producer.output_keys
+            )
+            if not any(
+                _wait_output_fact_exposed(producer, key, nested_path)
+                for producer in producers
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.DATAFLOW,
+                        "unexposed_wait_output_source",
+                        "Wait source is outside the producer control-fact contract",
+                        node_id=node.node_id,
+                        path=source,
+                        details={"output_key": key},
+                    )
+                )
             continue
         if source.startswith("node.outputs."):
             resolved = _resolve_node_output_source(
@@ -195,7 +232,7 @@ def _validate_wait_sources(
                     )
                 )
                 continue
-            producer_id, output_key = resolved
+            producer_id, output_key, nested_path = resolved
             if producer_id not in ancestors_before:
                 diagnostics.append(
                     diagnostic(
@@ -210,6 +247,27 @@ def _validate_wait_sources(
                         },
                     )
                 )
+            else:
+                producer = nodes_by_id[producer_id]
+                assert isinstance(producer, HarnessExecutableNode)
+                if not _wait_output_fact_exposed(
+                    producer,
+                    output_key,
+                    nested_path,
+                ):
+                    diagnostics.append(
+                        diagnostic(
+                            HarnessGraphValidationPhase.DATAFLOW,
+                            "unexposed_wait_node_output_source",
+                            "Wait node source is outside the producer control-fact contract",
+                            node_id=node.node_id,
+                            path=source,
+                            details={
+                                "producer_node_id": producer_id,
+                                "output_key": output_key,
+                            },
+                        )
+                    )
     return tuple(diagnostics)
 
 
@@ -229,11 +287,17 @@ def _top_level_key(path: str, prefix: str) -> str:
     return path.removeprefix(prefix).split(".", maxsplit=1)[0]
 
 
+def _nested_output_path(path: str, prefix: str) -> str:
+    value = path.removeprefix(prefix)
+    _, separator, nested = value.partition(".")
+    return nested if separator else ""
+
+
 def _resolve_node_output_source(
     source: str,
     *,
     nodes_by_id: dict[str, HarnessExecutableNode | HarnessControlNode],
-) -> tuple[str, str] | None:
+) -> tuple[str, str, str] | None:
     value = source.removeprefix("node.outputs.")
     matches = sorted(
         (
@@ -246,11 +310,42 @@ def _resolve_node_output_source(
     if not matches:
         return None
     producer_id = matches[0]
-    output_key = value.removeprefix(f"{producer_id}.").split(".", maxsplit=1)[0]
+    output_path = value.removeprefix(f"{producer_id}.")
+    output_key, separator, nested_path = output_path.partition(".")
     producer = nodes_by_id[producer_id]
     if not isinstance(producer, HarnessExecutableNode) or output_key not in producer.output_keys:
         return None
-    return producer_id, output_key
+    return producer_id, output_key, nested_path if separator else ""
+
+
+def _wait_output_fact_exposed(
+    producer: HarnessExecutableNode,
+    output_key: str,
+    nested_path: str,
+) -> bool:
+    step_metadata = producer.metadata.get("step_metadata", {})
+    if not isinstance(step_metadata, Mapping):
+        return False
+    raw_paths = step_metadata.get("control_fact_paths", ())
+    if isinstance(raw_paths, str) or not isinstance(raw_paths, tuple | list):
+        return False
+    declared = tuple(str(path).strip() for path in raw_paths if str(path).strip())
+    if len(producer.output_keys) > 1:
+        relative = tuple(
+            "" if path == output_key else path.removeprefix(f"{output_key}.")
+            for path in declared
+            if path == output_key or path.startswith(f"{output_key}.")
+        )
+    else:
+        relative = declared
+    if not relative:
+        return False
+    if not nested_path:
+        return True
+    return any(
+        path == nested_path or path.startswith(f"{nested_path}.")
+        for path in relative
+    )
 
 
 def _validate_shared_output_declaration(
@@ -286,6 +381,13 @@ def _validate_parallel_shared_writes(
         and node.join is not None
         and node.node_kind in {HarnessGraphNodeKind.JOIN_ALL, HarnessGraphNodeKind.JOIN_ANY}
     }
+    merge_by_join = {
+        str(node.metadata["join_node_id"]): node
+        for node in graph.nodes
+        if isinstance(node, HarnessControlNode)
+        and node.merge is not None
+        and isinstance(node.metadata.get("join_node_id"), str)
+    }
     adjacency: dict[str, list[str]] = defaultdict(list)
     for edge in graph.edges:
         if edge.edge_kind in _NON_DATAFLOW_EDGE_KINDS:
@@ -300,6 +402,23 @@ def _validate_parallel_shared_writes(
         join = join_by_fork.get(fork.node_id)
         if join is None:
             continue
+        merge = merge_by_join.get(join.node_id)
+        if merge is not None and merge.merge is not None:
+            expected_branches = set(join.join.required_branch_ids)
+            actual_branches = set(merge.merge.input_branch_ids)
+            if actual_branches != expected_branches:
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.DATAFLOW,
+                        "merge_branch_contract_mismatch",
+                        "merge inputs do not match the paired Parallel-All branches",
+                        node_id=merge.node_id,
+                        details={
+                            "expected_branch_ids": sorted(expected_branches),
+                            "actual_branch_ids": sorted(actual_branches),
+                        },
+                    )
+                )
         writes_by_key: dict[str, set[str]] = defaultdict(set)
         for branch in fork.branches:
             branch_nodes = _nodes_until(
@@ -313,9 +432,24 @@ def _validate_parallel_shared_writes(
                     continue
                 for output_key in node.output_keys:
                     writes_by_key[output_key].add(branch.branch_id)
-        merge_declared = join.join is not None and join.join.merge_ref is not None
         for output_key, branches in sorted(writes_by_key.items()):
-            if len(branches) < 2 or merge_declared:
+            if len(branches) < 2:
+                continue
+            if merge is not None and merge.merge is not None:
+                if output_key in merge.merge.output_keys:
+                    continue
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.DATAFLOW,
+                        "parallel_shared_write_unmerged",
+                        "merge contract does not cover one shared branch output",
+                        node_id=merge.node_id,
+                        details={
+                            "output_key": output_key,
+                            "branch_ids": sorted(branches),
+                        },
+                    )
+                )
                 continue
             diagnostics.append(
                 diagnostic(

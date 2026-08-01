@@ -162,8 +162,6 @@ def test_valid_explicit_graph_initializes_without_legacy_state_or_events() -> No
     assert isinstance(state, HarnessGraphState)
     assert state.graph_ref.checksum == control_plane._prepared_graphs[run_id].checksum
     assert event_port.events == []
-    assert event_port.transitions == {}
-    assert event_port.states == {}
     assert event_port.created_activities == []
     assert control_plane.graph_transition_port.recover_graph(run_id).state == state
 
@@ -202,11 +200,11 @@ def test_failed_preflight_does_not_poison_same_run_id_for_corrected_spec() -> No
 
     state = control_plane.initialize(run_spec)
 
-    assert state.run_spec.run_id == run_id
+    assert state.run_id == run_id
     assert run_id in control_plane._prepared_run_specs
     assert run_id in control_plane._prepared_graphs
-    assert event_port.events
-    assert run_id in event_port.states
+    assert event_port.events == []
+    assert control_plane.graph_transition_port.recover_graph(run_id).state == state
 
 
 def _invalid_static_case(
@@ -295,8 +293,6 @@ def _assert_preflight_left_no_state(
     run_id: str,
 ) -> None:
     assert event_port.events == []
-    assert event_port.transitions == {}
-    assert event_port.states == {}
     assert event_port.created_activities == []
     for cache_name in (
         "_prepared_run_specs",
@@ -310,7 +306,16 @@ def _assert_preflight_left_no_state(
     ):
         assert run_id not in getattr(control_plane, cache_name)
     if control_plane.graph_transition_port is not None:
-        assert control_plane.graph_transition_port.recover_graph(run_id).state is None
+        recovery = control_plane.graph_transition_port.recover_graph(run_id)
+        assert recovery.graph is None
+        assert recovery.run_spec_checksum is None
+        assert recovery.state is None
+        assert recovery.expected_last_sequence == 0
+        assert recovery.decision_commits == ()
+        assert recovery.projection_commits == ()
+        assert recovery.activity_result_commits == ()
+        assert recovery.observation_commits == ()
+        assert recovery.activities == ()
 
 
 class _StaticCompiler:

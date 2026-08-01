@@ -52,6 +52,28 @@ def test_event_adapter_cannot_decide_harness_flow_or_invoke_workers() -> None:
     assert called_attributes.isdisjoint(forbidden_calls)
 
 
+def test_durable_event_adapter_exposes_no_legacy_execution_api() -> None:
+    tree = ast.parse(
+        DURABLE_ADAPTER.read_text(encoding="utf-8"),
+        filename=str(DURABLE_ADAPTER),
+    )
+    adapter = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "DurableHarnessEventPort"
+    )
+    methods = {
+        node.name
+        for node in adapter.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert methods.isdisjoint(
+        {"resolve_replay_activity", "commit_transition", "recover"}
+    )
+
+
 def test_control_plane_has_no_implicit_memory_fallback_or_subscriber_routing() -> None:
     source = CONTROL_PLANE.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(CONTROL_PLANE))
@@ -75,14 +97,15 @@ def test_control_plane_has_no_implicit_memory_fallback_or_subscriber_routing() -
     assert isinstance(event_port_assignments[0].value, ast.Name)
     assert event_port_assignments[0].value.id == "event_port"
 
-    call_worker = next(
+    process_graph_activity = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_call_worker"
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_process_graph_activity"
     )
     direct_worker_calls = [
         node
-        for node in ast.walk(call_worker)
+        for node in ast.walk(process_graph_activity)
         if isinstance(node, ast.Call)
         and (
             isinstance(node.func, ast.Name)
@@ -94,10 +117,41 @@ def test_control_plane_has_no_implicit_memory_fallback_or_subscriber_routing() -
     assert direct_worker_calls
     called_attributes = {
         node.func.attr
-        for node in ast.walk(call_worker)
+        for node in ast.walk(process_graph_activity)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
     assert called_attributes.isdisjoint({"deliver", "dispatch", "publish", "subscribe"})
+
+
+def test_control_plane_has_one_graph_execution_path() -> None:
+    tree = ast.parse(
+        CONTROL_PLANE.read_text(encoding="utf-8"),
+        filename=str(CONTROL_PLANE),
+    )
+    control_plane = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "HarnessControlPlane"
+    )
+    methods = {
+        node.name
+        for node in control_plane.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    assert "_drive_graph" in methods
+    assert methods.isdisjoint(
+        {
+            "_drive",
+            "_start_run",
+            "_plan_step",
+            "_execute_step",
+            "_verify_step",
+            "_route_to_step",
+            "_route_to_repair",
+            "_restore_recovery",
+        }
+    )
 
 
 def test_research_runtime_requires_injected_harness_event_port() -> None:

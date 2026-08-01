@@ -46,7 +46,15 @@ def test_retry_exhaustion_fails_run() -> None:
     assert result.state.status == HarnessRunStatus.FAILED
     assert step_state.status == HarnessStepStatus.FAILED
     assert step_state.attempts == 2
-    assert result.state.metadata["terminal_reason"] == "second failure"
+    assert result.state.metadata["terminal_reason"] == "graph_terminal_failure"
+    assert result.graph_state is not None
+    failed_node = next(
+        node
+        for node in result.graph_state.node_instances
+        if node.step_id == "call"
+    )
+    assert failed_node.metadata["decision_payload"]["reason"] == "second failure"
+    assert failed_node.metadata["decision_payload"]["error"] == "second failure"
 
 
 def test_global_retry_budget_caps_step_policy_attempts() -> None:

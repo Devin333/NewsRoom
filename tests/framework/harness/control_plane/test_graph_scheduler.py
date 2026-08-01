@@ -27,8 +27,10 @@ from framework.harness.control_plane.graph_evaluator import (
     WorkflowGraphEvaluator,
 )
 from framework.harness.control_plane.graph_state import (
+    HarnessActiveActivityState,
     HarnessAttemptEvidenceReference,
     HarnessBudgetCounterState,
+    HarnessCompensationEntry,
     HarnessEvidenceKind,
     HarnessGraphBudgetState,
     HarnessGraphReference,
@@ -50,6 +52,7 @@ from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
 from framework.harness.workflow.dsl import (
     Choice,
     ChoiceBranch,
+    CompensationBinding,
     HarnessGraphSpec,
     ParallelAll,
     ParallelBranch,
@@ -196,17 +199,23 @@ def test_real_evaluator_terminal_evidence_is_accepted() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "step_status", "attempt"),
+    ("status", "step_status", "attempt", "expected_type"),
     (
-        ("pending", "pending", 0),
-        ("waiting", "waiting_approval", 0),
-        ("cancel_requested", "running", 1),
+        ("pending", "pending", 0, None),
+        (
+            "waiting",
+            "waiting_approval",
+            0,
+            HarnessGraphDecisionType.PROJECT_RUN_WAITING,
+        ),
+        ("cancel_requested", "running", 1, None),
     ),
 )
 def test_non_step_runnable_executable_is_quiescent_without_input(
     status: str,
     step_status: str,
     attempt: int,
+    expected_type: HarnessGraphDecisionType | None,
 ) -> None:
     _, graph = _linear_workflow("entry")
     node = _executable_node(
@@ -217,13 +226,20 @@ def test_non_step_runnable_executable_is_quiescent_without_input(
         ordinal=1,
         attempt=attempt,
     )
+    activities = (
+        (_active_activity(graph, node),) if status == "cancel_requested" else ()
+    )
 
     decision = HarnessScheduler().next_decision(
-        _state(graph, nodes=(node,)),
+        _state(graph, nodes=(node,), active_activities=activities),
         graph=graph,
     )
 
-    assert decision is None
+    if expected_type is None:
+        assert decision is None
+    else:
+        assert decision is not None
+        assert decision.decision_type is expected_type
 
 
 def test_scheduler_rejects_stale_evaluator_checksums() -> None:
@@ -442,7 +458,11 @@ def test_cancel_requested_node_never_redispatches_without_reconciliation() -> No
         attempt=1,
         last_sequence=2,
     )
-    state = _state(graph, nodes=(node,))
+    state = _state(
+        graph,
+        nodes=(node,),
+        active_activities=(_active_activity(graph, node),),
+    )
 
     decision = HarnessScheduler().next_decision(
         state,
@@ -474,10 +494,13 @@ def test_non_step_runnable_executable_rejects_step_input(
         ordinal=1,
         attempt=attempt,
     )
+    activities = (
+        (_active_activity(graph, node),) if status == "cancel_requested" else ()
+    )
 
     with pytest.raises(HarnessValidationError) as captured:
         HarnessScheduler().next_decision(
-            _state(graph, nodes=(node,)),
+            _state(graph, nodes=(node,), active_activities=activities),
             graph=graph,
             step_inputs=(_step_input(workflow, node),),
         )
@@ -490,7 +513,6 @@ def test_non_step_runnable_executable_rejects_step_input(
     (
         ("ready", "pending"),
         ("running", "planning"),
-        ("compensating", "plan_verified"),
     ),
 )
 def test_step_runnable_executable_requires_step_input(
@@ -516,25 +538,56 @@ def test_step_runnable_executable_requires_step_input(
     assert decision.reason_code == "step_lifecycle_input_missing"
 
 
-def test_compensating_executable_retains_step_lifecycle() -> None:
-    workflow, graph = _linear_workflow("compensate")
-    node = _executable_node(
+@pytest.mark.parametrize(
+    ("step_status", "attempt", "with_activity_evidence", "expected_type"),
+    (
+        ("pending", 0, False, HarnessGraphDecisionType.ENTER_STEP_PHASE),
+        ("plan_verified", 0, False, HarnessGraphDecisionType.DISPATCH_ACTIVITY),
+        ("running", 1, True, HarnessGraphDecisionType.VERIFY_ACTIVITY_RESULT),
+    ),
+)
+def test_compensating_executable_retains_exact_bindings_through_step_lifecycle(
+    step_status: str,
+    attempt: int,
+    with_activity_evidence: bool,
+    expected_type: HarnessGraphDecisionType,
+) -> None:
+    workflow, graph = _compensation_workflow()
+    origin, node, entry = _running_compensation_projection(
         graph,
-        "compensate",
-        status="compensating",
-        step_status="plan_verified",
-        ordinal=1,
+        step_status=step_status,
+        attempt=attempt,
+        with_activity_evidence=with_activity_evidence,
+    )
+    state = _state(
+        graph,
+        nodes=(origin, node),
+        compensations=(entry,),
+        metadata={"execution_mode": "compensating"},
+    )
+    step_input = (
+        _succeeded_worker_input(workflow, graph, node)
+        if with_activity_evidence
+        else _step_input(workflow, node)
     )
 
     decision = HarnessScheduler().next_decision(
-        _state(graph, nodes=(node,)),
+        state,
         graph=graph,
-        step_inputs=(_step_input(workflow, node),),
+        step_inputs=(step_input,),
     )
 
     assert decision is not None
-    assert decision.decision_type is HarnessGraphDecisionType.DISPATCH_ACTIVITY
-    assert decision.attempt == 1
+    assert decision.decision_type is expected_type
+    definition = _definition(graph, "compensation:undo-publish")
+    assert dict(decision.binding_versions) == {
+        "step": definition.step_ref.exact_ref,
+        "worker": definition.worker_ref.exact_ref,
+        "activity": entry.activity_ref.exact_ref,
+        "gate:0000": definition.gate_refs[0].exact_ref,
+        "compensation": entry.handler_ref.exact_ref,
+    }
+    assert entry.activity_ref != definition.activity_ref
 
 
 def test_waiting_executable_does_not_block_later_ready_node() -> None:
@@ -559,6 +612,66 @@ def test_waiting_executable_does_not_block_later_ready_node() -> None:
     assert decision.node_instance_id == ready.instance_id
 
 
+def test_approved_waiting_executable_resumes_verify_with_current_attempt_evidence() -> (
+    None
+):
+    workflow, graph = _linear_workflow("approval")
+    node = _executable_node(
+        graph,
+        "approval",
+        status="waiting",
+        step_status="waiting_approval",
+        ordinal=1,
+        last_sequence=2,
+        metadata={"approval_granted": True},
+    )
+    definition = _definition(graph, "approval")
+    approval = HarnessAttemptEvidenceReference(
+        canonical_checksum({"approval": node.instance_id}),
+        HarnessEvidenceKind.APPROVAL,
+        node.instance_id,
+        node.attempt,
+        node.last_event_sequence,
+        contract_ref=definition.step_ref,
+        payload_ref=canonical_checksum({"approved": True}),
+    )
+    node = HarnessNodeInstanceState(
+        node.identity,
+        node.node_kind,
+        node.status,
+        step_id=node.step_id,
+        step_ref=node.step_ref,
+        step_status=node.step_status,
+        attempt=node.attempt,
+        evidence_refs=(approval,),
+        activation_sequence=node.activation_sequence,
+        last_event_sequence=node.last_event_sequence,
+        metadata=node.metadata,
+    )
+    step = next(item for item in workflow.steps if item.step_id == node.step_id)
+    step_input = HarnessGraphStepSchedulingInput(
+        node.instance_id,
+        step,
+        StepLifecycleObservations.for_node(
+            node,
+            approval_granted=True,
+            approval_evidence=approval,
+        ),
+        _budget(),
+    )
+
+    decision = HarnessScheduler().next_decision(
+        _state(graph, nodes=(node,)),
+        graph=graph,
+        step_inputs=(step_input,),
+    )
+
+    assert decision is not None
+    assert decision.decision_type is HarnessGraphDecisionType.VERIFY_ACTIVITY_RESULT
+    assert decision.reason_code == "approval_granted_verify"
+    assert decision.evidence_refs == (approval.evidence_ref,)
+
+
 def test_first_activity_dispatch_allocates_attempt_one() -> None:
     workflow, graph = _linear_workflow("analyze")
     node = _executable_node(
@@ -581,6 +694,81 @@ def test_first_activity_dispatch_allocates_attempt_one() -> None:
     assert decision.attempt == 1
     assert decision.payload["source_attempt"] == 0
     assert decision.payload["activity_attempt"] == 1
+
+
+def test_activity_dispatch_waits_for_a_physical_slot_and_resumes_stably() -> None:
+    workflow, graph = _linear_workflow("first", "second")
+    first = _executable_node(
+        graph,
+        "first",
+        status="running",
+        step_status="running",
+        ordinal=1,
+        attempt=1,
+        last_sequence=2,
+    )
+    second = _executable_node(
+        graph,
+        "second",
+        status="running",
+        step_status="plan_verified",
+        ordinal=2,
+        last_sequence=2,
+    )
+    first_definition = _definition(graph, "first")
+    activity = HarnessActiveActivityState(
+        "activity-first",
+        first_definition.activity_ref,
+        first.instance_id,
+        1,
+        "activity-first:attempt:1",
+        1,
+        2,
+    )
+    saturated = _state(
+        graph,
+        nodes=(first, second),
+        active_activities=(activity,),
+        max_parallelism=1,
+    )
+
+    deferred = HarnessScheduler().next_decision(
+        saturated,
+        graph=graph,
+        step_inputs=(
+            _step_input(workflow, first),
+            _step_input(workflow, second),
+        ),
+    )
+
+    assert deferred is None
+
+    completed_first = HarnessNodeInstanceState(
+        first.identity,
+        first.node_kind,
+        "succeeded",
+        step_id=first.step_id,
+        step_ref=first.step_ref,
+        step_status="succeeded",
+        attempt=first.attempt,
+        activation_sequence=first.activation_sequence,
+        last_event_sequence=3,
+    )
+    released = _state(
+        graph,
+        nodes=(completed_first, second),
+        max_parallelism=1,
+    )
+
+    admitted = HarnessScheduler().next_decision(
+        released,
+        graph=graph,
+        step_inputs=(_step_input(workflow, second),),
+    )
+
+    assert admitted is not None
+    assert admitted.decision_type is HarnessGraphDecisionType.DISPATCH_ACTIVITY
+    assert admitted.node_instance_id == second.instance_id
 
 
 def test_retry_activity_dispatch_allocates_next_attempt() -> None:
@@ -976,6 +1164,42 @@ def _linear_workflow(
     return workflow, HarnessWorkflowGraphCompiler().compile(workflow).graph
 
 
+def _compensation_workflow() -> tuple[HarnessWorkflowSpec, NormalizedHarnessGraph]:
+    workflow = HarnessWorkflowSpec(
+        workflow_id="compensation-scheduler",
+        workflow_version="2",
+        steps=(
+            HarnessStepSpec(
+                "publish",
+                "llm",
+                side_effect_handler="publication.effect@1",
+                metadata={"step_version": "1", "worker_version": "1"},
+            ),
+            HarnessStepSpec(
+                "undo",
+                "llm",
+                quality_gate="compensation.schema@3",
+                metadata={"step_version": "4", "worker_version": "5"},
+            ),
+        ),
+        entry_step_id="publish",
+        graph=HarnessGraphSpec(
+            "compensation-scheduler-graph",
+            StepRef("publish"),
+            compensations=(
+                CompensationBinding(
+                    "undo-publish",
+                    "publish",
+                    "undo",
+                    "publication.undo@6",
+                    "publication.undo.activity@7",
+                ),
+            ),
+        ),
+    )
+    return workflow, HarnessWorkflowGraphCompiler().compile(workflow).graph
+
+
 def _choice_workflow() -> tuple[HarnessWorkflowSpec, NormalizedHarnessGraph]:
     workflow = HarnessWorkflowSpec(
         workflow_id="choice-scheduler",
@@ -1046,10 +1270,21 @@ def _state(
     graph: NormalizedHarnessGraph,
     *,
     nodes: tuple[HarnessNodeInstanceState, ...] = (),
+    active_activities: tuple[HarnessActiveActivityState, ...] = (),
+    compensations: tuple[HarnessCompensationEntry, ...] = (),
+    metadata: Mapping[str, Any] | None = None,
+    max_parallelism: int = 4,
     lifecycle: str = "running",
     outcome: str = "none",
 ) -> HarnessGraphState:
-    last_sequence = max((0, *(item.last_event_sequence for item in nodes)))
+    last_sequence = max(
+        (
+            0,
+            *(item.last_event_sequence for item in nodes),
+            *(item.dispatched_sequence for item in active_activities),
+            *(item.last_event_sequence for item in compensations),
+        )
+    )
     return HarnessGraphState(
         run_id="run-scheduler",
         graph_ref=HarnessGraphReference(
@@ -1063,6 +1298,8 @@ def _state(
         lifecycle=lifecycle,
         outcome=outcome,
         node_instances=nodes,
+        active_activities=active_activities,
+        compensation_stack=compensations,
         budgets=HarnessGraphBudgetState(
             (
                 HarnessBudgetCounterState(
@@ -1070,11 +1307,134 @@ def _state(
                     100,
                     used=len(nodes),
                 ),
+                HarnessBudgetCounterState("compensations", 100),
                 HarnessBudgetCounterState("max_active_nodes", 16),
-                HarnessBudgetCounterState("max_parallelism", 4),
+                HarnessBudgetCounterState("max_parallelism", max_parallelism),
             )
         ),
         last_event_sequence=last_sequence,
+        metadata={} if metadata is None else metadata,
+    )
+
+
+def _running_compensation_projection(
+    graph: NormalizedHarnessGraph,
+    *,
+    step_status: str,
+    attempt: int,
+    with_activity_evidence: bool,
+) -> tuple[
+    HarnessNodeInstanceState,
+    HarnessNodeInstanceState,
+    HarnessCompensationEntry,
+]:
+    origin_definition = _definition(graph, "publish")
+    origin_identity = HarnessNodeInstanceIdentity(
+        "run-scheduler",
+        graph.checksum,
+        "publish",
+        activation_ordinal=1,
+    )
+    effect_ref = canonical_checksum({"effect": origin_identity.instance_id})
+    origin = HarnessNodeInstanceState(
+        origin_identity,
+        origin_definition.node_kind,
+        "succeeded",
+        step_id=origin_definition.step_id,
+        step_ref=origin_definition.step_ref,
+        step_status="succeeded",
+        attempt=1,
+        evidence_refs=(
+            HarnessAttemptEvidenceReference(
+                effect_ref,
+                HarnessEvidenceKind.SIDE_EFFECT_OUTCOME,
+                origin_identity.instance_id,
+                1,
+                2,
+                contract_ref=origin_definition.side_effect_ref,
+                payload_ref=effect_ref,
+            ),
+        ),
+        activation_sequence=1,
+        last_event_sequence=2,
+    )
+    definition = _definition(graph, "compensation:undo-publish")
+    binding = graph.compensation_refs[0]
+    identity = HarnessNodeInstanceIdentity(
+        "run-scheduler",
+        graph.checksum,
+        binding.compensation_node_id,
+        activation_ordinal=2,
+    )
+    idempotency_key = canonical_checksum(
+        {"operation": "compensate", "origin": origin.instance_id}
+    )
+    entry = HarnessCompensationEntry(
+        "entry-publish",
+        origin.instance_id,
+        effect_ref,
+        2,
+        binding.handler_ref,
+        binding.activity_ref,
+        idempotency_key,
+        9,
+        status="running",
+        compensation_node_instance_id=identity.instance_id,
+        last_event_sequence=3,
+    )
+    evidence = ()
+    if with_activity_evidence:
+        result_ref = canonical_checksum(
+            {"compensation": identity.instance_id, "attempt": attempt}
+        )
+        evidence = (
+            HarnessAttemptEvidenceReference(
+                result_ref,
+                HarnessEvidenceKind.ACTIVITY_RESULT,
+                identity.instance_id,
+                attempt,
+                3,
+                contract_ref=definition.worker_ref,
+                payload_ref=result_ref,
+            ),
+        )
+    node = HarnessNodeInstanceState(
+        identity,
+        definition.node_kind,
+        "compensating",
+        step_id=definition.step_id,
+        step_ref=definition.step_ref,
+        step_status=step_status,
+        attempt=attempt,
+        evidence_refs=evidence,
+        activation_sequence=3,
+        last_event_sequence=3,
+        metadata={
+            "compensation_entry_id": entry.entry_id,
+            "origin_node_instance_id": entry.origin_node_instance_id,
+            "effect_outcome_ref": entry.effect_outcome_ref,
+            "compensation_handler_ref": entry.handler_ref.exact_ref,
+            "compensation_activity_ref": entry.activity_ref.exact_ref,
+            "compensation_idempotency_key": entry.idempotency_key,
+            "compensation_fencing_generation": entry.fencing_generation,
+        },
+    )
+    return origin, node, entry
+
+
+def _active_activity(
+    graph: NormalizedHarnessGraph,
+    node: HarnessNodeInstanceState,
+) -> HarnessActiveActivityState:
+    definition = _definition(graph, node.identity.node_id)
+    return HarnessActiveActivityState(
+        f"activity-{node.identity.node_id}",
+        definition.activity_ref,
+        node.instance_id,
+        node.attempt,
+        f"activity-{node.identity.node_id}:attempt:{node.attempt}",
+        1,
+        node.last_event_sequence,
     )
 
 

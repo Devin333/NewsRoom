@@ -1,0 +1,286 @@
+{
+  "events": [
+    {
+      "business_context": {
+        "agent_id": null,
+        "request_id": null,
+        "run_id": "run-frozen-v1-history",
+        "step_id": "collect",
+        "task_id": null,
+        "tool_call_id": null,
+        "workflow_id": "durable-boundary"
+      },
+      "causation_id": null,
+      "content_checksum": "sha256:a5b43a23cba206e2188bb7b41fba4fd9b70f3654a49f44b137b563bcc5644606",
+      "content_type": "application/json",
+      "correlation_id": "run-frozen-v1-history",
+      "data_schema": "newsroom.harness-transition/v1",
+      "envelope_schema": "newsroom.event-envelope/v2",
+      "event_id": "harness-transition-v2:90c4409565d07ad7dab0dc33ac6fe5203bb704e802fadb83252bedf039f795c1",
+      "event_type": "harness_transition_committed",
+      "extensions": {
+        "deterministic_history": {
+          "commands": [],
+          "handler_input": {},
+          "policy": {
+            "expected_activity": null,
+            "handler_id": "harness-control-plane",
+            "handler_version": "newsroom.harness-state-reducer/v1",
+            "policy_id": "harness-control-policy",
+            "policy_version": "newsroom.harness-control-policy/v1",
+            "recorded_activity_ref": null,
+            "schema_id": "newsroom.harness-transition",
+            "schema_version": "newsroom.harness-transition/v1",
+            "workflow_id": "durable-boundary",
+            "workflow_version": "1"
+          },
+          "record_checksum": "sha256:9bbb757cfa3b54cdfedc7f225c6c01ce24dcfb9774d963f6a64ed74e30efd7da",
+          "schema": "newsroom.deterministic-history/v1"
+        }
+      },
+      "observed_at": "2026-07-15T08:00:00Z",
+      "occurred_at": "2026-07-15T08:00:00Z",
+      "payload": {
+        "after_state_checksum": "sha256:148d0613d21c6de125791e47bf7a322f99d5430525562507a498812a6d19937c",
+        "before_state_checksum": "sha256:9efec81f18ac628d1383392bd27a1937d001e14b0f22e4f137e282c4e25582d6",
+        "expected_last_sequence": 0,
+        "from_version": 0,
+        "policy_version": "newsroom.harness-control-policy/v1",
+        "reducer_version": "newsroom.harness-state-reducer/v1",
+        "schema_version": "newsroom.harness-transition/v1",
+        "state": {
+          "current_step_id": "collect",
+          "metadata": {},
+          "replan_count": 0,
+          "run_spec_checksum": "sha256:7e596a9f8e31769874f40a164ca856208ec6b1b987758cfb5a4e14119b3a3b37",
+          "schema": "newsroom.harness-state-projection/v1",
+          "status": "created",
+          "step_states": [
+            {
+              "attempts": 0,
+              "has_output_ref": false,
+              "metadata": {},
+              "replans": 0,
+              "status": "pending",
+              "step_id": "collect",
+              "updated_at": "2026-07-15T08:00:00Z"
+            }
+          ],
+          "turn_count": 0,
+          "updated_at": "2026-07-15T08:00:00Z",
+          "worker_call_count": 0,
+          "workflow_checksum": "sha256:aeea0f9a498d0502833886cae73a38cf10cb5be1864a71cfddb5005c2462fdcf",
+          "workflow_id": "durable-boundary",
+          "workflow_version": "1"
+        },
+        "state_version": 1,
+        "transition_id": "harness-transition-v2:90c4409565d07ad7dab0dc33ac6fe5203bb704e802fadb83252bedf039f795c1",
+        "transition_kind": "initialize",
+        "workflow_checksum": "sha256:aeea0f9a498d0502833886cae73a38cf10cb5be1864a71cfddb5005c2462fdcf",
+        "workflow_version": "1"
+      },
+      "payload_ref": null,
+      "producer": {
+        "component": "framework.harness.control_plane",
+        "instance_id": null,
+        "version": "1"
+      },
+      "record_checksum": "sha256:0b4bbd7d8c6f08c06307dc35a672465b623f1802e676388c6d839e5ce13d9059",
+      "security_classification": "internal",
+      "source": "io.newsroom.harness.control-plane",
+      "stream_id": "run:run-frozen-v1-history",
+      "stream_sequence": 1,
+      "subject": "collect",
+      "tenant_id": "tenant-test",
+      "trace": null
+    },
+    {
+      "business_context": {
+        "agent_id": null,
+        "request_id": null,
+        "run_id": "run-frozen-v1-history",
+        "step_id": "collect",
+        "task_id": null,
+        "tool_call_id": null,
+        "workflow_id": "durable-boundary"
+      },
+      "causation_id": null,
+      "content_checksum": "sha256:696dc31bf949dc92a52af692f7f538a9c2d6c1eb63c73a353f8f3e1b73a28761",
+      "content_type": "application/json",
+      "correlation_id": "run-frozen-v1-history",
+      "data_schema": "newsroom.harness-transition/v1",
+      "envelope_schema": "newsroom.event-envelope/v2",
+      "event_id": "harness-transition-v2:9292ab9d82f9570bf4eb974f5d51f400f48de9882677e6ab620ff16f57b0c7eb",
+      "event_type": "harness_transition_committed",
+      "extensions": {
+        "deterministic_history": {
+          "commands": [],
+          "handler_input": {},
+          "policy": {
+            "expected_activity": null,
+            "handler_id": "harness-control-plane",
+            "handler_version": "newsroom.harness-state-reducer/v1",
+            "policy_id": "harness-control-policy",
+            "policy_version": "newsroom.harness-control-policy/v1",
+            "recorded_activity_ref": null,
+            "schema_id": "newsroom.harness-transition",
+            "schema_version": "newsroom.harness-transition/v1",
+            "workflow_id": "durable-boundary",
+            "workflow_version": "1"
+          },
+          "record_checksum": "sha256:9bbb757cfa3b54cdfedc7f225c6c01ce24dcfb9774d963f6a64ed74e30efd7da",
+          "schema": "newsroom.deterministic-history/v1"
+        }
+      },
+      "observed_at": "2026-07-15T08:00:00.000001Z",
+      "occurred_at": "2026-07-15T08:00:00.000001Z",
+      "payload": {
+        "after_state_checksum": "sha256:badfb5204b63a54ba82a052842eee58ac234ed67e6c08b4994e5de75d8bcbabd",
+        "before_state_checksum": "sha256:148d0613d21c6de125791e47bf7a322f99d5430525562507a498812a6d19937c",
+        "expected_last_sequence": 1,
+        "from_version": 1,
+        "policy_version": "newsroom.harness-control-policy/v1",
+        "reducer_version": "newsroom.harness-state-reducer/v1",
+        "schema_version": "newsroom.harness-transition/v1",
+        "state": {
+          "current_step_id": "collect",
+          "metadata": {},
+          "replan_count": 0,
+          "run_spec_checksum": "sha256:7e596a9f8e31769874f40a164ca856208ec6b1b987758cfb5a4e14119b3a3b37",
+          "schema": "newsroom.harness-state-projection/v1",
+          "status": "running",
+          "step_states": [
+            {
+              "attempts": 0,
+              "has_output_ref": false,
+              "metadata": {},
+              "replans": 0,
+              "status": "pending",
+              "step_id": "collect",
+              "updated_at": "2026-07-15T08:00:00Z"
+            }
+          ],
+          "turn_count": 0,
+          "updated_at": "2026-07-15T08:00:00.000001Z",
+          "worker_call_count": 0,
+          "workflow_checksum": "sha256:aeea0f9a498d0502833886cae73a38cf10cb5be1864a71cfddb5005c2462fdcf",
+          "workflow_id": "durable-boundary",
+          "workflow_version": "1"
+        },
+        "state_version": 2,
+        "transition_id": "harness-transition-v2:9292ab9d82f9570bf4eb974f5d51f400f48de9882677e6ab620ff16f57b0c7eb",
+        "transition_kind": "run_start",
+        "workflow_checksum": "sha256:aeea0f9a498d0502833886cae73a38cf10cb5be1864a71cfddb5005c2462fdcf",
+        "workflow_version": "1"
+      },
+      "payload_ref": null,
+      "producer": {
+        "component": "framework.harness.control_plane",
+        "instance_id": null,
+        "version": "1"
+      },
+      "record_checksum": "sha256:558f57bb8b182b5a2fb8514fcf03483a8c9973ddb81b5f5b3993b536b3f7acd8",
+      "security_classification": "internal",
+      "source": "io.newsroom.harness.control-plane",
+      "stream_id": "run:run-frozen-v1-history",
+      "stream_sequence": 2,
+      "subject": "collect",
+      "tenant_id": "tenant-test",
+      "trace": null
+    },
+    {
+      "business_context": {
+        "agent_id": null,
+        "request_id": null,
+        "run_id": "run-frozen-v1-history",
+        "step_id": "collect",
+        "task_id": null,
+        "tool_call_id": null,
+        "workflow_id": "durable-boundary"
+      },
+      "causation_id": null,
+      "content_checksum": "sha256:be6891b26eed41b43bdf539ab9be7576d8df34ddd04c6f4fe9fc63f055324554",
+      "content_type": "application/json",
+      "correlation_id": "run-frozen-v1-history",
+      "data_schema": "newsroom.harness-transition/v1",
+      "envelope_schema": "newsroom.event-envelope/v2",
+      "event_id": "harness-transition-v2:688c255a22a1a6aaf5cf776879f3b447848ba4eb66b4a7d81088f35517302af2",
+      "event_type": "harness_transition_committed",
+      "extensions": {
+        "deterministic_history": {
+          "commands": [],
+          "handler_input": {},
+          "policy": {
+            "expected_activity": null,
+            "handler_id": "harness-control-plane",
+            "handler_version": "newsroom.harness-state-reducer/v1",
+            "policy_id": "harness-control-policy",
+            "policy_version": "newsroom.harness-control-policy/v1",
+            "recorded_activity_ref": null,
+            "schema_id": "newsroom.harness-transition",
+            "schema_version": "newsroom.harness-transition/v1",
+            "workflow_id": "durable-boundary",
+            "workflow_version": "1"
+          },
+          "record_checksum": "sha256:9bbb757cfa3b54cdfedc7f225c6c01ce24dcfb9774d963f6a64ed74e30efd7da",
+          "schema": "newsroom.deterministic-history/v1"
+        }
+      },
+      "observed_at": "2026-07-15T08:00:00.000002Z",
+      "occurred_at": "2026-07-15T08:00:00.000002Z",
+      "payload": {
+        "after_state_checksum": "sha256:f4a17502b94f89b86ec34ada492739f3c9ec5d03599475daa95f79cf43150bf6",
+        "before_state_checksum": "sha256:badfb5204b63a54ba82a052842eee58ac234ed67e6c08b4994e5de75d8bcbabd",
+        "expected_last_sequence": 2,
+        "from_version": 2,
+        "policy_version": "newsroom.harness-control-policy/v1",
+        "reducer_version": "newsroom.harness-state-reducer/v1",
+        "schema_version": "newsroom.harness-transition/v1",
+        "state": {
+          "current_step_id": "collect",
+          "metadata": {},
+          "replan_count": 0,
+          "run_spec_checksum": "sha256:7e596a9f8e31769874f40a164ca856208ec6b1b987758cfb5a4e14119b3a3b37",
+          "schema": "newsroom.harness-state-projection/v1",
+          "status": "planning",
+          "step_states": [
+            {
+              "attempts": 0,
+              "has_output_ref": false,
+              "metadata": {},
+              "replans": 0,
+              "status": "planning",
+              "step_id": "collect",
+              "updated_at": "2026-07-15T08:00:00.000002Z"
+            }
+          ],
+          "turn_count": 1,
+          "updated_at": "2026-07-15T08:00:00.000002Z",
+          "worker_call_count": 0,
+          "workflow_checksum": "sha256:aeea0f9a498d0502833886cae73a38cf10cb5be1864a71cfddb5005c2462fdcf",
+          "workflow_id": "durable-boundary",
+          "workflow_version": "1"
+        },
+        "state_version": 3,
+        "transition_id": "harness-transition-v2:688c255a22a1a6aaf5cf776879f3b447848ba4eb66b4a7d81088f35517302af2",
+        "transition_kind": "plan_entry",
+        "workflow_checksum": "sha256:aeea0f9a498d0502833886cae73a38cf10cb5be1864a71cfddb5005c2462fdcf",
+        "workflow_version": "1"
+      },
+      "payload_ref": null,
+      "producer": {
+        "component": "framework.harness.control_plane",
+        "instance_id": null,
+        "version": "1"
+      },
+      "record_checksum": "sha256:6d70b1876956fc5a3d4106e9b0797e2e482804d46a873aa1cf78bc23b2d7e235",
+      "security_classification": "internal",
+      "source": "io.newsroom.harness.control-plane",
+      "stream_id": "run:run-frozen-v1-history",
+      "stream_sequence": 3,
+      "subject": "collect",
+      "tenant_id": "tenant-test",
+      "trace": null
+    }
+  ]
+}

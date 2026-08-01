@@ -11,6 +11,7 @@ from framework.harness.workflow.conditions import (
 )
 from framework.harness.workflow.dsl import WaitKind
 from framework.harness.workflow.graph import (
+    HarnessCompensationReference,
     HarnessControlNode,
     HarnessExecutableNode,
     HarnessGraphEdgeKind,
@@ -481,6 +482,10 @@ def _validate_compensations(
 ) -> tuple[HarnessGraphDiagnostic, ...]:
     diagnostics: list[HarnessGraphDiagnostic] = []
     binding_ids = Counter(reference.binding_id for reference in graph.compensation_refs)
+    origin_bindings = Counter(
+        (reference.for_node_id, reference.scope)
+        for reference in graph.compensation_refs
+    )
     compensation_edges = tuple(
         edge
         for edge in graph.edges
@@ -493,6 +498,42 @@ def _validate_compensations(
                 "duplicate_compensation_binding",
                 "compensation binding identity must be unique",
                 details={"binding_id": binding_id},
+            )
+        )
+    for origin_node_id, scope in sorted(
+        item for item, count in origin_bindings.items() if count > 1
+    ):
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "ambiguous_compensation_origin_binding",
+                "compensation origin must resolve to exactly one binding",
+                node_id=origin_node_id,
+                details={
+                    "scope": scope,
+                    "binding_ids": sorted(
+                        reference.binding_id
+                        for reference in graph.compensation_refs
+                        if reference.for_node_id == origin_node_id
+                        and reference.scope == scope
+                    )
+                },
+            )
+        )
+    terminal_bindings = tuple(
+        item
+        for item in graph.compensation_refs
+        if item.scope == "terminal_run"
+    )
+    if len(terminal_bindings) > 1:
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "ambiguous_terminal_compensation_binding",
+                "terminal side effect must resolve to at most one compensation binding",
+                details={
+                    "binding_ids": sorted(item.binding_id for item in terminal_bindings)
+                },
             )
         )
     for reference in graph.compensation_refs:
@@ -530,7 +571,7 @@ def _validate_compensations(
                     node_id=reference.for_node_id,
                 )
             )
-        if reference.scope != "node_instance":
+        if reference.scope not in {"node_instance", "terminal_run"}:
             diagnostics.append(
                 diagnostic(
                     HarnessGraphValidationPhase.SEMANTIC,
@@ -540,6 +581,40 @@ def _validate_compensations(
                     details={"scope": reference.scope},
                 )
             )
+        if reference.scope == "terminal_run":
+            policy = graph.terminal_policy
+            terminal_handler_ref = (
+                None
+                if policy is None
+                else f"{policy.handler.handler_id}@{policy.handler.version}"
+            )
+            if policy is None:
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.SEMANTIC,
+                        "terminal_compensation_policy_missing",
+                        "terminal compensation requires a terminal side-effect policy",
+                        node_id=reference.for_node_id,
+                        details={"binding_id": reference.binding_id},
+                    )
+                )
+            elif (
+                not isinstance(origin, HarnessExecutableNode)
+                or origin.side_effect_ref is None
+                or origin.side_effect_ref.exact_ref != terminal_handler_ref
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.SEMANTIC,
+                        "terminal_compensation_handler_mismatch",
+                        "terminal compensation origin handler must match the terminal policy",
+                        node_id=reference.for_node_id,
+                        details={
+                            "binding_id": reference.binding_id,
+                            "terminal_handler_ref": terminal_handler_ref,
+                        },
+                    )
+                )
         matching_edges = tuple(
             edge
             for edge in compensation_edges
@@ -598,7 +673,54 @@ def _validate_compensations(
                 edge_id=edge.edge_id,
             )
         )
+    for cycle in _compensation_binding_cycles(graph.compensation_refs):
+        diagnostics.append(
+            diagnostic(
+                HarnessGraphValidationPhase.SEMANTIC,
+                "cyclic_compensation_binding",
+                "compensation bindings must not form a cycle",
+                node_id=cycle[0],
+                details={"node_ids": list(cycle)},
+            )
+        )
     return tuple(diagnostics)
+
+
+def _compensation_binding_cycles(
+    references: tuple[HarnessCompensationReference, ...],
+) -> tuple[tuple[str, ...], ...]:
+    adjacency: dict[str, tuple[str, ...]] = {}
+    for source_id in sorted({item.for_node_id for item in references}):
+        adjacency[source_id] = tuple(
+            sorted(
+                item.compensation_node_id
+                for item in references
+                if item.for_node_id == source_id
+                and item.compensation_node_id != source_id
+            )
+        )
+    cycles: set[tuple[str, ...]] = set()
+    visited: set[str] = set()
+    active: list[str] = []
+
+    def visit(node_id: str) -> None:
+        if node_id in active:
+            start = active.index(node_id)
+            cycle = active[start:]
+            pivot = min(range(len(cycle)), key=cycle.__getitem__)
+            cycles.add(tuple(cycle[pivot:] + cycle[:pivot]))
+            return
+        if node_id in visited:
+            return
+        active.append(node_id)
+        for target_id in adjacency.get(node_id, ()):
+            visit(target_id)
+        active.pop()
+        visited.add(node_id)
+
+    for node_id in sorted(adjacency):
+        visit(node_id)
+    return tuple(sorted(cycles))
 
 
 def _validate_repair_edges(

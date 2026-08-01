@@ -1,6 +1,6 @@
 # Harness Graph Caller Migration Inventory
 
-- Captured: 2026-07-29
+- Captured: 2026-08-01
 - OpenSpec task: `1.2`
 - Machine-readable authority: `caller-migration-inventory.json`
 
@@ -10,6 +10,14 @@ in task `1.2`. Every match is assigned to exactly one migration phase or to an
 explicit non-Harness exclusion. A repository architecture test recomputes the
 search and fails when a caller is added, removed, duplicated, or left
 unclassified.
+
+The legacy execution search also runs
+`rg -n "\.recover\(" business framework infrastructure interfaces tests -g "*.py"`.
+After the Graph cutover there are no production callers of the v1 Harness
+`DurableHarnessEventPort.recover(...)` API and no remaining test callers.
+Same-name calls inside `graph_application.py` and `harness.py` target the Graph
+runtime recovery method, while matches in artifact tests belong to the
+separate artifact lifecycle.
 
 ## Migration Phases
 

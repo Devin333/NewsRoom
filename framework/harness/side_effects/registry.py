@@ -6,6 +6,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import (
+    HarnessSideEffectAttemptLease,
     HarnessSideEffectDecision,
     HarnessSideEffectHandlerReference,
     HarnessSideEffectIntent,
@@ -21,8 +22,7 @@ class HarnessSideEffectHandler(Protocol):
         self,
         intent: HarnessSideEffectIntent,
         authorization: HarnessSideEffectDecision,
-    ) -> HarnessSideEffectOutcome:
-        ...
+    ) -> HarnessSideEffectOutcome: ...
 
 
 @runtime_checkable
@@ -31,8 +31,69 @@ class HarnessSideEffectPreparationHandler(HarnessSideEffectHandler, Protocol):
         self,
         intent: HarnessSideEffectIntent,
         authorization: HarnessSideEffectDecision,
-    ) -> HarnessSideEffectOutcome:
-        ...
+    ) -> HarnessSideEffectOutcome: ...
+
+
+@runtime_checkable
+class HarnessFencedSideEffectHandler(HarnessSideEffectHandler, Protocol):
+    def commit_fenced(
+        self,
+        intent: HarnessSideEffectIntent,
+        authorization: HarnessSideEffectDecision,
+        attempt: HarnessSideEffectAttemptLease,
+    ) -> HarnessSideEffectOutcome: ...
+
+    def request_cancellation(self, attempt: HarnessSideEffectAttemptLease) -> None: ...
+
+    def confirm_termination(self, attempt: HarnessSideEffectAttemptLease) -> bool: ...
+
+    def reconcile(
+        self,
+        intent: HarnessSideEffectIntent,
+        authorization: HarnessSideEffectDecision,
+        attempt: HarnessSideEffectAttemptLease,
+    ) -> HarnessSideEffectOutcome | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessSideEffectCapabilities:
+    cancellation: bool = False
+    termination_confirmation: bool = False
+    stable_idempotency: bool = False
+    fencing: bool = False
+    reconciliation: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "cancellation",
+            "termination_confirmation",
+            "stable_idempotency",
+            "fencing",
+            "reconciliation",
+        ):
+            if not isinstance(getattr(self, field_name), bool):
+                raise _registry_error(
+                    "invalid_side_effect_capability",
+                    "side-effect safety capabilities must be booleans",
+                    field=field_name,
+                )
+
+    def missing_for_physical_concurrency(self) -> tuple[str, ...]:
+        return tuple(
+            field_name
+            for field_name in (
+                "cancellation",
+                "termination_confirmation",
+                "stable_idempotency",
+                "fencing",
+                "reconciliation",
+            )
+            if not getattr(self, field_name)
+        )
+
+    @property
+    def physical_concurrency_safe(self) -> bool:
+        return not self.missing_for_physical_concurrency()
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +102,7 @@ class HarnessSideEffectHandlerBinding:
     kind: str
     handler: HarnessSideEffectHandler
     supports_origins: tuple[str, ...] = ("worker", "controller_terminal")
+    capabilities: HarnessSideEffectCapabilities = HarnessSideEffectCapabilities()
 
     def __post_init__(self) -> None:
         reference = HarnessSideEffectHandlerReference.parse(self.reference)
@@ -50,9 +112,28 @@ class HarnessSideEffectHandlerBinding:
             raise HarnessValidationError("side-effect handler must implement commit")
         origins = tuple(str(origin).strip() for origin in self.supports_origins)
         if not origins or any(not origin for origin in origins):
-            raise HarnessValidationError("side-effect handler binding origins are invalid")
+            raise HarnessValidationError(
+                "side-effect handler binding origins are invalid"
+            )
         if len(set(origins)) != len(origins):
-            raise HarnessValidationError("side-effect handler binding origins must be unique")
+            raise HarnessValidationError(
+                "side-effect handler binding origins must be unique"
+            )
+        if not isinstance(self.capabilities, HarnessSideEffectCapabilities):
+            raise _registry_error(
+                "invalid_side_effect_capability",
+                "side-effect handler binding requires HarnessSideEffectCapabilities",
+                reference=str(reference),
+            )
+        if self.capabilities.physical_concurrency_safe and not isinstance(
+            self.handler,
+            HarnessFencedSideEffectHandler,
+        ):
+            raise _registry_error(
+                "invalid_fenced_side_effect_handler",
+                "parallel-safe side-effect handler must implement fenced execution",
+                reference=str(reference),
+            )
         object.__setattr__(self, "reference", reference)
         object.__setattr__(self, "kind", self.kind.strip())
         object.__setattr__(self, "supports_origins", origins)
@@ -61,8 +142,12 @@ class HarnessSideEffectHandlerBinding:
 class HarnessSideEffectRegistry:
     """Instance-scoped exact handler registry; no module-global fallback exists."""
 
-    def __init__(self, bindings: Iterable[HarnessSideEffectHandlerBinding] = ()) -> None:
-        self._bindings: dict[HarnessSideEffectHandlerReference, HarnessSideEffectHandlerBinding] = {}
+    def __init__(
+        self, bindings: Iterable[HarnessSideEffectHandlerBinding] = ()
+    ) -> None:
+        self._bindings: dict[
+            HarnessSideEffectHandlerReference, HarnessSideEffectHandlerBinding
+        ] = {}
         for binding in bindings:
             self.register(binding)
 
@@ -74,6 +159,7 @@ class HarnessSideEffectRegistry:
         kind: str | None = None,
         handler: HarnessSideEffectHandler | None = None,
         supports_origins: tuple[str, ...] = ("worker", "controller_terminal"),
+        capabilities: HarnessSideEffectCapabilities = HarnessSideEffectCapabilities(),
     ) -> HarnessSideEffectHandlerBinding:
         if binding is None:
             if reference is None or kind is None or handler is None:
@@ -85,6 +171,7 @@ class HarnessSideEffectRegistry:
                 kind=kind,
                 handler=handler,
                 supports_origins=supports_origins,
+                capabilities=capabilities,
             )
         if not isinstance(binding, HarnessSideEffectHandlerBinding):
             raise HarnessValidationError("side-effect registry binding is invalid")
@@ -129,7 +216,9 @@ class HarnessSideEffectRegistry:
             )
         return binding
 
-    def validate_intent(self, intent: HarnessSideEffectIntent) -> HarnessSideEffectHandlerBinding:
+    def validate_intent(
+        self, intent: HarnessSideEffectIntent
+    ) -> HarnessSideEffectHandlerBinding:
         if not isinstance(intent, HarnessSideEffectIntent):
             raise HarnessValidationError("side-effect intent is invalid")
         if intent.handler is None:
@@ -138,7 +227,9 @@ class HarnessSideEffectRegistry:
                 "side-effect intent has no exact handler reference",
                 effect_id=intent.effect_id,
             )
-        return self.resolve(intent.handler, kind=intent.kind, origin=intent.origin.value)
+        return self.resolve(
+            intent.handler, kind=intent.kind, origin=intent.origin.value
+        )
 
     def bindings(self) -> tuple[HarnessSideEffectHandlerBinding, ...]:
         return tuple(self._bindings.values())
@@ -149,8 +240,10 @@ def _registry_error(code: str, message: str, **details: Any) -> HarnessValidatio
 
 
 __all__ = [
+    "HarnessFencedSideEffectHandler",
     "HarnessSideEffectHandler",
     "HarnessSideEffectHandlerBinding",
+    "HarnessSideEffectCapabilities",
     "HarnessSideEffectPreparationHandler",
     "HarnessSideEffectRegistry",
 ]

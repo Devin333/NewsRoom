@@ -2,6 +2,7 @@
   "schema": "newsroom.harness-graph-schema-version-registry/v1",
   "registry_status": "locked-for-initial-implementation",
   "captured_at": "2026-07-29",
+  "updated_at": "2026-08-01",
   "task": "harness-workflow-graph-runtime:1.5",
   "runtime_generation": "newsroom.harness-graph-runtime/v2",
   "version_model": {
@@ -31,6 +32,23 @@
     "graph_decision": "newsroom.harness-graph-decision/v1",
     "graph_checkpoint": "newsroom.harness-graph-checkpoint/v1",
     "graph_inspection": "newsroom.harness-graph-inspection/v1"
+  },
+  "durable_projection_record": {
+    "event_type": "harness_graph_projection_committed",
+    "writer_data_schema": "newsroom.harness-graph-projection-record/v2",
+    "legacy_readable_data_schemas": [
+      "newsroom.harness-graph-control-commit/v1"
+    ],
+    "history_schema_id": "newsroom.harness-graph-projection-record",
+    "payload_policy": "bounded compact record; full graph state is rebuilt by the pinned reducer/applier and is never duplicated in each event",
+    "checksum_fields": [
+      "cause_checksum",
+      "previous_projection_checksum",
+      "projection_checksum",
+      "projection_commit_checksum",
+      "record_checksum"
+    ],
+    "reader_window": "v1 full projection records remain read-only for historical fixtures; v2 compact records are the only current writer"
   },
   "component_versions": {
     "graph_compiler": "newsroom.harness-graph-compiler/v1",
@@ -126,8 +144,39 @@
     "replay_activity_record": "newsroom.replay-activity-record/v1",
     "side_effect_intent": "newsroom.harness-side-effect-intent/v1",
     "side_effect_decision_version": "1",
+    "side_effect_attempt_lease": "newsroom.harness-side-effect-attempt-lease/v1",
     "side_effect_outcome": "newsroom.harness-side-effect-outcome/v1",
+    "fenced_side_effect_outcome": "newsroom.harness-side-effect-outcome/v2",
     "terminal_side_effect_policy": "newsroom.harness-terminal-side-effect-policy/v1"
+  },
+  "side_effect_outcome_version_policy": {
+    "reader_dispatch": "exact schema identity through HarnessSideEffectOutcome.from_dict",
+    "writers": [
+      {
+        "schema": "newsroom.harness-side-effect-outcome/v1",
+        "scope": "serial side-effect outcome only",
+        "fencing_fields": []
+      },
+      {
+        "schema": "newsroom.harness-side-effect-outcome/v2",
+        "scope": "fenced complete_attempt or reconcile_attempt only",
+        "fencing_fields": [
+          "attempt_id",
+          "fencing_generation"
+        ]
+      }
+    ],
+    "upcasters": [],
+    "v1_to_v2_upcast_allowed": false,
+    "upcast_reason": "A historical serial outcome contains no evidence from which an attempt identity or fencing generation can be reconstructed.",
+    "compatibility_window": {
+      "readers": "Exact v1 and v2 readers remain enabled while either schema exists in durable side-effect records.",
+      "v1_writer_scope": "Retained only for serial side-effect execution.",
+      "v2_writer_scope": "Required for every fenced side-effect completion or reconciliation.",
+      "v1_writer_retirement_gate": "Retire only after every serial side-effect caller migrates under a later explicit OpenSpec change with replay fixtures.",
+      "same_outcome_dual_write": false
+    },
+    "unknown_version_outcome": "typed side-effect outcome schema validation failure"
   },
   "legacy_readers": [
     {

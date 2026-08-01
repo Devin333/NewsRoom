@@ -17,9 +17,12 @@ from framework.harness.workflow.dsl import (
     HarnessGraphExpression,
     ParallelAll,
     ParallelAny,
+    PureMerge,
     Sequence,
     StepRef,
+    VerifiedAggregation,
     Wait,
+    WaitTimeoutAction,
 )
 from framework.harness.workflow.graph import (
     HarnessBranch,
@@ -34,6 +37,8 @@ from framework.harness.workflow.graph import (
     HarnessGraphNodeKind,
     HarnessJoinContract,
     HarnessLoopContract,
+    HarnessMergeContract,
+    HarnessMergeKind,
     HarnessWaitContract,
     NormalizedHarnessGraph,
 )
@@ -200,7 +205,9 @@ class _CompilerContext:
                 for source_id in left.terminal_node_ids:
                     for target_id in right.entry_node_ids:
                         self._add_edge(
-                            source_id, target_id, HarnessGraphEdgeKind.DEPENDENCY
+                            source_id,
+                            target_id,
+                            self._sequence_edge_kind(source_id),
                         )
             return _Fragment(
                 fragments[0].entry_node_ids, fragments[-1].terminal_node_ids
@@ -229,12 +236,34 @@ class _CompilerContext:
                     deadline_input_path=expression.deadline_input_path,
                 ),
             )
+            if (
+                expression.timeout_policy is not None
+                and expression.timeout_policy.action is WaitTimeoutAction.ROUTE
+            ):
+                assert expression.timeout_policy.target_node_id is not None
+                self._add_edge(
+                    expression.wait_id,
+                    expression.timeout_policy.target_node_id,
+                    HarnessGraphEdgeKind.WAIT_TIMEOUT,
+                )
             return _Fragment((expression.wait_id,), (expression.wait_id,))
         raise HarnessValidationError(
             "compiler received unsupported graph expression",
             code="unsupported_graph_node_kind",
             details={"type": type(expression).__name__},
         )
+
+    def _sequence_edge_kind(self, source_id: str) -> HarnessGraphEdgeKind:
+        source = next(
+            (node for node in self.nodes if node.node_id == source_id),
+            None,
+        )
+        if (
+            isinstance(source, HarnessControlNode)
+            and source.node_kind is HarnessGraphNodeKind.WAIT
+        ):
+            return HarnessGraphEdgeKind.WAIT_RESUME
+        return HarnessGraphEdgeKind.DEPENDENCY
 
     def _compile_choice(self, expression: Choice) -> _Fragment:
         compiled: list[tuple[Any, _Fragment]] = []
@@ -306,15 +335,14 @@ class _CompilerContext:
             )
             for index, (branch, fragment) in enumerate(compiled)
         )
-        merge_ref = (
-            None
-            if expression.merge_ref is None
-            else _reference_from_text(
+        merge_node_id = f"{expression.join_id}:merge"
+        merge_ref = None
+        if isinstance(expression.merge, PureMerge):
+            merge_ref = _reference_from_text(
                 HarnessContractKind.MERGE,
-                expression.merge_ref,
-                field_name="parallel_all.merge_ref",
+                expression.merge.merge_ref,
+                field_name="parallel_all.merge.merge_ref",
             )[0]
-        )
         self._add_control(
             node_id=expression.fork_id,
             node_kind=HarnessGraphNodeKind.FORK_ALL,
@@ -347,7 +375,87 @@ class _CompilerContext:
                     HarnessGraphEdgeKind.JOIN,
                     branch_id=branch.branch_id,
                 )
-        return _Fragment((expression.fork_id,), (expression.join_id,))
+        if expression.merge is None:
+            return _Fragment((expression.fork_id,), (expression.join_id,))
+        if isinstance(expression.merge, PureMerge):
+            self._add_control(
+                node_id=merge_node_id,
+                node_kind=HarnessGraphNodeKind.MERGE,
+                merge=HarnessMergeContract(
+                    merge_kind=HarnessMergeKind.PURE,
+                    input_branch_ids=tuple(
+                        branch.branch_id for branch in expression.branches
+                    ),
+                    output_keys=expression.merge.output_keys,
+                    merge_ref=merge_ref,
+                ),
+                metadata={"join_node_id": expression.join_id},
+            )
+            self._add_edge(
+                expression.join_id,
+                merge_node_id,
+                HarnessGraphEdgeKind.DEPENDENCY,
+            )
+            return _Fragment((expression.fork_id,), (merge_node_id,))
+        if not isinstance(expression.merge, VerifiedAggregation):
+            raise AssertionError("unsupported Parallel-All merge contract")
+        aggregation_step = self._step(expression.merge.step.step_id)
+        if expression.merge.branch_inputs_key not in aggregation_step.input_keys:
+            raise HarnessValidationError(
+                "verified aggregation Step must declare its branch input key",
+                code="aggregation_input_key_missing",
+                details={
+                    "step_id": aggregation_step.step_id,
+                    "branch_inputs_key": expression.merge.branch_inputs_key,
+                },
+            )
+        if aggregation_step.output_key is None:
+            raise HarnessValidationError(
+                "verified aggregation Step must declare one output key",
+                code="aggregation_output_key_missing",
+                details={"step_id": aggregation_step.step_id},
+            )
+        if aggregation_step.quality_gate is None:
+            raise HarnessValidationError(
+                "verified aggregation Step requires an exact deterministic Gate",
+                code="aggregation_gate_missing",
+                details={"step_id": aggregation_step.step_id},
+            )
+        aggregation = self._compile_expression(expression.merge.step)
+        if len(aggregation.entry_node_ids) != 1 or len(aggregation.terminal_node_ids) != 1:
+            raise HarnessValidationError(
+                "verified aggregation must compile to one executable node",
+                code="invalid_merge_contract",
+            )
+        aggregation_node_id = aggregation.entry_node_ids[0]
+        self._add_control(
+            node_id=merge_node_id,
+            node_kind=HarnessGraphNodeKind.MERGE,
+            merge=HarnessMergeContract(
+                merge_kind=HarnessMergeKind.AGGREGATION_STEP,
+                input_branch_ids=tuple(
+                    branch.branch_id for branch in expression.branches
+                ),
+                output_keys=(aggregation_step.output_key,),
+                aggregation_node_id=aggregation_node_id,
+            ),
+            metadata={
+                "branch_inputs_key": expression.merge.branch_inputs_key,
+                "join_node_id": expression.join_id,
+            },
+        )
+        self._add_edge(
+            expression.join_id,
+            aggregation_node_id,
+            HarnessGraphEdgeKind.DEPENDENCY,
+        )
+        for terminal_id in aggregation.terminal_node_ids:
+            self._add_edge(
+                terminal_id,
+                merge_node_id,
+                HarnessGraphEdgeKind.DEPENDENCY,
+            )
+        return _Fragment((expression.fork_id,), (merge_node_id,))
 
     def _compile_parallel_any(self, expression: ParallelAny) -> _Fragment:
         compiled = tuple(
@@ -638,6 +746,7 @@ class _CompilerContext:
                 step.side_effect_ref.version,
             )
         metadata = {
+            "worker_type": step.worker_type.value,
             "step_metadata": step.metadata,
             "retry_policy": step.retry_policy.to_dict(),
             "contract_provenance": {
@@ -681,6 +790,7 @@ class _CompilerContext:
         join: HarnessJoinContract | None = None,
         loop: HarnessLoopContract | None = None,
         wait: HarnessWaitContract | None = None,
+        merge: HarnessMergeContract | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.nodes.append(
@@ -692,6 +802,7 @@ class _CompilerContext:
                 join=join,
                 loop=loop,
                 wait=wait,
+                merge=merge,
                 metadata=metadata or {},
             )
         )

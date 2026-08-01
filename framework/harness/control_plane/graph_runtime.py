@@ -15,6 +15,9 @@ from framework.harness.control_plane.graph_decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
 )
+from framework.harness.control_plane.graph_evaluator import (
+    HarnessAcceptedGraphObservation,
+)
 from framework.harness.control_plane.graph_state import (
     HarnessBudgetCounterState,
     HarnessGraphBudgetState,
@@ -41,6 +44,9 @@ from framework.shared.time import ensure_utc, format_datetime
 HARNESS_GRAPH_ACTIVITY_SCHEMA = "newsroom.harness-graph-activity/v1"
 HARNESS_GRAPH_ACTIVITY_RESULT_SCHEMA = "newsroom.harness-graph-activity-result/v1"
 HARNESS_GRAPH_COMMIT_SCHEMA = "newsroom.harness-graph-control-commit/v1"
+HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA = (
+    "newsroom.harness-graph-projection-record/v2"
+)
 _CHECKSUM_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _GRAPH_SCOPE_FIELDS = (
     "tenant_scope_ref",
@@ -55,11 +61,14 @@ class HarnessGraphCommitKind(StrEnum):
     DECISION_PROJECTION = "decision_projection"
     ACTIVITY_RESULT = "activity_result"
     ACTIVITY_RESULT_PROJECTION = "activity_result_projection"
+    OBSERVATION = "observation"
+    OBSERVATION_PROJECTION = "observation_projection"
 
 
 class HarnessGraphActivityResultStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    TIMEOUT = "timeout"
     CANCELLED = "cancelled"
     INDETERMINATE = "indeterminate"
 
@@ -267,24 +276,30 @@ class HarnessGraphActivityResult:
         object.__setattr__(self, "status", HarnessGraphActivityResultStatus(self.status))
         termination_confirmed = self.termination_confirmed
         if termination_confirmed is None:
-            termination_confirmed = self.status in {
-                HarnessGraphActivityResultStatus.SUCCEEDED,
+            if self.status is HarnessGraphActivityResultStatus.SUCCEEDED:
+                termination_confirmed = True
+            elif self.status in {
                 HarnessGraphActivityResultStatus.FAILED,
-            }
+                HarnessGraphActivityResultStatus.TIMEOUT,
+                HarnessGraphActivityResultStatus.CANCELLED,
+            }:
+                raise HarnessValidationError(
+                    "non-success activity results require explicit termination confirmation",
+                    code="graph_activity_termination_confirmation_missing",
+                )
+            else:
+                termination_confirmed = False
         elif not isinstance(termination_confirmed, bool):
             raise HarnessValidationError(
                 "graph activity result termination_confirmed must be boolean",
                 code="invalid_graph_activity_termination",
             )
         if (
-            self.status in {
-                HarnessGraphActivityResultStatus.SUCCEEDED,
-                HarnessGraphActivityResultStatus.FAILED,
-            }
+            self.status is HarnessGraphActivityResultStatus.SUCCEEDED
             and not termination_confirmed
         ):
             raise HarnessValidationError(
-                "successful or failed activity results require confirmed termination",
+                "successful activity results require confirmed termination",
                 code="invalid_graph_activity_termination",
             )
         object.__setattr__(self, "termination_confirmed", termination_confirmed)
@@ -362,6 +377,7 @@ class HarnessGraphDecisionCommit:
     occurred_at: datetime
     activity_input_ref: str | None = None
     accepted_evidence_refs: tuple[str, ...] = ()
+    side_effect_outcome_ref: str | None = None
     schema_version: str = HARNESS_GRAPH_COMMIT_SCHEMA
     commit_checksum: str = field(init=False)
 
@@ -392,6 +408,30 @@ class HarnessGraphDecisionCommit:
                 "accepted decision evidence references must be unique",
                 code="duplicate_graph_decision_evidence",
             )
+        side_effect_outcome_ref = _optional_checksum(
+            self.side_effect_outcome_ref,
+            "graph_decision_commit.side_effect_outcome_ref",
+        )
+        if (
+            side_effect_outcome_ref is not None
+            and self.decision.decision_type
+            not in {
+                HarnessGraphDecisionType.COMPLETE_NODE,
+                HarnessGraphDecisionType.COMPLETE_RUN,
+            }
+        ):
+            raise HarnessValidationError(
+                "only node or run completion may carry side-effect outcome evidence",
+                code="graph_decision_side_effect_outcome_mismatch",
+            )
+        if (
+            side_effect_outcome_ref is not None
+            and side_effect_outcome_ref not in accepted_evidence_refs
+        ):
+            raise HarnessValidationError(
+                "side-effect outcome must be an accepted decision evidence reference",
+                code="graph_decision_side_effect_evidence_missing",
+            )
         if self.schema_version != HARNESS_GRAPH_COMMIT_SCHEMA:
             raise HarnessValidationError(
                 "unsupported graph commit schema",
@@ -403,6 +443,11 @@ class HarnessGraphDecisionCommit:
             self,
             "accepted_evidence_refs",
             accepted_evidence_refs,
+        )
+        object.__setattr__(
+            self,
+            "side_effect_outcome_ref",
+            side_effect_outcome_ref,
         )
         object.__setattr__(
             self,
@@ -419,6 +464,7 @@ class HarnessGraphDecisionCommit:
             "occurred_at": format_datetime(self.occurred_at),
             "activity_input_ref": self.activity_input_ref,
             "accepted_evidence_refs": list(self.accepted_evidence_refs),
+            "side_effect_outcome_ref": self.side_effect_outcome_ref,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -467,6 +513,52 @@ class HarnessGraphActivityResultCommit:
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessGraphObservationCommit:
+    observation: HarnessAcceptedGraphObservation
+    sequence: int
+    occurred_at: datetime
+    schema_version: str = HARNESS_GRAPH_COMMIT_SCHEMA
+    commit_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.observation, HarnessAcceptedGraphObservation):
+            raise TypeError("observation must be HarnessAcceptedGraphObservation")
+        _positive_int(self.sequence, "graph_observation_commit.sequence")
+        if self.observation.event_sequence != self.sequence:
+            raise HarnessValidationError(
+                "graph observation sequence must match its durable commit",
+                code="graph_observation_sequence_mismatch",
+            )
+        occurred_at = _datetime(
+            self.occurred_at,
+            "graph_observation_commit.occurred_at",
+        )
+        if self.schema_version != HARNESS_GRAPH_COMMIT_SCHEMA:
+            raise HarnessValidationError(
+                "unsupported graph commit schema",
+                code="unsupported_graph_commit_schema",
+            )
+        object.__setattr__(self, "occurred_at", occurred_at)
+        object.__setattr__(
+            self,
+            "commit_checksum",
+            canonical_checksum(self.checksum_projection()),
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "commit_kind": HarnessGraphCommitKind.OBSERVATION.value,
+            "observation": self.observation.to_dict(),
+            "sequence": self.sequence,
+            "occurred_at": format_datetime(self.occurred_at),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "commit_checksum": self.commit_checksum}
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessGraphProjectionCommit:
     commit_kind: HarnessGraphCommitKind | str
     cause_checksum: str
@@ -486,6 +578,7 @@ class HarnessGraphProjectionCommit:
             HarnessGraphCommitKind.INITIALIZE,
             HarnessGraphCommitKind.DECISION_PROJECTION,
             HarnessGraphCommitKind.ACTIVITY_RESULT_PROJECTION,
+            HarnessGraphCommitKind.OBSERVATION_PROJECTION,
         }:
             raise HarnessValidationError(
                 "projection commit kind is invalid",
@@ -621,6 +714,7 @@ class HarnessGraphRecovery:
     decision_commits: tuple[HarnessGraphDecisionCommit, ...] = ()
     projection_commits: tuple[HarnessGraphProjectionCommit, ...] = ()
     activity_result_commits: tuple[HarnessGraphActivityResultCommit, ...] = ()
+    observation_commits: tuple[HarnessGraphObservationCommit, ...] = ()
     activities: tuple[HarnessGraphActivity, ...] = ()
     dispatched_activity_ids: frozenset[str] = frozenset()
 
@@ -642,6 +736,7 @@ class HarnessGraphRecovery:
         decisions = tuple(self.decision_commits)
         projections = tuple(self.projection_commits)
         results = tuple(self.activity_result_commits)
+        observations = tuple(self.observation_commits)
         activities = tuple(self.activities)
         dispatched_activity_ids = frozenset(self.dispatched_activity_ids)
         if not all(isinstance(item, HarnessGraphDecisionCommit) for item in decisions):
@@ -654,17 +749,25 @@ class HarnessGraphRecovery:
             raise TypeError(
                 "activity_result_commits must contain HarnessGraphActivityResultCommit values"
             )
+        if not all(
+            isinstance(item, HarnessGraphObservationCommit) for item in observations
+        ):
+            raise TypeError(
+                "observation_commits must contain HarnessGraphObservationCommit values"
+            )
         if not all(isinstance(item, HarnessGraphActivity) for item in activities):
             raise TypeError("activities must contain HarnessGraphActivity values")
         decisions = tuple(sorted(decisions, key=lambda item: item.sequence))
         projections = tuple(sorted(projections, key=lambda item: item.sequence))
         results = tuple(sorted(results, key=lambda item: item.sequence))
+        observations = tuple(sorted(observations, key=lambda item: item.sequence))
         ordered_sequences = tuple(
             sorted(
                 (
                     *(item.sequence for item in decisions),
                     *(item.sequence for item in projections),
                     *(item.sequence for item in results),
+                    *(item.sequence for item in observations),
                 )
             )
         )
@@ -687,12 +790,17 @@ class HarnessGraphRecovery:
             object.__setattr__(self, "decision_commits", decisions)
             object.__setattr__(self, "projection_commits", projections)
             object.__setattr__(self, "activity_result_commits", results)
+            object.__setattr__(self, "observation_commits", observations)
             object.__setattr__(self, "activities", activities)
             object.__setattr__(self, "dispatched_activity_ids", dispatched_activity_ids)
             return
-        if ordered_sequences != tuple(range(1, self.expected_last_sequence + 1)):
+        if (
+            not ordered_sequences
+            or ordered_sequences[0] != 1
+            or ordered_sequences[-1] > self.expected_last_sequence
+        ):
             raise EventStoreCorruptionError(
-                "graph recovery stream sequences are not contiguous"
+                "graph recovery stream sequences are outside canonical order"
             )
         if self.graph is None or run_spec_checksum is None or self.state is None:
             raise EventStoreCorruptionError(
@@ -739,7 +847,27 @@ class HarnessGraphRecovery:
             raise EventStoreCorruptionError(
                 "graph recovery contains duplicate activity result identities"
             )
-        if self.graph.checksum in decision_by_checksum or self.graph.checksum in result_by_checksum:
+        observation_by_checksum = {
+            item.observation.observation_checksum: item for item in observations
+        }
+        if len(observation_by_checksum) != len(observations):
+            raise EventStoreCorruptionError(
+                "graph recovery contains duplicate observation identities"
+            )
+        cause_checksums = {
+            *decision_by_checksum,
+            *result_by_checksum,
+            *observation_by_checksum,
+        }
+        if len(cause_checksums) != (
+            len(decision_by_checksum)
+            + len(result_by_checksum)
+            + len(observation_by_checksum)
+        ):
+            raise EventStoreCorruptionError(
+                "graph recovery contains colliding cause identities"
+            )
+        if self.graph.checksum in cause_checksums:
             raise EventStoreCorruptionError(
                 "graph recovery cause identity collides with graph initialization"
             )
@@ -779,11 +907,20 @@ class HarnessGraphRecovery:
                     raise EventStoreCorruptionError(
                         "graph decision projection is not adjacent to its cause"
                     )
-            else:
+            elif (
+                projection.commit_kind
+                is HarnessGraphCommitKind.ACTIVITY_RESULT_PROJECTION
+            ):
                 cause = result_by_checksum.get(projection.cause_checksum)
                 if cause is None or projection.sequence != cause.sequence + 1:
                     raise EventStoreCorruptionError(
                         "graph activity result projection is not adjacent to its cause"
+                    )
+            else:
+                cause = observation_by_checksum.get(projection.cause_checksum)
+                if cause is None or projection.sequence != cause.sequence + 1:
+                    raise EventStoreCorruptionError(
+                        "graph observation projection is not adjacent to its cause"
                     )
         latest_projection = projections[-1]
         if (
@@ -798,6 +935,12 @@ class HarnessGraphRecovery:
                 (
                     *(item for item in decisions if item.decision.decision_checksum not in projection_by_cause),
                     *(item for item in results if item.result.result_checksum not in projection_by_cause),
+                    *(
+                        item
+                        for item in observations
+                        if item.observation.observation_checksum
+                        not in projection_by_cause
+                    ),
                 ),
                 key=lambda item: item.sequence,
             )
@@ -894,6 +1037,7 @@ class HarnessGraphRecovery:
         object.__setattr__(self, "decision_commits", decisions)
         object.__setattr__(self, "projection_commits", projections)
         object.__setattr__(self, "activity_result_commits", results)
+        object.__setattr__(self, "observation_commits", observations)
         object.__setattr__(self, "activities", activities)
         object.__setattr__(
             self,
@@ -923,6 +1067,15 @@ class HarnessGraphRecovery:
             if item.result.result_checksum not in projected
         )
 
+    @property
+    def pending_observations(self) -> tuple[HarnessGraphObservationCommit, ...]:
+        projected = self.projected_cause_checksums
+        return tuple(
+            item
+            for item in self.observation_commits
+            if item.observation.observation_checksum not in projected
+        )
+
 
 @runtime_checkable
 class HarnessGraphTransitionPort(Protocol):
@@ -946,6 +1099,7 @@ class HarnessGraphTransitionPort(Protocol):
         expected_last_sequence: int,
         activity_input_ref: str | None = None,
         accepted_evidence_refs: tuple[str, ...] = (),
+        side_effect_outcome_ref: str | None = None,
     ) -> HarnessGraphDecisionCommit: ...
 
     def commit_graph_projection(
@@ -963,6 +1117,14 @@ class HarnessGraphTransitionPort(Protocol):
         expected_last_sequence: int,
     ) -> HarnessGraphActivityResultCommit: ...
 
+    def commit_graph_observation(
+        self,
+        observation: HarnessAcceptedGraphObservation,
+        *,
+        occurred_at: datetime,
+        expected_last_sequence: int,
+    ) -> HarnessGraphObservationCommit: ...
+
     def recover_graph(self, run_id: str) -> HarnessGraphRecovery: ...
 
     def activity_for(self, activity_id: str) -> HarnessGraphActivity | None: ...
@@ -979,6 +1141,7 @@ class _InMemoryGraphJournal:
     decision_commits: list[HarnessGraphDecisionCommit]
     projection_commits: list[HarnessGraphProjectionCommit]
     activity_result_commits: list[HarnessGraphActivityResultCommit]
+    observation_commits: list[HarnessGraphObservationCommit]
     activities: dict[str, HarnessGraphActivity]
     dispatched_activity_ids: set[str]
 
@@ -1043,6 +1206,7 @@ class InMemoryHarnessGraphTransitionPort:
                 decision_commits=[],
                 projection_commits=[commit],
                 activity_result_commits=[],
+                observation_commits=[],
                 activities={},
                 dispatched_activity_ids=set(),
             )
@@ -1056,6 +1220,7 @@ class InMemoryHarnessGraphTransitionPort:
         expected_last_sequence: int,
         activity_input_ref: str | None = None,
         accepted_evidence_refs: tuple[str, ...] = (),
+        side_effect_outcome_ref: str | None = None,
     ) -> HarnessGraphDecisionCommit:
         if not isinstance(decision, HarnessGraphDecision):
             raise TypeError("decision must be HarnessGraphDecision")
@@ -1085,10 +1250,15 @@ class InMemoryHarnessGraphTransitionPort:
                         for item in accepted_evidence_refs
                     )
                 )
+                normalized_outcome_ref = _optional_checksum(
+                    side_effect_outcome_ref,
+                    "side_effect_outcome_ref",
+                )
                 if (
                     existing.decision != decision
                     or existing.activity_input_ref != normalized_input_ref
                     or existing.accepted_evidence_refs != normalized_evidence
+                    or existing.side_effect_outcome_ref != normalized_outcome_ref
                 ):
                     raise EventStoreCorruptionError(
                         "graph decision checksum resolves conflicting content"
@@ -1101,7 +1271,11 @@ class InMemoryHarnessGraphTransitionPort:
                     reason="graph decision attempted from a stale projection",
                 )
             recovery = self._recovery(decision.run_id, journal)
-            if recovery.pending_decisions or recovery.pending_activity_results:
+            if (
+                recovery.pending_decisions
+                or recovery.pending_activity_results
+                or recovery.pending_observations
+            ):
                 raise EventReplayMismatchError(
                     sequence=journal.last_sequence,
                     reason="graph stream has a committed cause awaiting projection",
@@ -1112,6 +1286,7 @@ class InMemoryHarnessGraphTransitionPort:
                 occurred_at,
                 activity_input_ref=activity_input_ref,
                 accepted_evidence_refs=accepted_evidence_refs,
+                side_effect_outcome_ref=side_effect_outcome_ref,
             )
             journal.decision_commits.append(commit)
             journal.last_sequence = commit.sequence
@@ -1158,6 +1333,10 @@ class InMemoryHarnessGraphTransitionPort:
             valid_causes = {
                 *(item.decision.decision_checksum for item in journal.decision_commits),
                 *(item.result.result_checksum for item in journal.activity_result_commits),
+                *(
+                    item.observation.observation_checksum
+                    for item in journal.observation_commits
+                ),
             }
             if commit.cause_checksum not in valid_causes:
                 raise EventStoreCorruptionError(
@@ -1179,12 +1358,24 @@ class InMemoryHarnessGraphTransitionPort:
                 ),
                 None,
             )
+            observation_commit = next(
+                (
+                    item
+                    for item in journal.observation_commits
+                    if item.observation.observation_checksum
+                    == commit.cause_checksum
+                ),
+                None,
+            )
             if (
                 commit.commit_kind is HarnessGraphCommitKind.DECISION_PROJECTION
                 and decision_commit is None
             ) or (
                 commit.commit_kind is HarnessGraphCommitKind.ACTIVITY_RESULT_PROJECTION
                 and result_commit is None
+            ) or (
+                commit.commit_kind is HarnessGraphCommitKind.OBSERVATION_PROJECTION
+                and observation_commit is None
             ):
                 raise EventStoreCorruptionError(
                     "graph projection kind does not match its committed cause"
@@ -1194,9 +1385,20 @@ class InMemoryHarnessGraphTransitionPort:
                     raise EventStoreCorruptionError(
                         "graph decision projection is not adjacent to its cause"
                     )
-            elif commit.sequence != result_commit.sequence + 1:
+            elif (
+                commit.commit_kind
+                is HarnessGraphCommitKind.ACTIVITY_RESULT_PROJECTION
+                and commit.sequence != result_commit.sequence + 1
+            ):
                 raise EventStoreCorruptionError(
                     "graph activity result projection is not adjacent to its cause"
+                )
+            elif (
+                commit.commit_kind is HarnessGraphCommitKind.OBSERVATION_PROJECTION
+                and commit.sequence != observation_commit.sequence + 1
+            ):
+                raise EventStoreCorruptionError(
+                    "graph observation projection is not adjacent to its cause"
                 )
             if commit.activity is not None:
                 prior = journal.activities.get(commit.activity.activity_id)
@@ -1259,7 +1461,11 @@ class InMemoryHarnessGraphTransitionPort:
                     reason="graph activity result is stale or already projected",
                 )
             recovery = self._recovery(activity.run_id, journal)
-            if recovery.pending_decisions or recovery.pending_activity_results:
+            if (
+                recovery.pending_decisions
+                or recovery.pending_activity_results
+                or recovery.pending_observations
+            ):
                 raise EventReplayMismatchError(
                     sequence=journal.last_sequence,
                     reason="graph stream has a committed cause awaiting projection",
@@ -1270,6 +1476,74 @@ class InMemoryHarnessGraphTransitionPort:
                 occurred_at,
             )
             journal.activity_result_commits.append(commit)
+            journal.last_sequence = commit.sequence
+            return commit
+
+    def commit_graph_observation(
+        self,
+        observation: HarnessAcceptedGraphObservation,
+        *,
+        occurred_at: datetime,
+        expected_last_sequence: int,
+    ) -> HarnessGraphObservationCommit:
+        if not isinstance(observation, HarnessAcceptedGraphObservation):
+            raise TypeError("observation must be HarnessAcceptedGraphObservation")
+        with self._lock:
+            journal = self._journal_for_node_instance(observation.node_instance_id)
+            existing = next(
+                (
+                    item
+                    for item in journal.observation_commits
+                    if item.observation.observation_checksum
+                    == observation.observation_checksum
+                ),
+                None,
+            )
+            if existing is not None:
+                if existing.observation != observation:
+                    raise EventStoreCorruptionError(
+                        "graph observation checksum resolves conflicting content"
+                    )
+                return existing
+            self._require_stream_head(journal, expected_last_sequence)
+            if observation.event_sequence != journal.last_sequence + 1:
+                raise EventReplayMismatchError(
+                    sequence=journal.last_sequence,
+                    reason="graph observation sequence is not contiguous",
+                )
+            node = next(
+                (
+                    item
+                    for item in journal.state.node_instances
+                    if item.instance_id == observation.node_instance_id
+                ),
+                None,
+            )
+            if (
+                node is None
+                or node.identity.node_id != observation.node_id
+                or node.attempt != observation.attempt
+            ):
+                raise EventReplayMismatchError(
+                    sequence=journal.last_sequence,
+                    reason="graph observation does not match the current node attempt",
+                )
+            recovery = self._recovery(journal.state.run_id, journal)
+            if (
+                recovery.pending_decisions
+                or recovery.pending_activity_results
+                or recovery.pending_observations
+            ):
+                raise EventReplayMismatchError(
+                    sequence=journal.last_sequence,
+                    reason="graph stream has a committed cause awaiting projection",
+                )
+            commit = HarnessGraphObservationCommit(
+                observation,
+                journal.last_sequence + 1,
+                occurred_at,
+            )
+            journal.observation_commits.append(commit)
             journal.last_sequence = commit.sequence
             return commit
 
@@ -1309,6 +1583,25 @@ class InMemoryHarnessGraphTransitionPort:
             )
         return matches[0]
 
+    def _journal_for_node_instance(
+        self,
+        node_instance_id: str,
+    ) -> _InMemoryGraphJournal:
+        matches = tuple(
+            journal
+            for journal in self._journals.values()
+            if any(
+                item.instance_id == node_instance_id
+                for item in journal.state.node_instances
+            )
+        )
+        if len(matches) != 1:
+            raise HarnessValidationError(
+                "graph node instance identity is unknown or ambiguous",
+                code="graph_observation_node_identity_mismatch",
+            )
+        return matches[0]
+
     def _require_journal(self, run_id: str) -> _InMemoryGraphJournal:
         journal = self._journals.get(run_id)
         if journal is None:
@@ -1343,6 +1636,7 @@ class InMemoryHarnessGraphTransitionPort:
             decision_commits=tuple(journal.decision_commits),
             projection_commits=tuple(journal.projection_commits),
             activity_result_commits=tuple(journal.activity_result_commits),
+            observation_commits=tuple(journal.observation_commits),
             activities=tuple(
                 sorted(journal.activities.values(), key=lambda item: item.activity_id)
             ),
@@ -1370,6 +1664,7 @@ def initial_graph_state(
     *,
     run_spec_checksum: str,
     event_sequence: int = 1,
+    runtime_scope_metadata: Mapping[str, Any] | None = None,
 ) -> HarnessGraphState:
     if not isinstance(run_spec, HarnessRunSpec):
         raise TypeError("run_spec must be HarnessRunSpec")
@@ -1386,6 +1681,10 @@ def initial_graph_state(
                 "node_activations",
                 policy.max_node_activations,
             ),
+            HarnessBudgetCounterState(
+                "compensations",
+                policy.max_compensations,
+            ),
             HarnessBudgetCounterState("replans", run_spec.budget.max_replans),
             HarnessBudgetCounterState("retries", retry_limit),
             HarnessBudgetCounterState("turns", run_spec.budget.max_turns),
@@ -1400,10 +1699,38 @@ def initial_graph_state(
         "workflow_ref": graph.workflow_ref.exact_ref,
         "graph_runtime_version": HARNESS_GRAPH_RUNTIME_VERSION,
     }
+    runtime_scopes = {} if runtime_scope_metadata is None else runtime_scope_metadata
+    if not isinstance(runtime_scopes, Mapping):
+        raise TypeError("runtime_scope_metadata must be a mapping")
+    unknown_scope_fields = set(runtime_scopes).difference(_GRAPH_SCOPE_FIELDS)
+    if unknown_scope_fields:
+        raise HarnessValidationError(
+            "graph runtime scope metadata contains unsupported fields",
+            code="graph_runtime_scope_mismatch",
+            details={"fields": sorted(unknown_scope_fields)},
+        )
     for field_name in _GRAPH_SCOPE_FIELDS:
-        value = run_spec.metadata.get(field_name)
-        if value is not None:
-            metadata[field_name] = _checksum(value, f"run_spec.metadata.{field_name}")
+        declared = run_spec.metadata.get(field_name)
+        runtime_value = runtime_scopes.get(field_name)
+        declared_ref = (
+            None
+            if declared is None
+            else _checksum(declared, f"run_spec.metadata.{field_name}")
+        )
+        runtime_ref = (
+            None
+            if runtime_value is None
+            else _checksum(runtime_value, f"runtime_scope_metadata.{field_name}")
+        )
+        if declared_ref is not None and runtime_ref is not None and declared_ref != runtime_ref:
+            raise HarnessValidationError(
+                "graph runtime scope conflicts with the declared run scope",
+                code="graph_runtime_scope_mismatch",
+                details={"field": field_name},
+            )
+        resolved = runtime_ref if runtime_ref is not None else declared_ref
+        if resolved is not None:
+            metadata[field_name] = resolved
     return HarnessGraphState(
         run_id=run_spec.run_id,
         graph_ref=graph_reference(graph),
@@ -1618,12 +1945,14 @@ __all__ = [
     "HARNESS_GRAPH_ACTIVITY_RESULT_SCHEMA",
     "HARNESS_GRAPH_ACTIVITY_SCHEMA",
     "HARNESS_GRAPH_COMMIT_SCHEMA",
+    "HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA",
     "HarnessGraphActivity",
     "HarnessGraphActivityResult",
     "HarnessGraphActivityResultCommit",
     "HarnessGraphActivityResultStatus",
     "HarnessGraphCommitKind",
     "HarnessGraphDecisionCommit",
+    "HarnessGraphObservationCommit",
     "HarnessGraphProjectionCommit",
     "HarnessGraphRecovery",
     "HarnessGraphTransitionPort",

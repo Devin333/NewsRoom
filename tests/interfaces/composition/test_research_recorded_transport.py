@@ -18,11 +18,7 @@ from business.research.application.single_paper_runtime import (
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
 )
-from business.research.workflows import (
-    PAPER_ANALYSIS_GATE_REFERENCES,
-    build_paper_analysis_workflow_spec,
-)
-from framework.events.canonical import checksum_for
+from business.research.workflows import PAPER_ANALYSIS_GATE_REFERENCES
 from framework.harness import HarnessEventType, HarnessReplayReader
 from infrastructure.research import (
     ArxivResearchSourceProvider,
@@ -374,28 +370,49 @@ def test_recorded_transports_execute_full_production_research_analysis(
         }
         assert set(PAPER_ANALYSIS_GATE_REFERENCES).issubset(recorded_gate_refs)
 
-        workflow = build_paper_analysis_workflow_spec()
-        expected_workflow_checksum = checksum_for(workflow.to_dict())
-        transitions = [
-            event.payload
+        scoped_event_port_factory = runtime.scoped_event_port_factory
+        assert scoped_event_port_factory is not None
+        graph_event_port = scoped_event_port_factory(
+            _RUN_ID,
+            result.actor_scope.to_metadata(),
+        )
+        graph_recovery = graph_event_port.recover_graph(_RUN_ID)
+        assert graph_recovery.graph is not None
+        assert graph_recovery.state is not None
+        assert graph_recovery.decision_commits
+        assert graph_recovery.projection_commits
+        assert graph_recovery.pending_decisions == ()
+        assert graph_recovery.pending_activity_results == ()
+        assert graph_recovery.pending_observations == ()
+        graph_ref = graph_recovery.state.graph_ref
+        assert graph_ref.graph_id == graph_recovery.graph.graph_id
+        assert graph_ref.workflow_ref == graph_recovery.graph.workflow_ref
+        assert graph_ref.schema_version == graph_recovery.graph.schema_version
+        assert graph_ref.compiler_version == graph_recovery.graph.compiler_version
+        assert (
+            graph_ref.condition_policy_version
+            == graph_recovery.graph.condition_policy_version
+        )
+        assert graph_ref.checksum == graph_recovery.graph.checksum
+        assert graph_ref.workflow_ref.contract_id == "research.paper_analysis"
+        assert graph_ref.workflow_ref.version == "1"
+        projection_by_cause = {
+            commit.cause_checksum: commit
+            for commit in graph_recovery.projection_commits
+        }
+        for decision_commit in graph_recovery.decision_commits:
+            decision = decision_commit.decision
+            assert decision.graph_ref == graph_ref
+            projection = projection_by_cause[decision.decision_checksum]
+            assert decision_commit.sequence < projection.sequence
+            assert projection.state.graph_ref == graph_ref
+
+        legacy_transition_count = sum(
+            1
             for event in result.trace.events
             if event.event_type is HarnessEventType.TRANSITION_COMMITTED
-        ]
-        assert transitions
-        assert {
-            (
-                transition["state"]["workflow_id"],
-                transition["workflow_version"],
-                transition["workflow_checksum"],
-            )
-            for transition in transitions
-        } == {
-            (
-                "research.paper_analysis",
-                "1",
-                expected_workflow_checksum,
-            )
-        }
+        )
+        assert legacy_transition_count == 0
 
         rag_metadata = result.rag_context.metadata
         assert {

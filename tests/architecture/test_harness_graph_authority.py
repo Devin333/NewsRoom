@@ -29,6 +29,14 @@ _ROUTING_METADATA_KEYS = frozenset(
         "routing_decision",
     }
 )
+_LEGACY_RUNTIME_AUTHORITY_MARKERS = (
+    ".current_step_id",
+    "HarnessRunStatus.PLANNING",
+    "HarnessRunStatus.EXECUTING",
+    "HarnessRunStatus.VERIFYING",
+    "HarnessRunStatus.REPLANNING",
+    "routing_rules=",
+)
 
 
 def test_harness_graph_modules_do_not_import_outer_layers() -> None:
@@ -73,11 +81,32 @@ def test_research_workers_and_gates_do_not_own_harness_routing() -> None:
     assert violations == []
 
     workflow = build_paper_analysis_workflow_spec()
-    assert workflow.routing_rules
+    assert workflow.graph is not None
+    assert workflow.routing_rules == ()
     assert all(
         not _ROUTING_METADATA_KEYS.intersection(step.metadata)
         for step in workflow.steps
     )
+
+
+def test_production_callers_do_not_read_legacy_harness_cursor_or_phase_status() -> (
+    None
+):
+    roots = (
+        Path("business/research"),
+        Path("interfaces"),
+        Path("infrastructure/storage/harness"),
+    )
+    violations = [
+        f"{path.as_posix()}: {marker}"
+        for root in roots
+        for path in root.rglob("*.py")
+        for source in (path.read_text(encoding="utf-8"),)
+        for marker in _LEGACY_RUNTIME_AUTHORITY_MARKERS
+        if marker in source
+    ]
+
+    assert violations == []
 
 
 def _imports(path: Path) -> tuple[str, ...]:

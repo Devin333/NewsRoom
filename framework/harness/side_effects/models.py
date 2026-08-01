@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
@@ -39,6 +39,12 @@ class HarnessSideEffectDecisionStatus(StrEnum):
 class HarnessSideEffectOutcomeStatus(StrEnum):
     COMMITTED = "committed"
     FAILED = "failed"
+
+
+class HarnessSideEffectAttemptStatus(StrEnum):
+    ACTIVE = "active"
+    TERMINATED = "terminated"
+    INDETERMINATE = "indeterminate"
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -121,7 +127,11 @@ class HarnessSideEffectIntent:
         identity_scope_ref = _checksum(self.identity_scope_ref, "identity_scope_ref")
         subject_scope_ref = _checksum(self.subject_scope_ref, "subject_scope_ref")
         attempt = _positive_int(self.attempt, "attempt")
-        handler = None if self.handler is None else HarnessSideEffectHandlerReference.parse(self.handler)
+        handler = (
+            None
+            if self.handler is None
+            else HarnessSideEffectHandlerReference.parse(self.handler)
+        )
         payload = _immutable_mapping(self.payload, "payload")
         candidate_refs = _candidate_refs(self.candidate_refs)
         retention_until = _optional_datetime(self.retention_until, "retention_until")
@@ -129,34 +139,54 @@ class HarnessSideEffectIntent:
         step_id = _optional_text(self.step_id, "step_id")
         terminal_action = _optional_text(self.terminal_action, "terminal_action")
         worker_result_ref = _optional_text(self.worker_result_ref, "worker_result_ref")
-        source_intent_ref = _optional_checksum(self.source_intent_ref, "source_intent_ref")
-        candidate_checksum = _optional_checksum(self.candidate_checksum, "candidate_checksum")
+        source_intent_ref = _optional_checksum(
+            self.source_intent_ref, "source_intent_ref"
+        )
+        candidate_checksum = _optional_checksum(
+            self.candidate_checksum, "candidate_checksum"
+        )
         state_checksum = _optional_checksum(self.state_checksum, "state_checksum")
         completion_input_ref = _optional_checksum(
             self.completion_input_ref,
             "completion_input_ref",
         )
         if origin is HarnessSideEffectOrigin.WORKER:
-            if step_id is None or worker_result_ref is None or candidate_checksum is None:
+            if (
+                step_id is None
+                or worker_result_ref is None
+                or candidate_checksum is None
+            ):
                 raise _validation_error(
                     "invalid_worker_side_effect_identity",
                     "worker side-effect intent requires step, worker-result, and candidate identities",
                     effect_id=effect_id,
                 )
-            if terminal_action is not None or state_checksum is not None or completion_input_ref is not None:
+            if (
+                terminal_action is not None
+                or state_checksum is not None
+                or completion_input_ref is not None
+            ):
                 raise _validation_error(
                     "worker_terminal_identity_forbidden",
                     "worker side-effect intent cannot carry controller-terminal identity",
                     effect_id=effect_id,
                 )
         else:
-            if terminal_action is None or state_checksum is None or completion_input_ref is None:
+            if (
+                terminal_action is None
+                or state_checksum is None
+                or completion_input_ref is None
+            ):
                 raise _validation_error(
                     "invalid_terminal_side_effect_identity",
                     "controller-terminal intent requires terminal action, state, and completion identities",
                     effect_id=effect_id,
                 )
-            if step_id is not None or worker_result_ref is not None or candidate_checksum is not None:
+            if (
+                step_id is not None
+                or worker_result_ref is not None
+                or candidate_checksum is not None
+            ):
                 raise _validation_error(
                     "terminal_worker_identity_forbidden",
                     "controller-terminal intent cannot carry worker identity",
@@ -222,7 +252,9 @@ class HarnessSideEffectIntent:
             candidate_refs=tuple(value.get("candidate_refs", ())),
             idempotency_key=value.get("idempotency_key"),
             retention_until=parse_datetime(value.get("retention_until")),
-            schema_version=value.get("schema_version", "newsroom.harness-side-effect-intent/v1"),
+            schema_version=value.get(
+                "schema_version", "newsroom.harness-side-effect-intent/v1"
+            ),
             checksum=value.get("checksum"),
         )
 
@@ -271,7 +303,9 @@ class HarnessSideEffectDecision:
     command_ordinal: int
     causation_id: str
     disposition: HarnessSideEffectDisposition | str
-    status: HarnessSideEffectDecisionStatus | str = HarnessSideEffectDecisionStatus.AUTHORIZED
+    status: HarnessSideEffectDecisionStatus | str = (
+        HarnessSideEffectDecisionStatus.AUTHORIZED
+    )
     step_id: str | None = None
     terminal_action: str | None = None
     attempt: int = 1
@@ -303,14 +337,34 @@ class HarnessSideEffectDecision:
             "reason_code",
             "decision_version",
         ):
-            object.__setattr__(self, field_name, _required_text(getattr(self, field_name), field_name))
+            object.__setattr__(
+                self, field_name, _required_text(getattr(self, field_name), field_name)
+            )
         object.__setattr__(self, "intent_ref", _checksum(self.intent_ref, "intent_ref"))
-        if isinstance(self.command_ordinal, bool) or not isinstance(self.command_ordinal, int) or self.command_ordinal < 0:
-            raise HarnessValidationError("command_ordinal must be a non-negative integer")
-        object.__setattr__(self, "origin", _enum(HarnessSideEffectOrigin, self.origin, "origin"))
-        object.__setattr__(self, "handler", HarnessSideEffectHandlerReference.parse(self.handler))
-        object.__setattr__(self, "identity_scope_ref", _checksum(self.identity_scope_ref, "identity_scope_ref"))
-        object.__setattr__(self, "subject_scope_ref", _checksum(self.subject_scope_ref, "subject_scope_ref"))
+        if (
+            isinstance(self.command_ordinal, bool)
+            or not isinstance(self.command_ordinal, int)
+            or self.command_ordinal < 0
+        ):
+            raise HarnessValidationError(
+                "command_ordinal must be a non-negative integer"
+            )
+        object.__setattr__(
+            self, "origin", _enum(HarnessSideEffectOrigin, self.origin, "origin")
+        )
+        object.__setattr__(
+            self, "handler", HarnessSideEffectHandlerReference.parse(self.handler)
+        )
+        object.__setattr__(
+            self,
+            "identity_scope_ref",
+            _checksum(self.identity_scope_ref, "identity_scope_ref"),
+        )
+        object.__setattr__(
+            self,
+            "subject_scope_ref",
+            _checksum(self.subject_scope_ref, "subject_scope_ref"),
+        )
         object.__setattr__(
             self,
             "disposition",
@@ -322,17 +376,29 @@ class HarnessSideEffectDecision:
             _enum(HarnessSideEffectDecisionStatus, self.status, "status"),
         )
         object.__setattr__(self, "attempt", _positive_int(self.attempt, "attempt"))
-        object.__setattr__(self, "effect_attempt", _positive_int(self.effect_attempt, "effect_attempt"))
+        object.__setattr__(
+            self, "effect_attempt", _positive_int(self.effect_attempt, "effect_attempt")
+        )
         object.__setattr__(
             self,
             "effect_attempt_limit",
             _positive_int(self.effect_attempt_limit, "effect_attempt_limit"),
         )
         if self.effect_attempt > self.effect_attempt_limit:
-            raise HarnessValidationError("effect_attempt must not exceed effect_attempt_limit")
+            raise HarnessValidationError(
+                "effect_attempt must not exceed effect_attempt_limit"
+            )
         object.__setattr__(self, "step_id", _optional_text(self.step_id, "step_id"))
-        object.__setattr__(self, "terminal_action", _optional_text(self.terminal_action, "terminal_action"))
-        object.__setattr__(self, "worker_result_ref", _optional_text(self.worker_result_ref, "worker_result_ref"))
+        object.__setattr__(
+            self,
+            "terminal_action",
+            _optional_text(self.terminal_action, "terminal_action"),
+        )
+        object.__setattr__(
+            self,
+            "worker_result_ref",
+            _optional_text(self.worker_result_ref, "worker_result_ref"),
+        )
         object.__setattr__(
             self,
             "terminal_state_ref",
@@ -355,12 +421,29 @@ class HarnessSideEffectDecision:
                 _optional_checksum(getattr(self, field_name), field_name),
             )
         if self.origin is HarnessSideEffectOrigin.WORKER:
-            if self.step_id is None or self.worker_result_ref is None or self.terminal_action is not None:
-                raise HarnessValidationError("worker side-effect decision identity is incomplete")
-        elif self.terminal_action is None or self.terminal_state_ref is None or self.step_id is not None:
-            raise HarnessValidationError("controller-terminal side-effect decision identity is incomplete")
-        if self.status is HarnessSideEffectDecisionStatus.AUTHORIZED and self.approval_evidence_ref is None:
-            raise HarnessValidationError("authorized side-effect decision requires approval policy evidence")
+            if (
+                self.step_id is None
+                or self.worker_result_ref is None
+                or self.terminal_action is not None
+            ):
+                raise HarnessValidationError(
+                    "worker side-effect decision identity is incomplete"
+                )
+        elif (
+            self.terminal_action is None
+            or self.terminal_state_ref is None
+            or self.step_id is not None
+        ):
+            raise HarnessValidationError(
+                "controller-terminal side-effect decision identity is incomplete"
+            )
+        if (
+            self.status is HarnessSideEffectDecisionStatus.AUTHORIZED
+            and self.approval_evidence_ref is None
+        ):
+            raise HarnessValidationError(
+                "authorized side-effect decision requires approval policy evidence"
+            )
         decided_at = _optional_datetime(self.decided_at, "decided_at")
         assert decided_at is not None
         object.__setattr__(self, "decided_at", decided_at)
@@ -449,6 +532,261 @@ HarnessSideEffectAuthorization = HarnessSideEffectDecision
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessSideEffectAttemptLease:
+    attempt_id: str
+    lease_id: str
+    owner_id: str
+    effect_id: str
+    decision_ref: str
+    idempotency_key: str
+    identity_scope_ref: str
+    subject_scope_ref: str
+    attempt: int
+    fencing_generation: int
+    acquired_at: datetime
+    lease_expires_at: datetime
+    status: HarnessSideEffectAttemptStatus | str = HarnessSideEffectAttemptStatus.ACTIVE
+    termination_confirmed: bool = False
+    resolved_at: datetime | None = None
+    outcome_ref: str | None = None
+    schema_version: str = "newsroom.harness-side-effect-attempt-lease/v1"
+    checksum: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "lease_id",
+            "owner_id",
+            "effect_id",
+            "idempotency_key",
+            "schema_version",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _required_text(getattr(self, field_name), field_name),
+            )
+        for field_name in (
+            "attempt_id",
+            "decision_ref",
+            "identity_scope_ref",
+            "subject_scope_ref",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _checksum(getattr(self, field_name), field_name),
+            )
+        object.__setattr__(self, "attempt", _positive_int(self.attempt, "attempt"))
+        object.__setattr__(
+            self,
+            "fencing_generation",
+            _positive_int(self.fencing_generation, "fencing_generation"),
+        )
+        if self.attempt != self.fencing_generation:
+            raise HarnessValidationError(
+                "side-effect attempt and fencing generation must advance together"
+            )
+        acquired_at = _optional_datetime(self.acquired_at, "acquired_at")
+        lease_expires_at = _optional_datetime(
+            self.lease_expires_at,
+            "lease_expires_at",
+        )
+        assert acquired_at is not None and lease_expires_at is not None
+        if lease_expires_at <= acquired_at:
+            raise HarnessValidationError(
+                "side-effect attempt lease must expire after acquisition"
+            )
+        object.__setattr__(self, "acquired_at", acquired_at)
+        object.__setattr__(self, "lease_expires_at", lease_expires_at)
+        status = _enum(HarnessSideEffectAttemptStatus, self.status, "status")
+        object.__setattr__(self, "status", status)
+        if not isinstance(self.termination_confirmed, bool):
+            raise HarnessValidationError("termination_confirmed must be a boolean")
+        resolved_at = _optional_datetime(self.resolved_at, "resolved_at")
+        outcome_ref = _optional_checksum(self.outcome_ref, "outcome_ref")
+        if resolved_at is not None and resolved_at < acquired_at:
+            raise HarnessValidationError(
+                "resolved_at cannot precede attempt acquisition"
+            )
+        object.__setattr__(self, "resolved_at", resolved_at)
+        object.__setattr__(self, "outcome_ref", outcome_ref)
+        if status is HarnessSideEffectAttemptStatus.ACTIVE:
+            if (
+                self.termination_confirmed
+                or resolved_at is not None
+                or outcome_ref is not None
+            ):
+                raise HarnessValidationError(
+                    "active side-effect attempt cannot carry termination evidence"
+                )
+        elif resolved_at is None:
+            raise HarnessValidationError(
+                "resolved side-effect attempt requires resolved_at"
+            )
+        elif (
+            status is HarnessSideEffectAttemptStatus.TERMINATED
+        ) is not self.termination_confirmed:
+            raise HarnessValidationError(
+                "side-effect attempt status conflicts with termination evidence"
+            )
+        elif (
+            status is HarnessSideEffectAttemptStatus.INDETERMINATE
+            and outcome_ref is not None
+        ):
+            raise HarnessValidationError(
+                "indeterminate side-effect attempt cannot reference a committed outcome"
+            )
+        expected = checksum_for(self._checksum_payload())
+        if self.checksum is not None and self.checksum != expected:
+            raise HarnessValidationError("side-effect attempt lease checksum mismatch")
+        object.__setattr__(self, "checksum", expected)
+
+    @classmethod
+    def create(
+        cls,
+        decision: HarnessSideEffectDecision,
+        *,
+        attempt: int,
+        owner_id: str,
+        lease_id: str,
+        acquired_at: datetime,
+        lease_expires_at: datetime,
+    ) -> HarnessSideEffectAttemptLease:
+        if not isinstance(decision, HarnessSideEffectDecision):
+            raise TypeError("decision must be HarnessSideEffectDecision")
+        assert decision.checksum is not None
+        generation = _positive_int(attempt, "attempt")
+        attempt_id = checksum_for(
+            {
+                "schema_version": "newsroom.harness-side-effect-attempt-identity/v1",
+                "decision_ref": decision.checksum,
+                "effect_id": decision.effect_id,
+                "idempotency_key": decision.idempotency_key,
+                "fencing_generation": generation,
+            }
+        )
+        return cls(
+            attempt_id=attempt_id,
+            lease_id=_required_text(lease_id, "lease_id"),
+            owner_id=_required_text(owner_id, "owner_id"),
+            effect_id=decision.effect_id,
+            decision_ref=decision.checksum,
+            idempotency_key=decision.idempotency_key,
+            identity_scope_ref=decision.identity_scope_ref,
+            subject_scope_ref=decision.subject_scope_ref,
+            attempt=generation,
+            fencing_generation=generation,
+            acquired_at=acquired_at,
+            lease_expires_at=lease_expires_at,
+        )
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> HarnessSideEffectAttemptLease:
+        if not isinstance(value, Mapping):
+            raise HarnessValidationError("side-effect attempt lease must be an object")
+        return cls(
+            attempt_id=value.get("attempt_id"),
+            lease_id=value.get("lease_id"),
+            owner_id=value.get("owner_id"),
+            effect_id=value.get("effect_id"),
+            decision_ref=value.get("decision_ref"),
+            idempotency_key=value.get("idempotency_key"),
+            identity_scope_ref=value.get("identity_scope_ref"),
+            subject_scope_ref=value.get("subject_scope_ref"),
+            attempt=value.get("attempt"),
+            fencing_generation=value.get("fencing_generation"),
+            acquired_at=parse_datetime(value.get("acquired_at")),
+            lease_expires_at=parse_datetime(value.get("lease_expires_at")),
+            status=value.get("status", HarnessSideEffectAttemptStatus.ACTIVE),
+            termination_confirmed=value.get("termination_confirmed", False),
+            resolved_at=parse_datetime(value.get("resolved_at")),
+            outcome_ref=value.get("outcome_ref"),
+            schema_version=value.get(
+                "schema_version",
+                "newsroom.harness-side-effect-attempt-lease/v1",
+            ),
+            checksum=value.get("checksum"),
+        )
+
+    def renewed(self, *, lease_expires_at: datetime) -> HarnessSideEffectAttemptLease:
+        if self.status is not HarnessSideEffectAttemptStatus.ACTIVE:
+            raise HarnessValidationError(
+                "only an active side-effect attempt can renew its lease"
+            )
+        normalized = _optional_datetime(lease_expires_at, "lease_expires_at")
+        assert normalized is not None
+        if normalized <= self.lease_expires_at:
+            raise HarnessValidationError(
+                "renewed side-effect lease must extend its expiry"
+            )
+        return replace(self, lease_expires_at=normalized, checksum=None)
+
+    def relinked_outcome(self, outcome_ref: str) -> HarnessSideEffectAttemptLease:
+        if self.status is not HarnessSideEffectAttemptStatus.TERMINATED:
+            raise HarnessValidationError(
+                "only a terminated side-effect attempt can reference an outcome"
+            )
+        return replace(
+            self,
+            outcome_ref=_checksum(outcome_ref, "outcome_ref"),
+            checksum=None,
+        )
+
+    def resolved(
+        self,
+        *,
+        termination_confirmed: bool,
+        resolved_at: datetime,
+        outcome_ref: str | None = None,
+    ) -> HarnessSideEffectAttemptLease:
+        if not isinstance(termination_confirmed, bool):
+            raise HarnessValidationError("termination_confirmed must be a boolean")
+        if self.status is HarnessSideEffectAttemptStatus.TERMINATED:
+            if termination_confirmed:
+                return self
+            raise HarnessValidationError(
+                "confirmed attempt termination cannot be revoked"
+            )
+        status = (
+            HarnessSideEffectAttemptStatus.TERMINATED
+            if termination_confirmed
+            else HarnessSideEffectAttemptStatus.INDETERMINATE
+        )
+        return replace(
+            self,
+            status=status,
+            termination_confirmed=termination_confirmed,
+            resolved_at=resolved_at,
+            outcome_ref=outcome_ref,
+            checksum=None,
+        )
+
+    def _checksum_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "attempt_id": self.attempt_id,
+            "lease_id": self.lease_id,
+            "owner_id": self.owner_id,
+            "effect_id": self.effect_id,
+            "decision_ref": self.decision_ref,
+            "idempotency_key": self.idempotency_key,
+            "identity_scope_ref": self.identity_scope_ref,
+            "subject_scope_ref": self.subject_scope_ref,
+            "attempt": self.attempt,
+            "fencing_generation": self.fencing_generation,
+            "acquired_at": format_datetime(self.acquired_at),
+            "lease_expires_at": format_datetime(self.lease_expires_at),
+            "status": self.status.value,
+            "termination_confirmed": self.termination_confirmed,
+            "resolved_at": format_datetime(self.resolved_at),
+            "outcome_ref": self.outcome_ref,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self._checksum_payload(), "checksum": self.checksum}
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessSideEffectOutcome:
     outcome_id: str
     effect_id: str
@@ -461,7 +799,9 @@ class HarnessSideEffectOutcome:
     subject_scope_ref: str
     atomic_group: str
     disposition: HarnessSideEffectDisposition | str
-    status: HarnessSideEffectOutcomeStatus | str = HarnessSideEffectOutcomeStatus.COMMITTED
+    status: HarnessSideEffectOutcomeStatus | str = (
+        HarnessSideEffectOutcomeStatus.COMMITTED
+    )
     candidate_refs: tuple[str, ...] = ()
     public_refs: tuple[str, ...] = ()
     result_ref: str | None = None
@@ -469,6 +809,8 @@ class HarnessSideEffectOutcome:
     committed_at: datetime = field(default_factory=utc_now)
     retention_until: datetime | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    attempt_id: str | None = None
+    fencing_generation: int | None = None
     schema_version: str = "newsroom.harness-side-effect-outcome/v1"
     checksum: str | None = None
 
@@ -485,11 +827,25 @@ class HarnessSideEffectOutcome:
             "reason_code",
             "schema_version",
         ):
-            object.__setattr__(self, field_name, _required_text(getattr(self, field_name), field_name))
-        object.__setattr__(self, "decision_ref", _checksum(self.decision_ref, "decision_ref"))
-        object.__setattr__(self, "handler", HarnessSideEffectHandlerReference.parse(self.handler))
-        object.__setattr__(self, "identity_scope_ref", _checksum(self.identity_scope_ref, "identity_scope_ref"))
-        object.__setattr__(self, "subject_scope_ref", _checksum(self.subject_scope_ref, "subject_scope_ref"))
+            object.__setattr__(
+                self, field_name, _required_text(getattr(self, field_name), field_name)
+            )
+        object.__setattr__(
+            self, "decision_ref", _checksum(self.decision_ref, "decision_ref")
+        )
+        object.__setattr__(
+            self, "handler", HarnessSideEffectHandlerReference.parse(self.handler)
+        )
+        object.__setattr__(
+            self,
+            "identity_scope_ref",
+            _checksum(self.identity_scope_ref, "identity_scope_ref"),
+        )
+        object.__setattr__(
+            self,
+            "subject_scope_ref",
+            _checksum(self.subject_scope_ref, "subject_scope_ref"),
+        )
         object.__setattr__(
             self,
             "disposition",
@@ -501,9 +857,44 @@ class HarnessSideEffectOutcome:
             _enum(HarnessSideEffectOutcomeStatus, self.status, "status"),
         )
         object.__setattr__(self, "candidate_refs", _candidate_refs(self.candidate_refs))
-        object.__setattr__(self, "public_refs", _candidate_refs(self.public_refs, field_name="public_refs"))
-        object.__setattr__(self, "result_ref", _optional_checksum(self.result_ref, "result_ref"))
-        object.__setattr__(self, "metadata", _immutable_mapping(self.metadata, "metadata"))
+        object.__setattr__(
+            self,
+            "public_refs",
+            _candidate_refs(self.public_refs, field_name="public_refs"),
+        )
+        object.__setattr__(
+            self, "result_ref", _optional_checksum(self.result_ref, "result_ref")
+        )
+        object.__setattr__(
+            self, "metadata", _immutable_mapping(self.metadata, "metadata")
+        )
+        attempt_id = _optional_checksum(self.attempt_id, "attempt_id")
+        fencing_generation = self.fencing_generation
+        if (attempt_id is None) is not (fencing_generation is None):
+            raise HarnessValidationError(
+                "side-effect outcome attempt and fencing identities must be supplied together"
+            )
+        if fencing_generation is not None:
+            fencing_generation = _positive_int(
+                fencing_generation,
+                "fencing_generation",
+            )
+        if self.schema_version == "newsroom.harness-side-effect-outcome/v1":
+            if attempt_id is not None:
+                raise HarnessValidationError(
+                    "side-effect outcome v1 cannot carry attempt fencing identity"
+                )
+        elif self.schema_version == "newsroom.harness-side-effect-outcome/v2":
+            if attempt_id is None:
+                raise HarnessValidationError(
+                    "side-effect outcome v2 requires attempt fencing identity"
+                )
+        else:
+            raise HarnessValidationError(
+                "side-effect outcome schema version is unsupported"
+            )
+        object.__setattr__(self, "attempt_id", attempt_id)
+        object.__setattr__(self, "fencing_generation", fencing_generation)
         committed_at = _optional_datetime(self.committed_at, "committed_at")
         assert committed_at is not None
         object.__setattr__(self, "committed_at", committed_at)
@@ -512,10 +903,20 @@ class HarnessSideEffectOutcome:
             "retention_until",
             _optional_datetime(self.retention_until, "retention_until"),
         )
-        if self.disposition is HarnessSideEffectDisposition.ACCEPTED and not self.public_refs:
-            raise HarnessValidationError("accepted side-effect outcome requires public refs")
-        if self.disposition is not HarnessSideEffectDisposition.ACCEPTED and self.public_refs:
-            raise HarnessValidationError("non-accepted side-effect outcome cannot expose public refs")
+        if (
+            self.disposition is HarnessSideEffectDisposition.ACCEPTED
+            and not self.public_refs
+        ):
+            raise HarnessValidationError(
+                "accepted side-effect outcome requires public refs"
+            )
+        if (
+            self.disposition is not HarnessSideEffectDisposition.ACCEPTED
+            and self.public_refs
+        ):
+            raise HarnessValidationError(
+                "non-accepted side-effect outcome cannot expose public refs"
+            )
         expected = checksum_for(self._checksum_payload())
         if self.checksum is not None and self.checksum != expected:
             raise HarnessValidationError("side-effect outcome checksum mismatch")
@@ -545,12 +946,16 @@ class HarnessSideEffectOutcome:
             committed_at=parse_datetime(value.get("committed_at")) or utc_now(),
             retention_until=parse_datetime(value.get("retention_until")),
             metadata=value.get("metadata", {}),
-            schema_version=value.get("schema_version", "newsroom.harness-side-effect-outcome/v1"),
+            attempt_id=value.get("attempt_id"),
+            fencing_generation=value.get("fencing_generation"),
+            schema_version=value.get(
+                "schema_version", "newsroom.harness-side-effect-outcome/v1"
+            ),
             checksum=value.get("checksum"),
         )
 
     def _checksum_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "outcome_id": self.outcome_id,
             "effect_id": self.effect_id,
@@ -572,6 +977,10 @@ class HarnessSideEffectOutcome:
             "retention_until": format_datetime(self.retention_until),
             "metadata": to_jsonable(self.metadata),
         }
+        if self.schema_version == "newsroom.harness-side-effect-outcome/v2":
+            payload["attempt_id"] = self.attempt_id
+            payload["fencing_generation"] = self.fencing_generation
+        return payload
 
     def to_dict(self) -> dict[str, Any]:
         return {**self._checksum_payload(), "checksum": self.checksum}
@@ -588,26 +997,38 @@ class HarnessTerminalSideEffectPolicy:
     not_required_evidence_ref: str | None = None
     inherited_gate_refs: tuple[str, ...] = ()
     inherit_budget: bool = True
-    disposition: HarnessSideEffectDisposition | str = HarnessSideEffectDisposition.ACCEPTED
+    disposition: HarnessSideEffectDisposition | str = (
+        HarnessSideEffectDisposition.ACCEPTED
+    )
     schema_version: str = "newsroom.harness-terminal-side-effect-policy/v1"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "policy_id", _identifier(self.policy_id, "policy_id"))
         object.__setattr__(self, "version", _version(self.version))
-        object.__setattr__(self, "handler", HarnessSideEffectHandlerReference.parse(self.handler))
+        object.__setattr__(
+            self, "handler", HarnessSideEffectHandlerReference.parse(self.handler)
+        )
         object.__setattr__(self, "kind", _identifier(self.kind, "kind"))
         if not isinstance(self.requires_approval, bool):
             raise HarnessValidationError("requires_approval must be a boolean")
-        object.__setattr__(self, "retry_limit", _positive_int(self.retry_limit, "retry_limit"))
+        object.__setattr__(
+            self, "retry_limit", _positive_int(self.retry_limit, "retry_limit")
+        )
         object.__setattr__(
             self,
             "not_required_evidence_ref",
-            _optional_checksum(self.not_required_evidence_ref, "not_required_evidence_ref"),
+            _optional_checksum(
+                self.not_required_evidence_ref, "not_required_evidence_ref"
+            ),
         )
         if self.requires_approval and self.not_required_evidence_ref is not None:
-            raise HarnessValidationError("approval-required terminal policy cannot pin not_required evidence")
+            raise HarnessValidationError(
+                "approval-required terminal policy cannot pin not_required evidence"
+            )
         if not self.requires_approval and self.not_required_evidence_ref is None:
-            raise HarnessValidationError("no-approval terminal policy requires pinned not_required evidence")
+            raise HarnessValidationError(
+                "no-approval terminal policy requires pinned not_required evidence"
+            )
         object.__setattr__(
             self,
             "inherited_gate_refs",
@@ -616,15 +1037,23 @@ class HarnessTerminalSideEffectPolicy:
         if not isinstance(self.inherit_budget, bool):
             raise HarnessValidationError("inherit_budget must be a boolean")
         if not self.inherit_budget:
-            raise HarnessValidationError("terminal side-effect policy must inherit the run budget")
+            raise HarnessValidationError(
+                "terminal side-effect policy must inherit the run budget"
+            )
         object.__setattr__(
             self,
             "disposition",
             _enum(HarnessSideEffectDisposition, self.disposition, "disposition"),
         )
         if self.disposition is not HarnessSideEffectDisposition.ACCEPTED:
-            raise HarnessValidationError("terminal side-effect policy must target accepted disposition")
-        object.__setattr__(self, "schema_version", _required_text(self.schema_version, "schema_version"))
+            raise HarnessValidationError(
+                "terminal side-effect policy must target accepted disposition"
+            )
+        object.__setattr__(
+            self,
+            "schema_version",
+            _required_text(self.schema_version, "schema_version"),
+        )
 
     @property
     def reference(self) -> str:
@@ -637,7 +1066,9 @@ class HarnessTerminalSideEffectPolicy:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> HarnessTerminalSideEffectPolicy:
         if not isinstance(value, Mapping):
-            raise HarnessValidationError("terminal side-effect policy must be an object")
+            raise HarnessValidationError(
+                "terminal side-effect policy must be an object"
+            )
         expected = {
             "schema_version",
             "policy_id",
@@ -697,7 +1128,10 @@ def _identifier(value: Any, field_name: str) -> str:
 
 def _version(value: Any) -> str:
     text = _required_text(value, "version")
-    if _VERSION_PATTERN.fullmatch(text) is None or text.casefold() in _AMBIGUOUS_VERSIONS:
+    if (
+        _VERSION_PATTERN.fullmatch(text) is None
+        or text.casefold() in _AMBIGUOUS_VERSIONS
+    ):
         raise _validation_error(
             "invalid_side_effect_handler_version",
             "side-effect version must be exact and cannot use a moving alias",
@@ -708,7 +1142,9 @@ def _version(value: Any) -> str:
 
 def _required_text(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value or value.strip() != value:
-        raise HarnessValidationError(f"{field_name} is required and must not contain surrounding whitespace")
+        raise HarnessValidationError(
+            f"{field_name} is required and must not contain surrounding whitespace"
+        )
     return value
 
 
@@ -727,7 +1163,9 @@ def _checksum(value: Any, field_name: str) -> str:
     if not text.startswith("sha256:"):
         raise HarnessValidationError(f"{field_name} must be a sha256 reference")
     digest = text.removeprefix("sha256:")
-    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
         raise HarnessValidationError(f"{field_name} must be a sha256 reference")
     return text
 
@@ -748,7 +1186,9 @@ def _text_tuple(value: Any, field_name: str) -> tuple[str, ...]:
     return tuple(_required_text(item, field_name) for item in value)
 
 
-def _candidate_refs(value: Any, *, field_name: str = "candidate_refs") -> tuple[str, ...]:
+def _candidate_refs(
+    value: Any, *, field_name: str = "candidate_refs"
+) -> tuple[str, ...]:
     refs = _text_tuple(value, field_name)
     if len(set(refs)) != len(refs):
         raise HarnessValidationError(f"{field_name} must not contain duplicates")
@@ -782,7 +1222,11 @@ def _freeze(value: Any) -> Any:
 def _optional_datetime(value: Any, field_name: str) -> datetime | None:
     if value is None:
         return None
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
         raise HarnessValidationError(f"{field_name} must be a timezone-aware datetime")
     return ensure_utc(value)
 
@@ -794,12 +1238,16 @@ def _enum(enum_type, value: Any, field_name: str):
         raise HarnessValidationError(f"{field_name} is invalid") from exc
 
 
-def _validation_error(code: str, message: str, **details: Any) -> HarnessValidationError:
+def _validation_error(
+    code: str, message: str, **details: Any
+) -> HarnessValidationError:
     return HarnessValidationError(message, code=code, details={"code": code, **details})
 
 
 __all__ = [
     "HarnessSideEffectAuthorization",
+    "HarnessSideEffectAttemptLease",
+    "HarnessSideEffectAttemptStatus",
     "HarnessSideEffectDecision",
     "HarnessSideEffectDecisionStatus",
     "HarnessSideEffectDisposition",

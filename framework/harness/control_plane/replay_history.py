@@ -33,6 +33,10 @@ from framework.events.runtime.history import (
 from framework.harness.control_plane.activity import HARNESS_ACTIVITY_CONTRACT
 from framework.harness.control_plane.event import HarnessEvent
 from framework.harness.control_plane.decision import HarnessDecision
+from framework.harness.control_plane.graph_runtime import (
+    HARNESS_GRAPH_COMMIT_SCHEMA,
+    HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA,
+)
 from framework.harness.control_plane.transition import (
     HARNESS_POLICY_VERSION,
     HARNESS_REDUCER_VERSION,
@@ -49,6 +53,10 @@ from framework.harness.quality.verdict import gate_result_evidence
 HARNESS_HISTORY_HANDLER_ID = "harness-control-plane"
 HARNESS_HISTORY_POLICY_ID = "harness-control-policy"
 HARNESS_HISTORY_SCHEMA_ID = "newsroom.harness-event"
+HARNESS_GRAPH_HISTORY_SCHEMA_ID = "newsroom.harness-graph-control-commit"
+HARNESS_GRAPH_PROJECTION_HISTORY_SCHEMA_ID = (
+    "newsroom.harness-graph-projection-record"
+)
 HARNESS_TRANSITION_HISTORY_SCHEMA_ID = "newsroom.harness-transition"
 HARNESS_EVENT_HISTORY_WORKFLOW_ID = "harness-events"
 HARNESS_EVENT_HISTORY_WORKFLOW_VERSION = "1"
@@ -330,6 +338,32 @@ def harness_event_history(event: HarnessEvent, *, data_schema: str) -> Determini
             policy_id=HARNESS_HISTORY_POLICY_ID,
             policy_version=HARNESS_POLICY_VERSION,
             schema_id=HARNESS_HISTORY_SCHEMA_ID,
+            schema_version=data_schema,
+        ),
+        commands=(),
+    )
+
+
+def harness_graph_history(*, data_schema: str) -> DeterministicHistoryRecord:
+    if data_schema not in {
+        HARNESS_GRAPH_COMMIT_SCHEMA,
+        HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA,
+    }:
+        raise ValueError("unsupported Harness Graph history schema")
+    schema_id = (
+        HARNESS_GRAPH_PROJECTION_HISTORY_SCHEMA_ID
+        if data_schema == HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA
+        else HARNESS_GRAPH_HISTORY_SCHEMA_ID
+    )
+    return DeterministicHistoryRecord(
+        policy=HistoryEventPolicy(
+            handler_id=HARNESS_HISTORY_HANDLER_ID,
+            handler_version=HARNESS_REDUCER_VERSION,
+            workflow_id=HARNESS_EVENT_HISTORY_WORKFLOW_ID,
+            workflow_version=HARNESS_EVENT_HISTORY_WORKFLOW_VERSION,
+            policy_id=HARNESS_HISTORY_POLICY_ID,
+            policy_version=HARNESS_POLICY_VERSION,
+            schema_id=schema_id,
             schema_version=data_schema,
         ),
         commands=(),
@@ -998,6 +1032,16 @@ def build_harness_history_verifier(
         ),
         (
             "schema",
+            HARNESS_GRAPH_HISTORY_SCHEMA_ID,
+            HARNESS_GRAPH_COMMIT_SCHEMA,
+        ),
+        (
+            "schema",
+            HARNESS_GRAPH_PROJECTION_HISTORY_SCHEMA_ID,
+            HARNESS_GRAPH_PROJECTION_RECORD_SCHEMA,
+        ),
+        (
+            "schema",
             HARNESS_TRANSITION_HISTORY_SCHEMA_ID,
             HARNESS_TRANSITION_DATA_SCHEMA,
         ),
@@ -1053,6 +1097,7 @@ __all__ = [
     "HARNESS_EVENT_HISTORY_WORKFLOW_ID",
     "HARNESS_HISTORY_HANDLER_ID",
     "HARNESS_HISTORY_POLICY_ID",
+    "HARNESS_GRAPH_HISTORY_SCHEMA_ID",
     "HarnessReplayActivityResolver",
     "build_harness_history_verifier",
     "harness_decision_history",
@@ -1061,6 +1106,7 @@ __all__ = [
     "harness_activity_history",
     "harness_activity_kind",
     "harness_event_history",
+    "harness_graph_history",
     "harness_expected_commands",
     "harness_transition_history",
 ]

@@ -703,15 +703,13 @@ class _DurableResearchRunRecoverySource:
             event.event_id for event in history[: cutoff_index + 1]
         ]:
             raise ValueError("Research published transcript conflicts with durable history")
-        _validate_terminal_publication_history(
-            history,
-            cutoff_index=cutoff_index,
-            authority_ref=authority_ref,
-            identity_scope_ref=identity_scope_ref,
-            subject_scope_ref=subject_scope_ref,
-        )
-
-        status = _terminal_history_status(history)
+        recover_graph = getattr(event_port, "recover_graph", None)
+        if not callable(recover_graph):
+            return None
+        graph_recovery = recover_graph(run_id)
+        if graph_recovery.state is None:
+            return None
+        status = graph_recovery.state.outcome.value
         # A finalized manifest can become durable immediately before the
         # controller commits COMPLETE_RUN.  It is not an accepted run yet,
         # and persisting that transient state as quarantine would make the
@@ -861,13 +859,16 @@ class _DurableResearchRunRecoverySource:
             request,
             created_at=created[0].occurred_at,
         )
-        recovery = event_port.recover(run_spec)
+        recover_graph = getattr(event_port, "recover_graph", None)
+        if not callable(recover_graph):
+            return None
+        recovery = recover_graph(run_spec.run_id)
         if recovery.state is None:
             return None
         result = ResearchAnalysisResult.from_durable_failure(
             request=request,
             events=history,
-            harness_status=recovery.state.status.value,
+            harness_status=recovery.state.outcome.value,
         )
         return ResearchRunRecord(
             run_id=request.run_id,
@@ -1472,69 +1473,6 @@ def _recovery_actor_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
     ).strip():
         raise ValueError("Research recovery actor scope is incomplete")
     return result
-
-
-def _validate_terminal_publication_history(
-    history: tuple[HarnessEvent, ...],
-    *,
-    cutoff_index: int,
-    authority_ref: str,
-    identity_scope_ref: str,
-    subject_scope_ref: str,
-) -> None:
-    decisions: list[tuple[int, Mapping[str, Any]]] = []
-    for index, event in enumerate(history[cutoff_index + 1 :], start=cutoff_index + 1):
-        if event.event_type is not HarnessEventType.DECISION_RECORDED:
-            continue
-        if event.payload.get("decision_type") != "complete_run":
-            continue
-        payload = event.payload.get("payload")
-        authorization = payload.get("side_effect_authorization") if isinstance(payload, Mapping) else None
-        if isinstance(authorization, Mapping):
-            decisions.append((index, authorization))
-    if len(decisions) != 1:
-        raise ValueError("Research terminal completion decision is not unique")
-    decision_index, authorization = decisions[0]
-    if (
-        authorization.get("origin") != HarnessSideEffectOrigin.CONTROLLER_TERMINAL.value
-        or authorization.get("decision_ref") != authority_ref
-        or authorization.get("identity_scope_ref") != identity_scope_ref
-        or authorization.get("subject_scope_ref") != subject_scope_ref
-        or authorization.get("disposition") != HarnessSideEffectDisposition.ACCEPTED.value
-    ):
-        raise ValueError("Research terminal completion authority conflicts")
-    success_transitions = [
-        event
-        for event in history[decision_index + 1 :]
-        if (
-            event.event_type is HarnessEventType.TRANSITION_COMMITTED
-            and event.payload.get("transition_kind") == "success"
-            and isinstance(event.payload.get("state"), Mapping)
-            and event.payload["state"].get("status") == "succeeded"
-        )
-    ]
-    # Zero is the recoverable publication-before-COMPLETE_RUN window; the
-    # caller defers it without writing a run record. Multiple successes are
-    # ambiguous and cannot be used as acceptance evidence.
-    if len(success_transitions) > 1:
-        raise ValueError("Research terminal success transition is ambiguous")
-
-
-def _terminal_history_status(history: tuple[HarnessEvent, ...]) -> str:
-    transitions = [
-        event
-        for event in history
-        if event.event_type is HarnessEventType.TRANSITION_COMMITTED
-    ]
-    if not transitions:
-        raise ValueError("Research recovery has no durable state transition")
-    state = transitions[-1].payload.get("state")
-    if not isinstance(state, Mapping):
-        raise ValueError("Research recovery terminal state is invalid")
-    status = state.get("status")
-    if not isinstance(status, str) or not status.strip():
-        raise ValueError("Research recovery terminal status is invalid")
-    return status
 
 
 def _research_source_policy(

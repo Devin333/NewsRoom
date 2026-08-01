@@ -13,6 +13,8 @@ from framework.harness.side_effects.fake import (
 )
 from framework.harness.side_effects.models import (
     HarnessSideEffectAuthorization,
+    HarnessSideEffectAttemptLease,
+    HarnessSideEffectAttemptStatus,
     HarnessSideEffectDecision,
     HarnessSideEffectDecisionStatus,
     HarnessSideEffectDisposition,
@@ -25,11 +27,14 @@ from framework.harness.side_effects.models import (
     HarnessTerminalSideEffectPolicy,
 )
 from framework.harness.side_effects.ports import (
+    HarnessFencedSideEffectStorePort,
     HarnessSideEffectHandlerContext,
     HarnessSideEffectReaderPort,
     HarnessSideEffectStorePort,
 )
 from framework.harness.side_effects.registry import (
+    HarnessFencedSideEffectHandler,
+    HarnessSideEffectCapabilities,
     HarnessSideEffectHandler,
     HarnessSideEffectHandlerBinding,
     HarnessSideEffectPreparationHandler,
@@ -38,10 +43,15 @@ from framework.harness.side_effects.registry import (
 
 __all__ = [
     "CountingHarnessSideEffectHandler",
+    "HarnessFencedSideEffectHandler",
+    "HarnessFencedSideEffectStorePort",
     "HarnessSideEffectApprovalEvidence",
     "HarnessSideEffectApprovalRequest",
     "HarnessSideEffectApprovalResolver",
     "HarnessSideEffectAuthorization",
+    "HarnessSideEffectAttemptLease",
+    "HarnessSideEffectAttemptStatus",
+    "HarnessSideEffectCapabilities",
     "HarnessSideEffectDecision",
     "HarnessSideEffectDecisionStatus",
     "HarnessSideEffectDisposition",

@@ -27,57 +27,48 @@ from framework.harness.workers.result import HarnessWorkerResult
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from framework.events.canonical import PayloadReference
-    from framework.events.runtime.activities import ReplayActivityDescriptor
     from framework.harness.control_plane.activity import HarnessActivity
-    from framework.harness.control_plane.durable_events import (
-        HarnessRecovery,
-        HarnessTransitionCommit,
-    )
-    from framework.harness.control_plane.state import HarnessRunSpec, HarnessState
-    from framework.harness.control_plane.transition import HarnessTransitionKind
+    from framework.harness.control_plane.graph_runtime import HarnessGraphActivity
+    from framework.harness.workflow.graph import NormalizedHarnessGraph
 
 
 @runtime_checkable
 class HarnessLLMPort(Protocol):
-    def generate(self, request: dict[str, Any]) -> HarnessWorkerResult:
-        ...
+    def generate(self, request: dict[str, Any]) -> HarnessWorkerResult: ...
 
 
 @runtime_checkable
 class HarnessToolPort(Protocol):
-    def list_tools(self) -> tuple[MCPToolDefinition, ...]:
-        ...
+    def list_tools(self) -> tuple[MCPToolDefinition, ...]: ...
 
-    def call_tool(self, request: MCPToolRequest) -> HarnessWorkerResult:
-        ...
+    def call_tool(self, request: MCPToolRequest) -> HarnessWorkerResult: ...
 
 
 @runtime_checkable
 class HarnessMemoryPort(Protocol):
-    def recall(self, query: dict[str, Any]) -> tuple[dict[str, Any], ...]:
-        ...
+    def recall(self, query: dict[str, Any]) -> tuple[dict[str, Any], ...]: ...
 
-    def propose_write(self, candidate: MemoryWriteCandidate) -> MemoryWriteCandidate:
-        ...
+    def propose_write(
+        self, candidate: MemoryWriteCandidate
+    ) -> MemoryWriteCandidate: ...
 
-    def commit_write(self, approved_write: MemoryWriteCandidate) -> MemoryWriteCandidate:
-        ...
+    def commit_write(
+        self, approved_write: MemoryWriteCandidate
+    ) -> MemoryWriteCandidate: ...
 
 
 @runtime_checkable
 class HarnessSkillPort(Protocol):
-    def run_skill(self, skill_id: str, inputs: dict[str, Any], context: dict[str, Any]) -> HarnessWorkerResult:
-        ...
+    def run_skill(
+        self, skill_id: str, inputs: dict[str, Any], context: dict[str, Any]
+    ) -> HarnessWorkerResult: ...
 
 
 @runtime_checkable
 class HarnessArtifactPort(Protocol):
-    def write_artifact(self, request: ArtifactWriteRequest) -> ArtifactRef:
-        ...
+    def write_artifact(self, request: ArtifactWriteRequest) -> ArtifactRef: ...
 
-    def read_artifact(self, ref: str) -> dict[str, Any]:
-        ...
+    def read_artifact(self, ref: str) -> dict[str, Any]: ...
 
 
 @runtime_checkable
@@ -103,30 +94,9 @@ class HarnessTransitionPort(HarnessEventPort, Protocol):
         """Create an activity using the port-owned authoritative identity scope."""
         ...
 
-    def commit_transition(
-        self,
-        previous: HarnessState | None,
-        state: HarnessState,
-        *,
-        from_version: int,
-        transition_kind: HarnessTransitionKind | str,
-        occurred_at: datetime,
-        decision: Any | None = None,
-        gate_results: Any | None = None,
-        budget: Any | None = None,
-        activity: HarnessActivity | None = None,
-        activity_result_event_id: str | None = None,
-    ) -> HarnessTransitionCommit:
-        ...
+    def read_history(self, run_id: str) -> tuple[HarnessEvent, ...]: ...
 
-    def recover(self, run_spec: HarnessRunSpec) -> HarnessRecovery:
-        ...
-
-    def read_history(self, run_id: str) -> tuple[HarnessEvent, ...]:
-        ...
-
-    def require_activity_storage(self) -> None:
-        ...
+    def require_activity_storage(self) -> None: ...
 
     def accept_activity(
         self,
@@ -139,11 +109,18 @@ class HarnessTransitionPort(HarnessEventPort, Protocol):
         """Persist accepted input before live work and return an existing terminal result."""
         ...
 
-    def resolve_replay_activity(
+    def resolve_graph_replay_activity(
         self,
-        state: HarnessState,
-    ) -> tuple[ReplayActivityDescriptor, PayloadReference] | None:
-        """Return the verified recorded activity bound to the current state."""
+        activity: HarnessGraphActivity,
+        graph: NormalizedHarnessGraph,
+        inputs: dict[str, Any] | None = None,
+    ) -> HarnessWorkerResult:
+        """Read one graph activity result without accepting or dispatching work.
+
+        Runtime hydration may omit inputs and trust the immutable activity
+        descriptor. Offline verification supplies inputs to recheck the causal
+        input checksum.
+        """
         ...
 
     def record_activity_result(
@@ -152,77 +129,68 @@ class HarnessTransitionPort(HarnessEventPort, Protocol):
         result: HarnessWorkerResult,
         *,
         completed_at: datetime,
-    ) -> HarnessEvent:
-        ...
+    ) -> HarnessEvent: ...
 
 
 @runtime_checkable
 class HarnessWorkerPort(Protocol):
-    def execute(self, task: dict[str, Any]) -> HarnessWorkerResult:
-        ...
+    def execute(self, task: dict[str, Any]) -> HarnessWorkerResult: ...
 
 
 @runtime_checkable
 class HarnessGovernancePort(Protocol):
-    def evaluate(self, context: dict[str, Any]) -> HarnessQualityVerdict:
-        ...
+    def evaluate(self, context: dict[str, Any]) -> HarnessQualityVerdict: ...
 
 
 @runtime_checkable
 class HarnessSubagentPort(Protocol):
-    def run_subagent(self, subagent_id: str, task: dict[str, Any], budget: dict[str, Any]) -> HarnessWorkerResult:
-        ...
+    def run_subagent(
+        self, subagent_id: str, task: dict[str, Any], budget: dict[str, Any]
+    ) -> HarnessWorkerResult: ...
 
 
 @runtime_checkable
 class HarnessContextPort(Protocol):
-    def assemble(self, context_request: dict[str, Any]) -> ContextEnvelope:
-        ...
+    def assemble(self, context_request: dict[str, Any]) -> ContextEnvelope: ...
 
 
 @runtime_checkable
 class HarnessRAGPort(Protocol):
-    def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack:
-        ...
+    def build_context_pack(self, request: RAGSessionRequest) -> RAGContextPack: ...
 
 
 @runtime_checkable
 class HarnessRetrievalPort(Protocol):
-    def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection:
-        ...
+    def retrieve(self, request: RetrievalRequest) -> EvidencePackCollection: ...
 
 
 @runtime_checkable
 class HarnessCheckpointPort(Protocol):
-    def save_checkpoint(self, checkpoint: HarnessCheckpoint) -> None:
-        ...
+    def save_checkpoint(self, checkpoint: HarnessCheckpoint) -> None: ...
 
 
 @runtime_checkable
 class HarnessTracePort(Protocol):
-    def write_trace(self, trace: HarnessTrace) -> None:
-        ...
+    def write_trace(self, trace: HarnessTrace) -> None: ...
 
 
 @runtime_checkable
 class HarnessSkillEvolutionPort(Protocol):
-    def collect_experience(self, request: dict[str, Any]) -> SkillExperience:
-        ...
+    def collect_experience(self, request: dict[str, Any]) -> SkillExperience: ...
 
-    def propose_candidate(self, request: dict[str, Any]) -> SkillCandidate:
-        ...
+    def propose_candidate(self, request: dict[str, Any]) -> SkillCandidate: ...
 
-    def evaluate_candidate(self, candidate: SkillCandidate) -> SkillEvaluationResult:
-        ...
+    def evaluate_candidate(
+        self, candidate: SkillCandidate
+    ) -> SkillEvaluationResult: ...
 
-    def decide_promotion(self, evaluation: SkillEvaluationResult) -> SkillPromotionDecision:
-        ...
+    def decide_promotion(
+        self, evaluation: SkillEvaluationResult
+    ) -> SkillPromotionDecision: ...
 
-    def promote_candidate(self, decision: SkillPromotionDecision) -> SkillRelease:
-        ...
+    def promote_candidate(self, decision: SkillPromotionDecision) -> SkillRelease: ...
 
-    def rollback_release(self, release: SkillRelease) -> SkillRollbackPlan:
-        ...
+    def rollback_release(self, release: SkillRelease) -> SkillRollbackPlan: ...
 
 
 __all__ = [

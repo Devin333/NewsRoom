@@ -3,8 +3,9 @@ from __future__ import annotations
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -18,6 +19,9 @@ from framework.harness import (
     HarnessSideEffectStorePort,
     HarnessValidationError,
 )
+from framework.harness.side_effects.models import HarnessSideEffectAttemptStatus
+from framework.harness.side_effects.ports import HarnessFencedSideEffectStorePort
+from framework.shared.json import stable_json_dumps
 from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
 
 
@@ -26,8 +30,22 @@ SUBJECT_SCOPE_REF = checksum_for({"paper_id": "paper-1"})
 COMMITTED_AT = datetime(2026, 7, 20, 4, 0, tzinfo=UTC)
 
 
-def _store(tmp_path: Path) -> SQLiteHarnessSideEffectStore:
-    return SQLiteHarnessSideEffectStore(tmp_path / "harness-side-effects.sqlite3")
+def _store(tmp_path: Path, **kwargs) -> SQLiteHarnessSideEffectStore:
+    return SQLiteHarnessSideEffectStore(
+        tmp_path / "harness-side-effects.sqlite3",
+        **kwargs,
+    )
+
+
+class _MutableClock:
+    def __init__(self) -> None:
+        self.now = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
 
 
 def _intent(
@@ -95,7 +113,8 @@ def _decision(
 def _outcome(
     decision: HarnessSideEffectDecision,
     *,
-    disposition: HarnessSideEffectDisposition | str = HarnessSideEffectDisposition.PREPARED,
+    disposition: HarnessSideEffectDisposition
+    | str = HarnessSideEffectDisposition.PREPARED,
 ) -> HarnessSideEffectOutcome:
     normalized = HarnessSideEffectDisposition(disposition)
     return HarnessSideEffectOutcome(
@@ -123,6 +142,7 @@ def test_sqlite_store_is_file_backed_wal_and_implements_ports(tmp_path: Path) ->
     store = _store(tmp_path)
 
     assert isinstance(store, HarnessSideEffectStorePort)
+    assert isinstance(store, HarnessFencedSideEffectStorePort)
     assert isinstance(store, HarnessSideEffectReaderPort)
     assert store.durability_policy == {
         "journal_mode": "WAL",
@@ -141,11 +161,45 @@ def test_sqlite_store_is_file_backed_wal_and_implements_ports(tmp_path: Path) ->
     assert {
         "harness_side_effect_decisions",
         "harness_side_effect_attempts",
+        "harness_side_effect_attempt_leases",
         "harness_side_effect_outcomes",
     } <= tables
 
     with pytest.raises(ValueError, match="file-backed"):
         SQLiteHarnessSideEffectStore(":memory:")
+
+
+def test_unknown_future_schema_fails_before_ddl_or_journal_mutation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "harness-side-effects.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE harness_side_effect_store_metadata ("
+            "schema_version INTEGER PRIMARY KEY, created_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO harness_side_effect_store_metadata "
+            "(schema_version, created_at) VALUES (999, 'future')"
+        )
+        connection.execute("CREATE TABLE future_owned_record (value TEXT NOT NULL)")
+        before = connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        ).fetchall()
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+
+    with pytest.raises(HarnessValidationError) as captured:
+        SQLiteHarnessSideEffectStore(database)
+
+    assert captured.value.code == "side_effect_store_schema_unsupported"
+    with sqlite3.connect(database) as connection:
+        after = connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        ).fetchall()
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == journal_mode
+    assert after == before
 
 
 def test_decision_outcome_and_attempt_survive_reconstruction(tmp_path: Path) -> None:
@@ -163,22 +217,31 @@ def test_decision_outcome_and_attempt_survive_reconstruction(tmp_path: Path) -> 
     reconstructed = _store(tmp_path)
     assert reconstructed.get_decision(decision.checksum) == decision
     assert reconstructed.list_decisions(run_id="run-1") == (decision,)
-    assert reconstructed.get_outcome(
-        effect_id=intent.effect_id,
-        identity_scope_ref=IDENTITY_SCOPE_REF,
-        subject_scope_ref=SUBJECT_SCOPE_REF,
-        idempotency_key=intent.idempotency_key,
-    ) == outcome
-    assert reconstructed.read_outcome(
-        effect_id=intent.effect_id,
-        identity_scope_ref=IDENTITY_SCOPE_REF,
-        subject_scope_ref=SUBJECT_SCOPE_REF,
-    ) == outcome
-    assert reconstructed.attempt_count(
-        effect_id=intent.effect_id,
-        identity_scope_ref=IDENTITY_SCOPE_REF,
-        subject_scope_ref=SUBJECT_SCOPE_REF,
-    ) == 1
+    assert (
+        reconstructed.get_outcome(
+            effect_id=intent.effect_id,
+            identity_scope_ref=IDENTITY_SCOPE_REF,
+            subject_scope_ref=SUBJECT_SCOPE_REF,
+            idempotency_key=intent.idempotency_key,
+        )
+        == outcome
+    )
+    assert (
+        reconstructed.read_outcome(
+            effect_id=intent.effect_id,
+            identity_scope_ref=IDENTITY_SCOPE_REF,
+            subject_scope_ref=SUBJECT_SCOPE_REF,
+        )
+        == outcome
+    )
+    assert (
+        reconstructed.attempt_count(
+            effect_id=intent.effect_id,
+            identity_scope_ref=IDENTITY_SCOPE_REF,
+            subject_scope_ref=SUBJECT_SCOPE_REF,
+        )
+        == 1
+    )
     reconstructed.verify_integrity()
 
 
@@ -265,19 +328,25 @@ def test_disposition_update_is_atomic_idempotent_and_restart_durable(
     assert quarantined is not None
     assert quarantined.disposition is HarnessSideEffectDisposition.QUARANTINE
     assert quarantined.checksum != prepared.checksum
-    assert store.set_disposition(
-        effect_id=intent.effect_id,
-        disposition="quarantine",
-        identity_scope_ref=IDENTITY_SCOPE_REF,
-        subject_scope_ref=SUBJECT_SCOPE_REF,
-    ) == quarantined
+    assert (
+        store.set_disposition(
+            effect_id=intent.effect_id,
+            disposition="quarantine",
+            identity_scope_ref=IDENTITY_SCOPE_REF,
+            subject_scope_ref=SUBJECT_SCOPE_REF,
+        )
+        == quarantined
+    )
 
     reconstructed = _store(tmp_path)
-    assert reconstructed.read_outcome(
-        effect_id=intent.effect_id,
-        identity_scope_ref=IDENTITY_SCOPE_REF,
-        subject_scope_ref=SUBJECT_SCOPE_REF,
-    ) == quarantined
+    assert (
+        reconstructed.read_outcome(
+            effect_id=intent.effect_id,
+            identity_scope_ref=IDENTITY_SCOPE_REF,
+            subject_scope_ref=SUBJECT_SCOPE_REF,
+        )
+        == quarantined
+    )
     with pytest.raises(HarnessValidationError, match="cannot publish"):
         reconstructed.set_disposition(
             effect_id=intent.effect_id,
@@ -328,10 +397,308 @@ def test_concurrent_attempt_reservations_never_exceed_durable_limit(
     with ThreadPoolExecutor(max_workers=8) as executor:
         results = list(executor.map(lambda _: reserve(), range(8)))
 
-    assert sorted(result for result in results if isinstance(result, int)) == [1, 2, 3, 4]
+    assert sorted(result for result in results if isinstance(result, int)) == [
+        1,
+        2,
+        3,
+        4,
+    ]
     assert results.count("effect_retry_exhausted") == 4
-    assert _store(tmp_path).attempt_count(
-        effect_id=intent.effect_id,
-        identity_scope_ref=IDENTITY_SCOPE_REF,
-        subject_scope_ref=SUBJECT_SCOPE_REF,
-    ) == 4
+    assert (
+        _store(tmp_path).attempt_count(
+            effect_id=intent.effect_id,
+            identity_scope_ref=IDENTITY_SCOPE_REF,
+            subject_scope_ref=SUBJECT_SCOPE_REF,
+        )
+        == 4
+    )
+
+
+def test_fenced_attempt_is_restart_durable_and_requires_confirmed_termination(
+    tmp_path: Path,
+) -> None:
+    clock = _MutableClock()
+    intent = _intent(effect_id="effect-fenced")
+    decision = _decision(intent, attempt_limit=3)
+    store = _store(tmp_path, attempt_lease_seconds=30, clock=clock)
+    store.put_decision(decision)
+
+    first = store.acquire_attempt(
+        decision,
+        owner_id="owner-1",
+        lease_id="lease-1",
+    )
+    reconstructed = _store(tmp_path, attempt_lease_seconds=30, clock=clock)
+    assert (
+        reconstructed.acquire_attempt(
+            decision,
+            owner_id="owner-1",
+            lease_id="lease-1",
+        )
+        == first
+    )
+    assert reconstructed.renew_attempt(first) == first
+    with pytest.raises(HarnessValidationError) as active:
+        reconstructed.acquire_attempt(
+            decision,
+            owner_id="owner-2",
+            lease_id="lease-2",
+        )
+    assert active.value.code == "side_effect_attempt_in_progress"
+
+    clock.advance(5)
+    renewed = reconstructed.renew_attempt(first)
+    assert renewed.lease_expires_at > first.lease_expires_at
+    clock.advance(31)
+    with pytest.raises(HarnessValidationError) as expired:
+        reconstructed.acquire_attempt(
+            decision,
+            owner_id="owner-2",
+            lease_id="lease-2",
+        )
+    assert expired.value.code == "side_effect_attempt_termination_unconfirmed"
+
+    indeterminate = reconstructed.finish_attempt(
+        renewed,
+        termination_confirmed=False,
+    )
+    assert indeterminate.status is HarnessSideEffectAttemptStatus.INDETERMINATE
+    with pytest.raises(HarnessValidationError) as unresolved:
+        reconstructed.acquire_attempt(
+            decision,
+            owner_id="owner-2",
+            lease_id="lease-2",
+        )
+    assert unresolved.value.code == "side_effect_attempt_termination_unconfirmed"
+
+    reconstructed.finish_attempt(renewed, termination_confirmed=True)
+    second = reconstructed.acquire_attempt(
+        decision,
+        owner_id="owner-2",
+        lease_id="lease-2",
+    )
+    assert second.attempt == second.fencing_generation == 2
+    assert second.idempotency_key == first.idempotency_key
+    with pytest.raises(HarnessValidationError) as stale:
+        reconstructed.complete_attempt(first, _outcome(decision))
+    assert stale.value.code == "stale_side_effect_attempt"
+
+    committed = reconstructed.complete_attempt(second, _outcome(decision))
+    assert committed.attempt_id == second.attempt_id
+    assert committed.fencing_generation == second.fencing_generation
+    assert committed.schema_version == "newsroom.harness-side-effect-outcome/v2"
+    persisted = _store(tmp_path, clock=clock)
+    assert (
+        persisted.get_outcome(
+            effect_id=decision.effect_id,
+            identity_scope_ref=decision.identity_scope_ref,
+            subject_scope_ref=decision.subject_scope_ref,
+            idempotency_key=decision.idempotency_key,
+        )
+        == committed
+    )
+    completed_attempt = persisted.get_attempt(
+        effect_id=decision.effect_id,
+        identity_scope_ref=decision.identity_scope_ref,
+        subject_scope_ref=decision.subject_scope_ref,
+    )
+    assert completed_attempt.status is HarnessSideEffectAttemptStatus.TERMINATED
+    assert completed_attempt.outcome_ref == committed.checksum
+    quarantined = persisted.set_disposition(
+        effect_id=decision.effect_id,
+        disposition="quarantine",
+        identity_scope_ref=decision.identity_scope_ref,
+        subject_scope_ref=decision.subject_scope_ref,
+    )
+    assert quarantined is not None
+    assert (
+        persisted.get_attempt(
+            effect_id=decision.effect_id,
+            identity_scope_ref=decision.identity_scope_ref,
+            subject_scope_ref=decision.subject_scope_ref,
+        ).outcome_ref
+        == quarantined.checksum
+    )
+    with pytest.raises(HarnessValidationError) as bypass:
+        persisted.put_outcome(_outcome(decision))
+    assert bypass.value.code == "fenced_side_effect_attempt_required"
+    persisted.verify_integrity()
+
+
+def test_concurrent_fenced_attempt_acquisition_allows_one_active_owner(
+    tmp_path: Path,
+) -> None:
+    intent = _intent(effect_id="effect-concurrent-fenced")
+    decision = _decision(intent, attempt_limit=4)
+    _store(tmp_path).put_decision(decision)
+
+    def acquire(index: int) -> int | str:
+        try:
+            return (
+                _store(tmp_path)
+                .acquire_attempt(
+                    decision,
+                    owner_id=f"owner-{index}",
+                    lease_id=f"lease-{index}",
+                )
+                .attempt
+            )
+        except HarnessValidationError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(acquire, range(8)))
+
+    assert results.count(1) == 1
+    assert results.count("side_effect_attempt_in_progress") == 7
+    assert (
+        _store(tmp_path).attempt_count(
+            effect_id=decision.effect_id,
+            identity_scope_ref=decision.identity_scope_ref,
+            subject_scope_ref=decision.subject_scope_ref,
+        )
+        == 1
+    )
+
+
+def test_integrity_rejects_v2_outcome_bound_to_another_attempt_identity(
+    tmp_path: Path,
+) -> None:
+    intent = _intent(effect_id="effect-tampered-fence")
+    decision = _decision(intent)
+    store = _store(tmp_path)
+    store.put_decision(decision)
+    attempt = store.acquire_attempt(
+        decision,
+        owner_id="owner-tampered-fence",
+        lease_id="lease-tampered-fence",
+    )
+    committed = store.complete_attempt(attempt, _outcome(decision))
+    completed_attempt = store.get_attempt(
+        effect_id=decision.effect_id,
+        identity_scope_ref=decision.identity_scope_ref,
+        subject_scope_ref=decision.subject_scope_ref,
+    )
+    assert completed_attempt is not None
+    tampered = replace(
+        committed,
+        attempt_id=checksum_for({"attempt": "another"}),
+        checksum=None,
+    )
+    relinked_attempt = completed_attempt.relinked_outcome(tampered.checksum)
+
+    with sqlite3.connect(store.database) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(
+            "UPDATE harness_side_effect_outcomes "
+            "SET outcome_ref = ?, outcome_json = ? WHERE outcome_ref = ?",
+            (
+                tampered.checksum,
+                stable_json_dumps(tampered.to_dict()),
+                committed.checksum,
+            ),
+        )
+        connection.execute(
+            "UPDATE harness_side_effect_attempt_leases "
+            "SET outcome_ref = ?, attempt_json = ? WHERE attempt_id = ?",
+            (
+                tampered.checksum,
+                stable_json_dumps(relinked_attempt.to_dict()),
+                attempt.attempt_id,
+            ),
+        )
+
+    with pytest.raises(HarnessValidationError) as captured:
+        _store(tmp_path)
+    assert captured.value.code == "side_effect_store_corrupt"
+    assert "conflicts with its lease" in str(captured.value)
+
+
+def test_concurrent_reconciliation_commits_one_outcome_without_new_fence(
+    tmp_path: Path,
+) -> None:
+    intent = _intent(effect_id="effect-concurrent-reconciliation")
+    decision = _decision(intent, attempt_limit=3)
+    initial_store = _store(tmp_path)
+    initial_store.put_decision(decision)
+    attempt = initial_store.acquire_attempt(
+        decision,
+        owner_id="crashed-owner",
+        lease_id="crashed-lease",
+    )
+    stores = (_store(tmp_path), _store(tmp_path))
+    barrier = Barrier(2)
+
+    def reconcile(store: SQLiteHarnessSideEffectStore) -> HarnessSideEffectOutcome:
+        barrier.wait(timeout=5)
+        return store.reconcile_attempt(attempt, _outcome(decision))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(reconcile, stores))
+
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0].attempt_id == attempt.attempt_id
+    assert outcomes[0].fencing_generation == 1
+    persisted = _store(tmp_path)
+    completed = persisted.get_attempt(
+        effect_id=decision.effect_id,
+        identity_scope_ref=decision.identity_scope_ref,
+        subject_scope_ref=decision.subject_scope_ref,
+    )
+    assert completed is not None
+    assert completed.status is HarnessSideEffectAttemptStatus.TERMINATED
+    assert completed.fencing_generation == 1
+    assert completed.outcome_ref == outcomes[0].checksum
+    assert (
+        persisted.attempt_count(
+            effect_id=decision.effect_id,
+            identity_scope_ref=decision.identity_scope_ref,
+            subject_scope_ref=decision.subject_scope_ref,
+        )
+        == 1
+    )
+    with sqlite3.connect(persisted.database) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM harness_side_effect_outcomes"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM harness_side_effect_attempt_leases"
+            ).fetchone()[0]
+            == 1
+        )
+    persisted.verify_integrity()
+
+
+def test_v1_schema_migrates_without_reclassifying_serial_attempts(
+    tmp_path: Path,
+) -> None:
+    intent = _intent(effect_id="effect-v1-migration")
+    decision = _decision(intent, attempt_limit=3)
+    store = _store(tmp_path)
+    store.put_decision(decision)
+    assert store.reserve_attempt(decision) == 1
+
+    with sqlite3.connect(store.database) as connection:
+        connection.execute("DROP TABLE harness_side_effect_attempt_leases")
+        connection.execute(
+            "UPDATE harness_side_effect_store_metadata SET schema_version = 1"
+        )
+
+    migrated = _store(tmp_path)
+    with sqlite3.connect(migrated.database) as connection:
+        version = connection.execute(
+            "SELECT schema_version FROM harness_side_effect_store_metadata"
+        ).fetchone()[0]
+    assert version == 2
+    assert migrated.reserve_attempt(decision) == 2
+    with pytest.raises(HarnessValidationError) as unfenced:
+        migrated.acquire_attempt(
+            decision,
+            owner_id="owner-v2",
+            lease_id="lease-v2",
+        )
+    assert unfenced.value.code == "side_effect_attempt_termination_unconfirmed"

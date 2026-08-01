@@ -23,8 +23,10 @@ from framework.harness.workflow.dsl import (
     ParallelAll,
     ParallelAny,
     ParallelBranch,
+    PureMerge,
     Sequence,
     StepRef,
+    VerifiedAggregation,
     Wait,
     WaitTimeoutPolicy,
 )
@@ -68,7 +70,10 @@ def test_every_graph_dsl_construct_round_trips_canonically() -> None:
                                         output_namespace="analysis.experiment",
                                     ),
                                 ),
-                                merge_ref="research_analysis_merge@1",
+                                merge=PureMerge(
+                                    "research_analysis_merge@1",
+                                    ("structure", "experiment"),
+                                ),
                             ),
                             priority=10,
                             condition=ConditionAll((passed, score)),
@@ -137,6 +142,24 @@ def test_every_graph_dsl_construct_round_trips_canonically() -> None:
     assert payload["schema_version"] == HARNESS_GRAPH_DSL_SCHEMA
     assert restored == graph
     assert restored.to_dict() == payload
+
+
+def test_parallel_merge_contracts_require_explicit_outputs_or_aggregation_input() -> None:
+    with pytest.raises(HarnessValidationError) as missing_outputs:
+        PureMerge("research.merge@1", ())
+
+    assert missing_outputs.value.code == "invalid_merge_contract"
+
+    aggregation = VerifiedAggregation(
+        step=StepRef("aggregate"),
+        branch_inputs_key="branch_output_refs",
+    )
+
+    assert aggregation.to_dict() == {
+        "kind": "aggregation_step",
+        "step": {"kind": "step", "step_id": "aggregate", "node_id": "aggregate"},
+        "branch_inputs_key": "branch_output_refs",
+    }
 
 
 def test_pre_input_contract_graph_spec_defaults_missing_input_keys() -> None:

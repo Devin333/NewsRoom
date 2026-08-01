@@ -15,8 +15,10 @@ from framework.harness.workflow.dsl import (
     ParallelAll,
     ParallelAny,
     ParallelBranch,
+    PureMerge,
     Sequence,
     StepRef,
+    VerifiedAggregation,
     Wait,
 )
 from framework.harness.workflow.graph import (
@@ -55,6 +57,7 @@ def test_legacy_linear_workflow_lowers_to_dependency_edges_without_fake_control_
         "report",
     ]
     assert all(isinstance(node, HarnessExecutableNode) for node in first.graph.nodes)
+    assert all(node.metadata["worker_type"] == "script" for node in first.graph.nodes)
     assert {
         (edge.source_id, edge.target_id, edge.edge_kind) for edge in first.graph.edges
     } == {
@@ -151,7 +154,10 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
                                             "right", StepRef("right"), "all.right"
                                         ),
                                     ),
-                                    merge_ref="merge.all@2",
+                                    merge=PureMerge(
+                                        "merge.all@2",
+                                        ("left_output", "right_output"),
+                                    ),
                                 ),
                                 priority=0,
                                 condition=_passed(),
@@ -236,6 +242,7 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
     assert kinds["route:join"] == HarnessGraphNodeKind.CHOICE_JOIN
     assert kinds["all-fork"] == HarnessGraphNodeKind.FORK_ALL
     assert kinds["all-join"] == HarnessGraphNodeKind.JOIN_ALL
+    assert kinds["all-join:merge"] == HarnessGraphNodeKind.MERGE
     assert kinds["any-fork"] == HarnessGraphNodeKind.FORK_ANY
     assert kinds["any-join"] == HarnessGraphNodeKind.JOIN_ANY
     assert kinds["bounded-loop"] == HarnessGraphNodeKind.LOOP_GUARD
@@ -249,6 +256,12 @@ def test_explicit_dsl_lowers_all_control_constructs_and_compensation() -> None:
     assert graph.terminal_policy == workflow.terminal_side_effect_policy
     assert graph.terminal_policy.handler_ref.handler_id == "publication.commit"
     assert graph.compensation_refs[0].handler_ref.exact_ref == "publication.retract@1"
+    merge = next(node for node in graph.nodes if node.node_id == "all-join:merge")
+    assert isinstance(merge, HarnessControlNode)
+    assert merge.merge is not None
+    assert merge.merge.output_keys == ("left_output", "right_output")
+    assert merge.merge.merge_ref is not None
+    assert merge.merge.merge_ref.exact_ref == "merge.all@2"
     assert any(edge.edge_kind == HarnessGraphEdgeKind.LOOP_BACK for edge in graph.edges)
     assert any(
         edge.target_id == "route:join"
@@ -289,6 +302,54 @@ def test_compiler_retains_retry_repair_and_marks_inferred_legacy_versions() -> N
         and edge.edge_kind == HarnessGraphEdgeKind.REPAIR
         for edge in graph.edges
     )
+
+
+def test_verified_aggregation_compiles_through_step_lifecycle_and_merge_marker() -> None:
+    workflow = HarnessWorkflowSpec(
+        workflow_id="verified-aggregation",
+        steps=(
+            HarnessStepSpec("left", "script", output_key="left_output"),
+            HarnessStepSpec("right", "script", output_key="right_output"),
+            HarnessStepSpec(
+                "aggregate",
+                "script",
+                input_keys=("branch_output_refs",),
+                output_key="combined",
+                quality_gate="aggregate.schema@1",
+            ),
+        ),
+        entry_step_id="left",
+        graph=HarnessGraphSpec(
+            "aggregation-graph",
+            ParallelAll(
+                "fork",
+                "join",
+                (
+                    ParallelBranch("left", StepRef("left"), "left"),
+                    ParallelBranch("right", StepRef("right"), "right"),
+                ),
+                merge=VerifiedAggregation(
+                    StepRef("aggregate"),
+                    "branch_output_refs",
+                ),
+            ),
+        ),
+    )
+
+    graph = HarnessWorkflowGraphCompiler().compile(workflow).graph
+    marker = next(node for node in graph.nodes if node.node_id == "join:merge")
+
+    assert isinstance(marker, HarnessControlNode)
+    assert marker.merge is not None
+    assert marker.merge.merge_kind.value == "aggregation_step"
+    assert marker.merge.aggregation_node_id == "aggregate"
+    assert marker.merge.output_keys == ("combined",)
+    assert graph.terminal_node_ids == ("join:merge",)
+    assert {
+        (edge.source_id, edge.target_id)
+        for edge in graph.edges
+        if edge.edge_kind is HarnessGraphEdgeKind.DEPENDENCY
+    }.issuperset({("join", "aggregate"), ("aggregate", "join:merge")})
 
 
 def test_unknown_step_and_loop_without_explicit_exit_fail_closed() -> None:

@@ -4,6 +4,7 @@
 - Registry status: `locked-for-initial-implementation`
 - Runtime generation: `newsroom.harness-graph-runtime/v2`
 - Captured: `2026-07-29`
+- Updated: `2026-08-01` for fenced side-effect outcomes and compact Graph projection records
 - Scope: OpenSpec task `1.5`
 
 This registry fixes the initial Graph Runtime contract and event identities
@@ -58,6 +59,24 @@ Required deterministic component versions:
 | Restricted condition policy | `newsroom.harness-graph-condition-policy/v1` |
 | Deterministic merge contract | `newsroom.harness-graph-merge/v1` |
 
+## Durable Projection Record
+
+`harness_graph_projection_committed` uses the current compact data schema
+`newsroom.harness-graph-projection-record/v2`. The record contains causal and
+projection checksums, sequence and budget evidence, an activity descriptor, and
+a bounded `state_summary`; it does not repeat the full `HarnessGraphState` in
+every event. The pinned reducer/applier reconstructs the full in-memory state
+and verifies `projection_commit_checksum` before the Control Plane accepts the
+commit.
+
+The historical `newsroom.harness-graph-control-commit/v1` projection payload
+remains readable but is no longer a writer. v2 replay uses the independent
+history component id `newsroom.harness-graph-projection-record`, so a stream
+containing v1 control commits and v2 compact records cannot accidentally pin
+conflicting versions under one deterministic-history component. A compact
+record checksum or summary mismatch fails closed; the summary is diagnostic,
+never scheduling authority.
+
 These are exact replay registrations, not package versions. A recorded history
 must resolve the exact implementation or an explicit migration. It cannot run
 the current implementation merely because the component ID matches.
@@ -110,11 +129,29 @@ Graph Runtime does not replace these exact dependency identities:
 | Replay activity record | `newsroom.replay-activity-record/v1` |
 | Side-effect intent | `newsroom.harness-side-effect-intent/v1` |
 | Side-effect decision | `decision_version = "1"` |
-| Side-effect outcome | `newsroom.harness-side-effect-outcome/v1` |
+| Side-effect attempt lease | `newsroom.harness-side-effect-attempt-lease/v1` |
+| Serial side-effect outcome | `newsroom.harness-side-effect-outcome/v1` |
+| Fenced side-effect outcome | `newsroom.harness-side-effect-outcome/v2` |
 | Terminal side-effect policy | `newsroom.harness-terminal-side-effect-policy/v1` |
 
 Graph history references these identities rather than copying or silently
 upgrading them.
+
+### Side-effect outcome reader and writer policy
+
+The outcome schemas are partitioned by execution semantics rather than dual
+writes. The serial path continues to write exact v1 bytes and checksums. Only
+`complete_attempt` and `reconcile_attempt` may write v2; v2 requires both the
+stable `attempt_id` and monotonic `fencing_generation`, and those fields
+participate in the outcome checksum.
+
+`HarnessSideEffectOutcome.from_dict` dispatches by exact schema identity and
+reads both versions. No v1-to-v2 upcaster exists or is permitted because a
+serial historical outcome contains no evidence from which a fence can be
+invented. Exact v1 and v2 readers remain available while either schema exists
+in durable records. The v1 writer remains limited to serial execution and may
+be retired only by a later explicit OpenSpec change after every serial caller
+has migrated and replay fixtures pass. Unknown outcome versions fail closed.
 
 ## Legacy v1 Reader Identities
 

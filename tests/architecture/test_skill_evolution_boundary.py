@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from framework.harness.skills.evolution.models import FORBIDDEN_SKILL_CANDIDATE_KEYS
 from framework.harness.workers.result import FORBIDDEN_WORKER_RESULT_KEYS
 from tests.architecture._helpers import PROJECT_ROOT, forbidden_imports, token_violations

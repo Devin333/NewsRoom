@@ -71,7 +71,11 @@ _SAFE_STATE_INTEGER_KEYS = frozenset(
         "sandbox_runs_used",
     }
 )
-_SAFE_STATE_TEXT_KEYS = frozenset({"repair_from_step_id"})
+_SAFE_STATE_TEXT_KEYS = frozenset(
+    {
+        "repair_from_step_id",
+    }
+)
 _SAFE_STEP_BOOLEAN_KEYS = frozenset({"approval_granted", "rerouted"})
 _SAFE_STEP_INTEGER_KEYS = frozenset({"activity_attempt"})
 _SAFE_STEP_TEXT_KEYS = frozenset(
@@ -88,6 +92,8 @@ _SAFE_STEP_TEXT_KEYS = frozenset(
         "worker_status",
     }
 )
+_SAFE_STATE_CHECKSUM_KEYS = frozenset()
+_SAFE_STEP_CHECKSUM_KEYS = frozenset()
 _REFERENCE_ONLY_STATE_KEYS = frozenset(
     {
         "outputs",
@@ -1165,6 +1171,10 @@ def _project_step_state(step: HarnessStepState) -> dict[str, Any]:
             metadata[key] = value
         elif key in _SAFE_STEP_INTEGER_KEYS:
             metadata[key] = _nonnegative_int(value, f"step metadata {key}")
+        elif key in _SAFE_STEP_CHECKSUM_KEYS:
+            if not _is_checksum(value):
+                raise HarnessValidationError(f"step metadata {key} must be a sha256 reference")
+            metadata[key] = value
         elif key in _SAFE_STEP_TEXT_KEYS and value is not None:
             text = str(value).strip()
             if text:
@@ -1204,6 +1214,10 @@ def _project_state_metadata(value: Mapping[str, Any]) -> dict[str, Any]:
     for key, item in value.items():
         if key in _SAFE_STATE_INTEGER_KEYS:
             projected[key] = _nonnegative_int(item, f"state metadata {key}")
+        elif key in _SAFE_STATE_CHECKSUM_KEYS:
+            if not _is_checksum(item):
+                raise HarnessValidationError(f"state metadata {key} must be a sha256 reference")
+            projected[key] = item
         elif key in _SAFE_STATE_TEXT_KEYS and item is not None:
             text = str(item).strip()
             if text:

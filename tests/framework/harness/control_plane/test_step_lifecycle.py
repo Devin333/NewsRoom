@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 import framework.harness.control_plane.step_lifecycle as step_lifecycle_module
-from framework.harness.control_plane.decision import HarnessDecisionType
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.gates import HarnessGateResult
 from framework.harness.control_plane.graph_state import (
@@ -25,14 +24,7 @@ from framework.harness.control_plane.graph_state import (
     HarnessNodeInstanceStatus,
 )
 from framework.harness.control_plane.policy import HarnessBudget, HarnessBudgetSnapshot
-from framework.harness.control_plane.scheduler import HarnessScheduler
-from framework.harness.control_plane.state import (
-    HarnessRunSpec,
-    HarnessRunStatus,
-    HarnessState,
-    HarnessStepState,
-    HarnessStepStatus,
-)
+from framework.harness.control_plane.state import HarnessStepState, HarnessStepStatus
 from framework.harness.control_plane.step_lifecycle import (
     StepGateObservation,
     StepLifecycleBindingMode,
@@ -52,26 +44,12 @@ from framework.harness.workflow.graph import (
     HarnessContractReference,
     HarnessGraphNodeKind,
 )
-from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.workflow.versioning import HARNESS_STEP_LIFECYCLE_VERSION
 from framework.harness.workers.result import HarnessWorkerResult
 from framework.shared.json import stable_json_dumps
 
 
 _MACHINE = StepLifecycleStateMachine()
-_LEGACY_DECISION_TYPES = {
-    StepLifecycleTransitionType.PLAN_STEP: HarnessDecisionType.PLAN_STEP,
-    StepLifecycleTransitionType.EXECUTE_STEP: HarnessDecisionType.EXECUTE_STEP,
-    StepLifecycleTransitionType.VERIFY_STEP: HarnessDecisionType.VERIFY_STEP,
-    StepLifecycleTransitionType.COMPLETE_STEP: HarnessDecisionType.COMPLETE_STEP,
-    StepLifecycleTransitionType.RETRY_STEP: HarnessDecisionType.RETRY_STEP,
-    StepLifecycleTransitionType.REPLAN_STEP: HarnessDecisionType.REPLAN_STEP,
-    StepLifecycleTransitionType.ROUTE_TO_REPAIR: HarnessDecisionType.ROUTE_TO_REPAIR,
-    StepLifecycleTransitionType.WAIT_FOR_APPROVAL: HarnessDecisionType.WAIT_FOR_APPROVAL,
-    StepLifecycleTransitionType.BLOCK_STEP: HarnessDecisionType.BLOCK_RUN,
-    StepLifecycleTransitionType.FAIL_STEP: HarnessDecisionType.FAIL_RUN,
-    StepLifecycleTransitionType.HALT_STEP: HarnessDecisionType.HALT_RUN,
-}
 
 
 def test_plan_execute_verify_phase_mapping_is_bounded_and_local_to_one_step() -> None:
@@ -647,69 +625,86 @@ def test_graph_bound_retry_budget_exact_boundary(
     assert transition.evidence_refs == (evidence,)
 
 
-def test_retry_replan_repair_approval_and_halt_match_legacy_scheduler() -> None:
+def test_retry_replan_repair_approval_and_halt_match_frozen_v1_goldens() -> None:
     retry_step = _step(
         retry_policy=HarnessRetryPolicy(max_attempts=2, retry_on_statuses=("failed",))
     )
-    _assert_legacy_parity(
+    _assert_frozen_v1_parity(
         step=retry_step,
         status=HarnessStepStatus.RUNNING,
         worker_result=HarnessWorkerResult("failed", error="transient"),
         attempts=1,
+        expected=StepLifecycleTransitionType.RETRY_STEP,
+        expected_reason="transient",
     )
 
     replan_step = _step()
-    _assert_legacy_parity(
+    _assert_frozen_v1_parity(
         step=replan_step,
         status=HarnessStepStatus.VERIFYING,
         gate_results=(HarnessGateResult("schema", False, reason="missing title"),),
         budget=HarnessBudget(20, 1, 1, 10),
+        expected=StepLifecycleTransitionType.REPLAN_STEP,
+        expected_reason="verification failed",
     )
 
     repair_step = _step(retry_policy=HarnessRetryPolicy(repair_step_id="repair"))
-    _assert_legacy_parity(
+    _assert_frozen_v1_parity(
         step=repair_step,
         status=HarnessStepStatus.VERIFYING,
         gate_results=(HarnessGateResult("schema", False, reason="missing title"),),
+        expected=StepLifecycleTransitionType.ROUTE_TO_REPAIR,
+        expected_target="repair",
+        expected_reason="verification failed; route to repair step",
     )
 
     approval_step = _step(metadata={"approval_required": True})
-    _assert_legacy_parity(
+    _assert_frozen_v1_parity(
         step=approval_step,
         status=HarnessStepStatus.RUNNING,
         worker_result=HarnessWorkerResult("succeeded"),
+        expected=StepLifecycleTransitionType.WAIT_FOR_APPROVAL,
+        expected_reason="step requires Harness approval",
     )
 
-    _assert_legacy_parity(
+    _assert_frozen_v1_parity(
         step=_step(),
         status=HarnessStepStatus.PENDING,
         budget=HarnessBudget(2, 0, 0, 10),
         turns_used=2,
+        expected=StepLifecycleTransitionType.HALT_STEP,
+        expected_reason="turn budget is exhausted",
     )
 
-    _assert_legacy_parity(
+    _assert_frozen_v1_parity(
         step=_step(),
         status=HarnessStepStatus.PLAN_VERIFIED,
         budget=HarnessBudget(20, 0, 0, 1),
         worker_calls_used=1,
+        expected=StepLifecycleTransitionType.HALT_STEP,
+        expected_reason="worker call budget is exhausted",
     )
 
 
-def test_plan_gate_failure_matches_legacy_replan_and_exhaustion_behavior() -> None:
+def test_plan_gate_failure_matches_frozen_v1_replan_and_exhaustion_goldens() -> None:
     failed_gate = HarnessGateResult("plan", False, reason="unsafe plan")
-    _assert_legacy_parity(
+    _assert_frozen_v1_parity(
         step=_step(),
         status=HarnessStepStatus.PLANNING,
         gate_results=(failed_gate,),
         budget=HarnessBudget(20, 1, 0, 10),
+        expected=StepLifecycleTransitionType.REPLAN_STEP,
+        expected_reason="plan gate failed",
     )
-    _assert_legacy_parity(
+    _assert_frozen_v1_parity(
         step=_step(),
         status=HarnessStepStatus.PLANNING,
         gate_results=(failed_gate,),
         budget=HarnessBudget(20, 1, 0, 10),
         replans_used=1,
         step_replans=1,
+        expected=StepLifecycleTransitionType.HALT_STEP,
+        expected_reason="plan gate failed and replan budget is exhausted",
     )
 
 
@@ -1052,10 +1047,13 @@ def test_invalid_or_ambiguous_inputs_fail_closed() -> None:
         )
 
 
-def _assert_legacy_parity(
+def _assert_frozen_v1_parity(
     *,
     step: HarnessStepSpec,
     status: HarnessStepStatus,
+    expected: StepLifecycleTransitionType,
+    expected_target: str | None = None,
+    expected_reason: str | None = None,
     budget: HarnessBudget | None = None,
     worker_result: HarnessWorkerResult | None = None,
     gate_results: tuple[HarnessGateResult, ...] = (),
@@ -1068,47 +1066,12 @@ def _assert_legacy_parity(
     approval_granted: bool = False,
 ) -> None:
     resolved_budget = budget or HarnessBudget(20, 2, 2, 10)
-    workflow = HarnessWorkflowSpec(
-        workflow_id=f"legacy-{step.step_id}",
-        steps=(
-            step,
-            HarnessStepSpec("repair", "script"),
-        )
-        if step.retry_policy.repair_step_id == "repair"
-        else (step,),
-        entry_step_id=step.step_id,
-    )
-    run_spec = HarnessRunSpec(
-        run_id=f"run-{step.step_id}",
-        workflow=workflow,
-        budget=resolved_budget,
-    )
-    legacy_step_state = HarnessStepState(
+    historical_step_state = HarnessStepState(
         step_id=step.step_id,
         status=status,
         attempts=attempts,
         replans=step_replans,
         metadata={"approval_granted": approval_granted},
-    )
-    other_states = tuple(
-        HarnessStepState(step_id=step_id)
-        for step_id in workflow.step_ids
-        if step_id != step.step_id
-    )
-    legacy_state = HarnessState(
-        run_spec=run_spec,
-        status=HarnessRunStatus.RUNNING,
-        step_states=(legacy_step_state, *other_states),
-        current_step_id=step.step_id,
-        turn_count=turns_used,
-        replan_count=replans_used,
-        worker_call_count=worker_calls_used,
-    )
-    legacy = HarnessScheduler().next_decision(
-        legacy_state,
-        worker_result=worker_result,
-        gate_results=gate_results,
-        quality_verdict=quality_verdict,
     )
     snapshot = HarnessBudgetSnapshot.from_budget(
         resolved_budget,
@@ -1118,7 +1081,7 @@ def _assert_legacy_parity(
     )
     transition = _MACHINE.next_transition(
         step,
-        StepLifecycleState.from_legacy(legacy_step_state),
+        StepLifecycleState.from_legacy(historical_step_state),
         StepLifecycleObservations.from_legacy(
             worker_result=worker_result,
             gate_results=gate_results,
@@ -1129,9 +1092,9 @@ def _assert_legacy_parity(
     )
 
     assert transition is not None
-    assert _LEGACY_DECISION_TYPES[transition.transition_type] is legacy.decision_type
-    assert transition.target_step_id == legacy.target_step_id
-    assert transition.reason == legacy.reason
+    assert transition.transition_type is expected
+    assert transition.target_step_id == expected_target
+    assert transition.reason == expected_reason
     assert transition.binding_mode is StepLifecycleBindingMode.LEGACY_UNBOUND
     assert transition.step_ref is None
     assert transition.node_instance_id is None

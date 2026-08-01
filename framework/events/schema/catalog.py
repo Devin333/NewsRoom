@@ -599,6 +599,35 @@ HARNESS_EVENT_ALIASES = (
 
 HARNESS_TRANSITION_EVENT_TYPE = "harness_transition_committed"
 HARNESS_TRANSITION_DATA_SCHEMA = "newsroom.harness-transition/v1"
+HARNESS_GRAPH_COMMIT_DATA_SCHEMA = "newsroom.harness-graph-control-commit/v1"
+HARNESS_GRAPH_PROJECTION_RECORD_DATA_SCHEMA = (
+    "newsroom.harness-graph-projection-record/v2"
+)
+HARNESS_GRAPH_COMMIT_EVENT_TYPES = (
+    "harness_graph_initialized",
+    "harness_graph_decision_committed",
+    "harness_graph_projection_committed",
+    "harness_graph_activity_result_committed",
+    "harness_graph_observation_committed",
+)
+HARNESS_GRAPH_TRANSITION_EVENT_SCHEMAS: Mapping[str, str] = MappingProxyType(
+    {
+        "harness_graph_created": "newsroom.harness-graph-created/v1",
+        "harness_graph_decision_committed": "newsroom.harness-graph-decision/v1",
+        "harness_graph_node_activated": "newsroom.harness-graph-node-activated/v1",
+        "harness_graph_node_terminal": "newsroom.harness-graph-node-terminal/v1",
+        "harness_graph_choice_selected": "newsroom.harness-graph-choice-selected/v1",
+        "harness_graph_fork_opened": "newsroom.harness-graph-fork-opened/v1",
+        "harness_graph_join_satisfied": "newsroom.harness-graph-join-satisfied/v1",
+        "harness_graph_loop_transitioned": "newsroom.harness-graph-loop-transition/v1",
+        "harness_graph_wait_transitioned": "newsroom.harness-graph-wait-transition/v1",
+        "harness_graph_winner_selected": "newsroom.harness-graph-winner-selected/v1",
+        "harness_graph_cancellation_transitioned": "newsroom.harness-graph-cancellation-transition/v1",
+        "harness_graph_compensation_transitioned": "newsroom.harness-graph-compensation-transition/v1",
+        "harness_graph_budget_transitioned": "newsroom.harness-graph-budget-transition/v1",
+        "harness_graph_run_lifecycle_transitioned": "newsroom.harness-graph-run-lifecycle-transition/v1",
+    }
+)
 
 
 def default_event_schema_catalog(
@@ -650,6 +679,38 @@ def default_event_schema_catalog(
             current=True,
         )
     )
+    for event_type in HARNESS_GRAPH_COMMIT_EVENT_TYPES:
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema=HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+                json_schema=_harness_graph_commit_payload_schema(event_type),
+                sensitivity_policy=SensitivityPolicy(),
+                current=event_type != "harness_graph_projection_committed",
+            )
+        )
+    catalog.register(
+        EventSchemaRegistration(
+            event_type="harness_graph_projection_committed",
+            data_schema=HARNESS_GRAPH_PROJECTION_RECORD_DATA_SCHEMA,
+            json_schema=_harness_graph_projection_record_payload_schema(),
+            sensitivity_policy=SensitivityPolicy(),
+            current=True,
+        )
+    )
+    for event_type, data_schema in HARNESS_GRAPH_TRANSITION_EVENT_SCHEMAS.items():
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema=data_schema,
+                json_schema=_harness_graph_transition_payload_schema(data_schema),
+                sensitivity_policy=SensitivityPolicy(),
+                # Decision commits keep the canonical control-commit schema as
+                # the writer.  Its logical decision schema remains explicitly
+                # readable for bounded history migration.
+                current=event_type not in HARNESS_GRAPH_COMMIT_EVENT_TYPES,
+            )
+        )
     return catalog
 
 
@@ -690,6 +751,230 @@ _ARRAY_OF_CHECKSUMS = {
     "items": _CHECKSUM_TEXT,
     "maxItems": 4096,
 }
+
+
+def _harness_graph_transition_payload_schema(data_schema: str) -> dict[str, Any]:
+    """Reference-only schema for one logical graph transition projection."""
+
+    return {
+        "type": "object",
+        "maxProperties": 10,
+        "properties": {
+            "schema_version": {"const": data_schema},
+            "transition_type": _TEXT,
+            "graph_checksum": _CHECKSUM_TEXT,
+            "projection_checksum": _CHECKSUM_TEXT,
+            "cause_checksum": {
+                "anyOf": [_CHECKSUM_TEXT, {"type": "null"}],
+            },
+            "node_instance_id": {
+                "anyOf": [_TEXT, {"type": "null"}],
+            },
+            "attempt": {
+                "anyOf": [_NONNEGATIVE_INTEGER, {"type": "null"}],
+            },
+            "evidence_refs": _ARRAY_OF_CHECKSUMS,
+            "payload_refs": {
+                "type": "object",
+                "maxProperties": 64,
+                "additionalProperties": _CHECKSUM_TEXT,
+            },
+            "diagnostic_refs": _ARRAY_OF_CHECKSUMS,
+        },
+        "required": [
+            "schema_version",
+            "transition_type",
+            "graph_checksum",
+            "projection_checksum",
+            "cause_checksum",
+            "node_instance_id",
+            "attempt",
+            "evidence_refs",
+            "payload_refs",
+            "diagnostic_refs",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def _harness_graph_commit_payload_schema(event_type: str) -> dict[str, Any]:
+    commit_kind: dict[str, Any]
+    commit_field: str
+    if event_type == "harness_graph_initialized":
+        commit_kind = {"const": "initialize"}
+        commit_field = "state"
+    elif event_type == "harness_graph_decision_committed":
+        commit_kind = {"const": "decision"}
+        commit_field = "decision"
+    elif event_type == "harness_graph_projection_committed":
+        commit_kind = {
+            "enum": [
+                "decision_projection",
+                "activity_result_projection",
+                "observation_projection",
+            ]
+        }
+        commit_field = "state"
+    elif event_type == "harness_graph_activity_result_committed":
+        commit_kind = {"const": "activity_result"}
+        commit_field = "result"
+    elif event_type == "harness_graph_observation_committed":
+        commit_kind = {"const": "observation"}
+        commit_field = "observation"
+    else:  # pragma: no cover - default catalog owns the finite caller set
+        raise AssertionError(f"unsupported Harness graph event type: {event_type}")
+    commit_properties: dict[str, Any] = {
+        "schema_version": {"const": HARNESS_GRAPH_COMMIT_DATA_SCHEMA},
+        "commit_kind": commit_kind,
+        "sequence": _POSITIVE_INTEGER,
+        "occurred_at": _TEXT,
+        "commit_checksum": _CHECKSUM_TEXT,
+        commit_field: _OBJECT,
+    }
+    commit_required = [
+        "schema_version",
+        "commit_kind",
+        "sequence",
+        "occurred_at",
+        "commit_checksum",
+        commit_field,
+    ]
+    if event_type == "harness_graph_decision_committed":
+        commit_properties.update(
+            {
+                "activity_input_ref": {
+                    "anyOf": [_CHECKSUM_TEXT, {"type": "null"}],
+                },
+                "accepted_evidence_refs": _ARRAY_OF_CHECKSUMS,
+                "side_effect_outcome_ref": {
+                    "anyOf": [_CHECKSUM_TEXT, {"type": "null"}],
+                },
+            }
+        )
+        commit_required.extend(
+            [
+                "activity_input_ref",
+                "accepted_evidence_refs",
+                "side_effect_outcome_ref",
+            ]
+        )
+    elif event_type in {
+        "harness_graph_initialized",
+        "harness_graph_projection_committed",
+    }:
+        previous_projection_checksum = (
+            {"type": "null"}
+            if event_type == "harness_graph_initialized"
+            else _CHECKSUM_TEXT
+        )
+        commit_properties.update(
+            {
+                "cause_checksum": _CHECKSUM_TEXT,
+                "previous_projection_checksum": previous_projection_checksum,
+                "budget_reservations": _OBJECT,
+                "budget_consumptions": _OBJECT,
+                "activity": {"anyOf": [_OBJECT, {"type": "null"}]},
+            }
+        )
+        commit_required.extend(
+            [
+                "cause_checksum",
+                "previous_projection_checksum",
+                "budget_reservations",
+                "budget_consumptions",
+                "activity",
+            ]
+        )
+    commit_schema = {
+        "type": "object",
+        "maxProperties": 17,
+        "properties": commit_properties,
+        "required": commit_required,
+        "additionalProperties": False,
+    }
+    if event_type == "harness_graph_initialized":
+        return {
+            "type": "object",
+            "maxProperties": 3,
+            "properties": {
+                "commit": commit_schema,
+                "graph": {"type": "object", "maxProperties": 32},
+                "run_spec_checksum": _CHECKSUM_TEXT,
+            },
+            "required": ["commit", "graph", "run_spec_checksum"],
+            "additionalProperties": False,
+        }
+    return {
+        "type": "object",
+        "maxProperties": 1,
+        "properties": {"commit": commit_schema},
+        "required": ["commit"],
+        "additionalProperties": False,
+    }
+
+
+def _harness_graph_projection_record_payload_schema() -> dict[str, Any]:
+    checksum = _CHECKSUM_TEXT
+    commit = {
+        "type": "object",
+        "maxProperties": 17,
+        "properties": {
+            "schema_version": {
+                "const": HARNESS_GRAPH_PROJECTION_RECORD_DATA_SCHEMA
+            },
+            "state_schema_version": {"type": "string", "minLength": 1},
+            "reducer_version": {"type": "string", "minLength": 1},
+            "commit_kind": {
+                "enum": [
+                    "decision_projection",
+                    "activity_result_projection",
+                    "observation_projection",
+                ]
+            },
+            "run_id": _TEXT,
+            "cause_checksum": checksum,
+            "previous_projection_checksum": checksum,
+            "projection_checksum": checksum,
+            "sequence": _POSITIVE_INTEGER,
+            "occurred_at": _TEXT,
+            "budget_reservations": _OBJECT,
+            "budget_consumptions": _OBJECT,
+            "activity": {"anyOf": [_OBJECT, {"type": "null"}]},
+            "state_summary": _OBJECT,
+            "activated_node_instance_id": {"anyOf": [_TEXT, {"type": "null"}]},
+            "projection_commit_checksum": checksum,
+            "record_checksum": checksum,
+        },
+        "required": [
+            "schema_version",
+            "state_schema_version",
+            "reducer_version",
+            "commit_kind",
+            "run_id",
+            "cause_checksum",
+            "previous_projection_checksum",
+            "projection_checksum",
+            "sequence",
+            "occurred_at",
+            "budget_reservations",
+            "budget_consumptions",
+            "activity",
+            "state_summary",
+            "activated_node_instance_id",
+            "projection_commit_checksum",
+            "record_checksum",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "maxProperties": 1,
+        "properties": {"commit": commit},
+        "required": ["commit"],
+        "additionalProperties": False,
+    }
+
+
 _HARNESS_GATE_RESULT = {
     "type": "object",
     "maxProperties": 6,
@@ -711,17 +996,19 @@ _HARNESS_GATE_RESULTS = {
 }
 _HARNESS_PHASE_METADATA = {
     "type": "object",
-    "maxProperties": 3,
+    "maxProperties": 5,
     "properties": {
         "turn_count": _NONNEGATIVE_INTEGER,
         "worker_call_count": _NONNEGATIVE_INTEGER,
         "replan_count": _NONNEGATIVE_INTEGER,
+        "node_instance_id": _TEXT,
+        "attempt": _NONNEGATIVE_INTEGER,
     },
     "additionalProperties": False,
 }
 _HARNESS_DECISION_PAYLOAD = {
     "type": "object",
-    "maxProperties": 9,
+    "maxProperties": 11,
     "properties": {
         "approval_outcome": {"enum": ["approved", "cancelled"]},
         "backoff_seconds": {"type": "number", "minimum": 0},
@@ -732,6 +1019,8 @@ _HARNESS_DECISION_PAYLOAD = {
         "worker_result_ref": _CHECKSUM_TEXT,
         "value_ref": _CHECKSUM_TEXT,
         "decision_payload_ref": _CHECKSUM_TEXT,
+        "graph_decision_checksum": _CHECKSUM_TEXT,
+        "side_effect_decision_ref": _CHECKSUM_TEXT,
     },
     "required": ["decision_payload_ref"],
     "additionalProperties": False,
@@ -1197,16 +1486,32 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "step_id": _TEXT,
                 "attempt": _POSITIVE_INTEGER,
                 "max_attempts": _POSITIVE_INTEGER,
-                "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
-                "on_timeout": _TEXT,
+                # Bounded legacy producer field. New producers record both the
+                # configured and effective timeout explicitly below.
+                "timeout_seconds": _NULLABLE_POSITIVE_NUMBER,
+                "configured_timeout_seconds": _NULLABLE_POSITIVE_NUMBER,
+                "effective_timeout_seconds": _NULLABLE_POSITIVE_NUMBER,
+                "cancellation_source": {
+                    "enum": ["step_deadline", "parent_attempt"]
+                },
+                "on_timeout": {"enum": ["fail", "retry"]},
                 "termination_confirmed": {"type": ["boolean", "null"]},
                 "indeterminate": _BOOLEAN,
             },
-            required=(
-                "attempt",
-                "max_attempts",
-                "timeout_seconds",
-                "on_timeout",
+            required=("attempt", "max_attempts", "on_timeout"),
+            any_of=(
+                {"required": ["timeout_seconds"]},
+                {
+                    "required": [
+                        "effective_timeout_seconds",
+                        "cancellation_source",
+                        "termination_confirmed",
+                        "indeterminate",
+                    ],
+                    "properties": {
+                        "termination_confirmed": {"type": "boolean"},
+                    },
+                },
             ),
         )
     if event_type == "policy_violation":
@@ -1497,6 +1802,7 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
                     ]
                 },
                 "activity_id": _TEXT,
+                "node_instance_id": _TEXT,
                 "idempotency_key": _TEXT,
                 "activity_attempt": _POSITIVE_INTEGER,
                 "activity_contract_version": _TEXT,

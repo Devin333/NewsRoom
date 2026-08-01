@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
-from business.research.application.single_paper_runtime import ResearchSinglePaperRuntime
+from business.research.application.single_paper_runtime import (
+    ResearchSinglePaperRuntime,
+)
 from business.research.workflows.paper_analysis_workflow import (
     build_paper_analysis_workflow_spec,
 )
 from framework.events.canonical import checksum_for
-from framework.events.runtime.history import DeterministicHistoryRecord
 from framework.harness import (
     CountingHarnessSideEffectHandler,
     DeterministicGate,
@@ -25,6 +25,8 @@ from framework.harness import (
     HarnessCheckpoint,
     HarnessControlPlane,
     HarnessGateResult,
+    HarnessGraphDecision,
+    HarnessGraphDecisionType,
     HarnessRetryPolicy,
     HarnessRoutingRule,
     HarnessRunSpec,
@@ -52,6 +54,57 @@ _FIXTURE = Path("tests/fixtures/harness/graph_migration/current_v1_golden.json")
 _FIXED_AT = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 _IDENTITY_SCOPE_REF = checksum_for({"tenant_id": "golden-tenant"})
 _SUBJECT_SCOPE_REF = checksum_for({"paper_id": "golden-paper"})
+_RUN_FIXTURE_NAMES = (
+    "linear_execution",
+    "conditional_route",
+    "retry",
+    "replan",
+    "repair",
+    "approval_wait",
+    "side_effect_publication",
+)
+_EXPECTED_OUTPUTS = {
+    "linear_execution": {
+        "collect": {
+            "status": "succeeded",
+            "output": {"evidence": ["claim-1"]},
+            "error": None,
+        },
+        "report": {
+            "status": "succeeded",
+            "output": {"report": "grounded"},
+            "error": None,
+        },
+    },
+    "conditional_route": {
+        "classify": {
+            "status": "succeeded",
+            "output": {"kind": "repair"},
+            "error": None,
+        },
+        "repair": {"status": "succeeded", "output": {"fixed": True}, "error": None},
+    },
+    "retry": {
+        "call": {"status": "succeeded", "output": {"value": "ok"}, "error": None},
+    },
+    "replan": {
+        "draft": {"status": "succeeded", "output": {"body": "x"}, "error": None},
+    },
+    "repair": {
+        "draft": {"status": "succeeded", "output": {"body": "x"}, "error": None},
+        "repair": {"status": "succeeded", "output": {"title": "fixed"}, "error": None},
+    },
+    "approval_wait": {
+        "publish": {"status": "succeeded", "output": {"candidate": "x"}, "error": None},
+    },
+    "side_effect_publication": {
+        "publish": {
+            "status": "succeeded",
+            "output": {"candidate": "report"},
+            "error": None,
+        },
+    },
+}
 
 
 class _RoutingGate(DeterministicGate):
@@ -67,13 +120,89 @@ class _RoutingGate(DeterministicGate):
         )
 
 
-def test_current_v1_harness_and_research_behavior_matches_golden_fixture() -> None:
+def test_graph_compiled_behavior_matches_v1_semantic_golden_fixture() -> None:
     expected = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    actual = build_graph_compiled_golden_snapshot()
 
-    assert build_current_v1_golden_snapshot() == expected
+    assert actual["schema"] == expected["schema"]
+    for fixture_name in _RUN_FIXTURE_NAMES:
+        assert actual[fixture_name] == _legacy_semantic_projection(
+            fixture_name,
+            expected[fixture_name],
+        ), fixture_name
+
+    expected_workflow = expected["linear_research_workflow"]
+    actual_workflow = actual["linear_research_workflow"]
+    assert actual_workflow["step_ids"] == expected_workflow["step_ids"]
+    assert actual_workflow["entry_step_id"] == expected_workflow["entry_step_id"]
+    assert actual_workflow["terminal_policy"] == expected_workflow["terminal_policy"]
+    assert actual_workflow["route_pairs"] == []
+    assert expected_workflow["route_pairs"]
+
+    research_workflow = build_paper_analysis_workflow_spec()
+    assert actual_workflow["workflow_checksum"] == checksum_for(
+        research_workflow.to_dict()
+    )
+    assert actual_workflow["workflow_checksum"] != expected_workflow[
+        "workflow_checksum"
+    ]
+    assert actual_workflow["compiled_graph_checksum"].startswith("sha256:")
+    recompiled_research = (
+        HarnessWorkflowGraphCompiler()
+        .compile(research_workflow)
+        .graph
+    )
+    assert (
+        actual_workflow["compiled_graph_checksum"]
+        == recompiled_research.checksum
+    )
+    node_kinds = {
+        node.node_id: node.node_kind.value for node in recompiled_research.nodes
+    }
+    assert {
+        "analysis_fork": "fork_all",
+        "analysis_join": "join_all",
+        "analysis_join:merge": "merge",
+    }.items() <= node_kinds.items()
+    assert {
+        (edge.source_id, edge.target_id, edge.branch_id)
+        for edge in recompiled_research.edges
+        if edge.edge_kind.value == "fork_branch"
+    } == {
+        ("analysis_fork", "analyze_structure", "structure"),
+        ("analysis_fork", "analyze_contribution", "contribution"),
+        ("analysis_fork", "analyze_experiments", "experiments"),
+    }
+
+    assert actual["checkpoint"] == expected["checkpoint"]
+    assert {
+        key: value
+        for key, value in actual["final_business_result"].items()
+        if key != "trace_event_types"
+    } == {
+        key: value
+        for key, value in expected["final_business_result"].items()
+        if key != "trace_event_types"
+    }
+    assert (
+        "harness_transition_committed"
+        in expected["final_business_result"]["trace_event_types"]
+    )
+    assert (
+        "harness_transition_committed"
+        not in actual["final_business_result"]["trace_event_types"]
+    )
+
+    graph_history = actual["durable_history"]
+    assert (
+        graph_history["decision_count"] == expected["durable_history"]["decision_count"]
+    )
+    assert graph_history["all_decisions_graph_native"] is True
+    assert graph_history["decision_checksums_unique"] is True
+    assert graph_history["legacy_transition_event_count"] == 0
 
 
-def build_current_v1_golden_snapshot() -> dict[str, Any]:
+def build_graph_compiled_golden_snapshot() -> dict[str, Any]:
     linear = _linear_run()
     conditional = _conditional_run()
     retry = _retry_run()
@@ -86,11 +215,11 @@ def build_current_v1_golden_snapshot() -> dict[str, Any]:
     research_workflow = build_paper_analysis_workflow_spec()
     compiled_research = HarnessWorkflowGraphCompiler().compile(research_workflow).graph
 
-    decision_histories = [
-        DeterministicHistoryRecord.from_dict(event.deterministic_history)
-        for event in linear.events
-        if event.event_type.value == "decision_recorded"
-    ]
+    graph_decisions = tuple(
+        decision
+        for decision in linear.decisions
+        if isinstance(decision, HarnessGraphDecision)
+    )
     return {
         "schema": "newsroom.harness-graph-migration-golden/v1",
         "linear_research_workflow": {
@@ -99,31 +228,23 @@ def build_current_v1_golden_snapshot() -> dict[str, Any]:
             "step_ids": list(research_workflow.step_ids),
             "entry_step_id": research_workflow.entry_step_id,
             "route_pairs": [
-                [rule.from_step, rule.to_step] for rule in research_workflow.routing_rules
+                [rule.from_step, rule.to_step]
+                for rule in research_workflow.routing_rules
             ],
             "terminal_policy": research_workflow.terminal_side_effect_policy.to_dict(),
         },
         "linear_execution": _run_projection(linear),
-        "conditional_route": {
-            **_run_projection(conditional),
-            "called_steps": sorted(conditional.worker_results),
-        },
+        "conditional_route": _run_projection(conditional),
         "retry": _run_projection(retry),
         "replan": _run_projection(replan),
         "repair": _run_projection(repair),
         "approval_wait": _run_projection(approval),
         "side_effect_publication": {
             **_run_projection(side_effect),
-            "handler_calls": side_effect_handler.call_count,
-            "decision_writes": side_effect_store.decision_write_count,
-            "outcome_writes": side_effect_store.outcome_write_count,
-            "outcomes": {
-                step_id: {
-                    "status": outcome.status.value,
-                    "disposition": outcome.disposition.value,
-                    "handler_ref": str(outcome.handler),
-                }
-                for step_id, outcome in sorted(side_effect.side_effect_outcomes.items())
+            "side_effect_metrics": {
+                "handler_calls": side_effect_handler.call_count,
+                "decision_writes": side_effect_store.decision_write_count,
+                "outcome_writes": side_effect_store.outcome_write_count,
             },
             "durable_reference_keys": sorted(
                 key
@@ -133,11 +254,16 @@ def build_current_v1_golden_snapshot() -> dict[str, Any]:
             ),
         },
         "durable_history": {
-            "schema": decision_histories[0].schema,
-            "decision_count": len(decision_histories),
-            "command_ordinals": [history.commands[0].ordinal for history in decision_histories],
-            "one_command_per_decision": all(
-                len(history.commands) == 1 for history in decision_histories
+            "schema": graph_decisions[0].schema_version,
+            "decision_count": len(graph_decisions),
+            "all_decisions_graph_native": len(graph_decisions) == len(linear.decisions),
+            "decision_checksums_unique": len(
+                {decision.decision_checksum for decision in graph_decisions}
+            )
+            == len(graph_decisions),
+            "legacy_transition_event_count": sum(
+                event.event_type.value == "harness_transition_committed"
+                for event in linear.events
             ),
         },
         "checkpoint": {
@@ -158,7 +284,9 @@ def _linear_run():
         workflow_id="golden-linear",
         steps=(
             HarnessStepSpec("collect", "llm", output_key="evidence"),
-            HarnessStepSpec("report", "llm", input_keys=("evidence",), output_key="report"),
+            HarnessStepSpec(
+                "report", "llm", input_keys=("evidence",), output_key="report"
+            ),
         ),
         entry_step_id="collect",
     )
@@ -204,9 +332,15 @@ def _conditional_run():
     return HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
         worker_registry={
-            "classify": lambda task: HarnessWorkerResult("succeeded", output={"kind": "repair"}),
-            "normal": lambda task: HarnessWorkerResult("succeeded", output={"normal": True}),
-            "repair": lambda task: HarnessWorkerResult("succeeded", output={"fixed": True}),
+            "classify": lambda task: HarnessWorkerResult(
+                "succeeded", output={"kind": "repair"}
+            ),
+            "normal": lambda task: HarnessWorkerResult(
+                "succeeded", output={"normal": True}
+            ),
+            "repair": lambda task: HarnessWorkerResult(
+                "succeeded", output={"fixed": True}
+            ),
         },
         gate_registry=registry,
     ).run(HarnessRunSpec("golden-conditional-run", workflow, created_at=_FIXED_AT))
@@ -256,7 +390,9 @@ def _replan_run():
     )
     return HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
-        worker_registry={"draft": lambda task: HarnessWorkerResult("succeeded", output={"body": "x"})},
+        worker_registry={
+            "draft": lambda task: HarnessWorkerResult("succeeded", output={"body": "x"})
+        },
     ).run(
         HarnessRunSpec(
             "golden-replan-run",
@@ -284,8 +420,12 @@ def _repair_run():
     return HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
         worker_registry={
-            "draft": lambda task: HarnessWorkerResult("succeeded", output={"body": "x"}),
-            "repair": lambda task: HarnessWorkerResult("succeeded", output={"title": "fixed"}),
+            "draft": lambda task: HarnessWorkerResult(
+                "succeeded", output={"body": "x"}
+            ),
+            "repair": lambda task: HarnessWorkerResult(
+                "succeeded", output={"title": "fixed"}
+            ),
         },
     ).run(HarnessRunSpec("golden-repair-run", workflow, created_at=_FIXED_AT))
 
@@ -293,12 +433,20 @@ def _repair_run():
 def _approval_run():
     workflow = HarnessWorkflowSpec(
         workflow_id="golden-approval",
-        steps=(HarnessStepSpec("publish", "artifact", metadata={"approval_required": True}),),
+        steps=(
+            HarnessStepSpec(
+                "publish", "artifact", metadata={"approval_required": True}
+            ),
+        ),
         entry_step_id="publish",
     )
     return HarnessControlPlane(
         event_port=InMemoryHarnessEventPort(),
-        worker_registry={"publish": lambda task: HarnessWorkerResult("succeeded", output={"candidate": "x"})},
+        worker_registry={
+            "publish": lambda task: HarnessWorkerResult(
+                "succeeded", output={"candidate": "x"}
+            )
+        },
     ).run(HarnessRunSpec("golden-approval-run", workflow, created_at=_FIXED_AT))
 
 
@@ -421,27 +569,22 @@ def _research_result() -> dict[str, Any]:
         "rag_context_present": result.rag_context is not None,
         "artifact_types": sorted(result.artifact_refs),
         "worker_steps": sorted(result.diagnostics["worker_results"]),
-        "trace_event_types": sorted({event.event_type.value for event in result.trace.events}),
+        "trace_event_types": sorted(
+            {event.event_type.value for event in result.trace.events}
+        ),
     }
 
 
 def _run_projection(result) -> dict[str, Any]:
+    graph_state = result.graph_state
+    assert graph_state is not None
+    graph_budget_usage = {
+        counter.name: counter.used for counter in graph_state.budgets.counters
+    }
     return {
         "status": result.state.status.value,
         "current_step_id": result.state.current_step_id,
-        "decisions": [
-            ":".join(
-                (
-                    decision.decision_type.value,
-                    decision.step_id or "-",
-                    decision.target_step_id or "-",
-                )
-            )
-            for decision in result.decisions
-        ],
-        "event_type_counts": dict(
-            sorted(Counter(event.event_type.value for event in result.events).items())
-        ),
+        "decisions": _graph_decisions_as_v1_semantics(result),
         "phase_sequence": [
             f"{event.step_id}:{event.payload['phase']}:{event.payload['boundary']}"
             for event in result.events
@@ -460,9 +603,263 @@ def _run_projection(result) -> dict[str, Any]:
             "replans": result.state.replan_count,
             "worker_calls": result.state.worker_call_count,
         },
+        "graph_budget_usage": {
+            "turns": graph_budget_usage["turns"],
+            "replans": graph_budget_usage["replans"],
+            "worker_calls": graph_budget_usage["worker_calls"],
+        },
         "terminal_reason": result.state.metadata.get("terminal_reason"),
         "worker_steps": sorted(result.worker_results),
+        "outputs": {
+            step_id: {
+                "status": worker_result.status.value,
+                "output": worker_result.candidate_payload()["output"],
+                "error": worker_result.error,
+            }
+            for step_id, worker_result in sorted(result.worker_results.items())
+        },
+        "gates": [
+            {
+                "step_id": event.step_id,
+                "gate": event.payload["gate"],
+                "passed": event.payload["passed"],
+            }
+            for event in result.events
+            if event.event_type.value == "gate_evaluated"
+        ],
+        "side_effects": {
+            step_id: {
+                "status": outcome.status.value,
+                "disposition": outcome.disposition.value,
+                "handler_ref": str(outcome.handler),
+            }
+            for step_id, outcome in sorted(result.side_effect_outcomes.items())
+        },
+        "graph_terminal": {
+            "lifecycle": graph_state.lifecycle.value,
+            "outcome": graph_state.outcome.value,
+            "reason_code": graph_state.terminal_reason_code,
+        },
+        "event_protocol": {
+            "all_decisions_graph_native": all(
+                isinstance(decision, HarnessGraphDecision)
+                for decision in result.decisions
+            ),
+            "legacy_transition_event_count": sum(
+                event.event_type.value == "harness_transition_committed"
+                for event in result.events
+            ),
+        },
     }
 
 
-__all__ = ["build_current_v1_golden_snapshot"]
+def _graph_decisions_as_v1_semantics(result) -> list[str]:
+    graph_state = result.graph_state
+    assert graph_state is not None
+    executable_node_ids = {
+        node.identity.node_id
+        for node in graph_state.node_instances
+        if node.step_id is not None
+    }
+    projected: list[str] = []
+    routed_targets: set[str] = set()
+    current_step_id: str | None = None
+    started = False
+
+    for decision in result.decisions:
+        assert isinstance(decision, HarnessGraphDecision)
+        if decision.decision_type is HarnessGraphDecisionType.ACTIVATE_NODE:
+            node_id = decision.node_id
+            assert node_id is not None
+            if node_id not in executable_node_ids:
+                continue
+            if not started:
+                projected.append(f"start_step:{node_id}:{node_id}")
+                started = True
+            elif node_id in routed_targets:
+                routed_targets.remove(node_id)
+            else:
+                assert current_step_id is not None
+                projected.append(f"route_to_step:{current_step_id}:{node_id}")
+            continue
+
+        if decision.decision_type is HarnessGraphDecisionType.SELECT_CHOICE:
+            assert current_step_id is not None
+            target_node_id = _single_target(decision)
+            projected.append(f"route_to_step:{current_step_id}:{target_node_id}")
+            routed_targets.add(target_node_id)
+            continue
+
+        transition_type = decision.payload.get("step_transition_type")
+        if isinstance(transition_type, str):
+            # The graph side-effect protocol splits the legacy completion
+            # boundary into PREPARE_SIDE_EFFECT and COMPLETE_NODE.  The
+            # latter is an internal durable acknowledgement, so omit it
+            # from the v1 semantic projection to preserve one completion
+            # event before COMPLETE_RUN.
+            if (
+                decision.decision_type is HarnessGraphDecisionType.COMPLETE_NODE
+                and decision.payload.get("side_effect_prepare_decision_ref")
+            ):
+                continue
+            step_id = decision.node_id or current_step_id
+            assert step_id is not None
+            legacy_transition_type = (
+                "halt_run" if transition_type == "halt_step" else transition_type
+            )
+            target_step_id = decision.payload.get("target_step_id")
+            if target_step_id is None and decision.target_node_ids:
+                target_step_id = _single_target(decision)
+            projected.append(
+                f"{legacy_transition_type}:{step_id}:{target_step_id or '-'}"
+            )
+            current_step_id = step_id
+            if decision.decision_type is HarnessGraphDecisionType.ROUTE_TO_REPAIR:
+                assert isinstance(target_step_id, str)
+                routed_targets.add(target_step_id)
+            continue
+
+        if decision.decision_type is HarnessGraphDecisionType.COMPLETE_RUN:
+            assert current_step_id is not None
+            projected.append(f"complete_run:{current_step_id}:-")
+            continue
+        if decision.decision_type is HarnessGraphDecisionType.PROJECT_RUN_WAITING:
+            continue
+        raise AssertionError(
+            f"unmapped Graph migration decision: {decision.decision_type.value}"
+        )
+    return projected
+
+
+def _single_target(decision: HarnessGraphDecision) -> str:
+    assert len(decision.target_node_ids) == 1
+    return decision.target_node_ids[0]
+
+
+def _legacy_semantic_projection(
+    fixture_name: str,
+    legacy: dict[str, Any],
+) -> dict[str, Any]:
+    expected_outputs = _EXPECTED_OUTPUTS[fixture_name]
+    expected_gates = _expected_gate_projection(fixture_name)
+    assert sorted(expected_outputs) == legacy["worker_steps"]
+    assert len(expected_gates) == legacy["event_type_counts"]["gate_evaluated"]
+    projection = {
+        "status": legacy["status"],
+        "current_step_id": legacy["current_step_id"],
+        "decisions": legacy["decisions"],
+        "phase_sequence": [
+            item
+            for item in legacy["phase_sequence"]
+            if item.split(":", maxsplit=2)[1] in {"plan", "execute", "verify"}
+        ],
+        "step_states": legacy["step_states"],
+        "counters": legacy["counters"],
+        "graph_budget_usage": legacy["counters"],
+        "terminal_reason": legacy["terminal_reason"],
+        "worker_steps": legacy["worker_steps"],
+        "outputs": expected_outputs,
+        "gates": expected_gates,
+        "side_effects": legacy.get("outcomes", {}),
+        "graph_terminal": _legacy_graph_terminal(
+            legacy["status"],
+            legacy["terminal_reason"],
+        ),
+        "event_protocol": {
+            "all_decisions_graph_native": True,
+            "legacy_transition_event_count": 0,
+        },
+    }
+    if fixture_name == "side_effect_publication":
+        projection["side_effect_metrics"] = {
+            "handler_calls": legacy["handler_calls"],
+            "decision_writes": legacy["decision_writes"],
+            "outcome_writes": legacy["outcome_writes"],
+        }
+        projection["durable_reference_keys"] = legacy["durable_reference_keys"]
+    return projection
+
+
+def _legacy_graph_terminal(status: str, terminal_reason: str | None) -> dict[str, Any]:
+    lifecycle_and_outcome = {
+        "succeeded": ("completed", "succeeded"),
+        "failed": ("completed", "failed"),
+        "cancelled": ("completed", "cancelled"),
+        "waiting_approval": ("waiting", "none"),
+        "halted": ("halted", "none"),
+    }
+    lifecycle, outcome = lifecycle_and_outcome[status]
+    reason_codes = {
+        "verification failed and replan budget is exhausted": (
+            "verification_failed_replans_exhausted"
+        ),
+    }
+    return {
+        "lifecycle": lifecycle,
+        "outcome": outcome,
+        "reason_code": reason_codes.get(terminal_reason),
+    }
+
+
+def _expected_gate_projection(fixture_name: str) -> list[dict[str, Any]]:
+    if fixture_name == "linear_execution":
+        return [*_step_gates("collect"), *_step_gates("report")]
+    if fixture_name == "conditional_route":
+        return [
+            *_step_gates("classify", extra_verify_gates=("golden_routing",)),
+            *_step_gates("repair"),
+        ]
+    if fixture_name == "retry":
+        return _step_gates("call")
+    if fixture_name == "replan":
+        failed_attempt = _step_gates("draft", output_schema_passed=False)
+        return [*failed_attempt, *failed_attempt]
+    if fixture_name == "repair":
+        return [
+            *_step_gates("draft", output_schema_passed=False),
+            *_step_gates("repair"),
+        ]
+    if fixture_name == "approval_wait":
+        return _plan_gates("publish")
+    if fixture_name == "side_effect_publication":
+        return _step_gates("publish")
+    raise AssertionError(f"unknown migration fixture: {fixture_name}")
+
+
+def _step_gates(
+    step_id: str,
+    *,
+    output_schema_passed: bool = True,
+    extra_verify_gates: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    verify_gates = (
+        ("tool_allowlist", True),
+        ("output_schema", output_schema_passed),
+        ("deduplication", True),
+        ("score_range", True),
+        ("budget", True),
+        ("skill_evolution_budget", True),
+        *((gate, True) for gate in extra_verify_gates),
+    )
+    return [
+        *_plan_gates(step_id),
+        *(
+            {"step_id": step_id, "gate": gate, "passed": passed}
+            for gate, passed in verify_gates
+        ),
+    ]
+
+
+def _plan_gates(step_id: str) -> list[dict[str, Any]]:
+    return [
+        {"step_id": step_id, "gate": gate, "passed": True}
+        for gate in (
+            "tool_allowlist",
+            "deduplication",
+            "budget",
+            "skill_evolution_budget",
+        )
+    ]
+
+
+__all__ = ["build_graph_compiled_golden_snapshot"]

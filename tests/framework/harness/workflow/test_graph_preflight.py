@@ -12,6 +12,7 @@ from framework.harness.workflow.dsl import (
     HarnessGraphSpec,
     ParallelAll,
     ParallelBranch,
+    PureMerge,
     Sequence,
     StepRef,
 )
@@ -314,7 +315,11 @@ def test_parallel_shared_write_requires_explicit_merge_and_isolated_namespaces()
                         ParallelBranch("left", StepRef("left"), "branch.left"),
                         ParallelBranch("right", StepRef("right"), "branch.right"),
                     ),
-                    merge_ref=merge_ref,
+                    merge=(
+                        None
+                        if merge_ref is None
+                        else PureMerge(merge_ref, ("shared",))
+                    ),
                 ),
             ),
         )
@@ -329,6 +334,30 @@ def test_parallel_shared_write_requires_explicit_merge_and_isolated_namespaces()
     }
     assert "parallel_shared_write_conflict" not in {
         item.code for item in _preflight(with_merge).diagnostics
+    }
+
+    incomplete_merge = HarnessWorkflowGraphCompiler().compile(
+        HarnessWorkflowSpec(
+            workflow_id="parallel-incomplete-merge",
+            steps=workflow(None).steps,
+            entry_step_id="left",
+            graph=HarnessGraphSpec(
+                graph_id="parallel-incomplete-merge",
+                root=ParallelAll(
+                    fork_id="fork",
+                    join_id="join",
+                    branches=(
+                        ParallelBranch("left", StepRef("left"), "branch.left"),
+                        ParallelBranch("right", StepRef("right"), "branch.right"),
+                    ),
+                    merge=PureMerge("shared.merge@1", ("other",)),
+                ),
+            ),
+        )
+    ).graph
+
+    assert "parallel_shared_write_unmerged" in {
+        item.code for item in _preflight(incomplete_merge).diagnostics
     }
 
 

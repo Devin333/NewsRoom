@@ -8,9 +8,9 @@ from framework.harness import (
     GateRegistration,
     HarnessBudget,
     HarnessControlPlane,
-    HarnessDecisionType,
     HarnessEventType,
     HarnessGateResult,
+    HarnessGraphDecisionType,
     InMemoryHarnessEventPort,
     HarnessRetryPolicy,
     HarnessRouteKind,
@@ -21,10 +21,6 @@ from framework.harness import (
     HarnessStepStatus,
     HarnessWorkerResult,
     HarnessWorkflowSpec,
-)
-from framework.events.runtime.history import (
-    DETERMINISTIC_HISTORY_EXTENSION,
-    DeterministicHistoryRecord,
 )
 
 
@@ -48,8 +44,9 @@ def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> N
         ),
         entry_step_id="collect",
     )
+    event_port = InMemoryHarnessEventPort()
     result = HarnessControlPlane(
-        event_port=InMemoryHarnessEventPort(),
+        event_port=event_port,
         worker_registry={
             "collect": lambda task: HarnessWorkerResult(status="succeeded", output={"claim": "grounded"}),
             "summarize": lambda task: HarnessWorkerResult(status="succeeded", output={"summary": "done"}),
@@ -58,17 +55,17 @@ def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> N
 
     assert result.state.status == HarnessRunStatus.SUCCEEDED
     assert [decision.decision_type for decision in result.decisions] == [
-        HarnessDecisionType.START_STEP,
-        HarnessDecisionType.PLAN_STEP,
-        HarnessDecisionType.EXECUTE_STEP,
-        HarnessDecisionType.VERIFY_STEP,
-        HarnessDecisionType.COMPLETE_STEP,
-        HarnessDecisionType.ROUTE_TO_STEP,
-        HarnessDecisionType.PLAN_STEP,
-        HarnessDecisionType.EXECUTE_STEP,
-        HarnessDecisionType.VERIFY_STEP,
-        HarnessDecisionType.COMPLETE_STEP,
-        HarnessDecisionType.COMPLETE_RUN,
+        HarnessGraphDecisionType.ACTIVATE_NODE,
+        HarnessGraphDecisionType.ENTER_STEP_PHASE,
+        HarnessGraphDecisionType.DISPATCH_ACTIVITY,
+        HarnessGraphDecisionType.VERIFY_ACTIVITY_RESULT,
+        HarnessGraphDecisionType.COMPLETE_NODE,
+        HarnessGraphDecisionType.ACTIVATE_NODE,
+        HarnessGraphDecisionType.ENTER_STEP_PHASE,
+        HarnessGraphDecisionType.DISPATCH_ACTIVITY,
+        HarnessGraphDecisionType.VERIFY_ACTIVITY_RESULT,
+        HarnessGraphDecisionType.COMPLETE_NODE,
+        HarnessGraphDecisionType.COMPLETE_RUN,
     ]
     phase_events = [event for event in result.events if event.event_type == HarnessEventType.PHASE_RECORDED]
     assert [(event.step_id, event.payload["phase"], event.payload["boundary"]) for event in phase_events] == [
@@ -85,26 +82,23 @@ def test_linear_workflow_executes_steps_in_order_with_plan_execute_verify() -> N
         ("summarize", "verify", "entry"),
         ("summarize", "verify", "exit"),
     ]
-    decision_events = [
-        event
-        for event in result.events
-        if event.event_type == HarnessEventType.DECISION_RECORDED
-    ]
-    histories = [
-        DeterministicHistoryRecord.from_dict(event.deterministic_history)
-        for event in decision_events
-    ]
-    assert [history.commands[0].ordinal for history in histories] == list(
-        range(len(histories))
+    recovery = event_port.recover_graph(result.state.run_spec.run_id)
+    assert tuple(commit.decision for commit in recovery.decision_commits) == tuple(
+        result.decisions
     )
-    assert all(len(history.commands) == 1 for history in histories)
-    transition_histories = [
-        DeterministicHistoryRecord.from_dict(event.deterministic_history)
-        for event in result.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.deterministic_history is not None
-    ]
-    assert all(not history.commands for history in transition_histories)
+    assert recovery.pending_decisions == ()
+    assert len(
+        {commit.decision.decision_checksum for commit in recovery.decision_commits}
+    ) == len(result.decisions)
+    projection_sequences = {
+        commit.cause_checksum: commit.sequence
+        for commit in recovery.projection_commits
+    }
+    assert all(
+        commit.sequence
+        < projection_sequences[commit.decision.decision_checksum]
+        for commit in recovery.decision_commits
+    )
 
 
 def test_worker_waiting_approval_status_cannot_create_approval_state() -> None:
@@ -129,12 +123,15 @@ def test_worker_waiting_approval_status_cannot_create_approval_state() -> None:
 
     assert result.state.status == HarnessRunStatus.HALTED
     assert all(
-        decision.decision_type != HarnessDecisionType.WAIT_FOR_APPROVAL
+        decision.decision_type is not HarnessGraphDecisionType.REGISTER_WAIT
         for decision in result.decisions
     )
     assert result.state.metadata["terminal_reason"] == (
-        "worker requested approval without Harness policy"
+        "worker_approval_request_untrusted"
     )
+    halt = result.decisions[-1]
+    assert halt.decision_type is HarnessGraphDecisionType.HALT_RUN
+    assert halt.payload["reason"] == "worker requested approval without Harness policy"
 
 
 def test_routing_rule_jumps_to_declared_step() -> None:
@@ -177,8 +174,12 @@ def test_routing_rule_jumps_to_declared_step() -> None:
         ),
     ).run(HarnessRunSpec(run_id="run-route", workflow=workflow))
 
-    routed = [decision for decision in result.decisions if decision.decision_type == HarnessDecisionType.ROUTE_TO_STEP]
-    assert routed[0].target_step_id == "repair"
+    routed = [
+        decision
+        for decision in result.decisions
+        if decision.decision_type is HarnessGraphDecisionType.SELECT_CHOICE
+    ]
+    assert routed[0].target_node_ids == ("repair",)
     assert "normal_path" not in result.worker_results
     assert result.state.status == HarnessRunStatus.SUCCEEDED
 
@@ -206,8 +207,12 @@ def test_quality_gate_failed_routes_to_repair_step() -> None:
         }
     ).run(HarnessRunSpec(run_id="run-repair", workflow=workflow))
 
-    repair_decisions = [decision for decision in result.decisions if decision.decision_type == HarnessDecisionType.ROUTE_TO_REPAIR]
-    assert repair_decisions[0].target_step_id == "repair"
+    repair_decisions = [
+        decision
+        for decision in result.decisions
+        if decision.decision_type is HarnessGraphDecisionType.ROUTE_TO_REPAIR
+    ]
+    assert repair_decisions[0].target_node_ids == ("repair",)
     draft_state = next(step for step in result.state.step_states if step.step_id == "draft")
     assert draft_state.status == HarnessStepStatus.FAILED
     assert result.state.status == HarnessRunStatus.SUCCEEDED
@@ -260,4 +265,7 @@ def test_max_turns_exhaustion_halts_run() -> None:
     )
 
     assert result.state.status == HarnessRunStatus.HALTED
-    assert result.state.metadata["terminal_reason"] == "turn budget is exhausted"
+    assert result.state.metadata["terminal_reason"] == "turn_budget_exhausted"
+    halt = result.decisions[-1]
+    assert halt.decision_type is HarnessGraphDecisionType.HALT_RUN
+    assert halt.payload["reason"] == "turn budget is exhausted"

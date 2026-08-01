@@ -12,6 +12,7 @@ from framework.harness import (
     HarnessBudget,
     HarnessControlPlane,
     HarnessEventCanonicalAdapter,
+    HarnessGraphDecisionType,
     HarnessRetryPolicy,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -25,6 +26,7 @@ from framework.harness import (
     HarnessWorkflowSpec,
     harness_worker_candidate_ref,
 )
+from framework.harness.control_plane.graph_evaluator import HarnessGraphObservationType
 from infrastructure.storage.events.activity_store import SQLiteRecordedActivityStore
 from infrastructure.storage.events.sqlite import SQLiteEventStore
 from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
@@ -34,40 +36,70 @@ IDENTITY_SCOPE_REF = checksum_for("tenant-test")
 SUBJECT_SCOPE_REF = checksum_for({"paper_id": "paper-1"})
 
 
-class _FailBeforeTransitionPort:
-    def __init__(self, port, transition_kind: HarnessTransitionKind) -> None:
+class _GraphPortProxy:
+    def __init__(self, port) -> None:
         self._port = port
+
+    def __getattr__(self, name):
+        return getattr(self._port, name)
+
+    def initialize_graph(self, *args, **kwargs):
+        return self._port.initialize_graph(*args, **kwargs)
+
+    def commit_graph_decision(self, *args, **kwargs):
+        return self._port.commit_graph_decision(*args, **kwargs)
+
+    def commit_graph_projection(self, *args, **kwargs):
+        return self._port.commit_graph_projection(*args, **kwargs)
+
+    def commit_graph_activity_result(self, *args, **kwargs):
+        return self._port.commit_graph_activity_result(*args, **kwargs)
+
+    def commit_graph_observation(self, *args, **kwargs):
+        return self._port.commit_graph_observation(*args, **kwargs)
+
+    def recover_graph(self, *args, **kwargs):
+        return self._port.recover_graph(*args, **kwargs)
+
+    def activity_for(self, *args, **kwargs):
+        return self._port.activity_for(*args, **kwargs)
+
+    def mark_activity_dispatched(self, *args, **kwargs):
+        return self._port.mark_activity_dispatched(*args, **kwargs)
+
+    def graph_scope_metadata(self):
+        return self._port.graph_scope_metadata()
+
+
+class _FailBeforeTransitionPort(_GraphPortProxy):
+    def __init__(self, port, transition_kind: HarnessTransitionKind) -> None:
+        super().__init__(port)
         self._transition_kind = transition_kind
         self._failed = False
 
-    def __getattr__(self, name):
-        return getattr(self._port, name)
-
-    def commit_transition(self, previous, state, **kwargs):
-        kind = HarnessTransitionKind(kwargs["transition_kind"])
-        if not self._failed and kind is self._transition_kind:
+    def commit_graph_decision(self, decision, **kwargs):
+        expected_type = {
+            HarnessTransitionKind.STEP_SUCCESS: HarnessGraphDecisionType.COMPLETE_NODE,
+            HarnessTransitionKind.SUCCESS: HarnessGraphDecisionType.COMPLETE_RUN,
+        }.get(self._transition_kind)
+        if not self._failed and decision.decision_type is expected_type:
             self._failed = True
-            raise RuntimeError(f"injected crash before {kind.value}")
-        return self._port.commit_transition(previous, state, **kwargs)
+            raise RuntimeError(
+                f"injected crash before {self._transition_kind.value}"
+            )
+        return self._port.commit_graph_decision(decision, **kwargs)
 
 
-class _FailAfterCompletionDecisionPort:
-    def __init__(self, port) -> None:
-        self._port = port
+class _FailAfterAuthorizationStore(SQLiteHarnessSideEffectStore):
+    def __init__(self, database) -> None:
+        super().__init__(database)
         self._failed = False
 
-    def __getattr__(self, name):
-        return getattr(self._port, name)
-
-    def record(self, event):
-        committed = self._port.record(event)
-        if (
-            not self._failed
-            and event.event_type.value == "decision_recorded"
-            and event.payload.get("decision_type") in {"complete_step", "complete_run"}
-        ):
+    def put_decision(self, decision):
+        committed = super().put_decision(decision)
+        if not self._failed:
             self._failed = True
-            raise RuntimeError("injected crash after durable completion decision")
+            raise RuntimeError("injected crash after durable side-effect authorization")
         return committed
 
 
@@ -206,13 +238,62 @@ def _registry(prepare_handler, terminal_handler=None) -> HarnessSideEffectRegist
     return HarnessSideEffectRegistry(bindings)
 
 
-def test_sqlite_recovery_reuses_durable_decision_without_worker_reexecution(
+def _assert_graph_side_effect_commit_order(
+    event_port,
+    *,
+    run_id: str,
+    authorization,
+    outcome,
+) -> None:
+    recovery = event_port.recover_graph(run_id)
+    prepare_commits = tuple(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type
+        is HarnessGraphDecisionType.PREPARE_SIDE_EFFECT
+        and commit.decision.decision_checksum == authorization.causation_id
+    )
+    assert len(prepare_commits) == 1
+    prepare_commit = prepare_commits[0]
+    outcome_commits = tuple(
+        commit
+        for commit in recovery.observation_commits
+        if commit.observation.observation_type
+        is HarnessGraphObservationType.SIDE_EFFECT_OUTCOME
+        and commit.observation.payload["prepare_decision_ref"]
+        == prepare_commit.decision.decision_checksum
+    )
+    assert len(outcome_commits) == 1
+    outcome_commit = outcome_commits[0]
+    complete_commits = tuple(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.COMPLETE_NODE
+        and commit.decision.payload.get("side_effect_prepare_decision_ref")
+        == prepare_commit.decision.decision_checksum
+    )
+    assert len(complete_commits) == 1
+    complete_commit = complete_commits[0]
+
+    assert authorization.command_ordinal == prepare_commit.sequence
+    assert authorization.causation_id == prepare_commit.decision.decision_checksum
+    assert prepare_commit.sequence < outcome_commit.sequence < complete_commit.sequence
+    assert outcome.decision_ref == authorization.checksum
+    assert outcome_commit.observation.payload["decision_ref"] == authorization.checksum
+    assert outcome_commit.observation.payload["outcome_ref"] == outcome.checksum
+    assert outcome_commit.observation.evidence_ref == outcome.checksum
+    assert complete_commit.decision.payload["side_effect_outcome_ref"] == outcome.checksum
+    assert complete_commit.side_effect_outcome_ref == outcome.checksum
+    assert outcome.checksum in complete_commit.accepted_evidence_refs
+
+
+def test_sqlite_recovery_reuses_durable_authorization_without_worker_reexecution(
     tmp_path,
 ) -> None:
     event_database = tmp_path / "events.sqlite3"
     effect_database = tmp_path / "side-effects.sqlite3"
     encryption_key = Fernet.generate_key()
-    first_store = SQLiteHarnessSideEffectStore(effect_database)
+    first_store = _FailAfterAuthorizationStore(effect_database)
     first_handler = CountingHarnessSideEffectHandler(first_store)
     run_spec = _run_spec()
     worker_calls = 0
@@ -222,33 +303,55 @@ def test_sqlite_recovery_reuses_durable_decision_without_worker_reexecution(
         worker_calls += 1
         return _worker_result(task)
 
-    with pytest.raises(RuntimeError, match="after durable completion decision"):
+    first_event_port = _event_port(event_database, encryption_key)
+    with pytest.raises(
+        RuntimeError,
+        match="after durable side-effect authorization",
+    ):
         HarnessControlPlane(
-            event_port=_FailAfterCompletionDecisionPort(
-                _event_port(event_database, encryption_key)
-            ),
+            event_port=first_event_port,
             worker_registry={"publish": worker},
             side_effect_registry=_registry(first_handler),
             side_effect_store=first_store,
         ).run(run_spec)
 
+    original = first_store.list_decisions(run_id=run_spec.run_id)[0]
     assert worker_calls == 1
     assert first_handler.call_count == 0
-    assert first_store.list_decisions(run_id=run_spec.run_id) == ()
+    assert len(first_store.list_decisions(run_id=run_spec.run_id)) == 1
+    assert first_store.attempt_count(
+        effect_id=original.effect_id,
+        identity_scope_ref=original.identity_scope_ref,
+        subject_scope_ref=original.subject_scope_ref,
+    ) == 0
+    assert all(
+        commit.decision.decision_type is not HarnessGraphDecisionType.COMPLETE_NODE
+        for commit in first_event_port.recover_graph(run_spec.run_id).decision_commits
+    )
 
     recovered_store = SQLiteHarnessSideEffectStore(effect_database)
     recovered_handler = CountingHarnessSideEffectHandler(recovered_store)
+    recovered_event_port = _event_port(event_database, encryption_key)
     result = HarnessControlPlane(
-        event_port=_event_port(event_database, encryption_key),
+        event_port=recovered_event_port,
         worker_registry={"publish": worker},
         side_effect_registry=_registry(recovered_handler),
         side_effect_store=recovered_store,
     ).recover_and_run(run_spec)
+    authorization = recovered_store.list_decisions(run_id=run_spec.run_id)[0]
+    outcome = result.side_effect_outcomes["publish"]
 
     assert result.succeeded
     assert worker_calls == 1
     assert recovered_handler.call_count == 1
     assert len(recovered_store.list_decisions(run_id=run_spec.run_id)) == 1
+    assert authorization == original
+    _assert_graph_side_effect_commit_order(
+        recovered_event_port,
+        run_id=run_spec.run_id,
+        authorization=authorization,
+        outcome=outcome,
+    )
 
 
 def test_sqlite_recovery_reuses_external_effect_identity_before_outcome(

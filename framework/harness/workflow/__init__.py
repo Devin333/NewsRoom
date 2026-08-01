@@ -29,8 +29,11 @@ from framework.harness.workflow.dsl import (
     ParallelAnyCancellationPolicy,
     ParallelAnyFailurePolicy,
     ParallelBranch,
+    ParallelMerge,
+    PureMerge,
     Sequence,
     StepRef,
+    VerifiedAggregation,
     Wait,
     WaitKind,
     WaitTimeoutAction,
@@ -58,8 +61,16 @@ from framework.harness.workflow.graph import (
     graph_node_from_dict,
 )
 from framework.harness.workflow.reader import HarnessWorkflowContractReader
-from framework.harness.workflow.spec import HarnessRouteKind, HarnessRoutingRule, HarnessWorkflowSpec
-from framework.harness.workflow.step import HarnessRetryPolicy, HarnessStepSpec, HarnessWorkerType
+from framework.harness.workflow.spec import (
+    HarnessRouteKind,
+    HarnessRoutingRule,
+    HarnessWorkflowSpec,
+)
+from framework.harness.workflow.step import (
+    HarnessRetryPolicy,
+    HarnessStepSpec,
+    HarnessWorkerType,
+)
 from framework.harness.workflow.versioning import (
     DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY,
     HARNESS_CONDITION_POLICY_VERSION,
@@ -80,6 +91,7 @@ from framework.harness.workflow.versioning import (
     HARNESS_WORKER_ACTIVITY_SCHEMA,
     LEGACY_CHECKPOINT_SCHEMA,
     LEGACY_DECISION_SCHEMA,
+    LEGACY_EVENT_SCHEMA,
     LEGACY_STATE_SCHEMA,
     LEGACY_WORKFLOW_SCHEMA,
     NORMALIZED_HARNESS_GRAPH_SCHEMA,
@@ -166,6 +178,7 @@ __all__ = [
     "HarnessTerminalSideEffectPolicy",
     "LEGACY_CHECKPOINT_SCHEMA",
     "LEGACY_DECISION_SCHEMA",
+    "LEGACY_EVENT_SCHEMA",
     "LEGACY_STATE_SCHEMA",
     "LEGACY_WORKFLOW_SCHEMA",
     "NORMALIZED_HARNESS_GRAPH_SCHEMA",
@@ -176,8 +189,11 @@ __all__ = [
     "ParallelAnyCancellationPolicy",
     "ParallelAnyFailurePolicy",
     "ParallelBranch",
+    "ParallelMerge",
+    "PureMerge",
     "Sequence",
     "StepRef",
+    "VerifiedAggregation",
     "Wait",
     "WaitKind",
     "WaitTimeoutAction",

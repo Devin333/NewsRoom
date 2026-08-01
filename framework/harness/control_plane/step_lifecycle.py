@@ -211,7 +211,9 @@ class StepLifecycleState:
             step_ref=state.step_ref,
             node_instance_id=state.instance_id,
             last_event_sequence=state.last_event_sequence,
-            evidence_refs=state.evidence_refs,
+            evidence_refs=tuple(
+                item for item in state.evidence_refs if item.attempt == state.attempt
+            ),
         )
 
     @property
@@ -1165,6 +1167,25 @@ class StepLifecycleStateMachine:
         if status in {HarnessStepStatus.SUCCEEDED, HarnessStepStatus.SKIPPED}:
             return None
         if status is HarnessStepStatus.WAITING_APPROVAL:
+            if observations.binding_mode is StepLifecycleBindingMode.GRAPH_BOUND:
+                if observations.approval_evidence is None:
+                    return None
+                if not observations.approval_granted:
+                    return None
+                exhausted = _turn_budget_transition(
+                    state,
+                    budget,
+                    observations=observations,
+                )
+                if exhausted is not None:
+                    return exhausted
+                return _transition(
+                    StepLifecycleTransitionType.VERIFY_STEP,
+                    state,
+                    "approval_granted_verify",
+                    reason="Harness approval granted",
+                    observations=observations,
+                )
             return _transition(
                 StepLifecycleTransitionType.WAIT_FOR_APPROVAL,
                 state,

@@ -28,7 +28,12 @@ from framework.events.schema import (
     WORKFLOW_OPERATION_EVENT_TYPES,
     default_event_schema_catalog,
 )
-from framework.events.schema.catalog import _run_pure_validator
+from framework.events.schema.catalog import (
+    HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+    HARNESS_GRAPH_COMMIT_EVENT_TYPES,
+    HARNESS_GRAPH_PROJECTION_RECORD_DATA_SCHEMA,
+    _run_pure_validator,
+)
 from framework.events.telemetry import EventTelemetry
 
 
@@ -458,6 +463,37 @@ def test_workflow_timeout_schema_keeps_policy_source_and_rejects_monotonic_value
     assert missing_policy.value.rule == "required"
 
 
+def test_step_timeout_schema_distinguishes_effective_timeout_and_cancellation() -> None:
+    catalog = default_event_schema_catalog()
+    schema = "newsroom.workflow-event/v1"
+    canonical = _WORKFLOW_PAYLOAD_FIXTURE["workflow_events"]["step_timeout"][
+        "payload"
+    ]
+    assert catalog.validate("step_timeout", schema, canonical) == canonical
+
+    legacy = {
+        "step_id": "step-1",
+        "attempt": 1,
+        "max_attempts": 2,
+        "timeout_seconds": 30.0,
+        "on_timeout": "retry",
+        "termination_confirmed": None,
+        "indeterminate": False,
+    }
+    assert catalog.prepare_publish_payload(
+        "step_timeout",
+        schema,
+        legacy,
+        business_context=BusinessContext(step_id="step-1"),
+    ) == {field: value for field, value in legacy.items() if field != "step_id"}
+
+    missing_effective_timeout = dict(canonical)
+    del missing_effective_timeout["effective_timeout_seconds"]
+    with pytest.raises(EventSchemaValidationError) as incomplete:
+        catalog.validate("step_timeout", schema, missing_effective_timeout)
+    assert incomplete.value.rule == "anyOf"
+
+
 def test_default_catalog_uses_real_workflow_and_harness_payload_contracts() -> None:
     catalog = default_event_schema_catalog()
 
@@ -605,6 +641,362 @@ def test_default_catalog_accepts_harness_safe_summary_contracts() -> None:
             },
         )
     assert nested_bypass.value.path == "$.gate_results[0]"
+
+
+def test_default_catalog_accepts_graph_bound_harness_safe_fields() -> None:
+    catalog = default_event_schema_catalog()
+    schema = "newsroom.harness-event/v1"
+    checksum = "sha256:" + "a" * 64
+    node_instance_id = "hni_graph-node_1"
+    phase = {
+        "projection_schema": "harness-safe-summary/v1",
+        "phase": "plan",
+        "boundary": "entry",
+        "input_ref_checksums": [],
+        "output_ref_checksums": [],
+        "gate_results": [],
+        "metadata": {
+            "node_instance_id": node_instance_id,
+            "attempt": 0,
+        },
+    }
+    decision = {
+        "projection_schema": "harness-safe-summary/v1",
+        "decision_type": "complete_step",
+        "step_id": "publish",
+        "reason_ref": checksum,
+        "decision_payload": {
+            "decision_payload_ref": checksum,
+            "graph_decision_checksum": checksum,
+            "side_effect_decision_ref": checksum,
+        },
+        "decided_by": "harness",
+        "decided_at": "2026-07-31T02:00:00Z",
+    }
+    worker_marker = {
+        "projection_schema": "harness-safe-summary/v1",
+        "worker_type": "artifact",
+        "activity_id": "harness-activity:" + "b" * 64,
+        "node_instance_id": node_instance_id,
+        "idempotency_key": "harness-activity:" + "b" * 64,
+        "activity_attempt": 1,
+        "activity_contract_version": "newsroom.harness-worker-activity/v1",
+        "input_ref": checksum,
+        "input_count": 1,
+        "metadata_ref": checksum,
+    }
+
+    assert catalog.validate("phase_recorded", schema, phase) == phase
+    assert catalog.validate("decision_recorded", schema, decision) == decision
+    assert catalog.validate("worker_called", schema, worker_marker) == worker_marker
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload", "expected_path", "expected_rule"),
+    [
+        (
+            "phase_recorded",
+            {
+                "projection_schema": "harness-safe-summary/v1",
+                "phase": "plan",
+                "boundary": "entry",
+                "input_ref_checksums": [],
+                "output_ref_checksums": [],
+                "gate_results": [],
+                "metadata": {"node_instance_id": "node-1", "attempt": -1},
+            },
+            "$.metadata.attempt",
+            "minimum",
+        ),
+        (
+            "decision_recorded",
+            {
+                "projection_schema": "harness-safe-summary/v1",
+                "decision_type": "complete_step",
+                "decision_payload": {
+                    "decision_payload_ref": "sha256:" + "1" * 64,
+                    "graph_decision_checksum": "not-a-checksum",
+                },
+                "decided_by": "harness",
+            },
+            "$.decision_payload.graph_decision_checksum",
+            "pattern",
+        ),
+        (
+            "decision_recorded",
+            {
+                "projection_schema": "harness-safe-summary/v1",
+                "decision_type": "complete_step",
+                "decision_payload": {
+                    "decision_payload_ref": "sha256:" + "1" * 64,
+                    "side_effect_decision_ref": "not-a-checksum",
+                },
+                "decided_by": "harness",
+            },
+            "$.decision_payload.side_effect_decision_ref",
+            "pattern",
+        ),
+        (
+            "worker_called",
+            {
+                "projection_schema": "harness-safe-summary/v1",
+                "worker_type": "artifact",
+                "activity_id": "activity-1",
+                "node_instance_id": "",
+                "idempotency_key": "activity-1",
+                "activity_attempt": 1,
+                "activity_contract_version": "activity/v1",
+                "input_ref": "sha256:" + "1" * 64,
+                "input_count": 1,
+                "metadata_ref": "sha256:" + "2" * 64,
+            },
+            "$.node_instance_id",
+            "minLength",
+        ),
+    ],
+)
+def test_default_catalog_rejects_invalid_graph_bound_harness_safe_fields(
+    event_type: str,
+    payload: dict[str, object],
+    expected_path: str,
+    expected_rule: str,
+) -> None:
+    with pytest.raises(EventSchemaValidationError) as captured:
+        default_event_schema_catalog().validate(
+            event_type,
+            "newsroom.harness-event/v1",
+            payload,
+        )
+
+    assert captured.value.path == expected_path
+    assert captured.value.rule == expected_rule
+
+
+def _graph_commit_payload(
+    event_type: str,
+    commit_kind: str,
+    content_field: str,
+) -> dict[str, object]:
+    checksum = "sha256:" + "c" * 64
+    commit: dict[str, object] = {
+        "schema_version": HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+        "commit_kind": commit_kind,
+        "sequence": 1,
+        "occurred_at": "2026-07-31T02:00:00Z",
+        "commit_checksum": checksum,
+        content_field: {},
+    }
+    if event_type == "harness_graph_decision_committed":
+        commit.update(
+            {
+                "activity_input_ref": None,
+                "accepted_evidence_refs": [],
+                "side_effect_outcome_ref": None,
+            }
+        )
+    if event_type in {
+        "harness_graph_initialized",
+        "harness_graph_projection_committed",
+    }:
+        commit.update(
+            {
+                "cause_checksum": checksum,
+                "previous_projection_checksum": (
+                    None if event_type == "harness_graph_initialized" else checksum
+                ),
+                "budget_reservations": {},
+                "budget_consumptions": {},
+                "activity": None,
+            }
+        )
+    payload: dict[str, object] = {"commit": commit}
+    if event_type == "harness_graph_initialized":
+        payload.update({"graph": {}, "run_spec_checksum": checksum})
+    return payload
+
+
+@pytest.mark.parametrize(
+    ("event_type", "commit_kind", "content_field"),
+    [
+        ("harness_graph_initialized", "initialize", "state"),
+        ("harness_graph_decision_committed", "decision", "decision"),
+        (
+            "harness_graph_projection_committed",
+            "decision_projection",
+            "state",
+        ),
+        (
+            "harness_graph_projection_committed",
+            "activity_result_projection",
+            "state",
+        ),
+        (
+            "harness_graph_projection_committed",
+            "observation_projection",
+            "state",
+        ),
+        (
+            "harness_graph_activity_result_committed",
+            "activity_result",
+            "result",
+        ),
+        ("harness_graph_observation_committed", "observation", "observation"),
+    ],
+)
+def test_default_catalog_validates_canonical_harness_graph_commit_payloads(
+    event_type: str,
+    commit_kind: str,
+    content_field: str,
+) -> None:
+    catalog = default_event_schema_catalog()
+    payload = _graph_commit_payload(event_type, commit_kind, content_field)
+
+    assert set(HARNESS_GRAPH_COMMIT_EVENT_TYPES) == {
+        "harness_graph_initialized",
+        "harness_graph_decision_committed",
+        "harness_graph_projection_committed",
+        "harness_graph_activity_result_committed",
+        "harness_graph_observation_committed",
+    }
+    assert catalog.current_schema(event_type) == (
+        HARNESS_GRAPH_PROJECTION_RECORD_DATA_SCHEMA
+        if event_type == "harness_graph_projection_committed"
+        else HARNESS_GRAPH_COMMIT_DATA_SCHEMA
+    )
+    assert catalog.validate(
+        event_type,
+        HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+        payload,
+    ) == payload
+
+
+def test_graph_decision_commit_schema_validates_side_effect_outcome_reference() -> None:
+    catalog = default_event_schema_catalog()
+    payload = _graph_commit_payload(
+        "harness_graph_decision_committed",
+        "decision",
+        "decision",
+    )
+    commit = payload["commit"]
+    assert isinstance(commit, dict)
+    outcome_ref = "sha256:" + "d" * 64
+    with_outcome = {
+        **payload,
+        "commit": {
+            **commit,
+            "accepted_evidence_refs": [outcome_ref],
+            "side_effect_outcome_ref": outcome_ref,
+        },
+    }
+
+    assert catalog.validate(
+        "harness_graph_decision_committed",
+        HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+        with_outcome,
+    ) == with_outcome
+
+    invalid = {
+        **with_outcome,
+        "commit": {
+            **with_outcome["commit"],
+            "side_effect_outcome_ref": "not-a-checksum",
+        },
+    }
+    with pytest.raises(EventSchemaValidationError) as captured:
+        catalog.validate(
+            "harness_graph_decision_committed",
+            HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+            invalid,
+        )
+    assert captured.value.path == "$.commit.side_effect_outcome_ref"
+    assert captured.value.rule == "anyOf"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "commit_kind", "content_field", "wrong_kind"),
+    [
+        ("harness_graph_initialized", "initialize", "state", "decision"),
+        ("harness_graph_decision_committed", "decision", "decision", "observation"),
+        (
+            "harness_graph_projection_committed",
+            "decision_projection",
+            "state",
+            "decision",
+        ),
+        (
+            "harness_graph_activity_result_committed",
+            "activity_result",
+            "result",
+            "observation",
+        ),
+        (
+            "harness_graph_observation_committed",
+            "observation",
+            "observation",
+            "activity_result",
+        ),
+    ],
+)
+def test_default_catalog_rejects_mismatched_harness_graph_commit_payloads(
+    event_type: str,
+    commit_kind: str,
+    content_field: str,
+    wrong_kind: str,
+) -> None:
+    catalog = default_event_schema_catalog()
+    payload = _graph_commit_payload(event_type, commit_kind, content_field)
+    commit = payload["commit"]
+    assert isinstance(commit, dict)
+
+    wrong_kind_payload = {**payload, "commit": {**commit, "commit_kind": wrong_kind}}
+    with pytest.raises(EventSchemaValidationError) as wrong_kind_error:
+        catalog.validate(
+            event_type,
+            HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+            wrong_kind_payload,
+        )
+    assert wrong_kind_error.value.path == "$.commit.commit_kind"
+    assert wrong_kind_error.value.rule in {"const", "enum"}
+
+    missing_content = dict(commit)
+    missing_content.pop(content_field)
+    with pytest.raises(EventSchemaValidationError) as missing_content_error:
+        catalog.validate(
+            event_type,
+            HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+            {**payload, "commit": missing_content},
+        )
+    assert missing_content_error.value.path == "$.commit"
+    assert missing_content_error.value.rule == "required"
+
+
+def test_default_catalog_rejects_unknown_harness_graph_commit_fields() -> None:
+    catalog = default_event_schema_catalog()
+    payload = _graph_commit_payload(
+        "harness_graph_decision_committed",
+        "decision",
+        "decision",
+    )
+    commit = payload["commit"]
+    assert isinstance(commit, dict)
+
+    with pytest.raises(EventSchemaValidationError) as nested_extra:
+        catalog.validate(
+            "harness_graph_decision_committed",
+            HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+            {"commit": {**commit, "raw_worker_payload": {"secret": "value"}}},
+        )
+    assert nested_extra.value.path == "$.commit"
+    assert nested_extra.value.rule == "additionalProperties"
+
+    with pytest.raises(EventSchemaValidationError) as top_level_extra:
+        catalog.validate(
+            "harness_graph_decision_committed",
+            HARNESS_GRAPH_COMMIT_DATA_SCHEMA,
+            {**payload, "graph": {}},
+        )
+    assert top_level_extra.value.path == "$"
+    assert top_level_extra.value.rule == "additionalProperties"
 
 
 def test_default_catalog_registers_schema_owned_sensitivity_policies() -> None:

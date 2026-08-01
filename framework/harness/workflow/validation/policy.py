@@ -23,6 +23,7 @@ class HarnessGraphPreflightPolicy:
     max_edges: int = 50_000
     max_depth: int = 2_048
     max_node_activations: int = 100_000
+    max_compensations: int = 10_000
     max_parallelism: int = 1
     max_active_nodes: int = 1
     max_diagnostics: int = 100
@@ -33,6 +34,7 @@ class HarnessGraphPreflightPolicy:
             "max_edges",
             "max_depth",
             "max_node_activations",
+            "max_compensations",
             "max_parallelism",
             "max_active_nodes",
             "max_diagnostics",

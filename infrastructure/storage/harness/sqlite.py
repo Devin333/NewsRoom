@@ -4,23 +4,27 @@ from __future__ import annotations
 
 import math
 import sqlite3
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.side_effects.models import (
+    HarnessSideEffectAttemptLease,
+    HarnessSideEffectAttemptStatus,
     HarnessSideEffectDecision,
     HarnessSideEffectDisposition,
     HarnessSideEffectOutcome,
 )
 from framework.shared.json import json_loads, stable_json_dumps
+from framework.shared.time import format_datetime, utc_now
 
 
-SQLITE_HARNESS_SIDE_EFFECT_SCHEMA_VERSION = 1
+SQLITE_HARNESS_SIDE_EFFECT_SCHEMA_VERSION = 2
 DEFAULT_BUSY_TIMEOUT_SECONDS = 5.0
 DEFAULT_SYNCHRONOUS = "FULL"
 _SYNCHRONOUS_POLICIES = frozenset({"OFF", "NORMAL", "FULL", "EXTRA"})
@@ -86,6 +90,64 @@ CREATE TABLE IF NOT EXISTS harness_side_effect_attempts (
     CHECK (attempt_count <= attempt_limit)
 );
 
+CREATE TABLE IF NOT EXISTS harness_side_effect_attempt_leases (
+    attempt_id TEXT PRIMARY KEY,
+    lease_id TEXT NOT NULL UNIQUE,
+    owner_id TEXT NOT NULL,
+    effect_id TEXT NOT NULL,
+    decision_ref TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    identity_scope_ref TEXT NOT NULL,
+    subject_scope_ref TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    fencing_generation INTEGER NOT NULL,
+    acquired_at TEXT NOT NULL,
+    lease_expires_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    termination_confirmed INTEGER NOT NULL,
+    resolved_at TEXT,
+    outcome_ref TEXT,
+    attempt_json TEXT NOT NULL,
+    FOREIGN KEY (
+        effect_id, decision_ref, identity_scope_ref, subject_scope_ref,
+        idempotency_key
+    ) REFERENCES harness_side_effect_decisions (
+        effect_id, decision_ref, identity_scope_ref, subject_scope_ref,
+        idempotency_key
+    )
+        ON DELETE RESTRICT,
+    FOREIGN KEY (outcome_ref)
+        REFERENCES harness_side_effect_outcomes (outcome_ref)
+        ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED,
+    UNIQUE (effect_id, attempt),
+    UNIQUE (effect_id, fencing_generation),
+    CHECK (length(attempt_id) = 71),
+    CHECK (length(lease_id) >= 1),
+    CHECK (length(owner_id) >= 1),
+    CHECK (length(identity_scope_ref) = 71),
+    CHECK (length(subject_scope_ref) = 71),
+    CHECK (attempt >= 1),
+    CHECK (fencing_generation >= 1),
+    CHECK (attempt = fencing_generation),
+    CHECK (status IN ('active', 'terminated', 'indeterminate')),
+    CHECK (termination_confirmed IN (0, 1)),
+    CHECK (outcome_ref IS NULL OR length(outcome_ref) = 71),
+    CHECK (
+        (status = 'active' AND termination_confirmed = 0 AND resolved_at IS NULL)
+        OR (status = 'terminated' AND termination_confirmed = 1 AND resolved_at IS NOT NULL)
+        OR (status = 'indeterminate' AND termination_confirmed = 0 AND resolved_at IS NOT NULL)
+    ),
+    CHECK (status = 'terminated' OR outcome_ref IS NULL),
+    CHECK (json_valid(attempt_json))
+);
+
+CREATE INDEX IF NOT EXISTS idx_harness_side_effect_attempt_leases_effect
+    ON harness_side_effect_attempt_leases (effect_id, fencing_generation DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_harness_side_effect_attempt_one_unresolved
+    ON harness_side_effect_attempt_leases (effect_id)
+    WHERE status IN ('active', 'indeterminate');
+
 CREATE TABLE IF NOT EXISTS harness_side_effect_outcomes (
     outcome_ref TEXT PRIMARY KEY,
     outcome_id TEXT NOT NULL UNIQUE,
@@ -134,6 +196,8 @@ class SQLiteHarnessSideEffectStore:
         path: str | Path | None = None,
         busy_timeout_seconds: float = DEFAULT_BUSY_TIMEOUT_SECONDS,
         synchronous: str = DEFAULT_SYNCHRONOUS,
+        attempt_lease_seconds: float = 30.0,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         if database is None:
             database = path
@@ -148,10 +212,17 @@ class SQLiteHarnessSideEffectStore:
             )
         timeout = float(busy_timeout_seconds)
         if not math.isfinite(timeout) or timeout < 0:
-            raise ValueError("busy_timeout_seconds must be a finite non-negative number")
+            raise ValueError(
+                "busy_timeout_seconds must be a finite non-negative number"
+            )
         policy = str(synchronous).strip().upper()
         if policy not in _SYNCHRONOUS_POLICIES:
             raise ValueError("synchronous must be one of OFF, NORMAL, FULL, or EXTRA")
+        lease_seconds = float(attempt_lease_seconds)
+        if not math.isfinite(lease_seconds) or lease_seconds <= 0:
+            raise ValueError("attempt_lease_seconds must be a finite positive number")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
 
         path = Path(database).expanduser().resolve()
         try:
@@ -166,6 +237,8 @@ class SQLiteHarnessSideEffectStore:
         self.database = str(path)
         self.busy_timeout_seconds = timeout
         self.synchronous = policy
+        self.attempt_lease_seconds = lease_seconds
+        self._clock = clock
         self._initialize_schema()
 
     @property
@@ -252,59 +325,78 @@ class SQLiteHarnessSideEffectStore:
         assert outcome.checksum is not None
 
         with self._write("persist Harness side-effect outcome") as connection:
-            decision_row = connection.execute(
-                "SELECT * FROM harness_side_effect_decisions WHERE decision_ref = ?",
-                (outcome.decision_ref,),
+            fenced = connection.execute(
+                "SELECT 1 FROM harness_side_effect_attempt_leases "
+                "WHERE effect_id = ? LIMIT 1",
+                (outcome.effect_id,),
             ).fetchone()
-            if decision_row is None:
-                raise HarnessValidationError(
-                    "side-effect outcome has no durable authorization"
+            if fenced is not None or outcome.attempt_id is not None:
+                raise _store_error(
+                    "fenced_side_effect_attempt_required",
+                    "fenced side-effect outcome requires complete_attempt",
+                    effect_id=outcome.effect_id,
                 )
-            decision = _decision_from_row(decision_row)
-            _assert_outcome_matches_decision(outcome, decision)
+            self._assert_outcome_authorized(connection, outcome)
+            existing = self._existing_outcome(connection, outcome)
+            if existing is not None:
+                return existing
+            self._insert_outcome(connection, outcome)
+            return outcome
 
-            rows = _unique_rows(
-                connection.execute(
-                    "SELECT * FROM harness_side_effect_outcomes "
-                    "WHERE outcome_ref = ? OR outcome_id = ? OR effect_id = ? "
-                    "OR idempotency_key = ?",
-                    (
-                        outcome.checksum,
-                        outcome.outcome_id,
-                        outcome.effect_id,
-                        outcome.idempotency_key,
-                    ),
-                ).fetchall(),
-                key="outcome_ref",
+    def complete_attempt(
+        self,
+        attempt: HarnessSideEffectAttemptLease,
+        outcome: HarnessSideEffectOutcome,
+    ) -> HarnessSideEffectOutcome:
+        if not isinstance(outcome, HarnessSideEffectOutcome):
+            raise TypeError("outcome must be HarnessSideEffectOutcome")
+        with self._write("complete Harness side-effect attempt") as connection:
+            current = self._assert_current_attempt(connection, attempt)
+            self._assert_outcome_authorized(connection, outcome)
+            outcome = _bind_outcome_to_attempt(outcome, current)
+            existing = self._existing_outcome(connection, outcome)
+            if existing is not None:
+                return existing
+            self._assert_lease_accepts_result(current)
+            self._insert_outcome(connection, outcome)
+            self._resolve_attempt(
+                connection,
+                current,
+                termination_confirmed=True,
+                outcome_ref=outcome.checksum,
             )
-            if rows:
-                existing = tuple(_outcome_from_row(row) for row in rows)
-                if any(candidate != outcome for candidate in existing):
-                    raise HarnessValidationError(
-                        "side-effect outcome identity is immutable"
-                    )
-                return existing[0]
+            return outcome
 
-            connection.execute(
-                "INSERT INTO harness_side_effect_outcomes ("
-                "outcome_ref, outcome_id, effect_id, decision_ref, run_id, "
-                "identity_scope_ref, subject_scope_ref, idempotency_key, "
-                "disposition, outcome_json"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    outcome.checksum,
-                    outcome.outcome_id,
-                    outcome.effect_id,
-                    outcome.decision_ref,
-                    outcome.run_id,
-                    outcome.identity_scope_ref,
-                    outcome.subject_scope_ref,
-                    outcome.idempotency_key,
-                    outcome.disposition.value,
-                    stable_json_dumps(outcome.to_dict()),
-                ),
+    def reconcile_attempt(
+        self,
+        attempt: HarnessSideEffectAttemptLease,
+        outcome: HarnessSideEffectOutcome,
+    ) -> HarnessSideEffectOutcome:
+        if not isinstance(outcome, HarnessSideEffectOutcome):
+            raise TypeError("outcome must be HarnessSideEffectOutcome")
+        with self._write("reconcile Harness side-effect attempt") as connection:
+            current = self._assert_current_attempt(connection, attempt)
+            self._assert_outcome_authorized(connection, outcome)
+            outcome = _bind_outcome_to_attempt(outcome, current)
+            existing = self._existing_outcome(connection, outcome)
+            if existing is not None:
+                return existing
+            if current.status is HarnessSideEffectAttemptStatus.TERMINATED:
+                raise _store_error(
+                    "stale_side_effect_attempt",
+                    "terminated side-effect attempt has no reconciled outcome",
+                    effect_id=current.effect_id,
+                    attempt_id=current.attempt_id,
+                    fencing_generation=current.fencing_generation,
+                )
+            self._insert_outcome(connection, outcome)
+            self._resolve_attempt(
+                connection,
+                current,
+                termination_confirmed=True,
+                outcome_ref=outcome.checksum,
             )
-        return outcome
+            return outcome
 
     def get_outcome(
         self,
@@ -361,12 +453,15 @@ class SQLiteHarnessSideEffectStore:
             ).fetchall()
         return tuple(_decision_from_row(row) for row in rows)
 
-    def reserve_attempt(self, decision: HarnessSideEffectDecision) -> int:
+    def reserve_attempt(
+        self,
+        decision: HarnessSideEffectDecision,
+    ) -> int:
         if not isinstance(decision, HarnessSideEffectDecision):
             raise TypeError("decision must be HarnessSideEffectDecision")
         assert decision.checksum is not None
 
-        with self._write("reserve Harness side-effect attempt") as connection:
+        with self._write("reserve serial Harness side-effect attempt") as connection:
             decision_row = connection.execute(
                 "SELECT * FROM harness_side_effect_decisions WHERE decision_ref = ?",
                 (decision.checksum,),
@@ -374,6 +469,17 @@ class SQLiteHarnessSideEffectStore:
             if decision_row is None or _decision_from_row(decision_row) != decision:
                 raise HarnessValidationError(
                     "handler attempt requires the exact durable authorization"
+                )
+            fenced = connection.execute(
+                "SELECT 1 FROM harness_side_effect_attempt_leases "
+                "WHERE effect_id = ? LIMIT 1",
+                (decision.effect_id,),
+            ).fetchone()
+            if fenced is not None:
+                raise _store_error(
+                    "fenced_side_effect_attempt_required",
+                    "fenced side-effect cannot use serial attempt reservation",
+                    effect_id=decision.effect_id,
                 )
             ledger = self._assert_attempt_ledger(connection, decision)
             count = int(ledger["attempt_count"])
@@ -387,23 +493,164 @@ class SQLiteHarnessSideEffectStore:
                     attempt_limit=limit,
                 )
             next_count = count + 1
-            updated = connection.execute(
-                "UPDATE harness_side_effect_attempts SET attempt_count = ? "
-                "WHERE effect_id = ? AND decision_ref = ? AND attempt_count = ?",
-                (
-                    next_count,
-                    decision.effect_id,
-                    decision.checksum,
-                    count,
-                ),
+            self._advance_attempt_ledger(
+                connection,
+                decision=decision,
+                current_count=count,
+                next_count=next_count,
             )
-            if updated.rowcount != 1:  # pragma: no cover - BEGIN IMMEDIATE serializes writers
+            return next_count
+
+    def acquire_attempt(
+        self,
+        decision: HarnessSideEffectDecision,
+        *,
+        owner_id: str,
+        lease_id: str,
+    ) -> HarnessSideEffectAttemptLease:
+        if not isinstance(decision, HarnessSideEffectDecision):
+            raise TypeError("decision must be HarnessSideEffectDecision")
+        assert decision.checksum is not None
+        owner_id = _lease_identity(owner_id, "owner_id")
+        lease_id = _lease_identity(lease_id, "lease_id")
+
+        with self._write("acquire fenced Harness side-effect attempt") as connection:
+            decision_row = connection.execute(
+                "SELECT * FROM harness_side_effect_decisions WHERE decision_ref = ?",
+                (decision.checksum,),
+            ).fetchone()
+            if decision_row is None or _decision_from_row(decision_row) != decision:
+                raise HarnessValidationError(
+                    "handler attempt requires the exact durable authorization"
+                )
+            ledger = self._assert_attempt_ledger(connection, decision)
+            count = int(ledger["attempt_count"])
+            limit = int(ledger["attempt_limit"])
+            lease_row = connection.execute(
+                "SELECT * FROM harness_side_effect_attempt_leases WHERE lease_id = ?",
+                (lease_id,),
+            ).fetchone()
+            if lease_row is not None:
+                existing_lease = _attempt_from_row(lease_row)
+                if (
+                    existing_lease.owner_id != owner_id
+                    or existing_lease.decision_ref != decision.checksum
+                ):
+                    raise _store_error(
+                        "stale_side_effect_attempt",
+                        "side-effect lease identity belongs to another owner or decision",
+                        effect_id=decision.effect_id,
+                        lease_id=lease_id,
+                    )
+                return existing_lease
+            outcome_exists = connection.execute(
+                "SELECT 1 FROM harness_side_effect_outcomes WHERE effect_id = ?",
+                (decision.effect_id,),
+            ).fetchone()
+            if outcome_exists is not None:
                 raise _store_error(
-                    "side_effect_store_conflict",
-                    "side-effect attempt reservation conflicted",
+                    "side_effect_outcome_already_committed",
+                    "side-effect outcome is already committed",
                     effect_id=decision.effect_id,
                 )
-            return next_count
+            current = self._latest_attempt(connection, decision.effect_id)
+            if (
+                current is not None
+                and current.status is not HarnessSideEffectAttemptStatus.TERMINATED
+            ):
+                self._raise_attempt_overlap(current)
+            if current is None and count:
+                raise _store_error(
+                    "side_effect_attempt_termination_unconfirmed",
+                    "legacy side-effect attempt has no termination evidence",
+                    effect_id=decision.effect_id,
+                    attempt_count=count,
+                    legacy_unfenced=True,
+                )
+            if count >= limit:
+                raise _store_error(
+                    "effect_retry_exhausted",
+                    "side-effect retry budget is exhausted",
+                    effect_id=decision.effect_id,
+                    attempt_count=count,
+                    attempt_limit=limit,
+                )
+            next_count = count + 1
+            now = self._now()
+            lease = HarnessSideEffectAttemptLease.create(
+                decision,
+                attempt=next_count,
+                owner_id=owner_id,
+                lease_id=lease_id,
+                acquired_at=now,
+                lease_expires_at=now + timedelta(seconds=self.attempt_lease_seconds),
+            )
+            self._advance_attempt_ledger(
+                connection,
+                decision=decision,
+                current_count=count,
+                next_count=next_count,
+            )
+            self._insert_attempt(connection, lease)
+            return lease
+
+    def get_attempt(
+        self,
+        *,
+        effect_id: str,
+        identity_scope_ref: str,
+        subject_scope_ref: str,
+    ) -> HarnessSideEffectAttemptLease | None:
+        with self._read("read Harness side-effect attempt") as connection:
+            attempt = self._latest_attempt(connection, effect_id)
+            if attempt is None:
+                return None
+            if (
+                attempt.identity_scope_ref != identity_scope_ref
+                or attempt.subject_scope_ref != subject_scope_ref
+            ):
+                raise HarnessValidationError("side-effect attempt scope mismatch")
+            return attempt
+
+    def renew_attempt(
+        self,
+        attempt: HarnessSideEffectAttemptLease,
+    ) -> HarnessSideEffectAttemptLease:
+        with self._write("renew Harness side-effect attempt") as connection:
+            current = self._assert_current_attempt(connection, attempt)
+            self._assert_lease_accepts_result(current)
+            now = self._now()
+            next_expiry = now + timedelta(seconds=self.attempt_lease_seconds)
+            if next_expiry <= current.lease_expires_at:
+                return current
+            renewed = current.renewed(lease_expires_at=next_expiry)
+            self._update_attempt(connection, renewed)
+            return renewed
+
+    def finish_attempt(
+        self,
+        attempt: HarnessSideEffectAttemptLease,
+        *,
+        termination_confirmed: bool,
+    ) -> HarnessSideEffectAttemptLease:
+        with self._write("finish Harness side-effect attempt") as connection:
+            current = self._assert_current_attempt(connection, attempt)
+            if current.status is HarnessSideEffectAttemptStatus.TERMINATED:
+                if termination_confirmed:
+                    return current
+                raise HarnessValidationError(
+                    "confirmed attempt termination cannot be revoked"
+                )
+            if (
+                current.status is HarnessSideEffectAttemptStatus.INDETERMINATE
+                and not termination_confirmed
+            ):
+                return current
+            return self._resolve_attempt(
+                connection,
+                current,
+                termination_confirmed=termination_confirmed,
+            )
 
     def attempt_count(
         self,
@@ -499,11 +746,24 @@ class SQLiteHarnessSideEffectStore:
                     outcome.checksum,
                 ),
             )
-            if updated.rowcount != 1:  # pragma: no cover - BEGIN IMMEDIATE serializes writers
+            if (
+                updated.rowcount != 1
+            ):  # pragma: no cover - BEGIN IMMEDIATE serializes writers
                 raise _store_error(
                     "side_effect_store_conflict",
                     "side-effect disposition update conflicted",
                     effect_id=effect_id,
+                )
+            attempt_row = connection.execute(
+                "SELECT * FROM harness_side_effect_attempt_leases "
+                "WHERE outcome_ref = ?",
+                (outcome.checksum,),
+            ).fetchone()
+            if attempt_row is not None:
+                attempt = _attempt_from_row(attempt_row)
+                self._update_attempt(
+                    connection,
+                    attempt.relinked_outcome(updated_outcome.checksum),
                 )
             return updated_outcome
 
@@ -525,6 +785,11 @@ class SQLiteHarnessSideEffectStore:
                     ).fetchall()
                 )
             }
+            ledgers: dict[str, sqlite3.Row] = {}
+            attempts_by_outcome_ref: dict[
+                str,
+                list[HarnessSideEffectAttemptLease],
+            ] = {}
             for row in connection.execute(
                 "SELECT * FROM harness_side_effect_attempts"
             ).fetchall():
@@ -532,6 +797,45 @@ class SQLiteHarnessSideEffectStore:
                 if decision is None:
                     raise _corruption("side-effect attempt has no decision")
                 _assert_ledger_matches_decision(row, decision)
+                ledgers[str(row["effect_id"])] = row
+            for row in connection.execute(
+                "SELECT * FROM harness_side_effect_attempt_leases"
+            ).fetchall():
+                attempt = _attempt_from_row(row)
+                decision = decisions.get(attempt.decision_ref)
+                if decision is None:
+                    raise _corruption("side-effect attempt lease has no decision")
+                _assert_attempt_matches_decision(attempt, decision)
+                ledger = ledgers.get(attempt.effect_id)
+                if ledger is None or attempt.attempt > int(ledger["attempt_count"]):
+                    raise _corruption(
+                        "side-effect attempt lease exceeds its durable ledger"
+                    )
+                if attempt.outcome_ref is not None:
+                    outcome_row = connection.execute(
+                        "SELECT * FROM harness_side_effect_outcomes "
+                        "WHERE outcome_ref = ?",
+                        (attempt.outcome_ref,),
+                    ).fetchone()
+                    if outcome_row is None:
+                        raise _corruption(
+                            "side-effect attempt references a missing outcome"
+                        )
+                    outcome = _outcome_from_row(outcome_row)
+                    if (
+                        outcome.effect_id != attempt.effect_id
+                        or outcome.decision_ref != attempt.decision_ref
+                        or outcome.attempt_id != attempt.attempt_id
+                        or outcome.fencing_generation
+                        != attempt.fencing_generation
+                    ):
+                        raise _corruption(
+                            "side-effect attempt outcome conflicts with its lease"
+                        )
+                    attempts_by_outcome_ref.setdefault(
+                        attempt.outcome_ref,
+                        [],
+                    ).append(attempt)
             for row in connection.execute(
                 "SELECT * FROM harness_side_effect_outcomes"
             ).fetchall():
@@ -540,6 +844,18 @@ class SQLiteHarnessSideEffectStore:
                 if decision is None:
                     raise _corruption("side-effect outcome has no decision")
                 _assert_stored_outcome_matches_decision(outcome, decision)
+                if outcome.schema_version == (
+                    "newsroom.harness-side-effect-outcome/v2"
+                ):
+                    matching_attempts = attempts_by_outcome_ref.get(
+                        outcome.checksum,
+                        [],
+                    )
+                    if len(matching_attempts) != 1:
+                        raise _corruption(
+                            "fenced side-effect outcome must reference one exact "
+                            "terminated attempt"
+                        )
             connection.commit()
 
     def close(self) -> None:
@@ -592,9 +908,242 @@ class SQLiteHarnessSideEffectStore:
         _assert_ledger_matches_decision(row, decision)
         return row
 
+    @staticmethod
+    def _advance_attempt_ledger(
+        connection: sqlite3.Connection,
+        *,
+        decision: HarnessSideEffectDecision,
+        current_count: int,
+        next_count: int,
+    ) -> None:
+        updated = connection.execute(
+            "UPDATE harness_side_effect_attempts SET attempt_count = ? "
+            "WHERE effect_id = ? AND decision_ref = ? AND attempt_count = ?",
+            (
+                next_count,
+                decision.effect_id,
+                decision.checksum,
+                current_count,
+            ),
+        )
+        if (
+            updated.rowcount != 1
+        ):  # pragma: no cover - BEGIN IMMEDIATE serializes writers
+            raise _store_error(
+                "side_effect_store_conflict",
+                "side-effect attempt reservation conflicted",
+                effect_id=decision.effect_id,
+            )
+
+    @staticmethod
+    def _assert_outcome_authorized(
+        connection: sqlite3.Connection,
+        outcome: HarnessSideEffectOutcome,
+    ) -> None:
+        decision_row = connection.execute(
+            "SELECT * FROM harness_side_effect_decisions WHERE decision_ref = ?",
+            (outcome.decision_ref,),
+        ).fetchone()
+        if decision_row is None:
+            raise HarnessValidationError(
+                "side-effect outcome has no durable authorization"
+            )
+        _assert_outcome_matches_decision(outcome, _decision_from_row(decision_row))
+
+    @staticmethod
+    def _existing_outcome(
+        connection: sqlite3.Connection,
+        outcome: HarnessSideEffectOutcome,
+    ) -> HarnessSideEffectOutcome | None:
+        assert outcome.checksum is not None
+        rows = _unique_rows(
+            connection.execute(
+                "SELECT * FROM harness_side_effect_outcomes "
+                "WHERE outcome_ref = ? OR outcome_id = ? OR effect_id = ? "
+                "OR idempotency_key = ?",
+                (
+                    outcome.checksum,
+                    outcome.outcome_id,
+                    outcome.effect_id,
+                    outcome.idempotency_key,
+                ),
+            ).fetchall(),
+            key="outcome_ref",
+        )
+        if not rows:
+            return None
+        existing = tuple(_outcome_from_row(row) for row in rows)
+        if any(candidate != outcome for candidate in existing):
+            raise HarnessValidationError("side-effect outcome identity is immutable")
+        return existing[0]
+
+    @staticmethod
+    def _insert_outcome(
+        connection: sqlite3.Connection,
+        outcome: HarnessSideEffectOutcome,
+    ) -> None:
+        assert outcome.checksum is not None
+        connection.execute(
+            "INSERT INTO harness_side_effect_outcomes ("
+            "outcome_ref, outcome_id, effect_id, decision_ref, run_id, "
+            "identity_scope_ref, subject_scope_ref, idempotency_key, "
+            "disposition, outcome_json"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                outcome.checksum,
+                outcome.outcome_id,
+                outcome.effect_id,
+                outcome.decision_ref,
+                outcome.run_id,
+                outcome.identity_scope_ref,
+                outcome.subject_scope_ref,
+                outcome.idempotency_key,
+                outcome.disposition.value,
+                stable_json_dumps(outcome.to_dict()),
+            ),
+        )
+
+    @staticmethod
+    def _latest_attempt(
+        connection: sqlite3.Connection,
+        effect_id: str,
+    ) -> HarnessSideEffectAttemptLease | None:
+        row = connection.execute(
+            "SELECT * FROM harness_side_effect_attempt_leases "
+            "WHERE effect_id = ? ORDER BY fencing_generation DESC LIMIT 1",
+            (effect_id,),
+        ).fetchone()
+        return None if row is None else _attempt_from_row(row)
+
+    def _assert_current_attempt(
+        self,
+        connection: sqlite3.Connection,
+        attempt: HarnessSideEffectAttemptLease,
+    ) -> HarnessSideEffectAttemptLease:
+        if not isinstance(attempt, HarnessSideEffectAttemptLease):
+            raise TypeError("attempt must be HarnessSideEffectAttemptLease")
+        current = self._latest_attempt(connection, attempt.effect_id)
+        if current is None or not _same_attempt_generation(current, attempt):
+            raise _store_error(
+                "stale_side_effect_attempt",
+                "side-effect attempt no longer owns the current fence",
+                effect_id=attempt.effect_id,
+                attempt_id=attempt.attempt_id,
+                fencing_generation=attempt.fencing_generation,
+            )
+        return current
+
+    def _assert_lease_accepts_result(
+        self,
+        attempt: HarnessSideEffectAttemptLease,
+    ) -> None:
+        if attempt.status is not HarnessSideEffectAttemptStatus.ACTIVE:
+            raise _store_error(
+                "stale_side_effect_attempt",
+                "side-effect attempt is no longer active",
+                effect_id=attempt.effect_id,
+                attempt_id=attempt.attempt_id,
+                fencing_generation=attempt.fencing_generation,
+            )
+        if self._now() >= attempt.lease_expires_at:
+            raise _store_error(
+                "side_effect_attempt_lease_expired",
+                "side-effect attempt lease expired before the operation",
+                effect_id=attempt.effect_id,
+                attempt_id=attempt.attempt_id,
+                fencing_generation=attempt.fencing_generation,
+            )
+
+    def _raise_attempt_overlap(self, attempt: HarnessSideEffectAttemptLease) -> None:
+        now = self._now()
+        code = (
+            "side_effect_attempt_in_progress"
+            if attempt.status is HarnessSideEffectAttemptStatus.ACTIVE
+            and now < attempt.lease_expires_at
+            else "side_effect_attempt_termination_unconfirmed"
+        )
+        raise _store_error(
+            code,
+            "side-effect attempt cannot overlap an unconfirmed predecessor",
+            effect_id=attempt.effect_id,
+            attempt_id=attempt.attempt_id,
+            fencing_generation=attempt.fencing_generation,
+            lease_expired=now >= attempt.lease_expires_at,
+        )
+
+    @staticmethod
+    def _insert_attempt(
+        connection: sqlite3.Connection,
+        attempt: HarnessSideEffectAttemptLease,
+    ) -> None:
+        connection.execute(
+            "INSERT INTO harness_side_effect_attempt_leases ("
+            "attempt_id, lease_id, owner_id, effect_id, decision_ref, idempotency_key, "
+            "identity_scope_ref, subject_scope_ref, attempt, fencing_generation, "
+            "acquired_at, lease_expires_at, status, termination_confirmed, "
+            "resolved_at, outcome_ref, attempt_json"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            _attempt_row_values(attempt),
+        )
+
+    @staticmethod
+    def _update_attempt(
+        connection: sqlite3.Connection,
+        attempt: HarnessSideEffectAttemptLease,
+    ) -> None:
+        updated = connection.execute(
+            "UPDATE harness_side_effect_attempt_leases SET "
+            "lease_expires_at = ?, status = ?, termination_confirmed = ?, "
+            "resolved_at = ?, outcome_ref = ?, attempt_json = ? "
+            "WHERE attempt_id = ? AND lease_id = ? AND effect_id = ? "
+            "AND fencing_generation = ?",
+            (
+                format_datetime(attempt.lease_expires_at),
+                attempt.status.value,
+                int(attempt.termination_confirmed),
+                format_datetime(attempt.resolved_at),
+                attempt.outcome_ref,
+                stable_json_dumps(attempt.to_dict()),
+                attempt.attempt_id,
+                attempt.lease_id,
+                attempt.effect_id,
+                attempt.fencing_generation,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise _store_error(
+                "stale_side_effect_attempt",
+                "side-effect attempt update lost its current fence",
+                effect_id=attempt.effect_id,
+                attempt_id=attempt.attempt_id,
+                fencing_generation=attempt.fencing_generation,
+            )
+
+    def _resolve_attempt(
+        self,
+        connection: sqlite3.Connection,
+        attempt: HarnessSideEffectAttemptLease,
+        *,
+        termination_confirmed: bool,
+        outcome_ref: str | None = None,
+    ) -> HarnessSideEffectAttemptLease:
+        resolved = attempt.resolved(
+            termination_confirmed=termination_confirmed,
+            resolved_at=self._now(),
+            outcome_ref=outcome_ref,
+        )
+        self._update_attempt(connection, resolved)
+        return resolved
+
+    def _now(self) -> datetime:
+        return self._clock()
+
     def _initialize_schema(self) -> None:
         try:
             with self._connection() as connection:
+                _require_supported_schema_version(
+                    _stored_schema_version(connection),
+                )
                 journal_mode = str(
                     connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
                 )
@@ -604,30 +1153,40 @@ class SQLiteHarnessSideEffectStore:
                         "SQLite Harness side-effect store requires WAL mode",
                         journal_mode=journal_mode,
                     )
-                connection.executescript(_SCHEMA)
                 connection.execute("BEGIN IMMEDIATE")
-                metadata = connection.execute(
-                    "SELECT schema_version FROM harness_side_effect_store_metadata "
-                    "ORDER BY schema_version DESC LIMIT 1"
-                ).fetchone()
-                if metadata is None:
-                    connection.execute(
-                        "INSERT INTO harness_side_effect_store_metadata "
-                        "(schema_version, created_at) "
-                        "VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-                        (SQLITE_HARNESS_SIDE_EFFECT_SCHEMA_VERSION,),
-                    )
-                elif int(metadata["schema_version"]) != SQLITE_HARNESS_SIDE_EFFECT_SCHEMA_VERSION:
-                    raise _store_error(
-                        "side_effect_store_schema_unsupported",
-                        "SQLite Harness side-effect schema version is unsupported",
-                        schema_version=int(metadata["schema_version"]),
-                    )
-                connection.commit()
+                try:
+                    schema_version = _stored_schema_version(connection)
+                    _require_supported_schema_version(schema_version)
+                    _execute_schema(connection)
+                    if schema_version is None:
+                        connection.execute(
+                            "INSERT INTO harness_side_effect_store_metadata "
+                            "(schema_version, created_at) "
+                            "VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                            (SQLITE_HARNESS_SIDE_EFFECT_SCHEMA_VERSION,),
+                        )
+                    elif schema_version == 1:
+                        updated = connection.execute(
+                            "UPDATE harness_side_effect_store_metadata "
+                            "SET schema_version = ? WHERE schema_version = 1",
+                            (SQLITE_HARNESS_SIDE_EFFECT_SCHEMA_VERSION,),
+                        )
+                        if updated.rowcount != 1:
+                            raise _corruption(
+                                "SQLite Harness side-effect schema migration lost "
+                                "its version fence"
+                            )
+                    connection.commit()
+                except BaseException:
+                    if connection.in_transaction:
+                        connection.rollback()
+                    raise
         except HarnessValidationError:
             raise
         except sqlite3.Error as exc:
-            raise _sqlite_error(exc, operation="initialize Harness side-effect store") from exc
+            raise _sqlite_error(
+                exc, operation="initialize Harness side-effect store"
+            ) from exc
         self.verify_integrity()
 
     def _open_connection(self) -> sqlite3.Connection:
@@ -646,7 +1205,9 @@ class SQLiteHarnessSideEffectStore:
             connection.execute(f"PRAGMA synchronous={self.synchronous}")
             return connection
         except sqlite3.Error as exc:
-            raise _sqlite_error(exc, operation="open Harness side-effect store") from exc
+            raise _sqlite_error(
+                exc, operation="open Harness side-effect store"
+            ) from exc
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -701,7 +1262,9 @@ def _decision_from_row(row: sqlite3.Row) -> HarnessSideEffectDecision:
         "idempotency_key": decision.idempotency_key,
     }
     if any(row[key] != value for key, value in expected.items()):
-        raise _corruption("stored side-effect decision indexes do not match its payload")
+        raise _corruption(
+            "stored side-effect decision indexes do not match its payload"
+        )
     return decision
 
 
@@ -727,6 +1290,57 @@ def _outcome_from_row(row: sqlite3.Row) -> HarnessSideEffectOutcome:
     return outcome
 
 
+def _attempt_from_row(row: sqlite3.Row) -> HarnessSideEffectAttemptLease:
+    try:
+        payload = json_loads(str(row["attempt_json"]))
+        attempt = HarnessSideEffectAttemptLease.from_dict(payload)
+    except (HarnessValidationError, TypeError, ValueError) as exc:
+        raise _corruption("stored side-effect attempt lease is invalid") from exc
+    expected = {
+        "attempt_id": attempt.attempt_id,
+        "lease_id": attempt.lease_id,
+        "owner_id": attempt.owner_id,
+        "effect_id": attempt.effect_id,
+        "decision_ref": attempt.decision_ref,
+        "idempotency_key": attempt.idempotency_key,
+        "identity_scope_ref": attempt.identity_scope_ref,
+        "subject_scope_ref": attempt.subject_scope_ref,
+        "attempt": attempt.attempt,
+        "fencing_generation": attempt.fencing_generation,
+        "acquired_at": format_datetime(attempt.acquired_at),
+        "lease_expires_at": format_datetime(attempt.lease_expires_at),
+        "status": attempt.status.value,
+        "termination_confirmed": int(attempt.termination_confirmed),
+        "resolved_at": format_datetime(attempt.resolved_at),
+        "outcome_ref": attempt.outcome_ref,
+    }
+    if any(row[key] != value for key, value in expected.items()):
+        raise _corruption("stored side-effect attempt indexes do not match its payload")
+    return attempt
+
+
+def _attempt_row_values(attempt: HarnessSideEffectAttemptLease) -> tuple[Any, ...]:
+    return (
+        attempt.attempt_id,
+        attempt.lease_id,
+        attempt.owner_id,
+        attempt.effect_id,
+        attempt.decision_ref,
+        attempt.idempotency_key,
+        attempt.identity_scope_ref,
+        attempt.subject_scope_ref,
+        attempt.attempt,
+        attempt.fencing_generation,
+        format_datetime(attempt.acquired_at),
+        format_datetime(attempt.lease_expires_at),
+        attempt.status.value,
+        int(attempt.termination_confirmed),
+        format_datetime(attempt.resolved_at),
+        attempt.outcome_ref,
+        stable_json_dumps(attempt.to_dict()),
+    )
+
+
 def _assert_ledger_matches_decision(
     row: sqlite3.Row,
     decision: HarnessSideEffectDecision,
@@ -745,6 +1359,75 @@ def _assert_ledger_matches_decision(
         raise _corruption("side-effect attempt ledger count is invalid")
 
 
+def _assert_attempt_matches_decision(
+    attempt: HarnessSideEffectAttemptLease,
+    decision: HarnessSideEffectDecision,
+) -> None:
+    if (
+        attempt.effect_id != decision.effect_id
+        or attempt.decision_ref != decision.checksum
+        or attempt.idempotency_key != decision.idempotency_key
+        or attempt.identity_scope_ref != decision.identity_scope_ref
+        or attempt.subject_scope_ref != decision.subject_scope_ref
+    ):
+        raise _corruption("side-effect attempt lease conflicts with its decision")
+
+
+def _bind_outcome_to_attempt(
+    outcome: HarnessSideEffectOutcome,
+    attempt: HarnessSideEffectAttemptLease,
+) -> HarnessSideEffectOutcome:
+    if (
+        outcome.effect_id != attempt.effect_id
+        or outcome.decision_ref != attempt.decision_ref
+        or outcome.idempotency_key != attempt.idempotency_key
+        or outcome.identity_scope_ref != attempt.identity_scope_ref
+        or outcome.subject_scope_ref != attempt.subject_scope_ref
+    ):
+        raise HarnessValidationError(
+            "side-effect outcome attempt identity mismatch",
+            code="side_effect_outcome_attempt_identity_mismatch",
+        )
+    if outcome.attempt_id is None:
+        return replace(
+            outcome,
+            attempt_id=attempt.attempt_id,
+            fencing_generation=attempt.fencing_generation,
+            schema_version="newsroom.harness-side-effect-outcome/v2",
+            checksum=None,
+        )
+    if (
+        outcome.attempt_id != attempt.attempt_id
+        or outcome.fencing_generation != attempt.fencing_generation
+    ):
+        raise _store_error(
+            "stale_side_effect_attempt",
+            "side-effect outcome carries a stale fencing identity",
+            effect_id=outcome.effect_id,
+            attempt_id=outcome.attempt_id,
+            fencing_generation=outcome.fencing_generation,
+        )
+    return outcome
+
+
+def _same_attempt_generation(
+    left: HarnessSideEffectAttemptLease,
+    right: HarnessSideEffectAttemptLease,
+) -> bool:
+    return (
+        left.attempt_id == right.attempt_id
+        and left.lease_id == right.lease_id
+        and left.owner_id == right.owner_id
+        and left.effect_id == right.effect_id
+        and left.decision_ref == right.decision_ref
+        and left.idempotency_key == right.idempotency_key
+        and left.identity_scope_ref == right.identity_scope_ref
+        and left.subject_scope_ref == right.subject_scope_ref
+        and left.attempt == right.attempt
+        and left.fencing_generation == right.fencing_generation
+    )
+
+
 def _assert_outcome_matches_decision(
     outcome: HarnessSideEffectOutcome,
     decision: HarnessSideEffectDecision,
@@ -760,9 +1443,7 @@ def _assert_outcome_matches_decision(
         or outcome.subject_scope_ref != decision.subject_scope_ref
         or outcome.atomic_group != decision.atomic_group
     ):
-        raise HarnessValidationError(
-            "side-effect outcome does not match authorization"
-        )
+        raise HarnessValidationError("side-effect outcome does not match authorization")
 
 
 def _assert_stored_outcome_matches_decision(
@@ -808,6 +1489,66 @@ def _sqlite_error(exc: sqlite3.Error, *, operation: str) -> HarnessValidationErr
         "side_effect_store_unavailable",
         f"{operation} failed",
     )
+
+
+def _lease_identity(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value or value.strip() != value:
+        raise HarnessValidationError(
+            f"{field_name} is required and must not contain surrounding whitespace"
+        )
+    return value
+
+
+def _stored_schema_version(connection: sqlite3.Connection) -> int | None:
+    metadata_table = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'harness_side_effect_store_metadata'"
+    ).fetchone()
+    if metadata_table is None:
+        existing_objects = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        if existing_objects:
+            raise _corruption(
+                "SQLite Harness side-effect metadata is missing from a "
+                "non-empty database"
+            )
+        return None
+    rows = connection.execute(
+        "SELECT schema_version FROM harness_side_effect_store_metadata"
+    ).fetchall()
+    if len(rows) != 1:
+        raise _corruption(
+            "SQLite Harness side-effect metadata must contain exactly one version"
+        )
+    value = rows[0]["schema_version"]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _corruption("SQLite Harness side-effect schema version is invalid")
+    return value
+
+
+def _require_supported_schema_version(schema_version: int | None) -> None:
+    if schema_version not in (None, 1, SQLITE_HARNESS_SIDE_EFFECT_SCHEMA_VERSION):
+        raise _store_error(
+            "side_effect_store_schema_unsupported",
+            "SQLite Harness side-effect schema version is unsupported",
+            schema_version=schema_version,
+        )
+
+
+def _execute_schema(connection: sqlite3.Connection) -> None:
+    pending: list[str] = []
+    for line in _SCHEMA.splitlines(keepends=True):
+        pending.append(line)
+        statement = "".join(pending)
+        if not sqlite3.complete_statement(statement):
+            continue
+        if statement.strip():
+            connection.execute(statement)
+        pending.clear()
+    if "".join(pending).strip():  # pragma: no cover - static schema invariant
+        raise RuntimeError("SQLite Harness side-effect schema is incomplete")
 
 
 def _corruption(message: str) -> HarnessValidationError:

@@ -7,9 +7,16 @@ import pytest
 
 from framework.events.errors import EventReplayMismatchError, EventStoreCorruptionError
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.graph_application import (
+    HarnessGraphActivityCancellationRequest,
+)
 from framework.harness.control_plane.graph_decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
+)
+from framework.harness.control_plane.graph_evaluator import (
+    HarnessAcceptedGraphObservation,
+    HarnessGraphObservationType,
 )
 from framework.harness.control_plane.graph_runtime import (
     HarnessGraphActivity,
@@ -28,8 +35,10 @@ from framework.harness.control_plane.harness import (
     InMemoryHarnessEventPort,
 )
 from framework.harness.control_plane.policy import HarnessBudget
+from framework.harness.control_plane.scheduler import HarnessScheduler
 from framework.harness.control_plane.state import HarnessRunSpec, HarnessStepStatus
 from framework.harness.workflow.canonical import canonical_checksum
+from framework.harness.workflow.conditions import ConditionPredicate
 from framework.harness.workflow.dsl import (
     Choice,
     ChoiceBranch,
@@ -41,7 +50,7 @@ from framework.harness.workflow.graph import (
     HarnessExecutableNode,
     NormalizedHarnessGraph,
 )
-from framework.harness.workflow.spec import HarnessWorkflowSpec
+from framework.harness.workflow.spec import HarnessRoutingRule, HarnessWorkflowSpec
 from framework.harness.workflow.step import HarnessStepSpec
 from framework.harness.workflow.validation import (
     HarnessGraphPreflight,
@@ -65,12 +74,19 @@ def test_explicit_graph_initialization_pins_graph_before_run_creation() -> None:
     assert repeated == state
     assert state.lifecycle is RunLifecycle.CREATED
     assert state.last_event_sequence == 1
-    assert state.graph_ref.checksum == control_plane._prepared_graphs[run_spec.run_id].checksum
-    assert state.metadata["run_spec_checksum"] == control_plane._prepared_run_specs[run_spec.run_id]
+    assert (
+        state.graph_ref.checksum
+        == control_plane._prepared_graphs[run_spec.run_id].checksum
+    )
+    assert (
+        state.metadata["run_spec_checksum"]
+        == control_plane._prepared_run_specs[run_spec.run_id]
+    )
     assert state.budgets.require("node_activations").limit == 100_000
     assert state.budgets.require("max_active_nodes").limit == 1
     assert event_port.events == []
-    assert event_port.states == {}
+    assert not hasattr(event_port, "states")
+    assert not hasattr(event_port, "transitions")
     recovery = control_plane.graph_transition_port.recover_graph(run_spec.run_id)
     assert recovery.state == state
     assert recovery.graph == control_plane._prepared_graphs[run_spec.run_id]
@@ -78,15 +94,128 @@ def test_explicit_graph_initialization_pins_graph_before_run_creation() -> None:
     assert recovery.projection_commits[0].commit_kind.value == "initialize"
 
 
-def test_explicit_graph_run_fails_before_creating_graph_history() -> None:
-    run_spec = _run_spec("run-graph-not-cut-over")
+def test_explicit_graph_run_executes_through_graph_control_plane() -> None:
+    run_spec = _run_spec("run-explicit-graph")
     control_plane = _control_plane()
 
-    with pytest.raises(HarnessValidationError) as captured:
-        control_plane.run(run_spec)
+    result = control_plane.run(run_spec)
 
-    assert captured.value.code == "graph_execution_not_active"
-    assert control_plane.graph_transition_port.recover_graph(run_spec.run_id).state is None
+    assert result.state.status.value == "succeeded"
+    assert result.graph_state is not None
+    assert result.graph_state.lifecycle is RunLifecycle.COMPLETED
+    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
+    recovery = control_plane.graph_transition_port.recover_graph(run_spec.run_id)
+    assert recovery.state == result.graph_state
+    assert recovery.pending_decisions == ()
+
+
+def test_sequence_run_completes_predecessor_before_activating_successor() -> None:
+    run_spec = _run_spec(
+        "run-sequence-cutover",
+        step_ids=("first", "second"),
+    )
+    port = InMemoryHarnessEventPort()
+    worker_calls: list[str] = []
+
+    def record_worker(task: dict) -> HarnessWorkerResult:
+        worker_calls.append(task["step_id"])
+        return HarnessWorkerResult("succeeded", output={"step_id": task["step_id"]})
+
+    control_plane = HarnessControlPlane(
+        event_port=port,
+        worker_registry={
+            "first": record_worker,
+            "second": record_worker,
+        },
+    )
+
+    result = control_plane.run(run_spec)
+
+    assert worker_calls == ["first", "second"]
+    assert result.graph_state is not None
+    assert result.graph_state.lifecycle is RunLifecycle.COMPLETED
+    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert {
+        node.identity.node_id: node.status for node in result.graph_state.node_instances
+    } == {
+        "first": HarnessNodeInstanceStatus.SUCCEEDED,
+        "second": HarnessNodeInstanceStatus.SUCCEEDED,
+    }
+    recovery = port.recover_graph(run_spec.run_id)
+    first_completion = next(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.COMPLETE_NODE
+        and commit.decision.node_id == "first"
+    )
+    second_activation = next(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.ACTIVATE_NODE
+        and commit.decision.node_id == "second"
+    )
+    assert first_completion.sequence < second_activation.sequence
+
+
+def test_legacy_declaration_run_recover_and_resume_use_only_graph_executor() -> None:
+    steps = tuple(
+        HarnessStepSpec(
+            step_id,
+            "script",
+            metadata={
+                "step_version": "1",
+                "worker_version": "1",
+                **({"approval_required": True} if step_id == "first" else {}),
+            },
+        )
+        for step_id in ("first", "second")
+    )
+    run_spec = HarnessRunSpec(
+        run_id="run-legacy-declaration-graph-only",
+        workflow=HarnessWorkflowSpec(
+            workflow_id="legacy-declaration-graph-only",
+            steps=steps,
+            entry_step_id="first",
+            routing_rules=(HarnessRoutingRule("first", "second"),),
+        ),
+        created_at=_CREATED_AT,
+    )
+    port = InMemoryHarnessEventPort()
+    scheduler = HarnessScheduler()
+    worker_calls: list[str] = []
+
+    def record_worker(task: dict) -> HarnessWorkerResult:
+        worker_calls.append(task["step_id"])
+        return HarnessWorkerResult("succeeded", output={"step_id": task["step_id"]})
+
+    control_plane = HarnessControlPlane(
+        event_port=port,
+        scheduler=scheduler,
+        worker_registry={"first": record_worker, "second": record_worker},
+    )
+
+    waiting = control_plane.run(run_spec)
+    resumed = control_plane.resume_after_approval(waiting.state, approved=True)
+    recovered = HarnessControlPlane(
+        event_port=port,
+        scheduler=scheduler,
+        worker_registry={"first": record_worker, "second": record_worker},
+    ).recover_and_run(run_spec)
+
+    assert waiting.graph_state is not None
+    assert waiting.graph_state.lifecycle is RunLifecycle.WAITING
+    assert resumed.graph_state is not None
+    assert resumed.graph_state.lifecycle is RunLifecycle.COMPLETED
+    assert resumed.graph_state.outcome is RunOutcome.SUCCEEDED
+    assert recovered.graph_state == resumed.graph_state
+    assert worker_calls == ["first", "second"]
+    assert not hasattr(port, "states")
+    assert not hasattr(port, "transitions")
+    assert all(
+        isinstance(decision, HarnessGraphDecision)
+        for result in (waiting, resumed, recovered)
+        for decision in result.decisions
+    )
 
 
 def test_graph_activation_commits_decision_before_projection() -> None:
@@ -169,6 +298,89 @@ def test_choice_control_decision_applies_only_from_ready_choice() -> None:
 
     assert projected.node_instances[0].status is HarnessNodeInstanceStatus.SUCCEEDED
     assert projected.node_instances[0].last_event_sequence == 5
+
+
+def test_choice_run_uses_priority_and_commits_selection_before_activation() -> None:
+    run_spec = _priority_choice_run_spec("run-choice-priority")
+    port = InMemoryHarnessEventPort()
+    worker_calls: list[str] = []
+
+    def record_worker(task: dict) -> HarnessWorkerResult:
+        worker_calls.append(task["step_id"])
+        return HarnessWorkerResult("succeeded", output={"step_id": task["step_id"]})
+
+    control_plane = HarnessControlPlane(
+        event_port=port,
+        worker_registry={
+            "high": record_worker,
+            "low": record_worker,
+            "fallback": record_worker,
+        },
+    )
+
+    result = control_plane.run(run_spec)
+
+    assert worker_calls == ["high"]
+    assert result.graph_state is not None
+    assert result.graph_state.lifecycle is RunLifecycle.COMPLETED
+    assert result.graph_state.outcome is RunOutcome.SUCCEEDED
+    recovery = port.recover_graph(run_spec.run_id)
+    selection = next(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.SELECT_CHOICE
+    )
+    target_activation = next(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.ACTIVATE_NODE
+        and commit.decision.node_id == "high"
+    )
+    assert selection.decision.target_node_ids == ("high",)
+    assert selection.sequence < target_activation.sequence
+    assert all(
+        commit.decision.node_id not in {"low", "fallback"}
+        or commit.decision.decision_type
+        is not HarnessGraphDecisionType.DISPATCH_ACTIVITY
+        for commit in recovery.decision_commits
+    )
+
+
+def test_choice_run_without_match_or_default_halts_before_worker_execution() -> None:
+    run_spec = _no_match_choice_run_spec("run-choice-no-match")
+    port = InMemoryHarnessEventPort()
+    worker_calls: list[str] = []
+
+    def record_worker(task: dict) -> HarnessWorkerResult:
+        worker_calls.append(task["step_id"])
+        return HarnessWorkerResult("succeeded", output={"step_id": task["step_id"]})
+
+    control_plane = HarnessControlPlane(
+        event_port=port,
+        worker_registry={"target": record_worker},
+    )
+
+    result = control_plane.run(run_spec)
+
+    assert worker_calls == []
+    assert result.worker_results == {}
+    assert result.state.status.value == "halted"
+    assert result.state.metadata["terminal_reason"] == "no_matching_route"
+    assert result.graph_state is not None
+    assert result.graph_state.lifecycle is RunLifecycle.HALTED
+    assert result.graph_state.outcome is RunOutcome.NONE
+    assert result.graph_state.terminal_reason_code == "no_matching_route"
+    recovery = port.recover_graph(run_spec.run_id)
+    halt = next(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.HALT_RUN
+    )
+    assert halt.decision.reason_code == "no_matching_route"
+    assert all(
+        commit.decision.decision_type is not HarnessGraphDecisionType.DISPATCH_ACTIVITY
+        for commit in recovery.decision_commits
+    )
 
 
 def test_invalid_step_transition_is_rejected_before_durable_commit() -> None:
@@ -514,7 +726,140 @@ def test_async_activity_result_is_identity_bound_and_duplicate_idempotent() -> N
     assert running.projection_checksum != projected.projection_checksum
 
 
-def test_unconfirmed_cancellation_halts_indeterminate_without_releasing_activity() -> None:
+def test_graph_observation_duplicate_identical_is_durably_idempotent() -> None:
+    run_spec = _run_spec("run-observation-duplicate")
+    port = InMemoryHarnessEventPort()
+    dispatcher = _RecordingDispatcher(port)
+    control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
+    running = _dispatch_entry(control_plane, run_spec)
+    graph = control_plane._prepared_graphs[run_spec.run_id]
+    observation = _worker_status_observation(running, graph)
+
+    projected = control_plane.accept_graph_observation(
+        run_spec,
+        observation,
+        occurred_at=_at(5),
+    )
+    duplicate = control_plane.accept_graph_observation(
+        run_spec,
+        observation,
+        occurred_at=_at(6),
+    )
+
+    assert duplicate == projected
+    recovery = port.recover_graph(run_spec.run_id)
+    assert len(recovery.observation_commits) == 1
+    assert recovery.observation_commits[0].observation == observation
+    assert recovery.pending_observations == ()
+    observation_projections = tuple(
+        item
+        for item in recovery.projection_commits
+        if item.commit_kind.value == "observation_projection"
+    )
+    assert len(observation_projections) == 1
+    node = projected.node_instances[0]
+    assert [
+        item.evidence_ref
+        for item in node.evidence_refs
+        if item.evidence_ref == observation.evidence_ref
+    ] == [observation.evidence_ref]
+    assert len(node.metadata["accepted_observations"]) == 1
+
+
+def test_graph_observation_conflicting_duplicate_is_rejected_without_history_change() -> (
+    None
+):
+    run_spec = _run_spec("run-observation-conflict")
+    port = InMemoryHarnessEventPort()
+    dispatcher = _RecordingDispatcher(port)
+    control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
+    running = _dispatch_entry(control_plane, run_spec)
+    graph = control_plane._prepared_graphs[run_spec.run_id]
+    accepted = _worker_status_observation(running, graph)
+    projected = control_plane.accept_graph_observation(
+        run_spec,
+        accepted,
+        occurred_at=_at(5),
+    )
+    conflicting = replace(
+        accepted,
+        evidence_ref=_sha("conflicting-worker-status"),
+        payload={"status": "failed"},
+    )
+    before = port.recover_graph(run_spec.run_id)
+
+    with pytest.raises(EventReplayMismatchError, match="stale projection"):
+        control_plane.accept_graph_observation(
+            run_spec,
+            conflicting,
+            occurred_at=_at(6),
+        )
+
+    after = port.recover_graph(run_spec.run_id)
+    assert after == before
+    assert after.state == projected
+    assert [item.observation for item in after.observation_commits] == [accepted]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_exception", "expected_code"),
+    (
+        ("stale", EventReplayMismatchError, None),
+        ("cross_node", HarnessValidationError, "graph_observation_identity_mismatch"),
+        (
+            "cross_attempt",
+            HarnessValidationError,
+            "graph_observation_identity_mismatch",
+        ),
+    ),
+)
+def test_graph_observation_rejects_stale_cross_node_and_cross_attempt_inputs(
+    mutation: str,
+    expected_exception: type[Exception],
+    expected_code: str | None,
+) -> None:
+    run_spec = _run_spec(
+        f"run-observation-{mutation}",
+        step_ids=("first", "second"),
+    )
+    port = InMemoryHarnessEventPort()
+    dispatcher = _RecordingDispatcher(port)
+    control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
+    running = _dispatch_entry(control_plane, run_spec)
+    graph = control_plane._prepared_graphs[run_spec.run_id]
+    observation = _worker_status_observation(running, graph)
+    if mutation == "stale":
+        observation = replace(
+            observation,
+            event_sequence=running.last_event_sequence,
+        )
+    elif mutation == "cross_node":
+        observation = replace(
+            observation,
+            node_id="second",
+            contract_ref=_definition(graph, "second").worker_ref,
+        )
+    else:
+        observation = replace(
+            observation, attempt=running.node_instances[0].attempt + 1
+        )
+    before = port.recover_graph(run_spec.run_id)
+
+    with pytest.raises(expected_exception) as captured:
+        control_plane.accept_graph_observation(
+            run_spec,
+            observation,
+            occurred_at=_at(5),
+        )
+
+    if expected_code is not None:
+        assert captured.value.code == expected_code
+    assert port.recover_graph(run_spec.run_id) == before
+
+
+def test_unconfirmed_cancellation_halts_indeterminate_without_releasing_activity() -> (
+    None
+):
     run_spec = _run_spec("run-result-unconfirmed-cancel")
     port = InMemoryHarnessEventPort()
     dispatcher = _RecordingDispatcher(port)
@@ -526,6 +871,7 @@ def test_unconfirmed_cancellation_halts_indeterminate_without_releasing_activity
         evidence_ref=_sha("cancel-evidence"),
         payload_ref=_sha("cancel-payload"),
         status="cancelled",
+        termination_confirmed=False,
     )
 
     halted = control_plane.accept_graph_activity_result(
@@ -545,8 +891,139 @@ def test_unconfirmed_cancellation_halts_indeterminate_without_releasing_activity
     assert control_plane.next_graph_decision(run_spec, halted) is None
 
 
-def test_confirmed_failed_activity_can_retry_with_new_attempt_and_prior_evidence() -> None:
-    run_spec = _run_spec("run-result-retry")
+def test_confirmed_cancellation_releases_activity_and_terminalizes_node() -> None:
+    run_spec = _run_spec("run-result-confirmed-cancel")
+    port = InMemoryHarnessEventPort()
+    dispatcher = _RecordingDispatcher(port)
+    control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
+    _dispatch_entry(control_plane, run_spec)
+    activity = dispatcher.calls[0]
+    result = HarnessGraphActivityResult.for_activity(
+        activity,
+        evidence_ref=_sha("confirmed-cancel-evidence"),
+        payload_ref=_sha("confirmed-cancel-payload"),
+        status="cancelled",
+        termination_confirmed=True,
+    )
+
+    cancelled = control_plane.accept_graph_activity_result(
+        run_spec,
+        result,
+        occurred_at=_at(5),
+    )
+
+    assert cancelled.lifecycle is RunLifecycle.RUNNING
+    assert cancelled.outcome is RunOutcome.NONE
+    assert cancelled.node_instances[0].status is HarnessNodeInstanceStatus.CANCELLED
+    assert cancelled.active_activities == ()
+    assert control_plane.recover_graph(run_spec) == cancelled
+
+
+@pytest.mark.parametrize("result_status", ("succeeded", "failed"))
+def test_cancel_requested_activity_completion_reconciles_as_cancelled(
+    result_status: str,
+) -> None:
+    run_spec = _run_spec(f"run-cancel-race-{result_status}")
+    port = InMemoryHarnessEventPort()
+    dispatcher = _RecordingDispatcher(port)
+    control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
+    running = _dispatch_entry(control_plane, run_spec)
+    node = running.node_instances[0]
+    activity = dispatcher.calls[0]
+    graph = control_plane._prepared_graphs[run_spec.run_id]
+    cancel = _control_decision(
+        running,
+        HarnessGraphDecisionType.REQUEST_BRANCH_CANCEL,
+        node_id=node.identity.node_id,
+        node_instance_id=node.instance_id,
+        binding_versions=_bindings(_definition(graph, node.identity.node_id)),
+    )
+
+    cancelling = control_plane.apply_graph_decision(
+        run_spec,
+        running,
+        cancel,
+        occurred_at=_at(5),
+    )
+
+    assert cancelling.node_instances[0].status is (
+        HarnessNodeInstanceStatus.CANCEL_REQUESTED
+    )
+    assert len(dispatcher.cancellation_calls) == 1
+    request = dispatcher.cancellation_calls[0]
+    assert request.activity_id == activity.activity_id
+    assert request.attempt == activity.attempt
+    assert request.fencing_generation == activity.fencing_generation
+    result = HarnessGraphActivityResult.for_activity(
+        activity,
+        evidence_ref=_sha(f"cancel-race-{result_status}-evidence"),
+        payload_ref=_sha(f"cancel-race-{result_status}-payload"),
+        status=result_status,
+        termination_confirmed=True,
+    )
+
+    reconciled = control_plane.accept_graph_activity_result(
+        run_spec,
+        result,
+        occurred_at=_at(6),
+    )
+
+    cancelled_node = reconciled.node_instances[0]
+    assert cancelled_node.status is HarnessNodeInstanceStatus.CANCELLED
+    assert cancelled_node.step_status is HarnessStepStatus.HALTED
+    assert cancelled_node.metadata["cancel_reconciliation_status"] == result_status
+    assert reconciled.active_activities == ()
+
+
+def test_cancel_delivery_failure_recovers_same_durable_request() -> None:
+    run_spec = _run_spec("run-cancel-delivery-recovery")
+    port = InMemoryHarnessEventPort()
+    dispatcher = _FailOnceCancellationDispatcher(port)
+    control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
+    running = _dispatch_entry(control_plane, run_spec)
+    node = running.node_instances[0]
+    graph = control_plane._prepared_graphs[run_spec.run_id]
+    cancel = _control_decision(
+        running,
+        HarnessGraphDecisionType.REQUEST_BRANCH_CANCEL,
+        node_id=node.identity.node_id,
+        node_instance_id=node.instance_id,
+        binding_versions=_bindings(_definition(graph, node.identity.node_id)),
+    )
+
+    with pytest.raises(RuntimeError, match="cancellation unavailable"):
+        control_plane.apply_graph_decision(
+            run_spec,
+            running,
+            cancel,
+            occurred_at=_at(5),
+        )
+
+    interrupted = port.recover_graph(run_spec.run_id)
+    assert interrupted.pending_decisions == ()
+    assert interrupted.state is not None
+    assert interrupted.state.node_instances[0].status is (
+        HarnessNodeInstanceStatus.CANCEL_REQUESTED
+    )
+
+    recovered = control_plane.recover_graph(run_spec)
+
+    assert recovered.node_instances[0].status is (
+        HarnessNodeInstanceStatus.CANCEL_REQUESTED
+    )
+    assert len(dispatcher.cancellation_attempts) == 2
+    assert (
+        dispatcher.cancellation_attempts[0].request_checksum
+        == dispatcher.cancellation_attempts[1].request_checksum
+    )
+    assert dispatcher.cancellation_calls == [dispatcher.cancellation_attempts[1]]
+
+
+@pytest.mark.parametrize("result_status", ("failed", "timeout"))
+def test_confirmed_failed_activity_can_retry_with_new_attempt_and_prior_evidence(
+    result_status: str,
+) -> None:
+    run_spec = _run_spec(f"run-result-retry-{result_status}")
     port = InMemoryHarnessEventPort()
     dispatcher = _RecordingDispatcher(port)
     control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
@@ -554,9 +1031,10 @@ def test_confirmed_failed_activity_can_retry_with_new_attempt_and_prior_evidence
     first_activity = dispatcher.calls[0]
     failed = HarnessGraphActivityResult.for_activity(
         first_activity,
-        evidence_ref=_sha("failed-evidence"),
-        payload_ref=_sha("failed-payload"),
-        status="failed",
+        evidence_ref=_sha(f"{result_status}-evidence"),
+        payload_ref=_sha(f"{result_status}-payload"),
+        status=result_status,
+        termination_confirmed=True,
     )
     failed_state = control_plane.accept_graph_activity_result(
         run_spec,
@@ -678,6 +1156,7 @@ def test_conflicting_duplicate_activity_result_is_rejected() -> None:
         evidence_ref=_sha("conflicting-evidence"),
         payload_ref=_sha("conflicting-payload"),
         status="failed",
+        termination_confirmed=True,
     )
     control_plane.accept_graph_activity_result(
         run_spec,
@@ -805,7 +1284,9 @@ def test_shared_worker_call_budget_allows_only_one_competing_dispatch() -> None:
         item for item in after_second.node_instances if item.identity.node_id == "first"
     )
     second_node = next(
-        item for item in after_second.node_instances if item.identity.node_id == "second"
+        item
+        for item in after_second.node_instances
+        if item.identity.node_id == "second"
     )
     first_plan = _step_decision(
         after_second,
@@ -866,7 +1347,10 @@ def test_shared_worker_call_budget_allows_only_one_competing_dispatch() -> None:
         )
 
     assert captured.value.code == "graph_budget_exhausted"
-    assert port.recover_graph(run_spec.run_id).expected_last_sequence == before.expected_last_sequence
+    assert (
+        port.recover_graph(run_spec.run_id).expected_last_sequence
+        == before.expected_last_sequence
+    )
     assert [item.node_instance_id for item in dispatcher.calls] == [
         first_node.instance_id
     ]
@@ -1034,7 +1518,108 @@ def test_committed_activity_result_recovers_without_redispatch() -> None:
     recovered = control_plane.recover_graph(run_spec)
 
     assert recovered.active_activities == ()
-    assert recovered.node_instances[0].evidence_refs[-1].evidence_ref == result.evidence_ref
+    assert (
+        recovered.node_instances[0].evidence_refs[-1].evidence_ref
+        == result.evidence_ref
+    )
+    assert len(dispatcher.calls) == 1
+
+
+def test_committed_unprojected_observation_recovers_exactly_once() -> None:
+    run_spec = _run_spec("run-recover-observation")
+    port = _FaultInjectingEventPort()
+    dispatcher = _RecordingDispatcher(port)
+    control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
+    running = _dispatch_entry(control_plane, run_spec)
+    graph = control_plane._prepared_graphs[run_spec.run_id]
+    observation = _worker_status_observation(running, graph)
+    port.fail_next_projection = True
+
+    with pytest.raises(RuntimeError, match="projection unavailable"):
+        control_plane.accept_graph_observation(
+            run_spec,
+            observation,
+            occurred_at=_at(5),
+        )
+
+    interrupted = port.recover_graph(run_spec.run_id)
+    assert interrupted.state == running
+    assert interrupted.expected_last_sequence == running.last_event_sequence + 1
+    assert [item.observation for item in interrupted.pending_observations] == [
+        observation
+    ]
+    assert all(
+        item.evidence_ref != observation.evidence_ref
+        for item in interrupted.state.node_instances[0].evidence_refs
+    )
+
+    recovered = control_plane.recover_graph(run_spec)
+    replayed = control_plane.accept_graph_observation(
+        run_spec,
+        observation,
+        occurred_at=_at(6),
+    )
+
+    assert replayed == recovered
+    assert recovered.last_event_sequence == running.last_event_sequence + 2
+    assert [
+        item.evidence_ref
+        for item in recovered.node_instances[0].evidence_refs
+        if item.evidence_ref == observation.evidence_ref
+    ] == [observation.evidence_ref]
+    recovery = port.recover_graph(run_spec.run_id)
+    assert len(recovery.observation_commits) == 1
+    assert recovery.pending_observations == ()
+    assert (
+        len(
+            tuple(
+                item
+                for item in recovery.projection_commits
+                if item.cause_checksum == observation.observation_checksum
+            )
+        )
+        == 1
+    )
+    assert len(dispatcher.calls) == 1
+
+
+def test_observation_projection_failure_fails_closed_until_recovery() -> None:
+    run_spec = _run_spec("run-observation-projection-fail-closed")
+    port = _FaultInjectingEventPort()
+    dispatcher = _RecordingDispatcher(port)
+    control_plane = _control_plane(event_port=port, dispatcher=dispatcher)
+    running = _dispatch_entry(control_plane, run_spec)
+    graph = control_plane._prepared_graphs[run_spec.run_id]
+    committed = _worker_status_observation(running, graph)
+    port.fail_next_projection = True
+
+    with pytest.raises(RuntimeError, match="projection unavailable"):
+        control_plane.accept_graph_observation(
+            run_spec,
+            committed,
+            occurred_at=_at(5),
+        )
+
+    interrupted = port.recover_graph(run_spec.run_id)
+    competing = replace(
+        committed,
+        event_sequence=interrupted.expected_last_sequence + 1,
+        evidence_ref=_sha("competing-worker-status"),
+        payload={"status": "failed"},
+    )
+    with pytest.raises(HarnessValidationError) as captured:
+        control_plane.accept_graph_observation(
+            run_spec,
+            competing,
+            occurred_at=_at(6),
+        )
+
+    assert captured.value.code == "graph_recovery_required"
+    after = port.recover_graph(run_spec.run_id)
+    assert after == interrupted
+    assert after.state == running
+    assert [item.observation for item in after.pending_observations] == [committed]
+    assert after.state.projection_checksum == running.projection_checksum
     assert len(dispatcher.calls) == 1
 
 
@@ -1071,26 +1656,31 @@ def test_event_store_failure_prevents_projection_and_activity_dispatch() -> None
     assert dispatcher.calls == []
 
 
-def test_recovery_rejects_noncontiguous_stream_sequences() -> None:
+def test_recovery_allows_non_graph_canonical_sequence_gaps() -> None:
     run_spec = _run_spec("run-recovery-gap")
     port = InMemoryHarnessEventPort()
     control_plane = _control_plane(event_port=port)
     control_plane.initialize_graph(run_spec)
     recovery = port.recover_graph(run_spec.run_id)
 
+    with_gap = HarnessGraphRecovery(
+        run_id=recovery.run_id,
+        graph=recovery.graph,
+        run_spec_checksum=recovery.run_spec_checksum,
+        state=recovery.state,
+        expected_last_sequence=2,
+        decision_commits=recovery.decision_commits,
+        projection_commits=recovery.projection_commits,
+        activity_result_commits=recovery.activity_result_commits,
+        activities=recovery.activities,
+        dispatched_activity_ids=recovery.dispatched_activity_ids,
+    )
+
+    assert with_gap.expected_last_sequence == 2
+    assert with_gap.state is not None
+    assert with_gap.state.last_event_sequence == 1
     with pytest.raises(EventStoreCorruptionError):
-        HarnessGraphRecovery(
-            run_id=recovery.run_id,
-            graph=recovery.graph,
-            run_spec_checksum=recovery.run_spec_checksum,
-            state=recovery.state,
-            expected_last_sequence=2,
-            decision_commits=recovery.decision_commits,
-            projection_commits=recovery.projection_commits,
-            activity_result_commits=recovery.activity_result_commits,
-            activities=recovery.activities,
-            dispatched_activity_ids=recovery.dispatched_activity_ids,
-        )
+        replace(with_gap, expected_last_sequence=0)
 
 
 def test_projection_rejects_activity_worker_binding_tamper() -> None:
@@ -1228,6 +1818,104 @@ def _choice_run_spec(run_id: str) -> HarnessRunSpec:
     )
 
 
+def _priority_choice_run_spec(run_id: str) -> HarnessRunSpec:
+    matching = ConditionPredicate("graph.inputs.route", "equals", "matched")
+    steps = tuple(
+        HarnessStepSpec(
+            step_id,
+            "script",
+            metadata={"step_version": "1", "worker_version": "1"},
+        )
+        for step_id in ("high", "low", "fallback")
+    )
+    workflow = HarnessWorkflowSpec(
+        workflow_id=f"workflow-{run_id}",
+        workflow_version="2",
+        steps=steps,
+        entry_step_id="high",
+        graph=HarnessGraphSpec(
+            graph_id=f"graph-{run_id}",
+            root=Choice(
+                "choose",
+                (
+                    ChoiceBranch(
+                        "low-priority",
+                        StepRef("low"),
+                        priority=20,
+                        condition=matching,
+                    ),
+                    ChoiceBranch(
+                        "high-priority",
+                        StepRef("high"),
+                        priority=10,
+                        condition=matching,
+                    ),
+                    ChoiceBranch(
+                        "default",
+                        StepRef("fallback"),
+                        priority=30,
+                        is_default=True,
+                    ),
+                ),
+            ),
+        ),
+    )
+    return HarnessRunSpec(
+        run_id=run_id,
+        workflow=workflow,
+        inputs={"route": "matched"},
+        metadata={
+            "tenant_scope_ref": _sha(f"tenant-{run_id}"),
+            "identity_scope_ref": _sha(f"identity-{run_id}"),
+            "subject_scope_ref": _sha(f"subject-{run_id}"),
+        },
+        created_at=_CREATED_AT,
+    )
+
+
+def _no_match_choice_run_spec(run_id: str) -> HarnessRunSpec:
+    step = HarnessStepSpec(
+        "target",
+        "script",
+        metadata={"step_version": "1", "worker_version": "1"},
+    )
+    workflow = HarnessWorkflowSpec(
+        workflow_id=f"workflow-{run_id}",
+        workflow_version="2",
+        steps=(step,),
+        entry_step_id="target",
+        graph=HarnessGraphSpec(
+            graph_id=f"graph-{run_id}",
+            root=Choice(
+                "choose",
+                (
+                    ChoiceBranch(
+                        "only",
+                        StepRef("target"),
+                        priority=0,
+                        condition=ConditionPredicate(
+                            "graph.inputs.allowed",
+                            "equals",
+                            True,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    return HarnessRunSpec(
+        run_id=run_id,
+        workflow=workflow,
+        inputs={"allowed": False},
+        metadata={
+            "tenant_scope_ref": _sha(f"tenant-{run_id}"),
+            "identity_scope_ref": _sha(f"identity-{run_id}"),
+            "subject_scope_ref": _sha(f"subject-{run_id}"),
+        },
+        created_at=_CREATED_AT,
+    )
+
+
 def _worker(task: dict) -> HarnessWorkerResult:
     return HarnessWorkerResult("succeeded", output=task)
 
@@ -1317,6 +2005,7 @@ def _control_decision(
     node_instance_id: str,
     target_node_ids: tuple[str, ...] = (),
     payload: dict | None = None,
+    binding_versions: dict[str, str] | None = None,
 ) -> HarnessGraphDecision:
     return HarnessGraphDecision(
         decision_type,
@@ -1328,6 +2017,7 @@ def _control_decision(
         node_id=node_id,
         node_instance_id=node_instance_id,
         target_node_ids=target_node_ids,
+        binding_versions={} if binding_versions is None else binding_versions,
         payload={} if payload is None else payload,
     )
 
@@ -1341,7 +2031,9 @@ def _step_decision(
     attempt: int,
     payload: dict | None = None,
 ) -> HarnessGraphDecision:
-    node = next(item for item in state.node_instances if item.instance_id == node_instance_id)
+    node = next(
+        item for item in state.node_instances if item.instance_id == node_instance_id
+    )
     definition = _definition(graph, node.identity.node_id)
     return HarnessGraphDecision(
         decision_type,
@@ -1376,6 +2068,24 @@ def _bindings(definition: HarnessExecutableNode) -> dict[str, str]:
     }
 
 
+def _worker_status_observation(
+    state: HarnessGraphState,
+    graph: NormalizedHarnessGraph,
+) -> HarnessAcceptedGraphObservation:
+    node = state.node_instances[0]
+    definition = _definition(graph, node.identity.node_id)
+    return HarnessAcceptedGraphObservation(
+        HarnessGraphObservationType.WORKER_STATUS,
+        definition.node_id,
+        node.instance_id,
+        node.attempt,
+        state.last_event_sequence + 1,
+        definition.worker_ref,
+        _sha(f"worker-status-{state.run_id}-{node.attempt}"),
+        payload={"status": "succeeded"},
+    )
+
+
 def _sha(value: str) -> str:
     return canonical_checksum({"value": value})
 
@@ -1394,6 +2104,7 @@ class _RecordingDispatcher:
         self.port = port
         self.assert_committed = assert_committed
         self.calls: list[HarnessGraphActivity] = []
+        self.cancellation_calls: list[HarnessGraphActivityCancellationRequest] = []
 
     def dispatch(self, activity: HarnessGraphActivity) -> None:
         if self.assert_committed:
@@ -1408,6 +2119,40 @@ class _RecordingDispatcher:
                 for item in recovery.projection_commits
             )
         self.calls.append(activity)
+
+    def request_cancellation(
+        self,
+        request: HarnessGraphActivityCancellationRequest,
+    ) -> None:
+        recovery = self.port.recover_graph(request.run_id)
+        assert recovery.state is not None
+        assert any(
+            item.instance_id == request.node_instance_id
+            and item.status is HarnessNodeInstanceStatus.CANCEL_REQUESTED
+            for item in recovery.state.node_instances
+        )
+        assert any(
+            item.cause_checksum == request.causal_decision_checksum
+            for item in recovery.projection_commits
+        )
+        self.cancellation_calls.append(request)
+
+
+class _FailOnceCancellationDispatcher(_RecordingDispatcher):
+    def __init__(self, port: HarnessGraphTransitionPort) -> None:
+        super().__init__(port)
+        self.cancellation_attempts: list[HarnessGraphActivityCancellationRequest] = []
+        self.failed = False
+
+    def request_cancellation(
+        self,
+        request: HarnessGraphActivityCancellationRequest,
+    ) -> None:
+        self.cancellation_attempts.append(request)
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError("cancellation unavailable")
+        super().request_cancellation(request)
 
 
 class _FailOnceDispatcher(_RecordingDispatcher):

@@ -8,6 +8,10 @@ from typing import Any, TypeVar
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.state import HarnessRunStatus, HarnessStepStatus
+from framework.harness.waits.models import (
+    HarnessSignalInboxEntry,
+    HarnessSignalInboxEntryStatus,
+)
 from framework.harness.workflow.canonical import (
     canonical_checksum,
     exact_reference,
@@ -72,6 +76,18 @@ class HarnessEvidenceKind(StrEnum):
     APPROVAL = "approval"
     SIGNAL = "signal"
     TIMER = "timer"
+    MERGE_RESULT = "merge_result"
+
+
+class HarnessPendingSideEffectScope(StrEnum):
+    NODE_INSTANCE = "node_instance"
+    TERMINAL_RUN = "terminal_run"
+
+
+class HarnessPendingSideEffectStatus(StrEnum):
+    PREPARED = "prepared"
+    OUTCOME_RECORDED = "outcome_recorded"
+    FAILED = "failed"
 
 
 class HarnessJoinKind(StrEnum):
@@ -163,6 +179,7 @@ _NODE_STEP_STATUS_COMPATIBILITY = {
     ),
     HarnessNodeInstanceStatus.COMPENSATING: frozenset(
         {
+            HarnessStepStatus.PENDING,
             HarnessStepStatus.PLANNING,
             HarnessStepStatus.PLAN_VERIFIED,
             HarnessStepStatus.RUNNING,
@@ -374,6 +391,137 @@ class HarnessNodeInstanceIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class HarnessBranchOutputReference:
+    branch_id: str
+    output_namespace: str
+    branch_priority: int
+    producer_node_id: str
+    producer_declaration_order: int
+    producer_node_instance_id: str
+    producer_activation_ordinal: int
+    attempt: int
+    iteration_vector: tuple[HarnessLoopIteration, ...]
+    output_key: str
+    payload_ref: str
+    producer_terminal_ref: str
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "branch_id",
+            "output_namespace",
+            "producer_node_id",
+            "producer_node_instance_id",
+            "output_key",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                required_text(
+                    getattr(self, field_name),
+                    f"branch_output.{field_name}",
+                ),
+            )
+        _nonnegative_int(self.branch_priority, "branch_output.branch_priority")
+        _nonnegative_int(
+            self.producer_declaration_order,
+            "branch_output.producer_declaration_order",
+        )
+        _nonnegative_int(
+            self.producer_activation_ordinal,
+            "branch_output.producer_activation_ordinal",
+        )
+        _nonnegative_int(self.attempt, "branch_output.attempt")
+        vector = tuple(self.iteration_vector)
+        if not all(isinstance(item, HarnessLoopIteration) for item in vector):
+            raise TypeError(
+                "branch output iteration_vector must contain HarnessLoopIteration values"
+            )
+        object.__setattr__(self, "iteration_vector", vector)
+        object.__setattr__(
+            self,
+            "payload_ref",
+            _checksum(self.payload_ref, "branch_output.payload_ref"),
+        )
+        object.__setattr__(
+            self,
+            "producer_terminal_ref",
+            _checksum(
+                self.producer_terminal_ref,
+                "branch_output.producer_terminal_ref",
+            ),
+        )
+
+    @property
+    def stable_order_key(self) -> tuple[Any, ...]:
+        return (
+            self.branch_priority,
+            self.branch_id,
+            self.producer_declaration_order,
+            tuple((item.loop_id, item.iteration) for item in self.iteration_vector),
+            self.producer_activation_ordinal,
+            self.output_key,
+            self.producer_node_instance_id,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "branch_id": self.branch_id,
+            "output_namespace": self.output_namespace,
+            "branch_priority": self.branch_priority,
+            "producer_node_id": self.producer_node_id,
+            "producer_declaration_order": self.producer_declaration_order,
+            "producer_node_instance_id": self.producer_node_instance_id,
+            "producer_activation_ordinal": self.producer_activation_ordinal,
+            "attempt": self.attempt,
+            "iteration_vector": [item.to_dict() for item in self.iteration_vector],
+            "output_key": self.output_key,
+            "payload_ref": self.payload_ref,
+            "producer_terminal_ref": self.producer_terminal_ref,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessBranchOutputReference":
+        _exact_keys(
+            value,
+            {
+                "branch_id",
+                "output_namespace",
+                "branch_priority",
+                "producer_node_id",
+                "producer_declaration_order",
+                "producer_node_instance_id",
+                "producer_activation_ordinal",
+                "attempt",
+                "iteration_vector",
+                "output_key",
+                "payload_ref",
+                "producer_terminal_ref",
+            },
+            "branch output reference",
+        )
+        return cls(
+            branch_id=value["branch_id"],
+            output_namespace=value["output_namespace"],
+            branch_priority=value["branch_priority"],
+            producer_node_id=value["producer_node_id"],
+            producer_declaration_order=value["producer_declaration_order"],
+            producer_node_instance_id=value["producer_node_instance_id"],
+            producer_activation_ordinal=value["producer_activation_ordinal"],
+            attempt=value["attempt"],
+            iteration_vector=tuple(
+                HarnessLoopIteration.from_dict(item)
+                for item in _array(
+                    value["iteration_vector"],
+                    "branch_output.iteration_vector",
+                )
+            ),
+            output_key=value["output_key"],
+            payload_ref=value["payload_ref"],
+            producer_terminal_ref=value["producer_terminal_ref"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class HarnessAttemptEvidenceReference:
     evidence_ref: str
     kind: HarnessEvidenceKind | str
@@ -418,6 +566,9 @@ class HarnessAttemptEvidenceReference:
                 HarnessEvidenceKind.GATE_RESULT: frozenset({HarnessContractKind.GATE}),
                 HarnessEvidenceKind.SIDE_EFFECT_OUTCOME: frozenset(
                     {HarnessContractKind.SIDE_EFFECT}
+                ),
+                HarnessEvidenceKind.MERGE_RESULT: frozenset(
+                    {HarnessContractKind.MERGE}
                 ),
             }.get(self.kind)
             if (
@@ -478,6 +629,190 @@ class HarnessAttemptEvidenceReference:
                 else HarnessContractReference.from_dict(value["contract_ref"])
             ),
             payload_ref=value["payload_ref"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class HarnessPendingSideEffectState:
+    scope: HarnessPendingSideEffectScope | str
+    prepare_decision_ref: str
+    prepare_sequence: int
+    handler_ref: HarnessContractReference
+    node_id: str
+    node_instance_id: str
+    attempt: int
+    status: HarnessPendingSideEffectStatus | str = (
+        HarnessPendingSideEffectStatus.PREPARED
+    )
+    authorization_ref: str | None = None
+    outcome_ref: str | None = None
+    failure_ref: str | None = None
+    reason_code: str | None = None
+    observation_sequence: int | None = None
+
+    def __post_init__(self) -> None:
+        scope = HarnessPendingSideEffectScope(self.scope)
+        status = HarnessPendingSideEffectStatus(self.status)
+        object.__setattr__(
+            self,
+            "prepare_decision_ref",
+            _checksum(
+                self.prepare_decision_ref,
+                "pending_side_effect.prepare_decision_ref",
+            ),
+        )
+        _positive_int(
+            self.prepare_sequence,
+            "pending_side_effect.prepare_sequence",
+        )
+        if not isinstance(self.handler_ref, HarnessContractReference):
+            raise TypeError("pending side-effect handler_ref must be a contract reference")
+        _require_contract_kind(
+            self.handler_ref,
+            HarnessContractKind.SIDE_EFFECT,
+            "pending_side_effect.handler_ref",
+        )
+        for field_name in ("node_id", "node_instance_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                required_text(
+                    getattr(self, field_name),
+                    f"pending_side_effect.{field_name}",
+                ),
+            )
+        _positive_int(self.attempt, "pending_side_effect.attempt")
+        authorization_ref = (
+            None
+            if self.authorization_ref is None
+            else _checksum(
+                self.authorization_ref,
+                "pending_side_effect.authorization_ref",
+            )
+        )
+        outcome_ref = (
+            None
+            if self.outcome_ref is None
+            else _checksum(self.outcome_ref, "pending_side_effect.outcome_ref")
+        )
+        failure_ref = (
+            None
+            if self.failure_ref is None
+            else _checksum(self.failure_ref, "pending_side_effect.failure_ref")
+        )
+        reason_code = optional_text(
+            self.reason_code,
+            "pending_side_effect.reason_code",
+        )
+        observation_sequence = self.observation_sequence
+        if observation_sequence is not None:
+            _positive_int(
+                observation_sequence,
+                "pending_side_effect.observation_sequence",
+            )
+            if observation_sequence <= self.prepare_sequence:
+                raise HarnessValidationError(
+                    "side-effect observation must follow its durable preparation",
+                    code="pending_side_effect_sequence_mismatch",
+                )
+        if status is HarnessPendingSideEffectStatus.PREPARED:
+            if any(
+                value is not None
+                for value in (
+                    authorization_ref,
+                    outcome_ref,
+                    failure_ref,
+                    reason_code,
+                    observation_sequence,
+                )
+            ):
+                raise HarnessValidationError(
+                    "prepared side effect cannot contain outcome or failure evidence",
+                    code="invalid_pending_side_effect_state",
+                )
+        elif status is HarnessPendingSideEffectStatus.OUTCOME_RECORDED:
+            if (
+                authorization_ref is None
+                or outcome_ref is None
+                or observation_sequence is None
+                or failure_ref is not None
+                or reason_code is not None
+            ):
+                raise HarnessValidationError(
+                    "recorded side-effect outcome requires exact authorization and outcome evidence",
+                    code="invalid_pending_side_effect_state",
+                )
+        elif (
+            authorization_ref is None
+            or failure_ref is None
+            or reason_code is None
+            or observation_sequence is None
+            or outcome_ref is not None
+        ):
+            raise HarnessValidationError(
+                "failed side effect requires exact authorization and failure evidence",
+                code="invalid_pending_side_effect_state",
+            )
+        object.__setattr__(self, "scope", scope)
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "authorization_ref", authorization_ref)
+        object.__setattr__(self, "outcome_ref", outcome_ref)
+        object.__setattr__(self, "failure_ref", failure_ref)
+        object.__setattr__(self, "reason_code", reason_code)
+        object.__setattr__(self, "observation_sequence", observation_sequence)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope.value,
+            "prepare_decision_ref": self.prepare_decision_ref,
+            "prepare_sequence": self.prepare_sequence,
+            "handler_ref": self.handler_ref.to_dict(),
+            "node_id": self.node_id,
+            "node_instance_id": self.node_instance_id,
+            "attempt": self.attempt,
+            "status": self.status.value,
+            "authorization_ref": self.authorization_ref,
+            "outcome_ref": self.outcome_ref,
+            "failure_ref": self.failure_ref,
+            "reason_code": self.reason_code,
+            "observation_sequence": self.observation_sequence,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "HarnessPendingSideEffectState":
+        _exact_keys(
+            value,
+            {
+                "scope",
+                "prepare_decision_ref",
+                "prepare_sequence",
+                "handler_ref",
+                "node_id",
+                "node_instance_id",
+                "attempt",
+                "status",
+                "authorization_ref",
+                "outcome_ref",
+                "failure_ref",
+                "reason_code",
+                "observation_sequence",
+            },
+            "pending side effect",
+        )
+        return cls(
+            scope=value["scope"],
+            prepare_decision_ref=value["prepare_decision_ref"],
+            prepare_sequence=value["prepare_sequence"],
+            handler_ref=HarnessContractReference.from_dict(value["handler_ref"]),
+            node_id=value["node_id"],
+            node_instance_id=value["node_instance_id"],
+            attempt=value["attempt"],
+            status=value["status"],
+            authorization_ref=value["authorization_ref"],
+            outcome_ref=value["outcome_ref"],
+            failure_ref=value["failure_ref"],
+            reason_code=value["reason_code"],
+            observation_sequence=value["observation_sequence"],
         )
 
 
@@ -712,6 +1047,33 @@ class HarnessNodeInstanceState:
                 "node metadata must be an object",
                 code="invalid_graph_state_projection",
             )
+        raw_pending_side_effect = metadata.get("pending_side_effect")
+        if raw_pending_side_effect is not None:
+            if not isinstance(raw_pending_side_effect, Mapping):
+                raise HarnessValidationError(
+                    "pending side-effect node metadata must be an object",
+                    code="invalid_pending_side_effect_state",
+                )
+            pending_side_effect = HarnessPendingSideEffectState.from_dict(
+                raw_pending_side_effect
+            )
+            if (
+                pending_side_effect.scope
+                is not HarnessPendingSideEffectScope.NODE_INSTANCE
+                or pending_side_effect.node_id != self.identity.node_id
+                or pending_side_effect.node_instance_id != self.identity.instance_id
+                or pending_side_effect.attempt != self.attempt
+                or pending_side_effect.prepare_sequence > self.last_event_sequence
+                or (
+                    pending_side_effect.observation_sequence is not None
+                    and pending_side_effect.observation_sequence
+                    > self.last_event_sequence
+                )
+            ):
+                raise HarnessValidationError(
+                    "pending side effect does not match its node projection",
+                    code="pending_side_effect_identity_mismatch",
+                )
         object.__setattr__(self, "node_kind", node_kind)
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "step_id", step_id)
@@ -1452,6 +1814,7 @@ class HarnessGraphState:
     join_states: tuple[HarnessJoinState, ...] = ()
     loop_counters: tuple[HarnessLoopCounterState, ...] = ()
     wait_registrations: tuple[HarnessWaitRegistration, ...] = ()
+    signal_inbox: tuple[HarnessSignalInboxEntry, ...] = ()
     compensation_stack: tuple[HarnessCompensationEntry, ...] = ()
     budgets: HarnessGraphBudgetState = field(
         default_factory=lambda: HarnessGraphBudgetState(())
@@ -1552,6 +1915,17 @@ class HarnessGraphState:
                     "activity dispatch sequence must be within its node projection",
                     code="graph_state_sequence_regression",
                 )
+        active_node_ids = {item.node_instance_id for item in activities}
+        for node in nodes:
+            if (
+                node.status is HarnessNodeInstanceStatus.CANCEL_REQUESTED
+                and node.instance_id not in active_node_ids
+            ):
+                raise HarnessValidationError(
+                    "cancel-requested node requires one active activity",
+                    code="cancel_requested_activity_missing",
+                    details={"node_instance_id": node.instance_id},
+                )
 
         raw_joins = tuple(self.join_states)
         _require_type_tuple(raw_joins, HarnessJoinState, "join_states")
@@ -1563,8 +1937,16 @@ class HarnessGraphState:
         _require_unique(loops, lambda item: item.counter_id, "loop counter")
         raw_waits = tuple(self.wait_registrations)
         _require_type_tuple(raw_waits, HarnessWaitRegistration, "wait_registrations")
-        waits = tuple(sorted(raw_waits, key=lambda item: item.wait_id))
-        _require_unique(waits, lambda item: item.wait_id, "Wait registration")
+        waits = tuple(
+            sorted(
+                raw_waits,
+                key=lambda item: (
+                    item.registered_sequence,
+                    item.node_instance_id,
+                    item.wait_id,
+                ),
+            )
+        )
         _require_unique(
             waits,
             lambda item: item.node_instance_id,
@@ -1579,9 +1961,20 @@ class HarnessGraphState:
                     "Wait registration belongs to an unknown node instance",
                     code="cross_node_wait_rejected",
                 )
-            if node.node_kind is not HarnessGraphNodeKind.WAIT:
+            is_legacy_approval_wait = (
+                node.node_kind is HarnessGraphNodeKind.EXECUTABLE
+                and wait.kind is WaitKind.APPROVAL
+                and (
+                    node.step_status is HarnessStepStatus.WAITING_APPROVAL
+                    or not wait.unresolved
+                )
+            )
+            if (
+                node.node_kind is not HarnessGraphNodeKind.WAIT
+                and not is_legacy_approval_wait
+            ):
                 raise HarnessValidationError(
-                    "Wait registration requires a Wait control node instance",
+                    "Wait registration requires a Wait or legacy approval node instance",
                     code="wait_node_kind_mismatch",
                 )
             if wait.unresolved and not node.is_waiting:
@@ -1610,6 +2003,69 @@ class HarnessGraphState:
                     "waiting Wait node requires a durable registration",
                     code="wait_registration_missing",
                 )
+        raw_signals = tuple(self.signal_inbox)
+        _require_type_tuple(raw_signals, HarnessSignalInboxEntry, "signal_inbox")
+        signals = tuple(
+            sorted(
+                raw_signals,
+                key=lambda item: (
+                    item.signal.received_sequence,
+                    item.signal.signal_id,
+                    item.signal.signal_ref,
+                ),
+            )
+        )
+        _require_unique(
+            signals,
+            lambda item: (
+                item.signal.scope.tenant_scope_ref,
+                item.signal.signal_id,
+            ),
+            "Wait signal identity",
+            code="duplicate_wait_signal_identity",
+        )
+        for entry in signals:
+            signal = entry.signal
+            scope = signal.scope
+            node = nodes_by_id.get(scope.node_instance_id)
+            if scope.run_id != run_id:
+                raise HarnessValidationError(
+                    "Wait signal belongs to another run",
+                    code="wait_signal_run_scope_mismatch",
+                )
+            if node is None or node.node_kind is not HarnessGraphNodeKind.WAIT:
+                raise HarnessValidationError(
+                    "Wait signal requires an existing Wait control node instance",
+                    code="wait_signal_node_scope_mismatch",
+                )
+            if node.identity.node_id != scope.wait_id:
+                raise HarnessValidationError(
+                    "Wait signal definition does not match its node instance",
+                    code="wait_signal_wait_mismatch",
+                )
+            if signal.received_sequence > self.last_event_sequence:
+                raise HarnessValidationError(
+                    "Wait signal sequence exceeds the state high watermark",
+                    code="graph_state_sequence_regression",
+                )
+            if signal.received_sequence < node.activation_sequence:
+                raise HarnessValidationError(
+                    "Wait signal cannot precede its node activation",
+                    code="wait_signal_sequence_regression",
+                )
+            if entry.status is HarnessSignalInboxEntryStatus.MATCHED:
+                registration = waits_by_node.get(scope.node_instance_id)
+                if (
+                    registration is None
+                    or registration.status is not HarnessWaitStatus.RESUMED
+                    or registration.resolution_event_ref != signal.signal_ref
+                    or entry.match is None
+                    or entry.match.matched_sequence > self.last_event_sequence
+                ):
+                    raise HarnessValidationError(
+                        "matched Wait signal lacks exact durable registration evidence",
+                        code="wait_signal_match_registration_mismatch",
+                    )
         for join in joins:
             join_node = nodes_by_id.get(join.join_instance_id)
             fork_node = nodes_by_id.get(join.fork_instance_id)
@@ -1690,6 +2146,17 @@ class HarnessGraphState:
             lambda item: item.effect_commit_sequence,
             "compensation effect sequence",
         )
+        assigned_compensations = tuple(
+            item
+            for item in compensations
+            if item.compensation_node_instance_id is not None
+        )
+        _require_unique(
+            assigned_compensations,
+            lambda item: item.compensation_node_instance_id,
+            "compensation node assignment",
+            code="duplicate_compensation_node_assignment",
+        )
         for entry in compensations:
             origin = nodes_by_id.get(entry.origin_node_instance_id)
             if origin is None:
@@ -1739,6 +2206,23 @@ class HarnessGraphState:
                         code="compensation_node_kind_mismatch",
                     )
                 _validate_compensation_node_status(entry, compensation_node)
+                _validate_compensation_node_binding(entry, compensation_node)
+        assigned_node_ids = {
+            item.compensation_node_instance_id
+            for item in assigned_compensations
+        }
+        orphan_compensation_nodes = tuple(
+            item.instance_id
+            for item in nodes
+            if item.status is HarnessNodeInstanceStatus.COMPENSATING
+            and item.instance_id not in assigned_node_ids
+        )
+        if orphan_compensation_nodes:
+            raise HarnessValidationError(
+                "compensating node requires one durable compensation entry",
+                code="compensation_node_entry_missing",
+                details={"node_instance_ids": list(orphan_compensation_nodes)},
+            )
         if not isinstance(self.budgets, HarnessGraphBudgetState):
             raise TypeError("budgets must be HarnessGraphBudgetState")
         parallelism = self.budgets.get("max_parallelism")
@@ -1762,6 +2246,12 @@ class HarnessGraphState:
             *(item.last_event_sequence for item in joins),
             *(item.last_event_sequence for item in loops),
             *(item.last_event_sequence for item in waits),
+            *(item.signal.received_sequence for item in signals),
+            *(
+                item.match.matched_sequence
+                for item in signals
+                if item.match is not None
+            ),
             *(item.last_event_sequence for item in compensations),
         ]
         if component_sequences and max(component_sequences) > self.last_event_sequence:
@@ -1776,6 +2266,7 @@ class HarnessGraphState:
                 or joins
                 or loops
                 or waits
+                or signals
                 or compensations
                 or self.last_event_sequence not in {0, 1}
             ):
@@ -1784,14 +2275,32 @@ class HarnessGraphState:
                     code="invalid_created_run_projection",
                 )
         if lifecycle is RunLifecycle.WAITING:
-            if any(item.is_ready or item.is_running for item in nodes):
+            passive_join_ids = {
+                item.join_instance_id
+                for item in joins
+                if item.status is HarnessJoinStatus.OPEN
+            }
+            if any(
+                item.is_ready
+                or (item.is_running and item.instance_id not in passive_join_ids)
+                for item in nodes
+            ):
                 raise HarnessValidationError(
                     "WAITING lifecycle cannot have ready or running work",
                     code="invalid_waiting_run_projection",
                 )
-            if not any(item.unresolved for item in waits):
+            has_legacy_approval_wait = any(
+                item.node_kind is HarnessGraphNodeKind.EXECUTABLE
+                and item.status is HarnessNodeInstanceStatus.WAITING
+                and item.step_status is HarnessStepStatus.WAITING_APPROVAL
+                for item in nodes
+            )
+            if (
+                not any(item.unresolved for item in waits)
+                and not has_legacy_approval_wait
+            ):
                 raise HarnessValidationError(
-                    "WAITING lifecycle requires an unresolved Wait",
+                    "WAITING lifecycle requires an unresolved Wait or approval node",
                     code="invalid_waiting_run_projection",
                 )
         if lifecycle is RunLifecycle.COMPLETED:
@@ -1810,12 +2319,16 @@ class HarnessGraphState:
                     for item in loops
                 )
                 or any(
-                    item.status
-                    not in {
-                        HarnessCompensationStatus.SUCCEEDED,
-                        HarnessCompensationStatus.FAILED,
-                        HarnessCompensationStatus.INDETERMINATE,
-                    }
+                    item.status is HarnessCompensationStatus.RUNNING
+                    or (
+                        outcome
+                        in {
+                            RunOutcome.COMPENSATED,
+                            RunOutcome.COMPENSATION_FAILED,
+                            RunOutcome.INDETERMINATE,
+                        }
+                        and item.status is HarnessCompensationStatus.PENDING
+                    )
                     for item in compensations
                 )
             ):
@@ -1829,6 +2342,34 @@ class HarnessGraphState:
                 "graph state metadata must be an object",
                 code="invalid_graph_state_projection",
             )
+        raw_terminal_side_effect = metadata.get("pending_terminal_side_effect")
+        if raw_terminal_side_effect is not None:
+            if not isinstance(raw_terminal_side_effect, Mapping):
+                raise HarnessValidationError(
+                    "pending terminal side-effect metadata must be an object",
+                    code="invalid_pending_side_effect_state",
+                )
+            pending_terminal = HarnessPendingSideEffectState.from_dict(
+                raw_terminal_side_effect
+            )
+            pending_node = nodes_by_id.get(pending_terminal.node_instance_id)
+            if (
+                pending_terminal.scope
+                is not HarnessPendingSideEffectScope.TERMINAL_RUN
+                or pending_node is None
+                or pending_node.identity.node_id != pending_terminal.node_id
+                or pending_node.attempt != pending_terminal.attempt
+                or pending_terminal.prepare_sequence > self.last_event_sequence
+                or (
+                    pending_terminal.observation_sequence is not None
+                    and pending_terminal.observation_sequence
+                    > self.last_event_sequence
+                )
+            ):
+                raise HarnessValidationError(
+                    "pending terminal side effect does not match its graph projection",
+                    code="pending_side_effect_identity_mismatch",
+                )
         if self.schema_version != HARNESS_GRAPH_STATE_SCHEMA:
             raise HarnessValidationError(
                 "unsupported graph state schema",
@@ -1849,6 +2390,7 @@ class HarnessGraphState:
         object.__setattr__(self, "join_states", joins)
         object.__setattr__(self, "loop_counters", loops)
         object.__setattr__(self, "wait_registrations", waits)
+        object.__setattr__(self, "signal_inbox", signals)
         object.__setattr__(self, "compensation_stack", compensations)
         object.__setattr__(
             self,
@@ -1947,6 +2489,7 @@ class HarnessGraphState:
             "join_states": [item.to_dict() for item in self.join_states],
             "loop_counters": [item.to_dict() for item in self.loop_counters],
             "wait_registrations": [item.to_dict() for item in self.wait_registrations],
+            "signal_inbox": [item.to_dict() for item in self.signal_inbox],
             "compensation_stack": [item.to_dict() for item in self.compensation_stack],
             "budgets": self.budgets.to_dict(),
             "last_event_sequence": self.last_event_sequence,
@@ -1977,6 +2520,7 @@ class HarnessGraphState:
                 "join_states",
                 "loop_counters",
                 "wait_registrations",
+                "signal_inbox",
                 "compensation_stack",
                 "budgets",
                 "last_event_sequence",
@@ -2023,6 +2567,13 @@ class HarnessGraphState:
                 for item in _array(
                     value["wait_registrations"],
                     "graph_state.wait_registrations",
+                )
+            ),
+            signal_inbox=tuple(
+                HarnessSignalInboxEntry.from_dict(item)
+                for item in _array(
+                    value["signal_inbox"],
+                    "graph_state.signal_inbox",
                 )
             ),
             compensation_stack=tuple(
@@ -2192,7 +2743,7 @@ def _validate_wait_node_status(
     wait: HarnessWaitRegistration,
     node: HarnessNodeInstanceState,
 ) -> None:
-    allowed = {
+    allowed_by_status = {
         HarnessWaitStatus.REGISTERED: frozenset({HarnessNodeInstanceStatus.WAITING}),
         HarnessWaitStatus.RESUMED: frozenset(
             {
@@ -2205,6 +2756,7 @@ def _validate_wait_node_status(
                 HarnessNodeInstanceStatus.WAITING,
                 HarnessNodeInstanceStatus.SUCCEEDED,
                 HarnessNodeInstanceStatus.FAILED,
+                HarnessNodeInstanceStatus.HALTED,
             }
         ),
         HarnessWaitStatus.CANCELLED: frozenset(
@@ -2215,7 +2767,21 @@ def _validate_wait_node_status(
                 HarnessNodeInstanceStatus.HALTED,
             }
         ),
-    }[wait.status]
+    }
+    allowed = allowed_by_status[wait.status]
+    if (
+        node.node_kind is HarnessGraphNodeKind.EXECUTABLE
+        and wait.kind is WaitKind.APPROVAL
+        and wait.status is HarnessWaitStatus.RESUMED
+    ):
+        allowed = allowed.union(
+            {
+                HarnessNodeInstanceStatus.RUNNING,
+                HarnessNodeInstanceStatus.COMPENSATING,
+                HarnessNodeInstanceStatus.FAILED,
+                HarnessNodeInstanceStatus.HALTED,
+            }
+        )
     if node.status not in allowed:
         raise HarnessValidationError(
             "Wait registration status is incompatible with its node state",
@@ -2271,10 +2837,7 @@ def _validate_compensation_node_status(
             {HarnessNodeInstanceStatus.COMPENSATING}
         ),
         HarnessCompensationStatus.SUCCEEDED: frozenset(
-            {
-                HarnessNodeInstanceStatus.SUCCEEDED,
-                HarnessNodeInstanceStatus.COMPENSATED,
-            }
+            {HarnessNodeInstanceStatus.COMPENSATED}
         ),
         HarnessCompensationStatus.FAILED: frozenset({HarnessNodeInstanceStatus.FAILED}),
         HarnessCompensationStatus.INDETERMINATE: frozenset(
@@ -2286,6 +2849,46 @@ def _validate_compensation_node_status(
             "compensation entry status is incompatible with its node state",
             code="compensation_node_state_mismatch",
         )
+
+
+def _validate_compensation_node_binding(
+    entry: HarnessCompensationEntry,
+    node: HarnessNodeInstanceState,
+) -> None:
+    expected = {
+        "compensation_entry_id": entry.entry_id,
+        "origin_node_instance_id": entry.origin_node_instance_id,
+        "effect_outcome_ref": entry.effect_outcome_ref,
+        "compensation_handler_ref": entry.handler_ref.exact_ref,
+        "compensation_activity_ref": entry.activity_ref.exact_ref,
+        "compensation_idempotency_key": entry.idempotency_key,
+        "compensation_fencing_generation": entry.fencing_generation,
+    }
+    mismatches = [
+        key for key, value in expected.items() if node.metadata.get(key) != value
+    ]
+    if mismatches:
+        raise HarnessValidationError(
+            "compensation node binding does not match its durable entry",
+            code="graph_compensation_binding_mismatch",
+            details={"mismatches": mismatches},
+        )
+    if entry.status in {
+        HarnessCompensationStatus.SUCCEEDED,
+        HarnessCompensationStatus.FAILED,
+        HarnessCompensationStatus.INDETERMINATE,
+    }:
+        allowed_outcomes = {
+            evidence.evidence_ref for evidence in node.evidence_refs
+        }
+        last_decision = node.metadata.get("last_decision_checksum")
+        if isinstance(last_decision, str):
+            allowed_outcomes.add(last_decision)
+        if entry.outcome_ref not in allowed_outcomes:
+            raise HarnessValidationError(
+                "terminal compensation outcome is not bound to node evidence",
+                code="compensation_outcome_evidence_mismatch",
+            )
 
 
 def _map_v1_status(
@@ -2508,6 +3111,7 @@ __all__ = [
     "HarnessActiveActivityState",
     "HarnessAttemptEvidenceReference",
     "HarnessBudgetCounterState",
+    "HarnessBranchOutputReference",
     "HarnessCompensationEntry",
     "HarnessCompensationStatus",
     "HarnessEvidenceKind",
@@ -2524,6 +3128,9 @@ __all__ = [
     "HarnessNodeInstanceIdentity",
     "HarnessNodeInstanceState",
     "HarnessNodeInstanceStatus",
+    "HarnessPendingSideEffectScope",
+    "HarnessPendingSideEffectState",
+    "HarnessPendingSideEffectStatus",
     "HarnessWaitRegistration",
     "HarnessWaitStatus",
     "RunLifecycle",

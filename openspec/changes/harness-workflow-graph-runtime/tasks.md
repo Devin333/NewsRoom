@@ -58,87 +58,92 @@
 
 ## 7. Sequence and Choice Cutover
 
-- [ ] 7.1 Execute normalized Sequence graphs through graph-aware Control Plane state while retaining exact Step lifecycle and Gate behavior.
-- [ ] 7.2 Execute deterministic Choice control nodes with stable priority, one optional default, typed no-match failure, and durable branch selection before activation.
-- [ ] 7.3 Compare legacy and graph-compiled decisions, outputs, gates, budgets, side effects, and terminal results for all linear and conditional golden fixtures.
-- [ ] 7.4 Route the existing Research paper-analysis workflow through the graph executor without changing its Workers, Gates, Ports, publication contract, or result envelope.
-- [ ] 7.5 Remove sequence/choice decisions from the old current-step routing execution once all repository callers use the graph path.
+- [x] 7.1 Execute normalized Sequence graphs through graph-aware Control Plane state while retaining exact Step lifecycle and Gate behavior.
+- [x] 7.2 Execute deterministic Choice control nodes with stable priority, one optional default, typed no-match failure, and durable branch selection before activation.
+- [x] 7.3 Compare legacy and graph-compiled decisions, outputs, gates, budgets, side effects, and terminal results for all linear and conditional golden fixtures.
+- [x] 7.4 Route the existing Research paper-analysis workflow through the graph executor without changing its Workers, Gates, Ports, publication contract, or result envelope.
+- [x] 7.5 Remove sequence/choice decisions from the old current-step routing execution once all repository callers use the graph path.
 
 ## 8. Parallel Execution and Data Isolation
 
-- [ ] 8.1 Implement durable fork opening, deterministic branch scopes, stable activation admission, and Parallel-All join evidence.
-- [ ] 8.2 Implement `fail_fast`, `wait_all`, and `compensate` Parallel-All failure policies with termination-confirmed cancellation semantics.
-- [ ] 8.3 Implement Parallel-Any verified-success arbitration using authoritative stream sequence and commit the winner before downstream activation.
-- [ ] 8.4 Implement loser cancellation, result reconciliation, aggregate-all-failed policy, and preservation of committed loser side effects.
-- [ ] 8.5 Add node-instance-scoped branch output storage and exact branch output references.
-- [ ] 8.6 Implement deterministic pure merge and verified aggregation-step integration; reject last-writer-wins and undeclared shared writes.
-- [ ] 8.7 Add bounded physical activity dispatch controlled separately by `max_active_nodes` and `max_parallelism`, with stable admission order.
-- [ ] 8.8 Enforce attempt termination, idempotency, and fencing readiness before permitting physical concurrency for an activity or side effect.
-- [ ] 8.9 Add race, timeout, fail-fast, wait-all, all-failed, near-simultaneous winner, output-conflict, and crash-after-fork/join/winner tests.
+- [x] 8.1 Implement durable fork opening, deterministic branch scopes, stable activation admission, and Parallel-All join evidence.
+- [x] 8.2 Implement `fail_fast`, `wait_all`, and `compensate` Parallel-All failure policies with termination-confirmed cancellation semantics.
+- [x] 8.3 Implement Parallel-Any verified-success arbitration using authoritative stream sequence and commit the winner before downstream activation.
+- [x] 8.4 Implement loser cancellation, result reconciliation, aggregate-all-failed policy, and preservation of committed loser side effects.
+- [x] 8.5 Add node-instance-scoped branch output storage and exact branch output references.
+- [x] 8.6 Implement deterministic pure merge and verified aggregation-step integration; reject last-writer-wins and undeclared shared writes.
+- [x] 8.7 Add bounded physical activity dispatch controlled separately by `max_active_nodes` and `max_parallelism`, with stable admission order.
+- [x] 8.8 Enforce attempt termination, idempotency, and fencing readiness before permitting physical concurrency for an activity or side effect.
+- [x] 8.9 Add race, timeout, fail-fast, wait-all, all-failed, near-simultaneous winner, output-conflict, and crash-after-fork/join/winner tests.
 
 ## 9. Bounded Loop Execution
 
-- [ ] 9.1 Implement durable loop entry, continuation, exit, exhaustion, and iteration counter transitions.
-- [ ] 9.2 Create separate deterministic node instances and output scopes for each iteration while preserving retry attempts within one iteration.
-- [ ] 9.3 Enforce loop-local `max_iterations` plus cumulative run-level turn, Worker-call, activation, retry, and replan budgets.
-- [ ] 9.4 Add nested branch/loop scope tests, exact-bound tests, exhaustion-route tests, global-budget tests, and crash-between-iterations replay tests.
+- [x] 9.1 Implement durable loop entry, continuation, exit, exhaustion, and iteration counter transitions.
+- [x] 9.2 Create separate deterministic node instances and output scopes for each iteration while preserving retry attempts within one iteration.
+- [x] 9.3 Enforce loop-local `max_iterations` plus cumulative run-level turn, Worker-call, activation, retry, and replan budgets.
+- [x] 9.4 Add nested branch/loop scope tests, exact-bound tests, exhaustion-route tests, global-budget tests, and crash-between-iterations replay tests.
 
 ## 10. Durable Wait, Signal, Timer, and Approval
 
-- [ ] 10.1 Add framework ports and immutable records for durable Wait registration, scoped signal inbox, timer wake, approval evidence, resume, timeout, and cancellation.
-- [ ] 10.2 Implement signal identity, correlation, tenant/identity scope validation, duplicate idempotency, and bounded early-signal retention.
-- [ ] 10.3 Implement Control Plane Wait registration-before-projection and scheduler resume/timeout decisions without direct interface or infrastructure access.
-- [ ] 10.4 Integrate existing Harness approval resume semantics through the generic Wait contract while preserving exact approval evidence and side-effect authority.
-- [ ] 10.5 Add a timer adapter that records wake outcomes as activities/events and never uses the current wall clock during replay.
-- [ ] 10.6 Add Application Service operations for authorized signal, approval, cancellation, and inspection; interfaces MUST call these services rather than event stores or Control Plane internals.
-- [ ] 10.7 Project Run lifecycle WAITING only when no runnable/running work remains and prove another parallel branch can continue while one Wait is unresolved.
-- [ ] 10.8 Add process-restart, signal-before-registration, duplicate-signal, wrong-tenant, wrong-correlation, timeout, cancel, and timer-replay tests.
+- [x] 10.1 Add framework ports and immutable records for durable Wait registration, scoped signal inbox, timer wake, approval evidence, resume, timeout, and cancellation.
+- [x] 10.2 Implement signal identity, correlation, tenant/identity scope validation, duplicate idempotency, and bounded early-signal retention.
+- [x] 10.3 Implement Control Plane Wait registration-before-projection and scheduler resume/timeout decisions without direct interface or infrastructure access.
+- [x] 10.4 Integrate existing Harness approval resume semantics through the generic Wait contract while preserving exact approval evidence and side-effect authority.
+- [x] 10.5 Add a timer adapter that records wake outcomes as activities/events and never uses the current wall clock during replay.
+- [x] 10.6 Add Application Service operations for authorized signal, approval, cancellation, and inspection; interfaces MUST call these services rather than event stores or Control Plane internals.
+- [x] 10.7 Project Run lifecycle WAITING only when no runnable/running work remains and prove another parallel branch can continue while one Wait is unresolved.
+- [x] 10.8 Add process-restart, signal-before-registration, duplicate-signal, wrong-tenant, wrong-correlation, timeout, cancel, and timer-replay tests.
 
 ## 11. Explicit Compensation Runtime
 
-- [ ] 11.1 Resolve exact compensation bindings during preflight and reject implicit, unknown, ambiguous, cyclic, or scope-incompatible bindings.
-- [ ] 11.2 Push compensation entries only after the original side-effect outcome is durable and the originating executable node VERIFY succeeds.
-- [ ] 11.3 Enter a dedicated compensation mode that stops forward scheduling and selects entries in reverse durable effect-commit sequence.
-- [ ] 11.4 Execute each compensation as a bounded node instance through PLAN/EXECUTE/VERIFY with stable idempotency, fencing, Gate, budget, and outcome evidence.
-- [ ] 11.5 Integrate terminal side-effect outcomes and parallel loser effects into the same compensation ordering without inferring inverse operations.
-- [ ] 11.6 Implement `COMPENSATED`, `COMPENSATION_FAILED`, and `INDETERMINATE` terminal projections with explicit manual-intervention evidence.
-- [ ] 11.7 Add crash-before/after compensation dispatch/outcome, duplicate recovery, partial compensation failure, budget exhaustion, parallel effect ordering, and offline replay tests.
+- [x] 11.1 Resolve exact compensation bindings during preflight and reject implicit, unknown, ambiguous, cyclic, or scope-incompatible bindings.
+- [x] 11.2 Push compensation entries only after the original side-effect outcome is durable and the originating executable node VERIFY succeeds.
+- [x] 11.3 Enter a dedicated compensation mode that stops forward scheduling and selects entries in reverse durable effect-commit sequence.
+- [x] 11.4 Execute each compensation as a bounded node instance through PLAN/EXECUTE/VERIFY with stable idempotency, fencing, Gate, budget, and outcome evidence.
+- [x] 11.5 Integrate terminal side-effect outcomes and parallel loser effects into the same compensation ordering without inferring inverse operations.
+- [x] 11.6 Implement `COMPENSATED`, `COMPENSATION_FAILED`, and `INDETERMINATE` terminal projections with explicit manual-intervention evidence.
+- [x] 11.7 Add crash-before/after compensation dispatch/outcome, duplicate recovery, partial compensation failure, budget exhaustion, parallel effect ordering, and offline replay tests.
 
 ## 12. Durable Events, Checkpoints, and Replay
 
-- [ ] 12.1 Register versioned canonical data schemas for graph creation, activation, choice, fork, join, loop, Wait, winner, cancellation, compensation, budget, and lifecycle transitions without creating a second envelope or store.
-- [ ] 12.2 Add pure reducers for every graph event and verify projection checksums after each applied stream sequence.
-- [ ] 12.3 Extend checkpoints with graph version/checksum, node instances, active activities, join/loop/Wait/compensation state, budgets, last sequence, and projection checksum.
-- [ ] 12.4 Extend `REBUILD_STATE` to restore graph state without live activities, effects, signals, timers, or clocks.
-- [ ] 12.5 Extend `VERIFY_HISTORY` to rerun the pinned pure compiler/evaluator/state machine and compare decision checksums with recorded history.
-- [ ] 12.6 Add v1 event/state/checkpoint readers and upcasters with corruption, unknown-version, missing-evidence, and incompatible-graph quarantine fixtures.
-- [ ] 12.7 Add replay high-watermark, checkpoint-resume, Parallel winner, Wait wake, compensation, and no-live-fallback regression tests.
+- [x] 12.1 Register versioned canonical data schemas for graph creation, activation, choice, fork, join, loop, Wait, winner, cancellation, compensation, budget, and lifecycle transitions without creating a second envelope or store.
+- [x] 12.2 Add pure reducers for every graph event and verify projection checksums after each applied stream sequence.
+- [x] 12.3 Extend checkpoints with graph version/checksum, node instances, active activities, join/loop/Wait/compensation state, budgets, last sequence, and projection checksum.
+- [x] 12.4 Extend `REBUILD_STATE` to restore graph state without live activities, effects, signals, timers, or clocks.
+- [x] 12.5 Extend `VERIFY_HISTORY` to rerun the pinned pure compiler/evaluator/state machine and compare decision checksums with recorded history.
+- [x] 12.6 Add v1 event/state/checkpoint readers and upcasters with corruption, unknown-version, missing-evidence, and incompatible-graph quarantine fixtures.
+- [x] 12.7 Add replay high-watermark, checkpoint-resume, Parallel winner, Wait wake, compensation, and no-live-fallback regression tests.
 
 ## 13. Inspection, Security, and Operations
 
-- [ ] 13.1 Add graph-aware safe projections for lifecycle/outcome, node instances and phases, ready/running/waiting/terminal counts, branches, iterations, winners, joins, Waits, compensation, budgets, sequence, and terminal reasons.
-- [ ] 13.2 Expose graph inspection through Application Services and preserve existing public business result envelopes during the bounded migration.
-- [ ] 13.3 Apply schema-aware redaction, tenant scope, authorization, payload-reference, and bounded-diagnostic policy to graph events, checkpoints, inspection, logs, metrics, and traces.
-- [ ] 13.4 Add low-cardinality metrics for active/ready/waiting nodes, parallel admission, loop iterations, Wait age, compensation progress, decision latency, replay mismatch, and graph validation failure.
-- [ ] 13.5 Add operator diagnostics and health checks for stuck Waits, indeterminate activities, compensation failure, event lag, and incompatible history without exposing raw payloads.
+- [x] 13.1 Add graph-aware safe projections for lifecycle/outcome, node instances and phases, ready/running/waiting/terminal counts, branches, iterations, winners, joins, Waits, compensation, budgets, sequence, and terminal reasons.
+- [x] 13.2 Expose graph inspection through Application Services and preserve existing public business result envelopes during the bounded migration.
+- [x] 13.3 Apply schema-aware redaction, tenant scope, authorization, payload-reference, and bounded-diagnostic policy to graph events, checkpoints, inspection, logs, metrics, and traces.
+- [x] 13.4 Add low-cardinality metrics for active/ready/waiting nodes, parallel admission, loop iterations, Wait age, compensation progress, decision latency, replay mismatch, and graph validation failure.
+- [x] 13.5 Add operator diagnostics and health checks for stuck Waits, indeterminate activities, compensation failure, event lag, and incompatible history without exposing raw payloads.
 
 ## 14. Research Adoption and Compatibility Removal
 
-- [ ] 14.1 Convert the Research workflow declaration to the explicit Graph DSL only after legacy-compiled graph equivalence is proven.
-- [ ] 14.2 Introduce the first production `Parallel-All` across structure, contribution, and experiment analysis with branch-scoped outputs and an explicit verified aggregation contract.
-- [ ] 14.3 Prove Research claim verification, quality gates, reader payload, paper card, terminal publication, artifacts, and result envelope remain semantically equivalent after parallelization.
-- [ ] 14.4 Add v1/v2 mixed-history and status-projection tests for Research run inspection, recovery, artifact visibility, and latest accepted results.
-- [ ] 14.5 Migrate all repository callers away from authoritative `current_step_id` and run-wide PLAN/EXECUTE/VERIFY statuses.
-- [ ] 14.6 Delete the old routing executor, dual execution, dual write, deprecated cursor authority, and migration-only shims after all fixtures and repository callers pass.
+- [x] 14.1 Convert the Research workflow declaration to the explicit Graph DSL only after legacy-compiled graph equivalence is proven.
+- [x] 14.2 Introduce the first production `Parallel-All` across structure, contribution, and experiment analysis with branch-scoped outputs and an explicit verified aggregation contract.
+- [x] 14.3 Prove Research claim verification, quality gates, reader payload, paper card, terminal publication, artifacts, and result envelope remain semantically equivalent after parallelization.
+- [x] 14.4 Add v1/v2 mixed-history and status-projection tests for Research run inspection, recovery, artifact visibility, and latest accepted results.
+- [x] 14.5 Migrate all repository callers away from authoritative `current_step_id` and run-wide PLAN/EXECUTE/VERIFY statuses.
+- [x] 14.6 Delete the old routing executor, dual execution, dual write, deprecated cursor authority, and migration-only shims after all fixtures and repository callers pass.
 
 ## 15. Verification and Release Gates
 
-- [ ] 15.1 Run focused Graph compiler, validator, state, scheduler, Control Plane, parallel, loop, Wait, compensation, event, replay, and migration test suites.
-- [ ] 15.2 Run existing Harness, Research, API/application-service, architecture, side-effect, and deterministic gate regression suites without weakening assertions.
-- [ ] 15.3 Run deterministic fault-injection at decision commit, projection, activity dispatch/result, fork, join, winner, loop boundary, Wait registration/resume, and every compensation boundary.
-- [ ] 15.4 Run the graph preflight/readiness performance benchmark and document capacity results without weakening durable or deterministic semantics.
-- [ ] 15.5 Run `python -m scripts.dev compile` and fix all root-cause failures.
-- [ ] 15.6 Run mandatory `python -m scripts.dev smoke` and fix all root-cause failures.
-- [ ] 15.7 Run `openspec validate harness-workflow-graph-runtime --strict` and resolve every schema or scenario error.
-- [ ] 15.8 Execute and document rollback drills for crash after fork, before Parallel-Any winner, after Wait registration, and during compensation.
-- [ ] 15.9 Record final implementation evidence, dependency versions, migration/upcast results, replay checksums, performance results, removed legacy paths, and residual operational limits.
+- [x] 15.1 Run focused Graph compiler, validator, state, scheduler, Control Plane, parallel, loop, Wait, compensation, event, replay, and migration test suites.
+- [x] 15.2 Run existing Harness, Research, API/application-service, architecture, side-effect, and deterministic gate regression suites without weakening assertions.
+- [x] 15.3 Run deterministic fault-injection at decision commit, projection, activity dispatch/result, fork, join, winner, loop boundary, Wait registration/resume, and every compensation boundary.
+- [x] 15.4 Run the graph preflight/readiness performance benchmark and document capacity results without weakening durable or deterministic semantics.
+- [x] 15.5 Run `python -m scripts.dev compile` and fix all root-cause failures.
+- [x] 15.6 Run mandatory `python -m scripts.dev smoke` and fix all root-cause failures.
+- [x] 15.7 Run `openspec validate harness-workflow-graph-runtime --strict` and resolve every schema or scenario error.
+- [x] 15.8 Execute and document rollback drills for crash after fork, before Parallel-Any winner, after Wait registration, and during compensation.
+- [x] 15.9 Record final implementation evidence, dependency versions, migration/upcast results, replay checksums, performance results, removed legacy paths, and residual operational limits.
+
+Release-gate evidence is recorded in `evidence/release-gate-evidence.json` and
+`evidence/release-gate-evidence.md`. Task `1.1` remains intentionally open
+because the exact upstream production release and rollback qualifications are
+not present; this does not invalidate the repository implementation evidence.

@@ -4,18 +4,17 @@ from typing import Literal, cast
 
 import pytest
 
-from framework.events.canonical import checksum_for, thaw_canonical_json
 from framework.harness import (
     HarnessBudget,
     HarnessControlPlane,
-    HarnessDecisionType,
     HarnessEventType,
+    HarnessGraphDecisionType,
+    HarnessGraphObservationType,
     HarnessRouteKind,
     HarnessRoutingRule,
     HarnessRunSpec,
     HarnessRunStatus,
     HarnessStepSpec,
-    HarnessTransitionKind,
     HarnessValidationError,
     HarnessWorkerResult,
     HarnessWorkflowSpec,
@@ -31,9 +30,6 @@ from framework.harness.control_plane.gates import (
     GateContext,
     HarnessGateResult,
 )
-from framework.harness.quality.verdict import verification_evidence
-
-
 class _RecordingGate(DeterministicGate):
     def __init__(
         self,
@@ -112,8 +108,7 @@ def test_unknown_declared_gate_fails_before_any_event_or_worker_call() -> None:
     assert captured.value.code == "unknown_gate_reference"
     assert worker_calls == []
     assert event_port.events == []
-    assert event_port.transitions == {}
-    assert event_port.states == {}
+    _assert_no_graph_run(event_port, "run-unknown-gate")
 
 
 def test_mandatory_gate_moving_version_alias_fails_before_run_creation() -> None:
@@ -141,7 +136,7 @@ def test_mandatory_gate_moving_version_alias_fails_before_run_creation() -> None
     assert captured.value.code == "invalid_gate_reference"
     assert worker_calls == []
     assert event_port.events == []
-    assert event_port.transitions == {}
+    _assert_no_graph_run(event_port, "run-moving-mandatory-gate")
 
 
 def test_worker_quality_observation_does_not_create_a_verdict() -> None:
@@ -222,8 +217,8 @@ def test_high_worker_quality_observation_cannot_override_failed_gate_or_route() 
     assert domain_calls == [("draft", "CandidateGate")]
     assert target_calls == []
     assert not any(
-        decision.decision_type == HarnessDecisionType.ROUTE_TO_STEP
-        and decision.target_step_id == "publish"
+        decision.decision_type is HarnessGraphDecisionType.SELECT_CHOICE
+        and "publish" in decision.target_node_ids
         for decision in result.decisions
     )
 
@@ -277,9 +272,9 @@ def test_on_verdict_route_uses_gate_verdict_instead_of_worker_observation() -> N
     routed = [
         decision
         for decision in result.decisions
-        if decision.decision_type == HarnessDecisionType.ROUTE_TO_STEP
+        if decision.decision_type is HarnessGraphDecisionType.SELECT_CHOICE
     ]
-    assert routed[0].target_step_id == "selected"
+    assert routed[0].target_node_ids == ("selected",)
 
 
 def test_worker_quality_score_is_rejected_as_a_control_field() -> None:
@@ -564,8 +559,7 @@ def test_on_verdict_route_without_declared_gate_fails_preflight() -> None:
     assert "verdict" in str(captured.value).lower()
     assert worker_calls == []
     assert event_port.events == []
-    assert event_port.transitions == {}
-    assert event_port.states == {}
+    _assert_no_graph_run(event_port, "run-invalid-verdict-route")
 
 
 def test_verify_transition_and_decision_history_bind_gate_evidence_and_verdict() -> None:
@@ -602,37 +596,40 @@ def test_verify_transition_and_decision_history_bind_gate_evidence_and_verdict()
         and event.payload["boundary"] == "exit"
     )
     verdict = result.quality_verdicts["draft"]
-    expected_evidence = verification_evidence(
-        tuple(
-            HarnessGateResult(
-                gate_name=item["gate"],
-                passed=item["passed"],
-                reason=item.get("reason"),
-                details=item.get("details", {}),
-            )
-            for item in verify_phase.payload["gate_results"]
-        ),
-        verdict,
+    recovery = event_port.recover_graph(result.state.run_spec.run_id)
+    gate_observations = tuple(
+        commit.observation
+        for commit in recovery.observation_commits
+        if commit.observation.observation_type
+        is HarnessGraphObservationType.GATE_RESULT
     )
-    verify_transition = next(
-        transition
-        for transition in event_port.transitions[result.state.run_spec.run_id]
-        if transition.transition_kind == HarnessTransitionKind.VERIFY_EXIT
+    quality_observation = next(
+        commit.observation
+        for commit in recovery.observation_commits
+        if commit.observation.observation_type
+        is HarnessGraphObservationType.QUALITY_VERDICT
     )
-    assert verify_transition.gate_ref == checksum_for(expected_evidence)
+    complete_commit = next(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.COMPLETE_NODE
+    )
+    completion_projection = next(
+        commit
+        for commit in recovery.projection_commits
+        if commit.cause_checksum == complete_commit.decision.decision_checksum
+    )
 
-    complete_decision = next(
-        event
-        for event in result.events
-        if event.event_type == HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == HarnessDecisionType.COMPLETE_STEP
-    )
-    handler_input = complete_decision.deterministic_history["handler_input"]
-    assert [item["gate"] for item in handler_input["gate_results"]] == [
-        item["gate"] for item in verify_phase.payload["gate_results"]
-    ]
-    assert all(item["input_ref"].startswith("sha256:") for item in handler_input["gate_results"])
-    assert thaw_canonical_json(handler_input["quality_verdict"]) == verdict.to_dict()
+    assert len(gate_observations) == len(verify_phase.payload["gate_results"])
+    assert all(item.payload["passed"] for item in gate_observations)
+    assert quality_observation.payload == {"passed": True, "score": 0.8}
+    assert quality_observation.evidence_ref in complete_commit.accepted_evidence_refs
+    assert {
+        item.evidence_ref for item in gate_observations
+    } <= set(complete_commit.accepted_evidence_refs)
+    assert completion_projection.sequence == complete_commit.sequence + 1
+    assert verdict.passed is True
+    assert verdict.score == 0.8
 
 
 class _PassingGate(DeterministicGate):
@@ -648,6 +645,19 @@ def _workflow(step: HarnessStepSpec) -> HarnessWorkflowSpec:
         steps=(step,),
         entry_step_id=step.step_id,
     )
+
+
+def _assert_no_graph_run(event_port: InMemoryHarnessEventPort, run_id: str) -> None:
+    recovery = event_port.recover_graph(run_id)
+    assert recovery.graph is None
+    assert recovery.run_spec_checksum is None
+    assert recovery.state is None
+    assert recovery.expected_last_sequence == 0
+    assert recovery.decision_commits == ()
+    assert recovery.projection_commits == ()
+    assert recovery.activity_result_commits == ()
+    assert recovery.observation_commits == ()
+    assert recovery.activities == ()
 
 
 def _registration(

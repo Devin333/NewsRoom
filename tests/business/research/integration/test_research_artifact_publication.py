@@ -16,6 +16,7 @@ from framework.harness import (
     HarnessWorkerResult,
     HarnessWorkerStatus,
     InMemoryHarnessEventPort,
+    RunOutcome,
 )
 
 from business.research.application.single_paper_runtime import (
@@ -74,8 +75,11 @@ def test_runtime_publication_is_terminal_and_sqlite_authoritative(tmp_path: Path
     )["payload"]
     cutoff = result.diagnostics["terminal_history_cutoff"]
     assert published_trace["events"][-1]["event_id"] == cutoff
-    assert result.trace.events[-1].event_id != cutoff
-    assert len(result.trace.events) > len(published_trace["events"])
+    assert result.trace.events[-1].event_id == cutoff
+    assert [item["event_id"] for item in published_trace["events"]] == [
+        item.event_id for item in result.trace.events
+    ]
+    assert len(result.trace.events) == len(published_trace["events"])
 
     decisions = side_effect_store.list_decisions(run_id=result.run_id)
     assert [decision.origin for decision in decisions] == [
@@ -282,7 +286,9 @@ def test_terminal_member_failure_keeps_run_non_successful_and_public_refs_hidden
         with pytest.raises(RuntimeError, match="terminal member failure"):
             runtime.run(_request(run_id))
 
-        assert event_port.states[run_id].status.value != "succeeded"
+        graph_state = event_port.recover_graph(run_id).state
+        assert graph_state is not None
+        assert graph_state.outcome is not RunOutcome.SUCCEEDED
         assert handlers[0].prepare_calls == 1
         assert handlers[0].commit_calls == 1
         terminal_decision = next(

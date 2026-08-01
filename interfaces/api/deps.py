@@ -16,6 +16,8 @@ from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.event_operator_factory import event_operator_service_from_actor
 from interfaces.services.event_operator_service import EventOperatorApplicationService
+from interfaces.services.harness_graph_service import HarnessGraphApplicationService
+from interfaces.services.harness_wait_service import HarnessWaitApplicationService
 from interfaces.services.project_service import ProjectApplicationService
 from interfaces.services.research_service import ResearchApplicationService
 from interfaces.services.report_service import ReportApplicationService
@@ -41,6 +43,8 @@ EntityServiceFactory = Callable[[], EntityTrackingApplicationService]
 SubscriptionServiceFactory = Callable[[], SubscriptionApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
 EventOperatorServiceFactory = Callable[[ActorContext], EventOperatorApplicationService]
+HarnessGraphServiceFactory = Callable[[ActorContext], HarnessGraphApplicationService]
+HarnessWaitServiceFactory = Callable[[ActorContext], HarnessWaitApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
@@ -72,6 +76,8 @@ class ApiServices:
     auth_service_factory: AuthServiceFactory
     project_service_factory: ProjectServiceFactory
     research_service_factory: ResearchServiceFactory
+    harness_graph_service_factory: HarnessGraphServiceFactory | None = None
+    harness_wait_service_factory: HarnessWaitServiceFactory | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +114,8 @@ def build_api_services(
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
     research_service_factory: ResearchServiceFactory = build_research_application_service,
+    harness_graph_service_factory: HarnessGraphServiceFactory | None = None,
+    harness_wait_service_factory: HarnessWaitServiceFactory | None = None,
 ) -> ApiServices:
     return ApiServices(
         worker_service_factory=worker_service_factory,
@@ -129,6 +137,8 @@ def build_api_services(
         auth_service_factory=auth_service_factory,
         project_service_factory=project_service_factory,
         research_service_factory=research_service_factory,
+        harness_graph_service_factory=harness_graph_service_factory,
+        harness_wait_service_factory=harness_wait_service_factory,
     )
 
 

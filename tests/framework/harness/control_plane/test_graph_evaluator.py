@@ -12,11 +12,15 @@ from framework.harness.control_plane.graph_evaluator import (
     HarnessGraphObservationType,
     WorkflowGraphEvaluator,
 )
+from framework.harness.control_plane.graph_application import (
+    HarnessGraphDecisionApplier,
+)
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.control_plane.graph_state import (
     HarnessAttemptEvidenceReference,
     HarnessBudgetCounterState,
     HarnessCompensationEntry,
+    HarnessCompensationStatus,
     HarnessEvidenceKind,
     HarnessGraphBudgetState,
     HarnessGraphReference,
@@ -26,8 +30,11 @@ from framework.harness.control_plane.graph_state import (
     HarnessLoopIteration,
     HarnessNodeInstanceIdentity,
     HarnessNodeInstanceState,
+    HarnessNodeInstanceStatus,
     HarnessWaitRegistration,
 )
+from framework.harness.control_plane.scheduler import HarnessScheduler
+from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.workflow.canonical import canonical_checksum
 from framework.harness.workflow.compiler import HarnessWorkflowGraphCompiler
 from framework.harness.workflow.conditions import ConditionPredicate
@@ -429,68 +436,78 @@ def test_wait_registration_resume_and_run_waiting_projection_are_separate() -> N
 
 
 def test_compensation_progress_selects_reverse_durable_effect_order() -> None:
-    graph = _compile(
-        StepRef("publish"),
-        "publish",
-        "undo",
-        compensations=(
-            CompensationBinding(
-                "undo-publish",
-                "publish",
-                "undo",
-                "publication.undo@1",
-                "publication.undo.activity@1",
-            ),
-        ),
-    )
-    origin_identity = _identity(graph, "publish", ordinal=0)
-    effect_ref = _sha("publication-effect")
-    origin = _node(
-        graph,
-        "publish",
-        "succeeded",
-        ordinal=0,
-        sequence=3,
-        evidence=(
-            HarnessAttemptEvidenceReference(
-                effect_ref,
-                HarnessEvidenceKind.SIDE_EFFECT_OUTCOME,
-                origin_identity.instance_id,
-                1,
-                3,
-            ),
-        ),
-    )
-    entry = HarnessCompensationEntry(
-        "entry-publish",
-        origin.instance_id,
-        effect_ref,
-        3,
-        HarnessContractReference("compensation", "publication.undo", "1"),
-        HarnessContractReference("activity", "publication.undo.activity", "1"),
-        "undo:run-1:publish",
-        1,
-        last_event_sequence=3,
-    )
+    graph, state, earlier, later = _compensation_state()
 
     candidate = (
         WorkflowGraphEvaluator()
-        .evaluate(
-            graph,
-            _state(
-                graph,
-                nodes=(origin,),
-                compensations=(entry,),
-                metadata={"execution_mode": "compensating"},
-            ),
-        )
+        .evaluate(graph, state)
         .candidates[0]
     )
 
     assert candidate.candidate_type is HarnessGraphCandidateType.SCHEDULE_COMPENSATION
     assert candidate.node_id == "compensation:undo-publish"
-    assert candidate.payload["entry_id"] == "entry-publish"
-    assert candidate.evidence_refs == (effect_ref,)
+    assert candidate.payload["entry_id"] == later.entry_id
+    assert candidate.evidence_refs == (later.effect_outcome_ref,)
+    assert earlier.effect_commit_sequence < later.effect_commit_sequence
+
+
+def test_compensation_schedule_atomically_projects_selected_entry_and_instance() -> (
+    None
+):
+    graph, state, earlier, later = _compensation_state()
+    decision = HarnessScheduler().next_decision(state, graph=graph)
+
+    assert decision is not None
+    assert decision.decision_type.value == "schedule_compensation"
+    applied = HarnessGraphDecisionApplier().apply(
+        state,
+        graph,
+        decision,
+        decision_sequence=state.last_event_sequence + 1,
+        projection_sequence=state.last_event_sequence + 2,
+    ).state
+
+    entries = {item.entry_id: item for item in applied.compensation_stack}
+    assert entries[earlier.entry_id].status is HarnessCompensationStatus.PENDING
+    running = entries[later.entry_id]
+    assert running.status is HarnessCompensationStatus.RUNNING
+    assert running.compensation_node_instance_id is not None
+    compensation = next(
+        item
+        for item in applied.node_instances
+        if item.instance_id == running.compensation_node_instance_id
+    )
+    assert compensation.identity.node_id == "compensation:undo-publish"
+    assert compensation.status is HarnessNodeInstanceStatus.COMPENSATING
+    assert compensation.step_status is HarnessStepStatus.PENDING
+    assert compensation.metadata["compensation_entry_id"] == later.entry_id
+    assert compensation.metadata["effect_outcome_ref"] == later.effect_outcome_ref
+    assert applied.budgets.require("node_activations").used == 1
+    assert applied.budgets.require("compensations").used == 1
+    assert WorkflowGraphEvaluator().evaluate(graph, applied).candidates == ()
+
+
+def test_compensation_budget_exhaustion_halts_before_scheduling() -> None:
+    graph, state, earlier, later = _compensation_state()
+    budgets = HarnessGraphBudgetState(
+        tuple(
+            replace(counter, used=counter.limit)
+            if counter.name == "compensations"
+            else counter
+            for counter in state.budgets.counters
+        )
+    )
+    exhausted = replace(state, budgets=budgets, projection_checksum=None)
+
+    evaluation = WorkflowGraphEvaluator().evaluate(graph, exhausted)
+
+    assert _candidate_types(evaluation) == (HarnessGraphCandidateType.HALT_RUN,)
+    candidate = evaluation.candidates[0]
+    assert candidate.reason_code == "compensation_budget_exhausted"
+    assert candidate.evidence_refs == (
+        earlier.effect_outcome_ref,
+        later.effect_outcome_ref,
+    )
 
 
 def test_graph_completion_uses_terminal_projection_without_live_activity() -> None:
@@ -1109,6 +1126,123 @@ def _candidate_types(evaluation) -> tuple[HarnessGraphCandidateType, ...]:
     return tuple(item.candidate_type for item in evaluation.candidates)
 
 
+def _compensation_state() -> tuple[
+    NormalizedHarnessGraph,
+    HarnessGraphState,
+    HarnessCompensationEntry,
+    HarnessCompensationEntry,
+]:
+    graph = _compile(
+        Sequence((StepRef("prepare"), StepRef("publish"), StepRef("forward"))),
+        "prepare",
+        "publish",
+        "forward",
+        "undo-prepare",
+        "undo-publish",
+        compensations=(
+            CompensationBinding(
+                "undo-prepare",
+                "prepare",
+                "undo-prepare",
+                "publication.undo-prepare@1",
+                "publication.undo-prepare.activity@1",
+            ),
+            CompensationBinding(
+                "undo-publish",
+                "publish",
+                "undo-publish",
+                "publication.undo-publish@1",
+                "publication.undo-publish.activity@1",
+            ),
+        ),
+    )
+    prepare_identity = _identity(graph, "prepare", ordinal=0)
+    publish_identity = _identity(graph, "publish", ordinal=1)
+    prepare_effect = _sha("prepare-effect")
+    publish_effect = _sha("publish-effect")
+    prepare = _node(
+        graph,
+        "prepare",
+        "succeeded",
+        ordinal=0,
+        sequence=3,
+        evidence=(
+            HarnessAttemptEvidenceReference(
+                prepare_effect,
+                HarnessEvidenceKind.SIDE_EFFECT_OUTCOME,
+                prepare_identity.instance_id,
+                1,
+                3,
+            ),
+        ),
+    )
+    publish = _node(
+        graph,
+        "publish",
+        "succeeded",
+        ordinal=1,
+        sequence=5,
+        evidence=(
+            HarnessAttemptEvidenceReference(
+                publish_effect,
+                HarnessEvidenceKind.SIDE_EFFECT_OUTCOME,
+                publish_identity.instance_id,
+                1,
+                5,
+            ),
+        ),
+    )
+    earlier = HarnessCompensationEntry(
+        "entry-prepare",
+        prepare.instance_id,
+        prepare_effect,
+        3,
+        HarnessContractReference(
+            "compensation",
+            "publication.undo-prepare",
+            "1",
+        ),
+        HarnessContractReference(
+            "activity",
+            "publication.undo-prepare.activity",
+            "1",
+        ),
+        "undo:run-1:prepare",
+        1,
+        last_event_sequence=3,
+    )
+    later = HarnessCompensationEntry(
+        "entry-publish",
+        publish.instance_id,
+        publish_effect,
+        5,
+        HarnessContractReference(
+            "compensation",
+            "publication.undo-publish",
+            "1",
+        ),
+        HarnessContractReference(
+            "activity",
+            "publication.undo-publish.activity",
+            "1",
+        ),
+        "undo:run-1:publish",
+        1,
+        last_event_sequence=5,
+    )
+    return (
+        graph,
+        _state(
+            graph,
+            nodes=(prepare, publish),
+            compensations=(earlier, later),
+            metadata={"execution_mode": "compensating"},
+        ),
+        earlier,
+        later,
+    )
+
+
 def _compile(
     root,
     *step_ids: str,
@@ -1191,6 +1325,7 @@ def _state(
             HarnessGraphBudgetState(
                 (
                     HarnessBudgetCounterState("node_activations", 1_000),
+                    HarnessBudgetCounterState("compensations", 1_000),
                     HarnessBudgetCounterState("max_parallelism", 8),
                     HarnessBudgetCounterState("max_active_nodes", 16),
                 )

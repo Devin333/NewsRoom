@@ -35,6 +35,7 @@ class HarnessGraphDecisionType(StrEnum):
     ENTER_STEP_PHASE = "enter_step_phase"
     DISPATCH_ACTIVITY = "dispatch_activity"
     VERIFY_ACTIVITY_RESULT = "verify_activity_result"
+    PREPARE_SIDE_EFFECT = "prepare_side_effect"
     COMPLETE_NODE = "complete_node"
     COMPLETE_CONTROL_NODE = "complete_control_node"
     FAIL_NODE = "fail_node"
@@ -334,6 +335,28 @@ def _validate_decision_identity(
     attempt: int | None,
     binding_versions: Mapping[str, Any],
 ) -> None:
+    if decision_type is HarnessGraphDecisionType.PREPARE_SIDE_EFFECT:
+        terminal_scope = (
+            node_id is None
+            and node_instance_id is None
+            and step_ref is None
+            and attempt is None
+        )
+        node_scope = (
+            node_id is not None
+            and node_instance_id is not None
+            and step_ref is not None
+            and attempt is not None
+        )
+        if not terminal_scope and not node_scope:
+            raise HarnessValidationError(
+                "side-effect preparation requires either complete node identity or run scope",
+                code="graph_decision_identity_mismatch",
+            )
+        if node_scope:
+            assert step_ref is not None
+            _validate_step_bindings(step_ref, binding_versions)
+        return
     if decision_type in _NODE_DEFINITION_DECISION_TYPES:
         if node_id is None or node_instance_id is not None:
             raise HarnessValidationError(

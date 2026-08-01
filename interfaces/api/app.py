@@ -24,6 +24,7 @@ from framework.events import (
     trace_context_scope,
 )
 from framework.tool.governance.redaction import redact_sensitive_values
+from framework.shared.public_errors import project_public_error
 from framework.workers.approval import ApprovalAlreadyDecidedError, ApprovalNotFoundError
 from interfaces.models import (
     ActorContext,
@@ -58,6 +59,8 @@ from interfaces.services.run_report_projection import project_run_report_for_int
 from interfaces.services.entity_service import EntityTrackingApplicationService
 from interfaces.services.event_operator_factory import event_operator_service_from_actor
 from interfaces.services.event_operator_service import EventOperatorApplicationService
+from interfaces.services.harness_graph_service import HarnessGraphApplicationService
+from interfaces.services.harness_wait_service import HarnessWaitApplicationService
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.mcp_service import MCPApplicationService
 from interfaces.services.project_service import ProjectApplicationService
@@ -70,6 +73,7 @@ from interfaces.services.run_operation_service import RunOperationApplicationSer
 from interfaces.services.run_service import RunApplicationService
 from interfaces.services.schedule_service import ScheduleApplicationService
 from interfaces.services.source_service import SourceApplicationService
+from interfaces.services.source_runtime import SourceRuntimeProvider
 from interfaces.services.storage_service import StorageApplicationService
 from interfaces.services.subscription_service import SubscriptionApplicationService
 from interfaces.services.worker_service import WorkerApplicationService
@@ -87,6 +91,8 @@ EntityServiceFactory = Callable[[], EntityTrackingApplicationService]
 SubscriptionServiceFactory = Callable[[], SubscriptionApplicationService]
 MCPServiceFactory = Callable[[], MCPApplicationService]
 EventOperatorServiceFactory = Callable[[ActorContext], EventOperatorApplicationService]
+HarnessGraphServiceFactory = Callable[[ActorContext], HarnessGraphApplicationService]
+HarnessWaitServiceFactory = Callable[[ActorContext], HarnessWaitApplicationService]
 RunInspectionServiceFactory = Callable[[], RunInspectionService]
 ArtifactInspectionServiceFactory = Callable[[], ArtifactInspectionService]
 StorageServiceFactory = Callable[[], StorageApplicationService]
@@ -120,6 +126,8 @@ def create_app(
     auth_service_factory: AuthServiceFactory = AuthApplicationService,
     project_service_factory: ProjectServiceFactory = ProjectApplicationService,
     research_service_factory: ResearchServiceFactory = build_research_application_service,
+    harness_graph_service_factory: HarnessGraphServiceFactory | None = None,
+    harness_wait_service_factory: HarnessWaitServiceFactory | None = None,
     audit_emitter_factory: AuditEmitterFactory | None = audit_emitter_from_env,
     api_token: str | None = None,
     api_keys: ApiKeyRoles | None = None,
@@ -191,7 +199,12 @@ def create_app(
 
     @api.middleware("http")
     async def request_id_middleware(request: Request, call_next):
-        request_id = _request_id_from_header(request.headers.get(REQUEST_ID_HEADER)) or _new_request_id()
+        request_id = getattr(request.state, "request_id", None)
+        if not isinstance(request_id, str) or not request_id:
+            request_id = _request_id_from_header(
+                request.headers.get(REQUEST_ID_HEADER)
+            ) or _new_request_id()
+        request.state.request_id = request_id
         context_token = set_request_id(request_id)
         try:
             response = await call_next(request)
@@ -250,13 +263,12 @@ def create_app(
             _emit_api_audit(
                 audit_emitter,
                 request,
-                request_id=_request_id_from_header(request.headers.get(REQUEST_ID_HEADER))
-                or _request_id(),
+                request_id=_request_state_id(request),
                 status_code=500,
                 result="failed",
             )
             raise
-        request_id = response.headers.get(REQUEST_ID_HEADER) or _request_id()
+        request_id = response.headers.get(REQUEST_ID_HEADER) or _request_state_id(request)
         _emit_api_audit(
             audit_emitter,
             request,
@@ -284,6 +296,38 @@ def create_app(
             message=str(exc.detail or "HTTP error"),
             headers=exc.headers,
         )
+
+    @api.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        request_id = _request_state_id(request)
+        context_token = set_request_id(request_id)
+        try:
+            projected = project_public_error(
+                exc,
+                context="http",
+                operation=f"{request.method} {request.url.path}",
+            )
+            return _error(
+                status_code=500,
+                code="internal_error",
+                message=projected.error_message,
+                details={"error_id": projected.error_id},
+                headers={REQUEST_ID_HEADER: request_id},
+            )
+        finally:
+            reset_request_id(context_token)
+
+    if source_service_factory is SourceApplicationService:
+        source_runtime_provider = SourceRuntimeProvider()
+        source_service_factory = source_runtime_provider.source_service_factory
+        if worker_service_factory is WorkerApplicationService:
+
+            def default_worker_service_factory() -> WorkerApplicationService:
+                return WorkerApplicationService(
+                    source_service_factory=source_service_factory,
+                )
+
+            worker_service_factory = default_worker_service_factory
 
     resolved_mcp_service_factory = _mcp_service_factory(
         mcp_service_factory=mcp_service_factory,
@@ -323,6 +367,8 @@ def create_app(
         auth_service_factory=auth_service_factory,
         project_service_factory=project_service_factory,
         research_service_factory=research_service_factory,
+        harness_graph_service_factory=harness_graph_service_factory,
+        harness_wait_service_factory=harness_wait_service_factory,
     )
     helpers = ApiRouteHelpers(
         success=_success,
@@ -635,6 +681,15 @@ def _request_id_from_header(value: str | None) -> str | None:
     return request_id_from_header(value)
 
 
+def _request_state_id(request: Request) -> str:
+    value = getattr(request.state, "request_id", None)
+    if isinstance(value, str) and value:
+        return value
+    request_id = _request_id_from_header(request.headers.get(REQUEST_ID_HEADER)) or _request_id()
+    request.state.request_id = request_id
+    return request_id
+
+
 def _http_trace_carrier(headers: Any) -> dict[str, str]:
     allowed = {"traceparent", "tracestate", "baggage"}
     carrier: dict[str, str] = {}
@@ -786,6 +841,13 @@ def _required_api_permission(method: str, path: str) -> str | None:
     if resource == "events":
         return "events:read" if method == "GET" else "events:operate"
     if resource == "runs":
+        if (
+            method == "POST"
+            and len(parts) == 7
+            and parts[4] == "waits"
+            and parts[6] == "approval"
+        ):
+            return "manage:approvals"
         return "read:reports" if method == "GET" else "write:runs"
     if resource == "reports":
         if method == "GET":

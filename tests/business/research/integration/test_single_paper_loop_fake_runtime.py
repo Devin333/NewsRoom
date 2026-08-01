@@ -4,13 +4,21 @@ from copy import deepcopy
 
 import pytest
 
+from framework.events.canonical import checksum_for
 from framework.harness import (
     FakeArtifactPort,
+    HarnessControlPlane,
+    HarnessGraphDecisionType,
+    HarnessGraphStateReader,
+    HarnessLegacyEventReader,
     HarnessValidationError,
     InMemoryHarnessEventPort,
+    project_public_legacy_status,
 )
+from framework.harness.workflow import LEGACY_EVENT_SCHEMA, LEGACY_STATE_SCHEMA
 
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
+from business.research.application import single_paper_runtime as runtime_module
 from business.research.application.single_paper_runtime import (
     ResearchAnalysisResult,
     ResearchSinglePaperRuntime,
@@ -124,6 +132,161 @@ def test_single_paper_loop_outputs_artifacts_trace_and_transcript() -> None:
     assert all(
         "quality_score" not in worker_result["output"]
         for worker_result in result.diagnostics["worker_results"].values()
+    )
+
+
+def test_single_paper_analysis_uses_durable_parallel_branches_and_verified_merge() -> None:
+    event_port = InMemoryHarnessEventPort()
+    result = AnalyzePaperUseCase(
+        _runtime(event_port_factory=lambda _run_id: event_port)
+    ).analyze(
+        AnalyzePaperRequest(
+            run_id="research-run-parallel-analysis",
+            paper_id="paper-harness-001",
+            source_ref="https://arxiv.org/abs/2606.00123",
+            user_id="user-1",
+        )
+    )
+
+    recovery = event_port.recover_graph(result.run_id)
+    assert recovery.state is not None
+    decisions = tuple(item.decision for item in recovery.decision_commits)
+    fork = next(
+        item
+        for item in decisions
+        if item.decision_type is HarnessGraphDecisionType.OPEN_FORK
+    )
+    join = next(
+        item
+        for item in decisions
+        if item.decision_type is HarnessGraphDecisionType.SATISFY_JOIN
+    )
+    merge = next(
+        item
+        for item in decisions
+        if item.decision_type is HarnessGraphDecisionType.APPLY_MERGE
+    )
+    branch_nodes = {
+        item.identity.node_id: item
+        for item in recovery.state.node_instances
+        if item.identity.node_id
+        in {
+            "analyze_structure",
+            "analyze_contribution",
+            "analyze_experiments",
+        }
+    }
+
+    assert fork.decision_checksum != join.decision_checksum
+    assert join.decision_checksum != merge.decision_checksum
+    assert {node.identity.branch_path for node in branch_nodes.values()} == {
+        ("structure",),
+        ("contribution",),
+        ("experiments",),
+    }
+    refs = result.diagnostics["worker_results"]["verify_claims"]["output"][
+        "analysis_branch_refs"
+    ]
+    assert {(item["producer_node_id"], item["output_key"]) for item in refs} == {
+        ("analyze_structure", "structure_candidate"),
+        ("analyze_contribution", "contribution_candidate"),
+        ("analyze_experiments", "experiment_candidate"),
+    }
+    assert result.analysis is not None
+    assert result.analysis.contributions == [
+        "Bounded RAG",
+        "Context snapshots",
+        "Deterministic evidence gates",
+    ]
+
+
+def test_research_v1_projections_upcast_against_v2_history_without_hiding_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _CapturingHarnessControlPlane(HarnessControlPlane):
+        def run(self, run_spec):
+            harness_result = super().run(run_spec)
+            captured.update(
+                control_plane=self,
+                run_spec=run_spec,
+                harness_result=harness_result,
+            )
+            return harness_result
+
+    monkeypatch.setattr(
+        runtime_module,
+        "HarnessControlPlane",
+        _CapturingHarnessControlPlane,
+    )
+    artifact_port = FakeArtifactPort()
+    result = AnalyzePaperUseCase(_runtime(artifact_port=artifact_port)).analyze(
+        AnalyzePaperRequest(
+            run_id="research-run-mixed-v1-v2-history",
+            paper_id="paper-harness-001",
+            source_ref="https://arxiv.org/abs/2606.00123",
+            user_id="user-1",
+        )
+    )
+    control_plane = captured["control_plane"]
+    run_spec = captured["run_spec"]
+    harness_result = captured["harness_result"]
+    assert isinstance(control_plane, HarnessControlPlane)
+    graph_state = harness_result.graph_state
+    assert graph_state is not None
+    history_ref = checksum_for(
+        {
+            "run_id": result.run_id,
+            "projection_checksum": graph_state.projection_checksum,
+        }
+    )
+
+    legacy_state = {
+        "schema_version": LEGACY_STATE_SCHEMA,
+        **harness_result.state.to_dict(),
+    }
+    state_read = HarnessGraphStateReader().read_or_quarantine(
+        legacy_state,
+        rebuilt_state=graph_state,
+        history_evidence_ref=history_ref,
+        expected_graph_ref=graph_state.graph_ref,
+    )
+    legacy_event = {
+        "schema_version": LEGACY_EVENT_SCHEMA,
+        **harness_result.events[0].to_dict(),
+    }
+    event_read = HarnessLegacyEventReader().read_or_quarantine(
+        legacy_event,
+        stream_sequence=1,
+        history_evidence_ref=history_ref,
+        expected_run_id=result.run_id,
+    )
+    inspection = control_plane.inspect_graph(run_spec, verify_history=True).to_dict()
+    recovered = control_plane.recover_and_run(run_spec)
+
+    assert not state_read.quarantined
+    assert state_read.state == graph_state
+    assert not event_read.quarantined
+    assert event_read.evidence is not None
+    assert event_read.evidence.run_id == result.run_id
+    assert (
+        project_public_legacy_status(graph_state.lifecycle, graph_state.outcome).value
+        == result.status
+        == "succeeded"
+    )
+    assert inspection["projection_checksum"] == graph_state.projection_checksum
+    assert inspection["replay"]["quarantine_reason"] is None
+    assert recovered.graph_state == graph_state
+    assert set(result.artifact_refs) >= {
+        "research-analysis",
+        "research-reader-payload",
+        "research-paper-card",
+        "research-quality-result",
+    }
+    assert all(
+        artifact_port.read_artifact(reference)["artifact_type"] == artifact_type
+        for artifact_type, reference in result.artifact_refs.items()
     )
 
 

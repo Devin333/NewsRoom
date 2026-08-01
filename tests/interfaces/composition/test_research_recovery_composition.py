@@ -90,13 +90,20 @@ class _RaisedResearchLLMWorker(FakeResearchLLMWorker):
 
 
 class _HistoryReader:
-    def __init__(self, history) -> None:
+    def __init__(self, history, *, graph_recovery=None, graph_available: bool = True) -> None:
         self._history = tuple(history)
+        self._graph_recovery = graph_recovery
+        self._graph_available = graph_available
         self.read_calls = 0
 
     def read_history(self, _run_id: str):
         self.read_calls += 1
         return self._history
+
+    def recover_graph(self, run_id: str):
+        if not callable(self._graph_recovery) or not self._graph_available:
+            return type("MissingGraphRecovery", (), {"state": None})()
+        return self._graph_recovery(run_id)
 
 
 @pytest.fixture(scope="module")
@@ -243,7 +250,11 @@ def test_inflight_terminal_publication_is_deferred_until_success_transition(
             and event.metadata.get("transition_kind") == "success"
         )
     )
-    reader = _HistoryReader(truncated)
+    reader = _HistoryReader(
+        truncated,
+        graph_recovery=evidence["event_port"].recover_graph,
+        graph_available=False,
+    )
     store = _v2_store(evidence["root"] / "quarantine-store")
     source = _DurableResearchRunRecoverySource(
         artifact_port=evidence["artifact_port"],
@@ -264,7 +275,10 @@ def test_inflight_terminal_publication_is_deferred_until_success_transition(
     assert store.get_latest_by_paper_id("paper-harness-001") is None
     assert reader.read_calls == 1
 
-    completed_reader = _HistoryReader(full_history)
+    completed_reader = _HistoryReader(
+        full_history,
+        graph_recovery=evidence["event_port"].recover_graph,
+    )
     completed_source = _DurableResearchRunRecoverySource(
         artifact_port=evidence["artifact_port"],
         run_store=store,

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from framework.artifacts.paths import validate_artifact_path_segment
+from framework.agent.artifacts.paths import validate_artifact_path_segment
 from framework.events.canonical import checksum_for
 from framework.harness import (
     ArtifactPort,
@@ -19,6 +19,8 @@ from framework.harness import (
     HarnessControlPlane,
     HarnessEvent,
     HarnessEventType,
+    HarnessGraphPreflight,
+    HarnessGraphPreflightPolicy,
     HarnessTransitionPort,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -813,6 +815,12 @@ class ResearchSinglePaperRuntime:
             event_port=event_port,
             worker_registry=self._worker_registry(workspace),
             gate_registry=self.gate_registry,
+            graph_preflight=HarnessGraphPreflight(
+                policy=HarnessGraphPreflightPolicy(
+                    max_active_nodes=4,
+                    max_parallelism=1,
+                )
+            ),
             side_effect_registry=side_effect_registry,
             side_effect_store=self.side_effect_store,
         )
@@ -1294,20 +1302,26 @@ class ResearchSinglePaperRuntime:
         workspace.summary = summary
         return _ok(
             {
-                "candidate_ref": stable_research_id("candidate", workspace.request.run_id, "summary"),
+                "candidate_ref": stable_research_id(
+                    "candidate", workspace.request.run_id, "summary"
+                ),
                 "three_minute_read": summary.to_dict(),
                 "claims": [summary.core_idea],
                 "warnings": list(workspace.llm_candidate_warnings),
             }
         )
 
-    def _analyze_contribution(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
-        if workspace.summary is None:
-            return _failed("summary candidate is required before contribution analysis")
-        workspace.contributions = list(workspace.summary.key_contributions)
+    def _analyze_contribution(
+        self, task: dict[str, Any], workspace: "_ResearchRunWorkspace"
+    ) -> HarnessWorkerResult:
         workspace.taxonomy_candidates = [
             TaxonomyCandidate(
-                candidate_id=stable_research_id("taxonomy_candidate", workspace.request.run_id, item["level"], item["term_id"]),
+                candidate_id=stable_research_id(
+                    "taxonomy_candidate",
+                    workspace.request.run_id,
+                    item["level"],
+                    item["term_id"],
+                ),
                 level=item["level"],
                 term_id=item["term_id"],
                 label=item["label"],
@@ -1326,23 +1340,37 @@ class ResearchSinglePaperRuntime:
                 },
             ).get("taxonomy_candidates", [])
         ]
-        assignment = TaxonomyAssignmentBuilder(self.taxonomy_registry).build(workspace.request.paper_id, workspace.taxonomy_candidates)
+        assignment = TaxonomyAssignmentBuilder(self.taxonomy_registry).build(
+            workspace.request.paper_id, workspace.taxonomy_candidates
+        )
         workspace.taxonomy_assignment = assignment
+        evidence_refs = [
+            item.as_ref().to_dict()
+            for item in (
+                workspace.evidence_pack.items if workspace.evidence_pack else ()
+            )
+        ]
         return _ok(
             {
-                "contributions": list(workspace.contributions),
+                "contributions": [
+                    candidate.label for candidate in workspace.taxonomy_candidates
+                ],
                 "taxonomy_assignment": assignment.to_dict(),
                 "taxonomy_review_candidate_ids": assignment.review_candidate_ids,
-                "summary_evidence_refs": [
-                    evidence_ref.to_dict() for evidence_ref in workspace.summary.evidence_refs
-                ],
+                "summary_evidence_refs": evidence_refs,
             }
         )
 
-    def _analyze_experiments(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
+    def _analyze_experiments(
+        self, task: dict[str, Any], workspace: "_ResearchRunWorkspace"
+    ) -> HarnessWorkerResult:
         candidate = self.llm_worker.generate_candidate(
             task="candidate_experiment_claims",
-            payload={"evidence_pack": workspace.evidence_pack.to_dict() if workspace.evidence_pack else {}},
+            payload={
+                "evidence_pack": workspace.evidence_pack.to_dict()
+                if workspace.evidence_pack
+                else {}
+            },
         )
         claims: list[ResearchClaim] = []
         scores: list[ResearchScore] = []
@@ -1403,32 +1431,78 @@ class ResearchSinglePaperRuntime:
                 "claims": [claim.text for claim in claims],
                 "claim_models": [claim.to_dict() for claim in claims],
                 "scores": candidate_scores,
-                "claim_confidence_observation": min([claim.confidence for claim in claims] or [1.0]),
+                "claim_confidence_observation": min(
+                    [claim.confidence for claim in claims] or [1.0]
+                ),
             }
         )
 
-    def _verify_claims(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
+    def _verify_claims(
+        self, task: dict[str, Any], workspace: "_ResearchRunWorkspace"
+    ) -> HarnessWorkerResult:
         if workspace.evidence_pack is None:
             return _failed("evidence pack is required before claim verification")
-        gate_results = self.citation_verifier.verify_claims(workspace.claims, workspace.evidence_pack)
+        branch_refs = task.get("inputs", {}).get("analysis_branch_refs")
+        if not isinstance(branch_refs, tuple | list):
+            return _failed(
+                "analysis branch refs are required before claim verification"
+            )
+        expected_outputs = {
+            ("analyze_structure", "structure_candidate"),
+            ("analyze_contribution", "contribution_candidate"),
+            ("analyze_experiments", "experiment_candidate"),
+        }
+        actual_outputs = {
+            (item.get("producer_node_id"), item.get("output_key"))
+            for item in branch_refs
+            if isinstance(item, Mapping)
+        }
+        if (
+            len(branch_refs) != len(expected_outputs)
+            or actual_outputs != expected_outputs
+        ):
+            return _failed("analysis branch refs are incomplete or invalid")
+        if workspace.summary is None:
+            return _failed("summary candidate is required before claim verification")
+        workspace.contributions = list(workspace.summary.key_contributions)
+        gate_results = self.citation_verifier.verify_claims(
+            workspace.claims, workspace.evidence_pack
+        )
         workspace.claim_gate_results = gate_results
         return _ok(
             {
+                "analysis_branch_refs": [dict(item) for item in branch_refs],
                 "claim_gate_results": [result.to_dict() for result in gate_results],
                 "claim_models": [claim.to_dict() for claim in workspace.claims],
                 "evidence_pack": workspace.evidence_pack.to_dict(),
             }
         )
 
-    def _quality_gate(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
-        if workspace.paper is None or workspace.summary is None or workspace.evidence_pack is None:
-            return _failed("paper, summary, and evidence are required before quality gate")
+    def _quality_gate(
+        self, task: dict[str, Any], workspace: "_ResearchRunWorkspace"
+    ) -> HarnessWorkerResult:
+        if (
+            workspace.paper is None
+            or workspace.summary is None
+            or workspace.evidence_pack is None
+        ):
+            return _failed(
+                "paper, summary, and evidence are required before quality gate"
+            )
         analysis = ResearchAnalysis(
             paper_id=workspace.paper.paper_id,
             summary=workspace.summary,
             contributions=workspace.contributions,
-            methods=[candidate.term_id for candidate in workspace.taxonomy_candidates if candidate.level == "area"],
-            experiments=[claim.text for claim in workspace.claims if claim.claim_type == "experiment"],
+            methods=[
+                candidate.term_id
+                for candidate in workspace.taxonomy_candidates
+                if candidate.level == "area"
+            ],
+            experiments=[
+                claim.text
+                for claim in workspace.claims
+                if claim.claim_type == "experiment"
+            ],
             limitations=workspace.summary.limitations,
             reproducibility=[],
             related_work=[],
@@ -1941,7 +2015,20 @@ def _research_run_created_at(
         for event in history
         if event.event_type is HarnessEventType.RUN_CREATED
     )
-    if len(created) != 1:
+    if len(created) == 1:
+        return created[0].occurred_at
+    if not created:
+        recover_graph = getattr(event_port, "recover_graph", None)
+        if callable(recover_graph):
+            recovery = recover_graph(run_id)
+            initialization = tuple(
+                commit
+                for commit in recovery.projection_commits
+                if commit.commit_kind.value == "initialize"
+            )
+            if recovery.state is not None and len(initialization) == 1:
+                return initialization[0].occurred_at
+    if history or created:
         raise HarnessValidationError(
             "Research durable history must contain one RUN_CREATED event",
             code="research_run_created_event_invalid",
@@ -1951,7 +2038,7 @@ def _research_run_created_at(
                 "count": len(created),
             },
         )
-    return created[0].occurred_at
+    return utc_now()
 
 
 def _budget_from_options(options: dict[str, Any]) -> HarnessBudget:

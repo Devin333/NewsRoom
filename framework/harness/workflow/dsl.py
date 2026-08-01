@@ -190,27 +190,91 @@ class ParallelBranch:
 
 
 @dataclass(frozen=True, slots=True)
+class PureMerge:
+    merge_ref: str
+    output_keys: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "merge_ref",
+            exact_reference(self.merge_ref, "pure_merge.merge_ref"),
+        )
+        object.__setattr__(
+            self,
+            "output_keys",
+            _text_tuple(
+                self.output_keys,
+                "pure_merge.output_keys",
+                allow_empty=False,
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "pure",
+            "merge_ref": self.merge_ref,
+            "output_keys": list(self.output_keys),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedAggregation:
+    step: StepRef
+    branch_inputs_key: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.step, StepRef):
+            raise HarnessValidationError(
+                "verified aggregation requires a StepRef",
+                code="invalid_merge_contract",
+            )
+        object.__setattr__(
+            self,
+            "branch_inputs_key",
+            required_text(
+                self.branch_inputs_key,
+                "verified_aggregation.branch_inputs_key",
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": "aggregation_step",
+            "step": self.step.to_dict(),
+            "branch_inputs_key": self.branch_inputs_key,
+        }
+
+
+ParallelMerge: TypeAlias = PureMerge | VerifiedAggregation
+
+
+@dataclass(frozen=True, slots=True)
 class ParallelAll:
     fork_id: str
     join_id: str
     branches: tuple[ParallelBranch, ...]
     failure_policy: ParallelAllFailurePolicy | str = ParallelAllFailurePolicy.FAIL_FAST
-    merge_ref: str | None = None
+    merge: ParallelMerge | None = None
 
     def __post_init__(self) -> None:
         fork_id = required_text(self.fork_id, "parallel_all.fork_id")
         join_id = required_text(self.join_id, "parallel_all.join_id")
         branches = _parallel_branches(self.branches, "parallel_all.branches")
-        merge_ref = None
-        if self.merge_ref is not None:
-            merge_ref = exact_reference(self.merge_ref, "parallel_all.merge_ref")
+        if self.merge is not None and not isinstance(
+            self.merge,
+            PureMerge | VerifiedAggregation,
+        ):
+            raise HarnessValidationError(
+                "parallel_all.merge must be PureMerge or VerifiedAggregation",
+                code="invalid_merge_contract",
+            )
         object.__setattr__(self, "fork_id", fork_id)
         object.__setattr__(self, "join_id", join_id)
         object.__setattr__(self, "branches", branches)
         object.__setattr__(
             self, "failure_policy", ParallelAllFailurePolicy(self.failure_policy)
         )
-        object.__setattr__(self, "merge_ref", merge_ref)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -219,7 +283,7 @@ class ParallelAll:
             "join_id": self.join_id,
             "branches": [branch.to_dict() for branch in self.branches],
             "failure_policy": self.failure_policy.value,
-            "merge_ref": self.merge_ref,
+            "merge": None if self.merge is None else self.merge.to_dict(),
         }
 
 
@@ -610,13 +674,13 @@ def expression_from_dict(value: Mapping[str, Any]) -> HarnessGraphExpression:
             for item in _array(value["branches"], f"{kind}.branches")
         )
         if kind == "parallel_all":
-            _exact_keys(value, common | {"failure_policy", "merge_ref"}, kind)
+            _exact_keys(value, common | {"failure_policy", "merge"}, kind)
             return ParallelAll(
                 fork_id=value["fork_id"],
                 join_id=value["join_id"],
                 branches=branches,
                 failure_policy=value["failure_policy"],
-                merge_ref=value["merge_ref"],
+                merge=_parallel_merge_from_dict(value["merge"]),
             )
         _exact_keys(value, common | {"cancellation_policy", "failure_policy"}, kind)
         return ParallelAny(
@@ -726,6 +790,44 @@ def _parallel_branch_from_dict(value: Mapping[str, Any]) -> ParallelBranch:
     )
 
 
+def _parallel_merge_from_dict(value: Any) -> ParallelMerge | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError(
+            "parallel merge must be an object",
+            code="invalid_merge_contract",
+        )
+    kind = value.get("kind")
+    if kind == "pure":
+        _exact_keys(value, {"kind", "merge_ref", "output_keys"}, "pure merge")
+        return PureMerge(
+            merge_ref=value["merge_ref"],
+            output_keys=tuple(_array(value["output_keys"], "pure_merge.output_keys")),
+        )
+    if kind == "aggregation_step":
+        _exact_keys(
+            value,
+            {"kind", "step", "branch_inputs_key"},
+            "verified aggregation",
+        )
+        step = expression_from_dict(value["step"])
+        if not isinstance(step, StepRef):
+            raise HarnessValidationError(
+                "verified aggregation requires a StepRef",
+                code="invalid_merge_contract",
+            )
+        return VerifiedAggregation(
+            step=step,
+            branch_inputs_key=value["branch_inputs_key"],
+        )
+    raise HarnessValidationError(
+        "unsupported parallel merge kind",
+        code="invalid_merge_contract",
+        details={"kind": str(kind)},
+    )
+
+
 def _wait_timeout_from_dict(value: Mapping[str, Any]) -> WaitTimeoutPolicy:
     _exact_keys(value, {"action", "target_node_id"}, "wait timeout")
     return WaitTimeoutPolicy(
@@ -805,6 +907,29 @@ def _is_condition(value: Any) -> bool:
     return isinstance(value, ConditionPredicate | ConditionAll | ConditionAny)
 
 
+def _text_tuple(
+    value: Any,
+    field_name: str,
+    *,
+    allow_empty: bool,
+) -> tuple[str, ...]:
+    values = tuple(
+        required_text(item, field_name)
+        for item in _array(value, field_name)
+    )
+    if not allow_empty and not values:
+        raise HarnessValidationError(
+            f"{field_name} must not be empty",
+            code="invalid_merge_contract",
+        )
+    if len(values) != len(set(values)):
+        raise HarnessValidationError(
+            f"{field_name} must contain unique values",
+            code="invalid_merge_contract",
+        )
+    return tuple(sorted(values))
+
+
 def _array(value: Any, field_name: str) -> tuple[Any, ...]:
     if not isinstance(value, SequenceCollection) or isinstance(
         value, (str, bytes, bytearray)
@@ -847,8 +972,11 @@ __all__ = [
     "ParallelAnyCancellationPolicy",
     "ParallelAnyFailurePolicy",
     "ParallelBranch",
+    "ParallelMerge",
+    "PureMerge",
     "Sequence",
     "StepRef",
+    "VerifiedAggregation",
     "Wait",
     "WaitKind",
     "WaitTimeoutAction",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.skills.evolution.gates import SkillPromotionGate

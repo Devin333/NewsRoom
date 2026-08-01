@@ -10,6 +10,7 @@ from framework.harness.control_plane.gate_registry import GateBinding
 from framework.harness.side_effects.models import HarnessSideEffectOrigin
 from framework.harness.side_effects.registry import HarnessSideEffectHandlerBinding
 from framework.harness.workflow.binding_authority import (
+    HarnessActivityCapabilities,
     HarnessActivityContractBinding,
     HarnessCompensationHandlerBinding,
     HarnessDeterministicMergeBinding,
@@ -70,11 +71,20 @@ class HarnessGraphRuntimeResolver:
         self,
         workflow: HarnessWorkflowSpec,
         graph: NormalizedHarnessGraph,
+        *,
+        parallel_activity_capabilities: Mapping[
+            str,
+            HarnessActivityCapabilities,
+        ]
+        | None = None,
+        fenced_side_effect_store: bool = False,
     ) -> HarnessResolvedRuntimeBindings:
         if not isinstance(workflow, HarnessWorkflowSpec):
             raise TypeError("workflow must be HarnessWorkflowSpec")
         if not isinstance(graph, NormalizedHarnessGraph):
             raise TypeError("graph must be NormalizedHarnessGraph")
+        if not isinstance(fenced_side_effect_store, bool):
+            raise TypeError("fenced_side_effect_store must be boolean")
         _validate_workflow_reference(workflow, graph)
 
         steps_by_id = {step.step_id: step for step in workflow.steps}
@@ -162,15 +172,23 @@ class HarnessGraphRuntimeResolver:
                 required_gate_refs=terminal_gate_refs,
             )
 
-        parallel_safe = {
-            binding.reference.exact_ref
-            for binding in activities.values()
-            if binding.capabilities.parallel_safe
+        parallel_safe = _parallel_safe_activity_refs(
+            activities,
+            parallel_activity_capabilities,
+        )
+        parallel_safe_side_effects = {
+            _side_effect_reference(binding).exact_ref
+            for binding in side_effects.values()
+            if fenced_side_effect_store
+            and binding.capabilities.physical_concurrency_safe
         }
         return HarnessResolvedRuntimeBindings(
             registry_snapshot=HarnessGraphRegistrySnapshot(
                 references=tuple(references),
                 parallel_safe_activity_refs=tuple(parallel_safe),
+                parallel_safe_side_effect_refs=tuple(
+                    parallel_safe_side_effects
+                ),
                 compensation_safe_activity_refs=tuple(compensation_safe),
             ),
             workers_by_node=workers,
@@ -427,6 +445,41 @@ def _frozen_mapping(value: Mapping) -> Mapping:
     if not isinstance(value, Mapping):
         raise TypeError("resolved binding collections must be mappings")
     return MappingProxyType(dict(sorted(value.items(), key=lambda item: str(item[0]))))
+
+
+def _parallel_safe_activity_refs(
+    activities: Mapping[str, HarnessActivityContractBinding],
+    dispatcher_capabilities: Mapping[str, HarnessActivityCapabilities] | None,
+) -> set[str]:
+    if dispatcher_capabilities is None:
+        return {
+            binding.reference.exact_ref
+            for binding in activities.values()
+            if binding.capabilities.parallel_safe
+        }
+    if not isinstance(dispatcher_capabilities, Mapping):
+        raise TypeError("parallel_activity_capabilities must be a mapping")
+
+    resolved_refs = {
+        binding.reference.exact_ref for binding in activities.values()
+    }
+    safe_refs: set[str] = set()
+    for reference, capabilities in dispatcher_capabilities.items():
+        if not isinstance(reference, str) or reference not in resolved_refs:
+            raise _resolution_error(
+                "unknown_parallel_activity_capability_reference",
+                "dispatcher capability evidence references an unresolved activity contract",
+                reference=str(reference),
+            )
+        if not isinstance(capabilities, HarnessActivityCapabilities):
+            raise _resolution_error(
+                "invalid_parallel_activity_capabilities",
+                "dispatcher capability evidence must use HarnessActivityCapabilities",
+                reference=reference,
+            )
+        if capabilities.parallel_safe:
+            safe_refs.add(reference)
+    return safe_refs
 
 
 def _resolution_error(

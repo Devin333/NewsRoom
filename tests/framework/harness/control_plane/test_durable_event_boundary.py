@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -22,10 +24,6 @@ from framework.events.errors import (
     EventStoreUnavailableError,
     EventStreamVersionConflictError,
 )
-from framework.events.runtime.history import (
-    DETERMINISTIC_HISTORY_EXTENSION,
-    DeterministicHistoryRecord,
-)
 from framework.events.runtime.activities import (
     REPLAY_ACTIVITY_RECORD_CONTENT_TYPE,
     RecordedActivityPayloadWrite,
@@ -34,7 +32,11 @@ from framework.events.runtime.activities import (
     ReplayActivityRecordingConflictError,
     ReplayActivityStatus,
 )
-from framework.events.runtime.models import EventPage, StreamReadRequest, StreamSequenceCursor
+from framework.events.runtime.models import (
+    EventPage,
+    StreamReadRequest,
+    StreamSequenceCursor,
+)
 from framework.events.runtime.publisher import EventPublishRequest
 from framework.events.schema import (
     REQUIRED_SECURE_PAYLOAD_CAPABILITIES,
@@ -52,33 +54,44 @@ from framework.harness import (
     DurableHarnessTransitionPort,
     HarnessBudget,
     HarnessControlPlane,
-    HarnessDecisionType,
     HarnessEvent,
     HarnessEventCanonicalAdapter,
     HarnessEventType,
+    HarnessGraphDecisionType,
+    HarnessGraphObservationType,
     HarnessGateResult,
     InMemoryHarnessEventPort,
     HarnessRunSpec,
     HarnessRunStatus,
     HarnessRetryPolicy,
-    HarnessReplayReader,
+    HarnessState,
     HarnessStepSpec,
     HarnessValidationError,
     HarnessWorkerResult,
     HarnessWorkflowSpec,
+    RunLifecycle,
+    RunOutcome,
     event_log_entry_from_stored_event,
     transcript_entry_from_stored_event,
 )
-from framework.harness.control_plane.transition import HarnessStateProjection
-from framework.harness.control_plane.transitions import transition_run, transition_step
-from framework.harness.quality.verdict import (
-    aggregate_gate_verdict,
-    verification_evidence,
+from framework.harness.control_plane.durable_events import (
+    HARNESS_GRAPH_DECISION_EVENT_TYPE,
+    HARNESS_GRAPH_OBSERVATION_EVENT_TYPE,
+    HARNESS_GRAPH_PROJECTION_EVENT_TYPE,
 )
+from framework.harness.control_plane.transition import HarnessStateProjection
 from framework.shared.json import stable_json_dumps
 
 
 NOW = datetime(2026, 7, 15, 8, 0, tzinfo=UTC)
+FROZEN_V1_RUN_ID = "run-frozen-v1-history"
+FROZEN_V1_HISTORY_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "fixtures"
+    / "harness"
+    / "durable_events"
+    / "v1_transition_history.json"
+)
 
 
 class CanonicalRecordingRuntime:
@@ -129,10 +142,13 @@ class CanonicalRecordingRuntime:
         if existing is not None:
             assert_same_event_identity(existing, candidate)
             return existing
-        actual_last_sequence = self.get_stream_high_watermark(
-            event.stream_id,
-            tenant_id=event.tenant_id,
-        ) or 0
+        actual_last_sequence = (
+            self.get_stream_high_watermark(
+                event.stream_id,
+                tenant_id=event.tenant_id,
+            )
+            or 0
+        )
         if (
             expected_last_sequence is not None
             and expected_last_sequence != actual_last_sequence
@@ -180,7 +196,9 @@ class CanonicalRecordingRuntime:
                 tenant_id=request.tenant_id,
             )
         high_watermark = min(request.through_sequence or high_watermark, high_watermark)
-        after_sequence = request.cursor.after_sequence if request.cursor is not None else 0
+        after_sequence = (
+            request.cursor.after_sequence if request.cursor is not None else 0
+        )
         matching = [
             event
             for event in self.events
@@ -216,6 +234,25 @@ class CanonicalRecordingRuntime:
         self.events[self.events.index(event)] = replacement
         self._by_id[event.event_id] = replacement
         return replacement
+
+    def seed_stored_events(self, events: tuple[StoredEvent, ...]) -> None:
+        if self.events:
+            raise ValueError("canonical runtime must be empty before fixture seeding")
+        for event in events:
+            event.verify_integrity()
+            expected_sequence = (
+                self.get_stream_high_watermark(
+                    event.stream_id,
+                    tenant_id=event.tenant_id,
+                )
+                or 0
+            ) + 1
+            if event.stream_sequence != expected_sequence:
+                raise ValueError("frozen fixture stream sequence is not contiguous")
+            if event.event_id in self._by_id:
+                raise ValueError("frozen fixture contains a duplicate event identity")
+            self.events.append(event)
+            self._by_id[event.event_id] = event
 
 
 class SecureActivityStore:
@@ -274,7 +311,10 @@ class SecureActivityStore:
                     "activity terminal outcome collision"
                 )
             return existing
-        if existing.recorded_ref != accepted_ref or existing.record.activity != record.activity:
+        if (
+            existing.recorded_ref != accepted_ref
+            or existing.record.activity != record.activity
+        ):
             raise ReplayActivityRecordingConflictError(
                 "activity completion conflicts with accepted record"
             )
@@ -365,6 +405,26 @@ def _durable_port(runtime: CanonicalRecordingRuntime):
     )
 
 
+def _frozen_v1_history() -> tuple[StoredEvent, ...]:
+    fixture = json.loads(FROZEN_V1_HISTORY_PATH.read_text(encoding="utf-8"))
+    if set(fixture) != {"events"} or not isinstance(fixture["events"], list):
+        raise ValueError("frozen v1 history fixture has an invalid envelope")
+    return tuple(StoredEvent.from_dict(event) for event in fixture["events"])
+
+
+def _frozen_v1_transition(transition_kind: str) -> StoredEvent:
+    return next(
+        event
+        for event in _frozen_v1_history()
+        if event.payload is not None
+        and event.payload.get("transition_kind") == transition_kind
+    )
+
+
+def _frozen_v1_run_spec() -> HarnessRunSpec:
+    return replace(_run_spec(FROZEN_V1_RUN_ID), created_at=NOW)
+
+
 class CountingGate(DeterministicGate):
     gate_name = "counting"
 
@@ -374,38 +434,6 @@ class CountingGate(DeterministicGate):
     def evaluate(self, context) -> HarnessGateResult:
         self.calls += 1
         return HarnessGateResult(gate_name="counting", passed=True)
-
-
-class EntryStateGate(DeterministicGate):
-    def __init__(self, expected_step_status: str) -> None:
-        self.expected_step_status = expected_step_status
-        self.gate_name = f"entry_state_{expected_step_status}"
-        self.observations: list[tuple[str, bool]] = []
-
-    def evaluate(self, context) -> HarnessGateResult:
-        observation = (
-            context.step_state.status.value,
-            context.state.updated_at == context.step_state.updated_at,
-        )
-        self.observations.append(observation)
-        return HarnessGateResult(
-            gate_name=f"entry_state_{self.expected_step_status}",
-            passed=(
-                observation[0] == self.expected_step_status and observation[1]
-            ),
-        )
-
-
-class FailingGate(DeterministicGate):
-    gate_name = "always_fail"
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def evaluate(self, context) -> HarnessGateResult:
-        del context
-        self.calls += 1
-        return HarnessGateResult(gate_name="always_fail", passed=False)
 
 
 class FailOnceGate(DeterministicGate):
@@ -438,23 +466,6 @@ class VersionedCountingGate(DeterministicGate):
         )
 
 
-class FailAfterInMemoryTransitionPort(InMemoryHarnessEventPort):
-    def __init__(self, transition_kind: str) -> None:
-        super().__init__()
-        self.transition_kind = transition_kind
-        self.fail_once = True
-
-    def commit_transition(self, *args, **kwargs):
-        commit = super().commit_transition(*args, **kwargs)
-        if (
-            self.fail_once
-            and str(kwargs.get("transition_kind")) == self.transition_kind
-        ):
-            self.fail_once = False
-            raise EventStoreUnavailableError("commit outcome was uncertain")
-        return commit
-
-
 def test_control_plane_requires_an_explicit_event_port() -> None:
     with pytest.raises(HarnessValidationError, match="event_port is required"):
         HarnessControlPlane()
@@ -480,7 +491,9 @@ def test_typed_harness_event_detaches_and_freezes_nested_transition_content() ->
         event.payload["status"] = "failed"  # type: ignore[index]
 
 
-def test_typed_harness_event_roundtrips_through_canonical_commit_and_log_projection() -> None:
+def test_typed_harness_event_roundtrips_through_canonical_commit_and_log_projection() -> (
+    None
+):
     runtime = CanonicalRecordingRuntime()
     port = DurableHarnessEventPort(runtime)
     source = HarnessEvent(
@@ -519,40 +532,8 @@ def test_typed_harness_event_roundtrips_through_canonical_commit_and_log_project
     assert entry.record_checksum == stored.record_checksum
 
 
-def test_authoritative_transition_projects_status_and_transcript_phase() -> None:
-    runtime = CanonicalRecordingRuntime()
-    port = _durable_port(runtime)
-    run_spec = _run_spec("run-transition-read-model")
-    state = HarnessControlPlane(
-        event_port=port,
-        worker_registry=_default_worker_registry(),
-    ).initialize(run_spec)
-    run_time = state.updated_at + timedelta(microseconds=1)
-    running = transition_run(state, "running", at=run_time)
-    port.commit_transition(
-        state,
-        running,
-        from_version=1,
-        transition_kind="run_start",
-        occurred_at=run_time,
-    )
-    plan_time = run_time + timedelta(microseconds=1)
-    planning = transition_run(running, "planning", at=plan_time)
-    planning = transition_step(
-        planning,
-        run_spec.workflow.entry_step_id,
-        "planning",
-        turn_increment=1,
-        at=plan_time,
-    )
-    port.commit_transition(
-        running,
-        planning,
-        from_version=2,
-        transition_kind="plan_entry",
-        occurred_at=plan_time,
-    )
-    stored = runtime.events[-1]
+def test_v1_transition_reader_projects_status_and_transcript_phase() -> None:
+    stored = _frozen_v1_transition("plan_entry")
 
     log_entry = event_log_entry_from_stored_event(stored)
     transcript_entry = transcript_entry_from_stored_event(stored)
@@ -564,30 +545,42 @@ def test_authoritative_transition_projects_status_and_transcript_phase() -> None
     assert transcript_entry.metadata["stream_sequence"] == stored.stream_sequence
 
 
-def test_read_models_reject_integrity_valid_semantically_invalid_transition() -> None:
+def test_public_graph_execution_fails_closed_for_v1_only_history() -> None:
     runtime = CanonicalRecordingRuntime()
+    runtime.seed_stored_events(_frozen_v1_history())
     port = _durable_port(runtime)
-    run_spec = _run_spec("run-invalid-transition-read-model")
-    initial = HarnessControlPlane(
+    run_spec = _frozen_v1_run_spec()
+    legacy_state = HarnessState.initial(run_spec)
+    worker_calls: list[dict] = []
+
+    def worker(task: dict) -> HarnessWorkerResult:
+        worker_calls.append(task)
+        return HarnessWorkerResult("succeeded", output={"unexpected": True})
+
+    control_plane = HarnessControlPlane(
         event_port=port,
-        worker_registry=_default_worker_registry(),
-    ).initialize(run_spec)
-    transition_time = initial.updated_at + timedelta(microseconds=1)
-    running = transition_run(initial, "running", at=transition_time)
-    port.commit_transition(
-        initial,
-        running,
-        from_version=1,
-        transition_kind="run_start",
-        occurred_at=transition_time,
+        worker_registry={"collect": worker},
     )
-    raw = runtime.events[-1].to_dict()
+
+    for action in (
+        lambda: control_plane.initialize(run_spec),
+        lambda: control_plane.recover_and_run(run_spec),
+        lambda: control_plane.resume_after_approval(legacy_state, approved=True),
+    ):
+        with pytest.raises(EventIncompleteHistoryError, match="Graph initialization"):
+            action()
+
+    assert worker_calls == []
+
+
+def test_read_models_reject_integrity_valid_semantically_invalid_transition() -> None:
+    raw = _frozen_v1_transition("run_start").to_dict()
     payload = dict(raw["payload"])
     state_payload = dict(payload["state"])
     state_payload["status"] = "succeeded"
     payload["state"] = state_payload
     payload["after_state_checksum"] = HarnessStateProjection.from_dict(
-        {**state_payload, "run_id": run_spec.run_id}
+        {**state_payload, "run_id": FROZEN_V1_RUN_ID}
     ).checksum
     raw["payload"] = payload
     invalid = StoredEvent.from_dict(raw, verify_checksum=False)
@@ -619,18 +612,7 @@ def test_read_models_reject_wrong_harness_source_before_projection() -> None:
 
 
 def test_read_models_reject_transition_with_conflicting_expected_stream_head() -> None:
-    runtime = CanonicalRecordingRuntime()
-    port = _durable_port(runtime)
-    run_spec = _run_spec("run-invalid-transition-head")
-    HarnessControlPlane(
-        event_port=port,
-        worker_registry=_default_worker_registry(),
-    ).initialize(run_spec)
-    raw = next(
-        event.to_dict()
-        for event in runtime.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-    )
+    raw = _frozen_v1_transition("initialize").to_dict()
     payload = dict(raw["payload"])
     payload["expected_last_sequence"] = raw["stream_sequence"]
     raw["payload"] = payload
@@ -660,7 +642,8 @@ def test_secure_activity_event_projects_only_integrity_bound_refs() -> None:
         event for event in result.events if event.event_id == stored.event_id
     )
     recovered_projection = next(
-        event for event in port.read_history("run-activity-read-model")
+        event
+        for event in port.read_history("run-activity-read-model")
         if event.event_id == stored.event_id
     )
 
@@ -712,13 +695,20 @@ def test_worker_activity_projection_persists_refs_without_raw_secret_content() -
     assert runtime.events[0].payload["output_ref"].startswith("sha256:")
     assert runtime.events[0].payload["diagnostics_ref"].startswith("sha256:")
     assert runtime.events[0].payload["error_ref"].startswith("sha256:")
-    assert runtime.events[0].extensions["harness"]["metadata"]["omitted_metadata_count"] == 3
-    assert runtime.events[0].extensions["harness"]["metadata"]["omitted_metadata_ref"].startswith(
-        "sha256:"
+    assert (
+        runtime.events[0].extensions["harness"]["metadata"]["omitted_metadata_count"]
+        == 3
+    )
+    assert (
+        runtime.events[0]
+        .extensions["harness"]["metadata"]["omitted_metadata_ref"]
+        .startswith("sha256:")
     )
 
 
-def test_default_catalog_accepts_adapter_summaries_without_raw_worker_or_gate_content() -> None:
+def test_default_catalog_accepts_adapter_summaries_without_raw_worker_or_gate_content() -> (
+    None
+):
     secret = "harness-secret-that-must-not-persist"
     adapter = HarnessEventCanonicalAdapter()
     catalog = default_event_schema_catalog()
@@ -773,9 +763,7 @@ def test_default_catalog_accepts_adapter_summaries_without_raw_worker_or_gate_co
                 "activity_id": "harness-activity:" + "1" * 64,
                 "idempotency_key": "harness-activity:" + "1" * 64,
                 "activity_attempt": 1,
-                "activity_contract_version": (
-                    "newsroom.harness-worker-activity/v1"
-                ),
+                "activity_contract_version": ("newsroom.harness-worker-activity/v1"),
                 "inputs": {"prompt": secret},
                 "metadata": {"model_hint": secret},
             },
@@ -854,7 +842,9 @@ def test_adapter_rejects_non_boolean_gate_result_without_type_coercion() -> None
         )
 
 
-def test_commit_then_process_crash_keeps_store_authoritative_and_retry_is_idempotent() -> None:
+def test_commit_then_process_crash_keeps_store_authoritative_and_retry_is_idempotent() -> (
+    None
+):
     fail_once = True
 
     def fail_after(request: EventPublishRequest) -> bool:
@@ -866,7 +856,9 @@ def test_commit_then_process_crash_keeps_store_authoritative_and_retry_is_idempo
 
     runtime = CanonicalRecordingRuntime(fail_after=fail_after)
     first_port = DurableHarnessEventPort(runtime)
-    event = HarnessEvent(event_type=HarnessEventType.RUN_CREATED, run_id="run-crash", occurred_at=NOW)
+    event = HarnessEvent(
+        event_type=HarnessEventType.RUN_CREATED, run_id="run-crash", occurred_at=NOW
+    )
 
     with pytest.raises(EventStoreUnavailableError, match="uncertain"):
         first_port.record(event)
@@ -884,38 +876,6 @@ def test_commit_then_process_crash_keeps_store_authoritative_and_retry_is_idempo
     assert recovered_port.event_log_entries[0].stream_sequence == 1
 
 
-def test_initialize_uncertain_retry_reuses_run_spec_identity() -> None:
-    fail_once = True
-
-    def fail_after(request: EventPublishRequest) -> bool:
-        nonlocal fail_once
-        if fail_once and request.event_type == HarnessEventType.RUN_CREATED:
-            fail_once = False
-            return True
-        return False
-
-    runtime = CanonicalRecordingRuntime(fail_after=fail_after)
-    port = _durable_port(runtime)
-    control_plane = HarnessControlPlane(
-        event_port=port,
-        worker_registry=_default_worker_registry(),
-    )
-    run_spec = _run_spec("run-initialize-retry")
-
-    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
-        control_plane.initialize(run_spec)
-    recovered = control_plane.initialize(run_spec)
-
-    assert recovered.status == HarnessRunStatus.CREATED
-    assert len(runtime.events) == 2
-    assert [event.event_type for event in runtime.events] == [
-        HarnessEventType.RUN_CREATED,
-        HarnessEventType.TRANSITION_COMMITTED,
-    ]
-    assert len(port.events) == 2
-    assert runtime.events[0].occurred_at == run_spec.created_at
-
-
 def test_phase_entry_commit_failure_prevents_gate_and_projection_progress() -> None:
     gate = CountingGate()
     runtime = CanonicalRecordingRuntime(
@@ -930,7 +890,9 @@ def test_phase_entry_commit_failure_prevents_gate_and_projection_progress() -> N
     control_plane = HarnessControlPlane(
         event_port=port,
         plan_gates=(gate,),
-        worker_registry={"collect": lambda task: HarnessWorkerResult(status="succeeded")},
+        worker_registry={
+            "collect": lambda task: HarnessWorkerResult(status="succeeded")
+        },
     )
 
     with pytest.raises(EventStoreUnavailableError):
@@ -961,179 +923,16 @@ def test_worker_is_not_called_until_worker_activity_event_commits() -> None:
     port = _durable_port(runtime)
 
     run_spec = _run_spec("run-worker-failure")
-    control_plane = HarnessControlPlane(event_port=port, worker_registry={"collect": worker})
+    control_plane = HarnessControlPlane(
+        event_port=port, worker_registry={"collect": worker}
+    )
     with pytest.raises(EventStoreUnavailableError):
         control_plane.run(run_spec)
 
     assert worker_calls == 0
-    assert all(event.event_type != HarnessEventType.WORKER_CALLED for event in port.events)
-
-
-@pytest.mark.parametrize(
-    ("failed_transition_kind", "run_id"),
-    (
-        ("worker_result_committed", "run-orphan-worker-result"),
-        ("execute_exit", "run-orphan-execute-exit"),
-    ),
-)
-def test_recovery_converges_orphan_activity_result_without_reinvoking_worker(
-    failed_transition_kind: str,
-    run_id: str,
-) -> None:
-    worker_calls = 0
-    fail_worker_result_transition = True
-
-    def worker(task) -> HarnessWorkerResult:
-        nonlocal worker_calls
-        worker_calls += 1
-        return HarnessWorkerResult(
-            status="succeeded",
-            output={"candidate": "durable"},
-        )
-
-    def fail_before(request: EventPublishRequest) -> bool:
-        nonlocal fail_worker_result_transition
-        if (
-            fail_worker_result_transition
-            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
-            and request.payload is not None
-            and request.payload.get("transition_kind") == failed_transition_kind
-        ):
-            fail_worker_result_transition = False
-            return True
-        return False
-
-    runtime = CanonicalRecordingRuntime(fail_before=fail_before)
-    secure_store = SecureActivityStore()
-
-    def build_port() -> DurableHarnessTransitionPort:
-        return DurableHarnessTransitionPort(
-            runtime,
-            runtime,
-            secure_activity_store=secure_store,
-            adapter=HarnessEventCanonicalAdapter(
-                tenant_id="tenant-test",
-                security_classification=SecurityClassification.INTERNAL,
-            ),
-        )
-
-    run_spec = _run_spec(run_id)
-    with pytest.raises(EventStoreUnavailableError):
-        HarnessControlPlane(
-            event_port=build_port(),
-            worker_registry={"collect": worker},
-        ).run(run_spec)
-
-    assert worker_calls == 1
-    assert any(
-        event.event_type == HarnessEventType.WORKER_RESULT_RECORDED
-        for event in runtime.events
+    assert all(
+        event.event_type != HarnessEventType.WORKER_CALLED for event in port.events
     )
-    transition_kinds_before_recovery = [
-        event.payload.get("transition_kind")
-        for event in runtime.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-    ]
-    assert failed_transition_kind not in transition_kinds_before_recovery
-    assert transition_kinds_before_recovery.count("worker_result_committed") == (
-        0 if failed_transition_kind == "worker_result_committed" else 1
-    )
-
-    recovered = HarnessControlPlane(
-        event_port=build_port(),
-        worker_registry={"collect": worker},
-    ).recover_and_run(run_spec)
-    transition_kinds = [
-        event.payload.get("transition_kind")
-        for event in runtime.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-    ]
-
-    assert recovered.succeeded is True
-    assert worker_calls == 1
-    assert transition_kinds.count("worker_result_committed") == 1
-    assert transition_kinds.index("execute_entry") < transition_kinds.index(
-        "worker_result_committed"
-    ) < transition_kinds.index("execute_exit") < transition_kinds.index("verify_entry")
-
-
-@pytest.mark.parametrize(
-    ("failed_transition_kind", "gate_phase", "entry_status"),
-    (
-        ("plan_exit", "plan", "planning"),
-        ("verify_exit", "verify", "verifying"),
-    ),
-)
-def test_recovery_reuses_phase_entry_state_after_exit_commit_response_is_lost(
-    failed_transition_kind: str,
-    gate_phase: str,
-    entry_status: str,
-) -> None:
-    fail_once = True
-    worker_calls = 0
-    gate = EntryStateGate(entry_status)
-
-    def fail_after(request: EventPublishRequest) -> bool:
-        nonlocal fail_once
-        if (
-            fail_once
-            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
-            and request.payload is not None
-            and request.payload.get("transition_kind") == failed_transition_kind
-        ):
-            fail_once = False
-            return True
-        return False
-
-    def worker(task) -> HarnessWorkerResult:
-        nonlocal worker_calls
-        worker_calls += 1
-        return HarnessWorkerResult(status="succeeded", output={"answer": "ready"})
-
-    runtime = CanonicalRecordingRuntime(fail_after=fail_after)
-    secure_store = SecureActivityStore()
-
-    def build_port() -> DurableHarnessTransitionPort:
-        return DurableHarnessTransitionPort(
-            runtime,
-            runtime,
-            secure_activity_store=secure_store,
-            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
-        )
-
-    control_plane_kwargs = {
-        f"{gate_phase}_gates": (gate,),
-        "worker_registry": {"collect": worker},
-    }
-    run_spec = _run_spec(f"run-{failed_transition_kind}-uncertain")
-    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
-        HarnessControlPlane(
-            event_port=build_port(),
-            **control_plane_kwargs,
-        ).run(run_spec)
-
-    recovered = HarnessControlPlane(
-        event_port=build_port(),
-        **control_plane_kwargs,
-    ).recover_and_run(run_spec)
-    transition_kinds = [
-        event.payload.get("transition_kind")
-        for event in runtime.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-    ]
-    gate_event_count = sum(
-        event.event_type == HarnessEventType.GATE_EVALUATED
-        and event.payload.get("gate") == f"entry_state_{entry_status}"
-        for event in runtime.events
-    )
-
-    assert recovered.succeeded is True
-    expected_observations = 1 if gate_phase == "verify" else 2
-    assert gate.observations == [(entry_status, True)] * expected_observations
-    assert transition_kinds.count(f"{gate_phase}_entry") == 1
-    assert transition_kinds.count(f"{gate_phase}_exit") == 1
-    assert gate_event_count == 1
-    assert worker_calls == 1
 
 
 def test_verify_recovery_requires_and_reuses_exact_declared_gate_version() -> None:
@@ -1143,11 +942,9 @@ def test_verify_recovery_requires_and_reuses_exact_declared_gate_version() -> No
 
     def fail_after(request: EventPublishRequest) -> bool:
         nonlocal fail_once
-        if (
-            fail_once
-            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
-            and request.payload is not None
-            and request.payload.get("transition_kind") == "verify_exit"
+        if fail_once and _is_graph_decision_request(
+            request,
+            HarnessGraphDecisionType.COMPLETE_NODE,
         ):
             fail_once = False
             return True
@@ -1215,412 +1012,6 @@ def test_verify_recovery_requires_and_reuses_exact_declared_gate_version() -> No
     assert recovered.quality_verdicts["collect"].score == 0.9
 
 
-def test_in_memory_recovery_reuses_committed_verify_evidence() -> None:
-    worker_calls = 0
-    gate = VersionedCountingGate()
-    event_port = FailAfterInMemoryTransitionPort("verify_exit")
-
-    def worker(task) -> HarnessWorkerResult:
-        nonlocal worker_calls
-        del task
-        worker_calls += 1
-        return HarnessWorkerResult(status="succeeded", output={"candidate": True})
-
-    run_spec = HarnessRunSpec(
-        run_id="run-in-memory-verify-recovery",
-        workflow=HarnessWorkflowSpec(
-            workflow_id="in-memory-verify-recovery",
-            steps=(
-                HarnessStepSpec(
-                    step_id="collect",
-                    worker_type="llm",
-                    quality_gate="candidate_quality@1",
-                ),
-            ),
-            entry_step_id="collect",
-        ),
-    )
-    registration = GateRegistration(
-        reference=GateReference.parse("candidate_quality@1"),
-        gate=gate,
-    )
-
-    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
-        HarnessControlPlane(
-            event_port=event_port,
-            worker_registry={"collect": worker},
-            gate_registry=DeterministicGateRegistry((registration,)),
-        ).run(run_spec)
-
-    recovered = HarnessControlPlane(
-        event_port=event_port,
-        worker_registry={"collect": worker},
-        gate_registry=DeterministicGateRegistry((registration,)),
-    ).recover_and_run(run_spec)
-
-    assert recovered.succeeded is True
-    assert worker_calls == 1
-    assert gate.calls == 1
-
-
-def test_recovery_rejects_committed_verify_with_missing_gate_evidence() -> None:
-    gate = VersionedCountingGate()
-    event_port = FailAfterInMemoryTransitionPort("verify_exit")
-    run_spec = HarnessRunSpec(
-        run_id="run-missing-committed-gate-evidence",
-        workflow=HarnessWorkflowSpec(
-            workflow_id="missing-committed-gate-evidence",
-            steps=(
-                HarnessStepSpec(
-                    step_id="collect",
-                    worker_type="llm",
-                    quality_gate="candidate_quality@1",
-                ),
-            ),
-            entry_step_id="collect",
-        ),
-    )
-    registration = GateRegistration(
-        reference=GateReference.parse("candidate_quality@1"),
-        gate=gate,
-    )
-
-    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
-        HarnessControlPlane(
-            event_port=event_port,
-            worker_registry={
-                "collect": lambda task: HarnessWorkerResult(
-                    status="succeeded",
-                    output={"candidate": True},
-                )
-            },
-            gate_registry=DeterministicGateRegistry((registration,)),
-        ).run(run_spec)
-
-    missing_event_index = next(
-        index
-        for index, event in enumerate(event_port.events)
-        if event.event_type == HarnessEventType.GATE_EVALUATED
-        and event.payload.get("gate") == "candidate_quality"
-    )
-    del event_port.events[missing_event_index]
-
-    with pytest.raises(
-        EventIncompleteHistoryError,
-        match="gate evidence count is incomplete",
-    ):
-        HarnessControlPlane(
-            event_port=event_port,
-            worker_registry={"collect": lambda task: pytest.fail("worker reran")},
-            gate_registry=DeterministicGateRegistry((registration,)),
-        ).recover_and_run(run_spec)
-
-    assert gate.calls == 1
-
-
-def test_recovery_rejects_coordinated_gate_input_reference_tampering() -> None:
-    gate = VersionedCountingGate()
-    event_port = FailAfterInMemoryTransitionPort("verify_exit")
-    run_spec = HarnessRunSpec(
-        run_id="run-coordinated-gate-input-tamper",
-        workflow=HarnessWorkflowSpec(
-            workflow_id="coordinated-gate-input-tamper",
-            steps=(
-                HarnessStepSpec(
-                    step_id="collect",
-                    worker_type="llm",
-                    quality_gate="candidate_quality@1",
-                ),
-            ),
-            entry_step_id="collect",
-        ),
-    )
-    registration = GateRegistration(
-        reference=GateReference.parse("candidate_quality@1"),
-        gate=gate,
-    )
-
-    with pytest.raises(EventStoreUnavailableError, match="uncertain"):
-        HarnessControlPlane(
-            event_port=event_port,
-            worker_registry={
-                "collect": lambda task: HarnessWorkerResult(
-                    status="succeeded",
-                    output={"candidate": True},
-                )
-            },
-            gate_registry=DeterministicGateRegistry((registration,)),
-        ).run(run_spec)
-
-    verify_entry_index = max(
-        index
-        for index, event in enumerate(event_port.events)
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.payload.get("transition_kind") == "verify_entry"
-    )
-    verify_exit_index = next(
-        index
-        for index, event in enumerate(event_port.events[verify_entry_index + 1 :], verify_entry_index + 1)
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.payload.get("transition_kind") == "verify_exit"
-    )
-    gate_event_indexes = [
-        index
-        for index in range(verify_entry_index + 1, verify_exit_index)
-        if event_port.events[index].event_type == HarnessEventType.GATE_EVALUATED
-    ]
-    target_index = next(
-        index
-        for index in gate_event_indexes
-        if event_port.events[index].payload.get("gate") == "candidate_quality"
-    )
-    target_event = event_port.events[target_index]
-    target_payload = thaw_canonical_json(target_event.payload)
-    target_details = dict(target_payload["details"])
-    target_evidence = dict(target_details["harness_gate"])
-    target_evidence["input_ref"] = "sha256:" + "f" * 64
-    target_details["harness_gate"] = target_evidence
-    target_payload["details"] = target_details
-    event_port.events[target_index] = replace(target_event, payload=target_payload)
-
-    gate_results = tuple(
-        HarnessGateResult(
-            gate_name=str(event_port.events[index].payload["gate"]),
-            passed=event_port.events[index].payload["passed"],
-            reason=event_port.events[index].payload.get("reason"),
-            details=dict(event_port.events[index].payload["details"]),
-        )
-        for index in gate_event_indexes
-    )
-    verdict = aggregate_gate_verdict(
-        gate_results,
-        declared_gate_reference="candidate_quality@1",
-    )
-    tampered_gate_ref = checksum_for(verification_evidence(gate_results, verdict))
-    transitions = event_port.transitions[run_spec.run_id]
-    transition_index = next(
-        index
-        for index, transition in enumerate(transitions)
-        if str(transition.transition_kind) == "verify_exit"
-    )
-    tampered_transition = replace(
-        transitions[transition_index],
-        gate_ref=tampered_gate_ref,
-    )
-    transitions[transition_index] = tampered_transition
-    verify_exit_event = event_port.events[verify_exit_index]
-    event_port.events[verify_exit_index] = replace(
-        verify_exit_event,
-        payload=tampered_transition.to_payload(),
-    )
-
-    with pytest.raises(
-        EventStoreCorruptionError,
-        match="exact binding",
-    ):
-        HarnessControlPlane(
-            event_port=event_port,
-            worker_registry={"collect": lambda task: pytest.fail("worker reran")},
-            gate_registry=DeterministicGateRegistry((registration,)),
-        ).recover_and_run(run_spec)
-
-    assert gate.calls == 1
-
-
-def test_recovery_uses_recorded_verification_before_step_success_retry() -> None:
-    fail_once = True
-    worker_calls = 0
-    gate = VersionedCountingGate()
-
-    def fail_before(request: EventPublishRequest) -> bool:
-        nonlocal fail_once
-        if (
-            fail_once
-            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
-            and request.payload is not None
-            and request.payload.get("transition_kind") == "step_success"
-        ):
-            fail_once = False
-            return True
-        return False
-
-    def worker(task) -> HarnessWorkerResult:
-        nonlocal worker_calls
-        worker_calls += 1
-        return HarnessWorkerResult(status="succeeded", output={"candidate": True})
-
-    runtime = CanonicalRecordingRuntime(fail_before=fail_before)
-    secure_store = SecureActivityStore()
-
-    def build_port() -> DurableHarnessTransitionPort:
-        return DurableHarnessTransitionPort(
-            runtime,
-            runtime,
-            secure_activity_store=secure_store,
-            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
-        )
-
-    run_spec = HarnessRunSpec(
-        run_id="run-recorded-verify-recovery",
-        workflow=HarnessWorkflowSpec(
-            workflow_id="recorded-verify-recovery",
-            steps=(
-                HarnessStepSpec(
-                    step_id="collect",
-                    worker_type="llm",
-                    quality_gate="candidate_quality@1",
-                ),
-            ),
-            entry_step_id="collect",
-        ),
-    )
-    registration = GateRegistration(
-        reference=GateReference.parse("candidate_quality@1"),
-        gate=gate,
-    )
-
-    with pytest.raises(EventStoreUnavailableError):
-        HarnessControlPlane(
-            event_port=build_port(),
-            worker_registry={"collect": worker},
-            gate_registry=DeterministicGateRegistry((registration,)),
-        ).run(run_spec)
-    assert gate.calls == 1
-
-    recovered = HarnessControlPlane(
-        event_port=build_port(),
-        worker_registry={"collect": worker},
-        gate_registry=DeterministicGateRegistry((registration,)),
-    ).recover_and_run(run_spec)
-
-    assert recovered.succeeded is True
-    assert worker_calls == 1
-    assert gate.calls == 1
-    assert recovered.quality_verdicts["collect"].score == 0.9
-
-
-def test_failed_plan_gate_is_not_bypassed_when_plan_exit_commit_fails() -> None:
-    fail_once = True
-    worker_calls = 0
-    gate = FailingGate()
-
-    def fail_before(request: EventPublishRequest) -> bool:
-        nonlocal fail_once
-        if (
-            fail_once
-            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
-            and request.payload is not None
-            and request.payload.get("transition_kind") == "plan_exit"
-        ):
-            fail_once = False
-            return True
-        return False
-
-    def worker(task) -> HarnessWorkerResult:
-        nonlocal worker_calls
-        worker_calls += 1
-        return HarnessWorkerResult(status="succeeded")
-
-    runtime = CanonicalRecordingRuntime(fail_before=fail_before)
-    secure_store = SecureActivityStore()
-
-    def build_port() -> DurableHarnessTransitionPort:
-        return DurableHarnessTransitionPort(
-            runtime,
-            runtime,
-            secure_activity_store=secure_store,
-            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
-        )
-
-    run_spec = replace(
-        _run_spec("run-plan-gate-recovery"),
-        budget=HarnessBudget(
-            max_turns=10,
-            max_replans=0,
-            max_retries_per_step=0,
-            max_worker_calls=10,
-        ),
-    )
-    with pytest.raises(EventStoreUnavailableError):
-        HarnessControlPlane(
-            event_port=build_port(),
-            plan_gates=(gate,),
-            worker_registry={"collect": worker},
-        ).run(run_spec)
-
-    recovered = HarnessControlPlane(
-        event_port=build_port(),
-        plan_gates=(gate,),
-        worker_registry={"collect": worker},
-    ).recover_and_run(run_spec)
-
-    assert recovered.state.status == HarnessRunStatus.HALTED
-    assert recovered.state.turn_count == 1
-    assert gate.calls == 2
-    assert worker_calls == 0
-
-
-def test_recovery_commits_missing_replan_exit_without_reincrementing_budget() -> None:
-    fail_once = True
-    gate = FailingGate()
-
-    def fail_before(request: EventPublishRequest) -> bool:
-        nonlocal fail_once
-        if (
-            fail_once
-            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
-            and request.payload is not None
-            and request.payload.get("transition_kind") == "replan_exit"
-        ):
-            fail_once = False
-            return True
-        return False
-
-    runtime = CanonicalRecordingRuntime(fail_before=fail_before)
-    secure_store = SecureActivityStore()
-
-    def build_port() -> DurableHarnessTransitionPort:
-        return DurableHarnessTransitionPort(
-            runtime,
-            runtime,
-            secure_activity_store=secure_store,
-            adapter=HarnessEventCanonicalAdapter(tenant_id="tenant-test"),
-        )
-
-    run_spec = replace(
-        _run_spec("run-replan-exit-recovery"),
-        budget=HarnessBudget(
-            max_turns=10,
-            max_replans=1,
-            max_retries_per_step=0,
-            max_worker_calls=10,
-        ),
-    )
-    with pytest.raises(EventStoreUnavailableError):
-        HarnessControlPlane(
-            event_port=build_port(),
-            plan_gates=(gate,),
-            worker_registry=_default_worker_registry(),
-        ).run(run_spec)
-
-    recovered = HarnessControlPlane(
-        event_port=build_port(),
-        plan_gates=(gate,),
-        worker_registry=_default_worker_registry(),
-    ).recover_and_run(run_spec)
-    transition_kinds = [
-        event.payload.get("transition_kind")
-        for event in runtime.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-    ]
-
-    assert recovered.state.status == HarnessRunStatus.HALTED
-    assert recovered.state.replan_count == 1
-    assert recovered.state.turn_count == 2
-    assert transition_kinds.count("replan_entry") == 1
-    assert transition_kinds.count("replan_exit") == 1
-
-
 def test_recovery_reuses_terminal_activity_when_result_event_commit_failed() -> None:
     fail_result_commit_once = True
     worker_tasks: list[dict] = []
@@ -1657,11 +1048,20 @@ def test_recovery_reuses_terminal_activity_when_result_event_commit_failed() -> 
             worker_registry={"collect": worker},
         ).run(run_spec)
 
-    execute_entry = next(
+    dispatch_projection = next(
         event
         for event in runtime.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.payload.get("transition_kind") == "execute_entry"
+        if event.event_type == HARNESS_GRAPH_PROJECTION_EVENT_TYPE
+        and _graph_commit(event).get("activity") is not None
+    )
+    activity = _graph_commit(dispatch_projection)["activity"]
+    dispatch_decision = next(
+        event
+        for event in runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.DISPATCH_ACTIVITY,
+        )
     )
     recovered = HarnessControlPlane(
         event_port=build_port(),
@@ -1671,20 +1071,33 @@ def test_recovery_reuses_terminal_activity_when_result_event_commit_failed() -> 
     assert recovered.succeeded is True
     assert len(worker_tasks) == 1
     assert worker_tasks[0]["harness_activity"] == {
-        "activity_id": execute_entry.payload["activity_id"],
-        "idempotency_key": execute_entry.payload["idempotency_key"],
+        "activity_id": activity["activity_id"],
+        "idempotency_key": activity["idempotency_key"],
         "attempt": 1,
         "contract_version": "newsroom.harness-worker-activity/v1",
     }
-    assert sum(
-        event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.payload.get("transition_kind") == "execute_entry"
-        for event in runtime.events
-    ) == 1
-    assert sum(
-        event.event_type == HarnessEventType.WORKER_RESULT_RECORDED
-        for event in runtime.events
-    ) == 1
+    assert dispatch_decision.stream_sequence < dispatch_projection.stream_sequence
+    assert (
+        activity["causal_decision_checksum"]
+        == _graph_decision(dispatch_decision)["decision_checksum"]
+    )
+    assert (
+        sum(
+            _is_graph_decision_event(
+                event,
+                HarnessGraphDecisionType.DISPATCH_ACTIVITY,
+            )
+            for event in runtime.events
+        )
+        == 1
+    )
+    assert (
+        sum(
+            event.event_type == HarnessEventType.WORKER_RESULT_RECORDED
+            for event in runtime.events
+        )
+        == 1
+    )
 
 
 def test_recovery_executes_activity_when_worker_call_marker_never_committed() -> None:
@@ -1766,10 +1179,13 @@ def test_recovery_fails_closed_when_worker_call_marker_commit_is_uncertain() -> 
         ).recover_and_run(run_spec)
 
     assert worker_calls == 0
-    assert sum(
-        event.event_type == HarnessEventType.WORKER_CALLED
-        for event in runtime.events
-    ) == 1
+    assert (
+        sum(
+            event.event_type == HarnessEventType.WORKER_CALLED
+            for event in runtime.events
+        )
+        == 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -1953,33 +1369,30 @@ def test_retry_recovery_clears_previous_activity_result_and_error_metadata() -> 
         event_port=build_port(),
         worker_registry={"collect": worker},
     ).recover_and_run(run_spec)
-    execute_entries = [
+    dispatch_projections = [
         event
         for event in runtime.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.payload.get("transition_kind") == "execute_entry"
+        if event.event_type == HARNESS_GRAPH_PROJECTION_EVENT_TYPE
+        and _graph_commit(event).get("activity") is not None
     ]
-    second_step_metadata = execute_entries[-1].payload["state"]["step_states"][0][
-        "metadata"
-    ]
+    activities = [_graph_commit(event)["activity"] for event in dispatch_projections]
+    second_state = _graph_commit(dispatch_projections[-1])["state"]
+    second_node = second_state["node_instances"][0]
 
     assert recovered.succeeded is True
     assert worker_calls == 2
     assert [task["harness_activity"]["attempt"] for task in worker_tasks] == [1, 2]
-    assert (
-        worker_tasks[0]["harness_activity"]["idempotency_key"]
-        != worker_tasks[1]["harness_activity"]["idempotency_key"]
-    )
-    assert len(execute_entries) == 2
-    for key in (
-        "activity_result_event_id",
-        "worker_result_ref",
-        "worker_status",
-        "approval_granted",
-        "omitted_metadata_ref",
-    ):
-        assert key not in second_step_metadata
-    assert "error_ref" not in execute_entries[-1].payload["state"]["step_states"][0]
+    assert len(dispatch_projections) == 2
+    assert [activity["attempt"] for activity in activities] == [1, 2]
+    assert activities[0]["activity_id"] != activities[1]["activity_id"]
+    assert activities[0]["idempotency_key"] == activities[1]["idempotency_key"]
+    assert [activity["fencing_generation"] for activity in activities] == [1, 2]
+    assert second_node["attempt"] == 2
+    assert second_node["step_status"] == "running"
+    assert second_node["error_code"] is None
+    assert [item["activity_id"] for item in second_state["active_activities"]] == [
+        activities[1]["activity_id"]
+    ]
 
 
 def test_multistep_recovery_hydrates_prior_outputs_for_downstream_worker() -> None:
@@ -1989,12 +1402,11 @@ def test_multistep_recovery_hydrates_prior_outputs_for_downstream_worker() -> No
 
     def fail_before(request: EventPublishRequest) -> bool:
         nonlocal fail_second_plan_once
-        if (
-            fail_second_plan_once
-            and request.event_type == HarnessEventType.TRANSITION_COMMITTED
-            and request.payload is not None
-            and request.payload.get("transition_kind") == "plan_entry"
-            and request.business_context.step_id == "consume"
+        if fail_second_plan_once and _is_graph_decision_request(
+            request,
+            HarnessGraphDecisionType.ENTER_STEP_PHASE,
+            node_id="consume",
+            reason_code="plan_requested",
         ):
             fail_second_plan_once = False
             return True
@@ -2097,8 +1509,12 @@ def test_same_run_id_isolated_by_tenant_has_disjoint_canonical_identities() -> N
             )
         },
     ).run(run_spec)
-    tenant_a_events = [event for event in runtime.events if event.tenant_id == "tenant-a"]
-    tenant_b_events = [event for event in runtime.events if event.tenant_id == "tenant-b"]
+    tenant_a_events = [
+        event for event in runtime.events if event.tenant_id == "tenant-a"
+    ]
+    tenant_b_events = [
+        event for event in runtime.events if event.tenant_id == "tenant-b"
+    ]
 
     assert tenant_a.succeeded is True
     assert tenant_b.succeeded is True
@@ -2119,31 +1535,34 @@ def test_same_run_id_isolated_by_tenant_has_disjoint_canonical_identities() -> N
 
 def test_terminal_commit_failure_never_returns_memory_only_success() -> None:
     runtime = CanonicalRecordingRuntime(
-        fail_before=lambda request: (
-            request.event_type == HarnessEventType.RUN_STATE_CHANGED
-            and request.payload is not None
-            and request.payload.get("status") == "succeeded"
+        fail_before=lambda request: _is_graph_decision_request(
+            request,
+            HarnessGraphDecisionType.COMPLETE_RUN,
         )
     )
     port = _durable_port(runtime)
+    run_spec = _run_spec("run-terminal-failure")
 
     with pytest.raises(EventStoreUnavailableError):
         HarnessControlPlane(
             event_port=port,
-            worker_registry={"collect": lambda task: HarnessWorkerResult(status="succeeded")},
-        ).run(_run_spec("run-terminal-failure"))
+            worker_registry={
+                "collect": lambda task: HarnessWorkerResult(status="succeeded")
+            },
+        ).run(run_spec)
 
-    assert any(
-        event.event_type == HarnessEventType.DECISION_RECORDED
-        and event.payload.get("decision_type") == HarnessDecisionType.COMPLETE_RUN
-        for event in port.events
+    recovery = port.recover_graph(run_spec.run_id)
+    assert recovery.state.lifecycle is RunLifecycle.RUNNING
+    assert recovery.state.outcome is RunOutcome.NONE
+    assert recovery.state.node_instances[0].status.value == "succeeded"
+    assert not any(
+        _is_graph_decision_event(event, HarnessGraphDecisionType.COMPLETE_RUN)
+        for event in runtime.events
     )
     assert all(
-        not (
-            event.event_type == HarnessEventType.RUN_STATE_CHANGED
-            and event.payload.get("status") == "succeeded"
-        )
-        for event in port.events
+        _graph_projection_state(event).get("lifecycle") != RunLifecycle.COMPLETED.value
+        for event in runtime.events
+        if event.event_type == HARNESS_GRAPH_PROJECTION_EVENT_TYPE
     )
 
 
@@ -2152,7 +1571,9 @@ def test_plan_execute_verify_entry_and_exit_are_committed_in_order() -> None:
     port = _durable_port(runtime)
     result = HarnessControlPlane(
         event_port=port,
-        worker_registry={"collect": lambda task: HarnessWorkerResult(status="succeeded")},
+        worker_registry={
+            "collect": lambda task: HarnessWorkerResult(status="succeeded")
+        },
     ).run(_run_spec("run-phase-order"))
 
     assert result.state.status == HarnessRunStatus.SUCCEEDED
@@ -2172,17 +1593,32 @@ def test_plan_execute_verify_entry_and_exit_are_committed_in_order() -> None:
     assert [event.stream_sequence for event in runtime.events] == list(
         range(1, len(runtime.events) + 1)
     )
-    recovered_entries = tuple(event_log_entry_from_stored_event(event) for event in runtime.events)
-    assert recovered_entries[-1].status_after == "succeeded"
-    recovered = HarnessReplayReader().replay(
-        run_id="run-phase-order",
-        events=recovered_entries,
-    )
-    assert recovered.status == "succeeded"
-    assert recovered.side_effects_replayed is False
+    decision_events = [
+        event
+        for event in runtime.events
+        if event.event_type == HARNESS_GRAPH_DECISION_EVENT_TYPE
+    ]
+    assert [_graph_decision(event)["decision_type"] for event in decision_events] == [
+        HarnessGraphDecisionType.ACTIVATE_NODE.value,
+        HarnessGraphDecisionType.ENTER_STEP_PHASE.value,
+        HarnessGraphDecisionType.DISPATCH_ACTIVITY.value,
+        HarnessGraphDecisionType.VERIFY_ACTIVITY_RESULT.value,
+        HarnessGraphDecisionType.COMPLETE_NODE.value,
+        HarnessGraphDecisionType.COMPLETE_RUN.value,
+    ]
+    for decision_event in decision_events:
+        projection = _causal_graph_projection(runtime.events, decision_event)
+        assert decision_event.stream_sequence < projection.stream_sequence
+
+    recovery = port.recover_graph("run-phase-order")
+    assert recovery.state.lifecycle is RunLifecycle.COMPLETED
+    assert recovery.state.outcome is RunOutcome.SUCCEEDED
+    assert recovery.pending_decisions == ()
 
 
-def test_approval_resume_commits_before_continuation_and_does_not_repeat_worker() -> None:
+def test_approval_resume_commits_before_continuation_and_does_not_repeat_worker() -> (
+    None
+):
     worker_calls = 0
 
     def worker(task) -> HarnessWorkerResult:
@@ -2192,7 +1628,9 @@ def test_approval_resume_commits_before_continuation_and_does_not_repeat_worker(
 
     runtime = CanonicalRecordingRuntime()
     port = _durable_port(runtime)
-    control_plane = HarnessControlPlane(event_port=port, worker_registry={"collect": worker})
+    control_plane = HarnessControlPlane(
+        event_port=port, worker_registry={"collect": worker}
+    )
     waiting = control_plane.run(_run_spec("run-approval", approval_required=True))
     assert waiting.state.status == HarnessRunStatus.WAITING_APPROVAL
     before_resume = len(runtime.events)
@@ -2202,33 +1640,36 @@ def test_approval_resume_commits_before_continuation_and_does_not_repeat_worker(
     assert resumed.state.status == HarnessRunStatus.SUCCEEDED
     assert worker_calls == 1
     resumed_events = runtime.events[before_resume:]
-    assert resumed_events[0].event_type == HarnessEventType.DECISION_RECORDED
-    assert resumed_events[0].payload["decision_type"] == HarnessDecisionType.RESUME_AFTER_APPROVAL
-    history = DeterministicHistoryRecord.from_dict(
-        resumed_events[0].extensions[DETERMINISTIC_HISTORY_EXTENSION]
+    approval_event = resumed_events[0]
+    assert approval_event.event_type == HARNESS_GRAPH_OBSERVATION_EVENT_TYPE
+    approval = _graph_observation(approval_event)
+    assert approval["observation_type"] == HarnessGraphObservationType.WAIT_CAUSE.value
+    assert approval["attempt"] == 1
+    assert approval["payload"]["cause_kind"] == "approval"
+    assert approval["payload"]["record"]["approved"] is True
+    approval_projection = _causal_graph_projection(
+        runtime.events,
+        approval_event,
     )
-    previous_decision_count = sum(
-        event.event_type == HarnessEventType.DECISION_RECORDED
-        for event in runtime.events[:before_resume]
+    verify_decision = next(
+        event
+        for event in resumed_events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.VERIFY_ACTIVITY_RESULT,
+            reason_code="approval_granted_verify",
+        )
     )
-    assert len(history.commands) == 1
-    assert history.commands[0].ordinal == previous_decision_count
-    assert history.commands[0].kind == HarnessDecisionType.RESUME_AFTER_APPROVAL
-    assert history.handler_input["approval_outcome"] == "approved"
-    assert history.policy.expected_activity is not None
-    assert history.policy.recorded_activity_ref is not None
-    transition_index = next(
-        index
-        for index, event in enumerate(resumed_events)
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.payload.get("transition_kind") == "approval_resume"
+    verify_projection = _causal_graph_projection(runtime.events, verify_decision)
+    assert (
+        approval_event.stream_sequence
+        < approval_projection.stream_sequence
+        < verify_decision.stream_sequence
+        < verify_projection.stream_sequence
     )
-    state_index = next(
-        index
-        for index, event in enumerate(resumed_events)
-        if event.event_type == HarnessEventType.RUN_STATE_CHANGED
-    )
-    assert 0 < transition_index < state_index
+    recovery = port.recover_graph("run-approval")
+    assert recovery.state.lifecycle is RunLifecycle.COMPLETED
+    assert recovery.state.outcome is RunOutcome.SUCCEEDED
 
 
 def test_replan_requires_fresh_approval_for_the_new_activity_attempt() -> None:
@@ -2274,21 +1715,41 @@ def test_replan_requires_fresh_approval_for_the_new_activity_attempt() -> None:
 
     assert second_wait.state.status == HarnessRunStatus.WAITING_APPROVAL
     assert worker_calls == 2
-    execute_entries = [
+    dispatch_decisions = [
         event
         for event in runtime.events
-        if event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.payload.get("transition_kind") == "execute_entry"
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.DISPATCH_ACTIVITY,
+        )
     ]
-    assert len(execute_entries) == 2
-    second_metadata = execute_entries[-1].payload["state"]["step_states"][0][
-        "metadata"
+    wait_decisions = [
+        event
+        for event in runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.WAIT_NODE,
+            reason_code="harness_approval_required",
+        )
     ]
-    assert second_metadata["activity_attempt"] == 2
-    assert "approval_granted" not in second_metadata
-    assert execute_entries[-1].payload["state"]["step_states"][0][
-        "has_output_ref"
-    ] is False
+    approval_events = [
+        event
+        for event in runtime.events
+        if _is_graph_observation_event(
+            event,
+            HarnessGraphObservationType.WAIT_CAUSE,
+        )
+    ]
+    assert [_graph_decision(event)["attempt"] for event in dispatch_decisions] == [1, 2]
+    assert [_graph_decision(event)["attempt"] for event in wait_decisions] == [1, 2]
+    assert [_graph_observation(event)["attempt"] for event in approval_events] == [1]
+    second_dispatch_projection = _causal_graph_projection(
+        runtime.events,
+        dispatch_decisions[-1],
+    )
+    assert (
+        second_dispatch_projection.stream_sequence < wait_decisions[-1].stream_sequence
+    )
 
     completed = control_plane.resume_after_approval(
         second_wait.state,
@@ -2298,6 +1759,15 @@ def test_replan_requires_fresh_approval_for_the_new_activity_attempt() -> None:
     assert completed.state.status == HarnessRunStatus.SUCCEEDED
     assert gate.calls == 2
     assert worker_calls == 2
+    approval_events = [
+        event
+        for event in runtime.events
+        if _is_graph_observation_event(
+            event,
+            HarnessGraphObservationType.WAIT_CAUSE,
+        )
+    ]
+    assert [_graph_observation(event)["attempt"] for event in approval_events] == [1, 2]
 
 
 def test_approval_cancel_is_durable_before_cancelled_projection() -> None:
@@ -2305,7 +1775,9 @@ def test_approval_cancel_is_durable_before_cancelled_projection() -> None:
     port = _durable_port(runtime)
     control_plane = HarnessControlPlane(
         event_port=port,
-        worker_registry={"collect": lambda task: HarnessWorkerResult(status="succeeded")},
+        worker_registry={
+            "collect": lambda task: HarnessWorkerResult(status="succeeded")
+        },
     )
     waiting = control_plane.run(_run_spec("run-cancel", approval_required=True))
     before_cancel = len(runtime.events)
@@ -2314,23 +1786,36 @@ def test_approval_cancel_is_durable_before_cancelled_projection() -> None:
 
     assert cancelled.state.status == HarnessRunStatus.CANCELLED
     cancel_events = runtime.events[before_cancel:]
-    assert cancel_events[0].event_type == HarnessEventType.DECISION_RECORDED
-    assert cancel_events[0].payload["decision_type"] == HarnessDecisionType.CANCEL_RUN
-    history = DeterministicHistoryRecord.from_dict(
-        cancel_events[0].extensions[DETERMINISTIC_HISTORY_EXTENSION]
+    approval_event = cancel_events[0]
+    assert approval_event.event_type == HARNESS_GRAPH_OBSERVATION_EVENT_TYPE
+    approval = _graph_observation(approval_event)
+    assert approval["observation_type"] == HarnessGraphObservationType.WAIT_CAUSE.value
+    assert approval["payload"]["cause_kind"] == "approval"
+    assert approval["payload"]["record"]["approved"] is False
+    approval_projection = _causal_graph_projection(
+        runtime.events,
+        approval_event,
     )
-    previous_decision_count = sum(
-        event.event_type == HarnessEventType.DECISION_RECORDED
-        for event in runtime.events[:before_cancel]
+    cancel_decision = next(
+        event
+        for event in cancel_events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.COMPLETE_RUN,
+            reason_code="approval_cancelled",
+        )
     )
-    assert len(history.commands) == 1
-    assert history.commands[0].ordinal == previous_decision_count
-    assert history.commands[0].kind == HarnessDecisionType.CANCEL_RUN
-    assert history.handler_input["approval_outcome"] == "cancelled"
-    assert history.policy.expected_activity is not None
-    assert history.policy.recorded_activity_ref is not None
-    assert cancel_events[-1].event_type == HarnessEventType.RUN_STATE_CHANGED
-    assert cancel_events[-1].payload["status"] == "cancelled"
+    cancel_projection = _causal_graph_projection(runtime.events, cancel_decision)
+    assert (
+        approval_event.stream_sequence
+        < approval_projection.stream_sequence
+        < cancel_decision.stream_sequence
+        < cancel_projection.stream_sequence
+    )
+    terminal = _graph_projection_state(cancel_projection)
+    assert terminal["lifecycle"] == RunLifecycle.COMPLETED.value
+    assert terminal["outcome"] == RunOutcome.CANCELLED.value
+    assert terminal["terminal_reason_code"] == "approval_cancelled"
 
 
 def test_approval_resume_store_failure_leaves_input_state_unchanged() -> None:
@@ -2338,25 +1823,24 @@ def test_approval_resume_store_failure_leaves_input_state_unchanged() -> None:
     port = _durable_port(runtime)
     control_plane = HarnessControlPlane(
         event_port=port,
-        worker_registry={"collect": lambda task: HarnessWorkerResult(status="succeeded")},
+        worker_registry={
+            "collect": lambda task: HarnessWorkerResult(status="succeeded")
+        },
     )
     waiting = control_plane.run(_run_spec("run-resume-failure", approval_required=True))
     state = waiting.state
-    runtime.fail_before = lambda request: (
-        request.event_type == HarnessEventType.DECISION_RECORDED
-        and request.payload is not None
-        and request.payload.get("decision_type") == HarnessDecisionType.RESUME_AFTER_APPROVAL
+    before = port.recover_graph("run-resume-failure")
+    runtime.fail_before = lambda request: _is_graph_observation_request(
+        request,
+        HarnessGraphObservationType.WAIT_CAUSE,
     )
 
     with pytest.raises(EventStoreUnavailableError):
         control_plane.resume_after_approval(state, approved=True)
 
     assert state.status == HarnessRunStatus.WAITING_APPROVAL
-    assert not any(
-        event.event_type == HarnessEventType.RUN_STATE_CHANGED
-        and event.metadata.get("transition_kind") == "approval_resume"
-        for event in port.events
-    )
+    assert port.recover_graph("run-resume-failure") == before
+    assert before.pending_observations == ()
 
 
 def test_approval_resume_rejects_a_supplied_state_that_conflicts_with_history() -> None:
@@ -2364,9 +1848,13 @@ def test_approval_resume_rejects_a_supplied_state_that_conflicts_with_history() 
     port = _durable_port(runtime)
     control_plane = HarnessControlPlane(
         event_port=port,
-        worker_registry={"collect": lambda task: HarnessWorkerResult(status="succeeded")},
+        worker_registry={
+            "collect": lambda task: HarnessWorkerResult(status="succeeded")
+        },
     )
-    waiting = control_plane.run(_run_spec("run-resume-preflight", approval_required=True))
+    waiting = control_plane.run(
+        _run_spec("run-resume-preflight", approval_required=True)
+    )
     step_id = waiting.state.current_step_id
     assert step_id is not None
     unresolved_steps = tuple(
@@ -2378,7 +1866,9 @@ def test_approval_resume_rejects_a_supplied_state_that_conflicts_with_history() 
     unresolved = replace(waiting.state, step_states=unresolved_steps)
     before = len(runtime.events)
 
-    with pytest.raises(EventReplayMismatchError, match="does not match durable history"):
+    with pytest.raises(
+        EventReplayMismatchError, match="does not match durable Graph history"
+    ):
         control_plane.resume_after_approval(unresolved, approved=True)
 
     assert len(runtime.events) == before
@@ -2488,7 +1978,7 @@ def test_unsafe_run_id_fails_before_runtime_or_stream_derivation(run_id: str) ->
     assert port.events == []
 
 
-def test_retry_and_terminal_failure_decisions_precede_state_projection() -> None:
+def test_retry_and_terminal_failure_decisions_precede_graph_projection() -> None:
     runtime = CanonicalRecordingRuntime()
     port = _durable_port(runtime)
     workflow = HarnessWorkflowSpec(
@@ -2497,7 +1987,9 @@ def test_retry_and_terminal_failure_decisions_precede_state_projection() -> None
             HarnessStepSpec(
                 step_id="collect",
                 worker_type="llm",
-                retry_policy=HarnessRetryPolicy(max_attempts=2, retry_on_statuses=("failed",)),
+                retry_policy=HarnessRetryPolicy(
+                    max_attempts=2, retry_on_statuses=("failed",)
+                ),
             ),
         ),
         entry_step_id="collect",
@@ -2513,31 +2005,58 @@ def test_retry_and_terminal_failure_decisions_precede_state_projection() -> None
     ).run(HarnessRunSpec(run_id="run-retry-order", workflow=workflow))
 
     assert result.state.status == HarnessRunStatus.FAILED
-    retry_decision = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == HarnessDecisionType.RETRY_STEP,
+    retry_decision = next(
+        event
+        for event in runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.RETRY_NODE,
+            reason_code="worker_failure_retry",
+        )
     )
-    retry_projection = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.STEP_STATE_CHANGED
-        and event.extensions["harness"]["metadata"].get("transition_kind") == "retry",
+    retry_projection = _causal_graph_projection(runtime.events, retry_decision)
+    retry_state = _graph_projection_state(retry_projection)
+    assert retry_state["node_instances"][0]["step_status"] == "retrying"
+
+    failure_decision = next(
+        event
+        for event in runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.FAIL_NODE,
+            reason_code="worker_failure_terminal",
+        )
     )
-    failure_decision = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == HarnessDecisionType.FAIL_RUN,
+    failure_projection = _causal_graph_projection(runtime.events, failure_decision)
+    assert (
+        _graph_projection_state(failure_projection)["node_instances"][0]["step_status"]
+        == "failed"
     )
-    failure_projection = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.RUN_STATE_CHANGED
-        and event.payload["status"] == "failed",
+
+    terminal_decision = next(
+        event
+        for event in runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.COMPLETE_RUN,
+            reason_code="graph_terminal_failure",
+        )
     )
-    assert retry_decision < retry_projection
-    assert failure_decision < failure_projection
+    terminal_projection = _causal_graph_projection(runtime.events, terminal_decision)
+    terminal_state = _graph_projection_state(terminal_projection)
+    assert terminal_state["lifecycle"] == RunLifecycle.COMPLETED.value
+    assert terminal_state["outcome"] == RunOutcome.FAILED.value
+    assert (
+        retry_decision.stream_sequence
+        < retry_projection.stream_sequence
+        < failure_decision.stream_sequence
+        < failure_projection.stream_sequence
+        < terminal_decision.stream_sequence
+        < terminal_projection.stream_sequence
+    )
 
 
-def test_route_to_repair_and_budget_halt_have_durable_transition_kinds() -> None:
+def test_route_to_repair_and_budget_halt_use_durable_graph_decisions() -> None:
     repair_runtime = CanonicalRecordingRuntime()
     repair_port = _durable_port(repair_runtime)
     repair_workflow = HarnessWorkflowSpec(
@@ -2556,27 +2075,53 @@ def test_route_to_repair_and_budget_halt_have_durable_transition_kinds() -> None
     HarnessControlPlane(
         event_port=repair_port,
         worker_registry={
-            "draft": lambda task: HarnessWorkerResult(status="succeeded", output={"body": "missing"}),
-            "repair": lambda task: HarnessWorkerResult(status="succeeded", output={"title": "fixed"}),
+            "draft": lambda task: HarnessWorkerResult(
+                status="succeeded", output={"body": "missing"}
+            ),
+            "repair": lambda task: HarnessWorkerResult(
+                status="succeeded", output={"title": "fixed"}
+            ),
         },
     ).run(HarnessRunSpec(run_id="run-repair-order", workflow=repair_workflow))
-    repair_decision = _event_index(
-        repair_runtime.events,
-        lambda event: event.event_type == HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == HarnessDecisionType.ROUTE_TO_REPAIR,
+    repair_decision = next(
+        event
+        for event in repair_runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.ROUTE_TO_REPAIR,
+        )
     )
-    repair_projection = _event_index(
+    repair_projection = _causal_graph_projection(
         repair_runtime.events,
-        lambda event: event.event_type == HarnessEventType.STEP_STATE_CHANGED
-        and event.extensions["harness"]["metadata"].get("transition_kind") == "route_to_repair",
+        repair_decision,
     )
-    assert repair_decision < repair_projection
+    assert repair_decision.stream_sequence < repair_projection.stream_sequence
+    assert _graph_decision(repair_decision)["target_node_ids"] == ["repair"]
+    repair_state = _graph_projection_state(repair_projection)
+    draft_node = next(
+        node
+        for node in repair_state["node_instances"]
+        if node["identity"]["node_id"] == "draft"
+    )
+    assert draft_node["step_status"] == "failed"
+    repair_activation = next(
+        event
+        for event in repair_runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.ACTIVATE_NODE,
+            node_id="repair",
+        )
+    )
+    assert repair_projection.stream_sequence < repair_activation.stream_sequence
 
     halt_runtime = CanonicalRecordingRuntime()
     halt_port = _durable_port(halt_runtime)
     halted = HarnessControlPlane(
         event_port=halt_port,
-        worker_registry={"collect": lambda task: HarnessWorkerResult(status="succeeded")},
+        worker_registry={
+            "collect": lambda task: HarnessWorkerResult(status="succeeded")
+        },
     ).run(
         HarnessRunSpec(
             run_id="run-budget-halt",
@@ -2590,17 +2135,25 @@ def test_route_to_repair_and_budget_halt_have_durable_transition_kinds() -> None
         )
     )
     assert halted.state.status == HarnessRunStatus.HALTED
-    budget_decision = _event_index(
-        halt_runtime.events,
-        lambda event: event.event_type == HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == HarnessDecisionType.HALT_RUN,
+    budget_decision = next(
+        event
+        for event in halt_runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.HALT_RUN,
+        )
     )
-    budget_projection = _event_index(
+    budget_projection = _causal_graph_projection(
         halt_runtime.events,
-        lambda event: event.event_type == HarnessEventType.RUN_STATE_CHANGED
-        and event.extensions["harness"]["metadata"].get("transition_kind") == "budget_exhaustion",
+        budget_decision,
     )
-    assert budget_decision < budget_projection
+    budget_state = _graph_projection_state(budget_projection)
+    assert budget_decision.stream_sequence < budget_projection.stream_sequence
+    assert budget_state["lifecycle"] == RunLifecycle.HALTED.value
+    assert (
+        budget_state["terminal_reason_code"]
+        == _graph_decision(budget_decision)["reason_code"]
+    )
 
 
 def test_replan_decision_commits_before_replanning_projection() -> None:
@@ -2620,7 +2173,9 @@ def test_replan_decision_commits_before_replanning_projection() -> None:
     HarnessControlPlane(
         event_port=port,
         worker_registry={
-            "draft": lambda task: HarnessWorkerResult(status="succeeded", output={"body": "missing"})
+            "draft": lambda task: HarnessWorkerResult(
+                status="succeeded", output={"body": "missing"}
+            )
         },
     ).run(
         HarnessRunSpec(
@@ -2635,34 +2190,186 @@ def test_replan_decision_commits_before_replanning_projection() -> None:
         )
     )
 
-    decision_index = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == HarnessDecisionType.REPLAN_STEP,
+    replan_decision = next(
+        event
+        for event in runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.REPLAN_NODE,
+        )
     )
-    state_index = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.RUN_STATE_CHANGED
-        and event.extensions["harness"]["metadata"].get("transition_kind") == "replan",
+    replan_projection = _causal_graph_projection(runtime.events, replan_decision)
+    replan_state = _graph_projection_state(replan_projection)
+    assert replan_state["node_instances"][0]["step_status"] == "replanning"
+    assert _budget_used(replan_state, "replans") == 1
+
+    phase_decision = next(
+        event
+        for event in runtime.events
+        if _is_graph_decision_event(
+            event,
+            HarnessGraphDecisionType.ENTER_STEP_PHASE,
+            reason_code="controlled_replan",
+        )
     )
-    entry_index = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.PHASE_RECORDED
-        and event.payload.get("phase") == "replan"
-        and event.payload.get("boundary") == "entry",
+    phase_projection = _causal_graph_projection(runtime.events, phase_decision)
+    phase_state = _graph_projection_state(phase_projection)
+    assert _graph_decision(phase_decision)["payload"]["phase"] == "plan"
+    assert phase_state["node_instances"][0]["step_status"] == "planning"
+    entry_event = next(
+        event
+        for event in runtime.events
+        if event.stream_sequence > phase_projection.stream_sequence
+        and event.event_type == HarnessEventType.PHASE_RECORDED
+        and event.payload.get("phase") == "plan"
+        and event.payload.get("boundary") == "entry"
     )
-    exit_index = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.PHASE_RECORDED
-        and event.payload.get("phase") == "replan"
-        and event.payload.get("boundary") == "exit",
+    exit_event = next(
+        event
+        for event in runtime.events
+        if event.stream_sequence > entry_event.stream_sequence
+        and event.event_type == HarnessEventType.PHASE_RECORDED
+        and event.payload.get("phase") == "plan"
+        and event.payload.get("boundary") == "exit"
     )
-    transition_index = _event_index(
-        runtime.events,
-        lambda event: event.event_type == HarnessEventType.TRANSITION_COMMITTED
-        and event.payload.get("transition_kind") == "replan_entry",
+    assert (
+        replan_decision.stream_sequence
+        < replan_projection.stream_sequence
+        < phase_decision.stream_sequence
+        < phase_projection.stream_sequence
+        < entry_event.stream_sequence
+        < exit_event.stream_sequence
     )
-    assert decision_index < transition_index < state_index < entry_index < exit_index
+
+
+def _graph_commit(event: StoredEvent) -> dict:
+    assert event.payload is not None
+    commit = event.payload.get("commit")
+    assert isinstance(commit, Mapping)
+    thawed = thaw_canonical_json(commit)
+    assert isinstance(thawed, dict)
+    if "state" not in thawed and isinstance(thawed.get("state_summary"), Mapping):
+        thawed["state"] = thawed["state_summary"]
+    return thawed
+
+
+def _request_graph_commit(request: EventPublishRequest) -> dict | None:
+    if request.payload is None:
+        return None
+    commit = request.payload.get("commit")
+    if not isinstance(commit, Mapping):
+        return None
+    thawed = thaw_canonical_json(commit)
+    assert isinstance(thawed, dict)
+    return thawed
+
+
+def _graph_decision(event: StoredEvent) -> dict:
+    decision = _graph_commit(event).get("decision")
+    assert isinstance(decision, dict)
+    return decision
+
+
+def _graph_observation(event: StoredEvent) -> dict:
+    observation = _graph_commit(event).get("observation")
+    assert isinstance(observation, dict)
+    return observation
+
+
+def _graph_projection_state(event: StoredEvent) -> dict:
+    state = _graph_commit(event).get("state")
+    assert isinstance(state, dict)
+    return state
+
+
+def _is_graph_decision_event(
+    event: StoredEvent,
+    decision_type: HarnessGraphDecisionType,
+    *,
+    node_id: str | None = None,
+    reason_code: str | None = None,
+) -> bool:
+    if event.event_type != HARNESS_GRAPH_DECISION_EVENT_TYPE:
+        return False
+    decision = _graph_decision(event)
+    return (
+        decision.get("decision_type") == decision_type.value
+        and (node_id is None or decision.get("node_id") == node_id)
+        and (reason_code is None or decision.get("reason_code") == reason_code)
+    )
+
+
+def _is_graph_decision_request(
+    request: EventPublishRequest,
+    decision_type: HarnessGraphDecisionType,
+    *,
+    node_id: str | None = None,
+    reason_code: str | None = None,
+) -> bool:
+    if request.event_type != HARNESS_GRAPH_DECISION_EVENT_TYPE:
+        return False
+    commit = _request_graph_commit(request)
+    if commit is None:
+        return False
+    decision = commit.get("decision")
+    if not isinstance(decision, dict):
+        return False
+    return (
+        decision.get("decision_type") == decision_type.value
+        and (node_id is None or decision.get("node_id") == node_id)
+        and (reason_code is None or decision.get("reason_code") == reason_code)
+    )
+
+
+def _is_graph_observation_event(
+    event: StoredEvent,
+    observation_type: HarnessGraphObservationType,
+) -> bool:
+    return (
+        event.event_type == HARNESS_GRAPH_OBSERVATION_EVENT_TYPE
+        and _graph_observation(event).get("observation_type") == observation_type.value
+    )
+
+
+def _is_graph_observation_request(
+    request: EventPublishRequest,
+    observation_type: HarnessGraphObservationType,
+) -> bool:
+    if request.event_type != HARNESS_GRAPH_OBSERVATION_EVENT_TYPE:
+        return False
+    commit = _request_graph_commit(request)
+    if commit is None:
+        return False
+    observation = commit.get("observation")
+    return isinstance(observation, dict) and (
+        observation.get("observation_type") == observation_type.value
+    )
+
+
+def _causal_graph_projection(
+    events: list[StoredEvent],
+    cause_event: StoredEvent,
+) -> StoredEvent:
+    if cause_event.event_type == HARNESS_GRAPH_DECISION_EVENT_TYPE:
+        cause_checksum = _graph_decision(cause_event)["decision_checksum"]
+    elif cause_event.event_type == HARNESS_GRAPH_OBSERVATION_EVENT_TYPE:
+        cause_checksum = _graph_observation(cause_event)["observation_checksum"]
+    else:
+        raise AssertionError("unsupported Graph projection cause")
+    return next(
+        event
+        for event in events
+        if event.event_type == HARNESS_GRAPH_PROJECTION_EVENT_TYPE
+        and event.stream_sequence > cause_event.stream_sequence
+        and _graph_commit(event).get("cause_checksum") == cause_checksum
+    )
+
+
+def _budget_used(state: dict, budget_name: str) -> int:
+    counters = state["budgets"]["counters"]
+    return next(
+        int(counter["used"]) for counter in counters if counter["name"] == budget_name
+    )
 
 
 def _default_worker_registry() -> dict[str, Callable[[dict], HarnessWorkerResult]]:

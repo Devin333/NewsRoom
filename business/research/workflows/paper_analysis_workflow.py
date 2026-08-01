@@ -1,10 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 from framework.events.canonical import checksum_for
 from framework.harness.side_effects import HarnessTerminalSideEffectPolicy
-from framework.harness.workflow import HarnessRoutingRule, HarnessStepSpec, HarnessWorkerType, HarnessWorkflowSpec
+from framework.harness.workflow import (
+    HarnessGraphSpec,
+    HarnessStepSpec,
+    HarnessWorkerType,
+    HarnessWorkflowSpec,
+    ParallelAll,
+    ParallelBranch,
+    Sequence,
+    StepRef,
+    VerifiedAggregation,
+)
 
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
@@ -77,7 +85,7 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
         HarnessStepSpec(
             step_id="verify_claims",
             worker_type=HarnessWorkerType.QUALITY_GATE,
-            input_keys=("evidence_pack", "structure_candidate", "contribution_candidate", "experiment_candidate"),
+            input_keys=("evidence_pack", "analysis_branch_refs"),
             output_key="claim_verification",
             quality_gate="ClaimEvidenceGate@1",
         ),
@@ -124,7 +132,46 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
         workflow_id="research.paper_analysis",
         steps=steps,
         entry_step_id="load_paper_source",
-        routing_rules=_linear_routes(step.step_id for step in steps),
+        graph=HarnessGraphSpec(
+            graph_id="research.paper_analysis.graph",
+            root=Sequence(
+                (
+                    StepRef("load_paper_source"),
+                    StepRef("compile_document"),
+                    StepRef("run_research_rag"),
+                    StepRef("build_evidence_pack"),
+                    ParallelAll(
+                        fork_id="analysis_fork",
+                        join_id="analysis_join",
+                        branches=(
+                            ParallelBranch(
+                                "structure",
+                                StepRef("analyze_structure"),
+                                "analysis.structure",
+                            ),
+                            ParallelBranch(
+                                "contribution",
+                                StepRef("analyze_contribution"),
+                                "analysis.contribution",
+                            ),
+                            ParallelBranch(
+                                "experiments",
+                                StepRef("analyze_experiments"),
+                                "analysis.experiments",
+                            ),
+                        ),
+                        merge=VerifiedAggregation(
+                            StepRef("verify_claims"),
+                            "analysis_branch_refs",
+                        ),
+                    ),
+                    StepRef("quality_gate"),
+                    StepRef("build_reader_payload"),
+                    StepRef("build_paper_card"),
+                    StepRef("publish_artifacts"),
+                )
+            ),
+        ),
         terminal_policies={"publish_requires_verify": True},
         terminal_side_effect_policy=HarnessTerminalSideEffectPolicy(
             policy_id=RESEARCH_ARTIFACT_TERMINAL_POLICY_ID,
@@ -141,11 +188,6 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
         ),
         metadata={"scope": "harness_side_effect_authority"},
     )
-
-
-def _linear_routes(step_ids: Iterable[str]) -> tuple[HarnessRoutingRule, ...]:
-    ids = tuple(step_ids)
-    return tuple(HarnessRoutingRule(from_step=left, to_step=right) for left, right in zip(ids, ids[1:]))
 
 
 __all__ = [

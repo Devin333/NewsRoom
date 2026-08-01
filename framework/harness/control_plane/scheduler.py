@@ -5,12 +5,10 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-from framework.harness.control_plane.decision import (
-    HarnessDecision,
-    HarnessDecisionType,
+from framework.harness.control_plane.compensation_runtime import (
+    compensation_binding_versions,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
-from framework.harness.control_plane.gates import HarnessGateResult, all_gates_passed
 from framework.harness.control_plane.graph_decision import (
     HarnessGraphDecision,
     HarnessGraphDecisionType,
@@ -23,19 +21,17 @@ from framework.harness.control_plane.graph_evaluator import (
     WorkflowGraphEvaluator,
 )
 from framework.harness.control_plane.graph_state import (
+    HarnessEvidenceKind,
     HarnessGraphReference,
     HarnessGraphState,
     HarnessNodeInstanceState,
     HarnessNodeInstanceStatus,
+    HarnessPendingSideEffectState,
+    HarnessPendingSideEffectStatus,
     RunLifecycle,
 )
 from framework.harness.control_plane.policy import HarnessBudgetSnapshot
-from framework.harness.control_plane.routing import HarnessRoutingEvaluator
-from framework.harness.control_plane.state import (
-    HarnessRunStatus,
-    HarnessState,
-    HarnessStepStatus,
-)
+from framework.harness.control_plane.state import HarnessStepStatus
 from framework.harness.control_plane.step_lifecycle import (
     StepLifecycleBindingMode,
     StepLifecycleBudget,
@@ -44,11 +40,6 @@ from framework.harness.control_plane.step_lifecycle import (
     StepLifecycleTransition,
     StepLifecycleTransitionType,
 )
-from framework.harness.control_plane.transitions import (
-    get_step_state,
-    terminal_run_statuses,
-)
-from framework.harness.quality.verdict import HarnessQualityVerdict
 from framework.harness.workflow.canonical import (
     canonical_checksum,
     freeze_json,
@@ -69,9 +60,7 @@ from framework.harness.workflow.step import (
     HarnessRetryPolicy,
     HarnessStepSpec,
 )
-from framework.harness.workflow.spec import HarnessWorkflowSpec
 from framework.harness.workflow.versioning import HARNESS_WORKER_ACTIVITY_SCHEMA
-from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 
 
 _STEP_GRAPH_DECISION_TYPES = MappingProxyType(
@@ -119,6 +108,9 @@ _CANDIDATE_ALLOWED_NODE_KINDS = MappingProxyType(
         HarnessGraphCandidateType.SELECT_PARALLEL_WINNER: frozenset(
             {HarnessGraphNodeKind.JOIN_ANY}
         ),
+        HarnessGraphCandidateType.REQUEST_BRANCH_CANCEL: frozenset(
+            HarnessGraphNodeKind
+        ),
         HarnessGraphCandidateType.START_LOOP_ITERATION: frozenset(
             {HarnessGraphNodeKind.LOOP_GUARD}
         ),
@@ -144,11 +136,12 @@ _GLOBAL_GRAPH_CANDIDATE_TYPES = frozenset(
 )
 _ARBITRATION_RECONCILIATION = 0
 _ARBITRATION_SAFETY = 1
-_ARBITRATION_STEP = 2
-_ARBITRATION_GRAPH_CONTROL = 3
-_ARBITRATION_ACTIVATION = 4
-_ARBITRATION_WAITING = 5
-_ARBITRATION_COMPLETION = 6
+_ARBITRATION_CONTROL_ACTIVATION = 2
+_ARBITRATION_STEP = 3
+_ARBITRATION_GRAPH_CONTROL = 4
+_ARBITRATION_ACTIVATION = 5
+_ARBITRATION_WAITING = 6
+_ARBITRATION_COMPLETION = 7
 _STEP_LIFECYCLE_NODE_STATUSES = frozenset(
     {
         HarnessNodeInstanceStatus.READY,
@@ -240,152 +233,37 @@ class _SchedulingOption:
 
 
 class HarnessScheduler:
-    __slots__ = ("_graph_evaluator", "_routing", "_step_state_machine")
+    __slots__ = ("_graph_evaluator", "_step_state_machine")
 
     def __init__(
         self,
-        routing_evaluator: HarnessRoutingEvaluator | None = None,
         *,
         graph_evaluator: WorkflowGraphEvaluator | None = None,
         step_state_machine: StepLifecycleStateMachine | None = None,
     ) -> None:
-        self._routing = routing_evaluator or HarnessRoutingEvaluator()
         self._graph_evaluator = graph_evaluator or WorkflowGraphEvaluator()
         self._step_state_machine = step_state_machine or StepLifecycleStateMachine()
 
     def next_decision(
         self,
-        state: HarnessState | HarnessGraphState,
+        state: HarnessGraphState,
         *,
-        worker_result: HarnessWorkerResult | None = None,
-        quality_verdict: HarnessQualityVerdict | None = None,
-        gate_results: tuple[HarnessGateResult, ...] = (),
         graph: NormalizedHarnessGraph | None = None,
         graph_context: HarnessGraphEvaluationContext | None = None,
         step_inputs: tuple[HarnessGraphStepSchedulingInput, ...] = (),
-    ) -> HarnessDecision | HarnessGraphDecision | None:
-        if isinstance(state, HarnessGraphState):
-            if worker_result is not None or quality_verdict is not None or gate_results:
-                raise HarnessValidationError(
-                    "Graph scheduling accepts only graph-bound observations",
-                    code="ambiguous_graph_scheduler_input",
-                )
-            if graph is None:
-                raise HarnessValidationError(
-                    "Graph scheduling requires the pinned normalized graph",
-                    code="graph_scheduler_graph_missing",
-                )
-            return self._next_graph_decision(
-                state,
-                graph,
-                graph_context=graph_context,
-                step_inputs=step_inputs,
-            )
-        if not isinstance(state, HarnessState):
-            raise TypeError("state must be HarnessState or HarnessGraphState")
-        if graph is not None or graph_context is not None or step_inputs:
+    ) -> HarnessGraphDecision | None:
+        if not isinstance(state, HarnessGraphState):
+            raise TypeError("state must be HarnessGraphState")
+        if graph is None:
             raise HarnessValidationError(
-                "Legacy scheduling cannot accept graph runtime inputs",
-                code="ambiguous_graph_scheduler_input",
+                "Graph scheduling requires the pinned normalized graph",
+                code="graph_scheduler_graph_missing",
             )
-        run_id = state.run_spec.run_id
-        workflow = state.run_spec.workflow
-        if state.status in terminal_run_statuses():
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.HALT_RUN,
-                run_id=run_id,
-                step_id=state.current_step_id,
-                reason=f"run is already terminal: {state.status.value}",
-            )
-
-        if state.status == HarnessRunStatus.CREATED:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.START_STEP,
-                run_id=run_id,
-                step_id=workflow.entry_step_id,
-                target_step_id=workflow.entry_step_id,
-                reason="start entry step",
-            )
-
-        step_id = state.current_step_id or workflow.entry_step_id
-        step_state = get_step_state(state, step_id)
-        step_spec = _get_step_spec(workflow, step_id)
-
-        if state.status == HarnessRunStatus.WAITING_APPROVAL:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.WAIT_FOR_APPROVAL,
-                run_id=run_id,
-                step_id=step_id,
-                reason="run is waiting for Harness approval",
-            )
-        if step_state.status == HarnessStepStatus.PENDING:
-            budget_decision = self._turn_budget_decision(state, step_id)
-            if budget_decision is not None:
-                return budget_decision
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.PLAN_STEP,
-                run_id=run_id,
-                step_id=step_id,
-            )
-        if step_state.status == HarnessStepStatus.PLANNING:
-            return self._after_plan(state, gate_results)
-        if step_state.status == HarnessStepStatus.PLAN_VERIFIED:
-            return self._execute_or_halt(state, step_id)
-        if step_state.status == HarnessStepStatus.RUNNING:
-            return self._after_execute(state, step_spec, worker_result)
-        if step_state.status == HarnessStepStatus.RETRYING:
-            return self._execute_or_halt(state, step_id, reason="retry current step")
-        if step_state.status == HarnessStepStatus.VERIFYING:
-            if not gate_results and quality_verdict is None:
-                budget_decision = self._turn_budget_decision(state, step_id)
-                if budget_decision is not None:
-                    return budget_decision
-                return HarnessDecision(
-                    decision_type=HarnessDecisionType.VERIFY_STEP,
-                    run_id=run_id,
-                    step_id=step_id,
-                )
-            return self._after_verify(state, step_spec, gate_results, quality_verdict)
-        if step_state.status == HarnessStepStatus.REPLANNING:
-            budget_decision = self._turn_budget_decision(state, step_id)
-            if budget_decision is not None:
-                return budget_decision
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.PLAN_STEP,
-                run_id=run_id,
-                step_id=step_id,
-                reason="controlled replan",
-            )
-        if step_state.status == HarnessStepStatus.SUCCEEDED:
-            return self._after_step_success(
-                state, worker_result=worker_result, quality_verdict=quality_verdict
-            )
-        if step_state.status == HarnessStepStatus.WAITING_APPROVAL:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.WAIT_FOR_APPROVAL,
-                run_id=run_id,
-                step_id=step_id,
-                reason="step is waiting for approval",
-            )
-        if step_state.status == HarnessStepStatus.HALTED:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.HALT_RUN,
-                run_id=run_id,
-                step_id=step_id,
-                reason=step_state.error or "step halted",
-            )
-        if step_state.status == HarnessStepStatus.FAILED:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.FAIL_RUN,
-                run_id=run_id,
-                step_id=step_id,
-                reason=step_state.error or "step failed",
-            )
-        return HarnessDecision(
-            decision_type=HarnessDecisionType.FAIL_RUN,
-            run_id=run_id,
-            step_id=step_id,
-            reason=f"unsupported step status: {step_state.status.value}",
+        return self._next_graph_decision(
+            state,
+            graph,
+            graph_context=graph_context,
+            step_inputs=step_inputs,
         )
 
     def _next_graph_decision(
@@ -444,8 +322,9 @@ class HarnessScheduler:
             definitions=definitions,
             instances=instances,
         )
-        options = [
-            _graph_candidate_option(
+        options: list[_SchedulingOption] = []
+        for candidate in evaluation.candidates:
+            option = _graph_candidate_option(
                 candidate,
                 graph=graph,
                 state=state,
@@ -454,18 +333,39 @@ class HarnessScheduler:
                 definitions=definitions,
                 instances=instances,
             )
+            if option is not None:
+                options.append(option)
+        terminal_observation_override = any(
+            candidate.candidate_type is HarnessGraphCandidateType.COMPLETE_RUN
+            and candidate.reason_code
+            in {"approval_cancelled", "side_effect_retry_exhausted"}
             for candidate in evaluation.candidates
-        ]
+        )
+        compensation_mode = state.metadata.get("execution_mode") == "compensating"
 
         step_runnable_ids: set[str] = set()
         for node_state in state.node_instances:
             definition = definitions[node_state.identity.node_id]
             if not isinstance(definition, HarnessExecutableNode):
                 continue
-            if node_state.status not in _STEP_LIFECYCLE_NODE_STATUSES:
+            if not _is_step_lifecycle_runnable(node_state):
+                continue
+            if (
+                compensation_mode
+                and node_state.status is not HarnessNodeInstanceStatus.COMPENSATING
+            ):
                 continue
             step_runnable_ids.add(node_state.instance_id)
             step_input = inputs_by_instance.get(node_state.instance_id)
+            if terminal_observation_override:
+                if step_input is not None:
+                    _validate_graph_step_input(
+                        graph,
+                        definition,
+                        node_state,
+                        step_input,
+                    )
+                continue
             if step_input is None:
                 options.append(
                     _missing_step_input_option(
@@ -495,17 +395,22 @@ class HarnessScheduler:
                 state,
             ):
                 continue
-            options.append(
-                _step_transition_option(
-                    transition,
-                    graph=graph,
-                    state=state,
-                    graph_ref=graph_ref,
-                    node_state=node_state,
-                    definition=definition,
-                    observation_checksum=observation_checksum,
-                )
+            if (
+                transition.transition_type is StepLifecycleTransitionType.EXECUTE_STEP
+                and not _physical_dispatch_capacity_available(state)
+            ):
+                continue
+            option = _step_transition_option(
+                transition,
+                graph=graph,
+                state=state,
+                graph_ref=graph_ref,
+                node_state=node_state,
+                definition=definition,
+                observation_checksum=observation_checksum,
             )
+            if option is not None:
+                options.append(option)
 
         extra_inputs = sorted(set(inputs_by_instance).difference(step_runnable_ids))
         if extra_inputs:
@@ -525,279 +430,21 @@ class HarnessScheduler:
             ),
         ).decision
 
-    def _after_plan(
-        self, state: HarnessState, gate_results: tuple[HarnessGateResult, ...]
-    ) -> HarnessDecision:
-        step_id = state.current_step_id
-        if not step_id:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.FAIL_RUN, run_id=state.run_spec.run_id
-            )
-        if not gate_results or all_gates_passed(gate_results):
-            return self._execute_or_halt(state, step_id)
-        if self._can_replan(state):
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.REPLAN_STEP,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                reason="plan gate failed",
-                payload={"gate_results": [result.to_dict() for result in gate_results]},
-            )
-        return HarnessDecision(
-            decision_type=HarnessDecisionType.HALT_RUN,
-            run_id=state.run_spec.run_id,
-            step_id=step_id,
-            reason="plan gate failed and replan budget is exhausted",
-            payload={
-                "gate_results": [result.to_dict() for result in gate_results],
-                "budget_exhausted": "replans",
-            },
-        )
 
-    def _after_execute(
-        self,
-        state: HarnessState,
-        step_spec: HarnessStepSpec,
-        worker_result: HarnessWorkerResult | None,
-    ) -> HarnessDecision:
-        step_id = step_spec.step_id
-        if worker_result is None:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.EXECUTE_STEP,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-            )
-        if worker_result.status == HarnessWorkerStatus.SUCCEEDED:
-            if step_spec.metadata.get(
-                "approval_required"
-            ) is True and not get_step_state(state, step_id).metadata.get(
-                "approval_granted"
-            ):
-                return HarnessDecision(
-                    decision_type=HarnessDecisionType.WAIT_FOR_APPROVAL,
-                    run_id=state.run_spec.run_id,
-                    step_id=step_id,
-                    reason="step requires Harness approval",
-                )
-            budget_decision = self._turn_budget_decision(state, step_id)
-            if budget_decision is not None:
-                return budget_decision
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.VERIFY_STEP,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-            )
-        if worker_result.status == HarnessWorkerStatus.WAITING_APPROVAL:
-            if step_spec.metadata.get(
-                "approval_required"
-            ) is True and not get_step_state(state, step_id).metadata.get(
-                "approval_granted"
-            ):
-                return HarnessDecision(
-                    decision_type=HarnessDecisionType.WAIT_FOR_APPROVAL,
-                    run_id=state.run_spec.run_id,
-                    step_id=step_id,
-                    reason="step requires Harness approval",
-                )
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.HALT_RUN,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                reason="worker requested approval without Harness policy",
-            )
-        if worker_result.status == HarnessWorkerStatus.BLOCKED:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.BLOCK_RUN,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                reason=worker_result.error or "worker blocked",
-                payload=worker_result.to_dict(),
-            )
-        if self._can_retry(state, step_spec, worker_result):
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.RETRY_STEP,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                reason=worker_result.error or "worker failed with retryable status",
-                payload={
-                    "backoff_seconds": step_spec.retry_policy.backoff_seconds,
-                    "worker_result": worker_result.to_dict(),
-                },
-            )
-        if step_spec.retry_policy.repair_step_id:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.ROUTE_TO_REPAIR,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                target_step_id=step_spec.retry_policy.repair_step_id,
-                reason=worker_result.error
-                or "worker failed; route to configured repair step",
-                payload=worker_result.to_dict(),
-            )
-        return HarnessDecision(
-            decision_type=HarnessDecisionType.FAIL_RUN,
-            run_id=state.run_spec.run_id,
-            step_id=step_id,
-            reason=worker_result.error or "worker failed and retry budget is exhausted",
-            payload=worker_result.to_dict(),
-        )
 
-    def _after_verify(
-        self,
-        state: HarnessState,
-        step_spec: HarnessStepSpec,
-        gate_results: tuple[HarnessGateResult, ...],
-        quality_verdict: HarnessQualityVerdict | None,
-    ) -> HarnessDecision:
-        step_id = step_spec.step_id
-        verdict_failed = quality_verdict is not None and not quality_verdict.passed
-        if gate_results and all_gates_passed(gate_results) and not verdict_failed:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.COMPLETE_STEP,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-            )
-        failed_results = [
-            result.to_dict() for result in gate_results if not result.passed
-        ]
-        repair_step_id = (
-            step_spec.retry_policy.repair_step_id
-            or step_spec.metadata.get("repair_step_id")
+def _is_step_lifecycle_runnable(node: HarnessNodeInstanceState) -> bool:
+    if node.status in _STEP_LIFECYCLE_NODE_STATUSES:
+        return True
+    return (
+        node.status is HarnessNodeInstanceStatus.WAITING
+        and node.step_status is HarnessStepStatus.WAITING_APPROVAL
+        and node.metadata.get("approval_granted") is True
+        and any(
+            evidence.kind is HarnessEvidenceKind.APPROVAL
+            and evidence.attempt == node.attempt
+            for evidence in node.evidence_refs
         )
-        if repair_step_id:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.ROUTE_TO_REPAIR,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                target_step_id=str(repair_step_id),
-                reason="verification failed; route to repair step",
-                payload={
-                    "gate_results": failed_results,
-                    "quality_verdict": _verdict_payload(quality_verdict),
-                },
-            )
-        if self._can_replan(state):
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.REPLAN_STEP,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                reason="verification failed",
-                payload={
-                    "gate_results": failed_results,
-                    "quality_verdict": _verdict_payload(quality_verdict),
-                },
-            )
-        return HarnessDecision(
-            decision_type=HarnessDecisionType.HALT_RUN,
-            run_id=state.run_spec.run_id,
-            step_id=step_id,
-            reason="verification failed and replan budget is exhausted",
-            payload={
-                "gate_results": failed_results,
-                "quality_verdict": _verdict_payload(quality_verdict),
-                "budget_exhausted": "replans",
-            },
-        )
-
-    def _after_step_success(
-        self,
-        state: HarnessState,
-        *,
-        worker_result: HarnessWorkerResult | None,
-        quality_verdict: HarnessQualityVerdict | None,
-    ) -> HarnessDecision:
-        step_id = state.current_step_id
-        if not step_id:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.COMPLETE_RUN,
-                run_id=state.run_spec.run_id,
-            )
-        target_step_id = self._routing.select_next_step(
-            state.run_spec.workflow,
-            state,
-            step_id,
-            worker_result=worker_result,
-            quality_verdict=quality_verdict,
-        )
-        if target_step_id is None:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.COMPLETE_RUN,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                reason="workflow has no next step",
-            )
-        return HarnessDecision(
-            decision_type=HarnessDecisionType.ROUTE_TO_STEP,
-            run_id=state.run_spec.run_id,
-            step_id=step_id,
-            target_step_id=target_step_id,
-            reason="explicit routing rule or workflow order selected next step",
-        )
-
-    def _execute_or_halt(
-        self, state: HarnessState, step_id: str, *, reason: str | None = None
-    ) -> HarnessDecision:
-        budget_decision = self._turn_budget_decision(state, step_id)
-        if budget_decision is not None:
-            return budget_decision
-        if state.worker_call_count >= state.run_spec.budget.max_worker_calls:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.HALT_RUN,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                reason="worker call budget is exhausted",
-                payload={"budget_exhausted": "worker_calls"},
-            )
-        return HarnessDecision(
-            decision_type=HarnessDecisionType.EXECUTE_STEP,
-            run_id=state.run_spec.run_id,
-            step_id=step_id,
-            reason=reason,
-        )
-
-    def _turn_budget_decision(
-        self, state: HarnessState, step_id: str | None
-    ) -> HarnessDecision | None:
-        budget = state.run_spec.budget
-        if state.turn_count >= budget.max_turns:
-            return HarnessDecision(
-                decision_type=HarnessDecisionType.HALT_RUN,
-                run_id=state.run_spec.run_id,
-                step_id=step_id,
-                reason="turn budget is exhausted",
-                payload={
-                    "turn_count": state.turn_count,
-                    "max_turns": budget.max_turns,
-                    "budget_exhausted": "turns",
-                },
-            )
-        return None
-
-    def _can_replan(self, state: HarnessState) -> bool:
-        if state.current_step_id is None:
-            return False
-        step_state = get_step_state(state, state.current_step_id)
-        return (
-            state.replan_count < state.run_spec.budget.max_replans
-            and step_state.replans < state.run_spec.budget.max_replans
-        )
-
-    def _can_retry(
-        self,
-        state: HarnessState,
-        step_spec: HarnessStepSpec,
-        worker_result: HarnessWorkerResult,
-    ) -> bool:
-        retry_policy = step_spec.retry_policy
-        if worker_result.status.value not in retry_policy.retry_on_statuses:
-            return False
-        error_type = _error_type(worker_result)
-        if error_type and error_type in retry_policy.fail_fast_error_types:
-            return False
-        step_state = get_step_state(state, step_spec.step_id)
-        budget_attempts = state.run_spec.budget.max_retries_per_step + 1
-        allowed_attempts = min(retry_policy.effective_max_attempts, budget_attempts)
-        return step_state.attempts < allowed_attempts
+    )
 
 
 def _normalize_graph_step_inputs(
@@ -1037,12 +684,12 @@ def _accepted_graph_candidate_evidence_refs(
     context: HarnessGraphEvaluationContext,
 ) -> frozenset[str]:
     references = {
-        canonical_checksum(node_state.to_dict())
-        for node_state in state.node_instances
+        canonical_checksum(node_state.to_dict()) for node_state in state.node_instances
     }
     for node_state in state.node_instances:
         for evidence in node_state.evidence_refs:
             references.add(evidence.evidence_ref)
+        references.update(_terminal_metadata_evidence_refs(node_state))
     for join_state in state.join_states:
         references.update(join_state.terminal_event_refs.values())
     references.update(
@@ -1050,6 +697,10 @@ def _accepted_graph_candidate_evidence_refs(
         for registration in state.wait_registrations
         if registration.resolution_event_ref is not None
     )
+    for signal in state.signal_inbox:
+        references.add(signal.signal.signal_ref)
+        if signal.match is not None:
+            references.add(signal.match.match_ref)
     for entry in state.compensation_stack:
         references.add(entry.effect_outcome_ref)
         if entry.outcome_ref is not None:
@@ -1062,6 +713,36 @@ def _accepted_graph_candidate_evidence_refs(
     return frozenset(references)
 
 
+def _terminal_metadata_evidence_refs(
+    node: HarnessNodeInstanceState,
+) -> tuple[str, ...]:
+    if node.status is not HarnessNodeInstanceStatus.SUCCEEDED:
+        return ()
+    keys: tuple[str, ...] = ()
+    if (
+        node.node_kind is HarnessGraphNodeKind.EXECUTABLE
+        and node.metadata.get("last_decision_type") == "complete_node"
+    ):
+        keys = ("last_decision_checksum", "side_effect_decision_ref")
+    elif node.node_kind is HarnessGraphNodeKind.MERGE:
+        keys = ("merge_result_ref", "merge_decision_ref")
+    return tuple(
+        value
+        for key in keys
+        if isinstance((value := node.metadata.get(key)), str)
+        and _is_checksum_reference(value)
+    )
+
+
+def _is_checksum_reference(value: str) -> bool:
+    if not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(
+        character in "0123456789abcdef" for character in digest
+    )
+
+
 def _graph_candidate_option(
     candidate: HarnessGraphCandidate,
     *,
@@ -1071,7 +752,7 @@ def _graph_candidate_option(
     observation_checksum: str,
     definitions: Mapping[str, HarnessGraphNode],
     instances: Mapping[str, HarnessNodeInstanceState],
-) -> _SchedulingOption:
+) -> _SchedulingOption | None:
     rank = _graph_candidate_rank(candidate)
     definition = (
         None if candidate.node_id is None else definitions.get(candidate.node_id)
@@ -1087,17 +768,42 @@ def _graph_candidate_option(
         "priority": candidate.priority,
         "branch_id": candidate.branch_id,
     }
+    decision_type = HarnessGraphDecisionType(candidate.candidate_type.value)
+    reason_code = candidate.reason_code
+    evidence_refs = candidate.evidence_refs
+    if (
+        candidate.candidate_type is HarnessGraphCandidateType.COMPLETE_RUN
+        and candidate.payload.get("outcome") == "succeeded"
+        and graph.terminal_policy_ref is not None
+    ):
+        pending = _pending_terminal_side_effect(state)
+        if pending is None:
+            decision_type = HarnessGraphDecisionType.PREPARE_SIDE_EFFECT
+            reason_code = "terminal_side_effect_authorization_required"
+            payload["side_effect_scope"] = "terminal_run"
+            payload["completion_reason_code"] = candidate.reason_code
+        elif pending.status is HarnessPendingSideEffectStatus.PREPARED:
+            return None
+        elif pending.status is HarnessPendingSideEffectStatus.FAILED:
+            return None
+        else:
+            assert pending.outcome_ref is not None
+            evidence_refs = (*evidence_refs, pending.outcome_ref)
+            payload["side_effect_prepare_decision_ref"] = (
+                pending.prepare_decision_ref
+            )
+            payload["side_effect_outcome_ref"] = pending.outcome_ref
     decision = HarnessGraphDecision(
-        decision_type=HarnessGraphDecisionType(candidate.candidate_type.value),
+        decision_type=decision_type,
         run_id=state.run_id,
         graph_ref=graph_ref,
         input_projection_checksum=state.projection_checksum,
         observation_checksum=observation_checksum,
-        reason_code=candidate.reason_code,
+        reason_code=reason_code,
         node_id=candidate.node_id,
         node_instance_id=candidate.node_instance_id,
         target_node_ids=candidate.target_node_ids,
-        evidence_refs=candidate.evidence_refs,
+        evidence_refs=evidence_refs,
         binding_versions=_candidate_binding_versions(
             graph,
             candidate,
@@ -1124,7 +830,17 @@ def _graph_candidate_rank(candidate: HarnessGraphCandidate) -> int:
         return _ARBITRATION_RECONCILIATION
     if candidate.candidate_type is HarnessGraphCandidateType.HALT_RUN:
         return _ARBITRATION_SAFETY
+    if candidate.candidate_type is HarnessGraphCandidateType.REQUEST_BRANCH_CANCEL:
+        return _ARBITRATION_SAFETY
+    if (
+        candidate.candidate_type is HarnessGraphCandidateType.COMPLETE_RUN
+        and candidate.reason_code
+        in {"approval_cancelled", "side_effect_retry_exhausted"}
+    ):
+        return _ARBITRATION_SAFETY
     if candidate.candidate_type is HarnessGraphCandidateType.ACTIVATE_NODE:
+        if candidate.reason_code == "committed_control_selection_ready":
+            return _ARBITRATION_CONTROL_ACTIVATION
         return _ARBITRATION_ACTIVATION
     if candidate.candidate_type is HarnessGraphCandidateType.PROJECT_RUN_WAITING:
         return _ARBITRATION_WAITING
@@ -1160,7 +876,7 @@ def _graph_candidate_stable_key(
             declaration_order,
             candidate.sort_key,
         )
-    if rank == _ARBITRATION_ACTIVATION:
+    if rank in {_ARBITRATION_CONTROL_ACTIVATION, _ARBITRATION_ACTIVATION}:
         return (declaration_order, candidate.sort_key)
     return (
         candidate.priority,
@@ -1195,8 +911,15 @@ def _candidate_binding_versions(
 ) -> dict[str, str]:
     bindings: dict[str, str] = {}
     if isinstance(definition, HarnessExecutableNode):
-        bindings.update(_step_binding_versions(definition))
+        bindings.update(compensation_binding_versions(definition))
     elif isinstance(definition, HarnessControlNode):
+        if definition.wait is not None and candidate.candidate_type in {
+            HarnessGraphCandidateType.REGISTER_WAIT,
+            HarnessGraphCandidateType.RESUME_WAIT,
+        }:
+            bindings["wait"] = (
+                f"{definition.wait.signal_type}@{definition.wait.signal_version}"
+            )
         merge_ref = None
         if definition.join is not None:
             merge_ref = definition.join.merge_ref
@@ -1244,7 +967,7 @@ def _step_transition_option(
     node_state: HarnessNodeInstanceState,
     definition: HarnessExecutableNode,
     observation_checksum: str,
-) -> _SchedulingOption:
+) -> _SchedulingOption | None:
     if transition.evidence_refs:
         rank = _ARBITRATION_RECONCILIATION
     elif transition.transition_type is StepLifecycleTransitionType.HALT_STEP:
@@ -1253,28 +976,61 @@ def _step_transition_option(
         rank = _ARBITRATION_STEP
     target_node_ids = _repair_target_node_ids(graph, definition, transition)
     decision_attempt = _step_decision_attempt(transition, node_state)
+    decision_type = _STEP_GRAPH_DECISION_TYPES[transition.transition_type]
+    reason_code = transition.reason_code
+    evidence_refs = tuple(item.evidence_ref for item in transition.evidence_refs)
+    payload = _step_transition_payload(
+        transition,
+        source_attempt=node_state.attempt,
+        decision_attempt=decision_attempt,
+    )
+    pending: HarnessPendingSideEffectState | None = None
+    if (
+        transition.transition_type is StepLifecycleTransitionType.COMPLETE_STEP
+        and definition.side_effect_ref is not None
+        and node_state.status is not HarnessNodeInstanceStatus.COMPENSATING
+    ):
+        pending = _pending_node_side_effect(node_state)
+        if pending is None:
+            decision_type = HarnessGraphDecisionType.PREPARE_SIDE_EFFECT
+            reason_code = "side_effect_authorization_required"
+            payload["side_effect_scope"] = "node_instance"
+            payload["completion_reason_code"] = transition.reason_code
+        elif pending.status is HarnessPendingSideEffectStatus.PREPARED:
+            return None
+        elif pending.status is HarnessPendingSideEffectStatus.FAILED:
+            return None
+        else:
+            assert pending.outcome_ref is not None
+            evidence_refs = (*evidence_refs, pending.outcome_ref)
+            payload["side_effect_prepare_decision_ref"] = (
+                pending.prepare_decision_ref
+            )
+            payload["side_effect_outcome_ref"] = pending.outcome_ref
     decision = HarnessGraphDecision(
-        decision_type=_STEP_GRAPH_DECISION_TYPES[transition.transition_type],
+        decision_type=decision_type,
         run_id=state.run_id,
         graph_ref=graph_ref,
         input_projection_checksum=state.projection_checksum,
         observation_checksum=observation_checksum,
-        reason_code=transition.reason_code,
+        reason_code=reason_code,
         node_id=definition.node_id,
         node_instance_id=node_state.instance_id,
         step_ref=definition.step_ref,
         attempt=decision_attempt,
         target_node_ids=target_node_ids,
-        evidence_refs=tuple(item.evidence_ref for item in transition.evidence_refs),
-        binding_versions=_step_binding_versions(definition),
-        payload=_step_transition_payload(
-            transition,
-            source_attempt=node_state.attempt,
-            decision_attempt=decision_attempt,
+        evidence_refs=evidence_refs,
+        binding_versions=compensation_binding_versions(
+            definition,
+            state=state,
+            node=node_state,
         ),
+        payload=payload,
     )
     causal_sequence = (
-        max(item.event_sequence for item in transition.evidence_refs)
+        pending.observation_sequence
+        if pending is not None and pending.observation_sequence is not None
+        else max(item.event_sequence for item in transition.evidence_refs)
         if transition.evidence_refs
         else node_state.last_event_sequence
     )
@@ -1303,6 +1059,34 @@ def _step_transition_option(
     return _SchedulingOption(rank, stable_key, decision)
 
 
+def _pending_node_side_effect(
+    node: HarnessNodeInstanceState,
+) -> HarnessPendingSideEffectState | None:
+    value = node.metadata.get("pending_side_effect")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError(
+            "pending node side effect is not a canonical object",
+            code="invalid_pending_side_effect_state",
+        )
+    return HarnessPendingSideEffectState.from_dict(value)
+
+
+def _pending_terminal_side_effect(
+    state: HarnessGraphState,
+) -> HarnessPendingSideEffectState | None:
+    value = state.metadata.get("pending_terminal_side_effect")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError(
+            "pending terminal side effect is not a canonical object",
+            code="invalid_pending_side_effect_state",
+        )
+    return HarnessPendingSideEffectState.from_dict(value)
+
+
 def _missing_step_input_option(
     *,
     graph_ref: HarnessGraphReference,
@@ -1322,7 +1106,11 @@ def _missing_step_input_option(
         node_instance_id=node_state.instance_id,
         step_ref=definition.step_ref,
         attempt=node_state.attempt,
-        binding_versions=_step_binding_versions(definition),
+        binding_versions=compensation_binding_versions(
+            definition,
+            state=state,
+            node=node_state,
+        ),
         payload={"step_id": definition.step_id},
     )
     return _SchedulingOption(
@@ -1339,23 +1127,6 @@ def _missing_step_input_option(
         ),
         decision,
     )
-
-
-def _step_binding_versions(definition: HarnessExecutableNode) -> dict[str, str]:
-    bindings = {
-        "step": definition.step_ref.exact_ref,
-        "worker": definition.worker_ref.exact_ref,
-        "activity": definition.activity_ref.exact_ref,
-    }
-    bindings.update(
-        {
-            f"gate:{index:04d}": reference.exact_ref
-            for index, reference in enumerate(definition.gate_refs)
-        }
-    )
-    if definition.side_effect_ref is not None:
-        bindings["side_effect"] = definition.side_effect_ref.exact_ref
-    return bindings
 
 
 def _repair_target_node_ids(
@@ -1453,6 +1224,17 @@ def _dispatch_already_active(
             for item in state.active_activities
         )
     )
+
+
+def _physical_dispatch_capacity_available(state: HarnessGraphState) -> bool:
+    counter = state.budgets.get("max_parallelism")
+    if counter is None:
+        raise HarnessValidationError(
+            "Graph scheduling requires a physical parallelism counter",
+            code="graph_budget_counter_missing",
+            details={"name": "max_parallelism"},
+        )
+    return len(state.active_activities) < counter.limit
 
 
 def _validate_graph_step_input(
@@ -1609,27 +1391,6 @@ def _step_from_projection(value: Mapping[str, Any]) -> HarnessStepSpec:
     return step
 
 
-def _get_step_spec(workflow: HarnessWorkflowSpec, step_id: str) -> HarnessStepSpec:
-    for step in workflow.steps:
-        if step.step_id == step_id:
-            return step
-    raise LookupError(step_id)
-
-
-def _error_type(worker_result: HarnessWorkerResult) -> str | None:
-    diagnostics = (
-        worker_result.diagnostics
-        if isinstance(getattr(worker_result, "diagnostics", {}), dict)
-        else {}
-    )
-    value: Any = diagnostics.get("error_type")
-    if value is None:
-        value = worker_result.output.get("error_type")
-    return str(value) if value is not None else None
-
-
-def _verdict_payload(verdict: HarnessQualityVerdict | None) -> dict[str, Any] | None:
-    return verdict.to_dict() if verdict is not None else None
 
 
 __all__ = ["HarnessGraphStepSchedulingInput", "HarnessScheduler"]

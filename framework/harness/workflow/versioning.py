@@ -29,6 +29,7 @@ LEGACY_WORKFLOW_SCHEMA = "newsroom.harness-workflow-legacy/v1"
 LEGACY_STATE_SCHEMA = "newsroom.harness-state-legacy/v1"
 LEGACY_DECISION_SCHEMA = "newsroom.harness-decision-legacy/v1"
 LEGACY_CHECKPOINT_SCHEMA = "newsroom.harness-checkpoint-legacy/v1"
+LEGACY_EVENT_SCHEMA = "newsroom.harness-event/v1"
 
 HARNESS_GRAPH_EVENT_SCHEMAS: Mapping[str, str] = MappingProxyType(
     {
@@ -74,12 +75,16 @@ class HarnessGraphSchemaRegistration:
     def __post_init__(self) -> None:
         kind = HarnessGraphContractKind(self.contract_kind)
         writer = required_text(self.writer_schema, "writer_schema")
-        readable = tuple(required_text(item, "readable_schemas") for item in self.readable_schemas)
+        readable = tuple(
+            required_text(item, "readable_schemas") for item in self.readable_schemas
+        )
         executable = tuple(
-            required_text(item, "executable_schemas") for item in self.executable_schemas
+            required_text(item, "executable_schemas")
+            for item in self.executable_schemas
         )
         upcast_sources = tuple(
-            required_text(item, "legacy_upcast_sources") for item in self.legacy_upcast_sources
+            required_text(item, "legacy_upcast_sources")
+            for item in self.legacy_upcast_sources
         )
         additional_writers = tuple(
             required_text(item, "additional_writer_schemas")
@@ -142,11 +147,15 @@ class HarnessGraphSchemaRegistration:
 
 
 class HarnessGraphSchemaRegistry:
-    def __init__(self, registrations: tuple[HarnessGraphSchemaRegistration, ...]) -> None:
+    def __init__(
+        self, registrations: tuple[HarnessGraphSchemaRegistration, ...]
+    ) -> None:
         by_kind: dict[HarnessGraphContractKind, HarnessGraphSchemaRegistration] = {}
         for registration in registrations:
             if not isinstance(registration, HarnessGraphSchemaRegistration):
-                raise TypeError("registrations must contain HarnessGraphSchemaRegistration values")
+                raise TypeError(
+                    "registrations must contain HarnessGraphSchemaRegistration values"
+                )
             if registration.contract_kind in by_kind:
                 raise HarnessValidationError(
                     "graph schema contract kind is already registered",
@@ -213,7 +222,9 @@ class HarnessGraphSchemaRegistry:
     def to_dict(self) -> dict[str, Any]:
         return {
             "runtime_version": HARNESS_GRAPH_RUNTIME_VERSION,
-            "registrations": [registration.to_dict() for registration in self.registrations],
+            "registrations": [
+                registration.to_dict() for registration in self.registrations
+            ],
         }
 
 
@@ -255,7 +266,10 @@ DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY = HarnessGraphSchemaRegistry(
         HarnessGraphSchemaRegistration(
             contract_kind=HarnessGraphContractKind.GRAPH_CHECKPOINT,
             writer_schema=HARNESS_GRAPH_CHECKPOINT_SCHEMA,
-            readable_schemas=(LEGACY_CHECKPOINT_SCHEMA, HARNESS_GRAPH_CHECKPOINT_SCHEMA),
+            readable_schemas=(
+                LEGACY_CHECKPOINT_SCHEMA,
+                HARNESS_GRAPH_CHECKPOINT_SCHEMA,
+            ),
             executable_schemas=(HARNESS_GRAPH_CHECKPOINT_SCHEMA,),
             legacy_upcast_sources=(LEGACY_CHECKPOINT_SCHEMA,),
         ),
@@ -263,8 +277,12 @@ DEFAULT_HARNESS_GRAPH_SCHEMA_REGISTRY = HarnessGraphSchemaRegistry(
             contract_kind=HarnessGraphContractKind.GRAPH_EVENT,
             writer_schema=HARNESS_GRAPH_EVENT_SCHEMA,
             additional_writer_schemas=tuple(HARNESS_GRAPH_EVENT_SCHEMAS.values())[1:],
-            readable_schemas=tuple(HARNESS_GRAPH_EVENT_SCHEMAS.values()),
+            readable_schemas=(
+                LEGACY_EVENT_SCHEMA,
+                *tuple(HARNESS_GRAPH_EVENT_SCHEMAS.values()),
+            ),
             executable_schemas=tuple(HARNESS_GRAPH_EVENT_SCHEMAS.values()),
+            legacy_upcast_sources=(LEGACY_EVENT_SCHEMA,),
         ),
         HarnessGraphSchemaRegistration(
             contract_kind=HarnessGraphContractKind.GRAPH_INSPECTION,
@@ -296,6 +314,7 @@ __all__ = [
     "HARNESS_WORKER_ACTIVITY_SCHEMA",
     "LEGACY_CHECKPOINT_SCHEMA",
     "LEGACY_DECISION_SCHEMA",
+    "LEGACY_EVENT_SCHEMA",
     "LEGACY_STATE_SCHEMA",
     "LEGACY_WORKFLOW_SCHEMA",
     "NORMALIZED_HARNESS_GRAPH_SCHEMA",

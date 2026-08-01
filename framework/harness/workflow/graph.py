@@ -69,6 +69,7 @@ class HarnessContractKind(StrEnum):
     SIDE_EFFECT = "side_effect"
     COMPENSATION = "compensation"
     MERGE = "merge"
+    WAIT = "wait"
     TERMINAL_POLICY = "terminal_policy"
 
 

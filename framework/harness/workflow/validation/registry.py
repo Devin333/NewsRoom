@@ -24,6 +24,7 @@ from framework.harness.workflow.validation.policy import HarnessGraphPreflightPo
 class HarnessGraphRegistrySnapshot:
     references: tuple[HarnessContractReference, ...]
     parallel_safe_activity_refs: tuple[str, ...] = ()
+    parallel_safe_side_effect_refs: tuple[str, ...] = ()
     compensation_safe_activity_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -43,6 +44,11 @@ class HarnessGraphRegistrySnapshot:
         )
         object.__setattr__(
             self,
+            "parallel_safe_side_effect_refs",
+            _stable_text_tuple(self.parallel_safe_side_effect_refs),
+        )
+        object.__setattr__(
+            self,
             "compensation_safe_activity_refs",
             _stable_text_tuple(self.compensation_safe_activity_refs),
         )
@@ -54,6 +60,9 @@ class HarnessGraphRegistrySnapshot:
         return {
             "references": [reference.to_dict() for reference in self.references],
             "parallel_safe_activity_refs": list(self.parallel_safe_activity_refs),
+            "parallel_safe_side_effect_refs": list(
+                self.parallel_safe_side_effect_refs
+            ),
             "compensation_safe_activity_refs": list(
                 self.compensation_safe_activity_refs
             ),
@@ -124,7 +133,8 @@ def validate_registry(
         )
 
     if policy.max_parallelism > 1:
-        safe = set(registry.parallel_safe_activity_refs)
+        safe_activities = set(registry.parallel_safe_activity_refs)
+        safe_side_effects = set(registry.parallel_safe_side_effect_refs)
         parallel_node_ids = _parallel_executable_node_ids(graph)
         for node in graph.nodes:
             if (
@@ -132,17 +142,31 @@ def validate_registry(
                 or node.node_id not in parallel_node_ids
             ):
                 continue
-            if node.activity_ref.exact_ref in safe:
-                continue
-            diagnostics.append(
-                diagnostic(
-                    HarnessGraphValidationPhase.REGISTRY,
-                    "parallel_activity_safety_unproven",
-                    "physical parallel execution lacks exact termination/idempotency/fencing evidence",
-                    node_id=node.node_id,
-                    details={"activity_ref": node.activity_ref.exact_ref},
+            if node.activity_ref.exact_ref not in safe_activities:
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.REGISTRY,
+                        "parallel_activity_safety_unproven",
+                        "physical parallel execution lacks exact termination/idempotency/fencing evidence",
+                        node_id=node.node_id,
+                        details={"activity_ref": node.activity_ref.exact_ref},
+                    )
                 )
-            )
+            if (
+                node.side_effect_ref is not None
+                and node.side_effect_ref.exact_ref not in safe_side_effects
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        HarnessGraphValidationPhase.REGISTRY,
+                        "parallel_side_effect_safety_unproven",
+                        "physical parallel execution lacks a fenced side-effect handler and store",
+                        node_id=node.node_id,
+                        details={
+                            "side_effect_ref": node.side_effect_ref.exact_ref,
+                        },
+                    )
+                )
 
     compensation_safe = set(registry.compensation_safe_activity_refs)
     for reference in graph.compensation_refs:

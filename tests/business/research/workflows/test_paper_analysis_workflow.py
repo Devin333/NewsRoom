@@ -19,7 +19,39 @@ def test_paper_analysis_workflow_declares_unique_harness_steps() -> None:
     assert len(spec.step_ids) == len(set(spec.step_ids))
     assert spec.entry_step_id == "load_paper_source"
     assert "publish_artifacts" in spec.step_ids
+    assert spec.routing_rules == ()
+    assert spec.graph is not None
     assert spec.to_dict()["terminal_policies"]["publish_requires_verify"] is True
+
+
+def test_paper_analysis_workflow_declares_parallel_analysis_and_verified_merge() -> (
+    None
+):
+    spec = build_paper_analysis_workflow_spec()
+    assert spec.graph is not None
+
+    graph = spec.graph.to_dict()
+    root = graph["root"]
+    parallel = root["children"][4]
+
+    assert root["kind"] == "sequence"
+    assert parallel["kind"] == "parallel_all"
+    assert parallel["fork_id"] == "analysis_fork"
+    assert parallel["join_id"] == "analysis_join"
+    assert [branch["branch_id"] for branch in parallel["branches"]] == [
+        "structure",
+        "contribution",
+        "experiments",
+    ]
+    assert parallel["merge"] == {
+        "kind": "aggregation_step",
+        "step": {
+            "kind": "step",
+            "step_id": "verify_claims",
+            "node_id": "verify_claims",
+        },
+        "branch_inputs_key": "analysis_branch_refs",
+    }
 
 
 def test_paper_analysis_workflow_uses_exact_active_gate_versions() -> None:

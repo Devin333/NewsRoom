@@ -5,13 +5,11 @@ from dataclasses import dataclass, replace
 import pytest
 
 from framework.events.canonical import checksum_for
-from framework.events.errors import EventStoreCorruptionError
 from framework.harness import (
     CountingHarnessSideEffectHandler,
     DeterministicGate,
     HarnessBudget,
     HarnessControlPlane,
-    HarnessEventType,
     HarnessGateResult,
     HarnessRunSpec,
     HarnessRunStatus,
@@ -21,7 +19,6 @@ from framework.harness import (
     HarnessSideEffectRegistry,
     HarnessStepSpec,
     HarnessTerminalSideEffectPolicy,
-    HarnessTransitionKind,
     HarnessValidationError,
     HarnessWorkerResult,
     HarnessWorkflowSpec,
@@ -30,7 +27,9 @@ from framework.harness import (
     InMemoryHarnessSideEffectStore,
     harness_worker_candidate_ref,
 )
-from framework.harness.control_plane.replay_history import harness_decision_kernel
+from framework.harness.control_plane.graph_decision import HarnessGraphDecisionType
+from framework.harness.control_plane.graph_evaluator import HarnessGraphObservationType
+from framework.harness.control_plane.graph_runtime import HarnessGraphCommitKind
 
 
 IDENTITY_SCOPE_REF = checksum_for({"tenant_id": "tenant-1"})
@@ -61,51 +60,59 @@ class _FailOnceGate(DeterministicGate):
         )
 
 
-class _FailAfterCompletionDecisionPort(InMemoryHarnessEventPort):
+class _FailAfterAuthorizationStore(InMemoryHarnessSideEffectStore):
     def __init__(self) -> None:
         super().__init__()
         self.failed = False
 
-    def record(self, event):
-        committed = super().record(event)
-        if (
-            not self.failed
-            and event.event_type is HarnessEventType.DECISION_RECORDED
-            and event.payload.get("decision_type") in {"complete_step", "complete_run"}
-        ):
+    def put_decision(self, decision):
+        committed = super().put_decision(decision)
+        if not self.failed:
             self.failed = True
-            raise RuntimeError("injected crash after completion decision")
+            raise RuntimeError("injected crash after side-effect authorization")
         return committed
 
 
-class _FailBeforeCompletionDecisionPort(InMemoryHarnessEventPort):
+class _FailBeforeAuthorizationStore(InMemoryHarnessSideEffectStore):
     def __init__(self) -> None:
         super().__init__()
         self.failed = False
 
-    def record(self, event):
-        if (
-            not self.failed
-            and event.event_type is HarnessEventType.DECISION_RECORDED
-            and event.payload.get("decision_type") in {"complete_step", "complete_run"}
-        ):
+    def put_decision(self, decision):
+        if not self.failed:
             self.failed = True
-            raise RuntimeError("injected crash before completion decision")
-        return super().record(event)
+            raise RuntimeError("injected crash before side-effect authorization")
+        return super().put_decision(decision)
 
 
-class _FailBeforeTransitionPort(InMemoryHarnessEventPort):
-    def __init__(self, transition_kind: HarnessTransitionKind) -> None:
+class _FailBeforeGraphProjectionPort(InMemoryHarnessEventPort):
+    def __init__(self, decision_type: HarnessGraphDecisionType) -> None:
         super().__init__()
-        self.transition_kind = transition_kind
+        self.decision_type = decision_type
         self.failed = False
 
-    def commit_transition(self, previous, state, **kwargs):
-        transition_kind = HarnessTransitionKind(kwargs["transition_kind"])
-        if not self.failed and transition_kind is self.transition_kind:
-            self.failed = True
-            raise RuntimeError(f"injected crash before {transition_kind.value}")
-        return super().commit_transition(previous, state, **kwargs)
+    def commit_graph_projection(self, projection, **kwargs):
+        if (
+            not self.failed
+            and projection.commit_kind is HarnessGraphCommitKind.DECISION_PROJECTION
+        ):
+            recovery = self._graph_transition_port.recover_graph(
+                projection.state.run_id
+            )
+            causal = next(
+                (
+                    item.decision
+                    for item in recovery.pending_decisions
+                    if item.decision.decision_checksum == projection.cause_checksum
+                ),
+                None,
+            )
+            if causal is not None and causal.decision_type is self.decision_type:
+                self.failed = True
+                raise RuntimeError(
+                    f"injected crash before {self.decision_type.value} projection"
+                )
+        return super().commit_graph_projection(projection, **kwargs)
 
 
 class _EffectThenRecoverHandler:
@@ -263,6 +270,55 @@ def _run_spec(
     )
 
 
+def _assert_graph_side_effect_commit_order(
+    event_port,
+    *,
+    run_id: str,
+    authorization,
+    outcome,
+) -> None:
+    recovery = event_port.recover_graph(run_id)
+    prepare_commits = tuple(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type
+        is HarnessGraphDecisionType.PREPARE_SIDE_EFFECT
+        and commit.decision.decision_checksum == authorization.causation_id
+    )
+    assert len(prepare_commits) == 1
+    prepare_commit = prepare_commits[0]
+    outcome_commits = tuple(
+        commit
+        for commit in recovery.observation_commits
+        if commit.observation.observation_type
+        is HarnessGraphObservationType.SIDE_EFFECT_OUTCOME
+        and commit.observation.payload["prepare_decision_ref"]
+        == prepare_commit.decision.decision_checksum
+    )
+    assert len(outcome_commits) == 1
+    outcome_commit = outcome_commits[0]
+    complete_commits = tuple(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.COMPLETE_NODE
+        and commit.decision.payload.get("side_effect_prepare_decision_ref")
+        == prepare_commit.decision.decision_checksum
+    )
+    assert len(complete_commits) == 1
+    complete_commit = complete_commits[0]
+
+    assert authorization.command_ordinal == prepare_commit.sequence
+    assert authorization.causation_id == prepare_commit.decision.decision_checksum
+    assert prepare_commit.sequence < outcome_commit.sequence < complete_commit.sequence
+    assert outcome.decision_ref == authorization.checksum
+    assert outcome_commit.observation.payload["decision_ref"] == authorization.checksum
+    assert outcome_commit.observation.payload["outcome_ref"] == outcome.checksum
+    assert outcome_commit.observation.evidence_ref == outcome.checksum
+    assert complete_commit.decision.payload["side_effect_outcome_ref"] == outcome.checksum
+    assert complete_commit.side_effect_outcome_ref == outcome.checksum
+    assert outcome.checksum in complete_commit.accepted_evidence_refs
+
+
 def test_preflight_rejects_unknown_handler_before_run_or_worker_call() -> None:
     event_port = InMemoryHarnessEventPort()
     worker_calls = 0
@@ -412,16 +468,14 @@ def test_authorization_and_outcome_precede_step_success() -> None:
     step = result.state.step_states[0]
     assert step.metadata["side_effect_decision_ref"] == outcome.decision_ref
     assert step.metadata["side_effect_outcome_ref"] == outcome.checksum
-    complete_decision = next(
-        event
-        for event in result.events
-        if event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == "complete_step"
+    authorization = store.list_decisions(run_id=result.state.run_spec.run_id)[0]
+    _assert_graph_side_effect_commit_order(
+        event_port,
+        run_id=result.state.run_spec.run_id,
+        authorization=authorization,
+        outcome=outcome,
     )
-    assert complete_decision.payload["payload"]["side_effect_authorization"]["decision_ref"] == outcome.decision_ref
-    assert complete_decision.deterministic_history["handler_input"]["current_step_policy"][
-        "side_effect_authorization"
-    ]["decision_ref"] == outcome.decision_ref
+    assert authorization.checksum == outcome.decision_ref
 
 
 def test_controller_terminal_handler_commits_before_run_success() -> None:
@@ -648,9 +702,9 @@ def test_worker_cannot_supply_a_controller_terminal_intent() -> None:
     assert store.outcome_write_count == 0
 
 
-def test_crash_before_completion_decision_reuses_worker_result_without_early_effect() -> None:
-    event_port = _FailBeforeCompletionDecisionPort()
-    store = InMemoryHarnessSideEffectStore()
+def test_crash_before_authorization_reuses_worker_result_without_early_effect() -> None:
+    event_port = InMemoryHarnessEventPort()
+    store = _FailBeforeAuthorizationStore()
     handler = CountingHarnessSideEffectHandler(store)
     registry = HarnessSideEffectRegistry(
         (HarnessSideEffectHandlerBinding("research.prepare@1", "artifact", handler),)
@@ -663,7 +717,7 @@ def test_crash_before_completion_decision_reuses_worker_result_without_early_eff
         worker_calls += 1
         return _candidate_result(task)
 
-    with pytest.raises(RuntimeError, match="before completion decision"):
+    with pytest.raises(RuntimeError, match="before side-effect authorization"):
         HarnessControlPlane(
             event_port=event_port,
             worker_registry={"publish": worker},
@@ -675,6 +729,10 @@ def test_crash_before_completion_decision_reuses_worker_result_without_early_eff
     assert handler.call_count == 0
     assert store.decision_write_count == 0
     assert store.outcome_write_count == 0
+    assert all(
+        commit.decision.decision_type is not HarnessGraphDecisionType.COMPLETE_NODE
+        for commit in event_port.recover_graph(run_spec.run_id).decision_commits
+    )
 
     recovered = HarnessControlPlane(
         event_port=event_port,
@@ -690,50 +748,58 @@ def test_crash_before_completion_decision_reuses_worker_result_without_early_eff
     assert store.outcome_write_count == 1
 
 
-def test_recovery_reuses_dangling_completion_decision_identity() -> None:
-    event_port = _FailAfterCompletionDecisionPort()
-    store = InMemoryHarnessSideEffectStore()
+def test_recovery_reuses_durable_authorization_identity() -> None:
+    event_port = InMemoryHarnessEventPort()
+    store = _FailAfterAuthorizationStore()
     handler = CountingHarnessSideEffectHandler(store)
     registry = HarnessSideEffectRegistry(
         (HarnessSideEffectHandlerBinding("research.prepare@1", "artifact", handler),)
     )
     run_spec = _run_spec()
+    worker_calls = 0
 
-    with pytest.raises(RuntimeError, match="after completion decision"):
+    def worker(task: dict) -> HarnessWorkerResult:
+        nonlocal worker_calls
+        worker_calls += 1
+        return _candidate_result(task)
+
+    with pytest.raises(RuntimeError, match="after side-effect authorization"):
         HarnessControlPlane(
             event_port=event_port,
-            worker_registry={"publish": _candidate_result},
+            worker_registry={"publish": worker},
             side_effect_registry=registry,
             side_effect_store=store,
         ).run(run_spec)
 
-    original = next(
-        event
-        for event in event_port.events
-        if event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == "complete_step"
+    original = store.list_decisions(run_id=run_spec.run_id)[0]
+    assert worker_calls == 1
+    assert handler.call_count == 0
+    assert store.decision_write_count == 1
+    assert store.outcome_write_count == 0
+    assert all(
+        commit.decision.decision_type is not HarnessGraphDecisionType.COMPLETE_NODE
+        for commit in event_port.recover_graph(run_spec.run_id).decision_commits
     )
+
     result = HarnessControlPlane(
         event_port=event_port,
-        worker_registry={"publish": _candidate_result},
+        worker_registry={"publish": worker},
         side_effect_registry=registry,
         side_effect_store=store,
     ).recover_and_run(run_spec)
     authorization = store.list_decisions(run_id=run_spec.run_id)[0]
+    outcome = result.side_effect_outcomes["publish"]
 
     assert result.succeeded
+    assert worker_calls == 1
     assert handler.call_count == 1
-    assert authorization.command_ordinal == original.deterministic_history["handler_input"][
-        "command_ordinal"
-    ]
-    assert authorization.causation_id == original.deterministic_history["handler_input"][
-        "causation_id"
-    ]
-    assert sum(
-        event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == "complete_step"
-        for event in event_port.events
-    ) == 1
+    assert authorization == original
+    _assert_graph_side_effect_commit_order(
+        event_port,
+        run_id=run_spec.run_id,
+        authorization=authorization,
+        outcome=outcome,
+    )
 
 
 def test_recovery_reuses_external_effect_identity_after_crash_before_outcome() -> None:
@@ -768,7 +834,9 @@ def test_recovery_reuses_external_effect_identity_after_crash_before_outcome() -
 
 
 def test_recovery_reuses_durable_outcome_after_crash_before_step_transition() -> None:
-    event_port = _FailBeforeTransitionPort(HarnessTransitionKind.STEP_SUCCESS)
+    event_port = _FailBeforeGraphProjectionPort(
+        HarnessGraphDecisionType.COMPLETE_NODE
+    )
     store = InMemoryHarnessSideEffectStore()
     handler = CountingHarnessSideEffectHandler(store)
     registry = HarnessSideEffectRegistry(
@@ -776,7 +844,7 @@ def test_recovery_reuses_durable_outcome_after_crash_before_step_transition() ->
     )
     run_spec = _run_spec()
 
-    with pytest.raises(RuntimeError, match="before step_success"):
+    with pytest.raises(RuntimeError, match="before complete_node projection"):
         HarnessControlPlane(
             event_port=event_port,
             worker_registry={"publish": _candidate_result},
@@ -799,7 +867,9 @@ def test_recovery_reuses_durable_outcome_after_crash_before_step_transition() ->
 
 
 def test_terminal_recovery_reuses_durable_outcome_before_run_success() -> None:
-    event_port = _FailBeforeTransitionPort(HarnessTransitionKind.SUCCESS)
+    event_port = _FailBeforeGraphProjectionPort(
+        HarnessGraphDecisionType.COMPLETE_RUN
+    )
     store = InMemoryHarnessSideEffectStore()
     prepare_handler = CountingHarnessSideEffectHandler(store)
     terminal_handler = CountingHarnessSideEffectHandler(store, disposition="accepted")
@@ -816,7 +886,7 @@ def test_terminal_recovery_reuses_durable_outcome_before_run_success() -> None:
     )
     run_spec = _run_spec(terminal=True)
 
-    with pytest.raises(RuntimeError, match="before success"):
+    with pytest.raises(RuntimeError, match="before complete_run projection"):
         HarnessControlPlane(
             event_port=event_port,
             worker_registry={"publish": _candidate_result},
@@ -835,6 +905,48 @@ def test_terminal_recovery_reuses_durable_outcome_before_run_success() -> None:
     assert prepare_handler.call_count == 1
     assert terminal_handler.call_count == 1
     assert result.side_effect_outcomes["__terminal__"].disposition.value == "accepted"
+
+
+def _assert_graph_side_effect_retry_exhaustion(recovery, authorization) -> None:
+    failure_commits = tuple(
+        commit
+        for commit in recovery.observation_commits
+        if commit.observation.observation_type
+        is HarnessGraphObservationType.SIDE_EFFECT_FAILURE
+    )
+    assert len(failure_commits) == 1
+    failure_commit = failure_commits[0]
+    failure = failure_commit.observation
+    expected_failure_ref = checksum_for(
+        {
+            "code": "effect_retry_exhausted",
+            "effect_ref": checksum_for(authorization.effect_id),
+            "decision_ref": authorization.checksum,
+        }
+    )
+
+    assert failure.contract_ref.exact_ref == str(authorization.handler)
+    assert failure.payload["reason_code"] == "effect_retry_exhausted"
+    assert failure.payload["decision_ref"] == authorization.checksum
+    assert failure.payload["causal_graph_decision_checksum"] == (
+        authorization.causation_id
+    )
+    assert failure.payload["failure_ref"] == failure.evidence_ref
+    assert failure.evidence_ref == expected_failure_ref
+
+    terminal_commits = tuple(
+        commit
+        for commit in recovery.decision_commits
+        if commit.decision.decision_type is HarnessGraphDecisionType.COMPLETE_RUN
+        and commit.decision.reason_code == "side_effect_retry_exhausted"
+    )
+    assert len(terminal_commits) == 1
+    terminal = terminal_commits[0]
+    assert terminal.decision.payload["outcome"] == "failed"
+    assert terminal.decision.evidence_refs == (failure.evidence_ref,)
+    assert terminal.accepted_evidence_refs == terminal.decision.evidence_refs
+    assert terminal.side_effect_outcome_ref is None
+    assert terminal.sequence == failure_commit.sequence + 2
 
 
 def test_effect_retry_exhaustion_records_one_stable_failed_terminal_state() -> None:
@@ -860,25 +972,37 @@ def test_effect_retry_exhaustion_records_one_stable_failed_terminal_state() -> N
         side_effect_registry=registry,
         side_effect_store=store,
     ).recover_and_run(run_spec)
+    recovery_after_failure = event_port.recover_graph(run_spec.run_id)
     replayed = HarnessControlPlane(
         event_port=event_port,
         worker_registry={"publish": _candidate_result},
         side_effect_registry=registry,
         side_effect_store=store,
     ).recover_and_run(run_spec)
+    replayed_recovery = event_port.recover_graph(run_spec.run_id)
+    authorization = store.list_decisions(run_id=run_spec.run_id)[0]
 
     assert recovered.state.status is HarnessRunStatus.FAILED
     assert replayed.state.status is HarnessRunStatus.FAILED
-    assert recovered.state.metadata["terminal_reason"] == "side-effect failure: effect_retry_exhausted"
+    assert (
+        recovered.state.metadata["terminal_reason"]
+        == "side-effect failure: effect_retry_exhausted"
+    )
     assert handler.call_count == 1
     assert store.attempts_by_effect == {"effect-1": 1}
-    assert sum(
-        event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == "fail_run"
-        and event.payload["payload"]["side_effect_failure"]["code"]
-        == "effect_retry_exhausted"
-        for event in event_port.events
-    ) == 1
+    _assert_graph_side_effect_retry_exhaustion(
+        replayed_recovery,
+        authorization,
+    )
+    assert replayed_recovery.observation_commits == (
+        recovery_after_failure.observation_commits
+    )
+    assert replayed_recovery.decision_commits == (
+        recovery_after_failure.decision_commits
+    )
+    assert replayed_recovery.projection_commits == (
+        recovery_after_failure.projection_commits
+    )
 
 
 def test_terminal_retry_exhaustion_is_persisted_and_stable() -> None:
@@ -919,12 +1043,14 @@ def test_terminal_retry_exhaustion_is_persisted_and_stable() -> None:
         side_effect_registry=registry,
         side_effect_store=store,
     ).recover_and_run(run_spec)
+    recovery_after_failure = event_port.recover_graph(run_spec.run_id)
     replayed = HarnessControlPlane(
         event_port=event_port,
         worker_registry={"publish": _candidate_result},
         side_effect_registry=registry,
         side_effect_store=store,
     ).recover_and_run(run_spec)
+    replayed_recovery = event_port.recover_graph(run_spec.run_id)
     terminal_decision = next(
         decision
         for decision in store.list_decisions(run_id=run_spec.run_id)
@@ -940,115 +1066,16 @@ def test_terminal_retry_exhaustion_is_persisted_and_stable() -> None:
         subject_scope_ref=terminal_decision.subject_scope_ref,
     ) == 1
     assert store.outcomes_by_effect["effect-1"].disposition.value == "quarantine"
-    assert sum(
-        event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == "fail_run"
-        and event.payload["payload"]["side_effect_failure"]["code"]
-        == "effect_retry_exhausted"
-        for event in event_port.events
-    ) == 1
-
-
-def test_multiple_dangling_completion_decisions_fail_closed() -> None:
-    event_port = _FailAfterCompletionDecisionPort()
-    store = InMemoryHarnessSideEffectStore()
-    handler = CountingHarnessSideEffectHandler(store)
-    registry = HarnessSideEffectRegistry(
-        (HarnessSideEffectHandlerBinding("research.prepare@1", "artifact", handler),)
+    _assert_graph_side_effect_retry_exhaustion(
+        replayed_recovery,
+        terminal_decision,
     )
-    run_spec = _run_spec()
-
-    with pytest.raises(RuntimeError, match="after completion decision"):
-        HarnessControlPlane(
-            event_port=event_port,
-            worker_registry={"publish": _candidate_result},
-            side_effect_registry=registry,
-            side_effect_store=store,
-        ).run(run_spec)
-    decision = next(
-        event
-        for event in event_port.events
-        if event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == "complete_step"
+    assert replayed_recovery.observation_commits == (
+        recovery_after_failure.observation_commits
     )
-    event_port.events.append(replace(decision, event_id=f"{decision.event_id}:duplicate"))
-
-    with pytest.raises(EventStoreCorruptionError, match="multiple dangling"):
-        HarnessControlPlane(
-            event_port=event_port,
-            worker_registry={"publish": _candidate_result},
-            side_effect_registry=registry,
-            side_effect_store=store,
-        ).recover_and_run(run_spec)
-
-    assert handler.call_count == 0
-
-
-def test_offline_decision_kernel_reads_authorization_without_outcome_or_live_calls() -> None:
-    event_port = _FailAfterCompletionDecisionPort()
-    store = InMemoryHarnessSideEffectStore()
-    handler = CountingHarnessSideEffectHandler(store)
-    run_spec = _run_spec()
-
-    with pytest.raises(RuntimeError, match="after completion decision"):
-        HarnessControlPlane(
-            event_port=event_port,
-            worker_registry={"publish": _candidate_result},
-            side_effect_registry=HarnessSideEffectRegistry(
-                (
-                    HarnessSideEffectHandlerBinding(
-                        "research.prepare@1", "artifact", handler
-                    ),
-                )
-            ),
-            side_effect_store=store,
-        ).run(run_spec)
-
-    completion = next(
-        event
-        for event in event_port.events
-        if event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == "complete_step"
+    assert replayed_recovery.decision_commits == (
+        recovery_after_failure.decision_commits
     )
-    replayed = harness_decision_kernel(
-        completion.deterministic_history["handler_input"],
-        None,
+    assert replayed_recovery.projection_commits == (
+        recovery_after_failure.projection_commits
     )
-
-    assert replayed["decision_type"] == "complete_step"
-    assert replayed["payload"]["side_effect_authorization"]["decision_ref"]
-    assert handler.call_count == 0
-    assert store.decision_write_count == 0
-    assert store.outcome_write_count == 0
-
-
-def test_offline_decision_kernel_projects_side_effect_authorization_without_live_calls() -> None:
-    event_port = InMemoryHarnessEventPort()
-    store = InMemoryHarnessSideEffectStore()
-    handler = CountingHarnessSideEffectHandler(store)
-    result = HarnessControlPlane(
-        event_port=event_port,
-        worker_registry={"publish": _candidate_result},
-        side_effect_registry=HarnessSideEffectRegistry(
-            (HarnessSideEffectHandlerBinding("research.prepare@1", "artifact", handler),)
-        ),
-        side_effect_store=store,
-    ).run(_run_spec())
-    completion = next(
-        event
-        for event in result.events
-        if event.event_type is HarnessEventType.DECISION_RECORDED
-        and event.payload["decision_type"] == "complete_step"
-    )
-    calls_before = handler.call_count
-
-    replayed = harness_decision_kernel(
-        completion.deterministic_history["handler_input"],
-        None,
-    )
-
-    assert replayed["decision_type"] == "complete_step"
-    assert replayed["payload"]["side_effect_authorization"]["decision_ref"] == (
-        result.side_effect_outcomes["publish"].decision_ref
-    )
-    assert handler.call_count == calls_before
