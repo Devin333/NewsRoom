@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from business.research.domain.analysis import ResearchAnalysis
-from business.research.application.single_paper_runtime import AnalyzePaperRequest, ResearchAnalysisResult, ResearchSinglePaperRuntime
+from business.research.application.single_paper_runtime import (
+    AnalyzePaperRequest,
+    ResearchAnalysisResult,
+    ResearchDynamicTaskPlanUnavailableError,
+    ResearchSinglePaperRuntime,
+)
 
 
 class AnalyzePaperUseCase:
@@ -17,4 +22,9 @@ class AnalyzePaperUseCase:
         return analysis
 
 
-__all__ = ["AnalyzePaperRequest", "AnalyzePaperUseCase", "ResearchAnalysisResult"]
+__all__ = [
+    "AnalyzePaperRequest",
+    "AnalyzePaperUseCase",
+    "ResearchAnalysisResult",
+    "ResearchDynamicTaskPlanUnavailableError",
+]

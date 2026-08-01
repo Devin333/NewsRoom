@@ -252,6 +252,8 @@ from framework.events.schema import (
     SecurityExportProjection,
     SecurityProjection,
     SensitivityPolicy,
+    TASK_PLAN_EVENT_SCHEMA,
+    TASK_PLAN_EVENT_TYPES,
     WholeDocumentReferenceDisposition,
     default_event_schema_catalog,
 )
@@ -440,6 +442,8 @@ __all__ = [
     "EventSecurePayloadRequiredError",
     "EventSecurityError",
     "EventSecurityProjector",
+    "TASK_PLAN_EVENT_SCHEMA",
+    "TASK_PLAN_EVENT_TYPES",
     "EventStaleLeaseError",
     "EventStoreCapacityError",
     "EventStoreContentionError",

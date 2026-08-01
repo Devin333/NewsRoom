@@ -233,16 +233,68 @@ class _SchedulingOption:
 
 
 class HarnessScheduler:
-    __slots__ = ("_graph_evaluator", "_step_state_machine")
+    __slots__ = ("_graph_evaluator", "_step_state_machine", "_task_plan_scheduler")
 
     def __init__(
         self,
         *,
         graph_evaluator: WorkflowGraphEvaluator | None = None,
         step_state_machine: StepLifecycleStateMachine | None = None,
+        task_plan_scheduler: Any | None = None,
     ) -> None:
+        from framework.harness.task_plan.scheduler import TaskPlanScheduler
+
         self._graph_evaluator = graph_evaluator or WorkflowGraphEvaluator()
         self._step_state_machine = step_state_machine or StepLifecycleStateMachine()
+        if task_plan_scheduler is not None and not isinstance(
+            task_plan_scheduler,
+            TaskPlanScheduler,
+        ):
+            raise TypeError("task_plan_scheduler must be TaskPlanScheduler")
+        self._task_plan_scheduler = task_plan_scheduler or TaskPlanScheduler()
+
+    def next_task_plan_decision(
+        self,
+        projection: Any,
+        max_count: int,
+        *,
+        plan: Any,
+        policy: Any | None = None,
+        worker_capacity: int | None = None,
+        available_input_refs: tuple[str, ...] | Mapping[str, Any] = (),
+    ) -> Any:
+        """Return the only Control Plane-visible TaskPlan scheduling decision."""
+
+        return self._task_plan_scheduler.next_ready_tasks(
+            projection,
+            max_count,
+            plan=plan,
+            policy=policy,
+            worker_capacity=worker_capacity,
+            available_input_refs=available_input_refs,
+        )
+
+    def reserve_task_plan_tasks(self, projection: Any, decision: Any) -> Any:
+        return self._task_plan_scheduler.reserve_ready_tasks(projection, decision)
+
+    def mark_task_plan_dispatched(self, projection: Any, instance: Any) -> Any:
+        return self._task_plan_scheduler.mark_dispatched(projection, instance)
+
+    def mark_task_plan_started(self, projection: Any, instance: Any) -> Any:
+        return self._task_plan_scheduler.mark_started(projection, instance)
+
+    def reclaim_task_plan_task(
+        self,
+        projection: Any,
+        task_id: str,
+        *,
+        task_instance_id: str | None = None,
+    ) -> Any:
+        return self._task_plan_scheduler.reclaim_stale(
+            projection,
+            task_id,
+            task_instance_id=task_instance_id,
+        )
 
     def next_decision(
         self,

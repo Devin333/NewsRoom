@@ -1,0 +1,1300 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any, Self
+
+from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.task_plan.canonical import (
+    canonical_payload_checksum,
+    checksum,
+    exact_keys,
+    exact_reference,
+    frozen_mapping,
+    identifier,
+    non_negative_int,
+    optional_text,
+    positive_int,
+    reference,
+    required_text,
+    stable_text_tuple,
+    thaw_mapping,
+)
+from framework.harness.task_plan.forbidden import ensure_candidate_only
+from framework.harness.task_plan.schema import (
+    DEFAULT_TASK_PLAN_SCHEMA_REGISTRY,
+    PLAN_CANDIDATE_SCHEMA,
+    RESOLVED_TASK_DEFINITION_SCHEMA,
+    TASK_DEFINITION_SCHEMA,
+    TASK_INSTANCE_SCHEMA,
+    TASK_PLAN_PATCH_SCHEMA,
+    TASK_PLAN_PROJECTION_SCHEMA,
+    TASK_PROJECTION_SCHEMA,
+    TASK_RESULT_REFERENCE_SCHEMA,
+    VALIDATED_TASK_PLAN_SCHEMA,
+    TaskPlanContractKind,
+)
+from framework.shared.time import format_datetime, parse_datetime
+
+
+@dataclass(frozen=True, slots=True)
+class TaskBudget:
+    max_turns: int = 1
+    max_tool_calls: int = 0
+    max_memory_ops: int = 0
+    max_output_tokens: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_turns", positive_int(self.max_turns, "max_turns"))
+        for field_name in ("max_tool_calls", "max_memory_ops", "max_output_tokens"):
+            object.__setattr__(self, field_name, non_negative_int(getattr(self, field_name), field_name))
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "max_turns": self.max_turns,
+            "max_tool_calls": self.max_tool_calls,
+            "max_memory_ops": self.max_memory_ops,
+            "max_output_tokens": self.max_output_tokens,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset({"max_turns", "max_tool_calls", "max_memory_ops", "max_output_tokens"}),
+            model=cls.__name__,
+        )
+        return cls(**payload)
+
+    def plus(self, other: TaskBudget) -> TaskBudget:
+        return TaskBudget(
+            max_turns=self.max_turns + other.max_turns,
+            max_tool_calls=self.max_tool_calls + other.max_tool_calls,
+            max_memory_ops=self.max_memory_ops + other.max_memory_ops,
+            max_output_tokens=self.max_output_tokens + other.max_output_tokens,
+        )
+
+    def exceeds(self, limit: TaskBudget) -> tuple[str, ...]:
+        return tuple(
+            field_name
+            for field_name in ("max_turns", "max_tool_calls", "max_memory_ops", "max_output_tokens")
+            if getattr(self, field_name) > getattr(limit, field_name)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlanBuildBudget:
+    max_builder_calls: int = 1
+    max_turns: int = 1
+    max_tool_calls: int = 0
+
+    def __post_init__(self) -> None:
+        for field_name in ("max_builder_calls", "max_turns"):
+            object.__setattr__(self, field_name, positive_int(getattr(self, field_name), field_name))
+        object.__setattr__(self, "max_tool_calls", non_negative_int(self.max_tool_calls, "max_tool_calls"))
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "max_builder_calls": self.max_builder_calls,
+            "max_turns": self.max_turns,
+            "max_tool_calls": self.max_tool_calls,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset({"max_builder_calls", "max_turns", "max_tool_calls"}),
+            model=cls.__name__,
+        )
+        return cls(**payload)
+
+    def exceeds(self, limit: PlanBuildBudget) -> tuple[str, ...]:
+        return tuple(
+            field_name
+            for field_name in ("max_builder_calls", "max_turns", "max_tool_calls")
+            if getattr(self, field_name) > getattr(limit, field_name)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TaskRetryPolicy:
+    max_attempts: int = 1
+    retryable_reason_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "max_attempts", positive_int(self.max_attempts, "max_attempts"))
+        object.__setattr__(
+            self,
+            "retryable_reason_codes",
+            stable_text_tuple(self.retryable_reason_codes, "retryable_reason_codes"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_attempts": self.max_attempts,
+            "retryable_reason_codes": list(self.retryable_reason_codes),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset({"max_attempts", "retryable_reason_codes"}),
+            model=cls.__name__,
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class TaskOutputContract:
+    schema_ref: str
+    output_role: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "schema_ref", exact_reference(self.schema_ref, "schema_ref"))
+        object.__setattr__(self, "output_role", identifier(self.output_role, "output_role"))
+        object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "output_contract.metadata"))
+        ensure_candidate_only(self.to_dict(), path="$.output_contract")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_ref": self.schema_ref,
+            "output_role": self.output_role,
+            "metadata": thaw_mapping(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        ensure_candidate_only(value, path="$.output_contract")
+        payload = exact_keys(
+            value,
+            required=frozenset({"schema_ref", "output_role", "metadata"}),
+            model=cls.__name__,
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class TaskAcceptanceCriteria:
+    gate_refs: tuple[str, ...]
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "gate_refs",
+            stable_text_tuple(
+                self.gate_refs,
+                "acceptance_criteria.gate_refs",
+                allow_empty=False,
+                item_kind="exact_reference",
+            ),
+        )
+        object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "acceptance_criteria.metadata"))
+        ensure_candidate_only(self.to_dict(), path="$.acceptance_criteria")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"gate_refs": list(self.gate_refs), "metadata": thaw_mapping(self.metadata)}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        ensure_candidate_only(value, path="$.acceptance_criteria")
+        payload = exact_keys(
+            value,
+            required=frozenset({"gate_refs", "metadata"}),
+            model=cls.__name__,
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class TaskSpec:
+    task_id: str
+    objective: str
+    worker_capability: str
+    input_refs: tuple[str, ...]
+    output_contract: TaskOutputContract | Mapping[str, Any]
+    acceptance_criteria: TaskAcceptanceCriteria | Mapping[str, Any]
+    depends_on: tuple[str, ...] = ()
+    requested_tools: tuple[str, ...] = ()
+    requested_memory_namespaces: tuple[str, ...] = ()
+    budget_request: TaskBudget | Mapping[str, Any] = field(default_factory=TaskBudget)
+    retry_policy: TaskRetryPolicy | Mapping[str, Any] = field(default_factory=TaskRetryPolicy)
+    priority: int = 0
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = TASK_DEFINITION_SCHEMA
+    task_definition_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.TASK_DEFINITION,
+            self.schema_version,
+        )
+        output_contract = _model(self.output_contract, TaskOutputContract, "output_contract")
+        criteria = _model(self.acceptance_criteria, TaskAcceptanceCriteria, "acceptance_criteria")
+        budget = _model(self.budget_request, TaskBudget, "budget_request")
+        retry = _model(self.retry_policy, TaskRetryPolicy, "retry_policy")
+        object.__setattr__(self, "task_id", identifier(self.task_id, "task_id"))
+        object.__setattr__(self, "objective", required_text(self.objective, "objective", max_length=4096))
+        object.__setattr__(self, "worker_capability", identifier(self.worker_capability, "worker_capability"))
+        object.__setattr__(
+            self,
+            "input_refs",
+            stable_text_tuple(self.input_refs, "input_refs", allow_empty=False, item_kind="reference"),
+        )
+        object.__setattr__(self, "output_contract", output_contract)
+        object.__setattr__(self, "acceptance_criteria", criteria)
+        object.__setattr__(self, "depends_on", stable_text_tuple(self.depends_on, "depends_on"))
+        object.__setattr__(self, "requested_tools", stable_text_tuple(self.requested_tools, "requested_tools"))
+        object.__setattr__(
+            self,
+            "requested_memory_namespaces",
+            stable_text_tuple(self.requested_memory_namespaces, "requested_memory_namespaces"),
+        )
+        object.__setattr__(self, "budget_request", budget)
+        object.__setattr__(self, "retry_policy", retry)
+        if isinstance(self.priority, bool) or not isinstance(self.priority, int):
+            raise HarnessValidationError(
+                "TaskSpec priority must be an integer",
+                code="invalid_task_priority",
+                details={"task_id": self.task_id},
+            )
+        object.__setattr__(self, "diagnostics", frozen_mapping(self.diagnostics, "task.diagnostics"))
+        object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "task.metadata"))
+        ensure_candidate_only(self.checksum_projection(), path=f"$.tasks.{self.task_id}")
+        object.__setattr__(self, "task_definition_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "task_id": self.task_id,
+            "objective": self.objective,
+            "depends_on": list(self.depends_on),
+            "worker_capability": self.worker_capability,
+            "input_refs": list(self.input_refs),
+            "output_contract": self.output_contract.to_dict(),
+            "acceptance_criteria": self.acceptance_criteria.to_dict(),
+            "requested_tools": list(self.requested_tools),
+            "requested_memory_namespaces": list(self.requested_memory_namespaces),
+            "budget_request": self.budget_request.to_dict(),
+            "retry_policy": self.retry_policy.to_dict(),
+            "priority": self.priority,
+            "diagnostics": thaw_mapping(self.diagnostics),
+            "metadata": thaw_mapping(self.metadata),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "task_definition_checksum": self.task_definition_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        ensure_candidate_only(value, path="$.task")
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "task_id",
+                    "objective",
+                    "depends_on",
+                    "worker_capability",
+                    "input_refs",
+                    "output_contract",
+                    "acceptance_criteria",
+                    "requested_tools",
+                    "requested_memory_namespaces",
+                    "budget_request",
+                    "retry_policy",
+                    "priority",
+                    "diagnostics",
+                    "metadata",
+                    "task_definition_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("task_definition_checksum"), "task_definition_checksum")
+        task = cls(**payload)
+        _verify_checksum(supplied, task.task_definition_checksum, "task_definition_checksum", cls.__name__)
+        return task
+
+
+@dataclass(frozen=True, slots=True)
+class PlanCandidate:
+    candidate_id: str
+    run_id: str
+    workflow_id: str
+    stage_id: str
+    graph_checksum: str
+    input_context_refs: tuple[str, ...]
+    tasks: tuple[TaskSpec, ...]
+    required_output_roles: tuple[str, ...]
+    generated_by: str
+    requested_plan_budget: PlanBuildBudget | Mapping[str, Any]
+    requested_max_parallelism: int = 1
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = PLAN_CANDIDATE_SCHEMA
+    candidate_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.PLAN_CANDIDATE,
+            self.schema_version,
+        )
+        object.__setattr__(self, "candidate_id", identifier(self.candidate_id, "candidate_id"))
+        object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
+        object.__setattr__(self, "workflow_id", identifier(self.workflow_id, "workflow_id"))
+        object.__setattr__(self, "stage_id", identifier(self.stage_id, "stage_id"))
+        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        object.__setattr__(
+            self,
+            "input_context_refs",
+            stable_text_tuple(
+                self.input_context_refs,
+                "input_context_refs",
+                allow_empty=False,
+                item_kind="reference",
+            ),
+        )
+        tasks = tuple(_model(item, TaskSpec, "tasks") for item in self.tasks)
+        if not tasks:
+            raise HarnessValidationError(
+                "PlanCandidate must contain at least one task",
+                code="task_plan_empty_candidate",
+            )
+        object.__setattr__(
+            self,
+            "tasks",
+            tuple(sorted(tasks, key=lambda item: (item.task_id, item.task_definition_checksum))),
+        )
+        object.__setattr__(
+            self,
+            "required_output_roles",
+            stable_text_tuple(
+                self.required_output_roles,
+                "required_output_roles",
+                allow_empty=False,
+            ),
+        )
+        object.__setattr__(self, "generated_by", required_text(self.generated_by, "generated_by"))
+        object.__setattr__(
+            self,
+            "requested_plan_budget",
+            _model(self.requested_plan_budget, PlanBuildBudget, "requested_plan_budget"),
+        )
+        object.__setattr__(
+            self,
+            "requested_max_parallelism",
+            positive_int(self.requested_max_parallelism, "requested_max_parallelism"),
+        )
+        object.__setattr__(self, "diagnostics", frozen_mapping(self.diagnostics, "candidate.diagnostics"))
+        object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "candidate.metadata"))
+        ensure_candidate_only(self.checksum_projection(), path="$.candidate")
+        object.__setattr__(self, "candidate_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "candidate_id": self.candidate_id,
+            "run_id": self.run_id,
+            "workflow_id": self.workflow_id,
+            "stage_id": self.stage_id,
+            "graph_checksum": self.graph_checksum,
+            "input_context_refs": list(self.input_context_refs),
+            "tasks": [task.to_dict() for task in self.tasks],
+            "required_output_roles": list(self.required_output_roles),
+            "generated_by": self.generated_by,
+            "requested_plan_budget": self.requested_plan_budget.to_dict(),
+            "requested_max_parallelism": self.requested_max_parallelism,
+            "diagnostics": thaw_mapping(self.diagnostics),
+            "metadata": thaw_mapping(self.metadata),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "candidate_checksum": self.candidate_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        ensure_candidate_only(value, path="$.candidate")
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "candidate_id",
+                    "run_id",
+                    "workflow_id",
+                    "stage_id",
+                    "graph_checksum",
+                    "input_context_refs",
+                    "tasks",
+                    "required_output_roles",
+                    "generated_by",
+                    "requested_plan_budget",
+                    "requested_max_parallelism",
+                    "diagnostics",
+                    "metadata",
+                    "candidate_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("candidate_checksum"), "candidate_checksum")
+        raw_tasks = payload.pop("tasks")
+        if isinstance(raw_tasks, (str, bytes)) or not isinstance(raw_tasks, Sequence):
+            raise HarnessValidationError("PlanCandidate tasks must be an array", code="invalid_task_plan_payload")
+        candidate = cls(tasks=tuple(TaskSpec.from_dict(item) for item in raw_tasks), **payload)
+        _verify_checksum(supplied, candidate.candidate_checksum, "candidate_checksum", cls.__name__)
+        return candidate
+
+
+@dataclass(frozen=True, slots=True)
+class TaskPlanLimits:
+    max_tasks: int
+    max_depth: int
+    max_parallelism: int
+    max_replans: int
+    max_task_attempts: int
+    plan_build_budget: PlanBuildBudget | Mapping[str, Any]
+    per_task_budget: TaskBudget | Mapping[str, Any]
+    aggregate_task_budget: TaskBudget | Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        for field_name in ("max_tasks", "max_depth", "max_parallelism", "max_task_attempts"):
+            object.__setattr__(self, field_name, positive_int(getattr(self, field_name), field_name))
+        object.__setattr__(self, "max_replans", non_negative_int(self.max_replans, "max_replans"))
+        object.__setattr__(self, "plan_build_budget", _model(self.plan_build_budget, PlanBuildBudget, "plan_build_budget"))
+        object.__setattr__(self, "per_task_budget", _model(self.per_task_budget, TaskBudget, "per_task_budget"))
+        object.__setattr__(
+            self,
+            "aggregate_task_budget",
+            _model(self.aggregate_task_budget, TaskBudget, "aggregate_task_budget"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_tasks": self.max_tasks,
+            "max_depth": self.max_depth,
+            "max_parallelism": self.max_parallelism,
+            "max_replans": self.max_replans,
+            "max_task_attempts": self.max_task_attempts,
+            "plan_build_budget": self.plan_build_budget.to_dict(),
+            "per_task_budget": self.per_task_budget.to_dict(),
+            "aggregate_task_budget": self.aggregate_task_budget.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "max_tasks",
+                    "max_depth",
+                    "max_parallelism",
+                    "max_replans",
+                    "max_task_attempts",
+                    "plan_build_budget",
+                    "per_task_budget",
+                    "aggregate_task_budget",
+                }
+            ),
+            model=cls.__name__,
+        )
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedTaskSpec:
+    task: TaskSpec | Mapping[str, Any]
+    worker_ref: str
+    worker_contract_ref: str
+    allowed_tools: tuple[str, ...]
+    allowed_memory_namespaces: tuple[str, ...]
+    gate_refs: tuple[str, ...]
+    normalized_budget: TaskBudget | Mapping[str, Any]
+    normalized_retry_policy: TaskRetryPolicy | Mapping[str, Any]
+    subagent_id: str | None = None
+    schema_version: str = RESOLVED_TASK_DEFINITION_SCHEMA
+    task_definition_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.RESOLVED_TASK_DEFINITION,
+            self.schema_version,
+        )
+        task = _model(self.task, TaskSpec, "task")
+        budget = _model(self.normalized_budget, TaskBudget, "normalized_budget")
+        retry = _model(self.normalized_retry_policy, TaskRetryPolicy, "normalized_retry_policy")
+        object.__setattr__(self, "task", task)
+        object.__setattr__(self, "worker_ref", exact_reference(self.worker_ref, "worker_ref"))
+        object.__setattr__(
+            self,
+            "worker_contract_ref",
+            exact_reference(self.worker_contract_ref, "worker_contract_ref"),
+        )
+        object.__setattr__(self, "allowed_tools", stable_text_tuple(self.allowed_tools, "allowed_tools"))
+        object.__setattr__(
+            self,
+            "allowed_memory_namespaces",
+            stable_text_tuple(self.allowed_memory_namespaces, "allowed_memory_namespaces"),
+        )
+        object.__setattr__(
+            self,
+            "gate_refs",
+            stable_text_tuple(self.gate_refs, "gate_refs", allow_empty=False, item_kind="exact_reference"),
+        )
+        object.__setattr__(self, "normalized_budget", budget)
+        object.__setattr__(self, "normalized_retry_policy", retry)
+        object.__setattr__(self, "subagent_id", optional_text(self.subagent_id, "subagent_id"))
+        object.__setattr__(self, "task_definition_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    @property
+    def task_id(self) -> str:
+        return self.task.task_id
+
+    @property
+    def depends_on(self) -> tuple[str, ...]:
+        return self.task.depends_on
+
+    @property
+    def output_role(self) -> str:
+        return self.task.output_contract.output_role
+
+    @property
+    def priority(self) -> int:
+        return self.task.priority
+
+    @property
+    def binding_checksum(self) -> str:
+        """Checksum of the immutable execution boundary pinned in this task."""
+        return canonical_payload_checksum(
+            {
+                "worker_ref": self.worker_ref,
+                "worker_contract_ref": self.worker_contract_ref,
+                "allowed_tools": list(self.allowed_tools),
+                "allowed_memory_namespaces": list(self.allowed_memory_namespaces),
+                "subagent_id": self.subagent_id,
+            }
+        )
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "task": self.task.to_dict(),
+            "worker_ref": self.worker_ref,
+            "worker_contract_ref": self.worker_contract_ref,
+            "allowed_tools": list(self.allowed_tools),
+            "allowed_memory_namespaces": list(self.allowed_memory_namespaces),
+            "gate_refs": list(self.gate_refs),
+            "normalized_budget": self.normalized_budget.to_dict(),
+            "normalized_retry_policy": self.normalized_retry_policy.to_dict(),
+            "subagent_id": self.subagent_id,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "task_definition_checksum": self.task_definition_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "task",
+                    "worker_ref",
+                    "worker_contract_ref",
+                    "allowed_tools",
+                    "allowed_memory_namespaces",
+                    "gate_refs",
+                    "normalized_budget",
+                    "normalized_retry_policy",
+                    "subagent_id",
+                    "task_definition_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("task_definition_checksum"), "task_definition_checksum")
+        payload["task"] = TaskSpec.from_dict(payload["task"])
+        resolved = cls(**payload)
+        _verify_checksum(supplied, resolved.task_definition_checksum, "task_definition_checksum", cls.__name__)
+        return resolved
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedTaskPlan:
+    plan_id: str
+    run_id: str
+    workflow_id: str
+    stage_id: str
+    graph_checksum: str
+    version: int
+    parent_plan_id: str | None
+    source_candidate_ref: str
+    policy_ref: str
+    tasks: tuple[ResolvedTaskSpec, ...]
+    required_output_roles: tuple[str, ...]
+    limits: TaskPlanLimits | Mapping[str, Any]
+    accepted_at: str
+    schema_version: str = VALIDATED_TASK_PLAN_SCHEMA
+    plan_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.VALIDATED_PLAN,
+            self.schema_version,
+        )
+        object.__setattr__(self, "plan_id", identifier(self.plan_id, "plan_id"))
+        object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
+        object.__setattr__(self, "workflow_id", identifier(self.workflow_id, "workflow_id"))
+        object.__setattr__(self, "stage_id", identifier(self.stage_id, "stage_id"))
+        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        object.__setattr__(self, "version", positive_int(self.version, "version"))
+        object.__setattr__(
+            self,
+            "parent_plan_id",
+            identifier(self.parent_plan_id, "parent_plan_id") if self.parent_plan_id is not None else None,
+        )
+        object.__setattr__(self, "source_candidate_ref", reference(self.source_candidate_ref, "source_candidate_ref"))
+        object.__setattr__(self, "policy_ref", exact_reference(self.policy_ref, "policy_ref"))
+        tasks = tuple(_model(item, ResolvedTaskSpec, "tasks") for item in self.tasks)
+        if not tasks:
+            raise HarnessValidationError("ValidatedTaskPlan must contain tasks", code="task_plan_empty_plan")
+        object.__setattr__(self, "tasks", tuple(sorted(tasks, key=lambda item: (item.task_id, item.task_definition_checksum))))
+        object.__setattr__(
+            self,
+            "required_output_roles",
+            stable_text_tuple(self.required_output_roles, "required_output_roles", allow_empty=False),
+        )
+        object.__setattr__(self, "limits", _model(self.limits, TaskPlanLimits, "limits"))
+        object.__setattr__(self, "accepted_at", _timestamp(self.accepted_at, "accepted_at"))
+        object.__setattr__(self, "plan_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "plan_id": self.plan_id,
+            "run_id": self.run_id,
+            "workflow_id": self.workflow_id,
+            "stage_id": self.stage_id,
+            "graph_checksum": self.graph_checksum,
+            "version": self.version,
+            "parent_plan_id": self.parent_plan_id,
+            "source_candidate_ref": self.source_candidate_ref,
+            "policy_ref": self.policy_ref,
+            "tasks": [task.to_dict() for task in self.tasks],
+            "required_output_roles": list(self.required_output_roles),
+            "limits": self.limits.to_dict(),
+            "accepted_at": self.accepted_at,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "plan_checksum": self.plan_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "plan_id",
+                    "run_id",
+                    "workflow_id",
+                    "stage_id",
+                    "graph_checksum",
+                    "version",
+                    "parent_plan_id",
+                    "source_candidate_ref",
+                    "policy_ref",
+                    "tasks",
+                    "required_output_roles",
+                    "limits",
+                    "accepted_at",
+                    "plan_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("plan_checksum"), "plan_checksum")
+        raw_tasks = payload.pop("tasks")
+        if isinstance(raw_tasks, (str, bytes)) or not isinstance(raw_tasks, Sequence):
+            raise HarnessValidationError("ValidatedTaskPlan tasks must be an array", code="invalid_task_plan_payload")
+        plan = cls(tasks=tuple(ResolvedTaskSpec.from_dict(item) for item in raw_tasks), **payload)
+        _verify_checksum(supplied, plan.plan_checksum, "plan_checksum", cls.__name__)
+        return plan
+
+
+class PlanPatchOperationType(StrEnum):
+    ADD_REPLACEMENT_TASK = "ADD_REPLACEMENT_TASK"
+    SKIP_PENDING_TASK = "SKIP_PENDING_TASK"
+    UPDATE_PENDING_DEPENDENCY = "UPDATE_PENDING_DEPENDENCY"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanPatchOperation:
+    operation: PlanPatchOperationType | str
+    target_task_id: str | None = None
+    replacement_task: TaskSpec | Mapping[str, Any] | None = None
+    depends_on: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        operation = PlanPatchOperationType(self.operation)
+        target = identifier(self.target_task_id, "target_task_id") if self.target_task_id is not None else None
+        replacement = self.replacement_task
+        if replacement is not None:
+            replacement = _model(replacement, TaskSpec, "replacement_task")
+        depends_on = stable_text_tuple(self.depends_on, "depends_on")
+        if target is None:
+            raise HarnessValidationError(
+                "task patch operation requires target_task_id",
+                code="invalid_task_patch_operation",
+            )
+        if operation is PlanPatchOperationType.ADD_REPLACEMENT_TASK and replacement is None:
+            raise HarnessValidationError(
+                "ADD_REPLACEMENT_TASK requires replacement_task",
+                code="invalid_task_patch_operation",
+            )
+        if operation is PlanPatchOperationType.ADD_REPLACEMENT_TASK and depends_on:
+            raise HarnessValidationError(
+                "ADD_REPLACEMENT_TASK must use replacement_task dependencies",
+                code="invalid_task_patch_operation",
+            )
+        if operation is not PlanPatchOperationType.ADD_REPLACEMENT_TASK and replacement is not None:
+            raise HarnessValidationError(
+                "replacement_task is only valid for ADD_REPLACEMENT_TASK",
+                code="invalid_task_patch_operation",
+            )
+        if operation is not PlanPatchOperationType.UPDATE_PENDING_DEPENDENCY and depends_on:
+            raise HarnessValidationError(
+                "depends_on is only valid for UPDATE_PENDING_DEPENDENCY",
+                code="invalid_task_patch_operation",
+            )
+        if operation is PlanPatchOperationType.UPDATE_PENDING_DEPENDENCY and replacement is not None:
+            raise HarnessValidationError(
+                "replacement_task is not valid for UPDATE_PENDING_DEPENDENCY",
+                code="invalid_task_patch_operation",
+            )
+        if operation is PlanPatchOperationType.UPDATE_PENDING_DEPENDENCY and not depends_on:
+            raise HarnessValidationError(
+                "UPDATE_PENDING_DEPENDENCY requires depends_on",
+                code="invalid_task_patch_operation",
+            )
+        object.__setattr__(self, "operation", operation)
+        object.__setattr__(self, "target_task_id", target)
+        object.__setattr__(self, "replacement_task", replacement)
+        object.__setattr__(self, "depends_on", depends_on)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "operation": self.operation.value,
+            "target_task_id": self.target_task_id,
+            "replacement_task": self.replacement_task.to_dict() if self.replacement_task else None,
+            "depends_on": list(self.depends_on),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset({"operation", "target_task_id", "replacement_task", "depends_on"}),
+            model=cls.__name__,
+        )
+        replacement = payload.get("replacement_task")
+        if replacement is not None:
+            payload["replacement_task"] = TaskSpec.from_dict(replacement)
+        return cls(**payload)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanPatch:
+    patch_id: str
+    run_id: str
+    stage_id: str
+    base_plan_id: str
+    base_plan_version: int
+    reason_code: str
+    source_candidate_ref: str
+    operations: tuple[PlanPatchOperation, ...]
+    schema_version: str = TASK_PLAN_PATCH_SCHEMA
+    patch_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(TaskPlanContractKind.PLAN_PATCH, self.schema_version)
+        object.__setattr__(self, "patch_id", identifier(self.patch_id, "patch_id"))
+        object.__setattr__(self, "run_id", identifier(self.run_id, "run_id"))
+        object.__setattr__(self, "stage_id", identifier(self.stage_id, "stage_id"))
+        object.__setattr__(self, "base_plan_id", identifier(self.base_plan_id, "base_plan_id"))
+        object.__setattr__(self, "base_plan_version", positive_int(self.base_plan_version, "base_plan_version"))
+        object.__setattr__(self, "reason_code", identifier(self.reason_code, "reason_code"))
+        object.__setattr__(self, "source_candidate_ref", reference(self.source_candidate_ref, "source_candidate_ref"))
+        operations = tuple(_model(item, PlanPatchOperation, "operations") for item in self.operations)
+        if not operations:
+            raise HarnessValidationError("PlanPatch must contain operations", code="empty_task_plan_patch")
+        object.__setattr__(self, "operations", operations)
+        object.__setattr__(self, "patch_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "patch_id": self.patch_id,
+            "run_id": self.run_id,
+            "stage_id": self.stage_id,
+            "base_plan_id": self.base_plan_id,
+            "base_plan_version": self.base_plan_version,
+            "reason_code": self.reason_code,
+            "source_candidate_ref": self.source_candidate_ref,
+            "operations": [operation.to_dict() for operation in self.operations],
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "patch_checksum": self.patch_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "patch_id",
+                    "run_id",
+                    "stage_id",
+                    "base_plan_id",
+                    "base_plan_version",
+                    "reason_code",
+                    "source_candidate_ref",
+                    "operations",
+                    "patch_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("patch_checksum"), "patch_checksum")
+        raw_operations = payload.pop("operations")
+        if isinstance(raw_operations, (str, bytes)) or not isinstance(raw_operations, Sequence):
+            raise HarnessValidationError("PlanPatch operations must be an array", code="invalid_task_plan_payload")
+        patch = cls(operations=tuple(PlanPatchOperation.from_dict(item) for item in raw_operations), **payload)
+        _verify_checksum(supplied, patch.patch_checksum, "patch_checksum", cls.__name__)
+        return patch
+
+
+@dataclass(frozen=True, slots=True)
+class TaskResultReference:
+    result_ref: str
+    result_checksum: str
+    output_role: str
+    output_schema_ref: str
+    schema_version: str = TASK_RESULT_REFERENCE_SCHEMA
+    reference_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.RESULT_REFERENCE,
+            self.schema_version,
+        )
+        object.__setattr__(self, "result_ref", reference(self.result_ref, "result_ref"))
+        object.__setattr__(self, "result_checksum", checksum(self.result_checksum, "result_checksum"))
+        object.__setattr__(self, "output_role", identifier(self.output_role, "output_role"))
+        object.__setattr__(
+            self,
+            "output_schema_ref",
+            exact_reference(self.output_schema_ref, "output_schema_ref"),
+        )
+        object.__setattr__(self, "reference_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "result_ref": self.result_ref,
+            "result_checksum": self.result_checksum,
+            "output_role": self.output_role,
+            "output_schema_ref": self.output_schema_ref,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "reference_checksum": self.reference_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "result_ref",
+                    "result_checksum",
+                    "output_role",
+                    "output_schema_ref",
+                    "reference_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("reference_checksum"), "reference_checksum")
+        result = cls(**payload)
+        _verify_checksum(supplied, result.reference_checksum, "reference_checksum", cls.__name__)
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class TaskInstance:
+    run_id: str
+    stage_id: str
+    plan_id: str
+    plan_version: int
+    plan_checksum: str
+    task_id: str
+    task_definition_checksum: str
+    task_instance_id: str
+    attempt: int
+    worker_ref: str
+    idempotency_key: str
+    fencing_token: str
+    budget_snapshot: TaskBudget | Mapping[str, Any]
+    schema_version: str = TASK_INSTANCE_SCHEMA
+    instance_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.TASK_INSTANCE,
+            self.schema_version,
+        )
+        for field_name in ("run_id", "stage_id", "plan_id", "task_id", "task_instance_id"):
+            object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
+        object.__setattr__(self, "plan_version", positive_int(self.plan_version, "plan_version"))
+        object.__setattr__(self, "plan_checksum", checksum(self.plan_checksum, "plan_checksum"))
+        object.__setattr__(
+            self,
+            "task_definition_checksum",
+            checksum(self.task_definition_checksum, "task_definition_checksum"),
+        )
+        object.__setattr__(self, "attempt", positive_int(self.attempt, "attempt"))
+        object.__setattr__(self, "worker_ref", exact_reference(self.worker_ref, "worker_ref"))
+        object.__setattr__(self, "idempotency_key", identifier(self.idempotency_key, "idempotency_key"))
+        object.__setattr__(self, "fencing_token", identifier(self.fencing_token, "fencing_token"))
+        object.__setattr__(self, "budget_snapshot", _model(self.budget_snapshot, TaskBudget, "budget_snapshot"))
+        object.__setattr__(self, "instance_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "stage_id": self.stage_id,
+            "plan_id": self.plan_id,
+            "plan_version": self.plan_version,
+            "plan_checksum": self.plan_checksum,
+            "task_id": self.task_id,
+            "task_definition_checksum": self.task_definition_checksum,
+            "task_instance_id": self.task_instance_id,
+            "attempt": self.attempt,
+            "worker_ref": self.worker_ref,
+            "idempotency_key": self.idempotency_key,
+            "fencing_token": self.fencing_token,
+            "budget_snapshot": self.budget_snapshot.to_dict(),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "instance_checksum": self.instance_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "run_id",
+                    "stage_id",
+                    "plan_id",
+                    "plan_version",
+                    "plan_checksum",
+                    "task_id",
+                    "task_definition_checksum",
+                    "task_instance_id",
+                    "attempt",
+                    "worker_ref",
+                    "idempotency_key",
+                    "fencing_token",
+                    "budget_snapshot",
+                    "instance_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("instance_checksum"), "instance_checksum")
+        instance = cls(**payload)
+        _verify_checksum(supplied, instance.instance_checksum, "instance_checksum", cls.__name__)
+        return instance
+
+
+class TaskLifecycle(StrEnum):
+    PENDING = "pending"
+    READY = "ready"
+    DISPATCHED = "dispatched"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    BLOCKED = "blocked"
+
+
+@dataclass(frozen=True, slots=True)
+class TaskProjection:
+    task_id: str
+    task_definition_checksum: str
+    status: TaskLifecycle | str
+    attempts: int = 0
+    active_instance_id: str | None = None
+    result: TaskResultReference | Mapping[str, Any] | None = None
+    failure_reason_code: str | None = None
+    schema_version: str = TASK_PROJECTION_SCHEMA
+    projection_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.TASK_PROJECTION,
+            self.schema_version,
+        )
+        object.__setattr__(self, "task_id", identifier(self.task_id, "task_id"))
+        object.__setattr__(
+            self,
+            "task_definition_checksum",
+            checksum(self.task_definition_checksum, "task_definition_checksum"),
+        )
+        status = TaskLifecycle(self.status)
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "attempts", non_negative_int(self.attempts, "attempts"))
+        object.__setattr__(
+            self,
+            "active_instance_id",
+            identifier(self.active_instance_id, "active_instance_id") if self.active_instance_id is not None else None,
+        )
+        result = self.result
+        if result is not None:
+            result = _model(result, TaskResultReference, "result")
+        object.__setattr__(self, "result", result)
+        object.__setattr__(
+            self,
+            "failure_reason_code",
+            identifier(self.failure_reason_code, "failure_reason_code") if self.failure_reason_code is not None else None,
+        )
+        if status is TaskLifecycle.SUCCEEDED and result is None:
+            raise HarnessValidationError(
+                "succeeded task projection requires a committed result reference",
+                code="invalid_task_projection",
+                details={"task_id": self.task_id},
+            )
+        if result is not None and status is not TaskLifecycle.SUCCEEDED:
+            raise HarnessValidationError(
+                "only succeeded task projection may carry a result reference",
+                code="invalid_task_projection",
+                details={"task_id": self.task_id},
+            )
+        object.__setattr__(self, "projection_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "task_id": self.task_id,
+            "task_definition_checksum": self.task_definition_checksum,
+            "status": self.status.value,
+            "attempts": self.attempts,
+            "active_instance_id": self.active_instance_id,
+            "result": self.result.to_dict() if self.result else None,
+            "failure_reason_code": self.failure_reason_code,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "projection_checksum": self.projection_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "task_id",
+                    "task_definition_checksum",
+                    "status",
+                    "attempts",
+                    "active_instance_id",
+                    "result",
+                    "failure_reason_code",
+                    "projection_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("projection_checksum"), "projection_checksum")
+        if payload["result"] is not None:
+            payload["result"] = TaskResultReference.from_dict(payload["result"])
+        projection = cls(**payload)
+        _verify_checksum(supplied, projection.projection_checksum, "projection_checksum", cls.__name__)
+        return projection
+
+
+@dataclass(frozen=True, slots=True)
+class TaskPlanProjection:
+    run_id: str
+    stage_id: str
+    graph_checksum: str
+    plan_id: str
+    plan_version: int
+    plan_checksum: str
+    policy_ref: str
+    tasks: tuple[TaskProjection, ...]
+    consumed_budget: Mapping[str, Any]
+    last_sequence: int
+    schema_version: str = TASK_PLAN_PROJECTION_SCHEMA
+    projection_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        DEFAULT_TASK_PLAN_SCHEMA_REGISTRY.require_executable(
+            TaskPlanContractKind.PLAN_PROJECTION,
+            self.schema_version,
+        )
+        for field_name in ("run_id", "stage_id", "plan_id"):
+            object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
+        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        object.__setattr__(self, "plan_version", positive_int(self.plan_version, "plan_version"))
+        object.__setattr__(self, "plan_checksum", checksum(self.plan_checksum, "plan_checksum"))
+        object.__setattr__(self, "policy_ref", exact_reference(self.policy_ref, "policy_ref"))
+        tasks = tuple(_model(item, TaskProjection, "tasks") for item in self.tasks)
+        identities = [task.task_id for task in tasks]
+        if len(identities) != len(set(identities)):
+            raise HarnessValidationError(
+                "TaskPlanProjection task ids must be unique",
+                code="duplicate_task_projection",
+            )
+        object.__setattr__(self, "tasks", tuple(sorted(tasks, key=lambda item: item.task_id)))
+        object.__setattr__(self, "consumed_budget", frozen_mapping(self.consumed_budget, "consumed_budget"))
+        object.__setattr__(self, "last_sequence", non_negative_int(self.last_sequence, "last_sequence"))
+        object.__setattr__(self, "projection_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "run_id": self.run_id,
+            "stage_id": self.stage_id,
+            "graph_checksum": self.graph_checksum,
+            "plan_id": self.plan_id,
+            "plan_version": self.plan_version,
+            "plan_checksum": self.plan_checksum,
+            "policy_ref": self.policy_ref,
+            "tasks": [task.to_dict() for task in self.tasks],
+            "consumed_budget": thaw_mapping(self.consumed_budget),
+            "last_sequence": self.last_sequence,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "projection_checksum": self.projection_checksum}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        payload = exact_keys(
+            value,
+            required=frozenset(
+                {
+                    "schema_version",
+                    "run_id",
+                    "stage_id",
+                    "graph_checksum",
+                    "plan_id",
+                    "plan_version",
+                    "plan_checksum",
+                    "policy_ref",
+                    "tasks",
+                    "consumed_budget",
+                    "last_sequence",
+                    "projection_checksum",
+                }
+            ),
+            model=cls.__name__,
+        )
+        supplied = checksum(payload.pop("projection_checksum"), "projection_checksum")
+        raw_tasks = payload.pop("tasks")
+        if isinstance(raw_tasks, (str, bytes)) or not isinstance(raw_tasks, Sequence):
+            raise HarnessValidationError("TaskPlanProjection tasks must be an array", code="invalid_task_plan_payload")
+        projection = cls(tasks=tuple(TaskProjection.from_dict(item) for item in raw_tasks), **payload)
+        _verify_checksum(supplied, projection.projection_checksum, "projection_checksum", cls.__name__)
+        return projection
+
+
+def _model(value: Any, model_type: type, field_name: str):
+    if isinstance(value, model_type):
+        return value
+    if isinstance(value, Mapping):
+        return model_type.from_dict(value)
+    raise HarnessValidationError(
+        f"{field_name} must be {model_type.__name__}",
+        code="invalid_task_plan_model",
+        details={"field": field_name, "expected": model_type.__name__},
+    )
+
+
+def _verify_checksum(supplied: str, computed: str, field_name: str, model: str) -> None:
+    if supplied != computed:
+        raise HarnessValidationError(
+            f"{model} checksum does not match canonical content",
+            code="task_plan_checksum_mismatch",
+            details={"model": model, "field": field_name},
+        )
+
+
+def _timestamp(value: Any, field_name: str) -> str:
+    text = required_text(value, field_name)
+    parsed = parse_datetime(text)
+    if parsed is None or parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise HarnessValidationError(
+            f"{field_name} must be an RFC3339 timezone-aware timestamp",
+            code="invalid_task_plan_timestamp",
+            details={"field": field_name},
+        )
+    formatted = format_datetime(parsed)
+    if formatted is None:
+        raise AssertionError("timezone-aware timestamp did not format")
+    return formatted
+
+
+__all__ = [
+    "PlanBuildBudget",
+    "PlanCandidate",
+    "PlanPatch",
+    "PlanPatchOperation",
+    "PlanPatchOperationType",
+    "ResolvedTaskSpec",
+    "TaskAcceptanceCriteria",
+    "TaskBudget",
+    "TaskInstance",
+    "TaskLifecycle",
+    "TaskOutputContract",
+    "TaskPlanLimits",
+    "TaskPlanProjection",
+    "TaskProjection",
+    "TaskResultReference",
+    "TaskRetryPolicy",
+    "TaskSpec",
+    "ValidatedTaskPlan",
+    "TaskStatus",
+    "TaskPlanBudget",
+    "TASK_SPEC_SCHEMA",
+    "TASK_PLAN_SCHEMA",
+    "TASK_RESULT_SCHEMA",
+]
+
+# Names used by early TaskPlan fixtures remain harmless read-only aliases;
+# canonical storage and checksums still use the versioned contracts above.
+TaskStatus = TaskLifecycle
+TaskPlanBudget = TaskBudget
+TASK_SPEC_SCHEMA = TASK_DEFINITION_SCHEMA
+TASK_PLAN_SCHEMA = VALIDATED_TASK_PLAN_SCHEMA
+TASK_RESULT_SCHEMA = TASK_RESULT_REFERENCE_SCHEMA

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.events.canonical import BusinessContext
+from framework.events.canonical import BusinessContext, checksum_for
 from framework.events.errors import (
     EventContextConflictError,
     EventQuarantineError,
@@ -35,6 +35,7 @@ from framework.events.schema.catalog import (
     _run_pure_validator,
 )
 from framework.events.telemetry import EventTelemetry
+from framework.harness.task_plan.store import TASK_PLAN_EVENT_SCHEMA, TaskPlanEvent
 
 
 _LEGACY_FIXTURES = Path(__file__).parents[2] / "fixtures" / "events" / "legacy"
@@ -307,6 +308,42 @@ def test_default_catalog_registers_workflow_and_harness_aliases() -> None:
         "newsroom.workflow-event/v1",
         {"workflow_id": "wf-1", "workflow_version": "1", "profile": "live"},
     ) == {"workflow_id": "wf-1", "workflow_version": "1", "profile": "live"}
+
+
+def test_default_catalog_validates_exact_reference_only_task_plan_events() -> None:
+    catalog = default_event_schema_catalog()
+    graph_checksum = checksum_for({"graph": "task-plan"})
+    candidate_ref = checksum_for({"candidate": "one"})
+    event = TaskPlanEvent(
+        "PLAN_CANDIDATE_BUILT",
+        run_id="run-task-plan",
+        workflow_id="workflow-task-plan",
+        stage_id="analysis",
+        graph_checksum=graph_checksum,
+        input_checksum=candidate_ref,
+        payload={"candidate_ref": candidate_ref},
+        sequence=1,
+    )
+
+    durable_payload = event.to_dict()
+    durable_payload.pop("event_type")
+    durable_payload["details"] = durable_payload.pop("payload")
+    assert catalog.validate(
+        "PLAN_CANDIDATE_BUILT",
+        TASK_PLAN_EVENT_SCHEMA,
+        durable_payload,
+    ) == durable_payload
+
+    unsafe = dict(durable_payload)
+    unsafe["details"] = {"message": "planner prompt must not enter the event"}
+    with pytest.raises(EventSchemaValidationError) as captured:
+        catalog.validate(
+            "PLAN_CANDIDATE_BUILT",
+            TASK_PLAN_EVENT_SCHEMA,
+            unsafe,
+        )
+
+    assert captured.value.path == "$.details"
 
 
 def test_workflow_payload_fixture_covers_every_current_event_and_operation() -> None:

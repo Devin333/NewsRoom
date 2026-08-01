@@ -544,6 +544,31 @@ def _valid_payload(task: str) -> dict[str, Any]:
         return {"paper": paper, "evidence_pack": evidence_pack}
     if task == "candidate_experiment_claims":
         return {"evidence_pack": evidence_pack}
+    if task == "candidate_task_plan":
+        return {
+            "stage": {
+                "run_id": "run-1",
+                "workflow_id": "research.paper_analysis.dynamic",
+                "stage_id": "dynamic_analysis_stage",
+                "graph_checksum": "sha256:" + "1" * 64,
+                "context_refs": {
+                    "document": "document",
+                    "evidence_pack": "evidence_pack",
+                },
+                "policy_ref": "research.analysis@1",
+                "budget": {},
+            },
+            "required_output_roles": [
+                "analysis.structure",
+                "analysis.contribution",
+                "analysis.experiments",
+            ],
+            "allowed_capabilities": [
+                "research.analysis.structure",
+                "research.analysis.contribution",
+                "research.analysis.experiments",
+            ],
+        }
     if task == "rag_plan_candidate":
         return {
             "session": {
@@ -605,6 +630,36 @@ def _valid_output(task: str) -> dict[str, Any]:
                 ],
                 "confidence": 0.9,
             }
+        }
+    if task == "candidate_task_plan":
+        return {
+            "tasks": [
+                {
+                    "task_id": "analyze-structure",
+                    "objective": "Analyze paper structure from accepted evidence.",
+                    "worker_capability": "research.analysis.structure",
+                    "input_refs": ["document", "evidence_pack"],
+                    "depends_on": [],
+                    "priority": 10,
+                },
+                {
+                    "task_id": "analyze-contribution",
+                    "objective": "Analyze paper contributions from accepted evidence.",
+                    "worker_capability": "research.analysis.contribution",
+                    "input_refs": ["document", "evidence_pack"],
+                    "depends_on": [],
+                    "priority": 10,
+                },
+                {
+                    "task_id": "analyze-experiments",
+                    "objective": "Analyze experiments after the structure task.",
+                    "worker_capability": "research.analysis.experiments",
+                    "input_refs": ["document", "evidence_pack"],
+                    "depends_on": ["analyze-structure"],
+                    "priority": 5,
+                },
+            ],
+            "requested_max_parallelism": 3,
         }
     if task == "candidate_taxonomy":
         return {

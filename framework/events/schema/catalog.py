@@ -49,6 +49,33 @@ _BUSINESS_CONTEXT_FIELDS = (
     "request_id",
 )
 
+# TaskPlan uses the same durable event stream as the rest of Harness.  The
+# payload schema is intentionally reference-based; worker prompts and private
+# result bodies stay in their dedicated stores.
+TASK_PLAN_EVENT_SCHEMA = "newsroom.harness-task-plan-event/v1"
+TASK_PLAN_EVENT_TYPES = (
+    "PLAN_CANDIDATE_BUILT",
+    "PLAN_CANDIDATE_REJECTED",
+    "PLAN_VALIDATION_FAILED",
+    "PLAN_ACCEPTED",
+    "TASK_READY",
+    "TASK_DISPATCHED",
+    "TASK_STARTED",
+    "TASK_RETRY_SCHEDULED",
+    "TASK_RESULT_ACCEPTED",
+    "TASK_RESULT_REJECTED",
+    "TASK_COMPLETED",
+    "TASK_FAILED",
+    "TASK_BLOCKED",
+    "TASK_SKIPPED",
+    "PLAN_PATCH_PROPOSED",
+    "PLAN_PATCH_REJECTED",
+    "PLAN_PATCH_ACCEPTED",
+    "STAGE_OUTPUT_AGGREGATED",
+    "TASK_PLAN_VERIFIED",
+    "TASK_PLAN_HALTED",
+)
+
 
 SUPPORTED_HISTORICAL_ENVELOPE_SCHEMAS = frozenset(
     {
@@ -711,6 +738,16 @@ def default_event_schema_catalog(
                 current=event_type not in HARNESS_GRAPH_COMMIT_EVENT_TYPES,
             )
         )
+    for event_type in TASK_PLAN_EVENT_TYPES:
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema=TASK_PLAN_EVENT_SCHEMA,
+                json_schema=_task_plan_event_payload_schema(event_type),
+                sensitivity_policy=SensitivityPolicy(),
+                current=True,
+            )
+        )
     return catalog
 
 
@@ -794,6 +831,102 @@ def _harness_graph_transition_payload_schema(data_schema: str) -> dict[str, Any]
             "diagnostic_refs",
         ],
         "additionalProperties": False,
+    }
+
+
+def _task_plan_event_payload_schema(event_type: str) -> dict[str, Any]:
+    nullable_text = {"anyOf": [_TEXT, {"type": "null"}]}
+    nullable_checksum = {"anyOf": [_CHECKSUM_TEXT, {"type": "null"}]}
+    nullable_positive_integer = {"anyOf": [_POSITIVE_INTEGER, {"type": "null"}]}
+    safe_payload = {
+        "type": "object",
+        "additionalProperties": False,
+        "maxProperties": 16,
+        "properties": {
+            "candidate_ref": _CHECKSUM_TEXT,
+            "plan_ref": _CHECKSUM_TEXT,
+            "policy_ref": _TEXT,
+            "patch_ref": _CHECKSUM_TEXT,
+            "result_ref": nullable_text,
+            "result_checksum": _CHECKSUM_TEXT,
+            "gate_refs": {
+                "type": "array",
+                "items": _TEXT,
+                "maxItems": 64,
+                "uniqueItems": True,
+            },
+            "gate_evidence_refs": {
+                "type": "array",
+                "items": _CHECKSUM_TEXT,
+                "maxItems": 64,
+                "uniqueItems": True,
+            },
+            "aggregate_ref": _TEXT,
+            "aggregate_checksum": _CHECKSUM_TEXT,
+            "projection_checksum": _CHECKSUM_TEXT,
+            "decision_checksum": _CHECKSUM_TEXT,
+            "diagnostic_ref": _TEXT,
+            "output_refs_by_role": {
+                "type": "object",
+                "additionalProperties": _TEXT,
+                "maxProperties": 128,
+            },
+            "result_refs": _ARRAY_OF_TEXT,
+            "branch_refs": {
+                "type": "array",
+                "items": {"type": "object", "maxProperties": 16},
+                "maxItems": 128,
+            },
+        },
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "run_id",
+            "workflow_id",
+            "stage_id",
+            "graph_checksum",
+            "plan_id",
+            "plan_version",
+            "task_id",
+            "task_instance_id",
+            "attempt",
+            "schema_version",
+            "actor_type",
+            "causal_event_ref",
+            "input_checksum",
+            "output_refs",
+            "reason_code",
+            "details",
+            "sequence",
+            "event_checksum",
+        ],
+        "properties": {
+            "run_id": _TEXT,
+            "workflow_id": _TEXT,
+            "stage_id": _TEXT,
+            "graph_checksum": _CHECKSUM_TEXT,
+            "plan_id": nullable_text,
+            "plan_version": nullable_positive_integer,
+            "task_id": nullable_text,
+            "task_instance_id": nullable_text,
+            "attempt": nullable_positive_integer,
+            "schema_version": {"const": TASK_PLAN_EVENT_SCHEMA},
+            "actor_type": _TEXT,
+            "causal_event_ref": nullable_text,
+            "input_checksum": nullable_checksum,
+            "output_refs": {
+                "type": "array",
+                "items": _TEXT,
+                "maxItems": 128,
+                "uniqueItems": True,
+            },
+            "reason_code": nullable_text,
+            "details": safe_payload,
+            "sequence": _POSITIVE_INTEGER,
+            "event_checksum": _CHECKSUM_TEXT,
+        },
     }
 
 

@@ -1,0 +1,270 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Protocol, runtime_checkable
+
+from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.control_plane.policy import HarnessBudgetSnapshot
+from framework.harness.task_plan.canonical import (
+    checksum,
+    exact_reference,
+    frozen_mapping,
+    identifier,
+    reference,
+    required_text,
+    thaw_mapping,
+)
+from framework.harness.task_plan.models import PlanCandidate
+from framework.harness.task_plan.policy import TaskPlanPolicy
+from framework.harness.task_plan.store import TaskResultRecord
+from framework.harness.workers.result import HarnessWorkerResult
+
+
+@dataclass(frozen=True, slots=True)
+class PlanBuildRequest:
+    run_id: str
+    workflow_id: str
+    stage_id: str
+    graph_checksum: str
+    context_refs: Mapping[str, str]
+    policy: TaskPlanPolicy
+    budget: HarnessBudgetSnapshot | Mapping[str, Any] | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for field_name in ("run_id", "workflow_id", "stage_id"):
+            object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
+        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        if not isinstance(self.policy, TaskPlanPolicy):
+            raise TypeError("policy must be TaskPlanPolicy")
+        if self.policy.stage_id != self.stage_id:
+            raise HarnessValidationError(
+                "plan builder policy is pinned to another stage",
+                code="task_plan_policy_mismatch",
+            )
+        if not isinstance(self.context_refs, Mapping):
+            raise HarnessValidationError(
+                "plan builder context_refs must be an object of logical names to references",
+                code="task_plan_invalid_context_refs",
+            )
+        context_refs = {
+            identifier(key, "context_refs.key"): reference(value, "context_refs.value")
+            for key, value in self.context_refs.items()
+        }
+        denied = sorted(set(context_refs.values()) - set(self.policy.allowed_input_refs))
+        if denied:
+            raise HarnessValidationError(
+                "plan builder context references exceed the pinned stage policy",
+                code="task_plan_input_reference_unavailable",
+                details={"refs": denied},
+            )
+        object.__setattr__(
+            self,
+            "context_refs",
+            frozen_mapping(dict(sorted(context_refs.items())), "plan_build.context_refs"),
+        )
+        if self.budget is not None and not isinstance(self.budget, (HarnessBudgetSnapshot, Mapping)):
+            raise HarnessValidationError(
+                "plan builder budget must be a HarnessBudgetSnapshot or canonical mapping",
+                code="task_plan_invalid_plan_build_budget",
+            )
+        if isinstance(self.budget, Mapping):
+            object.__setattr__(self, "budget", frozen_mapping(self.budget, "plan_build.budget"))
+        object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "plan_build.metadata"))
+
+    def to_dict(self) -> dict[str, Any]:
+        budget = self.budget.to_dict() if hasattr(self.budget, "to_dict") else thaw_mapping(self.budget or {})
+        return {
+            "run_id": self.run_id,
+            "workflow_id": self.workflow_id,
+            "stage_id": self.stage_id,
+            "graph_checksum": self.graph_checksum,
+            "context_refs": thaw_mapping(self.context_refs),
+            "policy_ref": self.policy.exact_ref,
+            "budget": budget,
+        }
+
+
+@runtime_checkable
+class PlanCandidateBuilderPort(Protocol):
+    def build_candidate(self, request: PlanBuildRequest) -> PlanCandidate: ...
+
+
+class HarnessPlanCandidateBuilder:
+    """Adapter that exposes only approved stage context references."""
+
+    def __init__(self, worker: Any) -> None:
+        self.worker = worker
+
+    def build_candidate(self, request: PlanBuildRequest) -> PlanCandidate:
+        generate = getattr(self.worker, "generate", None)
+        if not callable(generate):
+            raise TypeError("plan builder must implement generate")
+        result = generate(
+            {
+                "stage": request.to_dict(),
+                "policy": _planner_policy_projection(request.policy),
+            }
+        )
+        if not isinstance(result, HarnessWorkerResult):
+            raise HarnessValidationError(
+                "plan builder must return HarnessWorkerResult",
+                code="task_plan_invalid_builder_result",
+            )
+        if result.status.value != "succeeded":
+            raise HarnessValidationError(
+                "plan builder failed to produce a candidate",
+                code="task_plan_builder_failed",
+                details={"status": result.status.value},
+            )
+        if frozenset(result.output) != {"candidate"} or not isinstance(result.output["candidate"], Mapping):
+            raise HarnessValidationError(
+                "plan builder output must contain exactly one candidate object",
+                code="task_plan_invalid_builder_result",
+            )
+        payload = result.output["candidate"]
+        candidate = payload if isinstance(payload, PlanCandidate) else PlanCandidate.from_dict(payload)
+        if (candidate.run_id, candidate.workflow_id, candidate.stage_id, candidate.graph_checksum) != (
+            request.run_id,
+            request.workflow_id,
+            request.stage_id,
+            request.graph_checksum,
+        ):
+            raise HarnessValidationError("plan builder returned candidate outside the requested stage", code="task_plan_candidate_scope_mismatch")
+        if not set(candidate.input_context_refs).issubset(request.context_refs.values()):
+            raise HarnessValidationError("plan builder referenced context outside policy", code="task_plan_input_reference_unavailable")
+        return candidate
+
+
+class FakePlanCandidateBuilder:
+    def __init__(self, candidate: PlanCandidate | Mapping[str, Any] | Exception) -> None:
+        self.candidate = candidate
+        self.calls: list[PlanBuildRequest] = []
+
+    def build_candidate(self, request: PlanBuildRequest) -> PlanCandidate:
+        self.calls.append(request)
+        if isinstance(self.candidate, Exception):
+            raise self.candidate
+        return self.candidate if isinstance(self.candidate, PlanCandidate) else PlanCandidate.from_dict(self.candidate)
+
+
+@dataclass(frozen=True, slots=True)
+class TaskPlanStageRequest:
+    run_id: str
+    workflow_id: str
+    stage_id: str
+    graph_checksum: str
+    context_refs: Mapping[str, str]
+    policy: TaskPlanPolicy
+    accepted_at: str
+    budget: HarnessBudgetSnapshot | Mapping[str, Any] | None = None
+    candidate: PlanCandidate | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    policy_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("run_id", "workflow_id", "stage_id"):
+            object.__setattr__(self, field_name, identifier(getattr(self, field_name), field_name))
+        object.__setattr__(self, "graph_checksum", checksum(self.graph_checksum, "graph_checksum"))
+        if not isinstance(self.policy, TaskPlanPolicy):
+            raise TypeError("policy must be TaskPlanPolicy")
+        if self.policy.stage_id != self.stage_id:
+            raise HarnessValidationError(
+                "TaskPlan stage request policy is pinned to another stage",
+                code="task_plan_policy_mismatch",
+            )
+        if self.policy_ref is not None:
+            object.__setattr__(self, "policy_ref", exact_reference(self.policy_ref, "policy_ref"))
+            if self.policy_ref != self.policy.exact_ref:
+                raise HarnessValidationError(
+                    "TaskPlan stage request policy ref is not pinned to supplied policy",
+                    code="task_plan_policy_mismatch",
+                )
+        context = self.context_refs
+        if not isinstance(context, Mapping):
+            raise HarnessValidationError(
+                "TaskPlan stage context_refs must be an object",
+                code="task_plan_invalid_context_refs",
+            )
+        normalized_context = {
+            identifier(key, "context_refs.key"): reference(value, "context_refs.value")
+            for key, value in context.items()
+        }
+        denied = sorted(set(normalized_context.values()) - set(self.policy.allowed_input_refs))
+        if denied:
+            raise HarnessValidationError(
+                "TaskPlan stage context references exceed policy",
+                code="task_plan_input_reference_unavailable",
+                details={"refs": denied},
+            )
+        object.__setattr__(
+            self,
+            "context_refs",
+            frozen_mapping(dict(sorted(normalized_context.items())), "task_plan.context_refs"),
+        )
+        accepted_at = required_text(self.accepted_at, "accepted_at")
+        from framework.shared.time import parse_datetime
+
+        parsed = parse_datetime(accepted_at)
+        if parsed is None or parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise HarnessValidationError(
+                "accepted_at must be an RFC3339 timezone-aware timestamp",
+                code="invalid_task_plan_timestamp",
+            )
+        object.__setattr__(self, "accepted_at", accepted_at)
+        if self.budget is not None and not isinstance(self.budget, (HarnessBudgetSnapshot, Mapping)):
+            raise HarnessValidationError(
+                "TaskPlan stage budget must be a HarnessBudgetSnapshot or mapping",
+                code="task_plan_invalid_plan_build_budget",
+            )
+        if isinstance(self.budget, Mapping):
+            object.__setattr__(self, "budget", frozen_mapping(self.budget, "task_plan.budget"))
+        if self.candidate is not None and not isinstance(self.candidate, PlanCandidate):
+            raise TypeError("candidate must be PlanCandidate")
+        object.__setattr__(self, "metadata", frozen_mapping(self.metadata, "task_plan.metadata"))
+
+
+@runtime_checkable
+class TaskPlanStageRunnerPort(Protocol):
+    def run(self, request: TaskPlanStageRequest) -> HarnessWorkerResult: ...
+
+
+@runtime_checkable
+class TaskPlanResultVerifierPort(Protocol):
+    def verify(
+        self,
+        result: HarnessWorkerResult,
+        *,
+        task: Any,
+        request: Any,
+        workflow_id: str | None = None,
+    ) -> TaskResultRecord: ...
+
+
+def _planner_policy_projection(policy: TaskPlanPolicy) -> dict[str, Any]:
+    return {
+        "policy_ref": policy.exact_ref,
+        "policy_checksum": policy.policy_checksum,
+        "stage_id": policy.stage_id,
+        "allowed_worker_capabilities": list(policy.allowed_worker_capabilities),
+        "allowed_tool_ids": list(policy.allowed_tool_ids),
+        "allowed_memory_namespaces": list(policy.allowed_memory_namespaces),
+        "allowed_input_refs": list(policy.allowed_input_refs),
+        "allowed_output_roles": list(policy.allowed_output_roles),
+        "required_output_roles": list(policy.required_output_roles),
+        "allowed_output_schema_refs": list(policy.allowed_output_schema_refs),
+        "allowed_gate_refs": list(policy.allowed_gate_refs),
+        "aggregated_output_roles": sorted(policy.deterministic_aggregator_refs),
+        "limits": policy.limits.to_dict(),
+    }
+
+
+__all__ = [
+    "FakePlanCandidateBuilder",
+    "HarnessPlanCandidateBuilder",
+    "PlanBuildRequest",
+    "PlanCandidateBuilderPort",
+    "TaskPlanResultVerifierPort",
+    "TaskPlanStageRequest",
+    "TaskPlanStageRunnerPort",
+]

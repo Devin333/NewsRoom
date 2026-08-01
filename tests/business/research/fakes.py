@@ -132,6 +132,36 @@ class FakeResearchLLMWorker:
         self.score_value = score_value
 
     def generate_candidate(self, *, task: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if task == "candidate_task_plan":
+            return {
+                "tasks": [
+                    {
+                        "task_id": "analyze-structure",
+                        "objective": "Analyze structure from accepted Research evidence.",
+                        "worker_capability": "research.analysis.structure",
+                        "input_refs": ["document", "evidence_pack"],
+                        "depends_on": [],
+                        "priority": 10,
+                    },
+                    {
+                        "task_id": "analyze-contribution",
+                        "objective": "Analyze contributions from accepted Research evidence.",
+                        "worker_capability": "research.analysis.contribution",
+                        "input_refs": ["document", "evidence_pack"],
+                        "depends_on": [],
+                        "priority": 10,
+                    },
+                    {
+                        "task_id": "analyze-experiments",
+                        "objective": "Analyze experiments after structure is available.",
+                        "worker_capability": "research.analysis.experiments",
+                        "input_refs": ["document", "evidence_pack"],
+                        "depends_on": ["analyze-structure"],
+                        "priority": 5,
+                    },
+                ],
+                "requested_max_parallelism": 3,
+            }
         if task == "candidate_three_minute_read":
             method_evidence_id = stable_research_id("evidence", "paper-harness-001", "sec-method")
             result = {

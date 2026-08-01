@@ -10,6 +10,7 @@ from framework.shared.json import to_jsonable
 
 
 class HarnessWorkerType(StrEnum):
+    TASK_PLAN = "task_plan"
     LLM = "llm"
     SKILL = "skill"
     SKILL_EVOLUTION = "skill_evolution"

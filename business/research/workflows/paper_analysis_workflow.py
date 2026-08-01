@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from framework.events.canonical import checksum_for
 from framework.harness.side_effects import HarnessTerminalSideEffectPolicy
 from framework.harness.workflow import (
@@ -17,6 +19,16 @@ from framework.harness.workflow import (
 from business.research.ports.artifact_publication import (
     RESEARCH_ARTIFACT_EFFECT_KIND,
     RESEARCH_ARTIFACT_HANDLER_REF,
+)
+from business.research.workflows.paper_analysis_task_plan import (
+    RESEARCH_DYNAMIC_AGGREGATOR_REF,
+    RESEARCH_DYNAMIC_CAPABILITY_REGISTRY_REF,
+    RESEARCH_DYNAMIC_CANDIDATE_BUILDER_REF,
+    RESEARCH_DYNAMIC_GATE_REGISTRY_REF,
+    RESEARCH_DYNAMIC_OUTPUT_ROLES,
+    RESEARCH_DYNAMIC_POLICY_REF,
+    RESEARCH_DYNAMIC_RESULT_STORE_REF,
+    RESEARCH_DYNAMIC_STAGE_ID,
 )
 
 
@@ -144,26 +156,11 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
                         fork_id="analysis_fork",
                         join_id="analysis_join",
                         branches=(
-                            ParallelBranch(
-                                "structure",
-                                StepRef("analyze_structure"),
-                                "analysis.structure",
-                            ),
-                            ParallelBranch(
-                                "contribution",
-                                StepRef("analyze_contribution"),
-                                "analysis.contribution",
-                            ),
-                            ParallelBranch(
-                                "experiments",
-                                StepRef("analyze_experiments"),
-                                "analysis.experiments",
-                            ),
+                            ParallelBranch("structure", StepRef("analyze_structure"), "analysis.structure"),
+                            ParallelBranch("contribution", StepRef("analyze_contribution"), "analysis.contribution"),
+                            ParallelBranch("experiments", StepRef("analyze_experiments"), "analysis.experiments"),
                         ),
-                        merge=VerifiedAggregation(
-                            StepRef("verify_claims"),
-                            "analysis_branch_refs",
-                        ),
+                        merge=VerifiedAggregation(StepRef("verify_claims"), "analysis_branch_refs"),
                     ),
                     StepRef("quality_gate"),
                     StepRef("build_reader_payload"),
@@ -179,9 +176,6 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
             handler=RESEARCH_ARTIFACT_HANDLER_REF,
             kind=RESEARCH_ARTIFACT_EFFECT_KIND,
             requires_approval=False,
-            # One initial terminal attempt plus one bounded recovery attempt
-            # closes the crash window after manifest visibility but before
-            # the durable outcome is read back.
             retry_limit=2,
             not_required_evidence_ref=RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF,
             inherited_gate_refs=("ResearchQualityGate@1",),
@@ -190,9 +184,72 @@ def build_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
     )
 
 
+def build_dynamic_paper_analysis_workflow_spec() -> HarnessWorkflowSpec:
+    """Return the opt-in Research workflow with a stage-local TaskPlan DAG.
+
+    The outer graph remains frozen and keeps the same evidence, claim
+    verification, quality and publication boundaries as the static workflow.
+    Only the analysis fan-out is replaced by the explicitly typed dynamic
+    stage.
+    """
+
+    static = build_paper_analysis_workflow_spec()
+    dynamic_step = HarnessStepSpec(
+        step_id=RESEARCH_DYNAMIC_STAGE_ID,
+        worker_type=HarnessWorkerType.TASK_PLAN,
+        input_keys=("document", "evidence_pack"),
+        output_key="analysis_branch_refs",
+        metadata={
+            "dynamic_stage": True,
+            "task_plan_policy_ref": RESEARCH_DYNAMIC_POLICY_REF,
+            "required_output_roles": list(RESEARCH_DYNAMIC_OUTPUT_ROLES),
+            "task_plan_schema": "newsroom.harness-task-plan/v1",
+            "task_plan_support": {
+                "candidate_builder_ref": RESEARCH_DYNAMIC_CANDIDATE_BUILDER_REF,
+                "capability_registry_ref": RESEARCH_DYNAMIC_CAPABILITY_REGISTRY_REF,
+                "gate_registry_ref": RESEARCH_DYNAMIC_GATE_REGISTRY_REF,
+                "aggregator_ref": RESEARCH_DYNAMIC_AGGREGATOR_REF,
+                "event_schema": "newsroom.harness-task-plan-event/v1",
+                "checkpoint_ref": "harness.graph-checkpoint@1",
+                "result_store_ref": RESEARCH_DYNAMIC_RESULT_STORE_REF,
+            },
+        },
+    )
+    steps = tuple(
+        step for step in static.steps
+        if step.step_id not in {"analyze_structure", "analyze_contribution", "analyze_experiments"}
+    )
+    steps = steps[:4] + (dynamic_step,) + steps[4:]
+    root = Sequence(
+        (
+            StepRef("load_paper_source"),
+            StepRef("compile_document"),
+            StepRef("run_research_rag"),
+            StepRef("build_evidence_pack"),
+            StepRef(RESEARCH_DYNAMIC_STAGE_ID),
+            StepRef("verify_claims"),
+            StepRef("quality_gate"),
+            StepRef("build_reader_payload"),
+            StepRef("build_paper_card"),
+            StepRef("publish_artifacts"),
+        )
+    )
+    return replace(
+        static,
+        workflow_id="research.paper_analysis.dynamic",
+        steps=steps,
+        graph=replace(
+            static.graph,
+            graph_id="research.paper_analysis.dynamic.graph",
+            root=root,
+        ),
+        metadata={**static.metadata, "dynamic_task_plan": True, "version": "1"},
+        workflow_version="1",
+    )
 __all__ = [
     "RESEARCH_ARTIFACT_NOT_REQUIRED_EVIDENCE_REF",
     "RESEARCH_ARTIFACT_TERMINAL_POLICY_ID",
     "RESEARCH_ARTIFACT_TERMINAL_POLICY_VERSION",
     "build_paper_analysis_workflow_spec",
+    "build_dynamic_paper_analysis_workflow_spec",
 ]

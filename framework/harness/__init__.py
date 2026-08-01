@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from framework.harness.task_plan import *
+from framework.harness.task_plan import __all__ as _TASK_PLAN_EXPORTS
+
 from framework.harness.artifacts import (
     ArtifactPort,
     ArtifactRef,
@@ -927,3 +930,5 @@ __all__ = [
     "skill_release_evidence_payload",
     "skill_rollback_plan_ref",
 ]
+
+__all__ += _TASK_PLAN_EXPORTS

@@ -65,6 +65,7 @@
       "framework/harness/control_plane/scheduler.py",
       "framework/harness/control_plane/state.py",
       "framework/harness/control_plane/transitions.py",
+      "framework/harness/task_plan/stage.py",
       "tests/framework/harness/control_plane/test_compensation_entry_durability.py",
       "tests/framework/harness/control_plane/test_deterministic_gate_enforcement.py",
       "tests/framework/harness/control_plane/test_gates.py",
@@ -82,7 +83,8 @@
       "tests/framework/harness/control_plane/test_side_effect_authority.py",
       "tests/framework/harness/control_plane/test_skill_evolution_budget.py",
       "tests/framework/harness/control_plane/test_state_transitions.py",
-      "tests/framework/harness/control_plane/test_wait_graph_control_plane.py"
+      "tests/framework/harness/control_plane/test_wait_graph_control_plane.py",
+      "tests/framework/harness/task_plan/test_task_plan_contract_matrix.py"
     ],
     "C_durable_state_checkpoint_and_replay": [
       "framework/events/migration.py",
@@ -113,6 +115,8 @@
     "D_research_adoption": [
       "business/research/application/single_paper_runtime.py",
       "business/research/workflows/paper_analysis_workflow.py",
+      "interfaces/composition/research.py",
+      "tests/business/research/integration/test_dynamic_paper_analysis_task_plan.py",
       "tests/business/research/workflows/test_paper_analysis_workflow.py",
       "tests/framework/harness/workflow/test_graph_migration_goldens.py",
       "tests/interfaces/composition/test_research_recorded_transport.py"

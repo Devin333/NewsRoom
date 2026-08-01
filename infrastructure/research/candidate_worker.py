@@ -90,6 +90,7 @@ SUPPORTED_CANDIDATE_TASKS = frozenset(
         "candidate_three_minute_read",
         "candidate_taxonomy",
         "candidate_experiment_claims",
+        "candidate_task_plan",
         "rag_plan_candidate",
     }
 )
@@ -311,12 +312,52 @@ _RAG_CANDIDATE_SCHEMA = _object_schema(
 
 _RAG_PLAN_SCHEMA = _object_schema({"candidate": _RAG_CANDIDATE_SCHEMA})
 
+_TASK_PLAN_OUTLINE_TASK_SCHEMA = _object_schema(
+    {
+        "task_id": _string_schema(maximum=128, minimum=1),
+        "objective": _string_schema(maximum=2_000, minimum=1),
+        "worker_capability": {
+            "type": "string",
+            "enum": [
+                "research.analysis.structure",
+                "research.analysis.contribution",
+                "research.analysis.experiments",
+            ],
+        },
+        "input_refs": _array_schema(
+            {
+                "type": "string",
+                "enum": ["document", "evidence_pack"],
+            },
+            maximum=2,
+            minimum=1,
+        ),
+        "depends_on": _array_schema(
+            _string_schema(maximum=128, minimum=1),
+            maximum=7,
+        ),
+        "priority": _integer_schema(minimum=0, maximum=100),
+    }
+)
+
+_TASK_PLAN_OUTLINE_SCHEMA = _object_schema(
+    {
+        "tasks": _array_schema(
+            _TASK_PLAN_OUTLINE_TASK_SCHEMA,
+            minimum=3,
+            maximum=8,
+        ),
+        "requested_max_parallelism": _integer_schema(minimum=1, maximum=3),
+    }
+)
+
 
 _SCHEMAS: dict[str, dict[str, Any]] = {
     "candidate_three_minute_read": _THREE_MINUTE_READ_SCHEMA,
     "candidate_taxonomy": _TAXONOMY_SCHEMA,
     "candidate_experiment_claims": _EXPERIMENT_SCHEMA,
     "rag_plan_candidate": _RAG_PLAN_SCHEMA,
+    "candidate_task_plan": _TASK_PLAN_OUTLINE_SCHEMA,
 }
 
 # Expose immutable task/schema references for composition/tests without
@@ -342,6 +383,12 @@ _TASK_INSTRUCTIONS = MappingProxyType(
             "Propose bounded retrieval-plan candidate steps for the supplied session. "
             "Stay inside the declared scope and avoid executed queries. Harness gates "
             "validate the plan before any step runs."
+        ),
+        "candidate_task_plan": (
+            "Propose a bounded Research analysis task outline. Use only the declared "
+            "capabilities and document/evidence_pack refs. Do not choose output schemas, "
+            "gates, workers, tools, memory, quality, publication, routing, or retries; "
+            "Harness supplies those controls after validation."
         ),
     }
 )
@@ -613,6 +660,8 @@ class StructuredResearchCandidateWorker:
                     for source_ref in step["source_refs"]:
                         _require_source_ref_scope(source_ref, scope, task=task)
             return
+        if task == "candidate_task_plan":
+            return
 
 
 def _project_payload(
@@ -654,6 +703,8 @@ def _project_payload(
         return _Projection(payload={"evidence_pack": evidence}, scope=scope)
     if task == "rag_plan_candidate":
         return _project_rag_request(payload, limits)
+    if task == "candidate_task_plan":
+        return _project_task_plan_request(payload, limits)
     raise ResearchCandidateContractError("unsupported Research candidate task")
 
 
@@ -831,6 +882,62 @@ def _project_rag_request(
         payload=projected,
         scope=_EvidenceScope({}, frozenset(allowed_source_refs)),
     )
+
+
+def _project_task_plan_request(
+    payload: dict[str, Any],
+    limits: _ProjectionLimits,
+) -> _Projection:
+    stage = _mapping_or_empty(payload.get("stage"))
+    allowed_capabilities = _string_list(
+        payload.get("allowed_capabilities"),
+        maximum=128,
+        limit=8,
+    )
+    required_roles = _string_list(
+        payload.get("required_output_roles"),
+        maximum=128,
+        limit=8,
+    )
+    allowed_refs = _string_list(
+        list(_mapping_or_empty(stage.get("context_refs")).keys()),
+        maximum=128,
+        limit=limits.list_items,
+    )
+    if set(allowed_refs) != {"document", "evidence_pack"}:
+        raise ResearchCandidateContractError(
+            "Research TaskPlan stage must expose only document and evidence_pack refs",
+            task="candidate_task_plan",
+        )
+    if set(allowed_capabilities) != {
+        "research.analysis.structure",
+        "research.analysis.contribution",
+        "research.analysis.experiments",
+    }:
+        raise ResearchCandidateContractError(
+            "Research TaskPlan capabilities are invalid",
+            task="candidate_task_plan",
+        )
+    if set(required_roles) != {
+        "analysis.structure",
+        "analysis.contribution",
+        "analysis.experiments",
+    }:
+        raise ResearchCandidateContractError(
+            "Research TaskPlan output roles are invalid",
+            task="candidate_task_plan",
+        )
+    projected = {
+        "stage": {
+            "workflow_id": _identity(stage.get("workflow_id"), maximum=256),
+            "stage_id": _identity(stage.get("stage_id"), maximum=256),
+            "policy_ref": _safe_reference(stage.get("policy_ref")),
+            "context_refs": sorted(allowed_refs),
+        },
+        "allowed_capabilities": sorted(allowed_capabilities),
+        "required_output_roles": sorted(required_roles),
+    }
+    return _Projection(payload=projected, scope=_EvidenceScope({}, frozenset()))
 
 
 def _project_unsupported_claims(value: Any, limits: _ProjectionLimits) -> list[dict[str, str]]:

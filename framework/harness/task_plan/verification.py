@@ -1,0 +1,406 @@
+"""Deterministic verification for one resolved TaskPlan task result.
+
+The planner and worker may propose content only.  This module turns a worker
+result into a durable result record only after the exact gate references pinned
+in ``ResolvedTaskSpec`` have produced bounded evidence.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from threading import RLock
+from typing import Any, Protocol, runtime_checkable
+
+from framework.harness.control_plane.errors import HarnessValidationError
+from framework.harness.task_plan.canonical import (
+    canonical_payload_checksum,
+    checksum,
+    exact_reference,
+    identifier,
+    optional_text,
+    stable_text_tuple,
+)
+from framework.harness.task_plan.models import (
+    ResolvedTaskSpec,
+    TaskInstance,
+    TaskLifecycle,
+)
+from framework.harness.task_plan.store import TaskResultRecord
+from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
+
+
+@dataclass(frozen=True, slots=True)
+class TaskPlanGateEvidence:
+    """Reference-only outcome for one exact deterministic task gate."""
+
+    gate_ref: str
+    input_checksum: str
+    result_checksum: str
+    passed: bool
+    reason_code: str | None = None
+    evidence_checksum: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "gate_ref", exact_reference(self.gate_ref, "gate_ref"))
+        object.__setattr__(self, "input_checksum", checksum(self.input_checksum, "input_checksum"))
+        object.__setattr__(self, "result_checksum", checksum(self.result_checksum, "result_checksum"))
+        if not isinstance(self.passed, bool):
+            raise TypeError("passed must be a bool")
+        reason_code = optional_text(self.reason_code, "reason_code")
+        if not self.passed and reason_code is None:
+            raise HarnessValidationError(
+                "failed TaskPlan gate evidence requires a stable reason code",
+                code="task_plan_gate_evidence_invalid",
+            )
+        object.__setattr__(self, "reason_code", reason_code)
+        object.__setattr__(self, "evidence_checksum", canonical_payload_checksum(self.checksum_projection()))
+
+    def checksum_projection(self) -> dict[str, Any]:
+        return {
+            "gate_ref": self.gate_ref,
+            "input_checksum": self.input_checksum,
+            "result_checksum": self.result_checksum,
+            "passed": self.passed,
+            "reason_code": self.reason_code,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.checksum_projection(), "evidence_checksum": self.evidence_checksum}
+
+
+@dataclass(frozen=True, slots=True)
+class TaskPlanGateRequest:
+    """Immutable, capability-free input passed to a task gate implementation."""
+
+    task: ResolvedTaskSpec
+    instance: TaskInstance
+    worker_result: HarnessWorkerResult
+    input_checksum: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.task, ResolvedTaskSpec):
+            raise TypeError("task must be ResolvedTaskSpec")
+        if not isinstance(self.instance, TaskInstance):
+            raise TypeError("instance must be TaskInstance")
+        if not isinstance(self.worker_result, HarnessWorkerResult):
+            raise TypeError("worker_result must be HarnessWorkerResult")
+        object.__setattr__(self, "input_checksum", checksum(self.input_checksum, "input_checksum"))
+
+
+TaskPlanGateCallable = Callable[[TaskPlanGateRequest], bool | TaskPlanGateEvidence]
+
+
+@runtime_checkable
+class TaskPlanGateEvaluatorPort(Protocol):
+    def evaluate(self, gate_ref: str, request: TaskPlanGateRequest) -> TaskPlanGateEvidence: ...
+
+
+class TaskPlanGateRegistry(TaskPlanGateEvaluatorPort):
+    """Exact-version registry for deterministic gate implementations."""
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._gates: dict[str, TaskPlanGateCallable] = {}
+
+    @property
+    def refs(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(sorted(self._gates))
+
+    def register(
+        self,
+        gate_ref: str,
+        evaluator: TaskPlanGateCallable,
+        *,
+        deterministic: bool = False,
+    ) -> None:
+        ref = exact_reference(gate_ref, "gate_ref")
+        if not callable(evaluator):
+            raise TypeError("evaluator must be callable")
+        if deterministic is not True:
+            raise HarnessValidationError(
+                "TaskPlan gate registration requires deterministic=True",
+                code="task_plan_gate_not_deterministic",
+                details={"gate_ref": ref},
+            )
+        with self._lock:
+            if ref in self._gates:
+                raise HarnessValidationError(
+                    "TaskPlan gate is already registered",
+                    code="task_plan_duplicate_gate",
+                    details={"gate_ref": ref},
+                )
+            self._gates[ref] = evaluator
+
+    def evaluate(self, gate_ref: str, request: TaskPlanGateRequest) -> TaskPlanGateEvidence:
+        ref = exact_reference(gate_ref, "gate_ref")
+        if not isinstance(request, TaskPlanGateRequest):
+            raise TypeError("request must be TaskPlanGateRequest")
+        with self._lock:
+            evaluator = self._gates.get(ref)
+        if evaluator is None:
+            raise HarnessValidationError(
+                "exact TaskPlan gate is unavailable",
+                code="task_plan_gate_unavailable",
+                details={"gate_ref": ref},
+            )
+        value = evaluator(request)
+        if isinstance(value, TaskPlanGateEvidence):
+            evidence = value
+            if (
+                evidence.gate_ref != ref
+                or evidence.input_checksum != request.input_checksum
+                or evidence.result_checksum
+                != canonical_payload_checksum(request.worker_result.candidate_payload())
+            ):
+                raise HarnessValidationError(
+                    "TaskPlan gate returned mismatched evidence identity",
+                    code="task_plan_gate_evidence_mismatch",
+                    details={"gate_ref": ref},
+                )
+            return evidence
+        if not isinstance(value, bool):
+            raise HarnessValidationError(
+                "TaskPlan gate must return bool or TaskPlanGateEvidence",
+                code="task_plan_gate_result_invalid",
+                details={"gate_ref": ref},
+            )
+        return TaskPlanGateEvidence(
+            gate_ref=ref,
+            input_checksum=request.input_checksum,
+            result_checksum=canonical_payload_checksum(request.worker_result.candidate_payload()),
+            passed=value,
+            reason_code=None if value else "task_gate_failed",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TaskPlanResultVerificationRequest:
+    task: ResolvedTaskSpec
+    instance: TaskInstance
+    worker_result: HarnessWorkerResult
+    workflow_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.task, ResolvedTaskSpec):
+            raise TypeError("task must be ResolvedTaskSpec")
+        if not isinstance(self.instance, TaskInstance):
+            raise TypeError("instance must be TaskInstance")
+        if not isinstance(self.worker_result, HarnessWorkerResult):
+            raise TypeError("worker_result must be HarnessWorkerResult")
+        object.__setattr__(self, "workflow_id", identifier(self.workflow_id, "workflow_id"))
+        _require_task_instance_identity(self.task, self.instance)
+
+
+class TaskPlanResultVerifier:
+    """Validate identity, usage boundaries and exact task gates before commit."""
+
+    def __init__(self, gates: TaskPlanGateEvaluatorPort | None = None) -> None:
+        self._gates = gates or TaskPlanGateRegistry()
+        if not isinstance(self._gates, TaskPlanGateEvaluatorPort):
+            raise TypeError("gates must implement TaskPlanGateEvaluatorPort")
+
+    def verify(
+        self,
+        result: HarnessWorkerResult,
+        *,
+        task: ResolvedTaskSpec,
+        request: TaskPlanResultVerificationRequest | TaskInstance,
+        workflow_id: str | None = None,
+    ) -> TaskResultRecord:
+        instance = request.instance if isinstance(request, TaskPlanResultVerificationRequest) else request
+        resolved_workflow_id = (
+            request.workflow_id
+            if isinstance(request, TaskPlanResultVerificationRequest)
+            else identifier(workflow_id, "workflow_id")
+            if workflow_id is not None
+            else None
+        )
+        if resolved_workflow_id is None:
+            raise HarnessValidationError(
+                "TaskPlan result verification requires accepted workflow identity",
+                code="task_plan_workflow_identity_required",
+            )
+        verification = (
+            request
+            if isinstance(request, TaskPlanResultVerificationRequest)
+            else TaskPlanResultVerificationRequest(
+                task=task,
+                instance=instance,
+                worker_result=result,
+                workflow_id=resolved_workflow_id,
+            )
+        )
+        if verification.worker_result is not result:
+            raise HarnessValidationError(
+                "TaskPlan verification request result does not match verifier input",
+                code="task_plan_result_identity_mismatch",
+            )
+        if result.effect_intent is not None:
+            raise HarnessValidationError(
+                "dynamic TaskPlan workers cannot propose side effects",
+                code="task_plan_result_side_effect_forbidden",
+            )
+
+        if result.status is not HarnessWorkerStatus.SUCCEEDED:
+            return _failure_record(
+                task,
+                instance,
+                result,
+                "task_worker_failed",
+                workflow_id=resolved_workflow_id,
+            )
+
+        _validate_worker_usage(result.metrics, task)
+        _validate_worker_boundary_diagnostics(result.diagnostics, task)
+        input_checksum = canonical_payload_checksum(
+            {
+                "instance": instance.checksum_projection(),
+                "worker_result": result.candidate_payload(),
+            }
+        )
+        gate_request = TaskPlanGateRequest(
+            task=task,
+            instance=instance,
+            worker_result=result,
+            input_checksum=input_checksum,
+        )
+        evidence = tuple(
+            self._gates.evaluate(gate_ref, gate_request)
+            for gate_ref in task.gate_refs
+        )
+        failed = next((item for item in evidence if not item.passed), None)
+        if failed is not None:
+            return _failure_record(
+                task,
+                instance,
+                result,
+                failed.reason_code or "task_gate_failed",
+                workflow_id=resolved_workflow_id,
+                verified_gate_refs=tuple(item.gate_ref for item in evidence),
+                gate_evidence_refs=tuple(item.evidence_checksum for item in evidence),
+            )
+        return TaskResultRecord(
+            run_id=instance.run_id,
+            workflow_id=resolved_workflow_id,
+            stage_id=instance.stage_id,
+            plan_id=instance.plan_id,
+            plan_version=instance.plan_version,
+            task_id=instance.task_id,
+            task_instance_id=instance.task_instance_id,
+            attempt=instance.attempt,
+            worker_ref=instance.worker_ref,
+            task_checksum=instance.task_definition_checksum,
+            binding_checksum=task.binding_checksum,
+            status=TaskLifecycle.SUCCEEDED,
+            result_ref=result.candidate_result_ref,
+            output_refs=result.artifacts,
+            output_roles=(task.output_role,),
+            output_schema_ref=task.task.output_contract.schema_ref,
+            usage=dict(result.metrics),
+            verified_gate_refs=tuple(item.gate_ref for item in evidence),
+            gate_evidence_refs=tuple(item.evidence_checksum for item in evidence),
+        )
+
+
+def _failure_record(
+    task: ResolvedTaskSpec,
+    instance: TaskInstance,
+    result: HarnessWorkerResult,
+    reason_code: str,
+    *,
+    workflow_id: str,
+    verified_gate_refs: tuple[str, ...] = (),
+    gate_evidence_refs: tuple[str, ...] = (),
+) -> TaskResultRecord:
+    return TaskResultRecord(
+        run_id=instance.run_id,
+        workflow_id=workflow_id,
+        stage_id=instance.stage_id,
+        plan_id=instance.plan_id,
+        plan_version=instance.plan_version,
+        task_id=instance.task_id,
+        task_instance_id=instance.task_instance_id,
+        attempt=instance.attempt,
+        worker_ref=instance.worker_ref,
+        task_checksum=instance.task_definition_checksum,
+        binding_checksum=task.binding_checksum,
+        status=TaskLifecycle.FAILED,
+        output_schema_ref=task.task.output_contract.schema_ref,
+        usage=dict(result.metrics),
+        error_code=identifier(reason_code, "reason_code"),
+        verified_gate_refs=verified_gate_refs,
+        gate_evidence_refs=gate_evidence_refs,
+    )
+
+
+def _require_task_instance_identity(task: ResolvedTaskSpec, instance: TaskInstance) -> None:
+    if (
+        task.task_id != instance.task_id
+        or task.task_definition_checksum != instance.task_definition_checksum
+        or task.worker_ref != instance.worker_ref
+    ):
+        raise HarnessValidationError(
+            "TaskPlan result verification identity is outside the accepted task",
+            code="task_plan_result_identity_mismatch",
+        )
+
+
+def _validate_worker_usage(value: Mapping[str, Any], task: ResolvedTaskSpec) -> None:
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError("worker metrics must be an object", code="task_plan_result_invalid")
+    limits = {
+        "turns": task.normalized_budget.max_turns,
+        "tool_calls": task.normalized_budget.max_tool_calls,
+        "memory_ops": task.normalized_budget.max_memory_ops,
+        "output_tokens": task.normalized_budget.max_output_tokens,
+    }
+    aliases = {
+        "max_turns": "turns",
+        "max_tool_calls": "tool_calls",
+        "max_memory_ops": "memory_ops",
+        "max_output_tokens": "output_tokens",
+    }
+    for raw_key, value_item in value.items():
+        key = aliases.get(str(raw_key), str(raw_key))
+        if key not in limits:
+            continue
+        if isinstance(value_item, bool) or not isinstance(value_item, int) or value_item < 0:
+            raise HarnessValidationError(
+                "dynamic task usage must be a non-negative integer",
+                code="task_plan_result_usage_invalid",
+                details={"field": key},
+            )
+        if value_item > limits[key]:
+            raise HarnessValidationError(
+                "dynamic task usage exceeds its pinned budget",
+                code="task_plan_result_budget_exceeded",
+                details={"field": key, "used": value_item, "limit": limits[key]},
+            )
+
+
+def _validate_worker_boundary_diagnostics(value: Mapping[str, Any], task: ResolvedTaskSpec) -> None:
+    if not isinstance(value, Mapping):
+        raise HarnessValidationError("worker diagnostics must be an object", code="task_plan_result_invalid")
+    used_tools = stable_text_tuple(value.get("used_tools", ()), "used_tools")
+    used_memory = stable_text_tuple(value.get("used_memory_namespaces", ()), "used_memory_namespaces")
+    denied_tools = sorted(set(used_tools) - set(task.allowed_tools))
+    denied_memory = sorted(set(used_memory) - set(task.allowed_memory_namespaces))
+    if denied_tools or denied_memory:
+        raise HarnessValidationError(
+            "dynamic worker reported usage outside its pinned boundary",
+            code="task_plan_result_boundary_violation",
+            details={"denied_tools": denied_tools, "denied_memory_namespaces": denied_memory},
+        )
+
+
+__all__ = [
+    "TaskPlanGateCallable",
+    "TaskPlanGateEvidence",
+    "TaskPlanGateEvaluatorPort",
+    "TaskPlanGateRegistry",
+    "TaskPlanGateRequest",
+    "TaskPlanResultVerificationRequest",
+    "TaskPlanResultVerifier",
+]

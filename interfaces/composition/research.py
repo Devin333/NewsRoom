@@ -51,6 +51,7 @@ from framework.llm.clients.openai_compatible import (
 )
 from framework.events.canonical import checksum_for
 from framework.harness import (
+    ContextEnvelope,
     HarnessEvent,
     HarnessEventType,
     HarnessSideEffectDisposition,
@@ -59,8 +60,21 @@ from framework.harness import (
     HarnessSideEffectStorePort,
     HarnessTrace,
     HarnessTranscript,
+    HarnessState,
+    HarnessWorkerResult,
+    HarnessBudgetSnapshot,
+    HarnessBudget,
+    ResolvedSubAgentTaskAdapter,
+    SubAgentRuntime,
+    TaskPlanResultVerifier,
+    DurableTaskPlanStore,
     transcript_entry_from_event,
 )
+from framework.harness.workflow import HarnessWorkflowGraphCompiler, HarnessWorkerType
+from framework.harness.workflow.binding_authority import HarnessWorkerBinding
+from framework.harness.workflow.graph import HarnessContractKind, HarnessContractReference
+from framework.harness.control_plane.gates import GateContext
+from framework.shared.time import utc_now
 from framework.harness.ports import HarnessTransitionPort
 from infrastructure.external.sources.arxiv import (
     ArxivConnector,
@@ -88,6 +102,17 @@ from infrastructure.research.local_chunk_store import LocalChunkPayloadStore
 from infrastructure.research.source_provider import ArxivResearchSourceProvider
 from infrastructure.storage.events.factory import durable_event_storage_from_env
 from infrastructure.storage.harness import SQLiteHarnessSideEffectStore
+from business.research.workflows import (
+    RESEARCH_DYNAMIC_CAPABILITIES,
+    RESEARCH_DYNAMIC_SUBAGENT_IDS,
+    build_dynamic_paper_analysis_workflow_spec,
+    build_paper_analysis_gate_registry,
+    build_research_analysis_capability_registry,
+    build_research_analysis_task_gate_registry,
+    build_research_analysis_task_plan_policy,
+    ResearchAnalysisTaskPlanStageWorker,
+    ResearchAnalysisPlanCandidateBuilder,
+)
 from interfaces.composition.research_errors import (
     ResearchCapability,
     ResearchCompositionError,
@@ -104,6 +129,55 @@ from interfaces.services.research_service import (
     ResearchServiceError,
 )
 from interfaces.services.source_runtime import SourceRuntimeProvider
+
+
+class _ProductionResearchAnalysisWorker:
+    """Adapter that keeps dynamic task execution on existing Research logic."""
+
+    worker_version = "1"
+    worker_type = HarnessWorkerType.SUBAGENT
+
+    def __init__(self, capability: str, *, dependencies: Any, workspace: Any) -> None:
+        self.worker_id = capability
+        self._dependencies = dependencies
+        self._workspace = workspace
+        self._methods = {
+            "research.analysis.structure": ResearchSinglePaperRuntime._analyze_structure,
+            "research.analysis.contribution": ResearchSinglePaperRuntime._analyze_contribution,
+            "research.analysis.experiments": ResearchSinglePaperRuntime._analyze_experiments,
+        }
+
+    def execute(self, task: Mapping[str, Any]) -> HarnessWorkerResult:
+        method = self._methods.get(self.worker_id)
+        if method is None:
+            raise RuntimeError("Research dynamic capability binding is unavailable")
+        return method(self._dependencies, task, self._workspace)
+
+
+def _dynamic_research_gate_context(
+    workspace: Any,
+    worker_result: HarnessWorkerResult,
+) -> GateContext:
+    run_spec = build_research_harness_run_spec(
+        workspace.request,
+        created_at=utc_now(),
+    )
+    base_state = HarnessState.initial(run_spec)
+    step_spec = next(
+        item for item in run_spec.workflow.steps
+        if item.step_id == "dynamic_analysis_stage"
+    )
+    step_state = next(
+        item for item in base_state.step_states
+        if item.step_id == "dynamic_analysis_stage"
+    )
+    return GateContext(
+        state=base_state,
+        step_spec=step_spec,
+        step_state=step_state,
+        worker_result=worker_result,
+        budget=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
+    )
 
 
 _RESEARCH_EVENT_TENANT_ID = "research-runtime"
@@ -1114,6 +1188,144 @@ def _build_configured_composition(
                 artifact_root=settings.artifact.root,
             ),
         )
+        dynamic_task_plan_store = DurableTaskPlanStore(
+            durable_events.event_runtime,
+            durable_events.event_store,
+            artifact_store=artifact_port.store,
+            tenant_id=_RESEARCH_EVENT_TENANT_ID,
+        )
+
+        def dynamic_task_plan_runner_factory(*, workspace: Any, dependencies: Any):
+            workflow_graph = HarnessWorkflowGraphCompiler().compile(
+                build_dynamic_paper_analysis_workflow_spec()
+            ).graph
+            policy = build_research_analysis_task_plan_policy()
+            task_workers: dict[str, Any] = {}
+            bindings: dict[str, HarnessWorkerBinding] = {}
+            for capability in RESEARCH_DYNAMIC_CAPABILITIES:
+                worker = _ProductionResearchAnalysisWorker(
+                    capability,
+                    dependencies=dependencies,
+                    workspace=workspace,
+                )
+                task_workers[capability] = worker
+                bindings[capability] = HarnessWorkerBinding(
+                    HarnessContractReference(
+                        HarnessContractKind.WORKER,
+                        capability,
+                        "1",
+                    ),
+                    HarnessWorkerType.SUBAGENT,
+                    worker,
+                )
+            capability_registry = build_research_analysis_capability_registry(bindings)
+            subagent_runtime = SubAgentRuntime(
+                workers={
+                    RESEARCH_DYNAMIC_SUBAGENT_IDS[capability]: worker
+                    for capability, worker in task_workers.items()
+                }
+            )
+            subagent_adapter = ResolvedSubAgentTaskAdapter(subagent_runtime)
+            gate_registry = build_paper_analysis_gate_registry()
+
+            def gate_context(request):
+                run_spec = build_research_harness_run_spec(
+                    workspace.request,
+                    created_at=utc_now(),
+                )
+                base_state = HarnessState.initial(run_spec)
+                state = HarnessState(
+                    run_spec=base_state.run_spec,
+                    status=base_state.status,
+                    step_states=base_state.step_states,
+                    current_step_id="dynamic_analysis_stage",
+                    metadata={
+                        "outputs": {
+                            "evidence_pack": {
+                                "evidence_pack": (
+                                    workspace.evidence_pack.to_dict()
+                                    if workspace.evidence_pack is not None
+                                    else {}
+                                )
+                            }
+                        }
+                    },
+                    updated_at=base_state.updated_at,
+                )
+                step_spec = next(
+                    item for item in run_spec.workflow.steps
+                    if item.step_id == "dynamic_analysis_stage"
+                )
+                step_state = next(
+                    item for item in base_state.step_states
+                    if item.step_id == "dynamic_analysis_stage"
+                )
+                return GateContext(
+                    state=state,
+                    step_spec=step_spec,
+                    step_state=step_state,
+                    worker_result=request.worker_result,
+                    budget=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
+                )
+
+            result_verifier = TaskPlanResultVerifier(
+                build_research_analysis_task_gate_registry(
+                    gate_registry,
+                    context_factory=gate_context,
+                )
+            )
+            context_pack = ContextEnvelope(
+                envelope_id=f"research-task-plan-context:{workspace.request.run_id}",
+                run_id=workspace.request.run_id,
+                workflow_id="research.paper_analysis.dynamic",
+                step_id="dynamic_analysis_stage",
+                phase="EXECUTE",
+                worker_id="research.task-plan",
+                worker_type=HarnessWorkerType.TASK_PLAN.value,
+                dynamic_tail={
+                    "input_refs": ["document", "evidence_pack"],
+                    "raw_parent_messages_included": False,
+                },
+            )
+
+            def execute(binding, instance):
+                plan = dynamic_task_plan_store.plan(
+                    instance.run_id,
+                    instance.stage_id,
+                    instance.plan_version,
+                )
+                if plan is None:
+                    raise RuntimeError("dynamic TaskPlan plan artifact is unavailable")
+                resolved = next(item for item in plan.tasks if item.task_id == instance.task_id)
+                child = subagent_adapter.invoke(
+                    resolved_task=resolved,
+                    binding=binding,
+                    task_instance_id=instance.task_instance_id,
+                    parent_run_id=instance.run_id,
+                    workflow_id=plan.workflow_id,
+                    stage_id=instance.stage_id,
+                    context_pack=context_pack,
+                    budget_snapshot=HarnessBudgetSnapshot.from_budget(HarnessBudget.safe_default()),
+                )
+                succeeded = child.status.value == "succeeded"
+                return HarnessWorkerResult(
+                    status="succeeded" if succeeded else "failed",
+                    output=child.output if succeeded else {},
+                    artifacts=child.artifact_refs if succeeded else (),
+                    diagnostics={"subagent_id": child.subagent_id, "transcript_ref": child.transcript_ref},
+                    error=None if succeeded else "Research analysis subagent gate failed",
+                )
+
+            return ResearchAnalysisTaskPlanStageWorker(
+                graph_checksum=workflow_graph.checksum,
+                accepted_at=utc_now().isoformat().replace("+00:00", "Z"),
+                candidate_builder=ResearchAnalysisPlanCandidateBuilder(candidate_worker),
+                capability_registry=capability_registry,
+                store=dynamic_task_plan_store,
+                worker_executor=execute,
+                result_verifier=result_verifier,
+                policy=policy,
+            )
         owned_resources.extend(
             resource
             for resource in (
@@ -1183,6 +1395,7 @@ def _build_configured_composition(
             scoped_event_port_factory=scoped_event_port_factory,
             side_effect_store=side_effect_store,
             artifact_handler_factory=ResearchArtifactBundleHandler,
+            dynamic_task_plan_runner_factory=dynamic_task_plan_runner_factory,
         )
         ask_use_case = AskPaperUseCase()
         rag_ask_provider = _PaperRagUseCaseProvider(ask_use_case)

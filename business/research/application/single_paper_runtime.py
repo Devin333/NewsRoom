@@ -80,6 +80,7 @@ from business.research.services import (
 from business.research.taxonomy import TaxonomyAssignment, TaxonomyAssignmentBuilder, TaxonomyCandidate, TaxonomyRegistry
 from business.research.workflows import (
     build_paper_analysis_gate_registry,
+    build_dynamic_paper_analysis_workflow_spec,
     build_paper_analysis_workflow_spec,
 )
 from business.research.ports.artifact_publication import (
@@ -90,6 +91,20 @@ from business.research.ports.artifact_publication import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+class ResearchDynamicTaskPlanUnavailableError(RuntimeError):
+    """Raised before activity when dynamic production dependencies are absent."""
+
+    code = "research_dynamic_task_plan_unavailable"
+    missing_capabilities = (
+        "research.task_plan.builder",
+        "research.task_plan.worker_bindings",
+        "research.task_plan.store",
+    )
+
+    def __init__(self) -> None:
+        super().__init__("Research dynamic TaskPlan runtime is unavailable")
 
 
 @dataclass(frozen=True)
@@ -113,7 +128,11 @@ def build_research_harness_run_spec(
     actor_metadata = _request_actor_metadata(request)
     return HarnessRunSpec(
         run_id=request.run_id,
-        workflow=build_paper_analysis_workflow_spec(),
+        workflow=(
+            build_dynamic_paper_analysis_workflow_spec()
+            if _dynamic_task_plan_requested(request.options)
+            else build_paper_analysis_workflow_spec()
+        ),
         inputs={
             "paper_id": request.paper_id,
             "source_ref": request.source_ref,
@@ -699,6 +718,7 @@ class ResearchSinglePaperRuntime:
         quality_gate: ResearchQualityGate | None = None,
         side_effect_store: HarnessSideEffectStorePort | None = None,
         artifact_handler_factory: Callable[..., Any] | None = None,
+        dynamic_task_plan_runner_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.source_provider = source_provider
         self.document_compiler = document_compiler
@@ -722,6 +742,9 @@ class ResearchSinglePaperRuntime:
         if artifact_handler_factory is not None and not callable(artifact_handler_factory):
             raise TypeError("artifact_handler_factory must be callable")
         self.artifact_handler_factory = artifact_handler_factory
+        if dynamic_task_plan_runner_factory is not None and not callable(dynamic_task_plan_runner_factory):
+            raise TypeError("dynamic_task_plan_runner_factory must be callable")
+        self.dynamic_task_plan_runner_factory = dynamic_task_plan_runner_factory
         self.ask_use_case = AskPaperUseCase()
         self.quality_gate = quality_gate or ResearchQualityGate()
         self.evidence_builder = ResearchEvidenceBuilder()
@@ -733,6 +756,10 @@ class ResearchSinglePaperRuntime:
         self.gate_registry = build_paper_analysis_gate_registry()
 
     def run(self, request: AnalyzePaperRequest) -> ResearchAnalysisResult:
+        if _dynamic_task_plan_requested(request.options) and (
+            self.dynamic_task_plan_runner_factory is None
+        ):
+            raise ResearchDynamicTaskPlanUnavailableError()
         actor_scope = self.ask_use_case.resolve_actor_scope(
             tenant_id=request.tenant_id,
             user_id=request.user_id,
@@ -1169,6 +1196,19 @@ class ResearchSinglePaperRuntime:
             worker_type._publish_artifacts,
             workspace,
         )
+        if _dynamic_task_plan_requested(workspace.request.options):
+            if self.dynamic_task_plan_runner_factory is None:
+                raise ResearchDynamicTaskPlanUnavailableError()
+            dynamic_worker = self.dynamic_task_plan_runner_factory(
+                workspace=workspace,
+                dependencies=dependencies,
+            )
+            if not callable(dynamic_worker):
+                execute = getattr(dynamic_worker, "run", None)
+                if not callable(execute):
+                    raise TypeError("dynamic_task_plan_runner_factory must return a callable or runner")
+                dynamic_worker = execute
+            bound_registry["dynamic_analysis_stage"] = dynamic_worker
         return bound_registry
 
     def _load_paper_source(self, task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
@@ -1212,6 +1252,11 @@ class ResearchSinglePaperRuntime:
         )
         session_spec = self.rag_policy_builder.build_session_spec(
             run_id=workspace.request.run_id,
+            # RAG is a stable child-session contract shared by both the
+            # static and dynamic outer Research workflow variants.  The
+            # dynamic workflow identity belongs to the outer graph; changing
+            # it here would invalidate the existing transcript projection
+            # boundary and replay identity.
             workflow_id="research.paper_analysis",
             step_id="run_research_rag",
             session_id=stable_research_id("research_rag", workspace.request.run_id, workspace.paper.paper_id),
@@ -1442,7 +1487,9 @@ class ResearchSinglePaperRuntime:
     ) -> HarnessWorkerResult:
         if workspace.evidence_pack is None:
             return _failed("evidence pack is required before claim verification")
-        branch_refs = task.get("inputs", {}).get("analysis_branch_refs")
+        branch_refs = _analysis_branch_refs_from_input(
+            task.get("inputs", {}).get("analysis_branch_refs")
+        )
         if not isinstance(branch_refs, tuple | list):
             return _failed(
                 "analysis branch refs are required before claim verification"
@@ -1739,12 +1786,20 @@ class ResearchSinglePaperRuntime:
         return workspace.context_assembler.assemble(
             {
                 "run_id": workspace.request.run_id,
-                "workflow_id": "research.paper_analysis",
+                "workflow_id": (
+                    "research.paper_analysis.dynamic"
+                    if _dynamic_task_plan_requested(workspace.request.options)
+                    else "research.paper_analysis"
+                ),
                 "step_id": "publish_artifacts",
                 "phase": "verify",
                 "worker_id": "research-analysis-worker",
                 "worker_type": "subagent",
-                "workflow_ref": "workflow://research.paper_analysis",
+                "workflow_ref": (
+                    "workflow://research.paper_analysis.dynamic"
+                    if _dynamic_task_plan_requested(workspace.request.options)
+                    else "workflow://research.paper_analysis"
+                ),
                 "worker_contract_ref": "schema://research.analysis.output",
                 "run_state_ref": f"run-state://{workspace.request.run_id}",
                 "evidence_memory_ref": workspace.research_rag_context.context_id if workspace.research_rag_context else "evidence-memory://empty",
@@ -2050,6 +2105,10 @@ def _budget_from_options(options: dict[str, Any]) -> HarnessBudget:
     )
 
 
+def _dynamic_task_plan_requested(options: Mapping[str, Any]) -> bool:
+    return bool(options.get("dynamic_analysis") or options.get("dynamic_task_plan"))
+
+
 def _rag_budget_from_options(options: dict[str, Any]) -> RAGBudget:
     return RAGBudget(
         max_rounds=min(int(options.get("rag_max_rounds", 6)), 8),
@@ -2101,6 +2160,25 @@ def _failed(error: str) -> HarnessWorkerResult:
 def _forbidden_candidate_keys(candidate: dict[str, Any]) -> list[str]:
     forbidden = {"next_step", "route", "quality_passed", "write_memory", "publish_artifact", "promote_skill"}
     return sorted(forbidden.intersection(candidate))
+
+
+def _analysis_branch_refs_from_input(value: Any) -> Any:
+    """Normalize static merge and dynamic-stage output envelopes.
+
+    A verified static merge exposes ``analysis_branch_refs`` directly. A
+    single-output dynamic graph node exposes its complete worker output under
+    that output key, so the established branch-ref contract is one level
+    deeper. Only that exact envelope shape is unwrapped.
+    """
+
+    if isinstance(value, Mapping) and set(value) == {
+        "aggregate_ref",
+        "aggregate_checksum",
+        "output_refs_by_role",
+        "analysis_branch_refs",
+    }:
+        return value.get("analysis_branch_refs")
+    return value
 
 
 def _score_candidate_is_in_supported_range(candidate: dict[str, Any]) -> bool:
@@ -2323,6 +2401,7 @@ def _gate_failures(events: list[HarnessEvent]) -> list[dict[str, Any]]:
 __all__ = [
     "AnalyzePaperRequest",
     "ResearchAnalysisResult",
+    "ResearchDynamicTaskPlanUnavailableError",
     "ResearchSinglePaperRuntime",
     "build_research_harness_run_spec",
 ]

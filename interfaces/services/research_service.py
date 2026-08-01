@@ -11,6 +11,7 @@ from business.research.application import (
     AnalyzePaperRequest,
     AskPaperUseCase,
     ResearchActorScope,
+    ResearchDynamicTaskPlanUnavailableError,
     ResearchRunDispositionReconciler,
     classify_research_run_record,
     research_identity_scope_ref,
@@ -1092,6 +1093,22 @@ def _run_store_service_error(
 
 
 def _research_runtime_service_error(error: Exception) -> ResearchServiceError:
+    if isinstance(error, ResearchDynamicTaskPlanUnavailableError):
+        return ResearchServiceError(
+            "research_runtime_unavailable",
+            "Research dynamic TaskPlan runtime is unavailable.",
+            status_code=503,
+            details={
+                "capabilities": list(error.missing_capabilities),
+                "remediation": {
+                    "code": "restore_research_runtime_capability",
+                    "message": (
+                        "Restore the named Research capability and retry the request."
+                    ),
+                },
+            },
+            retryable=False,
+        )
     return ResearchServiceError(
         "research_run_failed",
         "research run failed",
