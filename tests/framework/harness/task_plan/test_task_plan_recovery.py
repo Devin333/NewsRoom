@@ -286,6 +286,78 @@ def test_recovery_preserves_committed_result_until_terminal_event_without_redisp
     assert worker.calls == 0
 
 
+def test_recovery_quarantines_terminal_failure_without_durable_halt() -> None:
+    plan, base_events, worker = _history_fixture()
+    instance = task_instance_for_attempt(plan, "recover-task", 1)
+    result = replace(
+        _result(plan, instance),
+        status=TaskLifecycle.FAILED,
+        result_ref=None,
+        output_refs=(),
+        output_roles=(),
+        error_code="terminal_failure",
+    )
+    result_payload = {
+        "result_ref": result.result_ref,
+        "result_checksum": result.result_checksum,
+        "gate_refs": list(result.verified_gate_refs),
+        "gate_evidence_refs": list(result.gate_evidence_refs),
+    }
+    events = (
+        *base_events,
+        _lifecycle_event("TASK_READY", 3, plan, instance),
+        _lifecycle_event("TASK_DISPATCHED", 4, plan, instance),
+        _lifecycle_event("TASK_STARTED", 5, plan, instance),
+        _lifecycle_event(
+            "TASK_RESULT_REJECTED",
+            6,
+            plan,
+            instance,
+            output_refs=result.output_refs,
+            payload=result_payload,
+        ),
+        _lifecycle_event(
+            "TASK_FAILED",
+            7,
+            plan,
+            instance,
+            input_checksum=result.result_checksum,
+            output_refs=result.output_refs,
+            payload=result_payload,
+        ),
+    )
+
+    with pytest.raises(HarnessValidationError) as missing_halt:
+        TaskPlanRecoveryService().recover((plan,), events, results=(result,))
+    assert missing_halt.value.code == "task_plan_recovery_halt_missing"
+    assert worker.calls == 0
+
+    halted = TaskPlanEvent(
+        "TASK_PLAN_HALTED",
+        run_id=plan.run_id,
+        workflow_id=plan.workflow_id,
+        stage_id=plan.stage_id,
+        graph_checksum=plan.graph_checksum,
+        plan_id=plan.plan_id,
+        plan_version=plan.version,
+        reason_code="terminal_failure",
+        payload={
+            "diagnostic_ref": canonical_payload_checksum(
+                {"reason_code": "terminal_failure"}
+            )
+        },
+        sequence=8,
+    )
+    recovery = TaskPlanRecoveryService().recover(
+        (plan,),
+        (*events, halted),
+        results=(result,),
+    )
+    assert recovery.missing_queue_projections == ()
+    assert recovery.awaiting_reclaim == ()
+    assert worker.calls == 0
+
+
 def test_replay_fails_closed_for_missing_result_and_tampered_event_checksum():
     plan, base_events, _ = _history_fixture()
     instance = task_instance_for_attempt(plan, "recover-task", 1)
@@ -374,6 +446,20 @@ def test_replay_requires_patch_document_and_binds_it_to_the_next_plan_version():
         (plan, patched), events, patches=(patch,)
     )
     assert replay.projection.plan_version == 2
+    reduced = TaskPlanReplayReducer().reduce(
+        (plan, patched),
+        events,
+        patches=(patch,),
+        require_terminal_events=True,
+    )
+    recovery = TaskPlanRecoveryService().recover(
+        (plan, patched),
+        events,
+        patches=(patch,),
+    )
+    assert reduced.projection_checksum == replay.projection.projection_checksum
+    assert recovery.report.projection.projection_checksum == reduced.projection_checksum
+    assert recovery.report.projection.plan_version == 2
 
     with pytest.raises(HarnessValidationError) as missing:
         TaskPlanReplayReducer().replay((plan, patched), events)

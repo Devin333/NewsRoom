@@ -134,6 +134,43 @@ class TaskPlanRecoveryService:
             require_terminal_events=False,
             apply_unterminated_results=False,
         )
+        failure_sequences = tuple(
+            event.sequence for event in recorded_events if event.event_type == "TASK_FAILED"
+        )
+        has_halt_after_failure = bool(failure_sequences) and any(
+            event.event_type == "TASK_PLAN_HALTED"
+            and event.sequence > max(failure_sequences)
+            for event in recorded_events
+        )
+        has_terminal_failure = any(
+            item.status is TaskLifecycle.FAILED for item in report.projection.tasks
+        )
+        has_actionable_task = any(
+            item.status
+            in {
+                TaskLifecycle.PENDING,
+                TaskLifecycle.READY,
+                TaskLifecycle.DISPATCHED,
+                TaskLifecycle.RUNNING,
+            }
+            for item in report.projection.tasks
+        )
+        if has_terminal_failure and not has_actionable_task and not has_halt_after_failure:
+            raise HarnessValidationError(
+                "TaskPlan terminal failure has no durable halt evidence",
+                code="task_plan_recovery_halt_missing",
+                details={
+                    "stage_id": plan_history[-1].stage_id,
+                    "plan_version": plan_history[-1].version,
+                    "reason_codes": sorted(
+                        {
+                            item.failure_reason_code
+                            for item in report.projection.tasks
+                            if item.failure_reason_code is not None
+                        }
+                    ),
+                },
+            )
         states = {item.task_id: item for item in report.projection.tasks}
         pending_result_instances = {
             item.task_instance_id for item in report.pending_terminal_results

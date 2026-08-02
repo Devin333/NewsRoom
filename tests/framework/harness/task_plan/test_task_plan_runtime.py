@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from framework.harness.control_plane.errors import HarnessValidationError
@@ -16,7 +18,7 @@ from framework.harness.task_plan import (
     TaskCapabilityRegistration,
     TaskCapabilityRegistry,
     TaskOutputContract,
-    TaskPlanPatchValidator,
+    TaskPlanEvent,
     TaskPlanPolicy,
     TaskPlanScheduler,
     TaskPlanStageRequest,
@@ -226,6 +228,18 @@ class _CountingStore(InMemoryTaskPlanStore):
         return super().load_projection(run_id, stage_id)
 
 
+class _HaltFailingStore(InMemoryTaskPlanStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.halt_attempts = 0
+
+    def append_event(self, event: TaskPlanEvent) -> str:
+        if event.event_type == "TASK_PLAN_HALTED":
+            self.halt_attempts += 1
+            raise OSError("event store unavailable")
+        return super().append_event(event)
+
+
 def test_authorized_inspection_exposes_only_task_plan_control_projection() -> None:
     graph, policy, registry = _setup()
     candidate = _candidate(graph, (_task("a"),))
@@ -328,3 +342,97 @@ def test_task_plan_metrics_and_trace_are_low_cardinality_and_payload_free() -> N
     with pytest.raises(HarnessValidationError) as captured:
         TaskPlanMetricSample("bad", 1, {"run_id": "run"})
     assert captured.value.code == "task_plan_metric_label_rejected"
+
+
+def test_stage_runner_rejects_policy_drift_before_recording_patch() -> None:
+    graph, policy, registry = _setup()
+    candidate = _candidate(graph, (_task("a"),))
+    plan = TaskPlanValidator().accept(
+        candidate,
+        policy,
+        registry,
+        context=validator_context(graph),
+        accepted_at="2026-08-01T00:00:00Z",
+    )
+    store = InMemoryTaskPlanStore()
+    store.append_candidate(candidate)
+    store.accept_plan(plan)
+    events_before = store.read_events("run", "dynamic_stage")
+    projection_before = store.load_projection("run", "dynamic_stage")
+    drifted_policy = replace(policy, max_depth=policy.max_depth + 1)
+    patch = PlanPatch(
+        patch_id="policy-drift",
+        run_id="run",
+        stage_id="dynamic_stage",
+        base_plan_id=plan.plan_id,
+        base_plan_version=plan.version,
+        reason_code="repair",
+        source_candidate_ref="candidate://policy-drift",
+        operations=(
+            PlanPatchOperation(
+                PlanPatchOperationType.SKIP_PENDING_TASK,
+                target_task_id="a",
+            ),
+        ),
+    )
+    runner = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+    )
+    request = TaskPlanStageRequest(
+        run_id="run",
+        workflow_id="workflow",
+        stage_id="dynamic_stage",
+        graph_checksum=graph,
+        context_refs={"document": "document"},
+        policy=drifted_policy,
+        policy_ref=drifted_policy.exact_ref,
+        accepted_at="2026-08-01T00:01:00Z",
+    )
+
+    with pytest.raises(HarnessValidationError) as error:
+        runner.apply_patch(request, patch)
+
+    assert error.value.code == "task_plan_policy_mismatch"
+    assert store.read_events("run", "dynamic_stage") == events_before
+    assert store.load_projection("run", "dynamic_stage") == projection_before
+
+
+def test_stage_runner_fails_closed_when_halt_event_cannot_be_persisted() -> None:
+    graph, policy, registry = _setup()
+    candidate = _candidate(
+        graph,
+        (_task("a", depends_on=("b",)), _task("b", depends_on=("a",))),
+    )
+    store = _HaltFailingStore()
+    runner = TaskPlanStageRunner(
+        candidate_builder=FakePlanCandidateBuilder(candidate),
+        capability_registry=registry,
+        store=store,
+    )
+    request = TaskPlanStageRequest(
+        run_id="run",
+        workflow_id="workflow",
+        stage_id="dynamic_stage",
+        graph_checksum=graph,
+        context_refs={"document": "document"},
+        policy=policy,
+        policy_ref=policy.exact_ref,
+        candidate=candidate,
+        accepted_at="2026-08-01T00:01:00Z",
+    )
+
+    with pytest.raises(HarnessValidationError) as error:
+        runner.run(request)
+
+    assert error.value.code == "task_plan_halt_persistence_failed"
+    assert error.value.details["run_id"] == "run"
+    assert error.value.details["stage_id"] == "dynamic_stage"
+    assert error.value.details["reason_code"] == "task_plan_candidate_rejected"
+    assert store.halt_attempts == 1
+    assert not {
+        "TASK_PLAN_HALTED",
+        "STAGE_OUTPUT_AGGREGATED",
+        "TASK_PLAN_VERIFIED",
+    } & {event.event_type for event in store.read_events("run", "dynamic_stage")}

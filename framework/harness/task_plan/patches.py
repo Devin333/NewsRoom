@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 
 from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan.binding import TaskPlanCapabilityRegistry
+from framework.harness.task_plan.canonical import reference, task_reference_producer
+from framework.harness.task_plan.dag import task_dependency_depths
 from framework.harness.task_plan.models import (
     PlanPatch,
     PlanPatchOperationType,
@@ -27,9 +30,11 @@ class TaskPlanPatchValidator:
         capability_registry: TaskPlanCapabilityRegistry,
         *,
         accepted_at: str,
+        available_input_refs: Iterable[str],
     ) -> ValidatedTaskPlan:
         if not isinstance(plan, ValidatedTaskPlan) or not isinstance(patch, PlanPatch) or not isinstance(projection, TaskPlanProjection):
             raise TypeError("plan, patch and projection must use TaskPlan contracts")
+        self.require_policy_identity(plan, policy)
         if patch.run_id != plan.run_id or patch.stage_id != plan.stage_id:
             raise HarnessValidationError("patch scope does not match plan", code="task_plan_patch_scope_mismatch")
         if patch.base_plan_id != plan.plan_id or patch.base_plan_version != plan.version:
@@ -93,7 +98,13 @@ class TaskPlanPatchValidator:
                 raise HarnessValidationError("unsupported PlanPatch operation", code="task_plan_patch_operation_not_allowed")
         if len(next_definitions) > policy.max_tasks:
             raise HarnessValidationError("patch exceeds max_tasks", code="task_plan_task_limit_exceeded")
-        self._validate_dag(next_definitions, policy.max_depth)
+        task_dependency_depths(
+            {task_id: definition.depends_on for task_id, definition in next_definitions.items()},
+            max_depth=policy.max_depth,
+        )
+        available = frozenset(
+            reference(item, "available_input_refs") for item in available_input_refs
+        )
         totals = {"max_turns": 0, "max_tool_calls": 0, "max_memory_ops": 0, "max_output_tokens": 0}
         producers: dict[str, list[str]] = {}
         for task_id, resolved in next_definitions.items():
@@ -110,8 +121,8 @@ class TaskPlanPatchValidator:
                     details={"task_id": task_id, "role": resolved.output_role},
                 )
             for input_ref in resolved.task.input_refs:
-                if input_ref.startswith("task:") or input_ref.startswith("task://") or input_ref in next_definitions:
-                    producer = input_ref.removeprefix("task://").removeprefix("task:").split("#", 1)[0].split("/", 1)[0]
+                producer = task_reference_producer(input_ref, tuple(next_definitions))
+                if producer is not None:
                     if producer not in next_definitions:
                         raise HarnessValidationError(
                             "patch input references an unknown task",
@@ -124,7 +135,7 @@ class TaskPlanPatchValidator:
                             code="task_plan_task_input_dependency_missing",
                             details={"task_id": task_id, "producer_task_id": producer},
                         )
-                elif input_ref not in policy.allowed_input_refs:
+                elif input_ref not in policy.allowed_input_refs or input_ref not in available:
                     raise HarnessValidationError(
                         "patch input reference is outside policy",
                         code="task_plan_input_reference_unavailable",
@@ -181,6 +192,7 @@ class TaskPlanPatchValidator:
             parent_plan_id=plan.plan_id,
             source_candidate_ref=patch.patch_checksum,
             policy_ref=plan.policy_ref,
+            policy_checksum=plan.policy_checksum,
             tasks=tuple(next_definitions[key] for key in sorted(next_definitions)),
             required_output_roles=plan.required_output_roles,
             limits=plan.limits,
@@ -190,29 +202,23 @@ class TaskPlanPatchValidator:
     accept = apply
 
     @staticmethod
-    def _validate_dag(definitions: dict[str, ResolvedTaskSpec], max_depth: int) -> None:
-        visiting: set[str] = set()
-        visited: set[str] = set()
-
-        def visit(task_id: str) -> int:
-            if task_id in visiting:
-                raise HarnessValidationError("patch introduces a dependency cycle", code="task_plan_dependency_cycle")
-            if task_id in visited:
-                return 0
-            visiting.add(task_id)
-            depth = 0
-            for dependency in definitions[task_id].depends_on:
-                if dependency not in definitions:
-                    raise HarnessValidationError("patch references unknown dependency", code="task_plan_unknown_dependency")
-                depth = max(depth, visit(dependency) + 1)
-            visiting.remove(task_id)
-            visited.add(task_id)
-            if depth > max_depth:
-                raise HarnessValidationError("patch exceeds dependency depth", code="task_plan_depth_exceeded")
-            return depth
-
-        for task_id in sorted(definitions):
-            visit(task_id)
+    def require_policy_identity(plan: ValidatedTaskPlan, policy: TaskPlanPolicy) -> None:
+        if (
+            plan.policy_ref != policy.exact_ref
+            or plan.policy_checksum is None
+            or plan.policy_checksum != policy.policy_checksum
+        ):
+            raise HarnessValidationError(
+                "TaskPlan patch policy does not match the accepted Plan",
+                code="task_plan_policy_mismatch",
+                details={
+                    "plan_policy_ref": plan.policy_ref,
+                    "supplied_policy_ref": policy.exact_ref,
+                    "plan_policy_checksum": plan.policy_checksum,
+                    "supplied_policy_checksum": policy.policy_checksum,
+                    "plan_version": plan.version,
+                },
+            )
 
 
 def _with_dependencies(task: ResolvedTaskSpec, depends_on: tuple[str, ...]) -> ResolvedTaskSpec:

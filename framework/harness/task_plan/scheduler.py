@@ -10,7 +10,9 @@ from framework.harness.task_plan.canonical import (
     identifier,
     non_negative_int,
     positive_int,
+    task_reference_producer,
 )
+from framework.harness.task_plan.dag import task_dependency_depths
 from framework.harness.task_plan.models import (
     ResolvedTaskSpec,
     TaskInstance,
@@ -402,21 +404,9 @@ def _transition_task(
 
 
 def _task_depths(definitions: Mapping[str, ResolvedTaskSpec]) -> dict[str, int]:
-    memo: dict[str, int] = {}
-
-    def depth(task_id: str, active: frozenset[str] = frozenset()) -> int:
-        if task_id in memo:
-            return memo[task_id]
-        if task_id in active:
-            raise HarnessValidationError("accepted TaskPlan contains a cycle", code="task_plan_dependency_cycle")
-        dependencies = definitions[task_id].depends_on
-        value = 1 if not dependencies else 1 + max(depth(item, active | {task_id}) for item in dependencies)
-        memo[task_id] = value
-        return value
-
-    for task_id in definitions:
-        depth(task_id)
-    return memo
+    return task_dependency_depths(
+        {task_id: definition.depends_on for task_id, definition in definitions.items()}
+    )
 
 
 def _inputs_available(
@@ -427,9 +417,9 @@ def _inputs_available(
     for input_ref in definition.task.input_refs:
         if input_ref in available:
             continue
-        if not (input_ref.startswith("task://") or input_ref.startswith("task:")):
+        producer = task_reference_producer(input_ref, tuple(states))
+        if producer is None:
             return False
-        producer = input_ref.removeprefix("task://").removeprefix("task:").split("/", maxsplit=1)[0].split("#", maxsplit=1)[0]
         state = states.get(producer)
         if state is None or state.status is not TaskLifecycle.SUCCEEDED or state.result is None:
             return False

@@ -21,7 +21,6 @@ from framework.harness.task_plan.canonical import (
     thaw_mapping,
 )
 from framework.harness.task_plan.models import (
-    TASK_PLAN_PROJECTION_SCHEMA,
     PlanCandidate,
     PlanPatch,
     TaskLifecycle,

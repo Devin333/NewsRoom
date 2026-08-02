@@ -172,17 +172,19 @@ class TaskPlanReplayReducer:
 
     def reduce(
         self,
-        plan: ValidatedTaskPlan,
+        plan: ValidatedTaskPlan | Iterable[ValidatedTaskPlan],
         events: Iterable[TaskPlanEvent],
         *,
         results: Iterable[TaskResultRecord] = (),
         patches: Iterable[PlanPatch] = (),
         require_terminal_events: bool = False,
     ) -> TaskPlanProjection:
+        plan_history = (plan,) if isinstance(plan, ValidatedTaskPlan) else tuple(plan)
         return self.replay(
-            (plan,),
+            plan_history,
             events,
             results=results,
+            patches=patches,
             require_terminal_events=require_terminal_events,
             apply_unterminated_results=not require_terminal_events,
         ).projection
@@ -530,6 +532,7 @@ def _validated_plan_history(plans: Iterable[ValidatedTaskPlan]) -> tuple[Validat
             or plan.stage_id != first.stage_id
             or plan.graph_checksum != first.graph_checksum
             or plan.policy_ref != first.policy_ref
+            or plan.policy_checksum != first.policy_checksum
         ):
             raise HarnessValidationError(
                 "TaskPlan replay plan history has incompatible pinned identity",
@@ -689,6 +692,10 @@ def _accepted_plan_for_event(
         or event.input_checksum != plan.plan_checksum
         or payload.get("plan_ref") != plan.plan_checksum
         or payload.get("policy_ref") != plan.policy_ref
+        or (
+            payload.get("policy_checksum") is not None
+            and payload.get("policy_checksum") != plan.policy_checksum
+        )
     ):
         raise HarnessValidationError(
             "PLAN_ACCEPTED evidence does not match recorded plan",

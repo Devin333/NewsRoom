@@ -643,6 +643,7 @@ class ValidatedTaskPlan:
     required_output_roles: tuple[str, ...]
     limits: TaskPlanLimits | Mapping[str, Any]
     accepted_at: str
+    policy_checksum: str | None = None
     schema_version: str = VALIDATED_TASK_PLAN_SCHEMA
     plan_checksum: str = field(init=False)
 
@@ -664,6 +665,13 @@ class ValidatedTaskPlan:
         )
         object.__setattr__(self, "source_candidate_ref", reference(self.source_candidate_ref, "source_candidate_ref"))
         object.__setattr__(self, "policy_ref", exact_reference(self.policy_ref, "policy_ref"))
+        object.__setattr__(
+            self,
+            "policy_checksum",
+            checksum(self.policy_checksum, "policy_checksum")
+            if self.policy_checksum is not None
+            else None,
+        )
         tasks = tuple(_model(item, ResolvedTaskSpec, "tasks") for item in self.tasks)
         if not tasks:
             raise HarnessValidationError("ValidatedTaskPlan must contain tasks", code="task_plan_empty_plan")
@@ -678,7 +686,7 @@ class ValidatedTaskPlan:
         object.__setattr__(self, "plan_checksum", canonical_payload_checksum(self.checksum_projection()))
 
     def checksum_projection(self) -> dict[str, Any]:
-        return {
+        projection = {
             "schema_version": self.schema_version,
             "plan_id": self.plan_id,
             "run_id": self.run_id,
@@ -694,6 +702,9 @@ class ValidatedTaskPlan:
             "limits": self.limits.to_dict(),
             "accepted_at": self.accepted_at,
         }
+        if self.policy_checksum is not None:
+            projection["policy_checksum"] = self.policy_checksum
+        return projection
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.checksum_projection(), "plan_checksum": self.plan_checksum}
@@ -721,6 +732,7 @@ class ValidatedTaskPlan:
                     "plan_checksum",
                 }
             ),
+            optional=frozenset({"policy_checksum"}),
             model=cls.__name__,
         )
         supplied = checksum(payload.pop("plan_checksum"), "plan_checksum")

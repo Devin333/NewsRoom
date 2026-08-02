@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from threading import Lock
@@ -8,12 +8,7 @@ from threading import Lock
 import pytest
 
 from framework.agent.artifacts.models import ArtifactRef, ArtifactWriteRequest
-from framework.events.canonical import (
-    BusinessContext,
-    EventCandidate,
-    ProducerIdentity,
-    StoredEvent,
-)
+from framework.events.canonical import EventCandidate, StoredEvent
 from framework.events.errors import EventStreamVersionConflictError
 from framework.events.runtime.models import (
     AppendResult,
@@ -22,7 +17,6 @@ from framework.events.runtime.models import (
 )
 from framework.events.runtime.publisher import EventPublishRequest, EventRuntime
 from framework.events.schema import default_event_schema_catalog
-from framework.harness.control_plane.errors import HarnessValidationError
 from framework.harness.task_plan import (
     DurableTaskPlanStore,
     PlanBuildBudget,
@@ -534,6 +528,7 @@ def test_patch_and_terminal_result_are_recoverable_from_event_and_artifact_refs(
         policy,
         registry,
         accepted_at="2026-08-02T00:01:00Z",
+        available_input_refs=("document",),
     )
     store.accept_patched_plan(patch, next_plan)
 

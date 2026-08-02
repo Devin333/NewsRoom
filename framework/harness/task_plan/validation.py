@@ -14,8 +14,10 @@ from framework.harness.task_plan.canonical import (
     exact_reference,
     identifier,
     stable_text_tuple,
+    task_reference_producer,
     thaw_mapping,
 )
+from framework.harness.task_plan.dag import task_dependency_depths
 from framework.harness.task_plan.models import (
     PlanCandidate,
     ResolvedTaskSpec,
@@ -267,6 +269,7 @@ class TaskPlanValidator:
             parent_plan_id=None,
             source_candidate_ref=candidate.candidate_checksum,
             policy_ref=policy.exact_ref,
+            policy_checksum=policy.policy_checksum,
             tasks=result.resolved_tasks,
             required_output_roles=policy.required_output_roles,
             limits=policy.limits,
@@ -275,36 +278,27 @@ class TaskPlanValidator:
 
     @staticmethod
     def _validate_dag(by_id: Mapping[str, TaskSpec], max_depth: int, diagnostics: list[TaskPlanDiagnostic]) -> dict[str, int]:
-        depth: dict[str, int] = {}
-        visiting: set[str] = set()
-        visited: set[str] = set()
-
-        def visit(task_id: str) -> int:
-            if task_id in visiting:
-                diagnostics.append(_diag("dependency_cycle", "task dependency graph contains a cycle", "dag", task_id=task_id))
-                return 0
-            if task_id in visited:
-                return depth.get(task_id, 0)
-            visiting.add(task_id)
-            task = by_id[task_id]
-            dep_depths: list[int] = []
-            for dependency in task.depends_on:
-                if dependency not in by_id:
-                    diagnostics.append(_diag("unknown_dependency", "task references an unknown dependency", "dag", task_id=task_id, details={"dependency": dependency}))
-                else:
-                    dep_depths.append(visit(dependency))
-            visiting.remove(task_id)
-            visited.add(task_id)
-            depth[task_id] = (max(dep_depths) + 1) if dep_depths else 0
-            return depth[task_id]
-
-        for task_id in sorted(by_id):
-            value = visit(task_id)
-            if value > max_depth:
-                diagnostics.append(_diag("dependency_depth_exceeded", "task dependency depth exceeds policy", "dag", task_id=task_id, details={"depth": value, "max_depth": max_depth}))
-        if by_id and not any(not task.depends_on for task in by_id.values()):
-            diagnostics.append(_diag("no_executable_root", "candidate has no executable root task", "dag"))
-        return depth
+        try:
+            return task_dependency_depths(
+                {task_id: task.depends_on for task_id, task in by_id.items()},
+                max_depth=max_depth,
+            )
+        except HarnessValidationError as exc:
+            diagnostic_code = {
+                "task_plan_dependency_cycle": "dependency_cycle",
+                "task_plan_no_executable_root": "no_executable_root",
+                "task_plan_unreachable_task": "unreachable_task",
+            }.get(exc.code or "", exc.code or "task_plan_dag_invalid")
+            diagnostics.append(
+                _diag(
+                    diagnostic_code,
+                    str(exc),
+                    "dag",
+                    task_id=(exc.details or {}).get("task_id"),
+                    details=exc.details or {},
+                )
+            )
+            return {}
 
     @staticmethod
     def _validate_task(task: TaskSpec, by_id: Mapping[str, TaskSpec], policy: TaskPlanPolicy, capabilities: TaskPlanCapabilityRegistry, context: TaskPlanValidationContext, diagnostics: list[TaskPlanDiagnostic]) -> None:
@@ -316,8 +310,6 @@ class TaskPlanValidator:
             diagnostics.append(_diag("memory_not_allowed", "task requests memory outside policy", "policy", task_id=task.task_id))
         if task.output_contract.schema_ref not in policy.allowed_output_schema_refs:
             diagnostics.append(_diag("output_schema_not_allowed", "task output schema is outside policy", "outputs", task_id=task.task_id, details={"schema_ref": task.output_contract.schema_ref}))
-        if not set(task.input_refs).issubset(set(policy.allowed_input_refs)) and not any(ref.startswith("task:") or ref.startswith("task://") for ref in task.input_refs):
-            diagnostics.append(_diag("input_not_allowed", "task input is outside policy", "dataflow", task_id=task.task_id))
         unknown_gates = set(task.acceptance_criteria.gate_refs) - set(policy.allowed_gate_refs)
         if unknown_gates:
             diagnostics.append(_diag("gate_not_allowed", "task requests a gate outside policy", "policy", task_id=task.task_id, details={"gates": sorted(unknown_gates)}))
@@ -326,12 +318,16 @@ class TaskPlanValidator:
         for ref in task.input_refs:
             if ref in context.future_stage_input_refs:
                 diagnostics.append(_diag("future_stage_reference", "task references a future stage input", "dataflow", task_id=task.task_id, details={"ref": ref}))
-            if _is_task_ref(ref, by_id):
-                producer = _task_ref_id(ref, by_id)
+                continue
+            producer = task_reference_producer(ref, tuple(by_id))
+            if producer is not None:
+                if producer not in by_id:
+                    diagnostics.append(_diag("task_plan_unknown_dependency", "task input references an unknown producer", "dataflow", task_id=task.task_id, details={"ref": ref, "producer_task_id": producer}))
+                    continue
                 if producer not in task.depends_on:
-                    diagnostics.append(_diag("task_input_dependency_missing", "task input reference must be declared as a dependency", "dataflow", task_id=task.task_id, details={"ref": ref, "producer_task_id": producer}))
-            elif ref not in context.available_input_refs:
-                diagnostics.append(_diag("input_reference_unavailable", "task input reference is not available in this stage", "dataflow", task_id=task.task_id, details={"ref": ref}))
+                    diagnostics.append(_diag("task_plan_task_input_dependency_missing", "task input reference must be declared as a dependency", "dataflow", task_id=task.task_id, details={"ref": ref, "producer_task_id": producer}))
+            elif ref not in policy.allowed_input_refs or ref not in context.available_input_refs:
+                diagnostics.append(_diag("task_plan_input_reference_unavailable", "task input reference is not authorized and available in this stage", "dataflow", task_id=task.task_id, details={"ref": ref}))
         for ref in task.output_contract.metadata.values():
             if isinstance(ref, str) and ref in {"route", "quality_passed", "publish_artifact", "write_memory", "halt_workflow"}:
                 diagnostics.append(_diag("forbidden_control_field", "task output metadata contains a control field", "forbidden", task_id=task.task_id))
@@ -369,19 +365,6 @@ class TaskPlanValidator:
                 diagnostics.append(_diag("unreachable_task", "task is not reachable from a stage root", "dag", task_id=task_id))
             for task_id in sorted(required_producers - reachable):
                 diagnostics.append(_diag("unreachable_required_output", "required output producer is unreachable from a root", "dag", task_id=task_id))
-
-
-def _is_task_ref(ref: str, by_id: Mapping[str, TaskSpec]) -> bool:
-    if ref.startswith("task:"):
-        task_id = ref[5:].split("#", 1)[0].split("/", 1)[0]
-        return task_id in by_id
-    return ref in by_id
-
-
-def _task_ref_id(ref: str, by_id: Mapping[str, TaskSpec]) -> str:
-    if ref.startswith("task:"):
-        return ref[5:].split("#", 1)[0].split("/", 1)[0]
-    return ref
 
 
 def _diag(code: str, message: str, phase: str, *, task_id: str | None = None, field: str | None = None, details: Mapping[str, Any] | None = None) -> TaskPlanDiagnostic:

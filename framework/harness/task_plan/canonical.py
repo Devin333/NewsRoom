@@ -91,6 +91,30 @@ def exact_reference(value: Any, field_name: str) -> str:
     return text
 
 
+def task_reference_producer(
+    value: str,
+    known_task_ids: Sequence[str] = (),
+) -> str | None:
+    """Return the producer identity for canonical or known plain task refs."""
+
+    task_ref = reference(value, "input_ref")
+    remainder: str | None = None
+    if task_ref.startswith("task://"):
+        remainder = task_ref.removeprefix("task://")
+    elif task_ref.startswith("task:"):
+        remainder = task_ref.removeprefix("task:")
+    if remainder is not None:
+        producer = remainder.split("/", maxsplit=1)[0].split("#", maxsplit=1)[0]
+        if not producer:
+            raise _contract_error(
+                "invalid_task_plan_reference",
+                "task input reference must identify a producer task",
+                field="input_ref",
+            )
+        return identifier(producer, "producer_task_id")
+    return task_ref if task_ref in frozenset(known_task_ids) else None
+
+
 def checksum(value: Any, field_name: str) -> str:
     text = required_text(value, field_name)
     if _CHECKSUM_PATTERN.fullmatch(text) is None:
@@ -238,5 +262,6 @@ __all__ = [
     "reference",
     "required_text",
     "stable_text_tuple",
+    "task_reference_producer",
     "thaw_mapping",
 ]

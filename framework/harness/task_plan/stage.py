@@ -18,7 +18,7 @@ from framework.harness.task_plan.ports import (
 from framework.harness.task_plan.patches import TaskPlanPatchValidator
 from framework.harness.task_plan.models import PlanPatch
 from framework.harness.task_plan.scheduler import TaskPlanReadyDecision
-from framework.harness.task_plan.store import InMemoryTaskPlanStore, TaskPlanEvent, TaskPlanStorePort, TaskResultRecord
+from framework.harness.task_plan.store import TaskPlanEvent, TaskPlanStorePort, TaskResultRecord
 from framework.harness.task_plan.validation import TaskPlanValidationContext, TaskPlanValidator
 from framework.harness.workers.result import HarnessWorkerResult, HarnessWorkerStatus
 from framework.harness.task_plan.canonical import canonical_payload_checksum
@@ -67,6 +67,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
         current = self.store.plan(request.run_id, request.stage_id)
         if current is None:
             raise HarnessValidationError("cannot patch a stage without an accepted plan", code="task_plan_missing_plan")
+        self.patch_validator.require_policy_identity(current, request.policy)
         projection = self.store.load_projection(request.run_id, request.stage_id)
         self.store.append_patch(patch, accepted=False)
         try:
@@ -77,6 +78,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 request.policy,
                 self.capability_registry,
                 accepted_at=_required_observation_time(request),
+                available_input_refs=tuple(request.context_refs.values()),
             )
         except HarnessValidationError as exc:
             self.store.append_event(
@@ -157,10 +159,10 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
                 diagnostics={"plan_id": plan.plan_id, "plan_version": plan.version, "projection_checksum": projection.projection_checksum},
             )
         except HarnessValidationError as exc:
-            self._halt(request, str(exc), exc.code or "task_plan_failure")
+            self._halt(request, exc.code or "task_plan_failure")
             return HarnessWorkerResult(status=HarnessWorkerStatus.BLOCKED, error=str(exc), diagnostics={"reason_code": exc.code})
         except Exception as exc:
-            self._halt(request, str(exc), "task_plan_stage_failure")
+            self._halt(request, "task_plan_stage_failure")
             return HarnessWorkerResult(status=HarnessWorkerStatus.FAILED, error=str(exc), diagnostics={"reason_code": "task_plan_stage_failure"})
 
     def _ensure_plan(self, request: TaskPlanStageRequest) -> ValidatedTaskPlan:
@@ -168,8 +170,9 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             raise HarnessValidationError("TaskPlan request policy ref is not pinned to the supplied policy", code="task_plan_policy_mismatch")
         existing = self.store.plan(request.run_id, request.stage_id)
         if existing is not None:
-            if existing.graph_checksum != request.graph_checksum or existing.policy_ref != request.policy.exact_ref:
-                raise HarnessValidationError("existing TaskPlan is pinned to incompatible graph or policy", code="task_plan_pinned_version_mismatch")
+            if existing.graph_checksum != request.graph_checksum:
+                raise HarnessValidationError("existing TaskPlan is pinned to an incompatible graph", code="task_plan_pinned_version_mismatch")
+            self.patch_validator.require_policy_identity(existing, request.policy)
             return existing
         candidate = request.candidate or self.candidate_builder.build_candidate(PlanBuildRequest(
             run_id=request.run_id,
@@ -209,6 +212,7 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             parent_plan_id=None,
             source_candidate_ref=candidate.candidate_checksum,
             policy_ref=request.policy.exact_ref,
+            policy_checksum=request.policy.policy_checksum,
             tasks=result.resolved_tasks,
             required_output_roles=request.policy.required_output_roles,
             limits=request.policy.limits,
@@ -367,21 +371,31 @@ class TaskPlanStageRunner(TaskPlanStageRunnerPort):
             return HarnessWorkerResult(**value)
         raise HarnessValidationError("dynamic worker returned invalid result", code="task_plan_result_invalid")
 
-    def _halt(self, request: TaskPlanStageRequest, message: str, reason_code: str) -> None:
+    def _halt(self, request: TaskPlanStageRequest, reason_code: str) -> None:
         try:
+            plan = self.store.plan(request.run_id, request.stage_id)
+            diagnostic_ref = canonical_payload_checksum({"reason_code": reason_code})
             self.store.append_event(TaskPlanEvent(
                 "TASK_PLAN_HALTED", run_id=request.run_id, workflow_id=request.workflow_id, stage_id=request.stage_id,
                 graph_checksum=request.graph_checksum,
+                plan_id=plan.plan_id if plan is not None else None,
+                plan_version=plan.version if plan is not None else None,
                 reason_code=reason_code,
-                payload={
-                    "diagnostic_ref": canonical_payload_checksum(
-                        {"reason_code": reason_code}
-                    )
-                },
+                payload={"diagnostic_ref": diagnostic_ref},
                 sequence=self._next_sequence(request),
             ))
-        except Exception:
-            return
+        except Exception as exc:
+            raise HarnessValidationError(
+                "TaskPlan halt could not be durably committed",
+                code="task_plan_halt_persistence_failed",
+                details={
+                    "run_id": request.run_id,
+                    "stage_id": request.stage_id,
+                    "plan_version": plan.version if "plan" in locals() and plan is not None else None,
+                    "reason_code": reason_code,
+                    "diagnostic_ref": canonical_payload_checksum({"reason_code": reason_code}),
+                },
+            ) from exc
 
     def _next_sequence(self, request: TaskPlanStageRequest) -> int:
         return len(self.store.read_events(request.run_id, request.stage_id)) + 1
