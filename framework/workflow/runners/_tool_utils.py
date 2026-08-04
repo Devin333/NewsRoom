@@ -116,6 +116,14 @@ def tool_policy_from_step(step: StepSpec) -> ToolPolicy:
         ),
         timeout_seconds_default=payload.get("timeout_seconds_default", 30.0),
         max_attempts_default=int(payload.get("max_attempts_default", 1)),
+        cancellation_grace_seconds=float(
+            payload.get("cancellation_grace_seconds", 0.1)
+        ),
+        max_total_attempts=(
+            int(payload["max_total_attempts"])
+            if payload.get("max_total_attempts") is not None
+            else None
+        ),
     )
 
 

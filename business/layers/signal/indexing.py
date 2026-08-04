@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from business.layers.signal.artifact_refs import SignalArtifactRef
-from framework.artifacts.paths import resolve_artifact_descendant
+from framework.agent.artifacts.paths import resolve_artifact_descendant
 
 
 def source_artifact_ref_extractor(

@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     Artifact,
     ArtifactChecksumMismatchError,
     ArtifactIntegrityInspector,
@@ -22,7 +22,7 @@ from framework.artifacts import (
     compute_checksum,
     resolve_artifact_descendant,
 )
-from framework.artifacts.observability import (
+from framework.agent.artifacts.observability import (
     ARTIFACT_CHECKSUM_MISMATCH_EVENT,
     ARTIFACT_CHECKSUM_MISSING_EVENT,
     ARTIFACT_INTEGRITY_INSPECTION_EVENT,
@@ -38,7 +38,7 @@ from framework.artifacts.observability import (
     emit_artifact_path_rejected,
     emit_artifact_reserved_metadata_rejected,
 )
-from framework.artifacts.stores import verify_sha256_checksum
+from framework.agent.artifacts.stores import verify_sha256_checksum
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import DataBuffer
 from framework.workflow.runners.artifact import ArtifactStepRunner

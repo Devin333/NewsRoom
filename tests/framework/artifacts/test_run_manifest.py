@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from framework.artifacts import ArtifactManager, ArtifactPathError, ArtifactReference
-from framework.artifacts import ArtifactStoreMetadataError
-from framework.artifacts.runtime import manager as manager_module
+from framework.agent.artifacts import ArtifactManager, ArtifactPathError, ArtifactReference
+from framework.agent.artifacts import ArtifactStoreMetadataError
+from framework.agent.artifacts.runtime import manager as manager_module
 from framework.workflow.checkpoint import CheckpointReference
 
 

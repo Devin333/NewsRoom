@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from framework.artifacts.paths import (
+from framework.agent.artifacts.paths import (
     resolve_artifact_descendant,
     validate_relative_artifact_path,
 )

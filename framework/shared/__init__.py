@@ -1,5 +1,16 @@
 """Shared framework primitives and helpers."""
 
+from framework.shared.attempts import (
+    AttemptBudget,
+    AttemptBudgetExhaustedError,
+    AttemptCancelledError,
+    AttemptContext,
+    AttemptOutcome,
+    AttemptState,
+    AttemptSupervisor,
+    bind_attempt_context,
+    current_attempt_context,
+)
 from framework.shared.errors import (
     BoundaryViolationError,
     ConfigurationError,
@@ -27,6 +38,13 @@ from framework.shared.time import duration_ms, ensure_utc, format_datetime, pars
 from framework.shared.typing import JsonDict, JsonValue, Metadata, ensure_dict, ensure_list, optional_str
 
 __all__ = [
+    "AttemptBudget",
+    "AttemptBudgetExhaustedError",
+    "AttemptCancelledError",
+    "AttemptContext",
+    "AttemptOutcome",
+    "AttemptState",
+    "AttemptSupervisor",
     "BoundaryViolationError",
     "ConfigurationError",
     "DEFAULT_SENSITIVE_KEY_TOKENS",
@@ -52,7 +70,9 @@ __all__ = [
     "TaskId",
     "ValidationError",
     "canonical_json",
+    "bind_attempt_context",
     "contains_redacted_value",
+    "current_attempt_context",
     "duration_ms",
     "ensure_dict",
     "ensure_list",

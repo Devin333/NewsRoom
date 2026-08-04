@@ -7,7 +7,7 @@ from typing import Any
 from framework.events.trace import TraceContext
 from framework.specs import StepSpec, StepStatus
 from framework.workflow.buffer import DataBuffer
-from framework.artifacts import ArtifactManager, ArtifactRef
+from framework.agent.artifacts import ArtifactManager, ArtifactRef
 from framework.workflow.runtime.execution_context import utc_now
 from framework.workflow.runtime.manifest import (
     register_manifest_artifact,

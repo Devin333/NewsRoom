@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactPathError,
     resolve_artifact_descendant,
     validate_artifact_path_segment,

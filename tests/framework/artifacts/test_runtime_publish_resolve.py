@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactPathError,
     ArtifactStatus,
     LocalArtifactPublisher,
@@ -10,7 +10,7 @@ from framework.artifacts import (
     WorkflowArtifactRef,
     stable_hash_bytes,
 )
-from framework.artifacts.observability import (
+from framework.agent.artifacts.observability import (
     ARTIFACT_OBSERVABILITY_LOGGER,
     ARTIFACT_RESERVED_METADATA_REJECTED_EVENT,
 )

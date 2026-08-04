@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.artifacts import ArtifactManager, ArtifactReference
+from framework.agent.artifacts import ArtifactManager, ArtifactReference
 from framework.workflow.checkpoint import CheckpointReference
 from framework.workflow.runtime.manifest import RunManifestError
 

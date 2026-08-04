@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Any, Callable
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactReference,
     ArtifactManager,
@@ -22,7 +22,7 @@ from framework.artifacts import (
     compute_checksum,
     validate_artifact_path_segment,
 )
-from framework.artifacts.stores.integrity import validate_sha256_checksum
+from framework.agent.artifacts.stores.integrity import validate_sha256_checksum
 from framework.harness import (
     ArtifactRef as HarnessArtifactRef,
     ArtifactWriteRequest,

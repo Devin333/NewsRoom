@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactPathError,
     ArtifactStoreMetadataError,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from framework.specs import StepStatus
-from framework.artifacts import ArtifactRef
+from framework.agent.artifacts import ArtifactRef
 from framework.workflow.runtime.result import StepOutcome
 
 

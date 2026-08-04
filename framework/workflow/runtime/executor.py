@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactManager,
     resolve_artifact_descendant,
     validate_artifact_path_segment,

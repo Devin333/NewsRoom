@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 
 from business.layers.signal.artifacts import SourceArtifactWriter
 

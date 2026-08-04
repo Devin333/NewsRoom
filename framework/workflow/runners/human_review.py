@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import StepScopedDataBufferView
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners._utils import (
     contract_metrics as _contract_metrics,

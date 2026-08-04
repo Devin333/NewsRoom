@@ -5,7 +5,10 @@ from typing import Any
 
 from business.tools import build_business_tool_registry
 from framework.tool import ToolPolicy, build_tool_catalog
-from interfaces.services.source_tool_runtime import default_source_tool_runtime
+from interfaces.services.source_runtime import (
+    SourceRuntimeComposition,
+    SourceRuntimeProvider,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,19 @@ class ToolSchemaApplicationResult:
 
 
 class ToolApplicationService:
+    def __init__(
+        self,
+        *,
+        source_runtime: SourceRuntimeComposition | None = None,
+        source_runtime_provider: SourceRuntimeProvider | None = None,
+    ) -> None:
+        if source_runtime is not None and source_runtime_provider is not None:
+            raise ValueError(
+                "source_runtime and source_runtime_provider are mutually exclusive"
+            )
+        self._source_runtime = source_runtime
+        self._source_runtime_provider = source_runtime_provider or SourceRuntimeProvider()
+
     def list_tools(
         self,
         *,
@@ -39,9 +55,14 @@ class ToolApplicationService:
         allow_mcp: bool = False,
         include_dangerous: bool = False,
     ) -> ToolCatalogApplicationResult:
+        source_runtime = self._resolved_source_runtime()
         registry = build_business_tool_registry(
             include_dangerous_tools=include_dangerous,
-            source_tool_runtime=default_source_tool_runtime(),
+            source_registry=source_runtime.source_registry,
+            source_fetch_policy=source_runtime.business_fetch_policy,
+            source_tool_runtime=source_runtime.source_tool_runtime,
+            source_rate_limiter=source_runtime.rate_limiter,
+            source_health_manager=source_runtime.health_manager,
         )
         catalog = build_tool_catalog(
             registry,
@@ -67,9 +88,14 @@ class ToolApplicationService:
         allow_mcp: bool = False,
         include_dangerous: bool = False,
     ) -> ToolSchemaApplicationResult:
+        source_runtime = self._resolved_source_runtime()
         registry = build_business_tool_registry(
             include_dangerous_tools=include_dangerous,
-            source_tool_runtime=default_source_tool_runtime(),
+            source_registry=source_runtime.source_registry,
+            source_fetch_policy=source_runtime.business_fetch_policy,
+            source_tool_runtime=source_runtime.source_tool_runtime,
+            source_rate_limiter=source_runtime.rate_limiter,
+            source_health_manager=source_runtime.health_manager,
         )
         tools = registry.export_schema_for_llm(
             agent_id,
@@ -81,6 +107,11 @@ class ToolApplicationService:
             ),
         )
         return ToolSchemaApplicationResult(agent_id=agent_id, tools=tools)
+
+    def _resolved_source_runtime(self) -> SourceRuntimeComposition:
+        if self._source_runtime is not None:
+            return self._source_runtime
+        return self._source_runtime_provider.get()
 
     @staticmethod
     def tool_policy(

@@ -1,6 +1,6 @@
 import json
 
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 
 from business.layers.signal.source_artifact_publication import (
     SourceArtifactPublicationService,

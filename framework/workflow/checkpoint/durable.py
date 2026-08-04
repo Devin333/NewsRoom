@@ -14,7 +14,7 @@ from hmac import compare_digest
 import json
 from typing import Any
 
-from framework.artifacts import validate_artifact_path_segment
+from framework.agent.artifacts import validate_artifact_path_segment
 from framework.events.canonical import normalize_canonical_json, thaw_canonical_json
 from framework.shared.json import to_jsonable
 

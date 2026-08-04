@@ -8,7 +8,7 @@ from typing import Any
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.tool import ToolExecutor, ToolStatus
 from framework.workflow.buffer import StepScopedDataBufferView
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners._tool_utils import (
     observation_key,
@@ -152,6 +152,23 @@ class ToolCallStepRunner:
                     error_message=observation.result.error_message,
                     metrics=metrics,
                 )
+            if observation.status == ToolStatus.TIMEOUT:
+                return StepOutcome(
+                    status=StepStatus.TIMEOUT,
+                    outputs=outputs,
+                    error_type=observation.result.error_type,
+                    error_message=observation.result.error_message,
+                    error_details={
+                        "termination_confirmed": (
+                            observation.result.termination_confirmed
+                        ),
+                        "indeterminate": observation.result.indeterminate,
+                        "attempt_id": observation.result.attempt_id,
+                        "idempotency_key": observation.result.idempotency_key,
+                        "fencing_token": observation.result.fencing_token,
+                    },
+                    metrics=metrics,
+                )
             return StepOutcome(
                 status=StepStatus.FAILED,
                 outputs=outputs,
@@ -168,5 +185,4 @@ class ToolCallStepRunner:
             )
 
 __all__ = ["ToolCallStepRunner"]
-
 

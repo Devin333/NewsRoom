@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
-from framework.artifacts.paths import validate_artifact_path_segment
+from framework.agent.artifacts.paths import validate_artifact_path_segment
 from framework.events.canonical import (
     StoredEvent,
     checksum_for,

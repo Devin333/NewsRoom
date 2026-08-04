@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
 from framework.tool.builtin.artifact import register_artifact_tools
 

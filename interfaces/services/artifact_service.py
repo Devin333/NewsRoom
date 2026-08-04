@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from framework.artifacts.paths import (
+from framework.agent.artifacts.paths import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
     validate_relative_artifact_path,

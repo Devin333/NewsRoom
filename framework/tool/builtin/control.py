@@ -1,75 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone as _tz
-UTC = _tz.utc
 from typing import Any, Protocol
-from uuid import uuid4
 
-from framework.shared.time import format_datetime
 from framework.tool.governance.redaction import reject_sensitive_mapping_keys
 from framework.tool.governance.approval import ApprovalRequest
 from framework.tool.models.definition import ToolDefinition
 from framework.tool.registry.registry import ToolRegistry
-
-
-DEFAULT_TASK_QUEUE = "framework:queue:default"
+from framework.workers.models.task import DEFAULT_TASK_QUEUE, Task
 
 
 class TaskQueueWriter(Protocol):
     def enqueue(self, task: Any) -> Any: ...
-
-
-@dataclass
-class Task:
-    task_type: str
-    payload: dict[str, Any]
-    queue_name: str = DEFAULT_TASK_QUEUE
-    task_id: str = field(default_factory=lambda: uuid4().hex)
-    status: Any = "created"
-    attempts: int = 0
-    max_attempts: int = 3
-    priority: int = 0
-    timeout_seconds: int | None = None
-    dedup_key: str | None = None
-    trace_id: str | None = None
-    leased_by: str | None = None
-    lease_expires_at: datetime | None = None
-    scheduled_for: datetime | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-
-    @property
-    def attempt(self) -> int:
-        return self.attempts
-
-    @attempt.setter
-    def attempt(self, value: int) -> None:
-        self.attempts = int(value)
-
-    def to_dict(self) -> dict[str, Any]:
-        status = getattr(self.status, "value", self.status)
-        return {
-            "task_id": self.task_id,
-            "task_type": self.task_type,
-            "queue_name": self.queue_name,
-            "payload": dict(self.payload),
-            "status": status,
-            "attempt": self.attempts,
-            "attempts": self.attempts,
-            "max_attempts": self.max_attempts,
-            "priority": self.priority,
-            "timeout_seconds": self.timeout_seconds,
-            "dedup_key": self.dedup_key,
-            "trace_id": self.trace_id,
-            "leased_by": self.leased_by,
-            "lease_expires_at": format_datetime(self.lease_expires_at),
-            "scheduled_for": format_datetime(self.scheduled_for),
-            "metadata": dict(self.metadata),
-            "created_at": format_datetime(self.created_at),
-            "updated_at": format_datetime(self.updated_at),
-        }
 
 
 def register_control_tools(
@@ -336,6 +277,9 @@ def _optional_text(value: Any) -> str | None:
 def _normalize_message_id(message_id: Any) -> str | None:
     if message_id is None:
         return None
+    nested_message_id = getattr(message_id, "message_id", None)
+    if nested_message_id is not None:
+        return _normalize_message_id(nested_message_id)
     if isinstance(message_id, bytes):
         return message_id.decode("utf-8")
     return str(message_id)

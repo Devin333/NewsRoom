@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from framework.artifacts import ArtifactPathError
+from framework.agent.artifacts import ArtifactPathError
 from infrastructure.storage.local_json import LocalJsonRepository, ReportNotFoundError
 
 

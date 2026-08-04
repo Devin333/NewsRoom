@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
     ArtifactStoreMetadataError,
 )
-from framework.artifacts.paths import ArtifactPathError
+from framework.agent.artifacts.paths import ArtifactPathError
 from framework.events.canonical import (
     BusinessContext,
     EventCandidate,

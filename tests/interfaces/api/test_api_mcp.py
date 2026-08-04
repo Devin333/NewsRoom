@@ -60,6 +60,44 @@ def test_api_mcp_tool_resource_and_prompt_results_are_enveloped() -> None:
     assert prompt_response.json()["data"]["name"] == "news.run.diagnose"
 
 
+def test_api_mcp_sanitizes_unknown_failed_result() -> None:
+    secret = "Bearer super-secret-token"
+    client = TestClient(
+        create_app(
+            mcp_service_factory=lambda: _UnsafeFailedMCPService(secret),
+            audit_emitter_factory=None,
+        )
+    )
+
+    response = client.post(
+        "/api/v1/mcp/tools/news.report.latest/call",
+        json={"arguments": {}},
+    )
+    payload = response.json()
+
+    assert response.status_code == 500
+    assert payload["error"]["code"] == "mcp_request_failed"
+    assert payload["error"]["message"] == "internal error"
+    assert payload["error"]["details"]["error_type"] == "MCPInternalError"
+    assert payload["error"]["details"]["error_id"].startswith("err_")
+    assert secret not in response.text
+
+
+def test_api_mcp_preserves_safe_typed_not_found_contract() -> None:
+    client = TestClient(create_app(audit_emitter_factory=None))
+
+    response = client.post(
+        "/api/v1/mcp/tools/news.unknown/call",
+        json={"arguments": {}},
+    )
+    payload = response.json()
+
+    assert response.status_code == 404
+    assert payload["error"]["code"] == "mcp_tool_not_found"
+    assert payload["error"]["message"] == "unknown MCP tool: news.unknown"
+    assert payload["error"]["details"]["error_type"] == "MCPToolNotFound"
+
+
 def test_api_mcp_artifact_path_failures_use_outer_http_error_envelope() -> None:
     client = TestClient(
         create_app(
@@ -398,6 +436,22 @@ class _FailedMCPService:
                 "data": None,
                 "error_type": self.error_type,
                 "error_message": "artifact operation failed",
+            }
+        )
+
+
+class _UnsafeFailedMCPService:
+    def __init__(self, secret) -> None:
+        self.secret = secret
+
+    def call_tool(self, tool_name, arguments):
+        return _FakeResult(
+            {
+                "tool_name": tool_name,
+                "success": False,
+                "data": {"secret": self.secret},
+                "error_type": "DatabaseDriverError",
+                "error_message": self.secret,
             }
         )
 

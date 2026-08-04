@@ -26,6 +26,7 @@ class ToolPolicy:
     spill_large_results_to_artifact: bool = True
     timeout_seconds_default: float | None = 30.0
     max_attempts_default: int = 1
+    cancellation_grace_seconds: float = 0.1
     # Fix #3: caps tool-level × step-level retry multiplication
     max_total_attempts: int | None = None
 
@@ -37,6 +38,13 @@ class ToolPolicy:
             object.__setattr__(self, "timeout_seconds_default", self.default_timeout_seconds)
         elif self.default_timeout_seconds == 30.0:
             object.__setattr__(self, "default_timeout_seconds", float(self.timeout_seconds_default))
+        if self.cancellation_grace_seconds < 0:
+            raise ValueError("cancellation_grace_seconds must be non-negative")
+        if self.max_total_attempts is not None and (
+            type(self.max_total_attempts) is not int
+            or self.max_total_attempts < 1
+        ):
+            raise ValueError("max_total_attempts must be a positive integer")
 
     def allows(self, tool_name: str) -> bool:
         if tool_name in self.blocked_tools:
@@ -100,6 +108,7 @@ class ToolPolicy:
             "spill_large_results_to_artifact": self.spill_large_results_to_artifact,
             "timeout_seconds_default": self.timeout_seconds_default,
             "max_attempts_default": self.max_attempts_default,
+            "cancellation_grace_seconds": self.cancellation_grace_seconds,
             "max_total_attempts": self.max_total_attempts,
         }
 
@@ -131,6 +140,14 @@ class ToolPolicy:
             spill_large_results_to_artifact=bool(getattr(value, "spill_large_results_to_artifact", True)),
             timeout_seconds_default=getattr(value, "timeout_seconds_default", 30.0),
             max_attempts_default=int(getattr(value, "max_attempts_default", 1)),
+            cancellation_grace_seconds=float(
+                getattr(value, "cancellation_grace_seconds", 0.1)
+            ),
+            max_total_attempts=(
+                int(getattr(value, "max_total_attempts"))
+                if getattr(value, "max_total_attempts", None) is not None
+                else None
+            ),
         )
 
 

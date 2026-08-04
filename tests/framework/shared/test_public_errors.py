@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from framework.artifacts import ArtifactChecksumMismatchError
+from framework.agent.artifacts import ArtifactChecksumMismatchError
 from framework.shared.public_errors import (
     ApprovedPublicError,
     project_public_error,

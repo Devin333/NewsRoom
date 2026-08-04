@@ -4,7 +4,7 @@ from __future__ import annotations
 def test_framework_public_api_imports() -> None:
     import framework
     import framework.agent
-    import framework.artifacts
+    import framework.agent.artifacts
     import framework.events
     import framework.governance
     import framework.llm

@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import time
 from typing import Any
+
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.schema import EventSchemaCatalog
-
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import StepScopedDataBufferView
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners._utils import (
     failed_outcome as _failed_outcome,
@@ -20,6 +20,7 @@ from framework.workflow.runners.base import (
     StepRunnerCapability,
     StepRunnerSideEffectLevel,
     ValidationErrorItem,
+    ensure_attempt_active,
 )
 from framework.workflow.runners.registry import StepRunnerRegistry
 
@@ -102,6 +103,7 @@ class SubworkflowStepRunner:
     def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
+            ensure_attempt_active()
             if step.step_type != StepType.SUBWORKFLOW:
                 raise StepExecutionError(
                     f"unsupported step type for SubworkflowStepRunner: {step.step_type}"
@@ -153,6 +155,7 @@ class SubworkflowStepRunner:
                 profile=str(step.metadata.get("profile") or "subworkflow"),
                 run_id=child_run_id,
             )
+            ensure_attempt_active()
             _record_child_manifest_parent_link(
                 artifact_manager=self._artifact_manager,
                 child_run_id=child_run_id,
@@ -200,6 +203,7 @@ class SubworkflowStepRunner:
             )
             for key, value in outputs.items():
                 if key in buffer.list_allowed_writes():
+                    ensure_attempt_active()
                     buffer.write(key, value, lineage={"step_id": step.step_id})
             metrics = _with_contract_metrics(
                 metrics,

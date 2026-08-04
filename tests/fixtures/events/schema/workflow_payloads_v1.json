@@ -135,7 +135,7 @@
     },
     "step_timeout": {
       "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},
-      "payload": {"attempt": 1, "max_attempts": 2, "timeout_seconds": 30.0, "on_timeout": "retry"}
+      "payload": {"attempt": 1, "max_attempts": 2, "configured_timeout_seconds": 30.0, "effective_timeout_seconds": 20.0, "cancellation_source": "parent_attempt", "on_timeout": "retry", "termination_confirmed": true, "indeterminate": false}
     },
     "policy_violation": {
       "business_context": {"run_id": "run-1", "workflow_id": "workflow-1", "step_id": "step-1"},

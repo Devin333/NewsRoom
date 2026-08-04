@@ -10,7 +10,7 @@ from threading import Barrier
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactStoreMetadataError,
     compute_checksum,

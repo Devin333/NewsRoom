@@ -39,3 +39,26 @@ def test_news_cli_tools_schema_applies_policy_json(capsys) -> None:
     assert payload["agent_id"] == "cli"
     assert payload["tool_count"] == 1
     assert payload["tools"][0]["name"] == "report.validate"
+
+
+def test_news_cli_dangerous_list_and_schema_have_unique_web_search(capsys) -> None:
+    list_exit_code = news_cli.main(["tools", "list", "--include-dangerous", "--json"])
+    list_payload = json.loads(capsys.readouterr().out)
+
+    schema_exit_code = news_cli.main(
+        [
+            "tools",
+            "schema",
+            "--include-dangerous",
+            "--allowed",
+            "web.search",
+            "--json",
+        ]
+    )
+    schema_payload = json.loads(capsys.readouterr().out)
+
+    assert list_exit_code == 0
+    assert list_payload["registry_valid"] is True
+    assert [tool["name"] for tool in list_payload["tools"]].count("web.search") == 1
+    assert schema_exit_code == 0
+    assert [tool["name"] for tool in schema_payload["tools"]] == ["web.search"]

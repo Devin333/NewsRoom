@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def test_public_imports_are_available() -> None:
-    from framework.artifacts import (  # noqa: PLC0415
+    from framework.agent.artifacts import (  # noqa: PLC0415
         Artifact,
         ArtifactChecksumMismatchError,
         ArtifactManager,
@@ -16,7 +16,7 @@ def test_public_imports_are_available() -> None:
         validate_sha256_checksum,
         verify_sha256_checksum,
     )
-    from framework.artifacts.stores import (  # noqa: PLC0415
+    from framework.agent.artifacts.stores import (  # noqa: PLC0415
         ArtifactChecksumMismatchError as StoreChecksumMismatchError,
         ArtifactStoreMetadataError as StoreMetadataError,
     )

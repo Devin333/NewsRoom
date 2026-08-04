@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactPathError,
     resolve_artifact_descendant,
     validate_artifact_path_segment,

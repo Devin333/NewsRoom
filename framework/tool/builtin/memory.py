@@ -267,6 +267,7 @@ class _VectorSearchQuery:
     vector: list[float] | None = None
     filters: dict[str, Any] = field(default_factory=dict)
     limit: int = 10
+    offset: int = 0
     score_threshold: float | None = None
 
 

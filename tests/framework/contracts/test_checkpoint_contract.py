@@ -6,7 +6,7 @@ from framework.workflow.checkpoint.durable import (
     durable_envelope_from_checkpoint,
     durable_envelope_to_checkpoint,
 )
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.checkpoint_coordinator import CheckpointCoordinator
 from framework.workflow.runtime.execution_context import build_execution_context

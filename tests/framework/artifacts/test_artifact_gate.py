@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.artifacts import ArtifactManager, ArtifactPathError
+from framework.agent.artifacts import ArtifactManager, ArtifactPathError
 
 
 def test_artifact_gate_allows_relative_write(tmp_path) -> None:

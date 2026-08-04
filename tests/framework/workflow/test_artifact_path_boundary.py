@@ -7,8 +7,8 @@ from typing import Any, cast
 
 import pytest
 
-from framework.artifacts import ArtifactPathError
-from framework.artifacts.models import ArtifactRef
+from framework.agent.artifacts import ArtifactPathError
+from framework.agent.artifacts.models import ArtifactRef
 from framework.workflow.checkpoint.envelope import WorkflowCheckpointEnvelope
 from framework.workflow.checkpoint.model import WorkflowCheckpoint as RuntimeCheckpoint
 from framework.workflow.checkpoint.recovery import inspect_checkpoint_artifacts

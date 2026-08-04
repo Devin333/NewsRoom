@@ -6,6 +6,7 @@ from interfaces.api import create_app
 from interfaces.api.errors import ApiErrorCode, map_exception
 from interfaces.api.responses import error, success
 from interfaces.models import ApiMeta, PageRequest, ReportStatus, RunStatus
+from interfaces.events import AuditEmitter, InMemoryAuditSink
 
 
 def test_success_helper_builds_standard_envelope() -> None:
@@ -83,6 +84,56 @@ def test_api_unknown_route_uses_contract_envelope() -> None:
     assert payload["error"]["request_id"] == payload["request_id"]
 
 
+def test_api_unhandled_exception_uses_safe_envelope_and_one_request_id() -> None:
+    secret = "postgresql://operator:password@db.internal/news"
+    sink = InMemoryAuditSink()
+    client = TestClient(
+        create_app(
+            report_service_factory=lambda: _ExplodingReportService(secret),
+            audit_emitter_factory=lambda: AuditEmitter(sink),
+        ),
+        raise_server_exceptions=False,
+    )
+
+    response = client.get(
+        "/api/v1/reports/latest",
+        headers={"X-Request-ID": "contract-internal"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 500
+    assert response.headers["x-request-id"] == "contract-internal"
+    assert payload["success"] is False
+    assert payload["request_id"] == "contract-internal"
+    assert payload["error"]["request_id"] == "contract-internal"
+    assert payload["error"]["code"] == "internal_error"
+    assert payload["error"]["message"] == "internal server error"
+    assert payload["error"]["details"]["error_id"].startswith("err_")
+    assert sink.records[-1].actor.request_id == "contract-internal"
+    assert secret not in response.text
+    assert secret not in str(sink.records[-1].to_dict())
+
+
+def test_api_generated_request_id_survives_unhandled_exception_and_audit() -> None:
+    sink = InMemoryAuditSink()
+    client = TestClient(
+        create_app(
+            report_service_factory=lambda: _ExplodingReportService("unsafe detail"),
+            audit_emitter_factory=lambda: AuditEmitter(sink),
+        ),
+        raise_server_exceptions=False,
+    )
+
+    response = client.get("/api/v1/reports/latest")
+    payload = response.json()
+
+    request_id = response.headers["x-request-id"]
+    assert request_id.startswith("req_")
+    assert payload["request_id"] == request_id
+    assert payload["error"]["request_id"] == request_id
+    assert sink.records[-1].actor.request_id == request_id
+
+
 def test_contract_models_include_api_meta_pagination_and_status_aliases() -> None:
     meta = ApiMeta(request_id="contract-meta")
     page = PageRequest(limit=10, offset=0)
@@ -103,3 +154,11 @@ def test_map_exception_returns_structured_error_tuple() -> None:
     assert code == ApiErrorCode.INVALID_REQUEST
     assert message == "bad input"
     assert details == {}
+
+
+class _ExplodingReportService:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def latest_report(self):
+        raise RuntimeError(self.message)

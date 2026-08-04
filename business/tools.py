@@ -9,7 +9,7 @@ from business.layers.output.postgres_tools import register_postgres_tools
 from business.layers.output.tools import register_report_tools
 from business.layers.signal.connector_tools import register_arxiv_tools, register_github_tools
 from business.layers.signal.tools import FetchText, register_source_tools
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.memory import MemoryRuntime
 from framework.tool import (
     ToolRegistry,
@@ -19,7 +19,7 @@ from infrastructure.tools import (
     build_builtin_tool_registry,
 )
 from infrastructure.external.sources import default_arxiv_connector, default_github_connector
-from infrastructure.tools.web_search_tools import WebSearchProvider, register_web_search_tools
+from infrastructure.tools.web_search_tools import WebSearchProvider
 
 
 def build_business_tool_registry(
@@ -31,6 +31,7 @@ def build_business_tool_registry(
     source_fetch_text: FetchText | None = None,
     source_fetch_policy: Any | None = None,
     source_tool_runtime: Any | None = None,
+    source_rate_limiter: Any | None = None,
     allowed_source_domains: list[str] | None = None,
     source_health_manager: Any | None = None,
     arxiv_connector: Any | None = None,
@@ -62,7 +63,8 @@ def build_business_tool_registry(
         approval_store=approval_store,
         task_queue=task_queue,
         notification_options=notification_options,
-        include_network_tools=False,
+        web_search_provider=web_search_provider,
+        include_network_tools=include_network_tools or include_dangerous_tools,
         include_dangerous_tools=True,
     )
     register_business_tools(
@@ -73,6 +75,7 @@ def build_business_tool_registry(
         source_fetch_text=source_fetch_text,
         source_fetch_policy=source_fetch_policy,
         source_tool_runtime=source_tool_runtime,
+        source_rate_limiter=source_rate_limiter,
         allowed_source_domains=allowed_source_domains,
         source_health_manager=source_health_manager,
         arxiv_connector=arxiv_connector,
@@ -113,7 +116,8 @@ def build_business_dangerous_tool_registry(**kwargs: Any) -> ToolRegistry:
         approval_store=options.get("approval_store"),
         task_queue=options.get("task_queue"),
         notification_options=options.get("notification_options"),
-        include_network_tools=False,
+        web_search_provider=options.get("web_search_provider"),
+        include_network_tools=include_network_tools,
     )
     register_business_tools(
         registry,
@@ -123,6 +127,7 @@ def build_business_dangerous_tool_registry(**kwargs: Any) -> ToolRegistry:
         source_fetch_text=options.get("source_fetch_text"),
         source_fetch_policy=options.get("source_fetch_policy"),
         source_tool_runtime=options.get("source_tool_runtime"),
+        source_rate_limiter=options.get("source_rate_limiter"),
         allowed_source_domains=options.get("allowed_source_domains"),
         source_health_manager=options.get("source_health_manager"),
         arxiv_connector=options.get("arxiv_connector"),
@@ -147,6 +152,7 @@ def register_business_tools(
     source_fetch_text: FetchText | None = None,
     source_fetch_policy: Any | None = None,
     source_tool_runtime: Any | None = None,
+    source_rate_limiter: Any | None = None,
     allowed_source_domains: list[str] | None = None,
     source_health_manager: Any | None = None,
     arxiv_connector: Any | None = None,
@@ -164,6 +170,7 @@ def register_business_tools(
         fetch_text=source_fetch_text,
         fetch_policy=source_fetch_policy,
         source_runtime=source_tool_runtime,
+        rate_limiter=source_rate_limiter,
         allowed_domains=allowed_source_domains,
         health_manager=source_health_manager,
         source_registry=source_registry,
@@ -181,7 +188,6 @@ def register_business_tools(
     if include_network_tools:
         register_arxiv_tools(registry, connector=arxiv_connector or default_arxiv_connector())
         register_github_tools(registry, connector=github_connector or default_github_connector())
-        register_web_search_tools(registry, provider=web_search_provider)
     if postgres_repository is not None:
         register_postgres_tools(
             registry,

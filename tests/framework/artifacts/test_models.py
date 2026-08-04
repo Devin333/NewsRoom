@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     Artifact,
     ArtifactContent,
     ArtifactManifest,

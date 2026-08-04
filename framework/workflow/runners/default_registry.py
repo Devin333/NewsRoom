@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from framework.specs import StepType
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.workflow.runners.agent_loop import AgentLoopStepRunner
 from framework.workflow.runners.artifact import ArtifactStepRunner
 from framework.workflow.runners.function import FunctionStepRegistry, FunctionStepRunner

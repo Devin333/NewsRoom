@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
+from framework.shared.public_errors import sanitize_mcp_result_payload
 from interfaces.api.deps import ApiRouteHelpers, ApiServices
 from interfaces.models import (
     ActorContext,
@@ -44,7 +45,7 @@ _MCP_ERROR_HTTP_CONTRACT = {
     "ValueError": (400, "invalid_mcp_request"),
 }
 
-_MCP_SAFE_ERROR_MESSAGES = {
+_MCP_SAFE_EVENT_ERROR_MESSAGES = {
     "EventAuthorizationError": "event operator action is not authorized",
     "EventOperationNotFoundError": "event operator resource not found",
     "EventOperationCapabilityUnavailableError": "event operator capability is unavailable",
@@ -94,7 +95,13 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             )
         service = _bind_actor(services.mcp_service_factory(), actor)
         result = service.call_tool(tool_name, actual_request.arguments)
-        return _mcp_result_response(result, helpers=helpers, operation="call_tool")
+        return _mcp_result_response(
+            result,
+            helpers=helpers,
+            operation="call_tool",
+            expected_not_found_type="MCPToolNotFound",
+            expected_identifier=tool_name,
+        )
 
     @router.post("/api/v1/mcp/resources/read")
     def mcp_read_resource(request: Request, payload: MCPResourceReadRequest):
@@ -122,13 +129,25 @@ def create_router(services: ApiServices, helpers: ApiRouteHelpers) -> APIRouter:
             )
         service = _bind_actor(services.mcp_service_factory(), actor)
         result = service.read_resource(payload.uri)
-        return _mcp_result_response(result, helpers=helpers, operation="read_resource")
+        return _mcp_result_response(
+            result,
+            helpers=helpers,
+            operation="read_resource",
+            expected_not_found_type="MCPResourceNotFound",
+            expected_identifier=payload.uri,
+        )
 
     @router.post("/api/v1/mcp/prompts/{prompt_name}/get")
     def mcp_get_prompt(prompt_name: str, request: MCPPromptGetRequest | None = None):
         actual_request = request or MCPPromptGetRequest()
         result = services.mcp_service_factory().get_prompt(prompt_name, actual_request.arguments)
-        return _mcp_result_response(result, helpers=helpers, operation="get_prompt")
+        return _mcp_result_response(
+            result,
+            helpers=helpers,
+            operation="get_prompt",
+            expected_not_found_type="MCPPromptNotFound",
+            expected_identifier=prompt_name,
+        )
 
     return router
 
@@ -155,8 +174,26 @@ def _mcp_result_response(
     *,
     helpers: ApiRouteHelpers,
     operation: str,
+    expected_not_found_type: str,
+    expected_identifier: str,
 ) -> Any:
-    payload = result.to_dict()
+    raw_payload = result.to_dict()
+    raw_error_type = str(raw_payload.get("error_type") or "")
+    if raw_payload.get("success") is not True and raw_error_type in (
+        _MCP_SAFE_EVENT_ERROR_MESSAGES
+    ):
+        payload = {
+            "success": False,
+            "error_type": raw_error_type,
+            "error_message": _MCP_SAFE_EVENT_ERROR_MESSAGES[raw_error_type],
+        }
+    else:
+        payload = sanitize_mcp_result_payload(
+            raw_payload,
+            expected_not_found_type=expected_not_found_type,
+            expected_identifier=expected_identifier,
+            operation=operation,
+        )
     if payload.get("success") is True:
         return helpers.success(payload)
 
@@ -165,11 +202,7 @@ def _mcp_result_response(
         error_type,
         (500, "mcp_request_failed"),
     )
-    message = _MCP_SAFE_ERROR_MESSAGES.get(error_type)
-    if message is None and error_type.startswith("Event") and error_type.endswith("Error"):
-        message = "event operation failed"
-    if message is None:
-        message = str(payload.get("error_message") or f"MCP {operation} failed")
+    message = str(payload.get("error_message") or f"MCP {operation} failed")
     return helpers.error(
         status_code=status_code,
         code=code,
@@ -177,5 +210,10 @@ def _mcp_result_response(
         details={
             "error_type": error_type,
             "operation": operation,
+            **(
+                {"error_id": str(payload["error_id"])}
+                if payload.get("error_id")
+                else {}
+            ),
         },
     )

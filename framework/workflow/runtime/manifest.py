@@ -7,12 +7,12 @@ from hashlib import sha256
 from typing import Any, Protocol
 
 from framework.specs import StepType, WorkflowSpec, WorkflowStatus
-from framework.artifacts.runtime.publisher import (
+from framework.agent.artifacts.runtime.publisher import (
     WorkflowArtifactRef as ArtifactRef,
     redact_metadata,
     utc_now_iso,
 )
-from framework.artifacts.paths import (
+from framework.agent.artifacts.paths import (
     ArtifactPathError,
     resolve_artifact_descendant,
     validate_artifact_path_segment,

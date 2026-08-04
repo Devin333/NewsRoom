@@ -95,6 +95,11 @@ class ToolResult:
     policy_trace: ToolPolicyTrace | dict[str, Any] | None = None
     retry_count: int = 0
     timeout: bool = False
+    termination_confirmed: bool | None = None
+    indeterminate: bool = False
+    attempt_id: str | None = None
+    idempotency_key: str | None = None
+    fencing_token: int | None = None
     trace_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None
@@ -129,6 +134,13 @@ class ToolResult:
             )
         object.__setattr__(self, "retry_count", max(0, int(self.retry_count or 0)))
         object.__setattr__(self, "timeout", bool(self.timeout))
+        if self.termination_confirmed is not None:
+            object.__setattr__(
+                self,
+                "termination_confirmed",
+                bool(self.termination_confirmed),
+            )
+        object.__setattr__(self, "indeterminate", bool(self.indeterminate))
         if self.error_envelope is None:
             object.__setattr__(self, "error_envelope", _error_envelope(self))
         else:
@@ -233,6 +245,11 @@ class ToolResult:
             ),
             "retry_count": self.retry_count,
             "timeout": self.timeout,
+            "termination_confirmed": self.termination_confirmed,
+            "indeterminate": self.indeterminate,
+            "attempt_id": self.attempt_id,
+            "idempotency_key": self.idempotency_key,
+            "fencing_token": self.fencing_token,
             "trace_id": self.trace_id,
             "span_id": self.span_id,
             "parent_span_id": self.parent_span_id,
@@ -263,11 +280,18 @@ def _error_envelope(result: ToolResult) -> dict[str, Any] | None:
         "message": result.error_message or "",
         "domain": "tool",
         "severity": "error",
-        "retryable": result.status in {ToolStatus.TIMEOUT, ToolStatus.FAILED},
+        "retryable": (
+            result.status in {ToolStatus.TIMEOUT, ToolStatus.FAILED}
+            and not result.indeterminate
+        ),
         "tool_call_id": result.call_id,
         "details": {
             "tool_name": result.tool_name,
             "status": result.status.value,
             "output_bytes": result.output_bytes,
+            "termination_confirmed": result.termination_confirmed,
+            "indeterminate": result.indeterminate,
+            "attempt_id": result.attempt_id,
+            "fencing_token": result.fencing_token,
         },
     }

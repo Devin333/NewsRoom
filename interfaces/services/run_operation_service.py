@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from framework.artifacts.paths import (
+from framework.agent.artifacts.paths import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
 )

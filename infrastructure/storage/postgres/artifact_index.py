@@ -7,14 +7,14 @@ from typing import Any, Callable
 
 import psycopg
 
-from framework.artifacts.paths import (
+from framework.agent.artifacts.paths import (
     validate_artifact_path_segment,
     validate_relative_artifact_path,
 )
 from infrastructure.storage.postgres.dsn import normalize_dsn
 
 from infrastructure.storage.artifacts.local_json import ArtifactIndexNotFoundError
-from framework.artifacts.models import ArtifactRef
+from framework.agent.artifacts.models import ArtifactRef
 
 
 ConnectionFactory = Callable[[], Any]

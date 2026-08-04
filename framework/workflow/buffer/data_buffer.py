@@ -8,7 +8,11 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from enum import StrEnum
+from functools import wraps
+from threading import RLock
 from typing import Any
+
+from framework.shared.attempts import current_attempt_context
 
 
 DEFAULT_SENSITIVE_KEY_PATTERNS = (
@@ -45,6 +49,19 @@ class DataBufferSchemaError(RuntimeError):
 
 class DataBufferKeyError(RuntimeError):
     """Raised when a required buffer key is missing."""
+
+
+class StaleWorkflowAttemptError(RuntimeError):
+    """Raised when a closed or superseded attempt touches its buffer overlay."""
+
+
+def _synchronized(method: Any) -> Any:
+    @wraps(method)
+    def wrapped(self: "ScopedDataBuffer", *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 class RedactionStatus(StrEnum):
@@ -180,6 +197,7 @@ class ScopedDataBuffer:
         *,
         sensitive_keys: Iterable[str] | None = None,
     ) -> None:
+        self._lock = RLock()
         self._data: dict[str, Any] = {}
         self._scopes: dict[str, StepDataScope] = {}
         self._write_history: list[BufferWriteRecord] = []
@@ -189,10 +207,12 @@ class ScopedDataBuffer:
         self._sensitive_keys: set[str] = {str(key) for key in sensitive_keys or ()}
         self._snapshot_version = 0
         self._adhoc_scope_index = 0
+        self._attempt_fences: dict[str, int] = {}
 
         for key, value in (initial_values or {}).items():
             self.seed_request_key(str(key), value)
 
+    @_synchronized
     def register_scope(self, scope: StepDataScope) -> None:
         self._scopes[scope.step_id] = StepDataScope(
             step_id=scope.step_id,
@@ -201,13 +221,16 @@ class ScopedDataBuffer:
             write_keys={str(key) for key in scope.write_keys},
         )
 
+    @_synchronized
     def register_scopes(self, scopes: Iterable[StepDataScope]) -> None:
         for scope in scopes:
             self.register_scope(scope)
 
+    @_synchronized
     def register_schema(self, schema: BufferValueSchema) -> None:
         self._schema_registry[schema.key] = schema
 
+    @_synchronized
     def seed_request_key(self, key: str, value: Any) -> None:
         self._data[key] = deepcopy(value)
         self._lineage[key] = BufferLineage(
@@ -216,6 +239,7 @@ class ScopedDataBuffer:
         )
         self._snapshot_version += 1
 
+    @_synchronized
     def read(
         self,
         key: str | None = None,
@@ -235,6 +259,7 @@ class ScopedDataBuffer:
 
         return deepcopy(self._data[actual_key])
 
+    @_synchronized
     def write(
         self,
         key: str | None = None,
@@ -289,6 +314,7 @@ class ScopedDataBuffer:
         self._write_history.append(record)
         self._snapshot_version += 1
 
+    @_synchronized
     def delete(self, *, step_id: str | None = None, key: str) -> None:
         if step_id is not None:
             self._assert_can_write(step_id, key)
@@ -315,9 +341,11 @@ class ScopedDataBuffer:
         )
         self._snapshot_version += 1
 
+    @_synchronized
     def exists(self, key: str) -> bool:
         return key in self._data
 
+    @_synchronized
     def snapshot(self, *, redacted: bool = True) -> DataBufferSnapshot:
         values = {
             key: self._snapshot_value(key, value, redacted=redacted)
@@ -331,9 +359,11 @@ class ScopedDataBuffer:
             snapshot_version=self._snapshot_version,
         )
 
+    @_synchronized
     def snapshot_hash(self, *, redacted: bool = True) -> str:
         return stable_hash(self.snapshot(redacted=redacted).to_dict())
 
+    @_synchronized
     def diff(self, before_snapshot: Mapping[str, Any] | DataBufferSnapshot) -> BufferDiff:
         if isinstance(before_snapshot, DataBufferSnapshot):
             before = before_snapshot.to_dict()
@@ -378,6 +408,31 @@ class ScopedDataBuffer:
     def scoped(self, step_id: str) -> StepScopedDataBufferView:
         return StepScopedDataBufferView(step_id=step_id, buffer=self)
 
+    @_synchronized
+    def begin_attempt(
+        self,
+        step_id: str,
+        fencing_token: int,
+    ) -> "AttemptDataBufferOverlay":
+        if isinstance(fencing_token, bool) or fencing_token < 1:
+            raise ValueError("fencing_token must be a positive integer")
+        if step_id not in self._scopes:
+            raise DataBufferPermissionError(
+                f"No data scope registered for step: {step_id}"
+            )
+        self._attempt_fences[step_id] = fencing_token
+        return AttemptDataBufferOverlay(
+            step_id=step_id,
+            buffer=self,
+            fencing_token=fencing_token,
+            snapshot_values=deepcopy(self._data),
+        )
+
+    @_synchronized
+    def is_current_attempt(self, step_id: str, fencing_token: int) -> bool:
+        return self._attempt_fences.get(step_id) == fencing_token
+
+    @_synchronized
     def scope(
         self,
         read_keys: list[str] | set[str],
@@ -397,6 +452,7 @@ class ScopedDataBuffer:
         )
         return self.scoped(actual_step_id)
 
+    @_synchronized
     def lineage(self, key: str | None = None) -> dict[str, list[dict[str, Any]]] | list[dict[str, Any]]:
         if key is None:
             return deepcopy(self._legacy_lineage)
@@ -405,16 +461,19 @@ class ScopedDataBuffer:
     def _lineage_snapshot(self) -> dict[str, list[dict[str, Any]]]:
         return deepcopy(self._legacy_lineage)
 
+    @_synchronized
     def get_lineage(self, key: str) -> BufferLineage | None:
         lineage = self._lineage.get(key)
         return deepcopy(lineage) if lineage is not None else None
 
+    @_synchronized
     def write_history(self, key: str | None = None) -> list[BufferWriteRecord]:
         records = self._write_history
         if key is not None:
             records = [record for record in records if record.key == key]
         return list(records)
 
+    @_synchronized
     def redact(self, policy: dict[str, Any] | None = None) -> dict[str, Any]:
         policy = policy or {}
         redacted_keys = {str(key) for key in policy.get("redacted_keys", [])}
@@ -601,6 +660,175 @@ class StepScopedDataBufferView:
         if scope is None:
             return []
         return sorted(scope.write_keys)
+
+
+@dataclass(frozen=True)
+class _AttemptBufferMutation:
+    operation: str
+    key: str
+    value: Any = None
+    lineage: dict[str, Any] | None = None
+    source_keys: list[str] | None = None
+    schema_version: str | None = None
+    lineage_metadata: dict[str, Any] | None = None
+
+
+class AttemptDataBufferOverlay(StepScopedDataBufferView):
+    """Private, fenced write set for one Workflow step attempt."""
+
+    def __init__(
+        self,
+        *,
+        step_id: str,
+        buffer: ScopedDataBuffer,
+        fencing_token: int,
+        snapshot_values: Mapping[str, Any],
+    ) -> None:
+        super().__init__(step_id=step_id, buffer=buffer)
+        self.fencing_token = fencing_token
+        self._snapshot_values = deepcopy(dict(snapshot_values))
+        self._mutations: list[_AttemptBufferMutation] = []
+        self._closed = False
+        self._overlay_lock = RLock()
+
+    @property
+    def closed(self) -> bool:
+        with self._overlay_lock:
+            return self._closed
+
+    def read(self, key: str, default: Any = None, required: bool = True) -> Any:
+        with self._overlay_lock:
+            self._ensure_open()
+            self.buffer._assert_can_read(self.step_id, key)
+            if key not in self._snapshot_values:
+                if required:
+                    raise DataBufferKeyError(
+                        f"Required buffer key does not exist: {key}"
+                    )
+                return deepcopy(default)
+            return deepcopy(self._snapshot_values[key])
+
+    def write(
+        self,
+        key: str,
+        value: Any,
+        lineage: dict[str, Any] | None = None,
+        *,
+        source_keys: list[str] | None = None,
+        schema_version: str | None = None,
+        lineage_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self._overlay_lock:
+            self._ensure_open()
+            self.buffer._assert_can_write(self.step_id, key)
+            self.buffer._validate_schema(
+                key=key,
+                value=value,
+                schema_version=schema_version,
+            )
+            self._snapshot_values[key] = deepcopy(value)
+            self._mutations.append(
+                _AttemptBufferMutation(
+                    operation="write",
+                    key=key,
+                    value=deepcopy(value),
+                    lineage=deepcopy(lineage),
+                    source_keys=list(source_keys or []),
+                    schema_version=schema_version,
+                    lineage_metadata=deepcopy(lineage_metadata),
+                )
+            )
+
+    def delete(self, key: str) -> None:
+        with self._overlay_lock:
+            self._ensure_open()
+            self.buffer._assert_can_write(self.step_id, key)
+            self._snapshot_values.pop(key, None)
+            self._mutations.append(
+                _AttemptBufferMutation(operation="delete", key=key)
+            )
+
+    def exists(self, key: str) -> bool:
+        with self._overlay_lock:
+            self._ensure_open()
+            scope = self.buffer._scopes.get(self.step_id)
+            if scope is None:
+                raise DataBufferReadPermissionError(
+                    f"No data scope registered for step: {self.step_id}"
+                )
+            if (
+                key not in scope.read_keys
+                and key not in scope.optional_read_keys
+                and key not in scope.write_keys
+            ):
+                raise DataBufferReadPermissionError(
+                    f"Step {self.step_id} cannot access undeclared key: {key}; "
+                    "key is not in scope"
+                )
+            return key in self._snapshot_values
+
+    def close(self) -> None:
+        with self._overlay_lock:
+            self._closed = True
+
+    def commit(self) -> None:
+        """Atomically publish the staged mutations when this fence still owns the step."""
+
+        with self._overlay_lock, self.buffer._lock:
+            self._ensure_open()
+            if not self.buffer.is_current_attempt(self.step_id, self.fencing_token):
+                self._closed = True
+                raise StaleWorkflowAttemptError(
+                    f"workflow attempt fence is stale for step {self.step_id}"
+                )
+
+            state_before = (
+                deepcopy(self.buffer._data),
+                deepcopy(self.buffer._lineage),
+                deepcopy(self.buffer._legacy_lineage),
+                list(self.buffer._write_history),
+                self.buffer._snapshot_version,
+            )
+            try:
+                for mutation in self._mutations:
+                    if mutation.operation == "delete":
+                        self.buffer.delete(step_id=self.step_id, key=mutation.key)
+                    else:
+                        self.buffer.write(
+                            step_id=self.step_id,
+                            key=mutation.key,
+                            value=mutation.value,
+                            lineage=mutation.lineage,
+                            source_keys=mutation.source_keys,
+                            schema_version=mutation.schema_version,
+                            lineage_metadata=mutation.lineage_metadata,
+                        )
+                if self._mutations:
+                    self.buffer._snapshot_version = state_before[4] + 1
+            except BaseException:  # noqa: BLE001 - restore before propagating
+                (
+                    self.buffer._data,
+                    self.buffer._lineage,
+                    self.buffer._legacy_lineage,
+                    self.buffer._write_history,
+                    self.buffer._snapshot_version,
+                ) = state_before
+                self._closed = True
+                raise
+            self._closed = True
+
+    def _ensure_open(self) -> None:
+        if self._closed or not self.buffer.is_current_attempt(
+            self.step_id,
+            self.fencing_token,
+        ):
+            self._closed = True
+            raise StaleWorkflowAttemptError(
+                f"workflow attempt buffer is closed or stale for step {self.step_id}"
+            )
+        context = current_attempt_context()
+        if context is not None:
+            context.raise_if_cancelled()
 
 
 def step_scope_from_spec(step: Any) -> StepDataScope:

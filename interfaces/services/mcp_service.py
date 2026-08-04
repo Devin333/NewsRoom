@@ -4,7 +4,6 @@ from copy import copy
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone as _tz
 import os
-UTC = _tz.utc
 from typing import Any, Callable, Literal, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -40,6 +39,9 @@ from interfaces.services.event_delivery_operations_service import (
 )
 from interfaces.services.event_reader_service import EventAuthorizationError
 from infrastructure.storage.lifecycle import RetentionPolicy
+
+
+UTC = _tz.utc
 
 
 DEFAULT_MEMORY_COLLECTION = "report_sections"
@@ -131,7 +133,16 @@ class MCPApplicationService:
         self.worker_service_factory = worker_service_factory or _worker_service_factory
         self.run_service_factory = run_service_factory or _run_service_factory
         self.report_service_factory = report_service_factory or _report_service_factory
-        self.source_service_factory = source_service_factory or _source_service_factory
+        self._source_runtime_provider = None
+        if source_service_factory is None:
+            from interfaces.services.source_runtime import SourceRuntimeProvider
+
+            self._source_runtime_provider = SourceRuntimeProvider()
+            self.source_service_factory = (
+                self._source_runtime_provider.source_service_factory
+            )
+        else:
+            self.source_service_factory = source_service_factory
         self.entity_service_factory = entity_service_factory or _entity_service_factory
         self.subscription_service_factory = (
             subscription_service_factory or _subscription_service_factory

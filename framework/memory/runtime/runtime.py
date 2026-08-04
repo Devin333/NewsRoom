@@ -333,7 +333,14 @@ class MemoryRuntime:
     def _record_operation_trace(self, operation: MemoryOperationTrace) -> None:
         if self.trace_recorder is None:
             return
-        context = self._operation_trace_context(operation.operation_id)
+        context = (
+            self.trace_context.child(
+                span_id=operation.span_id,
+                memory_operation_id=operation.operation_id,
+            )
+            if self.trace_context is not None and operation.span_id is not None
+            else None
+        )
         self.trace_recorder.record(
             MemoryTraceEvent(
                 event_type="memory_operation",

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactStoreMetadataError,
     ArtifactStoreRequiredError,

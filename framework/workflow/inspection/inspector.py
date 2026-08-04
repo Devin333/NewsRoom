@@ -9,7 +9,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Iterator, Mapping
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactNotFoundError,
     ArtifactPathError,
     ArtifactStoreMetadataError,
@@ -18,7 +18,7 @@ from framework.artifacts import (
     validate_sha256_checksum,
     verify_sha256_checksum,
 )
-from framework.artifacts.observability import (
+from framework.agent.artifacts.observability import (
     emit_artifact_checksum_missing,
     emit_artifact_metadata_corrupt,
 )

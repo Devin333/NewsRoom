@@ -8,6 +8,15 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from framework.shared.attempts import (
+    AttemptBudget,
+    AttemptBudgetExhaustedError,
+    AttemptCancelledError,
+    AttemptContext,
+    AttemptState,
+    AttemptSupervisor,
+    current_attempt_context,
+)
 from framework.shared.json import to_jsonable
 from framework.events.propagation import (
     W3CSpanContext,
@@ -196,6 +205,9 @@ class ToolExecutor:
                 call.tool_name,
                 record_attempt,
                 max_total_attempts=policy.max_total_attempts,
+                definition=registered.definition,
+                cancellation_grace_seconds=policy.cancellation_grace_seconds,
+                idempotency_key=_tool_idempotency_key(call),
             )
             policy_trace.add(
                 "tool.retry",
@@ -262,6 +274,15 @@ class ToolExecutor:
                 error_message=str(exc),
                 call_id=call.call_id,
                 tool_name=call.tool_name,
+                termination_confirmed=exc.termination_confirmed,
+                indeterminate=exc.indeterminate,
+                attempt_id=exc.attempt_id,
+                idempotency_key=exc.idempotency_key,
+                fencing_token=exc.fencing_token,
+                metadata={
+                    "termination_confirmed": exc.termination_confirmed,
+                    "indeterminate": exc.indeterminate,
+                },
             )
             elapsed_ms = 0.0
         except Exception as exc:
@@ -458,6 +479,10 @@ def _result_event_payload(observation: ToolObservation) -> dict[str, Any]:
         "error_message": observation.result.error_message,
         "output_bytes": observation.result.output_bytes,
         "artifact_refs": [artifact_ref.to_dict() for artifact_ref in observation.result.artifact_refs],
+        "termination_confirmed": observation.result.termination_confirmed,
+        "indeterminate": observation.result.indeterminate,
+        "attempt_id": observation.result.attempt_id,
+        "fencing_token": observation.result.fencing_token,
     }
 
 
@@ -664,6 +689,11 @@ def _copy_tool_result(result: ToolResult, **overrides: Any) -> ToolResult:
         "policy_trace": result.policy_trace,
         "retry_count": result.retry_count,
         "timeout": result.timeout,
+        "termination_confirmed": result.termination_confirmed,
+        "indeterminate": result.indeterminate,
+        "attempt_id": result.attempt_id,
+        "idempotency_key": result.idempotency_key,
+        "fencing_token": result.fencing_token,
         "trace_id": result.trace_id,
         "span_id": result.span_id,
         "parent_span_id": result.parent_span_id,
@@ -800,17 +830,94 @@ def _invoke_with_retry(
     attempt_callback: Any | None = None,
     *,
     max_total_attempts: int | None = None,
+    definition: Any | None = None,
+    cancellation_grace_seconds: float = 0.1,
+    idempotency_key: str | None = None,
 ) -> tuple[Any, int]:
-    # Fix #3: cap attempts to avoid tool-level × step-level retry explosion
+    # Keep one total budget when a Tool executes inside a Workflow attempt.
     effective_max = min(max_attempts, max_total_attempts) if max_total_attempts else max_attempts
+    parent_context = current_attempt_context()
+    logical_idempotency_key = (
+        parent_context.idempotency_key
+        if parent_context is not None
+        else idempotency_key or f"tool:{tool_name}"
+    )
+    budget = parent_context.budget if parent_context is not None else None
+    if budget is None:
+        budget = AttemptBudget(max_attempts=effective_max)
+    elif parent_context is not None:
+        if max_total_attempts is not None:
+            budget.cap_at(max_total_attempts)
+        budget.expand_to(budget.used + max(0, effective_max - 1))
+        effective_max = min(effective_max, 1 + budget.remaining)
+    supervisor = AttemptSupervisor(
+        cancellation_grace_seconds=cancellation_grace_seconds
+    )
     for attempt in range(1, effective_max + 1):
+        if parent_context is not None:
+            parent_context.raise_if_cancelled()
         if callable(attempt_callback):
             attempt_callback(attempt)
         try:
-            return _invoke_with_timeout(executor, arguments, timeout_seconds, tool_name), attempt
-        except Exception:
+            supervised = supervisor.run(
+                lambda: executor(arguments),
+                timeout_seconds=_bounded_timeout(timeout_seconds, parent_context),
+                idempotency_key=logical_idempotency_key,
+                fencing_token=(
+                    parent_context.fencing_token
+                    if parent_context is not None
+                    else attempt
+                ),
+                budget=budget,
+                parent_cancel_event=(
+                    parent_context.cancel_event
+                    if parent_context is not None
+                    else None
+                ),
+                parent_context=parent_context,
+                claim_budget=not (parent_context is not None and attempt == 1),
+            )
+        except AttemptBudgetExhaustedError:
+            raise ToolRuntimeError("tool attempt budget exhausted") from None
+
+        if supervised.state is AttemptState.SUCCEEDED:
+            return supervised.value, attempt
+        if supervised.state is AttemptState.FAILED:
+            error = supervised.error
+            if isinstance(error, AttemptCancelledError):
+                raise _tool_timeout_error(
+                    tool_name=tool_name,
+                    timeout_seconds=timeout_seconds,
+                    context=supervised.context,
+                    termination_confirmed=True,
+                    indeterminate=False,
+                ) from None
+            if error is None:
+                raise ToolRuntimeError("tool attempt failed without an error")
             if attempt == effective_max:
-                raise
+                raise error
+            continue
+
+        timeout_is_safe = _timeout_retry_is_safe(definition)
+        indeterminate = supervised.indeterminate or not timeout_is_safe
+        if parent_context is not None:
+            if not supervised.termination_confirmed:
+                parent_context.mark_descendant_unconfirmed()
+            elif indeterminate:
+                parent_context.mark_descendant_indeterminate()
+        timeout_error = _tool_timeout_error(
+            tool_name=tool_name,
+            timeout_seconds=timeout_seconds,
+            context=supervised.context,
+            termination_confirmed=supervised.termination_confirmed,
+            indeterminate=indeterminate,
+        )
+        if (
+            attempt == effective_max
+            or not supervised.termination_confirmed
+            or indeterminate
+        ):
+            raise timeout_error
     raise RuntimeError(f"tool {tool_name} retry loop exited unexpectedly")
 
 
@@ -820,30 +927,32 @@ def _invoke_with_timeout(
     timeout_seconds: float | None,
     tool_name: str,
 ) -> Any:
-    if timeout_seconds is None or timeout_seconds <= 0:
-        return executor(arguments)
-    import threading
-    result_holder: list[Any] = []
-    error_holder: list[BaseException] = []
+    supervised = AttemptSupervisor().run(
+        lambda: executor(arguments),
+        timeout_seconds=timeout_seconds,
+        idempotency_key=f"tool:{tool_name}",
+    )
+    if supervised.state is AttemptState.SUCCEEDED:
+        return supervised.value
+    if supervised.state is AttemptState.FAILED:
+        if supervised.error is None:
+            raise ToolRuntimeError("tool attempt failed without an error")
+        raise supervised.error
+    raise _tool_timeout_error(
+        tool_name=tool_name,
+        timeout_seconds=timeout_seconds,
+        context=supervised.context,
+        termination_confirmed=supervised.termination_confirmed,
+        indeterminate=supervised.indeterminate,
+    )
 
-    def _run() -> None:
-        try:
-            result_holder.append(executor(arguments))
-        except BaseException as exc:  # noqa: BLE001
-            error_holder.append(exc)
 
-    # daemon=True: thread is abandoned (not joined) on timeout and won't block
-    # process exit, preventing thread accumulation on stuck tool functions.
-    thread = threading.Thread(target=_run, daemon=True, name=f"tool-timeout:{tool_name}")
-    thread.start()
-    thread.join(timeout=timeout_seconds)
-    if thread.is_alive():
-        raise ToolTimeoutError(
-            f"tool {tool_name} exceeded timeout of {timeout_seconds:g} seconds"
-        )
-    if error_holder:
-        raise error_holder[0]
-    return result_holder[0]
+def _tool_idempotency_key(call: ToolCall) -> str:
+    parent_context = current_attempt_context()
+    if parent_context is not None:
+        return parent_context.idempotency_key
+    configured = call.metadata.get("idempotency_key")
+    return str(configured or f"tool:{call.call_id}")
 
 
 def _trace_scoped_executor(
@@ -855,6 +964,56 @@ def _trace_scoped_executor(
             return executor(arguments)
 
     return execute
+
+
+def _bounded_timeout(
+    timeout_seconds: float | None,
+    parent_context: AttemptContext | None,
+) -> float | None:
+    parent_remaining = (
+        parent_context.remaining_seconds if parent_context is not None else None
+    )
+    if parent_remaining is None:
+        return timeout_seconds
+    if timeout_seconds is None or timeout_seconds <= 0:
+        return parent_remaining
+    return min(float(timeout_seconds), parent_remaining)
+
+
+def _timeout_retry_is_safe(definition: Any | None) -> bool:
+    if definition is None:
+        return True
+    side_effect = _side_effect_value(definition).casefold()
+    if side_effect in {"", "none", "read_only"}:
+        return True
+    metadata = dict(getattr(definition, "metadata", {}) or {})
+    return bool(
+        metadata.get("idempotent") is True
+        and metadata.get("reconciliation_supported") is True
+    )
+
+
+def _tool_timeout_error(
+    *,
+    tool_name: str,
+    timeout_seconds: float | None,
+    context: AttemptContext,
+    termination_confirmed: bool,
+    indeterminate: bool,
+) -> ToolTimeoutError:
+    timeout_text = (
+        f"{float(timeout_seconds):g} seconds"
+        if timeout_seconds is not None
+        else "its deadline"
+    )
+    return ToolTimeoutError(
+        f"tool {tool_name} exceeded timeout of {timeout_text}",
+        attempt_id=context.attempt_id,
+        idempotency_key=context.idempotency_key,
+        fencing_token=context.fencing_token,
+        termination_confirmed=termination_confirmed,
+        indeterminate=indeterminate,
+    )
 
 
 def _json_size_bytes(value: Any) -> int:

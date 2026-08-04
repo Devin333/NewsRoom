@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 from uuid import uuid4
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactPathError,
     resolve_artifact_descendant,
     validate_artifact_path_segment,

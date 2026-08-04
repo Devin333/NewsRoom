@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     Artifact,
     ArtifactChecksumMismatchError,
     ArtifactIntegrityInspector,
@@ -22,16 +22,16 @@ from framework.artifacts import (
     LocalArtifactStore,
     compute_checksum,
 )
-from framework.artifacts.observability import (
+from framework.agent.artifacts.observability import (
     ARTIFACT_CHECKSUM_MISMATCH_EVENT,
     ARTIFACT_CHECKSUM_MISSING_EVENT,
     ARTIFACT_METADATA_CORRUPT_EVENT,
     ARTIFACT_OBSERVABILITY_LOGGER,
 )
-from framework.artifacts.stores import local as local_store_module
-from framework.artifacts.runtime import manager as manager_module
-from framework.artifacts.stores import filesystem as filesystem_store_module
-from framework.artifacts.stores.errors import artifact_observability_was_emitted
+from framework.agent.artifacts.stores import local as local_store_module
+from framework.agent.artifacts.runtime import manager as manager_module
+from framework.agent.artifacts.stores import filesystem as filesystem_store_module
+from framework.agent.artifacts.stores.errors import artifact_observability_was_emitted
 
 
 _MISSING = object()

@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from framework.artifacts.paths import (
+from framework.agent.artifacts.paths import (
     ArtifactPathError,
     resolve_artifact_descendant,
     validate_artifact_path_segment,

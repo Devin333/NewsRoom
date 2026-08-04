@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import re
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
@@ -12,8 +10,10 @@ from framework.events import (
     W3CTracePropagator,
     current_trace_context,
 )
-from framework.tool.models import ToolDefinition, ToolRuntimeError, ToolTimeoutError
+from framework.shared.attempts import current_attempt_context
+from framework.tool.models import ToolDefinition, ToolRuntimeError
 from framework.tool.registry import ToolRegistry
+from framework.tool.runtime.timeout import run_with_timeout
 
 
 @dataclass(frozen=True)
@@ -171,28 +171,23 @@ def _run_mcp_operation(
     timeout_seconds: float,
     operation: str,
 ) -> Any:
-    if timeout_seconds <= 0:
+    parent_context = current_attempt_context()
+    if parent_context is not None:
         try:
+            parent_context.raise_if_cancelled()
             return operation_fn()
         except ToolRuntimeError:
             raise
         except Exception as exc:
             raise ToolRuntimeError(f"MCP transport error during {operation}: {exc}") from exc
-
-    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="news-mcp-tool")
-    future = pool.submit(operation_fn)
-    timed_out = False
     try:
-        return future.result(timeout=timeout_seconds)
-    except FutureTimeoutError as exc:
-        timed_out = True
-        future.cancel()
-        raise ToolTimeoutError(
-            f"MCP operation timed out during {operation} after {timeout_seconds:g} seconds"
-        ) from exc
+        return run_with_timeout(
+            operation_fn,
+            timeout_seconds,
+            operation=f"MCP operation during {operation}",
+            idempotency_key=f"mcp:{operation}",
+        )
     except ToolRuntimeError:
         raise
     except Exception as exc:
         raise ToolRuntimeError(f"MCP transport error during {operation}: {exc}") from exc
-    finally:
-        pool.shutdown(wait=not timed_out, cancel_futures=True)

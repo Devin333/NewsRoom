@@ -9,14 +9,14 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactManager,
     ArtifactPathError,
     resolve_artifact_descendant,
     validate_artifact_path_segment,
     validate_relative_artifact_path,
 )
-from framework.artifacts.models import ArtifactRef
+from framework.agent.artifacts.models import ArtifactRef
 from framework.events.errors import EventContractError
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.runtime.models import (

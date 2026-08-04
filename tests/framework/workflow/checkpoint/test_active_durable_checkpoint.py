@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 import framework.workflow.checkpoint.store as checkpoint_store_module
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events import EventRuntime, default_event_schema_catalog
 from framework.specs import StepSpec, WorkflowSpec
 from framework.workflow.checkpoint.durable import (

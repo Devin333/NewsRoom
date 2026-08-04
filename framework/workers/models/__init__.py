@@ -11,7 +11,7 @@ from framework.workers.models.task import (
     TaskRecord,
     WorkerRecord,
 )
-from framework.workers.queue.base import LeasedTask, QueueStatus
+from framework.workers.queue.base import LeasedTask, QueueStatus, StaleTaskLeaseError
 from framework.workers.runtime.backpressure import BackpressurePolicy
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "DeadLetterRecord",
     "LeasedTask",
     "QueueStatus",
+    "StaleTaskLeaseError",
     "Task",
     "TaskEnqueueResult",
     "TaskError",

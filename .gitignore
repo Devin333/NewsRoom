@@ -222,6 +222,7 @@ private.pem
 # NewsRoom local/generated files
 .newsroom/
 .tmp/
+.hex-skills/
 .agents/live-review/
 openspec/
 .codex/

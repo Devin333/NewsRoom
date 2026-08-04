@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
     ArtifactPathError,
@@ -16,7 +16,7 @@ from framework.workflow.inspection.inspector import (
     WorkflowRunInspector,
     read_strict_workflow_artifact_content,
 )
-from framework.artifacts.observability import (
+from framework.agent.artifacts.observability import (
     ARTIFACT_CHECKSUM_MISMATCH_EVENT,
     ARTIFACT_CHECKSUM_MISSING_EVENT,
     ARTIFACT_METADATA_CORRUPT_EVENT,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from framework.artifacts.paths import resolve_artifact_descendant
+from framework.agent.artifacts.paths import resolve_artifact_descendant
 from infrastructure.storage.artifacts import ArtifactRef
 from infrastructure.storage.lifecycle.retention import RetentionPolicy
 from infrastructure.storage.metrics.models import StorageMetrics

@@ -51,6 +51,7 @@ class TaskResult:
     output: dict[str, Any] = field(default_factory=dict)
     error_type: str | None = None
     error_message: str | None = None
+    error_id: str | None = None
     finished_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
@@ -72,6 +73,7 @@ class TaskResult:
             "output": dict(self.output),
             "error_type": self.error_type,
             "error_message": self.error_message,
+            "error_id": self.error_id,
             "finished_at": format_datetime(self.finished_at),
         }
 

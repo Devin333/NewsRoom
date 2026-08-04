@@ -4,6 +4,7 @@ from dataclasses import dataclass, field as dataclass_field
 from enum import StrEnum
 from typing import Any, Protocol
 
+from framework.shared.attempts import current_attempt_context
 from framework.specs import StepSpec, StepType
 from framework.workflow.buffer.data_buffer import StepScopedDataBufferView
 from framework.workflow.runtime.result import StepOutcome
@@ -90,6 +91,14 @@ class StepRunner(Protocol):
 
     def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         ...
+
+
+def ensure_attempt_active() -> None:
+    """Fail cooperatively when the owning runtime attempt was cancelled."""
+
+    context = current_attempt_context()
+    if context is not None:
+        context.raise_if_cancelled()
 
 
 def default_runner_can_resolve(

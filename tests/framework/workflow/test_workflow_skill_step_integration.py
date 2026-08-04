@@ -6,7 +6,7 @@ from typing import Any
 
 from framework.specs import EdgeSpec, StepSpec, StepType, WorkflowSpec, WorkflowStatus
 from framework.workflow.compiler import WorkflowCompiler
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runners import FunctionStepRegistry, build_default_step_runner_registry

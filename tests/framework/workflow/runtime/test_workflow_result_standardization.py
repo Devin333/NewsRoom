@@ -7,7 +7,7 @@ from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, Workfl
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
 from framework.workflow.runtime.artifact_publishers import WorkflowArtifactPublisherRegistry
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.execution_context import build_execution_context
 from framework.workflow.runtime.execution_loop import commit_workflow_transition

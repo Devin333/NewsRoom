@@ -6,7 +6,7 @@ from typing import Any
 from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec
 from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSideEffectLevel
 from framework.workflow.runners.registry import StepRunnerRegistry
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events import (
     EventRuntime,
     default_event_schema_catalog,

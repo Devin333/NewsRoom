@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
 from business.layers.output.records import OutputReport, OutputReportRecord, render_output_report_markdown

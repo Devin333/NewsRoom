@@ -9,7 +9,7 @@ from typing import Any
 from business.foundation.models.source_error_normalization import normalize_source_errors
 from business.layers.signal.artifact_refs import SignalArtifactRef
 from business.layers.signal.artifacts import SourceArtifactWriter
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events.canonical import StoredEvent
 from framework.events.runtime.replay_engine import ReplayCheckpoint
 

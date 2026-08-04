@@ -3,7 +3,7 @@ from dataclasses import replace
 
 import pytest
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactNotFoundError,
     ArtifactPathError,

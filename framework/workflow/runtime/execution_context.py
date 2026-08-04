@@ -13,7 +13,7 @@ from framework.events.canonical import BusinessContext
 from framework.events.ports import EventReaderPort, EventRuntimePort
 from framework.events.schema import EventSchemaCatalog, default_event_schema_catalog
 from framework.events.trace import TraceContext
-from framework.artifacts import ArtifactManager, validate_artifact_path_segment
+from framework.agent.artifacts import ArtifactManager, validate_artifact_path_segment
 from framework.workflow.runtime.event_emitter import (
     ScopedDurableWorkflowEventEmitter,
     WorkflowEventRecorderFacade,

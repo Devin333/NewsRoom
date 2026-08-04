@@ -8,10 +8,15 @@ import re
 import time
 from typing import Any
 
+from framework.shared.attempts import (
+    AttemptContext,
+    bind_attempt_context,
+    current_attempt_context,
+)
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import DataBuffer, StepScopedDataBufferView
-from framework.artifacts import ArtifactManager
-from framework.artifacts import ArtifactRef as StorageArtifactRef
+from framework.agent.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactRef as StorageArtifactRef
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners._utils import (
     failed_outcome as _failed_outcome,
@@ -24,6 +29,7 @@ from framework.workflow.runners.base import (
     StepRunnerSideEffectLevel,
     ValidationErrorItem,
     default_runner_can_resolve,
+    ensure_attempt_active,
 )
 from framework.workflow.runners.function import FunctionStepRegistry
 
@@ -61,7 +67,10 @@ class ParallelGroupStepRunner:
         supports_resume=True,
         supports_timeout=True,
         supports_retry=True,
-        side_effect_level=StepRunnerSideEffectLevel.NONE,
+        # Branch implementations are arbitrary application functions. Treat
+        # the aggregate as externally effectful unless the Step supplies an
+        # explicit idempotency and reconciliation contract.
+        side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
         required_dependencies=["function_registry"],
         description="Runs in-process function branches concurrently.",
     )
@@ -106,6 +115,7 @@ class ParallelGroupStepRunner:
     def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
+            ensure_attempt_active()
             if step.step_type != StepType.PARALLEL_GROUP:
                 raise StepExecutionError(
                     f"unsupported step type for ParallelGroupStepRunner: {step.step_type}"
@@ -156,6 +166,7 @@ class ParallelGroupStepRunner:
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
 
+            ensure_attempt_active()
             _enforce_parallel_failure_strategy(
                 failure_strategy=failure_strategy,
                 branch_results=branch_results,
@@ -173,6 +184,7 @@ class ParallelGroupStepRunner:
                         step_id=step.step_id,
                     )
 
+            ensure_attempt_active()
             branch_artifacts = _publish_parallel_branch_artifacts(
                 artifact_manager=self._artifact_manager,
                 run_id=self._run_id,
@@ -192,6 +204,7 @@ class ParallelGroupStepRunner:
             )
             for key, value in outputs.items():
                 if key in buffer.list_allowed_writes():
+                    ensure_attempt_active()
                     buffer.write(
                         key,
                         value,
@@ -247,6 +260,7 @@ def _run_parallel_branch(
     branch: Any,
     parent_buffer: StepScopedDataBufferView,
 ) -> dict[str, Any]:
+    ensure_attempt_active()
     branch = _normalize_parallel_branch(branch, index=0)
     started_at = _utc_now_iso()
     started = time.perf_counter()
@@ -264,7 +278,9 @@ def _run_parallel_branch(
     }
     local_buffer = DataBuffer(local_values)
     scoped = local_buffer.scope(read_keys=read_keys, write_keys=write_keys)
+    ensure_attempt_active()
     raw_outputs = registry.get(implementation)(scoped) or {}
+    ensure_attempt_active()
     if not isinstance(raw_outputs, dict):
         raise StepExecutionError(
             f"parallel_group branch {branch_id or implementation} returned "
@@ -399,11 +415,16 @@ def _run_parallel_branches_with_policy(
     pending: dict[Future[dict[str, Any]], dict[str, Any]] = {}
     start_times: dict[Future[dict[str, Any]], float] = {}
     started_at_by_future: dict[Future[dict[str, Any]], str] = {}
+    attempt_context = current_attempt_context()
 
     for branch in branches:
         submitted_branch = _branch_with_attempt(branch, 1)
         future = pool.submit(
-            _run_parallel_branch_with_policy, registry, submitted_branch, parent_buffer
+            _run_parallel_branch_with_context,
+            registry,
+            submitted_branch,
+            parent_buffer,
+            attempt_context,
         )
         pending[future] = submitted_branch
         start_times[future] = time.perf_counter()
@@ -415,7 +436,11 @@ def _run_parallel_branches_with_policy(
         if not done:
             for future in _timed_out_parallel_futures(pending, start_times):
                 branch = pending.pop(future)
-                future.cancel()
+                cancellation_confirmed = future.cancel()
+                if not cancellation_confirmed and attempt_context is not None:
+                    attempt_context.mark_descendant_indeterminate()
+                    if not future.done():
+                        attempt_context.mark_descendant_unconfirmed()
                 failed_branch_results.append(
                     _parallel_branch_failure_result(
                         branch,
@@ -446,6 +471,18 @@ def _run_parallel_branches_with_policy(
     return branch_results, failed_branch_results
 
 
+def _run_parallel_branch_with_context(
+    registry: FunctionStepRegistry,
+    branch: dict[str, Any],
+    parent_buffer: StepScopedDataBufferView,
+    attempt_context: AttemptContext | None,
+) -> dict[str, Any]:
+    if attempt_context is None:
+        return _run_parallel_branch_with_policy(registry, branch, parent_buffer)
+    with bind_attempt_context(attempt_context):
+        return _run_parallel_branch_with_policy(registry, branch, parent_buffer)
+
+
 def _run_parallel_branch_with_policy(
     registry: FunctionStepRegistry,
     branch: dict[str, Any],
@@ -456,6 +493,7 @@ def _run_parallel_branch_with_policy(
     no_retry_on_error_types = _branch_no_retry_on_error_types(branch)
     attempts = 0
     while True:
+        ensure_attempt_active()
         attempts += 1
         attempt_branch = _branch_with_attempt(branch, attempts)
         try:

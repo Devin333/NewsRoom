@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 import framework.workflow.runtime.executor as executor_module
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events import default_event_schema_catalog
 from framework.events.errors import EventStoreUnavailableError
 from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus

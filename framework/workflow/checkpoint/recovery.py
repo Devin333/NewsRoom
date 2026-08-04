@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
     validate_relative_artifact_path,

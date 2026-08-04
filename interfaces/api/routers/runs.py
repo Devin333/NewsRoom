@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactPathError,
     ArtifactStoreMetadataError,

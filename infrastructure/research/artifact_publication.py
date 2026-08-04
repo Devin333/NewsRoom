@@ -15,14 +15,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactNotFoundError,
     ArtifactReference,
     ArtifactStoreMetadataError,
     compute_checksum,
     validate_artifact_path_segment,
 )
-from framework.artifacts.models import ArtifactRef as StorageArtifactRef
+from framework.agent.artifacts.models import ArtifactRef as StorageArtifactRef
 from framework.events.canonical import checksum_for
 from framework.harness import (
     ArtifactWriteRequest,

@@ -5,7 +5,7 @@ import json
 import sys
 from typing import Any
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactPathError,
     ArtifactStoreMetadataError,

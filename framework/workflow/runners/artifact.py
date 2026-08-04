@@ -7,13 +7,13 @@ from typing import Any
 
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import StepScopedDataBufferView
-from framework.artifacts import ArtifactManager
-from framework.artifacts import ArtifactRef as StorageArtifactRef
-from framework.artifacts.observability import (
+from framework.agent.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactRef as StorageArtifactRef
+from framework.agent.artifacts.observability import (
     emit_artifact_reserved_metadata_rejected,
 )
 from framework.workflow.runtime.result import StepOutcome
-from framework.artifacts.runtime.publisher import LocalArtifactPublisher
+from framework.agent.artifacts.runtime.publisher import LocalArtifactPublisher
 from framework.workflow.runners._utils import (
     contract_metrics,
     failed_outcome,

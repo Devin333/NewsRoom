@@ -122,6 +122,7 @@ class TaskError:
     error_message: str
     retryable: bool = True
     operator_action_required: bool = False
+    error_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -129,6 +130,7 @@ class TaskError:
             "error_message": self.error_message,
             "retryable": self.retryable,
             "operator_action_required": self.operator_action_required,
+            "error_id": self.error_id,
         }
 
 

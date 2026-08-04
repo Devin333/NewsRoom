@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events import EventRuntime, default_event_schema_catalog
 from framework.specs import StepSpec, StepStatus, StepType, WorkflowSpec, WorkflowStatus
 from framework.workflow.checkpoint.durable import durable_envelope_from_checkpoint

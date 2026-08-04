@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import DataBuffer
 from framework.workflow.runners.artifact import (

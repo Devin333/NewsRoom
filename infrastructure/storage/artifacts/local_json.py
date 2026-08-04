@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from framework.artifacts.models import ArtifactRef
-from framework.artifacts.paths import (
+from framework.agent.artifacts.models import ArtifactRef
+from framework.agent.artifacts.paths import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
     validate_relative_artifact_path,

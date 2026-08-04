@@ -9,7 +9,7 @@ from framework.workflow.runners.base import StepRunnerCapability, StepRunnerSide
 from framework.workflow.runners.registry import StepRunnerRegistry
 import pytest
 
-from framework.artifacts import ArtifactManager, ArtifactPathError
+from framework.agent.artifacts import ArtifactManager, ArtifactPathError
 from framework.events import EventRuntime, default_event_schema_catalog
 from framework.workflow.runtime.executor import WorkflowExecutor
 from framework.workflow.runtime.manifest import validate_run_manifest

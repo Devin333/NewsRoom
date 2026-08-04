@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
-from framework.artifacts import (
+from framework.agent.artifacts import (
     resolve_artifact_descendant,
     validate_artifact_path_segment,
     validate_relative_artifact_path,

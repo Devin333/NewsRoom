@@ -5,7 +5,7 @@ from hashlib import sha256
 import pytest
 
 import interfaces.cli.news as news_cli
-from framework.artifacts import (
+from framework.agent.artifacts import (
     ArtifactChecksumMismatchError,
     ArtifactPathError,
     ArtifactStoreMetadataError,

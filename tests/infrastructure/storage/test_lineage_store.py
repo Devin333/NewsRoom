@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from business.layers.relation.evidence import EvidenceBundle, EvidenceItem
-from framework.artifacts import ArtifactPathError
+from framework.agent.artifacts import ArtifactPathError
 from infrastructure.storage.lineage import LineageRef, LocalJsonLineageStore, lineage_refs_from_evidence_bundle
 
 

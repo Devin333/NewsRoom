@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 from framework.tool import ToolCall, ToolDefinition, ToolExecutor, ToolPolicy, ToolRegistry, ToolStatus
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 
 
 def test_tool_runtime_contract_standard_result_paths(tmp_path) -> None:

@@ -2,8 +2,9 @@ from business.tools import (
     build_business_dangerous_tool_registry,
     build_business_tool_registry,
 )
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.tool import ToolCall, ToolExecutor, ToolPolicy, ToolStatus, build_tool_catalog
+from infrastructure.tools import WebSearchResult
 
 
 def test_business_tool_registry_includes_safe_business_tools() -> None:
@@ -61,6 +62,31 @@ def test_business_dangerous_registry_includes_risky_business_tools(tmp_path) -> 
     assert "quality.duplicate_check" not in names
 
 
+def test_business_dangerous_registry_has_one_web_search_owner_and_forwards_provider() -> None:
+    provider = _WebSearchProvider()
+
+    registry = build_business_tool_registry(
+        include_dangerous_tools=True,
+        web_search_provider=provider,
+    )
+    names = [definition.name for definition in registry.list_tools()]
+    result = registry.require("web.search").executor(
+        {"query": "agent runtime", "limit": 3, "timeout_seconds": 2}
+    )
+
+    assert names.count("web.search") == 1
+    assert registry.validate_no_conflicts().ok is True
+    assert provider.calls == [("agent runtime", 3, 2.0)]
+    assert result["results"] == [
+        {
+            "title": "Canonical provider",
+            "url": "https://example.com/result",
+            "snippet": "one owner",
+            "source": "test",
+        }
+    ]
+
+
 def test_business_registry_executes_report_validation_tool() -> None:
     registry = build_business_tool_registry(include_network_tools=False)
     executor = ToolExecutor(registry)
@@ -111,3 +137,19 @@ def test_business_tool_catalog_groups_business_namespaces() -> None:
         {"namespace": "quality", "tool_count": 1},
         {"namespace": "report", "tool_count": 1},
     ]
+
+
+class _WebSearchProvider:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def search(self, *, query, limit, timeout_seconds):
+        self.calls.append((query, limit, timeout_seconds))
+        return [
+            WebSearchResult(
+                title="Canonical provider",
+                url="https://example.com/result",
+                snippet="one owner",
+                source="test",
+            )
+        ]

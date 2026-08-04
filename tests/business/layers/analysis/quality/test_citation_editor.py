@@ -34,6 +34,37 @@ def test_citation_checker_passes_known_urls() -> None:
     assert result.claim_support_score == 1.0
 
 
+def test_citation_checker_matches_historical_source_url_aliases() -> None:
+    bundle = EvidenceBundle(
+        bundle_id="bundle",
+        items=[
+            EvidenceItem(
+                evidence_id="ev_legacy",
+                source_url="https://example.com/News/?topic=AI",
+                title="Legacy source",
+                summary="Legacy source summary",
+                confidence=0.9,
+                source_id="source",
+                source_item_id="source-item-legacy",
+                lineage=Lineage(source_id="source", source_item_id="source-item-legacy"),
+            )
+        ],
+    )
+    report = {
+        "sections": [
+            {
+                "title": "Summary",
+                "sources": ["https://example.com/News?Topic=AI"],
+            }
+        ]
+    }
+
+    result = CitationChecker().check(report, bundle)
+
+    assert result.unknown_urls == []
+    assert result.unsupported_urls == []
+
+
 def test_citation_checker_passes_known_evidence_ids() -> None:
     report = {
         "sections": [

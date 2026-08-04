@@ -11,7 +11,7 @@ from business.foundation.primitives.source_ref import source_url_read_aliases
 from business.layers.signal.artifact_refs import SignalArtifactRef
 from business.layers.signal.artifacts import SourceArtifactWriter
 from business.layers.signal.source_processing.normalize import normalize_item
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 from framework.events.canonical import StoredEvent
 from framework.events.runtime.replay_engine import ReplayCheckpoint
 from infrastructure.storage.persistence import (

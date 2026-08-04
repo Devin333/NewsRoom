@@ -13,7 +13,7 @@ REQUIRED_PACKAGES = (
     "framework/memory",
     "framework/workers",
     "framework/events",
-    "framework/artifacts",
+    "framework/agent/artifacts",
     "framework/governance",
 )
 

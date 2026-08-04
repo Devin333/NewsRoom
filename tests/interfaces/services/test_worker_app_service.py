@@ -1,4 +1,5 @@
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
+from framework.shared.attempts import current_attempt_context
 from framework.workers import LeasedTask, Task, TaskResult, TaskStatus, WorkerStatus
 from infrastructure.storage.workers import RedisQueueStatus
 from interfaces.services.worker_service import (
@@ -118,7 +119,10 @@ def test_worker_service_run_once_dead_letters_non_retryable_task() -> None:
     assert result.success is False
     assert result.retryable is False
     assert queue.enqueued == []
-    assert queue.dead_letters == [(task, "failed")]
+    assert queue.dead_letters == [(task, "task execution failed")]
+    assert result.error_type == "WorkerInternalError"
+    assert result.error_message == "task execution failed"
+    assert result.error_id is not None
     assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
 
 
@@ -171,6 +175,92 @@ def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
     assert task.metadata["reclaimed"] is True
     assert queue.reclaim_calls == [("worker-1", [DEFAULT_MEMORY_QUEUE], 60_000)]
     assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
+
+
+def test_worker_service_binds_fenced_attempt_context_and_uses_guarded_ack() -> None:
+    task = Task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=2)
+    leased = LeasedTask(
+        DEFAULT_MEMORY_QUEUE,
+        "1-0",
+        task,
+        owner_id="worker-1",
+        lease_id="lease-2",
+        fencing_token=2,
+        attempt=2,
+        effect_key="task:task-1",
+    )
+    queue = _FencedQueue(leased=leased)
+    handler = _ContextCapturingHandler()
+    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
+
+    result = service.run_once(worker_id="worker-1", block_ms=10)
+
+    assert result.success is True
+    assert handler.context is not None
+    assert handler.context.attempt_id == "lease-2"
+    assert handler.context.idempotency_key == "task:task-1"
+    assert handler.context.fencing_token == 2
+    assert queue.guarded_acks == [leased]
+    assert queue.acked == []
+
+
+def test_worker_service_lease_renewal_loss_cancels_context_and_rejects_terminal_write() -> None:
+    task = Task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=1)
+    leased = LeasedTask(
+        DEFAULT_MEMORY_QUEUE,
+        "1-0",
+        task,
+        owner_id="worker-1",
+        lease_id="lease-1",
+        fencing_token=1,
+        attempt=1,
+        effect_key="task:task-1",
+    )
+    queue = _FencedQueue(leased=leased, lose_renewal=True)
+    handler = _CooperativeLongHandler()
+    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
+
+    result = service.run_once(worker_id="worker-1", block_ms=10)
+
+    assert result.success is False
+    assert result.retryable is False
+    assert result.error_type == "StaleTaskLeaseError"
+    assert result.error_message == "task lease is stale"
+    assert result.error_id is not None
+    assert handler.cancelled is True
+    assert queue.guarded_acks == []
+    assert queue.guarded_failures == []
+
+
+def test_worker_service_raw_handler_exception_is_safe_and_keeps_correlation_id() -> None:
+    secret = "postgresql://alice:hunter2@database.internal/news"
+    task = Task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=1)
+    leased = LeasedTask(
+        DEFAULT_MEMORY_QUEUE,
+        "1-0",
+        task,
+        owner_id="worker-1",
+        lease_id="lease-1",
+        fencing_token=1,
+        attempt=1,
+        effect_key="task:task-1",
+    )
+    queue = _FencedQueue(leased=leased)
+    handler = _ExplodingHandler(secret)
+    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
+
+    result = service.run_once(worker_id="worker-1", block_ms=10)
+
+    assert result.success is False
+    assert result.error_type == "WorkerInternalError"
+    assert result.error_message == "task execution failed"
+    assert result.error_id is not None
+    assert secret not in str(result.to_dict())
+    assert len(queue.guarded_failures) == 1
+    persisted_error = queue.guarded_failures[0][1]
+    assert persisted_error.error_type == "WorkerInternalError"
+    assert persisted_error.error_message == "task execution failed"
+    assert persisted_error.error_id == result.error_id
 
 
 def test_worker_service_queue_status_uses_default_queues() -> None:
@@ -289,6 +379,74 @@ class _FakeQueue:
             )
             for queue_name in queue_names
         ]
+
+
+class _FencedQueue(_FakeQueue):
+    def __init__(self, *, leased, lose_renewal=False) -> None:
+        super().__init__(leased=leased)
+        self.lose_renewal = lose_renewal
+        self.guarded_acks = []
+        self.guarded_failures = []
+
+    def renewal_interval_seconds(self, leased):
+        return 0.01
+
+    def renew(self, leased):
+        if self.lose_renewal:
+            from framework.workers import StaleTaskLeaseError
+
+            raise StaleTaskLeaseError(leased, operation="renew")
+        return leased.lease_expires_at
+
+    def ack(self, leased, message_id=None):
+        if isinstance(leased, LeasedTask):
+            self.guarded_acks.append(leased)
+            return 1
+        return super().ack(leased, message_id)
+
+    def fail(self, leased, error):
+        self.guarded_failures.append((leased, error))
+
+
+class _ContextCapturingHandler:
+    task_type = "memory.reindex"
+
+    def __init__(self) -> None:
+        self.context = None
+
+    def handle(self, task):
+        self.context = current_attempt_context()
+        return TaskResult.success(task.task_id)
+
+
+class _CooperativeLongHandler:
+    task_type = "memory.reindex"
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    def handle(self, task):
+        import time
+
+        context = current_attempt_context()
+        assert context is not None
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if context.cancelled:
+                self.cancelled = True
+                context.raise_if_cancelled()
+            time.sleep(0.001)
+        raise AssertionError("lease cancellation was not delivered")
+
+
+class _ExplodingHandler:
+    task_type = "memory.reindex"
+
+    def __init__(self, secret) -> None:
+        self.secret = secret
+
+    def handle(self, task):
+        raise RuntimeError(f"database rejected {self.secret}")
 
 
 class _FakeWorkerRegistry:

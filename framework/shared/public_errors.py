@@ -318,7 +318,7 @@ def _is_approved_mcp_exception(exc: BaseException) -> bool:
         return True
     error_type = type(exc).__name__
     module = type(exc).__module__
-    return error_type in _ARTIFACT_ERROR_TYPES and module.startswith("framework.artifacts.")
+    return error_type in _ARTIFACT_ERROR_TYPES and module.startswith("framework.agent.artifacts.")
 
 
 def _safe_mcp_message(error_type: str, error_message: str | None) -> str:

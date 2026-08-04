@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone as _tz
@@ -19,15 +20,19 @@ from framework.events import (
     default_event_telemetry,
     trace_context_scope,
 )
+from framework.shared.attempts import AttemptContext, bind_attempt_context
+from framework.shared.public_errors import project_public_error, sanitize_public_error_fields
 from framework.workers import (
+    LeasedTask,
+    StaleTaskLeaseError,
     Task,
+    TaskError,
     TaskResult,
     TaskStatus,
     WorkerHeartbeat,
     WorkerHeartbeatStatus,
     WorkerStatus,
 )
-from framework.workers.models import LeasedTask
 from framework.workers.registry.handler import TaskHandler
 from infrastructure.storage.workers import (
     RedisQueueStatus,
@@ -36,6 +41,7 @@ from infrastructure.storage.workers import (
 )
 from interfaces.services.memory_service import MemoryApplicationService
 from interfaces.services.source_service import SourceApplicationService
+from interfaces.services.source_runtime import SourceRuntimeProvider
 
 
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
@@ -80,6 +86,7 @@ class WorkerRunOnceResult:
     workflow_run_id: str | None = None
     error_type: str | None = None
     error_message: str | None = None
+    error_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -96,6 +103,7 @@ class WorkerRunOnceResult:
             "workflow_run_id": self.workflow_run_id,
             "error_type": self.error_type,
             "error_message": self.error_message,
+            "error_id": self.error_id,
         }
 
 
@@ -171,6 +179,7 @@ class WorkerApplicationService:
         queue: RedisStreamTaskQueue | None = None,
         worker_registry: RedisWorkerRegistry | None = None,
         handlers: dict[str, TaskHandler] | None = None,
+        source_service_factory: Callable[[], SourceApplicationService] | None = None,
         trace_propagator: W3CTracePropagator | None = None,
         telemetry: EventTelemetry | None = None,
     ) -> None:
@@ -183,6 +192,14 @@ class WorkerApplicationService:
         if self.worker_registry is None and queue is None:
             self.worker_registry = RedisWorkerRegistry(redis_client)
         self._handlers = handlers
+        self._source_runtime_provider = None
+        if source_service_factory is None:
+            self._source_runtime_provider = SourceRuntimeProvider()
+            self._source_service_factory = (
+                self._source_runtime_provider.source_service_factory
+            )
+        else:
+            self._source_service_factory = source_service_factory
         self._trace_propagator = trace_propagator or W3CTracePropagator()
         self._telemetry = telemetry or default_event_telemetry(
             resource=TelemetryResource(service_name="newsroom-worker"),
@@ -204,7 +221,7 @@ class WorkerApplicationService:
                 memory_service=MemoryApplicationService(artifact_root=self.artifact_root)
             ),
             SourceHealthCheckTaskHandler.task_type: SourceHealthCheckTaskHandler(
-                source_service=SourceApplicationService()
+                source_service=self._source_service_factory()
             ),
         }
 
@@ -292,12 +309,17 @@ class WorkerApplicationService:
             status=WorkerStatus.RUNNING,
             current_task_id=leased.task.task_id,
         )
-        result = self._handle_leased_task(leased)
-        if result.success:
-            self.queue.ack(leased.queue_name, leased.message_id)
+        result, lease_failure = self._handle_leased_task(leased)
+        if lease_failure is not None:
+            result = _task_result_from_exception(leased.task, lease_failure, retryable=False)
         else:
-            self._requeue_or_dead_letter(leased.task, result)
-            self.queue.ack(leased.queue_name, leased.message_id)
+            try:
+                if result.success:
+                    self._ack_leased_task(leased)
+                else:
+                    self._fail_leased_task(leased, result)
+            except StaleTaskLeaseError as exc:
+                result = _task_result_from_exception(leased.task, exc, retryable=False)
         self._record_worker_heartbeat(
             worker_id=worker_id,
             queue_names=queues,
@@ -319,6 +341,7 @@ class WorkerApplicationService:
             workflow_run_id=result.workflow_run_id,
             error_type=result.error_type,
             error_message=result.error_message,
+            error_id=result.error_id,
         )
 
     def record_heartbeat(
@@ -453,16 +476,24 @@ class WorkerApplicationService:
             if idle_sleep_seconds:
                 actual_sleep(idle_sleep_seconds)
 
-    def _handle_leased_task(self, leased: LeasedTask) -> TaskResult:
+    def _handle_leased_task(self, leased: LeasedTask) -> tuple[TaskResult, BaseException | None]:
         handler = self.handlers.get(leased.task.task_type)
         if handler is None:
-            return TaskResult(
-                task_id=leased.task.task_id,
-                success=False,
-                status=TaskStatus.FAILED,
-                error_type="UnknownTaskType",
-                error_message=f"no handler for {leased.task.task_type}",
-            )
+            return _sanitize_task_result(
+                TaskResult(
+                    task_id=leased.task.task_id,
+                    success=False,
+                    retryable=False,
+                    status=TaskStatus.FAILED,
+                    error_type="UnknownTaskType",
+                    error_message=f"no handler for {leased.task.task_type}",
+                )
+            ), None
+        context = AttemptContext.create(
+            attempt_id=leased.lease_id,
+            idempotency_key=leased.effect_key or f"task:{leased.task.task_id}",
+            fencing_token=leased.fencing_token or max(1, leased.task.attempts),
+        )
         extracted_trace = self._trace_propagator.extract_span(
             leased.task.trace_carrier
         )
@@ -472,6 +503,14 @@ class WorkerApplicationService:
             extracted_trace.remote_context,
             relationship="worker_message",
             attempt_bucket=attempt_bucket,
+        )
+        stop_renewal = threading.Event()
+        renewal_failures: list[BaseException] = []
+        renewal_thread = self._start_lease_renewer(
+            leased,
+            context=context,
+            stop_event=stop_renewal,
+            failures=renewal_failures,
         )
         try:
             with trace_context_scope(consumer_trace), self._telemetry.start_span(
@@ -485,16 +524,76 @@ class WorkerApplicationService:
                     "newsroom.worker.attempt_bucket": attempt_bucket,
                 },
                 links=(trace_link,),
-            ):
-                return handler.handle(leased.task)
+            ), bind_attempt_context(context):
+                result = handler.handle(leased.task)
+                context.raise_if_cancelled()
         except Exception as exc:
-            return TaskResult(
-                task_id=leased.task.task_id,
-                success=False,
-                status=TaskStatus.FAILED,
-                error_type=type(exc).__name__,
-                error_message=str(exc),
+            result = _task_result_from_exception(leased.task, exc)
+        finally:
+            stop_renewal.set()
+            if renewal_thread is not None:
+                renewal_thread.join(timeout=1.0)
+        if renewal_failures:
+            return _task_result_from_exception(
+                leased.task,
+                renewal_failures[0],
+                retryable=False,
+            ), renewal_failures[0]
+        return _sanitize_task_result(result), None
+
+    def _start_lease_renewer(
+        self,
+        leased: LeasedTask,
+        *,
+        context: AttemptContext,
+        stop_event: threading.Event,
+        failures: list[BaseException],
+    ) -> threading.Thread | None:
+        renew = getattr(self.queue, "renew", None)
+        if not leased.is_fenced or not callable(renew):
+            return None
+        interval_fn = getattr(self.queue, "renewal_interval_seconds", None)
+        interval = float(interval_fn(leased)) if callable(interval_fn) else 1.0
+        if interval <= 0:
+            raise ValueError("lease renewal interval must be greater than zero")
+
+        def renewal_loop() -> None:
+            while not stop_event.wait(interval):
+                try:
+                    renew(leased)
+                except BaseException as exc:  # noqa: BLE001 - ownership loss is fail-closed
+                    failures.append(exc)
+                    context.cancel()
+                    return
+
+        thread = threading.Thread(
+            target=renewal_loop,
+            daemon=True,
+            name=f"worker-lease-renewer:{leased.task.task_id[:24]}",
+        )
+        thread.start()
+        return thread
+
+    def _ack_leased_task(self, leased: LeasedTask) -> None:
+        if leased.is_fenced:
+            self.queue.ack(leased)
+            return
+        self.queue.ack(leased.queue_name, leased.message_id)
+
+    def _fail_leased_task(self, leased: LeasedTask, result: TaskResult) -> None:
+        if leased.is_fenced:
+            self.queue.fail(
+                leased,
+                TaskError(
+                    result.error_type or "WorkerInternalError",
+                    result.error_message or "task execution failed",
+                    retryable=result.retryable,
+                    error_id=result.error_id,
+                ),
             )
+            return
+        self._requeue_or_dead_letter(leased.task, result)
+        self.queue.ack(leased.queue_name, leased.message_id)
 
     def _requeue_or_dead_letter(self, task: Task, result: TaskResult) -> None:
         reason = result.error_message or result.error_type or "task failed"
@@ -574,6 +673,50 @@ def _worker_attempt_bucket(attempt: int) -> str:
 
 def _unique_queue_names(queue_names: list[str]) -> list[str]:
     return list(dict.fromkeys(str(queue_name) for queue_name in queue_names))
+
+
+def _task_result_from_exception(
+    task: Task,
+    exc: BaseException,
+    *,
+    retryable: bool = True,
+) -> TaskResult:
+    projection = project_public_error(exc, context="worker", operation=task.task_type)
+    return TaskResult(
+        task_id=task.task_id,
+        success=False,
+        retryable=retryable,
+        status=TaskStatus.FAILED,
+        error_type=projection.error_type,
+        error_message=projection.error_message,
+        error_id=projection.error_id,
+    )
+
+
+def _sanitize_task_result(result: TaskResult) -> TaskResult:
+    if result.success:
+        return result
+    fields = sanitize_public_error_fields(
+        error_type=result.error_type,
+        error_message=result.error_message,
+        error_id=result.error_id,
+        context="worker",
+    )
+    return TaskResult(
+        task_id=result.task_id,
+        success=False,
+        retryable=result.retryable,
+        status=result.status,
+        workflow_run_id=result.workflow_run_id,
+        task_status=result.task_status,
+        run_status=result.run_status,
+        report_status=result.report_status,
+        output={},
+        error_type=str(fields["error_type"]),
+        error_message=str(fields["error_message"]),
+        error_id=fields["error_id"],
+        finished_at=result.finished_at,
+    )
 
 
 def _reject_secret_payload_keys(payload: dict[str, Any]) -> None:

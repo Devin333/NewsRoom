@@ -18,7 +18,7 @@ from business.layers.signal.source_artifact_inputs import (
     source_fetch_result_artifact_inputs,
     source_item_artifact_inputs,
 )
-from framework.artifacts import ArtifactManager
+from framework.agent.artifacts import ArtifactManager
 
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
