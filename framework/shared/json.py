@@ -53,10 +53,6 @@ def to_jsonable(value: Any) -> Any:
     return value
 
 
-def canonical_json(value: Any) -> str:
-    return stable_json_dumps(value)
-
-
 def _json_key(key: Any) -> str:
     if isinstance(key, Enum):
         return str(key.value)

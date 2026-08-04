@@ -21,7 +21,7 @@ from framework.shared.errors import (
 )
 from framework.shared.hashing import hash_bytes, hash_text, short_hash, stable_hash
 from framework.shared.ids import RunId, StepId, TaskId, generate_id, normalize_id, stable_id
-from framework.shared.json import canonical_json, json_loads, stable_json_dumps, to_jsonable
+from framework.shared.json import json_loads, stable_json_dumps, to_jsonable
 from framework.shared.pagination import PageRequest, PageResult
 from framework.shared.redaction import (
     DEFAULT_SENSITIVE_KEY_TOKENS,
@@ -69,7 +69,6 @@ __all__ = [
     "StepId",
     "TaskId",
     "ValidationError",
-    "canonical_json",
     "bind_attempt_context",
     "contains_redacted_value",
     "current_attempt_context",

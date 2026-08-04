@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
-from framework.shared import canonical_json, json_loads, stable_json_dumps, to_jsonable
+import framework.shared as shared
+import framework.shared.json as shared_json
+from framework.shared import json_loads, stable_json_dumps, to_jsonable
 
 
 class _Kind(Enum):
@@ -48,9 +50,13 @@ def test_to_jsonable_normalizes_runtime_values() -> None:
     }
 
 
-def test_stable_json_dumps_and_canonical_json_are_sorted_and_compact() -> None:
+def test_stable_json_dumps_is_sorted_and_compact() -> None:
     payload = {"b": 2, "a": 1}
 
     assert stable_json_dumps(payload) == '{"a":1,"b":2}'
-    assert canonical_json(payload) == stable_json_dumps(payload)
     assert json_loads(stable_json_dumps(payload)) == {"a": 1, "b": 2}
+
+
+def test_canonical_json_alias_is_not_part_of_shared_api() -> None:
+    assert not hasattr(shared, "canonical_json")
+    assert not hasattr(shared_json, "canonical_json")
