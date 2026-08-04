@@ -9,9 +9,12 @@ import time
 from typing import Any
 
 from framework.shared.attempts import (
+    AttemptBudget,
+    AttemptBudgetExhaustedError,
     AttemptContext,
     bind_attempt_context,
     current_attempt_context,
+    derive_idempotency_key,
 )
 from framework.specs import StepSpec, StepStatus, StepType
 from framework.workflow.buffer import DataBuffer, StepScopedDataBufferView
@@ -112,6 +115,18 @@ class ParallelGroupStepRunner:
             )
         ]
 
+    def attempt_budget_limit(
+        self,
+        step: StepSpec,
+        _buffer: StepScopedDataBufferView,
+    ) -> int:
+        """Reserve configured branch retry permits before execution starts."""
+
+        branches = step.metadata.get("branches")
+        if not isinstance(branches, list) or not branches:
+            return 1
+        return 1 + sum(_branch_max_retries(dict(branch)) for branch in branches)
+
     def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
         try:
@@ -128,6 +143,13 @@ class ParallelGroupStepRunner:
             normalized_branches = _normalize_parallel_branches(
                 branches, step_id=step.step_id
             )
+            normalized_branches = [
+                {
+                    **branch,
+                    "_retry_safe": _parallel_branch_retry_is_safe(step, branch),
+                }
+                for branch in normalized_branches
+            ]
 
             branch_results: list[dict[str, Any]] = []
             failed_branch_results: list[dict[str, Any]] = []
@@ -491,14 +513,51 @@ def _run_parallel_branch_with_policy(
     max_retries = _branch_max_retries(branch)
     retry_on_error_types = _branch_retry_on_error_types(branch)
     no_retry_on_error_types = _branch_no_retry_on_error_types(branch)
+    parent_context = current_attempt_context()
+    budget = (
+        parent_context.budget
+        if parent_context is not None and parent_context.budget is not None
+        else AttemptBudget(max_attempts=max(1, max_retries + 1))
+    )
+    branch_key = (
+        derive_idempotency_key(
+            parent_context.idempotency_key,
+            "branch",
+            str(branch["branch_id"]),
+        )
+        if parent_context is not None
+        else f"parallel-branch:{branch['branch_id']}"
+    )
     attempts = 0
     while True:
-        ensure_attempt_active()
         attempts += 1
         attempt_branch = _branch_with_attempt(branch, attempts)
+        if attempts > 1:
+            try:
+                fencing_token = budget.claim()
+            except AttemptBudgetExhaustedError as exc:
+                raise _ParallelBranchExecutionError(exc, attempts=attempts) from exc
+        else:
+            fencing_token = parent_context.fencing_token if parent_context else 1
+        child_context = AttemptContext.create(
+            idempotency_key=branch_key,
+            fencing_token=fencing_token,
+            budget=budget,
+            parent_cancel_event=(
+                parent_context.cancel_event if parent_context else None
+            ),
+            timeout_seconds=_branch_timeout_seconds(branch),
+        )
         try:
-            return _run_parallel_branch(registry, attempt_branch, parent_buffer)
+            with bind_attempt_context(child_context):
+                return _run_parallel_branch(registry, attempt_branch, parent_buffer)
         except Exception as exc:
+            if parent_context is not None and child_context.has_indeterminate_descendant:
+                parent_context.mark_descendant_indeterminate()
+            if not bool(branch.get("_retry_safe")):
+                if parent_context is not None:
+                    parent_context.mark_descendant_indeterminate()
+                raise _ParallelBranchExecutionError(exc, attempts=attempts) from exc
             if attempts > max_retries or not _should_retry_branch_error(
                 exc,
                 retry_on_error_types=retry_on_error_types,
@@ -512,6 +571,32 @@ def _run_parallel_branch_with_policy(
 
 def _branch_with_attempt(branch: dict[str, Any], attempts: int) -> dict[str, Any]:
     return {**branch, "_attempts": attempts}
+
+
+def _parallel_branch_retry_is_safe(
+    step: StepSpec,
+    branch: dict[str, Any],
+) -> bool:
+    side_effect_level = str(
+        branch.get("side_effect_level") or StepRunnerSideEffectLevel.EXTERNAL_WRITE
+    )
+    if side_effect_level in {
+        StepRunnerSideEffectLevel.NONE.value,
+        StepRunnerSideEffectLevel.READ_ONLY.value,
+    }:
+        return True
+    if side_effect_level == StepRunnerSideEffectLevel.IDEMPOTENT_WRITE.value:
+        return bool(branch.get("idempotent") is True or step.idempotent)
+    return bool(
+        (
+            branch.get("idempotency_contract") is True
+            or step.metadata.get("idempotency_contract") is True
+        )
+        and (
+            branch.get("reconciliation_supported") is True
+            or step.metadata.get("reconciliation_supported") is True
+        )
+    )
 
 
 def _branch_timeout_seconds(branch: dict[str, Any]) -> float | None:
@@ -589,6 +674,8 @@ def _should_retry_branch_error(
     retry_on_error_types: set[str],
     no_retry_on_error_types: set[str],
 ) -> bool:
+    if isinstance(exc, AttemptBudgetExhaustedError):
+        return False
     error_type = type(exc).__name__
     if error_type in no_retry_on_error_types:
         return False

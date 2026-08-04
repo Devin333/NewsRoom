@@ -200,6 +200,9 @@ def test_worker_service_binds_fenced_attempt_context_and_uses_guarded_ack() -> N
     assert handler.context.attempt_id == "lease-2"
     assert handler.context.idempotency_key == "task:task-1"
     assert handler.context.fencing_token == 2
+    assert handler.context.budget is not None
+    assert handler.context.budget.max_attempts == 1
+    assert handler.context.budget.used == 1
     assert queue.guarded_acks == [leased]
     assert queue.acked == []
 

@@ -12,10 +12,12 @@ from framework.shared.attempts import (
     AttemptBudget,
     AttemptBudgetExhaustedError,
     AttemptCancelledError,
+    AttemptCapacityExhaustedError,
     AttemptContext,
     AttemptState,
     AttemptSupervisor,
     current_attempt_context,
+    derive_idempotency_key,
 )
 from framework.shared.json import to_jsonable
 from framework.events.propagation import (
@@ -43,6 +45,7 @@ from framework.tool.models import (
     ToolPolicyTrace,
     ToolResult,
     ToolRuntimeError,
+    ToolIndeterminateError,
     ToolSecretError,
     ToolStatus,
     ToolTimeoutError,
@@ -282,6 +285,26 @@ class ToolExecutor:
                 metadata={
                     "termination_confirmed": exc.termination_confirmed,
                     "indeterminate": exc.indeterminate,
+                },
+            )
+            elapsed_ms = 0.0
+        except ToolIndeterminateError as exc:
+            policy_trace.add("tool.indeterminate", "safety", False, str(exc))
+            result = ToolResult(
+                status=ToolStatus.FAILED,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                call_id=call.call_id,
+                tool_name=call.tool_name,
+                termination_confirmed=exc.termination_confirmed,
+                indeterminate=exc.indeterminate,
+                attempt_id=exc.attempt_id,
+                idempotency_key=exc.idempotency_key,
+                fencing_token=exc.fencing_token,
+                metadata={
+                    "termination_confirmed": exc.termination_confirmed,
+                    "indeterminate": exc.indeterminate,
+                    "cause_type": exc.cause_type,
                 },
             )
             elapsed_ms = 0.0
@@ -837,18 +860,11 @@ def _invoke_with_retry(
     # Keep one total budget when a Tool executes inside a Workflow attempt.
     effective_max = min(max_attempts, max_total_attempts) if max_total_attempts else max_attempts
     parent_context = current_attempt_context()
-    logical_idempotency_key = (
-        parent_context.idempotency_key
-        if parent_context is not None
-        else idempotency_key or f"tool:{tool_name}"
-    )
+    logical_idempotency_key = idempotency_key or f"tool:{tool_name}"
     budget = parent_context.budget if parent_context is not None else None
     if budget is None:
         budget = AttemptBudget(max_attempts=effective_max)
     elif parent_context is not None:
-        if max_total_attempts is not None:
-            budget.cap_at(max_total_attempts)
-        budget.expand_to(budget.used + max(0, effective_max - 1))
         effective_max = min(effective_max, 1 + budget.remaining)
     supervisor = AttemptSupervisor(
         cancellation_grace_seconds=cancellation_grace_seconds
@@ -878,7 +894,7 @@ def _invoke_with_retry(
                 claim_budget=not (parent_context is not None and attempt == 1),
             )
         except AttemptBudgetExhaustedError:
-            raise ToolRuntimeError("tool attempt budget exhausted") from None
+            raise
 
         if supervised.state is AttemptState.SUCCEEDED:
             return supervised.value, attempt
@@ -894,11 +910,41 @@ def _invoke_with_retry(
                 ) from None
             if error is None:
                 raise ToolRuntimeError("tool attempt failed without an error")
+            if isinstance(error, AttemptCapacityExhaustedError):
+                raise error
+            if _failure_is_known_to_have_no_effect(definition, error):
+                raise error
+            if not _retry_is_safe(definition):
+                if parent_context is not None:
+                    parent_context.mark_descendant_indeterminate()
+                raise ToolIndeterminateError(
+                    f"tool {tool_name} failed after an external effect could not be reconciled",
+                    attempt_id=supervised.context.attempt_id,
+                    idempotency_key=supervised.context.idempotency_key,
+                    fencing_token=supervised.context.fencing_token,
+                    cause_type=type(error).__name__,
+                ) from error
             if attempt == effective_max:
                 raise error
             continue
 
-        timeout_is_safe = _timeout_retry_is_safe(definition)
+        if supervised.state is AttemptState.INDETERMINATE:
+            if parent_context is not None:
+                parent_context.mark_descendant_indeterminate()
+            error = supervised.error
+            raise ToolIndeterminateError(
+                f"tool {tool_name} has an indeterminate descendant effect",
+                attempt_id=supervised.context.attempt_id,
+                idempotency_key=supervised.context.idempotency_key,
+                fencing_token=supervised.context.fencing_token,
+                cause_type=(
+                    type(error).__name__
+                    if error is not None
+                    else "AttemptIndeterminateError"
+                ),
+            ) from error
+
+        timeout_is_safe = _retry_is_safe(definition)
         indeterminate = supervised.indeterminate or not timeout_is_safe
         if parent_context is not None:
             if not supervised.termination_confirmed:
@@ -950,7 +996,12 @@ def _invoke_with_timeout(
 def _tool_idempotency_key(call: ToolCall) -> str:
     parent_context = current_attempt_context()
     if parent_context is not None:
-        return parent_context.idempotency_key
+        child_id = str(call.metadata.get("idempotency_key") or call.call_id)
+        return derive_idempotency_key(
+            parent_context.idempotency_key,
+            "tool",
+            child_id,
+        )
     configured = call.metadata.get("idempotency_key")
     return str(configured or f"tool:{call.call_id}")
 
@@ -980,7 +1031,7 @@ def _bounded_timeout(
     return min(float(timeout_seconds), parent_remaining)
 
 
-def _timeout_retry_is_safe(definition: Any | None) -> bool:
+def _retry_is_safe(definition: Any | None) -> bool:
     if definition is None:
         return True
     side_effect = _side_effect_value(definition).casefold()
@@ -991,6 +1042,20 @@ def _timeout_retry_is_safe(definition: Any | None) -> bool:
         metadata.get("idempotent") is True
         and metadata.get("reconciliation_supported") is True
     )
+
+
+def _failure_is_known_to_have_no_effect(
+    definition: Any | None,
+    error: BaseException,
+) -> bool:
+    if definition is None:
+        return False
+    metadata = dict(getattr(definition, "metadata", {}) or {})
+    configured = metadata.get("no_effect_error_types") or []
+    if not isinstance(configured, list):
+        return False
+    error_types = {base.__name__ for base in type(error).__mro__}
+    return bool(error_types.intersection(str(value) for value in configured))
 
 
 def _tool_timeout_error(

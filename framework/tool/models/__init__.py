@@ -13,6 +13,7 @@ from framework.tool.models.result import ToolPolicyTrace, ToolResult
 from framework.tool.models.status import ToolSideEffect, ToolStatus
 from framework.tool.runtime.errors import (
     ToolDefinitionError,
+    ToolIndeterminateError,
     ToolPermissionError,
     ToolRuntimeError,
     ToolSecretError,
@@ -34,6 +35,7 @@ __all__ = [
     "ToolDefinition",
     "ToolDefinitionError",
     "ToolExecutorFn",
+    "ToolIndeterminateError",
     "ToolObservation",
     "ToolPermissionError",
     "ToolPolicy",

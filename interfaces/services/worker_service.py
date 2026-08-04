@@ -20,7 +20,11 @@ from framework.events import (
     default_event_telemetry,
     trace_context_scope,
 )
-from framework.shared.attempts import AttemptContext, bind_attempt_context
+from framework.shared.attempts import (
+    AttemptBudget,
+    AttemptContext,
+    bind_attempt_context,
+)
 from framework.shared.public_errors import project_public_error, sanitize_public_error_fields
 from framework.workers import (
     LeasedTask,
@@ -489,10 +493,27 @@ class WorkerApplicationService:
                     error_message=f"no handler for {leased.task.task_type}",
                 )
             ), None
+        raw_total_attempts = leased.task.metadata.get("max_total_attempts", 1)
+        if type(raw_total_attempts) is not int or raw_total_attempts < 1:
+            exc = ValueError("max_total_attempts must be a positive integer")
+            return _sanitize_task_result(
+                TaskResult(
+                    task_id=leased.task.task_id,
+                    success=False,
+                    retryable=False,
+                    status=TaskStatus.FAILED,
+                    error_type="InvalidAttemptBudget",
+                    error_message="max_total_attempts must be a positive integer",
+                )
+            ), exc
+        max_total_attempts = raw_total_attempts
+        attempt_budget = AttemptBudget(max_attempts=max_total_attempts)
+        attempt_budget.claim()
         context = AttemptContext.create(
             attempt_id=leased.lease_id,
             idempotency_key=leased.effect_key or f"task:{leased.task.task_id}",
             fencing_token=leased.fencing_token or max(1, leased.task.attempts),
+            budget=attempt_budget,
         )
         extracted_trace = self._trace_propagator.extract_span(
             leased.task.trace_carrier

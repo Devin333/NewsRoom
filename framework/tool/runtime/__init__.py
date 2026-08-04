@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from framework.tool.runtime.errors import (
     ToolDefinitionError,
+    ToolIndeterminateError,
     ToolPermissionError,
     ToolRuntimeError,
     ToolSecretError,
@@ -55,6 +56,7 @@ __all__ = [
     "ToolBatchExecutor",
     "ToolDefinitionError",
     "ToolExecutor",
+    "ToolIndeterminateError",
     "ToolPermissionError",
     "ToolRetryController",
     "ToolRuntimeError",

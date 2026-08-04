@@ -46,6 +46,10 @@ def run_with_timeout(
         if outcome.error is None:
             raise ToolRuntimeError("tool operation failed without an error")
         raise outcome.error
+    if outcome.state is AttemptState.INDETERMINATE:
+        if outcome.error is not None:
+            raise outcome.error
+        raise ToolRuntimeError("tool operation has an indeterminate outcome")
     timeout_text = (
         f"{float(timeout_seconds):g} seconds"
         if timeout_seconds is not None

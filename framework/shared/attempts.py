@@ -7,6 +7,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
+from hashlib import sha256
 from typing import Callable, Generic, Iterator, TypeVar
 
 from framework.shared.errors import RuntimeExecutionError
@@ -37,9 +38,32 @@ class AttemptBudgetExhaustedError(RuntimeExecutionError):
         )
 
 
+class AttemptCapacityExhaustedError(RuntimeExecutionError):
+    """Raised when no bounded attempt-execution slot is available."""
+
+    def __init__(self, *, max_active: int) -> None:
+        super().__init__(
+            "attempt execution capacity exhausted",
+            code="attempt_capacity_exhausted",
+            details={"max_active": max_active},
+        )
+
+
+class AttemptIndeterminateError(RuntimeExecutionError):
+    """Raised when a descendant may have completed an unconfirmed effect."""
+
+    def __init__(self, attempt_id: str) -> None:
+        super().__init__(
+            "attempt has an indeterminate descendant",
+            code="attempt_indeterminate",
+            details={"attempt_id": attempt_id},
+        )
+
+
 class AttemptState(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    INDETERMINATE = "indeterminate"
     TIMED_OUT = "timed_out"
 
 
@@ -49,7 +73,6 @@ class AttemptBudget:
 
     max_attempts: int
     _used: int = field(default=0, init=False, repr=False)
-    _ceiling: int | None = field(default=None, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -67,7 +90,7 @@ class AttemptBudget:
             return max(0, self.max_attempts - self._used)
 
     def claim(self) -> int:
-        """Reserve one attempt and return its one-based fencing generation."""
+        """Reserve one attempt and return its one-based diagnostic sequence."""
 
         with self._lock:
             if self._used >= self.max_attempts:
@@ -75,32 +98,62 @@ class AttemptBudget:
             self._used += 1
             return self._used
 
-    def expand_to(self, max_attempts: int) -> None:
-        """Raise, but never shrink, the shared logical-operation capacity."""
+class AttemptExecutionCapacity:
+    """Non-blocking bound on live, supervised attempt threads."""
 
-        if type(max_attempts) is not int or max_attempts < 1:
-            raise ValueError("max_attempts must be a positive integer")
+    def __init__(self, max_active: int = 128) -> None:
+        if type(max_active) is not int or max_active < 1:
+            raise ValueError("max_active must be a positive integer")
+        self.max_active = max_active
+        self._slots = threading.BoundedSemaphore(max_active)
+        self._lock = threading.Lock()
+        self._active = 0
+
+    @property
+    def active(self) -> int:
         with self._lock:
-            target = (
-                min(max_attempts, self._ceiling)
-                if self._ceiling is not None
-                else max_attempts
-            )
-            if target > self.max_attempts:
-                self.max_attempts = target
+            return self._active
 
-    def cap_at(self, max_attempts: int) -> None:
-        """Apply a shared total-attempt ceiling without invalidating claims."""
-
-        if type(max_attempts) is not int or max_attempts < 1:
-            raise ValueError("max_attempts must be a positive integer")
+    def acquire(self) -> bool:
+        if not self._slots.acquire(blocking=False):
+            return False
         with self._lock:
-            self._ceiling = (
-                max_attempts
-                if self._ceiling is None
-                else min(self._ceiling, max_attempts)
-            )
-            self.max_attempts = max(self._used, min(self.max_attempts, self._ceiling))
+            self._active += 1
+        return True
+
+    def release(self) -> None:
+        with self._lock:
+            if self._active <= 0:
+                raise RuntimeError("attempt execution capacity released too many times")
+            self._active -= 1
+        self._slots.release()
+
+
+DEFAULT_ATTEMPT_EXECUTION_CAPACITY = AttemptExecutionCapacity()
+
+
+def derive_idempotency_key(
+    parent_key: str,
+    child_kind: str,
+    child_id: str,
+    *,
+    max_length: int = 256,
+) -> str:
+    """Derive a stable bounded key for one logical child operation."""
+
+    parent = str(parent_key).strip()
+    kind = str(child_kind).strip()
+    identity = str(child_id).strip()
+    if not parent or not kind or not identity:
+        raise ValueError("parent_key, child_kind, and child_id are required")
+    if type(max_length) is not int or max_length < 32:
+        raise ValueError("max_length must be an integer greater than or equal to 32")
+    raw = f"{parent}:{kind}:{identity}"
+    if len(raw) <= max_length:
+        return raw
+    digest = sha256(raw.encode("utf-8")).hexdigest()[:24]
+    prefix_length = max(1, max_length - len(digest) - 1)
+    return f"{raw[:prefix_length]}:{digest}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +172,11 @@ class AttemptContext:
     deadline: float | None = None
     cancel_event: threading.Event = field(
         default_factory=threading.Event,
+        repr=False,
+        compare=False,
+    )
+    parent_cancel_event: threading.Event | None = field(
+        default=None,
         repr=False,
         compare=False,
     )
@@ -152,6 +210,7 @@ class AttemptContext:
         attempt_id: str | None = None,
         budget: AttemptBudget | None = None,
         cancel_event: threading.Event | None = None,
+        parent_cancel_event: threading.Event | None = None,
     ) -> "AttemptContext":
         deadline = (
             time.monotonic() + float(timeout_seconds)
@@ -164,6 +223,7 @@ class AttemptContext:
             fencing_token=fencing_token,
             deadline=deadline,
             cancel_event=cancel_event or threading.Event(),
+            parent_cancel_event=parent_cancel_event,
             budget=budget,
         )
 
@@ -172,7 +232,10 @@ class AttemptContext:
 
     @property
     def cancelled(self) -> bool:
-        return self.cancel_event.is_set()
+        return self.cancel_event.is_set() or bool(
+            self.parent_cancel_event is not None
+            and self.parent_cancel_event.is_set()
+        )
 
     @property
     def remaining_seconds(self) -> float | None:
@@ -183,6 +246,10 @@ class AttemptContext:
     def raise_if_cancelled(self) -> None:
         if self.cancelled:
             raise AttemptCancelledError(self.attempt_id)
+
+    def raise_if_indeterminate(self) -> None:
+        if self.has_indeterminate_descendant:
+            raise AttemptIndeterminateError(self.attempt_id)
 
     def mark_descendant_unconfirmed(self) -> None:
         self.descendant_unconfirmed_event.set()
@@ -239,10 +306,16 @@ class AttemptOutcome(Generic[T]):
 class AttemptSupervisor:
     """Execute callables with bounded, cooperative timeout semantics."""
 
-    def __init__(self, *, cancellation_grace_seconds: float = 0.1) -> None:
+    def __init__(
+        self,
+        *,
+        cancellation_grace_seconds: float = 0.1,
+        capacity: AttemptExecutionCapacity | None = None,
+    ) -> None:
         if cancellation_grace_seconds < 0:
             raise ValueError("cancellation_grace_seconds must be non-negative")
         self.cancellation_grace_seconds = float(cancellation_grace_seconds)
+        self.capacity = capacity or DEFAULT_ATTEMPT_EXECUTION_CAPACITY
 
     def run(
         self,
@@ -269,6 +342,7 @@ class AttemptSupervisor:
             timeout_seconds=timeout_seconds,
             budget=budget,
             cancel_event=cancel_event,
+            parent_cancel_event=parent_cancel_event,
         )
         started = time.monotonic()
         if parent_cancel_event is not None and parent_cancel_event.is_set():
@@ -286,9 +360,13 @@ class AttemptSupervisor:
                     self._propagate_descendant_state(context, parent_context)
                     return AttemptOutcome(
                         context=context,
-                        state=AttemptState.TIMED_OUT,
+                        state=(
+                            AttemptState.TIMED_OUT
+                            if context.has_unconfirmed_descendant
+                            else AttemptState.INDETERMINATE
+                        ),
                         error=exc,
-                        timed_out=True,
+                        timed_out=context.has_unconfirmed_descendant,
                         termination_confirmed=not context.has_unconfirmed_descendant,
                         indeterminate=True,
                         elapsed_seconds=time.monotonic() - started,
@@ -304,8 +382,12 @@ class AttemptSupervisor:
                 self._propagate_descendant_state(context, parent_context)
                 return AttemptOutcome(
                     context=context,
-                    state=AttemptState.TIMED_OUT,
-                    timed_out=True,
+                    state=(
+                        AttemptState.TIMED_OUT
+                        if context.has_unconfirmed_descendant
+                        else AttemptState.INDETERMINATE
+                    ),
+                    timed_out=context.has_unconfirmed_descendant,
                     termination_confirmed=not context.has_unconfirmed_descendant,
                     indeterminate=True,
                     elapsed_seconds=time.monotonic() - started,
@@ -329,6 +411,7 @@ class AttemptSupervisor:
             except BaseException as exc:  # noqa: BLE001 - carried to the owning runtime
                 failure.append(exc)
             finally:
+                self.capacity.release()
                 completed.set()
 
         thread = threading.Thread(
@@ -336,7 +419,20 @@ class AttemptSupervisor:
             daemon=True,
             name=f"framework-attempt:{context.attempt_id[:12]}",
         )
-        thread.start()
+        if not self.capacity.acquire():
+            return AttemptOutcome(
+                context=context,
+                state=AttemptState.FAILED,
+                error=AttemptCapacityExhaustedError(
+                    max_active=self.capacity.max_active,
+                ),
+                elapsed_seconds=time.monotonic() - started,
+            )
+        try:
+            thread.start()
+        except BaseException:
+            self.capacity.release()
+            raise
         timeout_deadline = (
             time.monotonic() + float(timeout_seconds)
             if has_deadline
@@ -364,8 +460,12 @@ class AttemptSupervisor:
                 self._propagate_descendant_state(context, parent_context)
                 return AttemptOutcome(
                     context=context,
-                    state=AttemptState.TIMED_OUT,
-                    timed_out=True,
+                    state=(
+                        AttemptState.TIMED_OUT
+                        if context.has_unconfirmed_descendant
+                        else AttemptState.INDETERMINATE
+                    ),
+                    timed_out=context.has_unconfirmed_descendant,
                     termination_confirmed=not context.has_unconfirmed_descendant,
                     indeterminate=True,
                     elapsed_seconds=time.monotonic() - started,
@@ -421,12 +521,16 @@ class AttemptSupervisor:
 
 __all__ = [
     "AttemptBudget",
+    "AttemptCapacityExhaustedError",
     "AttemptBudgetExhaustedError",
     "AttemptCancelledError",
     "AttemptContext",
+    "AttemptExecutionCapacity",
+    "AttemptIndeterminateError",
     "AttemptOutcome",
     "AttemptState",
     "AttemptSupervisor",
     "bind_attempt_context",
     "current_attempt_context",
+    "derive_idempotency_key",
 ]

@@ -99,6 +99,7 @@ def ensure_attempt_active() -> None:
     context = current_attempt_context()
     if context is not None:
         context.raise_if_cancelled()
+        context.raise_if_indeterminate()
 
 
 def default_runner_can_resolve(
@@ -110,6 +111,5 @@ def default_runner_can_resolve(
     if not capability.supported_implementations:
         return True
     return step.implementation in set(capability.supported_implementations)
-
 
 

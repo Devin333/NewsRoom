@@ -207,7 +207,7 @@ class ScopedDataBuffer:
         self._sensitive_keys: set[str] = {str(key) for key in sensitive_keys or ()}
         self._snapshot_version = 0
         self._adhoc_scope_index = 0
-        self._attempt_fences: dict[str, int] = {}
+        self._attempt_fences: dict[str, tuple[int, str]] = {}
 
         for key, value in (initial_values or {}).items():
             self.seed_request_key(str(key), value)
@@ -412,25 +412,35 @@ class ScopedDataBuffer:
     def begin_attempt(
         self,
         step_id: str,
-        fencing_token: int,
+        *,
+        owner_id: str,
     ) -> "AttemptDataBufferOverlay":
-        if isinstance(fencing_token, bool) or fencing_token < 1:
-            raise ValueError("fencing_token must be a positive integer")
+        normalized_owner_id = str(owner_id).strip()
+        if not normalized_owner_id:
+            raise ValueError("owner_id is required")
         if step_id not in self._scopes:
             raise DataBufferPermissionError(
                 f"No data scope registered for step: {step_id}"
             )
-        self._attempt_fences[step_id] = fencing_token
+        previous = self._attempt_fences.get(step_id)
+        fencing_token = 1 if previous is None else previous[0] + 1
+        self._attempt_fences[step_id] = (fencing_token, normalized_owner_id)
         return AttemptDataBufferOverlay(
             step_id=step_id,
             buffer=self,
             fencing_token=fencing_token,
+            owner_id=normalized_owner_id,
             snapshot_values=deepcopy(self._data),
         )
 
     @_synchronized
-    def is_current_attempt(self, step_id: str, fencing_token: int) -> bool:
-        return self._attempt_fences.get(step_id) == fencing_token
+    def is_current_attempt(
+        self,
+        step_id: str,
+        fencing_token: int,
+        owner_id: str,
+    ) -> bool:
+        return self._attempt_fences.get(step_id) == (fencing_token, owner_id)
 
     @_synchronized
     def scope(
@@ -682,10 +692,12 @@ class AttemptDataBufferOverlay(StepScopedDataBufferView):
         step_id: str,
         buffer: ScopedDataBuffer,
         fencing_token: int,
+        owner_id: str,
         snapshot_values: Mapping[str, Any],
     ) -> None:
         super().__init__(step_id=step_id, buffer=buffer)
         self.fencing_token = fencing_token
+        self.owner_id = owner_id
         self._snapshot_values = deepcopy(dict(snapshot_values))
         self._mutations: list[_AttemptBufferMutation] = []
         self._closed = False
@@ -776,7 +788,11 @@ class AttemptDataBufferOverlay(StepScopedDataBufferView):
 
         with self._overlay_lock, self.buffer._lock:
             self._ensure_open()
-            if not self.buffer.is_current_attempt(self.step_id, self.fencing_token):
+            if not self.buffer.is_current_attempt(
+                self.step_id,
+                self.fencing_token,
+                self.owner_id,
+            ):
                 self._closed = True
                 raise StaleWorkflowAttemptError(
                     f"workflow attempt fence is stale for step {self.step_id}"
@@ -821,6 +837,7 @@ class AttemptDataBufferOverlay(StepScopedDataBufferView):
         if self._closed or not self.buffer.is_current_attempt(
             self.step_id,
             self.fencing_token,
+            self.owner_id,
         ):
             self._closed = True
             raise StaleWorkflowAttemptError(
@@ -829,6 +846,7 @@ class AttemptDataBufferOverlay(StepScopedDataBufferView):
         context = current_attempt_context()
         if context is not None:
             context.raise_if_cancelled()
+            context.raise_if_indeterminate()
 
 
 def step_scope_from_spec(step: Any) -> StepDataScope:
@@ -906,6 +924,4 @@ def _legacy_changed_payload(modified: dict[str, dict[str, Any]]) -> dict[str, di
 def _looks_sensitive_key(key: str) -> bool:
     key_lower = key.casefold()
     return any(token in key_lower for token in DEFAULT_SENSITIVE_KEY_PATTERNS)
-
-
 

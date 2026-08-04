@@ -84,6 +84,20 @@ class ToolCallStepRunner:
             )
         ]
 
+    def attempt_budget_limit(
+        self,
+        step: StepSpec,
+        buffer: StepScopedDataBufferView,
+    ) -> int:
+        """Declare nested Tool retries before the shared budget is created."""
+
+        call = single_tool_call_from_step(step, buffer)
+        policy = tool_policy_from_step(step)
+        definition = self._registry.require(call.tool_name).definition
+        configured = definition.max_attempts
+        attempts = policy.max_attempts_default if configured is None else configured
+        return max(1, int(attempts))
+
     def configure_run_context(
         self,
         *,
@@ -174,6 +188,15 @@ class ToolCallStepRunner:
                 outputs=outputs,
                 error_type=observation.result.error_type,
                 error_message=observation.result.error_message,
+                error_details={
+                    "termination_confirmed": (
+                        observation.result.termination_confirmed
+                    ),
+                    "indeterminate": observation.result.indeterminate,
+                    "attempt_id": observation.result.attempt_id,
+                    "idempotency_key": observation.result.idempotency_key,
+                    "fencing_token": observation.result.fencing_token,
+                },
                 metrics=metrics,
             )
         except Exception as exc:
@@ -185,4 +208,3 @@ class ToolCallStepRunner:
             )
 
 __all__ = ["ToolCallStepRunner"]
-

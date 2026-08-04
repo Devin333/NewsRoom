@@ -33,6 +33,7 @@ def register_artifact_tools(
                 "additionalProperties": False,
             },
             side_effect="writes_local_state",
+            metadata={"no_effect_error_types": ["ArtifactPathError"]},
         ),
         lambda args: _write_artifact(artifact_manager, run_id, args),
     )

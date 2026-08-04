@@ -163,6 +163,43 @@ def test_external_write_timeout_is_indeterminate_even_after_confirmed_exit() -> 
     assert effects == ["accepted"]
 
 
+def test_external_write_ordinary_failure_is_indeterminate_and_not_retried() -> None:
+    calls = 0
+    effects: list[str] = []
+
+    def execute(_arguments: dict[str, object]) -> dict[str, bool]:
+        nonlocal calls
+        calls += 1
+        effects.append("accepted")
+        raise RuntimeError("remote acknowledgement lost")
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="sample.publish_failure",
+            side_effect=ToolSideEffect.WRITES_EXTERNAL_STATE,
+            max_attempts=3,
+        ),
+        execute,
+    )
+
+    observation = ToolExecutor(registry).execute(
+        ToolCall(tool_name="sample.publish_failure", call_id="publish-failure"),
+        ToolPolicy(
+            require_explicit_allowlist=False,
+            require_approval_for_side_effects=False,
+        ),
+    )
+
+    assert observation.status == ToolStatus.FAILED
+    assert observation.result.indeterminate is True
+    assert observation.result.retry_count == 0
+    assert observation.result.error_envelope is not None
+    assert observation.result.error_envelope["retryable"] is False
+    assert calls == 1
+    assert effects == ["accepted"]
+
+
 class _BlockingMCPClient:
     def __init__(self) -> None:
         self.release = threading.Event()

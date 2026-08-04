@@ -38,5 +38,26 @@ class ToolTimeoutError(ToolRuntimeError):
         )
 
 
+class ToolIndeterminateError(ToolRuntimeError):
+    """Raised when an external Tool effect cannot be reconciled after failure."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        attempt_id: str,
+        idempotency_key: str,
+        fencing_token: int,
+        cause_type: str,
+    ) -> None:
+        super().__init__(message)
+        self.attempt_id = attempt_id
+        self.idempotency_key = idempotency_key
+        self.fencing_token = fencing_token
+        self.cause_type = cause_type
+        self.termination_confirmed = True
+        self.indeterminate = True
+
+
 class ToolSecretError(ToolRuntimeError):
     """Raised when a tool secret cannot be safely resolved."""

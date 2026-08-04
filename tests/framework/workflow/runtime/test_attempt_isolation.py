@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -109,6 +110,24 @@ class _CooperativeRunner:
 class _Recorder:
     def emit(self, *_args: Any, **_kwargs: Any) -> None:
         return None
+
+
+class _RecordingArtifactManager:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.writes: list[str] = []
+
+    def write_json(
+        self,
+        run_id: str,
+        relative_path: str,
+        _payload: dict[str, Any],
+    ) -> Path:
+        self.writes.append(relative_path)
+        path = self.root / run_id / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+        return path
 
 
 def _registry(runner: Any) -> StepRunnerRegistry:
@@ -234,12 +253,15 @@ def test_attempt_overlay_validates_schema_and_rejects_superseded_fence() -> None
             required_fields={"value"},
         )
     )
-    old = buffer.begin_attempt("step", 1)
+    old = buffer.begin_attempt("step", owner_id="old-owner")
+    assert old.fencing_token == 1
 
     with pytest.raises(DataBufferSchemaError):
         old.write("first", {})
 
-    current = buffer.begin_attempt("step", 2)
+    current = buffer.begin_attempt("step", owner_id="current-owner")
+    assert current.fencing_token == 2
+    assert current.owner_id == "current-owner"
     with pytest.raises(StaleWorkflowAttemptError):
         old.write("second", "stale")
 
@@ -449,7 +471,61 @@ def test_nested_unconfirmed_tool_timeout_blocks_step_retry_and_overlap() -> None
     assert calls == 1
 
 
-def test_parallel_branch_timeout_blocks_step_retry_and_overlap() -> None:
+def test_nested_external_write_failure_is_indeterminate_but_not_a_timeout() -> None:
+    calls = 0
+    effects: list[str] = []
+
+    def execute(_arguments: dict[str, object]) -> dict[str, bool]:
+        nonlocal calls
+        calls += 1
+        effects.append("accepted")
+        raise RuntimeError("acknowledgement lost")
+
+    tool_registry = ToolRegistry()
+    tool_registry.register(
+        ToolDefinition(
+            name="sample.nested_publish_failure",
+            side_effect=ToolSideEffect.WRITES_EXTERNAL_STATE,
+            max_attempts=3,
+        ),
+        execute,
+    )
+    registry = StepRunnerRegistry()
+    registry.register(StepType.TOOL_CALL, ToolCallStepRunner(tool_registry))
+    output_keys = {"step_tool_observation", "step_tool_result"}
+    buffer = DataBuffer()
+    buffer.register_scope(StepDataScope(step_id="step", write_keys=output_keys))
+    step = StepSpec(
+        step_id="step",
+        step_type=StepType.TOOL_CALL,
+        write_keys=sorted(output_keys),
+        retry_policy={"max_retries": 2},
+        metadata={
+            "tool_name": "sample.nested_publish_failure",
+            "tool_policy": {
+                "require_explicit_allowlist": False,
+                "require_approval_for_side_effects": False,
+            },
+        },
+    )
+
+    outcome = StepInvoker(
+        step_runner_registry=registry,
+        sleep_fn=lambda _delay: None,
+    ).run_step_with_retries(step, buffer, _Recorder())
+
+    assert outcome.status == StepStatus.FAILED
+    assert outcome.error_type == "WorkflowStepIndeterminateError"
+    assert outcome.error_details["indeterminate"] is True
+    assert outcome.error_details["termination_confirmed"] is True
+    assert calls == 1
+    assert effects == ["accepted"]
+    assert all(not buffer.exists(key) for key in output_keys)
+
+
+def test_parallel_branch_timeout_blocks_step_retry_overlap_and_artifacts(
+    tmp_path: Path,
+) -> None:
     release = threading.Event()
     started = threading.Event()
     finished = threading.Event()
@@ -475,10 +551,16 @@ def test_parallel_branch_timeout_blocks_step_retry_and_overlap() -> None:
 
     function_registry = FunctionStepRegistry()
     function_registry.register("test.blocking_branch", blocking_branch)
+    artifact_manager = _RecordingArtifactManager(tmp_path)
     registry = StepRunnerRegistry()
     registry.register(
         StepType.PARALLEL_GROUP,
-        ParallelGroupStepRunner(function_registry, max_workers=1),
+        ParallelGroupStepRunner(
+            function_registry,
+            max_workers=1,
+            artifact_manager=artifact_manager,
+            run_id="run-indeterminate",
+        ),
     )
     buffer = DataBuffer()
     buffer.register_scope(StepDataScope(step_id="step"))
@@ -496,6 +578,7 @@ def test_parallel_branch_timeout_blocks_step_retry_and_overlap() -> None:
                 }
             ],
             "failure_strategy": "best_effort",
+            "write_branch_artifacts": True,
             "cancellation_grace_seconds": 0.005,
         },
     )
@@ -517,11 +600,112 @@ def test_parallel_branch_timeout_blocks_step_retry_and_overlap() -> None:
     assert calls == 1
     assert max_active == 1
     assert effects == []
+    assert artifact_manager.writes == []
 
     release.set()
     assert finished.wait(1)
     assert effects == ["published"]
     assert calls == 1
+
+
+def test_parallel_branch_retries_claim_one_fixed_parent_budget() -> None:
+    contexts: list[tuple[str, str, int, int, int]] = []
+
+    def failing_branch(_buffer: Any) -> dict[str, bool]:
+        context = current_attempt_context()
+        assert context is not None
+        assert context.budget is not None
+        contexts.append(
+            (
+                context.attempt_id,
+                context.idempotency_key,
+                context.fencing_token,
+                id(context.budget),
+                context.budget.used,
+            )
+        )
+        raise RuntimeError("branch failed")
+
+    function_registry = FunctionStepRegistry()
+    function_registry.register("test.failing_branch", failing_branch)
+    registry = StepRunnerRegistry()
+    registry.register(
+        StepType.PARALLEL_GROUP,
+        ParallelGroupStepRunner(function_registry, max_workers=1),
+    )
+    buffer = DataBuffer()
+    buffer.register_scope(StepDataScope(step_id="step"))
+    step = StepSpec(
+        step_id="step",
+        step_type=StepType.PARALLEL_GROUP,
+        metadata={
+            "branches": [
+                {
+                    "branch_id": "retrying",
+                    "implementation": "test.failing_branch",
+                    "retry_policy": {"max_retries": 3},
+                }
+            ],
+            "failure_strategy": "all_success",
+            "idempotency_contract": True,
+            "reconciliation_supported": True,
+        },
+    )
+
+    outcome = StepInvoker(
+        step_runner_registry=registry,
+        sleep_fn=lambda _delay: None,
+    ).run_step_with_retries(step, buffer, _Recorder())
+
+    assert outcome.status == StepStatus.FAILED
+    assert len(contexts) == 4
+    assert len({context[0] for context in contexts}) == 4
+    assert len({context[1] for context in contexts}) == 1
+    assert len({context[3] for context in contexts}) == 1
+    assert [context[2] for context in contexts] == [1, 2, 3, 4]
+    assert [context[4] for context in contexts] == [1, 2, 3, 4]
+
+
+def test_parallel_external_branch_failure_does_not_retry_without_contract() -> None:
+    effects: list[str] = []
+
+    def failing_branch(_buffer: Any) -> dict[str, bool]:
+        effects.append("accepted")
+        raise RuntimeError("acknowledgement lost")
+
+    function_registry = FunctionStepRegistry()
+    function_registry.register("test.unsafe_branch", failing_branch)
+    registry = StepRunnerRegistry()
+    registry.register(
+        StepType.PARALLEL_GROUP,
+        ParallelGroupStepRunner(function_registry, max_workers=1),
+    )
+    buffer = DataBuffer()
+    buffer.register_scope(StepDataScope(step_id="step"))
+    step = StepSpec(
+        step_id="step",
+        step_type=StepType.PARALLEL_GROUP,
+        metadata={
+            "branches": [
+                {
+                    "branch_id": "unsafe",
+                    "implementation": "test.unsafe_branch",
+                    "retry_policy": {"max_retries": 3},
+                }
+            ],
+            "failure_strategy": "all_success",
+        },
+    )
+
+    outcome = StepInvoker(
+        step_runner_registry=registry,
+        sleep_fn=lambda _delay: None,
+    ).run_step_with_retries(step, buffer, _Recorder())
+
+    assert outcome.status == StepStatus.FAILED
+    assert outcome.error_type == "WorkflowStepIndeterminateError"
+    assert outcome.error_details["indeterminate"] is True
+    assert effects == ["accepted"]
 
 
 def test_tool_batch_workers_share_step_context_and_total_attempt_budget() -> None:
@@ -593,7 +777,9 @@ def test_tool_batch_workers_share_step_context_and_total_attempt_budget() -> Non
     assert set(contexts) == {"sample.batch_one", "sample.batch_two"}
     first, second = contexts.values()
     assert first[0] != second[0]
-    assert first[1] == second[1] == outcome.metrics["idempotency_key"]
+    assert first[1] != second[1]
+    assert first[1].startswith(f"{outcome.metrics['idempotency_key']}:tool:")
+    assert second[1].startswith(f"{outcome.metrics['idempotency_key']}:tool:")
     assert first[2] == second[2] == 1
     assert first[3] == second[3]
     assert first[4] == second[4] == 1
@@ -669,12 +855,13 @@ def test_tool_batch_and_step_retries_share_one_total_attempt_budget() -> None:
     assert calls == 2
     assert len(contexts) == 2
     assert contexts[0][0] != contexts[1][0]
-    assert contexts[0][1] == contexts[1][1] == outcome.metrics["idempotency_key"]
+    assert contexts[0][1] == contexts[1][1]
+    assert contexts[0][1].startswith(f"{outcome.metrics['idempotency_key']}:tool:")
     assert [context[2] for context in contexts] == [1, 2]
     assert contexts[0][3] == contexts[1][3]
 
 
-def test_tool_only_retry_expands_shared_budget_without_step_retry() -> None:
+def test_tool_only_retry_uses_fixed_shared_budget_without_step_retry() -> None:
     contexts: list[tuple[str, str, int, int]] = []
 
     def execute(_arguments: dict[str, object]) -> dict[str, bool]:
@@ -735,7 +922,8 @@ def test_tool_only_retry_expands_shared_budget_without_step_retry() -> None:
     assert outcome.metrics["attempt"] == 1
     assert len(contexts) == 2
     assert contexts[0][0] != contexts[1][0]
-    assert contexts[0][1] == contexts[1][1] == outcome.metrics["idempotency_key"]
+    assert contexts[0][1] == contexts[1][1]
+    assert contexts[0][1].startswith(f"{outcome.metrics['idempotency_key']}:tool:")
     assert [context[2] for context in contexts] == [1, 2]
     assert contexts[0][3] == contexts[1][3]
     assert buffer.read("step_tool_result")["retry_count"] == 1

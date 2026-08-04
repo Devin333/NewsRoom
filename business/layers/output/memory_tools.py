@@ -6,6 +6,10 @@ from framework.tool.models import ToolDefinition
 from framework.tool.registry import ToolRegistry
 
 
+class MemoryIndexInputError(ValueError):
+    """Raised for validation failures proven to precede memory writes."""
+
+
 def register_memory_index_tools(
     registry: ToolRegistry,
     *,
@@ -34,6 +38,7 @@ def register_memory_index_tools(
                 "deprecated": True,
                 "deprecated_replacement": "memory.write",
                 "writes_vector_memory": True,
+                "no_effect_error_types": ["MemoryIndexInputError"],
             },
         ),
         lambda args: _index_memory(args, ingestion_service=ingestion_service),
@@ -47,14 +52,14 @@ def _index_memory(
 ) -> dict[str, Any]:
     run_id = str(args["run_id"]).strip()
     if not run_id:
-        raise ValueError("run_id is required")
+        raise MemoryIndexInputError("run_id is required")
 
     output: dict[str, Any] = {}
     indexed_inputs: list[str] = []
     if args.get("run_output") is not None:
         run_output = args["run_output"]
         if not isinstance(run_output, dict):
-            raise ValueError("run_output must be an object")
+            raise MemoryIndexInputError("run_output must be an object")
         output.update(run_output)
         indexed_inputs.append("run_output")
     if args.get("report") is not None:
@@ -65,7 +70,9 @@ def _index_memory(
         indexed_inputs.append("evidence_bundle")
 
     if "final_report" not in output and "evidence_bundle" not in output:
-        raise ValueError("report, evidence_bundle, or run_output is required")
+        raise MemoryIndexInputError(
+            "report, evidence_bundle, or run_output is required"
+        )
 
     result = ingestion_service.ingest_run_output(
         output,
