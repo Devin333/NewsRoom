@@ -4,6 +4,7 @@ from framework.specs.edge import EdgeCondition, EdgeConditionSpec, EdgeSpec
 from framework.specs.policy import (
     ArtifactPolicySpec,
     EvaluationPolicySpec,
+    ExecutionPolicySpec,
     FailurePolicySpec,
     GatePolicySpec,
     LineagePolicySpec,
@@ -31,6 +32,7 @@ from framework.specs.validation import WorkflowSpecError
 __all__ = [
     "ArtifactPolicySpec",
     "EvaluationPolicySpec",
+    "ExecutionPolicySpec",
     "EdgeCondition",
     "EdgeConditionSpec",
     "EdgeSpec",

@@ -84,20 +84,6 @@ class ToolCallStepRunner:
             )
         ]
 
-    def attempt_budget_limit(
-        self,
-        step: StepSpec,
-        buffer: StepScopedDataBufferView,
-    ) -> int:
-        """Declare nested Tool retries before the shared budget is created."""
-
-        call = single_tool_call_from_step(step, buffer)
-        policy = tool_policy_from_step(step)
-        definition = self._registry.require(call.tool_name).definition
-        configured = definition.max_attempts
-        attempts = policy.max_attempts_default if configured is None else configured
-        return max(1, int(attempts))
-
     def configure_run_context(
         self,
         *,
@@ -179,7 +165,9 @@ class ToolCallStepRunner:
                         "indeterminate": observation.result.indeterminate,
                         "attempt_id": observation.result.attempt_id,
                         "idempotency_key": observation.result.idempotency_key,
-                        "fencing_token": observation.result.fencing_token,
+                        "operation_id": observation.result.operation_id,
+                        "local_attempt_no": observation.result.local_attempt_no,
+                        "retry_credit_id": observation.result.retry_credit_id,
                     },
                     metrics=metrics,
                 )
@@ -193,9 +181,15 @@ class ToolCallStepRunner:
                         observation.result.termination_confirmed
                     ),
                     "indeterminate": observation.result.indeterminate,
+                    "effect_determinacy_confirmed": (
+                        observation.result.termination_confirmed is not False
+                        and not observation.result.indeterminate
+                    ),
                     "attempt_id": observation.result.attempt_id,
                     "idempotency_key": observation.result.idempotency_key,
-                    "fencing_token": observation.result.fencing_token,
+                    "operation_id": observation.result.operation_id,
+                    "local_attempt_no": observation.result.local_attempt_no,
+                    "retry_credit_id": observation.result.retry_credit_id,
                 },
                 metrics=metrics,
             )

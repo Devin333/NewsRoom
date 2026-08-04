@@ -1,8 +1,8 @@
 # 阶段 22：Attempt 作用域、重试预算与 Deadline Admission 收敛 PRD
 
-> Document status: READY_FOR_OPENSPEC
+> Document status: IMPLEMENTED
 >
-> Implementation status: NOT_STARTED
+> Implementation status: VERIFIED
 >
 > Version: v1.0
 >
@@ -16,7 +16,7 @@
 >
 > Proposed OpenSpec change: `attempt-scope-deadline-admission`
 >
-> Last updated: 2026-08-04
+> Last updated: 2026-08-05
 
 ## 0. 一句话结论
 
@@ -309,10 +309,12 @@ flowchart TD
     D -->|exhausted| R2[Admission rejected: budget]
     D --> E[Acquire live execution capacity]
     E -->|full| R3[Admission rejected: capacity]
-    E --> F[Atomically commit local attempt and optional retry credit]
-    F --> G[Issue resource lease when required]
-    G --> H[Create AttemptContext and start callable]
-    H --> I[Outcome plus deterministic propagation]
+    E --> F[Create AttemptContext behind a closed start gate]
+    F --> G[Persist attempt_started and commit the reservation]
+    G --> H[Issue resource lease when required]
+    H --> I[Release callable]
+    I --> J[Finalize caller outcome and resource cleanup]
+    J --> K[Persist attempt_terminal]
 ```
 
 如果 F 或 G 失败，必须释放已经取得的 capacity，且不得留下部分 budget claim 或 stale lease。实现需要一个集中式 admission controller 或等价的事务化获取顺序，禁止各调用方自行拼接半套逻辑。
@@ -323,14 +325,15 @@ flowchart TD
 
 ```text
 parent_available_until = parent_effective_deadline
-                       - parent_completion_reserve
 
 requested_until = now + child.timeout_seconds
-effective_until = min(parent_available_until, requested_until)
+child_reserve = child.cancellation_grace_seconds
+              + child.completion_reserve_seconds
+effective_until = min(parent_available_until - child_reserve,
+                      requested_until)
 
 execution_window = effective_until
                  - now
-                 - child.cancellation_grace_seconds
 
 admit when execution_window >= child.min_start_window_seconds
 ```

@@ -133,3 +133,47 @@ def test_durable_resume_request_rejects_unverified_boundary() -> None:
             mode=ResumeMode.EXACT,
             checkpoint=durable_envelope_from_checkpoint(checkpoint),
         )
+
+
+def test_resume_preserves_attempt_snapshot_as_diagnostic_only() -> None:
+    workflow = WorkflowSpec(
+        workflow_id="wf-attempt-resume",
+        name="Attempt Resume",
+        version="1",
+        steps=[StepSpec("s1", write_keys=["value"])],
+    )
+    old_snapshot = {
+        "schema_version": "attempt-execution-limits/v1",
+        "execution_id": "old-run",
+        "hard_deadline_remaining_seconds": 3.0,
+        "retry_credits": {
+            "max_total_retries": 2,
+            "used_retries": 2,
+            "remaining_retries": 0,
+        },
+    }
+    checkpoint = WorkflowCheckpoint(
+        checkpoint_id="cp-attempt-snapshot",
+        run_id="old-run",
+        workflow_id=workflow.workflow_id,
+        workflow_version=workflow.version,
+        current_step_ids=["s1"],
+        data_buffer_snapshot={"request": {}},
+        metadata={"attempt_execution_snapshot": old_snapshot},
+    )
+
+    plan = WorkflowResumePlanner().plan(
+        workflow,
+        WorkflowResumeRequest(
+            mode=ResumeMode.EXACT,
+            checkpoint=envelope_from_checkpoint(checkpoint),
+            run_id="new-run",
+        ),
+    )
+
+    assert plan.resume_metadata["attempt_execution_snapshot"] == old_snapshot
+    assert plan.resume_metadata["attempt_execution_snapshot_diagnostic_only"] is True
+    assert plan.resume_metadata["attempt_execution_scope_inherited"] is False
+    assert plan.resume_metadata["attempt_execution_resume_mode"] == (
+        "new_scope_budget_reset"
+    )

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
+import time
 from typing import Any, Protocol
 
 from framework.events.canonical import StoredEvent
 from framework.events.trace import TraceContext
 from framework.specs import WorkflowSpec
+from framework.shared.attempts import ExecutionLimits
 from framework.workflow.buffer import DataBuffer
 from framework.workflow.checkpoint.durable import (
     DurableWorkflowCheckpoint,
@@ -54,6 +56,7 @@ class CheckpointCoordinator:
         recorder: CheckpointEventRecorder,
         manifest: dict[str, Any] | None = None,
         checkpoint_ids: list[str] | None = None,
+        execution_limits: ExecutionLimits | None = None,
         trace_context: TraceContext | None = None,
         emit_event: bool = True,
     ) -> str | None:
@@ -77,6 +80,12 @@ class CheckpointCoordinator:
             "snapshot",
         ):
             metadata["budget_usage"] = self._global_budget_tracker.snapshot()
+        if execution_limits is not None:
+            snapshot = execution_limits.snapshot(now=time.monotonic())
+            snapshot["resume_policy"] = (
+                "diagnostic_only_new_execution_scope_on_resume"
+            )
+            metadata["attempt_execution_snapshot"] = snapshot
         checkpoint = DurableWorkflowCheckpoint(
             checkpoint_id=checkpoint_id,
             run_id=run_id,

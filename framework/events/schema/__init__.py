@@ -1,4 +1,6 @@
 from framework.events.schema.catalog import (
+    ATTEMPT_EVENT_DATA_SCHEMA,
+    ATTEMPT_EVENT_TYPES,
     HARNESS_EVENT_ALIASES,
     HARNESS_GRAPH_TRANSITION_EVENT_SCHEMAS,
     TASK_PLAN_EVENT_SCHEMA,
@@ -35,6 +37,8 @@ from framework.events.schema.security import (
 )
 
 __all__ = [
+    "ATTEMPT_EVENT_DATA_SCHEMA",
+    "ATTEMPT_EVENT_TYPES",
     "DEFAULT_FORBIDDEN_SECRET_KEYS",
     "DEFAULT_INLINE_PAYLOAD_BYTES",
     "HARNESS_EVENT_ALIASES",

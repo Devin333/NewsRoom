@@ -44,13 +44,17 @@ class WorkflowExecutionLoop:
         self._event_bridge = event_bridge
         self._manifest_updater = manifest_updater
         self._is_run_cancelled = is_run_cancelled
-        self._monotonic_fn = monotonic_fn or time.perf_counter
+        self._monotonic_fn = monotonic_fn or time.monotonic
 
     def run(self, context: WorkflowExecutionContext) -> None:
         workflow = context.workflow
+        set_clock = getattr(self._step_invoker, "set_clock", None)
+        if callable(set_clock):
+            set_clock(self._monotonic_fn)
         timeout_budget = workflow_timeout_budget(
             workflow,
             started_monotonic=context.started_monotonic,
+            reserve_seconds=context.execution_limits.root_reserve_seconds,
         )
         while context.current_step_ids:
             if self._timeout_if_exceeded(
@@ -92,6 +96,7 @@ class WorkflowExecutionLoop:
         now_monotonic = self._monotonic_fn()
         if not timeout_budget.is_exceeded(now_monotonic):
             return False
+        context.execution_limits.cancel_event.set()
         details = timeout_budget.details(now_monotonic)
         if step_id is not None:
             details["step_id"] = step_id
@@ -146,6 +151,7 @@ class WorkflowExecutionLoop:
     def _cancel_if_requested(self, context: WorkflowExecutionContext) -> bool:
         if not self._is_run_cancelled(context.run_id):
             return False
+        context.execution_limits.cancel_event.set()
         commit_workflow_transition(
             context=context,
             state_machine=self._state_machine,
@@ -229,6 +235,7 @@ class WorkflowExecutionLoop:
             context.buffer,
             context.recorder,
             trace_context=step_trace,
+            execution_limits=context.execution_limits,
         )
         self._event_bridge.emit_agent_loop_stream_events(
             context.recorder,
@@ -660,6 +667,7 @@ class WorkflowExecutionLoop:
             recorder=context.recorder,
             manifest=context.manifest,
             checkpoint_ids=context.checkpoint_ids,
+            execution_limits=context.execution_limits,
             trace_context=(
                 context.step_trace_contexts.get(context.path[-1])
                 if context.path

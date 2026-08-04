@@ -443,6 +443,22 @@ class ScopedDataBuffer:
         return self._attempt_fences.get(step_id) == (fencing_token, owner_id)
 
     @_synchronized
+    def abandon_attempt(
+        self,
+        step_id: str,
+        *,
+        lease_generation: int,
+        owner_id: str,
+    ) -> bool:
+        """Invalidate a lease when admitted work never reaches physical start."""
+
+        expected = (lease_generation, str(owner_id).strip())
+        if self._attempt_fences.get(step_id) != expected:
+            return False
+        self._attempt_fences.pop(step_id, None)
+        return True
+
+    @_synchronized
     def scope(
         self,
         read_keys: list[str] | set[str],
@@ -683,6 +699,44 @@ class _AttemptBufferMutation:
     lineage_metadata: dict[str, Any] | None = None
 
 
+class AttemptDataBufferCommitTransaction:
+    """Hold a buffer publication lock until its durable terminal fact exists."""
+
+    def __init__(
+        self,
+        *,
+        overlay: "AttemptDataBufferOverlay",
+        state_before: tuple[Any, ...],
+    ) -> None:
+        self._overlay = overlay
+        self._state_before = state_before
+        self._active = True
+
+    def rollback(self) -> None:
+        if not self._active:
+            return
+        try:
+            (
+                self._overlay.buffer._data,
+                self._overlay.buffer._lineage,
+                self._overlay.buffer._legacy_lineage,
+                self._overlay.buffer._write_history,
+                self._overlay.buffer._snapshot_version,
+            ) = self._state_before
+        finally:
+            self._release()
+
+    def complete(self) -> None:
+        if not self._active:
+            return
+        self._release()
+
+    def _release(self) -> None:
+        self._active = False
+        self._overlay.buffer._lock.release()
+        self._overlay._overlay_lock.release()
+
+
 class AttemptDataBufferOverlay(StepScopedDataBufferView):
     """Private, fenced write set for one Workflow step attempt."""
 
@@ -786,7 +840,16 @@ class AttemptDataBufferOverlay(StepScopedDataBufferView):
     def commit(self) -> None:
         """Atomically publish the staged mutations when this fence still owns the step."""
 
-        with self._overlay_lock, self.buffer._lock:
+        transaction = self.begin_commit()
+        transaction.complete()
+
+    def begin_commit(self) -> AttemptDataBufferCommitTransaction:
+        """Stage publication while retaining an atomic rollback boundary."""
+
+        self._overlay_lock.acquire()
+        self.buffer._lock.acquire()
+        state_before: tuple[Any, ...] | None = None
+        try:
             self._ensure_open()
             if not self.buffer.is_current_attempt(
                 self.step_id,
@@ -805,23 +868,28 @@ class AttemptDataBufferOverlay(StepScopedDataBufferView):
                 list(self.buffer._write_history),
                 self.buffer._snapshot_version,
             )
-            try:
-                for mutation in self._mutations:
-                    if mutation.operation == "delete":
-                        self.buffer.delete(step_id=self.step_id, key=mutation.key)
-                    else:
-                        self.buffer.write(
-                            step_id=self.step_id,
-                            key=mutation.key,
-                            value=mutation.value,
-                            lineage=mutation.lineage,
-                            source_keys=mutation.source_keys,
-                            schema_version=mutation.schema_version,
-                            lineage_metadata=mutation.lineage_metadata,
-                        )
-                if self._mutations:
-                    self.buffer._snapshot_version = state_before[4] + 1
-            except BaseException:  # noqa: BLE001 - restore before propagating
+            for mutation in self._mutations:
+                if mutation.operation == "delete":
+                    self.buffer.delete(step_id=self.step_id, key=mutation.key)
+                else:
+                    self.buffer.write(
+                        step_id=self.step_id,
+                        key=mutation.key,
+                        value=mutation.value,
+                        lineage=mutation.lineage,
+                        source_keys=mutation.source_keys,
+                        schema_version=mutation.schema_version,
+                        lineage_metadata=mutation.lineage_metadata,
+                    )
+            if self._mutations:
+                self.buffer._snapshot_version = state_before[4] + 1
+            self._closed = True
+            return AttemptDataBufferCommitTransaction(
+                overlay=self,
+                state_before=state_before,
+            )
+        except BaseException:  # noqa: BLE001 - restore before propagating
+            if state_before is not None:
                 (
                     self.buffer._data,
                     self.buffer._lineage,
@@ -829,9 +897,10 @@ class AttemptDataBufferOverlay(StepScopedDataBufferView):
                     self.buffer._write_history,
                     self.buffer._snapshot_version,
                 ) = state_before
-                self._closed = True
-                raise
             self._closed = True
+            self.buffer._lock.release()
+            self._overlay_lock.release()
+            raise
 
     def _ensure_open(self) -> None:
         if self._closed or not self.buffer.is_current_attempt(
@@ -924,4 +993,3 @@ def _legacy_changed_payload(modified: dict[str, dict[str, Any]]) -> dict[str, di
 def _looks_sensitive_key(key: str) -> bool:
     key_lower = key.casefold()
     return any(token in key_lower for token in DEFAULT_SENSITIVE_KEY_PATTERNS)
-

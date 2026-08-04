@@ -3790,6 +3790,7 @@ def _timeline_item_from_event(
     status = (
         _optional_string(payload.get("status"))
         or _optional_string(outcome.get("status"))
+        or _optional_string(payload.get("state"))
         or _status_from_event_type(event.event_type)
     )
     severity = _event_severity(event.event_type, status=status)
@@ -4466,6 +4467,8 @@ def _event_phase(event_type: str) -> str:
         return "human"
     if event_type in {"policy_violation"}:
         return "policy"
+    if event_type.startswith("attempt_"):
+        return "attempt"
     return "runtime"
 
 
@@ -4487,8 +4490,15 @@ def _event_severity(event_type: str, *, status: str | None = None) -> str:
         "edge_rejected",
         "human_review_paused",
         "human_review_requested",
+        "attempt_admission_rejected",
     }
     if event_type in error_events:
+        return "error"
+    if event_type == "attempt_terminal" and status in {
+        "FAILED",
+        "TIMED_OUT",
+        "INDETERMINATE",
+    }:
         return "error"
     if event_type in warning_events:
         return "warning"
@@ -4531,6 +4541,8 @@ def _status_from_event_type(event_type: str) -> str | None:
         return StepStatus.BLOCKED.value
     if event_type == "step_paused":
         return StepStatus.PAUSED.value
+    if event_type == "attempt_terminal":
+        return None
     return None
 
 
@@ -4585,6 +4597,21 @@ def _timeline_message(
         return f"human review paused: {step_id}" if step_id else "human review paused"
     if event_type == "policy_violation":
         return _optional_string(payload.get("message")) or "policy violation"
+    if event_type == "attempt_admission_rejected":
+        reason = _optional_string(payload.get("reason_code"))
+        return f"attempt admission rejected: {reason}" if reason else "attempt admission rejected"
+    if event_type == "attempt_started":
+        attempt_id = _optional_string(payload.get("attempt_id"))
+        attempt_no = payload.get("local_attempt_no")
+        return (
+            f"attempt started: {attempt_id} local_attempt_no={attempt_no}"
+            if attempt_id
+            else "attempt started"
+        )
+    if event_type == "attempt_terminal":
+        state = _optional_string(payload.get("state")) or "unknown"
+        reason = _optional_string(payload.get("reason_code"))
+        return f"attempt terminal: {state} ({reason})" if reason else f"attempt terminal: {state}"
     if event_type == "workflow_succeeded":
         return "workflow succeeded"
     if event_type == "workflow_failed":

@@ -77,23 +77,6 @@ class ToolBatchStepRunner:
             )
         ]
 
-    def attempt_budget_limit(
-        self,
-        step: StepSpec,
-        buffer: StepScopedDataBufferView,
-    ) -> int:
-        """Reserve the batch's declared retry permits in the outer budget."""
-
-        calls = tool_calls_from_step(step, buffer)
-        policy = tool_policy_from_step(step)
-        retry_permits = 0
-        for call in calls:
-            definition = self._registry.require(call.tool_name).definition
-            configured = definition.max_attempts
-            attempts = policy.max_attempts_default if configured is None else configured
-            retry_permits += max(0, int(attempts) - 1)
-        return 1 + retry_permits
-
     def configure_run_context(
         self,
         *,
@@ -183,6 +166,9 @@ class ToolBatchStepRunner:
                         "tool_call_count": len(observations),
                         "termination_confirmed": termination_confirmed,
                         "indeterminate": indeterminate,
+                        "effect_determinacy_confirmed": (
+                            termination_confirmed and not indeterminate
+                        ),
                     },
                     metrics=metrics,
                 )

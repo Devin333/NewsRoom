@@ -44,8 +44,14 @@ class _Runner:
         side_effect_level=StepRunnerSideEffectLevel.NONE,
     )
 
-    def __init__(self, outcomes: list[StepOutcome]) -> None:
+    def __init__(
+        self,
+        outcomes: list[StepOutcome],
+        *,
+        after_run: Any | None = None,
+    ) -> None:
         self._outcomes = list(outcomes)
+        self._after_run = after_run
 
     def can_resolve(self, step: StepSpec) -> bool:
         return step.step_type == StepType.FUNCTION
@@ -54,7 +60,10 @@ class _Runner:
         return []
 
     def run(self, step: StepSpec, buffer: Any) -> StepOutcome:
-        return self._outcomes.pop(0)
+        outcome = self._outcomes.pop(0)
+        if callable(self._after_run):
+            self._after_run()
+        return outcome
 
 
 class _CheckpointStore:
@@ -198,11 +207,13 @@ def test_execution_loop_stops_when_workflow_timeout_exceeds_after_step(tmp_path:
         edges=[EdgeSpec(source_step_id="s1", target_step_id="s2")],
         policies={"timeout": {"timeout_seconds": 0.5}},
     )
+    now = [0.1]
     runner = _Runner(
         [
             StepOutcome(status=StepStatus.SUCCEEDED, outputs={"first": True}),
             StepOutcome(status=StepStatus.SUCCEEDED, outputs={"second": True}),
-        ]
+        ],
+        after_run=lambda: now.__setitem__(0, 0.75),
     )
     registry = _registry(runner)
     artifact_manager = ArtifactManager(tmp_path)
@@ -230,14 +241,18 @@ def test_execution_loop_stops_when_workflow_timeout_exceeds_after_step(tmp_path:
             manifest=context.manifest,
         ),
         is_run_cancelled=lambda _run_id: False,
-        monotonic_fn=_MonotonicClock([0.1, 0.75]),
+        monotonic_fn=lambda: now[0],
     ).run(context)
 
     assert context.status == WorkflowStatus.FAILED
     assert context.error is not None
     assert context.error.error_type == "WorkflowTimeoutExceeded"
     assert context.error.step_id == "s1"
-    assert context.step_results["s1"].status == StepStatus.SUCCEEDED
+    assert context.step_results["s1"].status == StepStatus.TIMEOUT
+    assert (
+        context.step_results["s1"].error_details["cancellation_source"]
+        == "root_hard_deadline"
+    )
     assert "s2" not in context.step_results
     assert context.current_step_ids == []
     assert context.manifest["runtime_timeout"]["policy_source"] == (
@@ -247,6 +262,55 @@ def test_execution_loop_stops_when_workflow_timeout_exceeds_after_step(tmp_path:
         event.event.event_type == "workflow_timeout_exceeded"
         for event in context.recorder.list_events()
     )
+
+
+def test_resumed_execution_creates_fresh_attempt_scope_and_retry_ledger(
+    tmp_path: Path,
+) -> None:
+    workflow = WorkflowSpec(
+        workflow_id="wf-resume-attempt-scope",
+        name="Resume Attempt Scope",
+        version="1.0",
+        steps=[StepSpec(step_id="s1", write_keys=["value"])],
+        policies={
+            "timeout": {"timeout_seconds": 10.0},
+            "execution": {"max_total_retries": 2},
+        },
+    )
+    runner = _Runner([StepOutcome(status=StepStatus.SUCCEEDED)])
+    registry = _registry(runner)
+    artifact_manager = ArtifactManager(tmp_path)
+    event_dependencies = _event_dependencies(tmp_path)
+    original = build_execution_context(
+        workflow=workflow,
+        request={},
+        profile="test",
+        artifact_manager=artifact_manager,
+        step_runner_registry=registry,
+        **event_dependencies,
+        started_monotonic=10.0,
+        run_id="run-original-attempt-scope",
+    )
+    original.execution_limits.retry_credits.claim()
+
+    resumed = build_execution_context(
+        workflow=workflow,
+        request={},
+        profile="test",
+        artifact_manager=artifact_manager,
+        step_runner_registry=registry,
+        **event_dependencies,
+        started_monotonic=20.0,
+        run_id="run-resumed-attempt-scope",
+        resumed_from_checkpoint=True,
+    )
+
+    assert original.execution_limits.execution_id != resumed.execution_limits.execution_id
+    assert original.execution_limits.retry_credits.used_retries == 1
+    assert resumed.execution_limits.retry_credits.used_retries == 0
+    assert original.execution_limits.hard_deadline == 20.0
+    assert resumed.execution_limits.hard_deadline == 30.0
+    assert resumed.manifest["attempt_execution_limits"]["resume_budget_reset"] is True
 
 
 def test_execution_loop_persists_loop_limit_with_step_context(tmp_path: Path) -> None:

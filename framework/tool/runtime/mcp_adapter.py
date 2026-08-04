@@ -10,7 +10,7 @@ from framework.events import (
     W3CTracePropagator,
     current_trace_context,
 )
-from framework.shared.attempts import current_attempt_context
+from framework.shared.attempts import current_attempt_context, derive_idempotency_key
 from framework.tool.models import ToolDefinition, ToolRuntimeError
 from framework.tool.registry import ToolRegistry
 from framework.tool.runtime.timeout import run_with_timeout
@@ -172,20 +172,21 @@ def _run_mcp_operation(
     operation: str,
 ) -> Any:
     parent_context = current_attempt_context()
-    if parent_context is not None:
-        try:
-            parent_context.raise_if_cancelled()
-            return operation_fn()
-        except ToolRuntimeError:
-            raise
-        except Exception as exc:
-            raise ToolRuntimeError(f"MCP transport error during {operation}: {exc}") from exc
+    idempotency_key = (
+        derive_idempotency_key(
+            parent_context.idempotency_key,
+            "mcp",
+            operation,
+        )
+        if parent_context is not None
+        else f"standalone:mcp:{operation}"
+    )
     try:
         return run_with_timeout(
             operation_fn,
             timeout_seconds,
             operation=f"MCP operation during {operation}",
-            idempotency_key=f"mcp:{operation}",
+            idempotency_key=idempotency_key,
         )
     except ToolRuntimeError:
         raise

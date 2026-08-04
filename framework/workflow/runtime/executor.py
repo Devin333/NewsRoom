@@ -136,7 +136,7 @@ class WorkflowExecutor:
         )
         _validate_step_runners(workflow, self._step_runner_registry)
 
-        started_monotonic = time.perf_counter()
+        started_monotonic = time.monotonic()
         context = build_execution_context(
             workflow=workflow,
             request=request,
@@ -152,6 +152,7 @@ class WorkflowExecutor:
             current_step_ids=_current_step_ids,
             initial_path=_initial_path,
             initial_step_results=_initial_step_results,
+            resumed_from_checkpoint=_resumed_checkpoint_id is not None,
         )
         _configure_step_runners(
             self._step_runner_registry,
@@ -176,6 +177,9 @@ class WorkflowExecutor:
         step_invoker = StepInvoker(
             step_runner_registry=self._step_runner_registry,
             sleep_fn=self._sleep_fn,
+            cancellation_grace_seconds=(
+                workflow.policies.execution_policy.cancellation_grace_seconds
+            ),
         )
         checkpoint_coordinator = CheckpointCoordinator(
             checkpoint_store=self._checkpoint_store,

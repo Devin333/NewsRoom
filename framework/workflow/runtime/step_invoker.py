@@ -1,18 +1,23 @@
 from __future__ import annotations
 
-import uuid
 from dataclasses import replace
+import time
 from typing import Any, Callable
 
 from framework.specs import StepSpec, StepStatus
 from framework.events.trace import TraceContext
 from framework.shared.attempts import (
-    AttemptBudget,
-    AttemptBudgetExhaustedError,
     AttemptCancelledError,
     AttemptContext,
+    AttemptFinalization,
+    AttemptIdentity,
+    AttemptOutcome,
     AttemptState,
     AttemptSupervisor,
+    DeadlineAdmissionPolicy,
+    ExecutionLimits,
+    LocalRetryBudget,
+    RetryCreditLedger,
     current_attempt_context,
 )
 from framework.shared.time import utc_now
@@ -24,6 +29,7 @@ from framework.workflow.buffer import (
 from framework.workflow.governance.resource import StepResourceEstimator, StepResourceGuard
 from framework.workflow.governance.safety import safety_violation_for_step
 from framework.workflow.runtime.event_emitter import WorkflowEventRecorder
+from framework.workflow.runtime.attempt_event_sink import WorkflowDurableAttemptSink
 from framework.workflow.runtime.result import StepOutcome
 from framework.workflow.runners.base import (
     StepExecutionError,
@@ -46,12 +52,21 @@ class StepInvoker:
         step_runner_registry: StepRunnerRegistry,
         sleep_fn: Callable[[float], None],
         cancellation_grace_seconds: float = 0.1,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if cancellation_grace_seconds < 0:
             raise ValueError("cancellation_grace_seconds must be non-negative")
         self._step_runner_registry = step_runner_registry
         self._sleep_fn = sleep_fn
         self._cancellation_grace_seconds = float(cancellation_grace_seconds)
+        if not callable(clock):
+            raise ValueError("clock must be callable")
+        self._clock = clock
+
+    def set_clock(self, clock: Callable[[], float]) -> None:
+        if not callable(clock):
+            raise ValueError("clock must be callable")
+        self._clock = clock
 
     def run_step_with_retries(
         self,
@@ -60,144 +75,96 @@ class StepInvoker:
         recorder: WorkflowEventRecorder,
         *,
         trace_context: TraceContext | None = None,
+        execution_limits: ExecutionLimits | None = None,
     ) -> StepOutcome:
         retry_policy = step.retry_policy
         max_attempts = retry_policy.max_attempts or (retry_policy.max_retries + 1)
         parent_context = current_attempt_context()
-        try:
-            total_attempt_limit = _step_total_attempt_limit(
-                step,
-                buffer,
-                self._step_runner_registry,
-                step_attempt_limit=max_attempts,
+        limits = execution_limits or (
+            parent_context.execution_limits
+            if parent_context is not None
+            else None
+        )
+        if limits is None:
+            limits = ExecutionLimits(
+                retry_credits=RetryCreditLedger(
+                    max_total_retries=max(0, max_attempts - 1)
+                )
             )
-        except (TypeError, ValueError, StepExecutionError) as exc:
+        local_budget = LocalRetryBudget(max_attempts=max_attempts)
+        idempotency_key = _step_idempotency_key(step, trace_context)
+
+        preflight_started_at = utc_now()
+        resource_violation = resource_policy_violation(step, buffer)
+        if resource_violation is not None:
+            recorder.emit("policy_violation", resource_violation, trace_context=trace_context)
             return standardize_step_outcome(
                 StepOutcome(
-                    status=StepStatus.FAILED,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
+                    status=StepStatus.BLOCKED,
+                    error_type="WorkflowResourcePolicyViolation",
+                    error_message=resource_violation["message"],
+                    error_details=resource_violation,
                 ),
                 step=step,
                 trace_context=trace_context,
-                started_at=utc_now(),
+                started_at=preflight_started_at,
             )
-        budget = (
-            parent_context.budget
-            if parent_context is not None and parent_context.budget is not None
-            else AttemptBudget(max_attempts=total_attempt_limit)
-        )
-        idempotency_key = _step_idempotency_key(step, trace_context)
-        attempt = 1
-        while True:
-            attempt_started_at = utc_now()
+        safety_violation = safety_violation_for_step(step)
+        if safety_violation is not None:
             recorder.emit(
-                "step_started",
-                {
-                    "step_id": step.step_id,
-                    "step_type": step.step_type,
-                    "attempt": attempt,
-                    "max_attempts": max_attempts,
-                },
+                "runtime_safety_violation",
+                safety_violation,
                 trace_context=trace_context,
             )
-            resource_violation = resource_policy_violation(step, buffer)
-            if resource_violation is not None:
-                recorder.emit("policy_violation", resource_violation, trace_context=trace_context)
-                return standardize_step_outcome(
-                    StepOutcome(
-                        status=StepStatus.BLOCKED,
-                        error_type="WorkflowResourcePolicyViolation",
-                        error_message=resource_violation["message"],
-                        error_details=resource_violation,
-                    ),
-                    step=step,
-                    trace_context=trace_context,
-                    started_at=attempt_started_at,
-                )
-            safety_violation = safety_violation_for_step(step)
-            if safety_violation is not None:
-                recorder.emit(
-                    "runtime_safety_violation",
-                    safety_violation,
-                    trace_context=trace_context,
-                )
-                return standardize_step_outcome(
-                    StepOutcome(
-                        status=StepStatus.BLOCKED,
-                        error_type="WorkflowRuntimeSafetyViolation",
-                        error_message=safety_violation["message"],
-                        error_details=safety_violation,
-                    ),
-                    step=step,
-                    trace_context=trace_context,
-                    started_at=attempt_started_at,
-                )
-            capability_violation = step_runner_capability_violation(
-                step,
-                self._step_runner_registry,
-                resume_mode=False,
+            return standardize_step_outcome(
+                StepOutcome(
+                    status=StepStatus.BLOCKED,
+                    error_type="WorkflowRuntimeSafetyViolation",
+                    error_message=safety_violation["message"],
+                    error_details=safety_violation,
+                ),
+                step=step,
+                trace_context=trace_context,
+                started_at=preflight_started_at,
             )
-            if capability_violation is not None:
-                recorder.emit(
-                    "runner_capability_violation",
-                    capability_violation,
-                    trace_context=trace_context,
-                )
-                return standardize_step_outcome(
-                    StepOutcome(
-                        status=StepStatus.FAILED,
-                        error_type="StepRunnerCapabilityError",
-                        error_message=capability_violation["message"],
-                        error_details=capability_violation,
-                    ),
-                    step=step,
-                    trace_context=trace_context,
-                    started_at=attempt_started_at,
-                )
-            inherits_parent_permit = (
-                attempt == 1
-                and parent_context is not None
-                and parent_context.budget is budget
-                and budget.used > 0
+        capability_violation = step_runner_capability_violation(
+            step,
+            self._step_runner_registry,
+            resume_mode=False,
+        )
+        if capability_violation is not None:
+            recorder.emit(
+                "runner_capability_violation",
+                capability_violation,
+                trace_context=trace_context,
             )
-            if not inherits_parent_permit:
-                try:
-                    budget.claim()
-                except AttemptBudgetExhaustedError:
-                    return standardize_step_outcome(
-                        StepOutcome(
-                            status=StepStatus.FAILED,
-                            error_type="AttemptBudgetExhaustedError",
-                            error_message="step attempt budget exhausted",
-                            error_details={
-                                "attempt": attempt,
-                                "max_attempts": max_attempts,
-                                "max_total_attempts": budget.max_attempts,
-                                "budget_exceeded": True,
-                            },
-                        ),
-                        step=step,
-                        trace_context=trace_context,
-                        started_at=attempt_started_at,
-                    )
-            attempt_id = uuid.uuid4().hex
-            attempt_buffer = buffer.begin_attempt(
-                step.step_id,
-                owner_id=attempt_id,
+            return standardize_step_outcome(
+                StepOutcome(
+                    status=StepStatus.FAILED,
+                    error_type="StepRunnerCapabilityError",
+                    error_message=capability_violation["message"],
+                    error_details=capability_violation,
+                ),
+                step=step,
+                trace_context=trace_context,
+                started_at=preflight_started_at,
             )
-            fencing_token = attempt_buffer.fencing_token
+
+        while True:
+            attempt = local_budget.used + 1
+            attempt_started_at = utc_now()
             self._configure_runner_trace_context(step, trace_context)
             outcome = standardize_step_outcome(
                 self._run_step_attempt(
                     step,
-                    attempt_buffer,
+                    buffer,
                     attempt,
                     max_attempts,
-                    budget=budget,
+                    local_budget=local_budget,
+                    execution_limits=limits,
                     idempotency_key=idempotency_key,
-                    fencing_token=fencing_token,
-                    attempt_id=attempt_id,
+                    recorder=recorder,
+                    trace_context=trace_context,
                 ),
                 step=step,
                 trace_context=trace_context,
@@ -239,7 +206,6 @@ class StepInvoker:
                 return outcome
             if (
                 attempt >= max_attempts
-                or budget.remaining <= 0
                 or not retry_policy.should_retry(
                     error_type=outcome.error_type
                 )
@@ -263,7 +229,6 @@ class StepInvoker:
             )
             if delay_seconds:
                 self._sleep_fn(delay_seconds)
-            attempt += 1
 
     def _configure_runner_trace_context(
         self,
@@ -285,76 +250,268 @@ class StepInvoker:
     def _run_step_attempt(
         self,
         step: StepSpec,
-        attempt_buffer: AttemptDataBufferOverlay,
+        buffer: DataBuffer,
         attempt: int,
         max_attempts: int,
         *,
-        budget: AttemptBudget,
+        local_budget: LocalRetryBudget,
+        execution_limits: ExecutionLimits,
         idempotency_key: str,
-        fencing_token: int,
-        attempt_id: str,
+        recorder: WorkflowEventRecorder,
+        trace_context: TraceContext | None,
     ) -> StepOutcome:
         timeout_seconds = step.timeout_policy.timeout_seconds
-        try:
-            grace_seconds = float(
-                step.metadata.get(
-                    "cancellation_grace_seconds",
-                    self._cancellation_grace_seconds,
-                )
-            )
-        except (TypeError, ValueError):
-            attempt_buffer.close()
-            return StepOutcome(
-                status=StepStatus.FAILED,
-                error_type="StepExecutionError",
-                error_message="cancellation_grace_seconds must be numeric",
-            )
-        if grace_seconds < 0:
-            attempt_buffer.close()
-            return StepOutcome(
-                status=StepStatus.FAILED,
-                error_type="StepExecutionError",
-                error_message="cancellation_grace_seconds must be non-negative",
-            )
+        grace_seconds = (
+            step.timeout_policy.cancellation_grace_seconds
+            if step.timeout_policy.cancellation_grace_seconds is not None
+            else self._cancellation_grace_seconds
+        )
         supervisor = AttemptSupervisor(
-            cancellation_grace_seconds=grace_seconds
+            cancellation_grace_seconds=grace_seconds,
+            clock=self._clock,
         )
         parent_context = current_attempt_context()
-        effective_timeout = timeout_seconds
-        cancellation_source = "step_deadline"
-        if parent_context is not None and parent_context.remaining_seconds is not None:
-            if effective_timeout is None:
-                effective_timeout = parent_context.remaining_seconds
-                cancellation_source = "parent_attempt"
-            else:
-                if parent_context.remaining_seconds <= float(effective_timeout):
-                    cancellation_source = "parent_attempt"
-                effective_timeout = min(
-                    float(effective_timeout),
-                    parent_context.remaining_seconds,
-                )
-        supervised = supervisor.run(
-            lambda: self._invoke_step_runner(
+        attempt_buffer_holder: dict[str, AttemptDataBufferOverlay] = {}
+
+        def prepare(identity: AttemptIdentity) -> Callable[[], None]:
+            attempt_buffer = buffer.begin_attempt(
+                step.step_id,
+                owner_id=identity.attempt_id,
+            )
+            attempt_buffer_holder["value"] = attempt_buffer
+
+            def cleanup() -> None:
+                attempt_buffer.close()
+                abandon = getattr(buffer, "abandon_attempt", None)
+                if callable(abandon):
+                    abandon(
+                        step.step_id,
+                        lease_generation=attempt_buffer.fencing_token,
+                        owner_id=identity.attempt_id,
+                    )
+
+            return cleanup
+
+        def invoke_started_attempt() -> StepOutcome:
+            context = current_attempt_context()
+            if context is None:
+                raise RuntimeError("workflow step is missing attempt context")
+            recorder.emit(
+                "step_started",
+                {
+                    "step_id": step.step_id,
+                    "step_type": step.step_type,
+                    "attempt": context.local_attempt_no,
+                    "max_attempts": max_attempts,
+                },
+                trace_context=trace_context,
+            )
+            return self._invoke_step_runner(
                 step,
-                attempt_buffer,
-                attempt,
+                attempt_buffer_holder["value"],
+                context.local_attempt_no,
                 max_attempts,
-            ),
-            timeout_seconds=effective_timeout,
+            )
+
+        def finalize_attempt(
+            outcome: AttemptOutcome[StepOutcome],
+        ) -> AttemptOutcome[StepOutcome] | AttemptFinalization[StepOutcome]:
+            context = outcome.context
+            if context is None:
+                raise RuntimeError("workflow step is missing attempt context")
+            if outcome.state is not AttemptState.SUCCEEDED:
+                return outcome
+            step_outcome = outcome.value
+            if not isinstance(step_outcome, StepOutcome):
+                return replace(
+                    outcome,
+                    state=AttemptState.FAILED,
+                    value=None,
+                    error=StepExecutionError(
+                        "step attempt returned an invalid outcome"
+                    ),
+                )
+            step_outcome = _with_attempt_context(step_outcome, context)
+            if step_outcome.status in {StepStatus.SUCCEEDED, StepStatus.PAUSED}:
+                try:
+                    context.raise_if_cancelled()
+                    context.raise_if_indeterminate()
+                    transaction = attempt_buffer_holder["value"].begin_commit()
+                except AttemptCancelledError as exc:
+                    return replace(
+                        outcome,
+                        state=AttemptState.TIMED_OUT,
+                        value=None,
+                        error=exc,
+                        timed_out=True,
+                        termination_confirmed=True,
+                        reason_code=exc.code,
+                    )
+                except StaleWorkflowAttemptError as exc:
+                    return replace(
+                        outcome,
+                        state=AttemptState.FAILED,
+                        value=None,
+                        error=exc,
+                        reason_code=type(exc).__name__,
+                    )
+                return AttemptFinalization(
+                    outcome=replace(outcome, value=step_outcome),
+                    rollback=transaction.rollback,
+                    complete=transaction.complete,
+                )
+            if step_outcome.status in {StepStatus.FAILED, StepStatus.BLOCKED}:
+                error = StepExecutionError(
+                    step_outcome.error_message
+                    or f"step {step.step_id} returned {step_outcome.status.value}"
+                )
+                indeterminate = bool(
+                    step_outcome.error_details.get("indeterminate", False)
+                    or (
+                        step_outcome.status is StepStatus.FAILED
+                        and not _retry_is_safe(step, self._step_runner_registry)
+                        and not _step_outcome_has_confirmed_determinate_effect(
+                            step_outcome
+                        )
+                        and not _step_outcome_failure_is_known_to_have_no_effect(
+                            step,
+                            step_outcome,
+                        )
+                    )
+                )
+                return replace(
+                    outcome,
+                    state=(
+                        AttemptState.INDETERMINATE
+                        if indeterminate
+                        else AttemptState.FAILED
+                    ),
+                    value=step_outcome,
+                    error=error,
+                    indeterminate=indeterminate,
+                    reason_code=(
+                        WORKFLOW_STEP_INDETERMINATE_ERROR
+                        if indeterminate
+                        else step_outcome.error_type or type(error).__name__
+                    ),
+                )
+            if step_outcome.status in {StepStatus.TIMEOUT, StepStatus.CANCELLED}:
+                error = AttemptCancelledError(context.attempt_id)
+                return replace(
+                    outcome,
+                    state=AttemptState.TIMED_OUT,
+                    value=step_outcome,
+                    error=error,
+                    timed_out=True,
+                    indeterminate=bool(
+                        step_outcome.error_details.get("indeterminate", False)
+                    ),
+                    reason_code=step_outcome.error_type or error.code,
+                )
+            if step_outcome.status is StepStatus.SKIPPED:
+                return replace(outcome, value=step_outcome)
+            return replace(
+                outcome,
+                state=AttemptState.FAILED,
+                value=step_outcome,
+                error=StepExecutionError(
+                    f"step {step.step_id} returned non-terminal status "
+                    f"{step_outcome.status.value}"
+                ),
+                reason_code="step_non_terminal_outcome",
+            )
+
+        supervised = supervisor.run(
+            invoke_started_attempt,
+            timeout_seconds=timeout_seconds,
             idempotency_key=idempotency_key,
-            fencing_token=fencing_token,
-            attempt_id=attempt_id,
-            budget=budget,
-            parent_cancel_event=(
-                parent_context.cancel_event
-                if parent_context is not None
-                else None
+            operation_id=idempotency_key,
+            operation_kind="workflow_step",
+            local_budget=local_budget,
+            execution_limits=execution_limits,
+            admission_policy=DeadlineAdmissionPolicy(
+                timeout_seconds=timeout_seconds,
+                min_start_window_seconds=(
+                    step.timeout_policy.min_start_window_seconds
+                ),
+                cancellation_grace_seconds=grace_seconds,
+                completion_reserve_seconds=(
+                    step.timeout_policy.completion_reserve_seconds
+                ),
             ),
             parent_context=parent_context,
-            claim_budget=False,
+            prepare=prepare,
+            finalize=finalize_attempt,
+            event_sink=WorkflowDurableAttemptSink(
+                recorder=recorder,
+                execution_id=execution_limits.execution_id,
+                trace_context=trace_context,
+            ),
         )
+        if supervised.state is AttemptState.REJECTED:
+            error = supervised.error
+            admission = supervised.admission
+            reason_code = supervised.reason_code or "attempt_admission_rejected"
+            details = {
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "started": False,
+                "reason_code": reason_code,
+                "admission": (
+                    dict(admission.details) if admission is not None else {}
+                ),
+                "budget_exceeded": reason_code
+                in {
+                    "attempt_local_retry_exhausted",
+                    "attempt_global_retry_exhausted",
+                },
+            }
+            return StepOutcome(
+                status=StepStatus.BLOCKED,
+                error_type=(
+                    type(error).__name__
+                    if error is not None
+                    else "AttemptAdmissionRejected"
+                ),
+                error_message=(
+                    str(error) if error is not None else "attempt admission rejected"
+                ),
+                error_details=details,
+            )
+        if supervised.context is None:
+            raise RuntimeError("started attempt outcome is missing context")
+
+        if "value" not in attempt_buffer_holder:
+            error = supervised.error
+            return StepOutcome(
+                status=StepStatus.FAILED,
+                error_type=(
+                    type(error).__name__
+                    if error is not None
+                    else "StepAttemptPreparationError"
+                ),
+                error_message=(
+                    str(error)
+                    if error is not None
+                    else "step attempt preparation failed"
+                ),
+                error_details={
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "attempt_id": supervised.context.attempt_id,
+                    "idempotency_key": supervised.context.idempotency_key,
+                    "operation_id": supervised.context.operation_id,
+                    "local_attempt_no": supervised.context.local_attempt_no,
+                    "retry_credit_id": supervised.context.retry_credit_id,
+                    "termination_confirmed": supervised.termination_confirmed,
+                    "indeterminate": supervised.indeterminate,
+                },
+            )
+
+        deadline_details = dict(supervised.context.admission_details)
+        effective_timeout = _effective_timeout_seconds(deadline_details)
+        cancellation_source = _cancellation_source(deadline_details)
         if supervised.state is AttemptState.INDETERMINATE:
-            attempt_buffer.close()
             return StepOutcome(
                 status=StepStatus.FAILED,
                 error_type=WORKFLOW_STEP_INDETERMINATE_ERROR,
@@ -366,13 +523,14 @@ class StepInvoker:
                     "max_attempts": max_attempts,
                     "attempt_id": supervised.context.attempt_id,
                     "idempotency_key": supervised.context.idempotency_key,
-                    "fencing_token": supervised.context.fencing_token,
+                    "operation_id": supervised.context.operation_id,
+                    "local_attempt_no": supervised.context.local_attempt_no,
+                    "retry_credit_id": supervised.context.retry_credit_id,
                     "termination_confirmed": supervised.termination_confirmed,
                     "indeterminate": True,
                 },
             )
         if supervised.state is AttemptState.TIMED_OUT:
-            attempt_buffer.close()
             indeterminate = (
                 supervised.indeterminate
                 or not _retry_is_safe(
@@ -405,13 +563,19 @@ class StepInvoker:
                     "on_timeout": step.timeout_policy.on_timeout,
                     "attempt_id": supervised.context.attempt_id,
                     "idempotency_key": supervised.context.idempotency_key,
-                    "fencing_token": supervised.context.fencing_token,
+                    "operation_id": supervised.context.operation_id,
+                    "local_attempt_no": supervised.context.local_attempt_no,
+                    "retry_credit_id": supervised.context.retry_credit_id,
                     "termination_confirmed": supervised.termination_confirmed,
                     "indeterminate": indeterminate,
                 },
             )
         if supervised.state is AttemptState.FAILED:
-            attempt_buffer.close()
+            if isinstance(supervised.value, StepOutcome):
+                return _with_attempt_context(
+                    supervised.value,
+                    supervised.context,
+                )
             error = supervised.error
             indeterminate = (
                 not _retry_is_safe(step, self._step_runner_registry)
@@ -436,7 +600,9 @@ class StepInvoker:
                     "max_attempts": max_attempts,
                     "attempt_id": supervised.context.attempt_id,
                     "idempotency_key": supervised.context.idempotency_key,
-                    "fencing_token": supervised.context.fencing_token,
+                    "operation_id": supervised.context.operation_id,
+                    "local_attempt_no": supervised.context.local_attempt_no,
+                    "retry_credit_id": supervised.context.retry_credit_id,
                     "termination_confirmed": True,
                     "indeterminate": indeterminate,
                 },
@@ -444,53 +610,12 @@ class StepInvoker:
 
         outcome = supervised.value
         if not isinstance(outcome, StepOutcome):
-            attempt_buffer.close()
             return StepOutcome(
                 status=StepStatus.FAILED,
                 error_type="StepExecutionError",
                 error_message="step attempt returned an invalid outcome",
             )
-        if parent_context is not None and parent_context.cancelled:
-            attempt_buffer.close()
-            indeterminate = not _retry_is_safe(
-                step,
-                self._step_runner_registry,
-            )
-            return StepOutcome(
-                status=StepStatus.TIMEOUT,
-                error_type=(
-                    WORKFLOW_STEP_INDETERMINATE_TIMEOUT_ERROR
-                    if indeterminate
-                    else WORKFLOW_STEP_TIMEOUT_ERROR
-                ),
-                error_message=f"step {step.step_id} was cancelled by its parent attempt",
-                error_details={
-                    "attempt": attempt,
-                    "max_attempts": max_attempts,
-                    "attempt_id": supervised.context.attempt_id,
-                    "idempotency_key": supervised.context.idempotency_key,
-                    "fencing_token": supervised.context.fencing_token,
-                    "termination_confirmed": True,
-                    "indeterminate": indeterminate,
-                    "configured_timeout_seconds": timeout_seconds,
-                    "effective_timeout_seconds": effective_timeout,
-                    "cancellation_source": "parent_attempt",
-                },
-            )
-        outcome = _with_attempt_context(outcome, supervised.context)
-        if outcome.status in {StepStatus.SUCCEEDED, StepStatus.PAUSED}:
-            try:
-                attempt_buffer.commit()
-            except StaleWorkflowAttemptError as exc:
-                return StepOutcome(
-                    status=StepStatus.FAILED,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                    error_details=dict(outcome.error_details),
-                )
-        else:
-            attempt_buffer.close()
-        return outcome
+        return _with_attempt_context(outcome, supervised.context)
 
     def _invoke_step_runner(
         self,
@@ -555,6 +680,31 @@ def is_retryable_outcome(
     return False
 
 
+def _effective_timeout_seconds(details: dict[str, object]) -> float | None:
+    started = details.get("now_monotonic")
+    completion = details.get("completion_until")
+    if not isinstance(started, (int, float)) or not isinstance(
+        completion, (int, float)
+    ):
+        return None
+    return max(0.0, float(completion) - float(started))
+
+
+def _cancellation_source(details: dict[str, object]) -> str:
+    completion = details.get("completion_until")
+    if not isinstance(completion, (int, float)):
+        return "unbounded"
+    candidates = (
+        ("parent_attempt", details.get("parent_available_until")),
+        ("root_hard_deadline", details.get("root_available_until")),
+        ("step_deadline", details.get("requested_until")),
+    )
+    for source, value in candidates:
+        if isinstance(value, (int, float)) and float(value) == float(completion):
+            return source
+    return "step_deadline"
+
+
 def _step_idempotency_key(
     step: StepSpec,
     trace_context: TraceContext | None,
@@ -597,6 +747,10 @@ def _step_failure_is_known_to_have_no_effect(
 ) -> bool:
     if error is None:
         return False
+    if isinstance(error, StaleWorkflowAttemptError):
+        # The attempt overlay validates ownership and restores the buffer
+        # atomically before surfacing this error.
+        return True
     configured = (step.metadata or {}).get("no_effect_error_types") or []
     if not isinstance(configured, list):
         return False
@@ -604,33 +758,18 @@ def _step_failure_is_known_to_have_no_effect(
     return bool(error_types.intersection(str(value) for value in configured))
 
 
-def _step_total_attempt_limit(
+def _step_outcome_failure_is_known_to_have_no_effect(
     step: StepSpec,
-    buffer: DataBuffer,
-    registry: StepRunnerRegistry,
-    *,
-    step_attempt_limit: int,
-) -> int:
-    metadata = dict(step.metadata or {})
-    explicit = metadata.get("max_total_attempts")
-    tool_policy = metadata.get("tool_policy")
-    if explicit is None and isinstance(tool_policy, dict):
-        explicit = tool_policy.get("max_total_attempts")
-    if explicit is not None:
-        if type(explicit) is not int or explicit < 1:
-            raise StepExecutionError("max_total_attempts must be a positive integer")
-        return explicit
+    outcome: StepOutcome,
+) -> bool:
+    configured = (step.metadata or {}).get("no_effect_error_types") or []
+    if not isinstance(configured, list) or not outcome.error_type:
+        return False
+    return str(outcome.error_type) in {str(value) for value in configured}
 
-    runner = registry.resolve(step)
-    budget_limit = getattr(runner, "attempt_budget_limit", None)
-    if not callable(budget_limit):
-        return step_attempt_limit
-    nested_limit = budget_limit(step, buffer.scoped(step.step_id))
-    if type(nested_limit) is not int or nested_limit < 1:
-        raise StepExecutionError(
-            "step runner attempt_budget_limit must return a positive integer"
-        )
-    return step_attempt_limit + nested_limit - 1
+
+def _step_outcome_has_confirmed_determinate_effect(outcome: StepOutcome) -> bool:
+    return outcome.error_details.get("effect_determinacy_confirmed") is True
 
 
 def _is_capacity_exhausted_outcome(outcome: StepOutcome) -> bool:
@@ -649,8 +788,11 @@ def _with_attempt_context(
     metadata = dict(outcome.metadata)
     attempt_metadata = {
         "attempt_id": context.attempt_id,
+        "operation_id": context.operation_id,
+        "operation_kind": context.operation_kind,
+        "local_attempt_no": context.local_attempt_no,
         "idempotency_key": context.idempotency_key,
-        "fencing_token": context.fencing_token,
+        "retry_credit_id": context.retry_credit_id,
     }
     if outcome.status in {
         StepStatus.FAILED,
@@ -668,6 +810,15 @@ def _with_attempt_context(
         metrics=metrics,
         metadata=metadata,
     )
+
+
+def _attempt_error_code(error: BaseException | None) -> str | None:
+    if error is None:
+        return None
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code:
+        return code
+    return type(error).__name__
 
 
 def is_budget_exceeded_outcome(outcome: StepOutcome) -> bool:

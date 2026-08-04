@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 from framework.tool.models.status import ToolSideEffect
@@ -16,6 +17,9 @@ class ToolDefinition:
     side_effect: ToolSideEffect | str = "none"
     concurrency_safe: bool = False
     timeout_seconds: float | None = None
+    min_start_window_seconds: float | None = None
+    cancellation_grace_seconds: float | None = None
+    completion_reserve_seconds: float | None = None
     max_result_bytes: int | None = 1_000_000
     metadata: dict[str, Any] = field(default_factory=dict)
     is_dangerous: bool = False
@@ -31,6 +35,46 @@ class ToolDefinition:
             raise ToolDefinitionError(f"tool name must be namespaced: {self.name}")
         if not self.version:
             raise ToolDefinitionError(f"tool version is required for {self.name}")
+        if self.min_start_window_seconds is not None:
+            _validate_window_value(
+                "min_start_window_seconds",
+                self.min_start_window_seconds,
+                tool_name=self.name,
+            )
+        if self.completion_reserve_seconds is not None:
+            _validate_window_value(
+                "completion_reserve_seconds",
+                self.completion_reserve_seconds,
+                tool_name=self.name,
+            )
+        if self.timeout_seconds is not None:
+            _validate_window_value(
+                "timeout_seconds",
+                self.timeout_seconds,
+                tool_name=self.name,
+                positive=True,
+            )
+        if self.cancellation_grace_seconds is not None:
+            _validate_window_value(
+                "cancellation_grace_seconds",
+                self.cancellation_grace_seconds,
+                tool_name=self.name,
+            )
+        if (
+            self.timeout_seconds is not None
+            and self.min_start_window_seconds is not None
+            and self.min_start_window_seconds > self.timeout_seconds
+        ):
+            raise ToolDefinitionError(
+                "min_start_window_seconds must not exceed timeout_seconds "
+                f"for {self.name}"
+            )
+        if self.max_attempts is not None and (
+            type(self.max_attempts) is not int or self.max_attempts < 1
+        ):
+            raise ToolDefinitionError(
+                f"max_attempts must be a positive integer for {self.name}"
+            )
         if (
             self.max_result_bytes is not None
             and (not isinstance(self.max_result_bytes, int) or self.max_result_bytes < 0)
@@ -85,6 +129,9 @@ class ToolDefinition:
             "is_dangerous": self.is_dangerous,
             "requires_approval": self.requires_approval,
             "timeout_seconds": self.timeout_seconds,
+            "min_start_window_seconds": self.min_start_window_seconds,
+            "cancellation_grace_seconds": self.cancellation_grace_seconds,
+            "completion_reserve_seconds": self.completion_reserve_seconds,
             "max_attempts": self.max_attempts,
             "max_result_bytes": self.max_result_bytes,
             "concurrency_safe": self.concurrency_safe,
@@ -106,6 +153,11 @@ class ToolDefinition:
             side_effect=str(payload.get("side_effect") or "none"),
             concurrency_safe=bool(payload.get("concurrency_safe", False)),
             timeout_seconds=payload.get("timeout_seconds"),
+            min_start_window_seconds=payload.get("min_start_window_seconds"),
+            cancellation_grace_seconds=payload.get(
+                "cancellation_grace_seconds"
+            ),
+            completion_reserve_seconds=payload.get("completion_reserve_seconds"),
             max_result_bytes=payload.get("max_result_bytes", 1_000_000),
             metadata=dict(payload.get("metadata") or {}),
             is_dangerous=bool(payload.get("is_dangerous", False)),
@@ -113,4 +165,23 @@ class ToolDefinition:
             max_attempts=payload.get("max_attempts"),
             required_secret_names=[str(item) for item in payload.get("required_secret_names", [])],
             version=str(payload.get("version") or "1.0.0"),
+        )
+
+
+def _validate_window_value(
+    field_name: str,
+    value: Any,
+    *,
+    tool_name: str,
+    positive: bool = False,
+) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or (float(value) <= 0 if positive else float(value) < 0)
+    ):
+        condition = "positive" if positive else "non-negative"
+        raise ToolDefinitionError(
+            f"{field_name} must be a finite {condition} number for {tool_name}"
         )

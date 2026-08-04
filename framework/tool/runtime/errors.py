@@ -22,14 +22,20 @@ class ToolTimeoutError(ToolRuntimeError):
         *,
         attempt_id: str | None = None,
         idempotency_key: str | None = None,
-        fencing_token: int | None = None,
+        operation_id: str | None = None,
+        operation_kind: str | None = None,
+        local_attempt_no: int | None = None,
+        retry_credit_id: str | None = None,
         termination_confirmed: bool = False,
         indeterminate: bool | None = None,
     ) -> None:
         super().__init__(message)
         self.attempt_id = attempt_id
         self.idempotency_key = idempotency_key
-        self.fencing_token = fencing_token
+        self.operation_id = operation_id
+        self.operation_kind = operation_kind
+        self.local_attempt_no = local_attempt_no
+        self.retry_credit_id = retry_credit_id
         self.termination_confirmed = bool(termination_confirmed)
         self.indeterminate = (
             not self.termination_confirmed
@@ -47,13 +53,19 @@ class ToolIndeterminateError(ToolRuntimeError):
         *,
         attempt_id: str,
         idempotency_key: str,
-        fencing_token: int,
+        operation_id: str,
+        operation_kind: str,
+        local_attempt_no: int,
+        retry_credit_id: str | None,
         cause_type: str,
     ) -> None:
         super().__init__(message)
         self.attempt_id = attempt_id
         self.idempotency_key = idempotency_key
-        self.fencing_token = fencing_token
+        self.operation_id = operation_id
+        self.operation_kind = operation_kind
+        self.local_attempt_no = local_attempt_no
+        self.retry_credit_id = retry_credit_id
         self.cause_type = cause_type
         self.termination_confirmed = True
         self.indeterminate = True

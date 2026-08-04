@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
@@ -9,13 +10,18 @@ from pathlib import Path
 from typing import Any
 
 from framework.shared.attempts import (
-    AttemptBudget,
-    AttemptBudgetExhaustedError,
+    AdmissionResult,
     AttemptCancelledError,
     AttemptCapacityExhaustedError,
     AttemptContext,
     AttemptState,
     AttemptSupervisor,
+    AttemptLifecycleSink,
+    AttemptOutcome,
+    DeadlineAdmissionPolicy,
+    ExecutionLimits,
+    LocalRetryBudget,
+    RetryCreditLedger,
     current_attempt_context,
     derive_idempotency_key,
 )
@@ -57,6 +63,104 @@ from framework.tool.schema.validation import normalize_tool_arguments
 
 
 _RUNTIME_SECRETS_ARGUMENT = "_secrets"
+
+
+class _ToolAttemptEventMirror:
+    """Keep local ToolEvent telemetry aligned with admitted physical starts."""
+
+    required = False
+
+    def __init__(self, executor: "ToolExecutor", call: ToolCall) -> None:
+        self._executor = executor
+        self._call = call
+        self._tool_started_emitted = False
+
+    def rejected(
+        self,
+        *,
+        operation_id: str,
+        operation_kind: str,
+        idempotency_key: str,
+        admission: AdmissionResult,
+    ) -> None:
+        if operation_kind != "tool_call":
+            return
+        self._executor._emit(
+            "attempt_admission_rejected",
+            self._call,
+            {
+                "operation_id": operation_id,
+                "operation_kind": operation_kind,
+                "idempotency_key": idempotency_key,
+                "started": False,
+                "reason_code": admission.reason_code,
+                "deadline_calculation": {
+                    key: value
+                    for key, value in admission.details.items()
+                    if key.endswith("until") or key.endswith("seconds")
+                },
+            },
+        )
+
+    def started(self, *, context: AttemptContext) -> None:
+        if context.operation_kind != "tool_call":
+            return
+        payload = {
+            "operation_id": context.operation_id,
+            "operation_kind": context.operation_kind,
+            "idempotency_key": context.idempotency_key,
+            "started": True,
+            "attempt_id": context.attempt_id,
+            "local_attempt_no": context.local_attempt_no,
+            "retry_credit_id": context.retry_credit_id,
+            "parent_attempt_id": context.parent_attempt_id,
+        }
+        self._executor._emit("attempt_started", self._call, payload)
+        if not self._tool_started_emitted:
+            self._tool_started_emitted = True
+            self._executor._emit("tool_started", self._call, {
+                "attempt_id": context.attempt_id,
+                "local_attempt_no": context.local_attempt_no,
+                "operation_id": context.operation_id,
+                "idempotency_key": context.idempotency_key,
+            })
+
+    def terminal(self, *, outcome: Any) -> None:
+        context = outcome.context
+        if context is None or context.operation_kind != "tool_call":
+            return
+        state = (
+            "INDETERMINATE"
+            if outcome.indeterminate or outcome.state is AttemptState.INDETERMINATE
+            else (
+                "SUCCEEDED"
+                if outcome.state is AttemptState.SUCCEEDED
+                else "TIMED_OUT"
+                if outcome.state is AttemptState.TIMED_OUT
+                else "FAILED"
+            )
+        )
+        self._executor._emit(
+            "attempt_terminal",
+            self._call,
+            {
+                "operation_id": context.operation_id,
+                "operation_kind": context.operation_kind,
+                "idempotency_key": context.idempotency_key,
+                "started": True,
+                "attempt_id": context.attempt_id,
+                "local_attempt_no": context.local_attempt_no,
+                "retry_credit_id": context.retry_credit_id,
+                "parent_attempt_id": context.parent_attempt_id,
+                "state": state,
+                "reason_code": getattr(outcome, "reason_code", None)
+                or getattr(outcome.error, "code", None)
+                or (type(outcome.error).__name__ if outcome.error else None),
+                "termination_confirmed": outcome.termination_confirmed,
+                "indeterminate": outcome.indeterminate,
+                "elapsed_seconds": outcome.elapsed_seconds,
+            },
+        )
 
 
 class ToolExecutor:
@@ -120,13 +224,14 @@ class ToolExecutor:
         started_at = datetime.now(UTC)
         policy_trace = _ToolPolicyTraceBuilder(call.tool_name)
         attempts_used = 0
+        last_attempt_context: AttemptContext | None = None
 
         def record_attempt(attempt: int) -> None:
             nonlocal attempts_used
             attempts_used = max(attempts_used, int(attempt))
 
         def invoke() -> ToolResult:
-            nonlocal attempts_used
+            nonlocal attempts_used, last_attempt_context
             registered = self._registry.get(call.tool_name)
             policy_trace.risk_level = _risk_level(registered.definition)
             policy_trace.requires_approval = _requires_approval(registered.definition, policy)
@@ -198,19 +303,19 @@ class ToolExecutor:
             )
             policy_trace.add("tool.secrets", "safety", True, "secret injection passed")
 
-            self._emit("tool_started", call)
             max_attempts = _max_attempts(registered.definition, policy)
-            raw_output, attempts_used = _invoke_with_retry(
+            raw_output, attempts_used, last_attempt_context = _invoke_with_retry(
                 _trace_scoped_executor(registered.executor, scoped_context),
                 arguments,
                 _timeout_seconds(registered.definition, policy),
                 max_attempts,
                 call.tool_name,
                 record_attempt,
-                max_total_attempts=policy.max_total_attempts,
                 definition=registered.definition,
-                cancellation_grace_seconds=policy.cancellation_grace_seconds,
+                policy=policy,
                 idempotency_key=_tool_idempotency_key(call),
+                operation_id=_tool_idempotency_key(call),
+                attempt_event_sink=_ToolAttemptEventMirror(self, call),
             )
             policy_trace.add(
                 "tool.retry",
@@ -246,7 +351,10 @@ class ToolExecutor:
                     output_guardrail_result.error_message or "output size gate failed",
                     metadata={"output_bytes": output_bytes},
                 )
-                return output_guardrail_result
+                return _copy_tool_result(
+                    output_guardrail_result,
+                    **_attempt_result_fields(last_attempt_context),
+                )
             policy_trace.add(
                 "tool.output_size",
                 "resource",
@@ -254,7 +362,10 @@ class ToolExecutor:
                 "output size gate passed",
                 metadata={"output_bytes": output_bytes},
             )
-            return self._tool_result(call, safe_output, policy, output_bytes)
+            return _copy_tool_result(
+                self._tool_result(call, safe_output, policy, output_bytes),
+                **_attempt_result_fields(last_attempt_context),
+            )
 
         self._emit("tool_call_requested", call, {"call": call.to_dict()})
         try:
@@ -281,7 +392,10 @@ class ToolExecutor:
                 indeterminate=exc.indeterminate,
                 attempt_id=exc.attempt_id,
                 idempotency_key=exc.idempotency_key,
-                fencing_token=exc.fencing_token,
+                operation_id=exc.operation_id,
+                operation_kind=exc.operation_kind,
+                local_attempt_no=exc.local_attempt_no,
+                retry_credit_id=exc.retry_credit_id,
                 metadata={
                     "termination_confirmed": exc.termination_confirmed,
                     "indeterminate": exc.indeterminate,
@@ -300,7 +414,10 @@ class ToolExecutor:
                 indeterminate=exc.indeterminate,
                 attempt_id=exc.attempt_id,
                 idempotency_key=exc.idempotency_key,
-                fencing_token=exc.fencing_token,
+                operation_id=exc.operation_id,
+                operation_kind=exc.operation_kind,
+                local_attempt_no=exc.local_attempt_no,
+                retry_credit_id=exc.retry_credit_id,
                 metadata={
                     "termination_confirmed": exc.termination_confirmed,
                     "indeterminate": exc.indeterminate,
@@ -505,7 +622,10 @@ def _result_event_payload(observation: ToolObservation) -> dict[str, Any]:
         "termination_confirmed": observation.result.termination_confirmed,
         "indeterminate": observation.result.indeterminate,
         "attempt_id": observation.result.attempt_id,
-        "fencing_token": observation.result.fencing_token,
+        "operation_id": observation.result.operation_id,
+        "operation_kind": observation.result.operation_kind,
+        "local_attempt_no": observation.result.local_attempt_no,
+        "retry_credit_id": observation.result.retry_credit_id,
     }
 
 
@@ -716,7 +836,10 @@ def _copy_tool_result(result: ToolResult, **overrides: Any) -> ToolResult:
         "indeterminate": result.indeterminate,
         "attempt_id": result.attempt_id,
         "idempotency_key": result.idempotency_key,
-        "fencing_token": result.fencing_token,
+        "operation_id": result.operation_id,
+        "operation_kind": result.operation_kind,
+        "local_attempt_no": result.local_attempt_no,
+        "retry_credit_id": result.retry_credit_id,
         "trace_id": result.trace_id,
         "span_id": result.span_id,
         "parent_span_id": result.parent_span_id,
@@ -852,52 +975,92 @@ def _invoke_with_retry(
     tool_name: str,
     attempt_callback: Any | None = None,
     *,
-    max_total_attempts: int | None = None,
     definition: Any | None = None,
-    cancellation_grace_seconds: float = 0.1,
+    policy: ToolPolicy | None = None,
     idempotency_key: str | None = None,
-) -> tuple[Any, int]:
-    # Keep one total budget when a Tool executes inside a Workflow attempt.
-    effective_max = min(max_attempts, max_total_attempts) if max_total_attempts else max_attempts
+    operation_id: str | None = None,
+    attempt_event_sink: AttemptLifecycleSink | None = None,
+) -> tuple[Any, int, AttemptContext]:
     parent_context = current_attempt_context()
     logical_idempotency_key = idempotency_key or f"tool:{tool_name}"
-    budget = parent_context.budget if parent_context is not None else None
-    if budget is None:
-        budget = AttemptBudget(max_attempts=effective_max)
-    elif parent_context is not None:
-        effective_max = min(effective_max, 1 + budget.remaining)
-    supervisor = AttemptSupervisor(
-        cancellation_grace_seconds=cancellation_grace_seconds
+    resolved_operation_id = operation_id or logical_idempotency_key
+    resolved_policy = policy or ToolPolicy(require_explicit_allowlist=False)
+    local_budget = LocalRetryBudget(max_attempts=max_attempts)
+    execution_limits = _tool_execution_limits(
+        parent_context=parent_context,
+        policy=resolved_policy,
+        max_attempts=max_attempts,
+        idempotency_key=logical_idempotency_key,
     )
-    for attempt in range(1, effective_max + 1):
-        if parent_context is not None:
-            parent_context.raise_if_cancelled()
+    admission_policy = _tool_admission_policy(
+        definition=definition,
+        policy=resolved_policy,
+        timeout_seconds=timeout_seconds,
+        tool_name=tool_name,
+    )
+    supervisor = AttemptSupervisor(
+        cancellation_grace_seconds=admission_policy.cancellation_grace_seconds
+    )
+
+    def finalize_tool_attempt(
+        outcome: AttemptOutcome[Any],
+    ) -> AttemptOutcome[Any]:
+        retry_safe = _retry_is_safe(definition)
+        error = outcome.error
+        if outcome.state is AttemptState.TIMED_OUT:
+            if retry_safe:
+                return outcome
+            return replace(
+                outcome,
+                indeterminate=True,
+                reason_code=outcome.reason_code or "tool_timeout_indeterminate",
+            )
+        if outcome.state is not AttemptState.FAILED or error is None:
+            return outcome
+        if isinstance(error, AttemptCancelledError):
+            return replace(
+                outcome,
+                state=AttemptState.TIMED_OUT,
+                timed_out=True,
+                indeterminate=not retry_safe,
+                reason_code=error.code,
+            )
+        if retry_safe or _failure_is_known_to_have_no_effect(definition, error):
+            return outcome
+        return replace(
+            outcome,
+            state=AttemptState.INDETERMINATE,
+            indeterminate=True,
+            reason_code="tool_effect_indeterminate",
+        )
+
+    while local_budget.remaining > 0:
+        supervised = supervisor.run(
+            lambda: executor(arguments),
+            timeout_seconds=timeout_seconds,
+            idempotency_key=logical_idempotency_key,
+            operation_id=resolved_operation_id,
+            operation_kind="tool_call",
+            local_budget=local_budget,
+            admission_policy=admission_policy,
+            execution_limits=execution_limits,
+            parent_context=parent_context,
+            finalize=finalize_tool_attempt,
+            event_sink=attempt_event_sink,
+        )
+
+        if supervised.state is AttemptState.REJECTED:
+            if supervised.error is None:
+                raise ToolRuntimeError("tool attempt admission was rejected without an error")
+            raise supervised.error
+
+        context = _started_attempt_context(supervised, tool_name=tool_name)
+        attempt = context.local_attempt_no
         if callable(attempt_callback):
             attempt_callback(attempt)
-        try:
-            supervised = supervisor.run(
-                lambda: executor(arguments),
-                timeout_seconds=_bounded_timeout(timeout_seconds, parent_context),
-                idempotency_key=logical_idempotency_key,
-                fencing_token=(
-                    parent_context.fencing_token
-                    if parent_context is not None
-                    else attempt
-                ),
-                budget=budget,
-                parent_cancel_event=(
-                    parent_context.cancel_event
-                    if parent_context is not None
-                    else None
-                ),
-                parent_context=parent_context,
-                claim_budget=not (parent_context is not None and attempt == 1),
-            )
-        except AttemptBudgetExhaustedError:
-            raise
 
         if supervised.state is AttemptState.SUCCEEDED:
-            return supervised.value, attempt
+            return supervised.value, attempt, context
         if supervised.state is AttemptState.FAILED:
             error = supervised.error
             if isinstance(error, AttemptCancelledError):
@@ -912,19 +1075,24 @@ def _invoke_with_retry(
                 raise ToolRuntimeError("tool attempt failed without an error")
             if isinstance(error, AttemptCapacityExhaustedError):
                 raise error
-            if _failure_is_known_to_have_no_effect(definition, error):
-                raise error
-            if not _retry_is_safe(definition):
+            known_no_effect = _failure_is_known_to_have_no_effect(
+                definition,
+                error,
+            )
+            if not known_no_effect and not _retry_is_safe(definition):
                 if parent_context is not None:
                     parent_context.mark_descendant_indeterminate()
                 raise ToolIndeterminateError(
                     f"tool {tool_name} failed after an external effect could not be reconciled",
-                    attempt_id=supervised.context.attempt_id,
-                    idempotency_key=supervised.context.idempotency_key,
-                    fencing_token=supervised.context.fencing_token,
+                    attempt_id=context.attempt_id,
+                    idempotency_key=context.idempotency_key,
+                    operation_id=context.operation_id or context.idempotency_key,
+                    operation_kind=context.operation_kind,
+                    local_attempt_no=context.local_attempt_no,
+                    retry_credit_id=context.retry_credit_id,
                     cause_type=type(error).__name__,
                 ) from error
-            if attempt == effective_max:
+            if local_budget.remaining == 0:
                 raise error
             continue
 
@@ -934,9 +1102,12 @@ def _invoke_with_retry(
             error = supervised.error
             raise ToolIndeterminateError(
                 f"tool {tool_name} has an indeterminate descendant effect",
-                attempt_id=supervised.context.attempt_id,
-                idempotency_key=supervised.context.idempotency_key,
-                fencing_token=supervised.context.fencing_token,
+                attempt_id=context.attempt_id,
+                idempotency_key=context.idempotency_key,
+                operation_id=context.operation_id or context.idempotency_key,
+                operation_kind=context.operation_kind,
+                local_attempt_no=context.local_attempt_no,
+                retry_credit_id=context.retry_credit_id,
                 cause_type=(
                     type(error).__name__
                     if error is not None
@@ -959,7 +1130,7 @@ def _invoke_with_retry(
             indeterminate=indeterminate,
         )
         if (
-            attempt == effective_max
+            local_budget.remaining == 0
             or not supervised.termination_confirmed
             or indeterminate
         ):
@@ -973,11 +1144,24 @@ def _invoke_with_timeout(
     timeout_seconds: float | None,
     tool_name: str,
 ) -> Any:
+    local_budget = LocalRetryBudget(max_attempts=1)
+    execution_limits = ExecutionLimits(
+        execution_id=f"standalone-tool:{tool_name}",
+        retry_credits=RetryCreditLedger(max_total_retries=0),
+    )
     supervised = AttemptSupervisor().run(
         lambda: executor(arguments),
         timeout_seconds=timeout_seconds,
         idempotency_key=f"tool:{tool_name}",
+        operation_id=f"tool:{tool_name}",
+        operation_kind="tool_call",
+        local_budget=local_budget,
+        execution_limits=execution_limits,
     )
+    if supervised.state is AttemptState.REJECTED:
+        if supervised.error is None:
+            raise ToolRuntimeError("tool attempt admission was rejected without an error")
+        raise supervised.error
     if supervised.state is AttemptState.SUCCEEDED:
         return supervised.value
     if supervised.state is AttemptState.FAILED:
@@ -1015,20 +1199,6 @@ def _trace_scoped_executor(
             return executor(arguments)
 
     return execute
-
-
-def _bounded_timeout(
-    timeout_seconds: float | None,
-    parent_context: AttemptContext | None,
-) -> float | None:
-    parent_remaining = (
-        parent_context.remaining_seconds if parent_context is not None else None
-    )
-    if parent_remaining is None:
-        return timeout_seconds
-    if timeout_seconds is None or timeout_seconds <= 0:
-        return parent_remaining
-    return min(float(timeout_seconds), parent_remaining)
 
 
 def _retry_is_safe(definition: Any | None) -> bool:
@@ -1075,10 +1245,99 @@ def _tool_timeout_error(
         f"tool {tool_name} exceeded timeout of {timeout_text}",
         attempt_id=context.attempt_id,
         idempotency_key=context.idempotency_key,
-        fencing_token=context.fencing_token,
+        operation_id=context.operation_id,
+        operation_kind=context.operation_kind,
+        local_attempt_no=context.local_attempt_no,
+        retry_credit_id=context.retry_credit_id,
         termination_confirmed=termination_confirmed,
         indeterminate=indeterminate,
     )
+
+
+def _tool_execution_limits(
+    *,
+    parent_context: AttemptContext | None,
+    policy: ToolPolicy,
+    max_attempts: int,
+    idempotency_key: str,
+) -> ExecutionLimits:
+    if parent_context is not None and parent_context.execution_limits is not None:
+        return parent_context.execution_limits
+    max_total_retries = (
+        policy.max_total_retries
+        if policy.max_total_retries is not None
+        else max(0, max_attempts - 1)
+    )
+    return ExecutionLimits(
+        execution_id=f"standalone:{idempotency_key}",
+        retry_credits=RetryCreditLedger(max_total_retries=max_total_retries),
+    )
+
+
+def _tool_admission_policy(
+    *,
+    definition: Any | None,
+    policy: ToolPolicy,
+    timeout_seconds: float | None,
+    tool_name: str,
+) -> DeadlineAdmissionPolicy:
+    min_start_window = getattr(definition, "min_start_window_seconds", None)
+    cancellation_grace = getattr(
+        definition,
+        "cancellation_grace_seconds",
+        None,
+    )
+    completion_reserve = getattr(
+        definition,
+        "completion_reserve_seconds",
+        None,
+    )
+    return DeadlineAdmissionPolicy(
+        timeout_seconds=timeout_seconds,
+        min_start_window_seconds=(
+            policy.min_start_window_seconds
+            if min_start_window is None
+            else float(min_start_window)
+        ),
+        cancellation_grace_seconds=(
+            policy.cancellation_grace_seconds
+            if cancellation_grace is None
+            else float(cancellation_grace)
+        ),
+        completion_reserve_seconds=(
+            policy.completion_reserve_seconds
+            if completion_reserve is None
+            else float(completion_reserve)
+        ),
+        admission_details={"tool_name": tool_name},
+    )
+
+
+def _started_attempt_context(
+    outcome: Any,
+    *,
+    tool_name: str,
+) -> AttemptContext:
+    if outcome.context is None or not outcome.started:
+        raise ToolRuntimeError(
+            f"tool {tool_name} produced an execution outcome without an attempt context"
+        )
+    return outcome.context
+
+
+def _attempt_result_fields(
+    context: AttemptContext | None,
+) -> dict[str, Any]:
+    if context is None:
+        return {}
+    return {
+        "attempt_id": context.attempt_id,
+        "idempotency_key": context.idempotency_key,
+        "operation_id": context.operation_id,
+        "operation_kind": context.operation_kind,
+        "local_attempt_no": context.local_attempt_no,
+        "retry_credit_id": context.retry_credit_id,
+    }
 
 
 def _json_size_bytes(value: Any) -> int:

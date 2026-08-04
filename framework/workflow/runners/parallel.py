@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import replace
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from hashlib import sha256
+import math
 import re
 import time
 from typing import Any
 
 from framework.shared.attempts import (
-    AttemptBudget,
-    AttemptBudgetExhaustedError,
     AttemptContext,
+    AttemptIndeterminateError,
+    AttemptOutcome,
+    AttemptState,
+    AttemptSupervisor,
+    DeadlineAdmissionPolicy,
+    ExecutionLimits,
+    LocalRetryBudget,
+    RetryCreditLedger,
     bind_attempt_context,
     current_attempt_context,
     derive_idempotency_key,
@@ -114,18 +122,6 @@ class ParallelGroupStepRunner:
                 field="metadata.branches",
             )
         ]
-
-    def attempt_budget_limit(
-        self,
-        step: StepSpec,
-        _buffer: StepScopedDataBufferView,
-    ) -> int:
-        """Reserve configured branch retry permits before execution starts."""
-
-        branches = step.metadata.get("branches")
-        if not isinstance(branches, list) or not branches:
-            return 1
-        return 1 + sum(_branch_max_retries(dict(branch)) for branch in branches)
 
     def run(self, step: StepSpec, buffer: StepScopedDataBufferView) -> StepOutcome:
         started = time.perf_counter()
@@ -438,6 +434,17 @@ def _run_parallel_branches_with_policy(
     start_times: dict[Future[dict[str, Any]], float] = {}
     started_at_by_future: dict[Future[dict[str, Any]], str] = {}
     attempt_context = current_attempt_context()
+    execution_limits = (
+        attempt_context.execution_limits
+        if attempt_context is not None
+        and attempt_context.execution_limits is not None
+        else ExecutionLimits(
+            execution_id="standalone:parallel-group",
+            retry_credits=RetryCreditLedger(
+                max_total_retries=sum(_branch_max_retries(branch) for branch in branches)
+            ),
+        )
+    )
 
     for branch in branches:
         submitted_branch = _branch_with_attempt(branch, 1)
@@ -447,35 +454,14 @@ def _run_parallel_branches_with_policy(
             submitted_branch,
             parent_buffer,
             attempt_context,
+            execution_limits,
         )
         pending[future] = submitted_branch
         start_times[future] = time.perf_counter()
         started_at_by_future[future] = _utc_now_iso()
 
     while pending:
-        timeout = _next_parallel_wait_timeout(pending, start_times)
-        done, _ = wait(tuple(pending), timeout=timeout, return_when=FIRST_COMPLETED)
-        if not done:
-            for future in _timed_out_parallel_futures(pending, start_times):
-                branch = pending.pop(future)
-                cancellation_confirmed = future.cancel()
-                if not cancellation_confirmed and attempt_context is not None:
-                    attempt_context.mark_descendant_indeterminate()
-                    if not future.done():
-                        attempt_context.mark_descendant_unconfirmed()
-                failed_branch_results.append(
-                    _parallel_branch_failure_result(
-                        branch,
-                        TimeoutError(
-                            f"parallel_group branch {branch['branch_id']} exceeded timeout of "
-                            f"{_branch_timeout_seconds(branch):g} seconds"
-                        ),
-                        attempts=int(branch.get("_attempts") or 1),
-                        started_at=started_at_by_future.pop(future, None),
-                        started=start_times.pop(future, None),
-                    )
-                )
-            continue
+        done, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
         for future in done:
             branch = pending.pop(future)
             start_times.pop(future, None)
@@ -498,27 +484,36 @@ def _run_parallel_branch_with_context(
     branch: dict[str, Any],
     parent_buffer: StepScopedDataBufferView,
     attempt_context: AttemptContext | None,
+    execution_limits: ExecutionLimits,
 ) -> dict[str, Any]:
     if attempt_context is None:
-        return _run_parallel_branch_with_policy(registry, branch, parent_buffer)
+        return _run_parallel_branch_with_policy(
+            registry,
+            branch,
+            parent_buffer,
+            execution_limits=execution_limits,
+        )
     with bind_attempt_context(attempt_context):
-        return _run_parallel_branch_with_policy(registry, branch, parent_buffer)
+        return _run_parallel_branch_with_policy(
+            registry,
+            branch,
+            parent_buffer,
+            execution_limits=execution_limits,
+        )
 
 
 def _run_parallel_branch_with_policy(
     registry: FunctionStepRegistry,
     branch: dict[str, Any],
     parent_buffer: StepScopedDataBufferView,
+    *,
+    execution_limits: ExecutionLimits,
 ) -> dict[str, Any]:
     max_retries = _branch_max_retries(branch)
     retry_on_error_types = _branch_retry_on_error_types(branch)
     no_retry_on_error_types = _branch_no_retry_on_error_types(branch)
     parent_context = current_attempt_context()
-    budget = (
-        parent_context.budget
-        if parent_context is not None and parent_context.budget is not None
-        else AttemptBudget(max_attempts=max(1, max_retries + 1))
-    )
+    local_budget = LocalRetryBudget(max_attempts=max_retries + 1)
     branch_key = (
         derive_idempotency_key(
             parent_context.idempotency_key,
@@ -528,45 +523,102 @@ def _run_parallel_branch_with_policy(
         if parent_context is not None
         else f"parallel-branch:{branch['branch_id']}"
     )
-    attempts = 0
-    while True:
-        attempts += 1
-        attempt_branch = _branch_with_attempt(branch, attempts)
-        if attempts > 1:
-            try:
-                fencing_token = budget.claim()
-            except AttemptBudgetExhaustedError as exc:
-                raise _ParallelBranchExecutionError(exc, attempts=attempts) from exc
-        else:
-            fencing_token = parent_context.fencing_token if parent_context else 1
-        child_context = AttemptContext.create(
-            idempotency_key=branch_key,
-            fencing_token=fencing_token,
-            budget=budget,
-            parent_cancel_event=(
-                parent_context.cancel_event if parent_context else None
+    admission_policy = _branch_admission_policy(branch)
+    supervisor = AttemptSupervisor(
+        cancellation_grace_seconds=admission_policy.cancellation_grace_seconds
+    )
+
+    def finalize_branch_attempt(
+        outcome: AttemptOutcome[dict[str, Any]],
+    ) -> AttemptOutcome[dict[str, Any]]:
+        if bool(branch.get("_retry_safe")):
+            return outcome
+        if outcome.state is AttemptState.TIMED_OUT:
+            return replace(
+                outcome,
+                indeterminate=True,
+                reason_code=(
+                    outcome.reason_code or "parallel_branch_timeout_indeterminate"
+                ),
+            )
+        if outcome.state is AttemptState.FAILED:
+            return replace(
+                outcome,
+                state=AttemptState.INDETERMINATE,
+                indeterminate=True,
+                reason_code="parallel_branch_effect_indeterminate",
+            )
+        return outcome
+
+    while local_budget.remaining > 0:
+        candidate_attempt = local_budget.used + 1
+        attempt_branch = _branch_with_attempt(branch, candidate_attempt)
+        outcome = supervisor.run(
+            lambda: _run_parallel_branch(
+                registry,
+                attempt_branch,
+                parent_buffer,
             ),
-            timeout_seconds=_branch_timeout_seconds(branch),
+            timeout_seconds=admission_policy.timeout_seconds,
+            idempotency_key=branch_key,
+            operation_id=branch_key,
+            operation_kind="parallel_branch",
+            local_budget=local_budget,
+            admission_policy=admission_policy,
+            execution_limits=execution_limits,
+            parent_context=parent_context,
+            finalize=finalize_branch_attempt,
         )
-        try:
-            with bind_attempt_context(child_context):
-                return _run_parallel_branch(registry, attempt_branch, parent_buffer)
-        except Exception as exc:
-            if parent_context is not None and child_context.has_indeterminate_descendant:
-                parent_context.mark_descendant_indeterminate()
-            if not bool(branch.get("_retry_safe")):
-                if parent_context is not None:
+        if outcome.state is AttemptState.REJECTED:
+            error = outcome.error or StepExecutionError(
+                "parallel branch admission rejected without an error"
+            )
+            raise _ParallelBranchExecutionError(
+                error,
+                attempts=local_budget.used,
+            ) from error
+        if outcome.context is None:
+            raise RuntimeError("started parallel branch is missing attempt context")
+        attempts = outcome.context.local_attempt_no
+        if outcome.state is AttemptState.SUCCEEDED:
+            return outcome.value
+
+        error = outcome.error
+        if outcome.state is AttemptState.INDETERMINATE:
+            error = error or AttemptIndeterminateError(outcome.context.attempt_id)
+        elif outcome.state is AttemptState.TIMED_OUT:
+            error = TimeoutError(
+                f"parallel_group branch {branch['branch_id']} exceeded timeout of "
+                f"{_branch_timeout_text(admission_policy.timeout_seconds)}"
+            )
+        elif error is None:
+            error = StepExecutionError("parallel branch failed without an error")
+
+        indeterminate = (
+            outcome.indeterminate
+            or outcome.state is AttemptState.INDETERMINATE
+            or not bool(branch.get("_retry_safe"))
+        )
+        if indeterminate:
+            if parent_context is not None:
+                if not outcome.termination_confirmed:
+                    parent_context.mark_descendant_unconfirmed()
+                else:
                     parent_context.mark_descendant_indeterminate()
-                raise _ParallelBranchExecutionError(exc, attempts=attempts) from exc
-            if attempts > max_retries or not _should_retry_branch_error(
-                exc,
+            raise _ParallelBranchExecutionError(error, attempts=attempts) from error
+        if (
+            local_budget.remaining == 0
+            or not _should_retry_branch_error(
+                error,
                 retry_on_error_types=retry_on_error_types,
                 no_retry_on_error_types=no_retry_on_error_types,
-            ):
-                raise _ParallelBranchExecutionError(exc, attempts=attempts) from exc
-            delay = _branch_retry_delay_seconds(branch, attempts)
-            if delay > 0:
-                time.sleep(delay)
+            )
+        ):
+            raise _ParallelBranchExecutionError(error, attempts=attempts) from error
+        delay = _branch_retry_delay_seconds(branch, attempts)
+        if delay > 0:
+            time.sleep(delay)
+    raise RuntimeError("parallel branch retry loop exited unexpectedly")
 
 
 def _branch_with_attempt(branch: dict[str, Any], attempts: int) -> dict[str, Any]:
@@ -603,12 +655,69 @@ def _branch_timeout_seconds(branch: dict[str, Any]) -> float | None:
     value = branch.get("timeout_seconds")
     if value is None:
         return None
-    timeout = float(value)
-    if timeout <= 0:
+    if isinstance(value, bool):
         raise StepExecutionError(
-            "parallel_group branch timeout_seconds must be positive"
+            "parallel_group branch timeout_seconds must be a finite positive number"
+        )
+    timeout = float(value)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise StepExecutionError(
+            "parallel_group branch timeout_seconds must be a finite positive number"
         )
     return timeout
+
+
+def _branch_admission_policy(
+    branch: dict[str, Any],
+) -> DeadlineAdmissionPolicy:
+    timeout = _branch_timeout_seconds(branch)
+    min_start_window = _branch_non_negative_window(
+        branch,
+        "min_start_window_seconds",
+        default=0.0,
+    )
+    cancellation_grace = _branch_non_negative_window(
+        branch,
+        "cancellation_grace_seconds",
+        default=0.0,
+    )
+    completion_reserve = _branch_non_negative_window(
+        branch,
+        "completion_reserve_seconds",
+        default=0.0,
+    )
+    return DeadlineAdmissionPolicy(
+        timeout_seconds=timeout,
+        min_start_window_seconds=min_start_window,
+        cancellation_grace_seconds=cancellation_grace,
+        completion_reserve_seconds=completion_reserve,
+        admission_details={"branch_id": str(branch["branch_id"])},
+    )
+
+
+def _branch_non_negative_window(
+    branch: dict[str, Any],
+    field_name: str,
+    *,
+    default: float,
+) -> float:
+    raw = branch.get(field_name, default)
+    if isinstance(raw, bool):
+        raise StepExecutionError(
+            f"parallel_group branch {field_name} must be finite and non-negative"
+        )
+    value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        raise StepExecutionError(
+            f"parallel_group branch {field_name} must be finite and non-negative"
+        )
+    return value
+
+
+def _branch_timeout_text(timeout_seconds: float | None) -> str:
+    if timeout_seconds is None:
+        return "its effective deadline"
+    return f"{timeout_seconds:g} seconds"
 
 
 def _branch_retry_policy(branch: dict[str, Any]) -> dict[str, Any]:
@@ -641,9 +750,9 @@ def _branch_retry_delay_seconds(branch: dict[str, Any], attempt: int) -> float:
         return 0.0
     index = min(max(attempt - 1, 0), len(raw_delays) - 1)
     delay = float(raw_delays[index])
-    if delay < 0:
+    if not math.isfinite(delay) or delay < 0:
         raise StepExecutionError(
-            "parallel_group branch retry delay must be non-negative"
+            "parallel_group branch retry delay must be finite and non-negative"
         )
     return delay
 
@@ -674,44 +783,12 @@ def _should_retry_branch_error(
     retry_on_error_types: set[str],
     no_retry_on_error_types: set[str],
 ) -> bool:
-    if isinstance(exc, AttemptBudgetExhaustedError):
-        return False
     error_type = type(exc).__name__
     if error_type in no_retry_on_error_types:
         return False
     if retry_on_error_types and error_type not in retry_on_error_types:
         return False
     return True
-
-
-def _next_parallel_wait_timeout(
-    pending: dict[Future[dict[str, Any]], dict[str, Any]],
-    start_times: dict[Future[dict[str, Any]], float],
-) -> float | None:
-    timeouts: list[float] = []
-    now = time.perf_counter()
-    for future, branch in pending.items():
-        timeout = _branch_timeout_seconds(branch)
-        if timeout is None:
-            continue
-        remaining = timeout - (now - start_times[future])
-        timeouts.append(max(0.0, remaining))
-    if not timeouts:
-        return None
-    return min(timeouts)
-
-
-def _timed_out_parallel_futures(
-    pending: dict[Future[dict[str, Any]], dict[str, Any]],
-    start_times: dict[Future[dict[str, Any]], float],
-) -> list[Future[dict[str, Any]]]:
-    timed_out: list[Future[dict[str, Any]]] = []
-    now = time.perf_counter()
-    for future, branch in pending.items():
-        timeout = _branch_timeout_seconds(branch)
-        if timeout is not None and now - start_times[future] >= timeout:
-            timed_out.append(future)
-    return timed_out
 
 
 def _parallel_group_outputs(

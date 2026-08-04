@@ -1,4 +1,5 @@
 from framework.workers.models.dead_letter import DeadLetterRecord
+from framework.workers.models.execution_policy import WorkerExecutionPolicy
 from framework.workers.models.metrics import WorkerMetrics
 from framework.workers.models.result import TaskEnqueueResult, TaskResult
 from framework.workers.models.retry import TaskRetryPolicy
@@ -30,6 +31,7 @@ __all__ = [
     "TaskRetryPolicy",
     "TaskStatus",
     "WorkerMetrics",
+    "WorkerExecutionPolicy",
     "WorkerRecord",
     "WorkerStatus",
 ]

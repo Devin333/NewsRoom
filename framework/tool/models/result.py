@@ -99,7 +99,10 @@ class ToolResult:
     indeterminate: bool = False
     attempt_id: str | None = None
     idempotency_key: str | None = None
-    fencing_token: int | None = None
+    operation_id: str | None = None
+    operation_kind: str | None = None
+    local_attempt_no: int | None = None
+    retry_credit_id: str | None = None
     trace_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None
@@ -249,7 +252,10 @@ class ToolResult:
             "indeterminate": self.indeterminate,
             "attempt_id": self.attempt_id,
             "idempotency_key": self.idempotency_key,
-            "fencing_token": self.fencing_token,
+            "operation_id": self.operation_id,
+            "operation_kind": self.operation_kind,
+            "local_attempt_no": self.local_attempt_no,
+            "retry_credit_id": self.retry_credit_id,
             "trace_id": self.trace_id,
             "span_id": self.span_id,
             "parent_span_id": self.parent_span_id,
@@ -292,6 +298,9 @@ def _error_envelope(result: ToolResult) -> dict[str, Any] | None:
             "termination_confirmed": result.termination_confirmed,
             "indeterminate": result.indeterminate,
             "attempt_id": result.attempt_id,
-            "fencing_token": result.fencing_token,
+            "operation_id": result.operation_id,
+            "operation_kind": result.operation_kind,
+            "local_attempt_no": result.local_attempt_no,
+            "retry_credit_id": result.retry_credit_id,
         },
     }

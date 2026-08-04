@@ -1,5 +1,11 @@
 from business.layers.signal.worker_handlers import SourceHealthCheckTaskHandler
-from framework.shared.attempts import current_attempt_context
+from framework.shared.attempts import (
+    AdmissionResult,
+    AttemptContext,
+    AttemptOutcome,
+    AttemptState,
+    current_attempt_context,
+)
 from framework.workers import LeasedTask, Task, TaskResult, TaskStatus, WorkerStatus
 from infrastructure.storage.workers import RedisQueueStatus
 from interfaces.services.worker_service import (
@@ -7,6 +13,7 @@ from interfaces.services.worker_service import (
     DEFAULT_MEMORY_QUEUE,
     DEFAULT_SOURCE_QUEUE,
     WorkerApplicationService,
+    _WorkerAttemptTelemetrySink,
 )
 
 
@@ -102,6 +109,106 @@ def test_worker_service_run_once_requeues_failed_task_before_max_attempts() -> N
     assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
 
 
+def test_worker_failed_result_persists_failed_attempt_terminal() -> None:
+    task = Task(
+        task_type="memory.reindex",
+        payload={"run_id": "run-1"},
+        task_id="task-failed-terminal",
+        attempts=1,
+        max_attempts=3,
+    )
+    queue = _FakeQueue(leased=LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", task))
+    handler = _FakeHandler(success=False)
+
+    class _Sink:
+        def __init__(self) -> None:
+            self.outcomes: list[AttemptOutcome[object]] = []
+
+        def rejected(self, **_payload):
+            return None
+
+        def started(self, **_payload):
+            return None
+
+        def terminal(self, *, outcome):
+            self.outcomes.append(outcome)
+
+    sink = _Sink()
+    service = WorkerApplicationService(
+        queue=queue,
+        handlers={handler.task_type: handler},
+        attempt_event_sink_factory=lambda _leased, _limits: sink,
+    )
+
+    result = service.run_once(worker_id="worker-1", block_ms=10)
+
+    assert result.success is False
+    assert len(sink.outcomes) == 1
+    assert sink.outcomes[0].state is AttemptState.FAILED
+    assert sink.outcomes[0].reason_code == "FakeFailure"
+    assert isinstance(sink.outcomes[0].value, TaskResult)
+    assert sink.outcomes[0].value.success is False
+
+
+def test_worker_inconsistent_failure_status_is_normalized_before_terminal() -> None:
+    task = Task(
+        task_type="memory.reindex",
+        payload={"run_id": "run-1"},
+        task_id="task-inconsistent-terminal",
+        attempts=1,
+        max_attempts=3,
+    )
+    queue = _FakeQueue(leased=LeasedTask(DEFAULT_MEMORY_QUEUE, "1-0", task))
+
+    class _CancelledFailureHandler:
+        task_type = "memory.reindex"
+
+        def handle(self, leased_task):
+            return TaskResult(
+                task_id=leased_task.task_id,
+                success=False,
+                retryable=True,
+                status=TaskStatus.CANCELLED,
+                error_type="CancelledButReturned",
+                error_message="handler returned a contradictory status",
+            )
+
+    class _Sink:
+        def __init__(self) -> None:
+            self.outcomes: list[AttemptOutcome[object]] = []
+
+        def rejected(self, **_payload):
+            return None
+
+        def started(self, **_payload):
+            return None
+
+        def terminal(self, *, outcome):
+            self.outcomes.append(outcome)
+
+    handler = _CancelledFailureHandler()
+    sink = _Sink()
+    service = WorkerApplicationService(
+        queue=queue,
+        handlers={handler.task_type: handler},
+        attempt_event_sink_factory=lambda _leased, _limits: sink,
+    )
+
+    result = service.run_once(worker_id="worker-1", block_ms=10)
+
+    assert result.success is False
+    assert result.retryable is False
+    assert result.task_status is TaskStatus.FAILED
+    assert result.error_type == "WorkerInternalError"
+    assert queue.enqueued == []
+    assert queue.dead_letters == [(task, "task execution failed")]
+    assert len(sink.outcomes) == 1
+    assert sink.outcomes[0].state is AttemptState.FAILED
+    assert sink.outcomes[0].reason_code == "worker_task_result_inconsistent"
+    assert isinstance(sink.outcomes[0].value, TaskResult)
+    assert sink.outcomes[0].value.status is TaskStatus.FAILED
+
+
 def test_worker_service_run_once_dead_letters_non_retryable_task() -> None:
     task = Task(
         task_type="memory.reindex",
@@ -177,7 +284,7 @@ def test_worker_service_run_once_reclaims_stale_task_when_no_new_task() -> None:
     assert queue.acked == [(DEFAULT_MEMORY_QUEUE, "1-0")]
 
 
-def test_worker_service_binds_fenced_attempt_context_and_uses_guarded_ack() -> None:
+def test_worker_service_keeps_queue_fence_outside_attempt_identity() -> None:
     task = Task(task_type="memory.reindex", payload={}, task_id="task-1", attempts=2)
     leased = LeasedTask(
         DEFAULT_MEMORY_QUEUE,
@@ -197,14 +304,103 @@ def test_worker_service_binds_fenced_attempt_context_and_uses_guarded_ack() -> N
 
     assert result.success is True
     assert handler.context is not None
-    assert handler.context.attempt_id == "lease-2"
+    assert handler.context.attempt_id != "lease-2"
     assert handler.context.idempotency_key == "task:task-1"
-    assert handler.context.fencing_token == 2
-    assert handler.context.budget is not None
-    assert handler.context.budget.max_attempts == 1
-    assert handler.context.budget.used == 1
+    assert handler.context.operation_id == "task:task-1"
+    assert handler.context.local_attempt_no == 1
+    assert handler.context.local_budget is not None
+    assert handler.context.local_budget.max_attempts == 1
+    assert handler.context.local_budget.used == 1
+    assert not hasattr(handler.context, "fencing_token")
     assert queue.guarded_acks == [leased]
     assert queue.acked == []
+
+
+def test_worker_service_exposes_attempt_lifecycle_sink_without_queue_fence() -> None:
+    task = Task(task_type="memory.reindex", payload={}, task_id="task-events")
+    leased = LeasedTask(
+        DEFAULT_MEMORY_QUEUE,
+        "1-0",
+        task,
+        owner_id="worker-1",
+        lease_id="lease-events",
+        fencing_token=9,
+        effect_key="task:task-events",
+    )
+    queue = _FencedQueue(leased=leased)
+    handler = _ContextCapturingHandler()
+
+    class _Sink:
+        def __init__(self) -> None:
+            self.events = []
+
+        def rejected(self, **payload):
+            self.events.append(("rejected", payload))
+
+        def started(self, **payload):
+            self.events.append(("started", payload))
+
+        def terminal(self, **payload):
+            self.events.append(("terminal", payload))
+
+    sink = _Sink()
+    service = WorkerApplicationService(
+        queue=queue,
+        handlers={handler.task_type: handler},
+        attempt_event_sink_factory=lambda _leased, _limits: sink,
+    )
+
+    result = service.run_once(worker_id="worker-1", block_ms=10)
+
+    assert result.success is True
+    assert [event_type for event_type, _ in sink.events] == [
+        "started",
+        "terminal",
+    ]
+    started_context = sink.events[0][1]["context"]
+    assert started_context.operation_id == "task:task-events"
+    assert not hasattr(started_context, "fencing_token")
+    assert "fencing_token" not in str(sink.events)
+
+
+def test_worker_attempt_telemetry_sink_failure_is_isolated() -> None:
+    class _ThrowingSpan:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def add_event(self, _name, _attributes):
+            self.calls += 1
+            raise RuntimeError("telemetry unavailable")
+
+    span = _ThrowingSpan()
+    sink = _WorkerAttemptTelemetrySink(span)
+    context = AttemptContext.create(
+        operation_id="task:telemetry",
+        operation_kind="worker_handler",
+        idempotency_key="task:telemetry",
+    )
+
+    sink.rejected(
+        operation_id="task:telemetry",
+        operation_kind="worker_handler",
+        idempotency_key="task:telemetry",
+        admission=AdmissionResult(
+            admitted=False,
+            reason_code="attempt_capacity_exhausted",
+            effective_deadline=None,
+            execution_window_seconds=None,
+        ),
+    )
+    sink.started(context=context)
+    sink.terminal(
+        outcome=AttemptOutcome(
+            context=context,
+            state=AttemptState.SUCCEEDED,
+        )
+    )
+
+    assert sink.required is False
+    assert span.calls == 3
 
 
 def test_worker_service_lease_renewal_loss_cancels_context_and_rejects_terminal_write() -> None:
@@ -221,7 +417,26 @@ def test_worker_service_lease_renewal_loss_cancels_context_and_rejects_terminal_
     )
     queue = _FencedQueue(leased=leased, lose_renewal=True)
     handler = _CooperativeLongHandler()
-    service = WorkerApplicationService(queue=queue, handlers={handler.task_type: handler})
+
+    class _Sink:
+        def __init__(self) -> None:
+            self.outcomes: list[AttemptOutcome[object]] = []
+
+        def rejected(self, **_payload):
+            return None
+
+        def started(self, **_payload):
+            return None
+
+        def terminal(self, *, outcome):
+            self.outcomes.append(outcome)
+
+    sink = _Sink()
+    service = WorkerApplicationService(
+        queue=queue,
+        handlers={handler.task_type: handler},
+        attempt_event_sink_factory=lambda _leased, _limits: sink,
+    )
 
     result = service.run_once(worker_id="worker-1", block_ms=10)
 
@@ -233,6 +448,9 @@ def test_worker_service_lease_renewal_loss_cancels_context_and_rejects_terminal_
     assert handler.cancelled is True
     assert queue.guarded_acks == []
     assert queue.guarded_failures == []
+    assert len(sink.outcomes) == 1
+    assert sink.outcomes[0].state is AttemptState.INDETERMINATE
+    assert sink.outcomes[0].indeterminate is True
 
 
 def test_worker_service_raw_handler_exception_is_safe_and_keeps_correlation_id() -> None:

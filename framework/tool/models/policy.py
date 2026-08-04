@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 from framework.tool.models.definition import ToolDefinition
@@ -25,10 +26,11 @@ class ToolPolicy:
     max_result_chars_inline: int = 8000
     spill_large_results_to_artifact: bool = True
     timeout_seconds_default: float | None = 30.0
+    min_start_window_seconds: float = 0.0
     max_attempts_default: int = 1
     cancellation_grace_seconds: float = 0.1
-    # Fix #3: caps tool-level × step-level retry multiplication
-    max_total_attempts: int | None = None
+    completion_reserve_seconds: float = 0.0
+    max_total_retries: int | None = None
 
     def __post_init__(self) -> None:
         blocked = sorted({*self.blocked_tools, *self.denied_tools})
@@ -38,13 +40,40 @@ class ToolPolicy:
             object.__setattr__(self, "timeout_seconds_default", self.default_timeout_seconds)
         elif self.default_timeout_seconds == 30.0:
             object.__setattr__(self, "default_timeout_seconds", float(self.timeout_seconds_default))
-        if self.cancellation_grace_seconds < 0:
-            raise ValueError("cancellation_grace_seconds must be non-negative")
-        if self.max_total_attempts is not None and (
-            type(self.max_total_attempts) is not int
-            or self.max_total_attempts < 1
+        for name in (
+            "min_start_window_seconds",
+            "cancellation_grace_seconds",
+            "completion_reserve_seconds",
         ):
-            raise ValueError("max_total_attempts must be a positive integer")
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) < 0
+            ):
+                raise ValueError(f"{name} must be finite and non-negative")
+        if self.timeout_seconds_default is not None and (
+            isinstance(self.timeout_seconds_default, bool)
+            or not isinstance(self.timeout_seconds_default, (int, float))
+            or not math.isfinite(float(self.timeout_seconds_default))
+            or self.timeout_seconds_default <= 0
+        ):
+            raise ValueError("timeout_seconds_default must be finite and positive")
+        if (
+            self.timeout_seconds_default is not None
+            and self.min_start_window_seconds > self.timeout_seconds_default
+        ):
+            raise ValueError(
+                "min_start_window_seconds must not exceed timeout_seconds_default"
+            )
+        if type(self.max_attempts_default) is not int or self.max_attempts_default < 1:
+            raise ValueError("max_attempts_default must be a positive integer")
+        if self.max_total_retries is not None and (
+            type(self.max_total_retries) is not int
+            or self.max_total_retries < 0
+        ):
+            raise ValueError("max_total_retries must be a non-negative integer")
 
     def allows(self, tool_name: str) -> bool:
         if tool_name in self.blocked_tools:
@@ -107,9 +136,11 @@ class ToolPolicy:
             "max_result_chars_inline": self.max_result_chars_inline,
             "spill_large_results_to_artifact": self.spill_large_results_to_artifact,
             "timeout_seconds_default": self.timeout_seconds_default,
+            "min_start_window_seconds": self.min_start_window_seconds,
             "max_attempts_default": self.max_attempts_default,
             "cancellation_grace_seconds": self.cancellation_grace_seconds,
-            "max_total_attempts": self.max_total_attempts,
+            "completion_reserve_seconds": self.completion_reserve_seconds,
+            "max_total_retries": self.max_total_retries,
         }
 
     @classmethod
@@ -120,6 +151,11 @@ class ToolPolicy:
             return cls()
         data = value.to_dict() if hasattr(value, "to_dict") else value
         if isinstance(data, dict):
+            if "max_total_attempts" in data:
+                raise ValueError(
+                    "legacy max_total_attempts requires explicit migration to "
+                    "max_total_retries"
+                )
             supported = cls().to_dict().keys()
             return cls(**{key: data[key] for key in supported if key in data})
         return cls(
@@ -139,13 +175,19 @@ class ToolPolicy:
             max_result_chars_inline=int(getattr(value, "max_result_chars_inline", 8000)),
             spill_large_results_to_artifact=bool(getattr(value, "spill_large_results_to_artifact", True)),
             timeout_seconds_default=getattr(value, "timeout_seconds_default", 30.0),
+            min_start_window_seconds=float(
+                getattr(value, "min_start_window_seconds", 0.0)
+            ),
             max_attempts_default=int(getattr(value, "max_attempts_default", 1)),
             cancellation_grace_seconds=float(
                 getattr(value, "cancellation_grace_seconds", 0.1)
             ),
-            max_total_attempts=(
-                int(getattr(value, "max_total_attempts"))
-                if getattr(value, "max_total_attempts", None) is not None
+            completion_reserve_seconds=float(
+                getattr(value, "completion_reserve_seconds", 0.0)
+            ),
+            max_total_retries=(
+                int(getattr(value, "max_total_retries"))
+                if getattr(value, "max_total_retries", None) is not None
                 else None
             ),
         )

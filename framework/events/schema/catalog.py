@@ -612,6 +612,13 @@ WORKFLOW_OPERATION_EVENT_TYPES = (
     "run_operation_failed",
 )
 
+ATTEMPT_EVENT_DATA_SCHEMA = "newsroom.attempt-event/v1"
+ATTEMPT_EVENT_TYPES = (
+    "attempt_admission_rejected",
+    "attempt_started",
+    "attempt_terminal",
+)
+
 HARNESS_EVENT_ALIASES = (
     "run_created",
     "run_state_changed",
@@ -680,6 +687,17 @@ def default_event_schema_catalog(
                 data_schema="newsroom.workflow-operation/v1",
                 json_schema=_workflow_operation_payload_schema(event_type),
                 sensitivity_policy=_workflow_operation_sensitivity_policy(),
+                current=True,
+                authoritative_context_fields=_BUSINESS_CONTEXT_FIELDS,
+            )
+        )
+    for event_type in ATTEMPT_EVENT_TYPES:
+        catalog.register(
+            EventSchemaRegistration(
+                event_type=event_type,
+                data_schema=ATTEMPT_EVENT_DATA_SCHEMA,
+                json_schema=_attempt_payload_schema(event_type),
+                sensitivity_policy=SensitivityPolicy(),
                 current=True,
                 authoritative_context_fields=_BUSINESS_CONTEXT_FIELDS,
             )
@@ -758,6 +776,7 @@ _ARRAY_OF_TEXT = {"type": "array", "items": _TEXT, "maxItems": 4096}
 _NONNEGATIVE_INTEGER = {"type": "integer", "minimum": 0}
 _POSITIVE_INTEGER = {"type": "integer", "minimum": 1}
 _NUMBER = {"type": "number"}
+_NULLABLE_NUMBER = {"type": ["number", "null"]}
 _NONNEGATIVE_NUMBER = {"type": "number", "minimum": 0}
 _POSITIVE_NUMBER = {"type": "number", "exclusiveMinimum": 0}
 _NULLABLE_POSITIVE_NUMBER = {
@@ -1364,6 +1383,141 @@ def _payload_schema(
     return schema
 
 
+_ATTEMPT_BUDGET_SNAPSHOT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "max_attempts": _POSITIVE_INTEGER,
+        "used_attempts": _NONNEGATIVE_INTEGER,
+        "remaining_attempts": _NONNEGATIVE_INTEGER,
+    },
+    "required": ["max_attempts", "used_attempts", "remaining_attempts"],
+    "additionalProperties": False,
+}
+
+_RETRY_CREDIT_SNAPSHOT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "max_total_retries": _NONNEGATIVE_INTEGER,
+        "used_retries": _NONNEGATIVE_INTEGER,
+        "remaining_retries": _NONNEGATIVE_INTEGER,
+    },
+    "required": [
+        "max_total_retries",
+        "used_retries",
+        "remaining_retries",
+    ],
+    "additionalProperties": False,
+}
+
+_ATTEMPT_DEADLINE_CALCULATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "now_monotonic": _NUMBER,
+        "requested_until": _NULLABLE_NUMBER,
+        "parent_available_until": _NULLABLE_NUMBER,
+        "root_available_until": _NULLABLE_NUMBER,
+        "completion_until": _NULLABLE_NUMBER,
+        "effective_deadline": _NULLABLE_NUMBER,
+        "execution_window_seconds": _NULLABLE_NUMBER,
+        "min_start_window_seconds": _NONNEGATIVE_NUMBER,
+        "cancellation_grace_seconds": _NONNEGATIVE_NUMBER,
+        "completion_reserve_seconds": _NONNEGATIVE_NUMBER,
+    },
+    "required": [
+        "now_monotonic",
+        "requested_until",
+        "parent_available_until",
+        "root_available_until",
+        "completion_until",
+        "effective_deadline",
+        "execution_window_seconds",
+        "min_start_window_seconds",
+        "cancellation_grace_seconds",
+        "completion_reserve_seconds",
+    ],
+    "additionalProperties": False,
+}
+
+
+def _attempt_payload_schema(event_type: str) -> dict[str, Any]:
+    common = {
+        "execution_id": _TEXT,
+        "operation_id": _TEXT,
+        "operation_kind": _TEXT,
+        "idempotency_key": _TEXT,
+        "started": _BOOLEAN,
+        "deadline_calculation": _ATTEMPT_DEADLINE_CALCULATION_SCHEMA,
+        "local_budget": _ATTEMPT_BUDGET_SNAPSHOT_SCHEMA,
+        "root_retry_credits": _RETRY_CREDIT_SNAPSHOT_SCHEMA,
+    }
+    common_required = (
+        "execution_id",
+        "operation_id",
+        "operation_kind",
+        "idempotency_key",
+        "started",
+        "deadline_calculation",
+        "local_budget",
+        "root_retry_credits",
+    )
+    if event_type == "attempt_admission_rejected":
+        return _payload_schema(
+            properties={
+                **common,
+                "started": {"const": False},
+                "reason_code": _TEXT,
+            },
+            required=(*common_required, "reason_code"),
+        )
+    started_properties = {
+        **common,
+        "started": {"const": True},
+        "attempt_id": _TEXT,
+        "local_attempt_no": _POSITIVE_INTEGER,
+        "retry_credit_id": _NULLABLE_TEXT,
+        "parent_attempt_id": _NULLABLE_TEXT,
+    }
+    started_required = (
+        *common_required,
+        "attempt_id",
+        "local_attempt_no",
+        "retry_credit_id",
+        "parent_attempt_id",
+    )
+    if event_type == "attempt_started":
+        return _payload_schema(
+            properties=started_properties,
+            required=started_required,
+        )
+    if event_type == "attempt_terminal":
+        return _payload_schema(
+            properties={
+                **started_properties,
+                "state": {
+                    "enum": [
+                        "SUCCEEDED",
+                        "FAILED",
+                        "TIMED_OUT",
+                        "INDETERMINATE",
+                    ]
+                },
+                "reason_code": _NULLABLE_TEXT,
+                "termination_confirmed": _BOOLEAN,
+                "indeterminate": _BOOLEAN,
+                "elapsed_seconds": _NONNEGATIVE_NUMBER,
+            },
+            required=(
+                *started_required,
+                "state",
+                "reason_code",
+                "termination_confirmed",
+                "indeterminate",
+                "elapsed_seconds",
+            ),
+        )
+    raise EventSchemaError(f"Attempt event schema is not defined: {event_type}")
+
+
 def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
     if event_type == "workflow_started":
         return _payload_schema(
@@ -1625,7 +1779,11 @@ def _workflow_payload_schema(event_type: str) -> dict[str, Any]:
                 "configured_timeout_seconds": _NULLABLE_POSITIVE_NUMBER,
                 "effective_timeout_seconds": _NULLABLE_POSITIVE_NUMBER,
                 "cancellation_source": {
-                    "enum": ["step_deadline", "parent_attempt"]
+                    "enum": [
+                        "step_deadline",
+                        "parent_attempt",
+                        "root_hard_deadline",
+                    ]
                 },
                 "on_timeout": {"enum": ["fail", "retry"]},
                 "termination_confirmed": {"type": ["boolean", "null"]},

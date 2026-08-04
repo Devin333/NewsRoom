@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from pathlib import Path
@@ -21,9 +21,18 @@ from framework.events import (
     trace_context_scope,
 )
 from framework.shared.attempts import (
-    AttemptBudget,
+    AdmissionResult,
     AttemptContext,
-    bind_attempt_context,
+    AttemptLifecycleSink,
+    AttemptOutcome,
+    AttemptState,
+    AttemptSupervisor,
+    CompositeAttemptLifecycleSink,
+    DeadlineAdmissionPolicy,
+    ExecutionLimits,
+    LocalRetryBudget,
+    RetryCreditLedger,
+    current_attempt_context,
 )
 from framework.shared.public_errors import project_public_error, sanitize_public_error_fields
 from framework.workers import (
@@ -35,6 +44,7 @@ from framework.workers import (
     TaskStatus,
     WorkerHeartbeat,
     WorkerHeartbeatStatus,
+    WorkerExecutionPolicy,
     WorkerStatus,
 )
 from framework.workers.registry.handler import TaskHandler
@@ -54,6 +64,74 @@ DEFAULT_SOURCE_QUEUE = "news:queue:sources"
 DEFAULT_DEAD_LETTER_QUEUE = "news:queue:dead-letter"
 WORKER_STATUS_CHOICES = tuple(status.value for status in WorkerStatus)
 DEFAULT_WORKER_STATUS = WorkerStatus.RUNNING.value
+
+
+class _WorkerAttemptTelemetrySink:
+    """Mirror worker attempt facts onto a failure-isolated telemetry span."""
+
+    required = False
+
+    def __init__(self, span: Any) -> None:
+        self._span = span
+
+    def _add_event(self, name: str, attributes: dict[str, Any]) -> None:
+        try:
+            self._span.add_event(name, attributes)
+        except Exception:
+            return
+
+    def rejected(
+        self,
+        *,
+        operation_id: str,
+        operation_kind: str,
+        idempotency_key: str,
+        admission: AdmissionResult,
+    ) -> None:
+        if operation_kind != "worker_handler":
+            return
+        self._add_event(
+            "attempt_admission_rejected",
+            {
+                "newsroom.attempt.operation_id": operation_id,
+                "newsroom.attempt.operation_kind": operation_kind,
+                "newsroom.attempt.idempotency_key": idempotency_key,
+                "newsroom.attempt.started": False,
+                "newsroom.attempt.reason_code": admission.reason_code or "unknown",
+            },
+        )
+
+    def started(self, *, context: AttemptContext) -> None:
+        if context.operation_kind != "worker_handler":
+            return
+        self._add_event(
+            "attempt_started",
+            {
+                "newsroom.attempt.operation_id": context.operation_id or "unknown",
+                "newsroom.attempt.operation_kind": context.operation_kind,
+                "newsroom.attempt.idempotency_key": context.idempotency_key,
+                "newsroom.attempt.attempt_id": context.attempt_id,
+                "newsroom.attempt.local_attempt_no": context.local_attempt_no,
+            },
+        )
+
+    def terminal(self, *, outcome: AttemptOutcome[object]) -> None:
+        context = outcome.context
+        if context is None or context.operation_kind != "worker_handler":
+            return
+        self._add_event(
+            "attempt_terminal",
+            {
+                "newsroom.attempt.operation_id": context.operation_id or "unknown",
+                "newsroom.attempt.operation_kind": context.operation_kind,
+                "newsroom.attempt.attempt_id": context.attempt_id,
+                "newsroom.attempt.state": outcome.state.value,
+                "newsroom.attempt.termination_confirmed": (
+                    outcome.termination_confirmed
+                ),
+                "newsroom.attempt.indeterminate": outcome.indeterminate,
+            },
+        )
 
 
 @dataclass(frozen=True)
@@ -186,6 +264,10 @@ class WorkerApplicationService:
         source_service_factory: Callable[[], SourceApplicationService] | None = None,
         trace_propagator: W3CTracePropagator | None = None,
         telemetry: EventTelemetry | None = None,
+        attempt_event_sink_factory: Callable[
+            [LeasedTask, ExecutionLimits], AttemptLifecycleSink | None
+        ]
+        | None = None,
     ) -> None:
         self.artifact_root = Path(artifact_root)
         redis_client = None
@@ -212,6 +294,7 @@ class WorkerApplicationService:
                 version="1",
             ),
         )
+        self._attempt_event_sink_factory = attempt_event_sink_factory
 
     @property
     def handlers(self) -> dict[str, TaskHandler]:
@@ -493,27 +576,48 @@ class WorkerApplicationService:
                     error_message=f"no handler for {leased.task.task_type}",
                 )
             ), None
-        raw_total_attempts = leased.task.metadata.get("max_total_attempts", 1)
-        if type(raw_total_attempts) is not int or raw_total_attempts < 1:
-            exc = ValueError("max_total_attempts must be a positive integer")
+        try:
+            if "max_total_attempts" in leased.task.metadata:
+                raise ValueError(
+                    "legacy max_total_attempts requires explicit migration to "
+                    "max_total_retries"
+                )
+            raw_policy = leased.task.metadata.get("execution_policy")
+            if raw_policy is not None and not isinstance(raw_policy, dict):
+                raise ValueError("worker execution_policy must be an object")
+            policy = WorkerExecutionPolicy.from_mapping(raw_policy)
+            timeout_seconds = (
+                float(leased.task.timeout_seconds)
+                if leased.task.timeout_seconds is not None
+                else None
+            )
+            policy.validate_timeout(timeout_seconds)
+        except (TypeError, ValueError) as exc:
             return _sanitize_task_result(
                 TaskResult(
                     task_id=leased.task.task_id,
                     success=False,
                     retryable=False,
                     status=TaskStatus.FAILED,
-                    error_type="InvalidAttemptBudget",
-                    error_message="max_total_attempts must be a positive integer",
+                    error_type="InvalidWorkerExecutionPolicy",
+                    error_message=str(exc),
                 )
             ), exc
-        max_total_attempts = raw_total_attempts
-        attempt_budget = AttemptBudget(max_attempts=max_total_attempts)
-        attempt_budget.claim()
-        context = AttemptContext.create(
-            attempt_id=leased.lease_id,
-            idempotency_key=leased.effect_key or f"task:{leased.task.task_id}",
-            fencing_token=leased.fencing_token or max(1, leased.task.attempts),
-            budget=attempt_budget,
+
+        logical_key = leased.effect_key or f"task:{leased.task.task_id}"
+        execution_limits = ExecutionLimits(
+            execution_id=f"worker:{leased.task.task_id}:{leased.lease_id or leased.message_id}",
+            hard_deadline=(
+                time.monotonic() + timeout_seconds
+                if timeout_seconds is not None
+                else None
+            ),
+            retry_credits=RetryCreditLedger(
+                max_total_retries=policy.max_total_retries
+            ),
+            cancellation_grace_seconds=policy.cancellation_grace_seconds,
+            verify_reserve_seconds=policy.verify_reserve_seconds,
+            commit_reserve_seconds=policy.commit_reserve_seconds,
         )
         extracted_trace = self._trace_propagator.extract_span(
             leased.task.trace_carrier
@@ -527,13 +631,43 @@ class WorkerApplicationService:
         )
         stop_renewal = threading.Event()
         renewal_failures: list[BaseException] = []
-        renewal_thread = self._start_lease_renewer(
-            leased,
-            context=context,
-            stop_event=stop_renewal,
-            failures=renewal_failures,
-        )
-        try:
+        renewal_thread_holder: list[threading.Thread] = []
+        renewal_cleanup_lock = threading.Lock()
+        renewal_cleanup_done = False
+
+        def stop_lease_renewal_once() -> None:
+            nonlocal renewal_cleanup_done
+            with renewal_cleanup_lock:
+                if renewal_cleanup_done:
+                    return
+                stop_renewal.set()
+                unconfirmed_threads: list[str] = []
+                for renewal_thread in tuple(renewal_thread_holder):
+                    renewal_thread.join(timeout=1.0)
+                    if renewal_thread.is_alive():
+                        unconfirmed_threads.append(renewal_thread.name)
+                if unconfirmed_threads:
+                    raise RuntimeError(
+                        "worker lease renewal cleanup did not terminate: "
+                        + ", ".join(unconfirmed_threads)
+                    )
+                renewal_cleanup_done = True
+
+        def prepare_handler(_identity: Any) -> Callable[[], None]:
+            renewal_thread = self._start_lease_renewer(
+                leased,
+                cancel_event=execution_limits.cancel_event,
+                stop_event=stop_renewal,
+                failures=renewal_failures,
+            )
+            if renewal_thread is not None:
+                renewal_thread_holder.append(renewal_thread)
+            return stop_lease_renewal_once
+
+        def invoke_handler() -> TaskResult:
+            context = current_attempt_context()
+            if context is None:
+                raise RuntimeError("worker handler is missing attempt context")
             with trace_context_scope(consumer_trace), self._telemetry.start_span(
                 "newsroom.worker.consume",
                 attributes={
@@ -545,15 +679,160 @@ class WorkerApplicationService:
                     "newsroom.worker.attempt_bucket": attempt_bucket,
                 },
                 links=(trace_link,),
-            ), bind_attempt_context(context):
+            ):
                 result = handler.handle(leased.task)
                 context.raise_if_cancelled()
-        except Exception as exc:
-            result = _task_result_from_exception(leased.task, exc)
+                return result
+
+        def finalize_handler_attempt(
+            outcome: AttemptOutcome[TaskResult],
+        ) -> AttemptOutcome[TaskResult]:
+            stop_lease_renewal_once()
+            if renewal_failures:
+                failure = renewal_failures[0]
+                return replace(
+                    outcome,
+                    state=AttemptState.INDETERMINATE,
+                    value=None,
+                    error=failure,
+                    indeterminate=True,
+                    reason_code=type(failure).__name__,
+                )
+            if outcome.state is not AttemptState.SUCCEEDED:
+                return outcome
+            result = outcome.value
+            if not isinstance(result, TaskResult):
+                error = TypeError("worker handler must return TaskResult")
+                return replace(
+                    outcome,
+                    state=AttemptState.FAILED,
+                    value=None,
+                    error=error,
+                    reason_code=type(error).__name__,
+                )
+            if result.success and result.status is TaskStatus.SUCCEEDED:
+                return outcome
+            if result.success or result.status is not TaskStatus.FAILED:
+                error = ValueError(
+                    "worker handler returned inconsistent TaskResult success/status"
+                )
+                normalized = TaskResult(
+                    task_id=leased.task.task_id,
+                    success=False,
+                    retryable=False,
+                    status=TaskStatus.FAILED,
+                    error_type="WorkerTaskResultInconsistent",
+                    error_message=(
+                        "worker handler result must use success=true/status=succeeded "
+                        "or success=false/status=failed"
+                    ),
+                )
+                return replace(
+                    outcome,
+                    state=AttemptState.FAILED,
+                    value=normalized,
+                    error=error,
+                    reason_code="worker_task_result_inconsistent",
+                )
+            error = RuntimeError(
+                result.error_message
+                or result.error_type
+                or "worker handler returned a failed TaskResult"
+            )
+            return replace(
+                outcome,
+                state=AttemptState.FAILED,
+                value=result,
+                error=error,
+                reason_code=result.error_type or "worker_task_failed",
+            )
+
+        try:
+            custom_attempt_sink = (
+                self._attempt_event_sink_factory(leased, execution_limits)
+                if self._attempt_event_sink_factory is not None
+                else None
+            )
+            with self._telemetry.start_span(
+                "newsroom.worker.attempt",
+                attributes={
+                    "newsroom.component": "worker",
+                    "newsroom.operation": "attempt",
+                    "newsroom.transport": "worker",
+                    "newsroom.worker.task_type": leased.task.task_type,
+                    "newsroom.worker.queue": leased.task.queue_name,
+                    "newsroom.worker.attempt_bucket": attempt_bucket,
+                },
+                links=(trace_link,),
+            ) as attempt_span:
+                telemetry_attempt_sink = _WorkerAttemptTelemetrySink(attempt_span)
+                attempt_sink = (
+                    CompositeAttemptLifecycleSink(
+                        (custom_attempt_sink, telemetry_attempt_sink)
+                    )
+                    if custom_attempt_sink is not None
+                    else telemetry_attempt_sink
+                )
+                outcome = AttemptSupervisor(
+                    cancellation_grace_seconds=policy.cancellation_grace_seconds
+                ).run(
+                    invoke_handler,
+                    timeout_seconds=timeout_seconds,
+                    idempotency_key=logical_key,
+                    operation_id=logical_key,
+                    operation_kind="worker_handler",
+                    local_budget=LocalRetryBudget(max_attempts=1),
+                    admission_policy=DeadlineAdmissionPolicy(
+                        timeout_seconds=timeout_seconds,
+                        min_start_window_seconds=policy.min_start_window_seconds,
+                        cancellation_grace_seconds=policy.cancellation_grace_seconds,
+                        completion_reserve_seconds=policy.completion_reserve_seconds,
+                        admission_details={
+                            "task_id": leased.task.task_id,
+                            "task_type": leased.task.task_type,
+                        },
+                    ),
+                    execution_limits=execution_limits,
+                    cancel_event=execution_limits.cancel_event,
+                    prepare=prepare_handler,
+                    finalize=finalize_handler_attempt,
+                    event_sink=attempt_sink,
+                )
+            if outcome.state is AttemptState.REJECTED:
+                exc = outcome.error or RuntimeError(
+                    "worker handler admission rejected without an error"
+                )
+                return _task_result_from_exception(
+                    leased.task,
+                    exc,
+                    retryable=False,
+                ), exc
+            if outcome.state is AttemptState.SUCCEEDED:
+                result = outcome.value
+                if not isinstance(result, TaskResult):
+                    raise TypeError("worker handler must return TaskResult")
+            elif outcome.state is AttemptState.FAILED:
+                if isinstance(outcome.value, TaskResult):
+                    result = outcome.value
+                else:
+                    exc = outcome.error or RuntimeError(
+                        "worker handler failed without an error"
+                    )
+                    result = _task_result_from_exception(leased.task, exc)
+            else:
+                exc = outcome.error or TimeoutError(
+                    "worker handler did not terminate deterministically"
+                )
+                result = _task_result_from_exception(
+                    leased.task,
+                    exc,
+                    retryable=(
+                        outcome.termination_confirmed
+                        and not outcome.indeterminate
+                    ),
+                )
         finally:
-            stop_renewal.set()
-            if renewal_thread is not None:
-                renewal_thread.join(timeout=1.0)
+            stop_lease_renewal_once()
         if renewal_failures:
             return _task_result_from_exception(
                 leased.task,
@@ -566,7 +845,7 @@ class WorkerApplicationService:
         self,
         leased: LeasedTask,
         *,
-        context: AttemptContext,
+        cancel_event: threading.Event,
         stop_event: threading.Event,
         failures: list[BaseException],
     ) -> threading.Thread | None:
@@ -584,7 +863,7 @@ class WorkerApplicationService:
                     renew(leased)
                 except BaseException as exc:  # noqa: BLE001 - ownership loss is fail-closed
                     failures.append(exc)
-                    context.cancel()
+                    cancel_event.set()
                     return
 
         thread = threading.Thread(

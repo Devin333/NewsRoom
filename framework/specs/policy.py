@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 from framework.specs.validation import WorkflowSpecError
@@ -106,11 +107,42 @@ class FailurePolicySpec:
 @dataclass(frozen=True)
 class TimeoutPolicySpec:
     timeout_seconds: float | None = None
+    min_start_window_seconds: float = 0.0
+    cancellation_grace_seconds: float | None = None
+    completion_reserve_seconds: float = 0.0
     on_timeout: str = "fail"
 
     def __post_init__(self) -> None:
-        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
-            raise WorkflowSpecError("timeout_seconds must be positive when set")
+        if self.timeout_seconds is not None:
+            _finite_number(
+                "timeout_seconds",
+                self.timeout_seconds,
+                minimum=0.0,
+                strict_minimum=True,
+            )
+        _finite_number(
+            "min_start_window_seconds",
+            self.min_start_window_seconds,
+            minimum=0.0,
+        )
+        if self.cancellation_grace_seconds is not None:
+            _finite_number(
+                "cancellation_grace_seconds",
+                self.cancellation_grace_seconds,
+                minimum=0.0,
+            )
+        _finite_number(
+            "completion_reserve_seconds",
+            self.completion_reserve_seconds,
+            minimum=0.0,
+        )
+        if (
+            self.timeout_seconds is not None
+            and self.min_start_window_seconds > self.timeout_seconds
+        ):
+            raise WorkflowSpecError(
+                "min_start_window_seconds must not exceed timeout_seconds"
+            )
         if self.on_timeout not in {"fail", "retry"}:
             raise WorkflowSpecError("on_timeout must be one of: fail, retry")
 
@@ -120,7 +152,45 @@ class TimeoutPolicySpec:
     def to_dict(self) -> dict[str, Any]:
         return {
             "timeout_seconds": self.timeout_seconds,
+            "min_start_window_seconds": self.min_start_window_seconds,
+            "cancellation_grace_seconds": self.cancellation_grace_seconds,
+            "completion_reserve_seconds": self.completion_reserve_seconds,
             "on_timeout": self.on_timeout,
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionPolicySpec:
+    max_total_retries: int | None = None
+    cancellation_grace_seconds: float = 0.1
+    verify_reserve_seconds: float = 0.0
+    commit_reserve_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.max_total_retries is not None and (
+            type(self.max_total_retries) is not int
+            or self.max_total_retries < 0
+        ):
+            raise WorkflowSpecError(
+                "max_total_retries must be a non-negative integer when set"
+            )
+        for field_name in (
+            "cancellation_grace_seconds",
+            "verify_reserve_seconds",
+            "commit_reserve_seconds",
+        ):
+            _finite_number(
+                field_name,
+                getattr(self, field_name),
+                minimum=0.0,
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_total_retries": self.max_total_retries,
+            "cancellation_grace_seconds": self.cancellation_grace_seconds,
+            "verify_reserve_seconds": self.verify_reserve_seconds,
+            "commit_reserve_seconds": self.commit_reserve_seconds,
         }
 
 
@@ -366,6 +436,7 @@ class RuntimeQualityPolicySpec:
 
 @dataclass(frozen=True, init=False)
 class WorkflowPolicySpec:
+    execution_policy: ExecutionPolicySpec = field(default_factory=ExecutionPolicySpec)
     retry_policy: RetryPolicySpec = field(default_factory=RetryPolicySpec)
     timeout_policy: TimeoutPolicySpec = field(default_factory=TimeoutPolicySpec)
     failure_policy: FailurePolicySpec = field(default_factory=FailurePolicySpec)
@@ -378,6 +449,7 @@ class WorkflowPolicySpec:
 
     def __init__(
         self,
+        execution_policy: ExecutionPolicySpec | dict[str, Any] | None = None,
         retry_policy: RetryPolicySpec | dict[str, Any] | None = None,
         timeout_policy: TimeoutPolicySpec | dict[str, Any] | None = None,
         failure_policy: FailurePolicySpec | dict[str, Any] | None = None,
@@ -388,6 +460,7 @@ class WorkflowPolicySpec:
         runtime_quality: RuntimeQualityPolicySpec | dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         *,
+        execution: ExecutionPolicySpec | dict[str, Any] | None = None,
         retry: RetryPolicySpec | dict[str, Any] | None = None,
         timeout: TimeoutPolicySpec | dict[str, Any] | None = None,
         failure: FailurePolicySpec | dict[str, Any] | None = None,
@@ -396,6 +469,13 @@ class WorkflowPolicySpec:
         artifact: ArtifactPolicySpec | dict[str, Any] | None = None,
         lineage: LineagePolicySpec | dict[str, Any] | None = None,
     ) -> None:
+        object.__setattr__(
+            self,
+            "execution_policy",
+            execution
+            if execution is not None
+            else execution_policy or ExecutionPolicySpec(),
+        )
         object.__setattr__(self, "retry_policy", retry if retry is not None else retry_policy or RetryPolicySpec())
         object.__setattr__(
             self,
@@ -436,6 +516,7 @@ class WorkflowPolicySpec:
         self.__post_init__()
 
     def __post_init__(self) -> None:
+        _coerce_policy(self, "execution_policy", ExecutionPolicySpec)
         _coerce_policy(self, "retry_policy", RetryPolicySpec)
         _coerce_policy(self, "timeout_policy", TimeoutPolicySpec)
         _coerce_policy(self, "failure_policy", FailurePolicySpec)
@@ -472,6 +553,10 @@ class WorkflowPolicySpec:
             )
 
     @property
+    def execution(self) -> ExecutionPolicySpec:
+        return self.execution_policy
+
+    @property
     def retry(self) -> RetryPolicySpec:
         return self.retry_policy
 
@@ -501,6 +586,7 @@ class WorkflowPolicySpec:
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
+            "execution_policy": self.execution_policy.to_dict(),
             "retry_policy": self.retry_policy.to_dict(),
             "timeout_policy": self.timeout_policy.to_dict(),
             "failure_policy": self.failure_policy.to_dict(),
@@ -528,11 +614,31 @@ def _coerce_policy(owner: Any, field_name: str, model: type) -> None:
         object.__setattr__(owner, field_name, model(**value))
 
 
+def _finite_number(
+    field_name: str,
+    value: Any,
+    *,
+    minimum: float,
+    strict_minimum: bool = False,
+) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise WorkflowSpecError(f"{field_name} must be a finite number")
+    if strict_minimum and float(value) <= minimum:
+        raise WorkflowSpecError(f"{field_name} must be greater than {minimum:g}")
+    if not strict_minimum and float(value) < minimum:
+        raise WorkflowSpecError(f"{field_name} must be at least {minimum:g}")
+
+
 __all__ = [
     "ArtifactPolicySpec",
     "FailurePolicySpec",
     "LineagePolicySpec",
     "EvaluationPolicySpec",
+    "ExecutionPolicySpec",
     "GatePolicySpec",
     "RuntimeQualityPolicySpec",
     "QualityPolicySpec",

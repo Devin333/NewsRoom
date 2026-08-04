@@ -13,6 +13,12 @@ from framework.workflow.runtime.errors import (
 from framework.workflow.runtime.result import StepOutcome, WorkflowError, WorkflowResult
 from framework.workflow.runtime.run_result import RunResult
 from framework.workflow.runtime.state import StepRuntimeState, WorkflowRuntimeState
+from framework.shared.attempt_history import (
+    AttemptHistoryProjection,
+    decode_attempt_history,
+    decode_attempt_history_many,
+)
+from framework.workflow.runtime.attempt_event_sink import WorkflowDurableAttemptSink
 
 if TYPE_CHECKING:
     from framework.workflow.runtime.executor import WorkflowExecutor
@@ -20,11 +26,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "StepExecutionError",
+    "AttemptHistoryProjection",
     "StepOutcome",
     "StepRunContext",
     "StepRuntimeState",
     "RunResult",
     "WorkflowCancellationError",
+    "WorkflowDurableAttemptSink",
     "WorkflowError",
     "WorkflowExecutionError",
     "WorkflowExecutor",
@@ -34,6 +42,8 @@ __all__ = [
     "WorkflowRuntimeError",
     "WorkflowRuntimeState",
     "WorkflowRunner",
+    "decode_attempt_history",
+    "decode_attempt_history_many",
 ]
 
 

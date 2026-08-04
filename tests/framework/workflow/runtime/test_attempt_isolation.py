@@ -7,9 +7,20 @@ from typing import Any
 
 import pytest
 
-from framework.shared.attempts import current_attempt_context
+from framework.shared.attempts import (
+    AttemptLifecycleEmissionError,
+    ExecutionLimits,
+    RetryCreditLedger,
+    current_attempt_context,
+)
 from framework.specs import StepSpec, StepStatus, StepType
-from framework.tool import ToolDefinition, ToolRegistry, ToolSideEffect
+from framework.tool import (
+    MCPServerConfig,
+    MCPToolAdapter,
+    ToolDefinition,
+    ToolRegistry,
+    ToolSideEffect,
+)
 from framework.workflow.buffer import (
     BufferValueSchema,
     DataBuffer,
@@ -91,7 +102,7 @@ class _CooperativeRunner:
         context = current_attempt_context()
         assert context is not None
         self.contexts.append(
-            (context.attempt_id, context.idempotency_key, context.fencing_token)
+            (context.attempt_id, context.idempotency_key, context.local_attempt_no)
         )
         self.effects.append("called")
         if len(self.contexts) == 1:
@@ -107,8 +118,43 @@ class _CooperativeRunner:
         )
 
 
+class _ImmediateWriteRunner:
+    capability = StepRunnerCapability(
+        step_type=StepType.FUNCTION,
+        runner_id="test.immediate_write",
+        version="1.0",
+        supports_checkpoint=True,
+        supports_resume=False,
+        supports_timeout=True,
+        supports_retry=True,
+        side_effect_level=StepRunnerSideEffectLevel.NONE,
+    )
+
+    def can_resolve(self, step: StepSpec) -> bool:
+        return step.step_type == StepType.FUNCTION
+
+    def validate_step(self, _step: StepSpec) -> list[Any]:
+        return []
+
+    def run(self, _step: StepSpec, buffer: Any) -> StepOutcome:
+        buffer.write("result", "committed-before-terminal")
+        return StepOutcome(
+            status=StepStatus.SUCCEEDED,
+            outputs={"result": "committed-before-terminal"},
+        )
+
+
 class _Recorder:
-    def emit(self, *_args: Any, **_kwargs: Any) -> None:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def emit(
+        self,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        **_kwargs: Any,
+    ) -> None:
+        self.events.append((event_type, dict(payload or {})))
         return None
 
 
@@ -158,6 +204,153 @@ def _run(step: StepSpec, runner: Any, buffer: DataBuffer) -> StepOutcome:
         buffer,
         _Recorder(),
     )
+
+
+def test_step_overlay_commits_before_attempt_terminal_is_recorded() -> None:
+    buffer = _buffer()
+    terminal_values: list[str] = []
+
+    class _CommitObservingRecorder(_Recorder):
+        def emit(
+            self,
+            event_type: str,
+            payload: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> None:
+            event_payload = dict(payload or {})
+            if (
+                event_type == "attempt_terminal"
+                and event_payload.get("operation_kind") == "workflow_step"
+            ):
+                terminal_values.append(buffer.read("result"))
+            super().emit(event_type, event_payload, **kwargs)
+
+    recorder = _CommitObservingRecorder()
+    step = StepSpec(
+        step_id="step",
+        step_type=StepType.FUNCTION,
+        read_keys=["input"],
+        write_keys=["result"],
+    )
+    outcome = StepInvoker(
+        step_runner_registry=_registry(_ImmediateWriteRunner()),
+        sleep_fn=lambda _delay: None,
+    ).run_step_with_retries(step, buffer, recorder)
+
+    assert outcome.status is StepStatus.SUCCEEDED
+    assert terminal_values == ["committed-before-terminal"]
+    event_types = [event_type for event_type, _ in recorder.events]
+    assert event_types.index("attempt_started") < event_types.index("step_started")
+    assert event_types.index("step_started") < event_types.index("attempt_terminal")
+
+
+def test_step_terminal_persistence_failure_rolls_back_buffer_publication() -> None:
+    buffer = _buffer()
+    version_before = buffer.snapshot(redacted=False).snapshot_version
+
+    class _TerminalFailureRecorder(_Recorder):
+        def emit(
+            self,
+            event_type: str,
+            payload: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> None:
+            event_payload = dict(payload or {})
+            if (
+                event_type == "attempt_terminal"
+                and event_payload.get("operation_kind") == "workflow_step"
+            ):
+                raise OSError("durable terminal unavailable")
+            super().emit(event_type, event_payload, **kwargs)
+
+    step = StepSpec(
+        step_id="step",
+        step_type=StepType.FUNCTION,
+        read_keys=["input"],
+        write_keys=["result"],
+    )
+
+    with pytest.raises(AttemptLifecycleEmissionError):
+        StepInvoker(
+            step_runner_registry=_registry(_ImmediateWriteRunner()),
+            sleep_fn=lambda _delay: None,
+        ).run_step_with_retries(step, buffer, _TerminalFailureRecorder())
+
+    assert buffer.read("result", required=False) is None
+    assert buffer.snapshot(redacted=False).snapshot_version == version_before
+
+
+def test_failed_step_outcome_persists_failed_attempt_terminal() -> None:
+    class _FailedOutcomeRunner(_ImmediateWriteRunner):
+        def run(self, _step: StepSpec, _buffer: Any) -> StepOutcome:
+            return StepOutcome(
+                status=StepStatus.FAILED,
+                error_type="ExpectedStepFailure",
+                error_message="expected failure",
+            )
+
+    recorder = _Recorder()
+    outcome = StepInvoker(
+        step_runner_registry=_registry(_FailedOutcomeRunner()),
+        sleep_fn=lambda _delay: None,
+    ).run_step_with_retries(
+        StepSpec(step_id="step", step_type=StepType.FUNCTION),
+        _buffer(),
+        recorder,
+    )
+
+    terminal = next(
+        payload
+        for event_type, payload in recorder.events
+        if event_type == "attempt_terminal"
+        and payload.get("operation_kind") == "workflow_step"
+    )
+    assert outcome.status is StepStatus.FAILED
+    assert outcome.error_type == "ExpectedStepFailure"
+    assert terminal["state"] == "FAILED"
+
+
+def test_unsafe_external_write_failure_persists_indeterminate_attempt_terminal() -> None:
+    class _UnsafeFailedOutcomeRunner(_ImmediateWriteRunner):
+        capability = StepRunnerCapability(
+            step_type=StepType.FUNCTION,
+            runner_id="test.unsafe_failed_outcome",
+            version="1.0",
+            supports_checkpoint=True,
+            supports_resume=False,
+            supports_timeout=True,
+            supports_retry=True,
+            side_effect_level=StepRunnerSideEffectLevel.EXTERNAL_WRITE,
+        )
+
+        def run(self, _step: StepSpec, _buffer: Any) -> StepOutcome:
+            return StepOutcome(
+                status=StepStatus.FAILED,
+                error_type="AckLost",
+                error_message="external effect could not be confirmed",
+            )
+
+    recorder = _Recorder()
+    outcome = StepInvoker(
+        step_runner_registry=_registry(_UnsafeFailedOutcomeRunner()),
+        sleep_fn=lambda _delay: None,
+    ).run_step_with_retries(
+        StepSpec(step_id="step", step_type=StepType.FUNCTION),
+        _buffer(),
+        recorder,
+    )
+
+    terminal = next(
+        payload
+        for event_type, payload in recorder.events
+        if event_type == "attempt_terminal"
+        and payload.get("operation_kind") == "workflow_step"
+    )
+    assert outcome.status is StepStatus.FAILED
+    assert outcome.error_type == "WorkflowStepIndeterminateError"
+    assert outcome.error_details["indeterminate"] is True
+    assert terminal["state"] == "INDETERMINATE"
+    assert terminal["indeterminate"] is True
 
 
 def test_timed_out_attempt_cannot_publish_staged_or_late_buffer_writes() -> None:
@@ -278,6 +471,50 @@ def test_attempt_overlay_validates_schema_and_rejects_superseded_fence() -> None
         current.write("second", "late")
 
 
+def test_step_deadline_rejection_preserves_existing_data_buffer_owner() -> None:
+    runner = _CooperativeRunner(StepRunnerSideEffectLevel.READ_ONLY)
+    buffer = _buffer()
+    old_owner = buffer.begin_attempt("step", owner_id="existing-owner")
+    recorder = _Recorder()
+    step = StepSpec(
+        step_id="step",
+        step_type=StepType.FUNCTION,
+        read_keys=["input"],
+        write_keys=["result"],
+        timeout_policy={
+            "timeout_seconds": 5.0,
+            "min_start_window_seconds": 1.0,
+        },
+    )
+
+    outcome = StepInvoker(
+        step_runner_registry=_registry(runner),
+        sleep_fn=lambda _delay: None,
+        clock=lambda: 10.0,
+    ).run_step_with_retries(
+        step,
+        buffer,
+        recorder,
+        execution_limits=ExecutionLimits(
+            execution_id="deadline:data-buffer",
+            hard_deadline=10.5,
+            retry_credits=RetryCreditLedger(max_total_retries=0),
+        ),
+    )
+
+    assert outcome.status is StepStatus.BLOCKED
+    assert runner.contexts == []
+    old_owner.write("result", "existing-owner-remains-valid")
+    replacement = buffer.begin_attempt("step", owner_id="replacement-owner")
+    assert replacement.fencing_token == 2
+    assert [event_type for event_type, _ in recorder.events].count(
+        "attempt_admission_rejected"
+    ) == 1
+    assert all(
+        event_type != "attempt_started" for event_type, _ in recorder.events
+    )
+
+
 def test_tool_timeout_remains_step_timeout_and_discards_tool_outputs() -> None:
     tool_registry = ToolRegistry()
     tool_registry.register(
@@ -310,13 +547,14 @@ def test_tool_timeout_remains_step_timeout_and_discards_tool_outputs() -> None:
         },
     )
 
+    recorder = _Recorder()
     outcome = StepInvoker(
         step_runner_registry=registry,
         sleep_fn=lambda _delay: None,
     ).run_step_with_retries(
         step,
         buffer,
-        _Recorder(),
+        recorder,
     )
 
     assert outcome.status == StepStatus.TIMEOUT
@@ -325,15 +563,35 @@ def test_tool_timeout_remains_step_timeout_and_discards_tool_outputs() -> None:
     assert all(not buffer.exists(key) for key in output_keys)
 
 
-def test_nested_tool_and_step_share_one_total_attempt_budget_and_logical_key() -> None:
+def test_nested_tool_retry_keeps_step_attempt_and_local_numbering_independent() -> None:
     tool_contexts: list[tuple[str, str, int]] = []
+
+    class _MCPClient:
+        def list_tools(self, _server: MCPServerConfig) -> list[dict[str, object]]:
+            return []
+
+        def call_tool(
+            self,
+            _server: MCPServerConfig,
+            _remote_tool_name: str,
+            _arguments: dict[str, object],
+        ) -> object:
+            return None
+
+    mcp_adapter = MCPToolAdapter(_MCPClient())
+    mcp_server = MCPServerConfig(
+        server_id="nested",
+        name="Nested",
+        transport="in_memory",
+    )
 
     def execute(_arguments: dict[str, object]) -> dict[str, bool]:
         context = current_attempt_context()
         assert context is not None
         tool_contexts.append(
-            (context.attempt_id, context.idempotency_key, context.fencing_token)
+            (context.attempt_id, context.idempotency_key, context.local_attempt_no)
         )
+        assert mcp_adapter.list_tools(mcp_server) == []
         if len(tool_contexts) == 1:
             raise RuntimeError("retry once")
         return {"ok": True}
@@ -370,13 +628,18 @@ def test_nested_tool_and_step_share_one_total_attempt_budget_and_logical_key() -
         },
     )
 
+    recorder = _Recorder()
     outcome = StepInvoker(
         step_runner_registry=registry,
         sleep_fn=lambda _delay: None,
     ).run_step_with_retries(
         step,
         buffer,
-        _Recorder(),
+        recorder,
+        execution_limits=ExecutionLimits(
+            execution_id="test:nested-tool",
+            retry_credits=RetryCreditLedger(max_total_retries=1),
+        ),
     )
 
     assert outcome.status == StepStatus.SUCCEEDED
@@ -385,6 +648,51 @@ def test_nested_tool_and_step_share_one_total_attempt_budget_and_logical_key() -
     assert tool_contexts[0][0] != tool_contexts[1][0]
     assert tool_contexts[0][1] == tool_contexts[1][1]
     assert [item[2] for item in tool_contexts] == [1, 2]
+
+    attempt_events = [
+        (event_type, payload)
+        for event_type, payload in recorder.events
+        if event_type in {"attempt_started", "attempt_terminal"}
+    ]
+    started_payloads = [
+        payload
+        for event_type, payload in attempt_events
+        if event_type == "attempt_started"
+    ]
+    terminal_payloads = [
+        payload
+        for event_type, payload in attempt_events
+        if event_type == "attempt_terminal"
+    ]
+    assert len(started_payloads) == len(terminal_payloads) == 5
+    assert {
+        payload["operation_kind"] for payload in started_payloads
+    } == {"workflow_step", "tool_call", "tool_operation"}
+    assert len({payload["attempt_id"] for payload in started_payloads}) == 5
+    assert {payload["attempt_id"] for payload in started_payloads} == {
+        payload["attempt_id"] for payload in terminal_payloads
+    }
+    step_attempt_id = next(
+        payload["attempt_id"]
+        for payload in started_payloads
+        if payload["operation_kind"] == "workflow_step"
+    )
+    tool_attempt_ids = {
+        payload["attempt_id"]
+        for payload in started_payloads
+        if payload["operation_kind"] == "tool_call"
+    }
+    assert all(
+        payload["parent_attempt_id"] == step_attempt_id
+        for payload in started_payloads
+        if payload["operation_kind"] == "tool_call"
+    )
+    assert all(
+        payload["parent_attempt_id"] in tool_attempt_ids
+        for payload in started_payloads
+        if payload["operation_kind"] == "tool_operation"
+    )
+    assert all("fencing_token" not in str(payload) for _, payload in attempt_events)
 
 
 def test_nested_unconfirmed_tool_timeout_blocks_step_retry_and_overlap() -> None:
@@ -438,7 +746,7 @@ def test_nested_unconfirmed_tool_timeout_blocks_step_retry_and_overlap() -> None
             "tool_policy": {
                 "require_explicit_allowlist": False,
                 "require_approval_for_side_effects": False,
-                "cancellation_grace_seconds": 0.05,
+                "cancellation_grace_seconds": 0.001,
             },
             "cancellation_grace_seconds": 0.005,
             "idempotency_contract": True,
@@ -446,13 +754,14 @@ def test_nested_unconfirmed_tool_timeout_blocks_step_retry_and_overlap() -> None
         },
     )
 
+    recorder = _Recorder()
     outcome = StepInvoker(
         step_runner_registry=registry,
         sleep_fn=lambda _delay: None,
     ).run_step_with_retries(
         step,
         buffer,
-        _Recorder(),
+        recorder,
     )
 
     assert started.is_set()
@@ -512,7 +821,11 @@ def test_nested_external_write_failure_is_indeterminate_but_not_a_timeout() -> N
     outcome = StepInvoker(
         step_runner_registry=registry,
         sleep_fn=lambda _delay: None,
-    ).run_step_with_retries(step, buffer, _Recorder())
+    ).run_step_with_retries(
+        step,
+        buffer,
+        _Recorder(),
+    )
 
     assert outcome.status == StepStatus.FAILED
     assert outcome.error_type == "WorkflowStepIndeterminateError"
@@ -608,20 +921,20 @@ def test_parallel_branch_timeout_blocks_step_retry_overlap_and_artifacts(
     assert calls == 1
 
 
-def test_parallel_branch_retries_claim_one_fixed_parent_budget() -> None:
+def test_parallel_branch_retries_use_one_local_budget_and_root_credits() -> None:
     contexts: list[tuple[str, str, int, int, int]] = []
 
     def failing_branch(_buffer: Any) -> dict[str, bool]:
         context = current_attempt_context()
         assert context is not None
-        assert context.budget is not None
+        assert context.local_budget is not None
         contexts.append(
             (
                 context.attempt_id,
                 context.idempotency_key,
-                context.fencing_token,
-                id(context.budget),
-                context.budget.used,
+                context.local_attempt_no,
+                id(context.local_budget),
+                context.local_budget.used,
             )
         )
         raise RuntimeError("branch failed")
@@ -655,7 +968,15 @@ def test_parallel_branch_retries_claim_one_fixed_parent_budget() -> None:
     outcome = StepInvoker(
         step_runner_registry=registry,
         sleep_fn=lambda _delay: None,
-    ).run_step_with_retries(step, buffer, _Recorder())
+    ).run_step_with_retries(
+        step,
+        buffer,
+        _Recorder(),
+        execution_limits=ExecutionLimits(
+            execution_id="test:parallel-branch-retry",
+            retry_credits=RetryCreditLedger(max_total_retries=3),
+        ),
+    )
 
     assert outcome.status == StepStatus.FAILED
     assert len(contexts) == 4
@@ -697,18 +1018,26 @@ def test_parallel_external_branch_failure_does_not_retry_without_contract() -> N
         },
     )
 
+    recorder = _Recorder()
     outcome = StepInvoker(
         step_runner_registry=registry,
         sleep_fn=lambda _delay: None,
-    ).run_step_with_retries(step, buffer, _Recorder())
+    ).run_step_with_retries(step, buffer, recorder)
 
     assert outcome.status == StepStatus.FAILED
     assert outcome.error_type == "WorkflowStepIndeterminateError"
     assert outcome.error_details["indeterminate"] is True
     assert effects == ["accepted"]
+    branch_terminal = next(
+        payload
+        for event_type, payload in recorder.events
+        if event_type == "attempt_terminal"
+        and payload.get("operation_kind") == "parallel_branch"
+    )
+    assert branch_terminal["state"] == "INDETERMINATE"
 
 
-def test_tool_batch_workers_share_step_context_and_total_attempt_budget() -> None:
+def test_tool_batch_siblings_have_independent_local_attempt_scopes() -> None:
     barrier = threading.Barrier(2)
     lock = threading.Lock()
     contexts: dict[str, tuple[str, str, int, int, int]] = {}
@@ -717,14 +1046,14 @@ def test_tool_batch_workers_share_step_context_and_total_attempt_budget() -> Non
         def _execute(_arguments: dict[str, object]) -> dict[str, str]:
             context = current_attempt_context()
             assert context is not None
-            assert context.budget is not None
+            assert context.local_budget is not None
             with lock:
                 contexts[name] = (
                     context.attempt_id,
                     context.idempotency_key,
-                    context.fencing_token,
-                    id(context.budget),
-                    context.budget.used,
+                    context.local_attempt_no,
+                    id(context.local_budget),
+                    context.local_budget.used,
                 )
             barrier.wait(1)
             return {"name": name}
@@ -764,13 +1093,14 @@ def test_tool_batch_workers_share_step_context_and_total_attempt_budget() -> Non
         },
     )
 
+    recorder = _Recorder()
     outcome = StepInvoker(
         step_runner_registry=registry,
         sleep_fn=lambda _delay: None,
     ).run_step_with_retries(
         step,
         buffer,
-        _Recorder(),
+        recorder,
     )
 
     assert outcome.status == StepStatus.SUCCEEDED
@@ -781,11 +1111,11 @@ def test_tool_batch_workers_share_step_context_and_total_attempt_budget() -> Non
     assert first[1].startswith(f"{outcome.metrics['idempotency_key']}:tool:")
     assert second[1].startswith(f"{outcome.metrics['idempotency_key']}:tool:")
     assert first[2] == second[2] == 1
-    assert first[3] == second[3]
+    assert first[3] != second[3]
     assert first[4] == second[4] == 1
 
 
-def test_tool_batch_and_step_retries_share_one_total_attempt_budget() -> None:
+def test_tool_batch_child_retries_use_its_own_local_budget() -> None:
     contexts: list[tuple[str, str, int, int]] = []
     calls = 0
 
@@ -794,13 +1124,13 @@ def test_tool_batch_and_step_retries_share_one_total_attempt_budget() -> None:
         calls += 1
         context = current_attempt_context()
         assert context is not None
-        assert context.budget is not None
+        assert context.local_budget is not None
         contexts.append(
             (
                 context.attempt_id,
                 context.idempotency_key,
-                context.fencing_token,
-                id(context.budget),
+                context.local_attempt_no,
+                id(context.local_budget),
             )
         )
         raise RuntimeError("always fails")
@@ -840,13 +1170,14 @@ def test_tool_batch_and_step_retries_share_one_total_attempt_budget() -> None:
         },
     )
 
+    recorder = _Recorder()
     outcome = StepInvoker(
         step_runner_registry=registry,
         sleep_fn=lambda _delay: None,
     ).run_step_with_retries(
         step,
         buffer,
-        _Recorder(),
+        recorder,
     )
 
     assert outcome.status == StepStatus.FAILED
@@ -859,21 +1190,28 @@ def test_tool_batch_and_step_retries_share_one_total_attempt_budget() -> None:
     assert contexts[0][1].startswith(f"{outcome.metrics['idempotency_key']}:tool:")
     assert [context[2] for context in contexts] == [1, 2]
     assert contexts[0][3] == contexts[1][3]
+    terminal = next(
+        payload
+        for event_type, payload in recorder.events
+        if event_type == "attempt_terminal"
+        and payload.get("operation_kind") == "workflow_step"
+    )
+    assert terminal["state"] == "FAILED"
 
 
-def test_tool_only_retry_uses_fixed_shared_budget_without_step_retry() -> None:
+def test_tool_only_retry_uses_local_budget_without_step_retry() -> None:
     contexts: list[tuple[str, str, int, int]] = []
 
     def execute(_arguments: dict[str, object]) -> dict[str, bool]:
         context = current_attempt_context()
         assert context is not None
-        assert context.budget is not None
+        assert context.local_budget is not None
         contexts.append(
             (
                 context.attempt_id,
                 context.idempotency_key,
-                context.fencing_token,
-                id(context.budget),
+                context.local_attempt_no,
+                id(context.local_budget),
             )
         )
         if len(contexts) == 1:
@@ -916,6 +1254,10 @@ def test_tool_only_retry_uses_fixed_shared_budget_without_step_retry() -> None:
         step,
         buffer,
         _Recorder(),
+        execution_limits=ExecutionLimits(
+            execution_id="test:tool-only-retry",
+            retry_credits=RetryCreditLedger(max_total_retries=1),
+        ),
     )
 
     assert outcome.status == StepStatus.SUCCEEDED

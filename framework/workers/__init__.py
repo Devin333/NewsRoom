@@ -29,6 +29,7 @@ from framework.workers.models import (
     TaskRetryPolicy,
     TaskStatus,
     WorkerMetrics,
+    WorkerExecutionPolicy,
     WorkerRecord,
     WorkerStatus,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "WorkerLoop",
     "WorkerLoopRunResult",
     "WorkerMetrics",
+    "WorkerExecutionPolicy",
     "WorkerRecord",
     "WorkerRunner",
     "WorkerStatus",

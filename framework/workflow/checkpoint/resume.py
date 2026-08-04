@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, TypeAlias
@@ -545,12 +546,18 @@ def _base_resume_metadata(request: WorkflowResumeRequest) -> dict[str, Any]:
             "checkpoint_schema_version": checkpoint.schema_version,
             "checkpoint_checksum": checkpoint.checksum,
             "checkpoint_migrations": list(checkpoint.metadata.get("migrations") or []),
+            "attempt_execution_resume_mode": "new_scope_budget_reset",
+            "attempt_execution_scope_inherited": False,
         }
     )
     budget_usage = checkpoint.metadata.get("budget_usage")
     if isinstance(budget_usage, dict):
         metadata["budget_usage"] = dict(budget_usage)
         metadata["resume_budget_inherited"] = True
+    attempt_snapshot = checkpoint.metadata.get("attempt_execution_snapshot")
+    if isinstance(attempt_snapshot, dict):
+        metadata["attempt_execution_snapshot"] = deepcopy(attempt_snapshot)
+        metadata["attempt_execution_snapshot_diagnostic_only"] = True
     if isinstance(checkpoint, WorkflowCheckpointV2Envelope):
         cursor = request.recovery_cursor
         if cursor is None:

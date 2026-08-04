@@ -55,6 +55,11 @@ def tool_call_from_payload(
         raise StepExecutionError(
             f"tool_batch step {step.step_id} tool call must be an object"
         )
+    if "max_total_attempts" in payload:
+        raise StepExecutionError(
+            "legacy tool_policy.max_total_attempts requires explicit migration "
+            "to max_total_retries"
+        )
     tool_name = str(payload.get("tool_name") or "")
     if not tool_name:
         raise StepExecutionError(
@@ -115,13 +120,19 @@ def tool_policy_from_step(step: StepSpec) -> ToolPolicy:
             payload.get("spill_large_results_to_artifact", True)
         ),
         timeout_seconds_default=payload.get("timeout_seconds_default", 30.0),
+        min_start_window_seconds=float(
+            payload.get("min_start_window_seconds", 0.0)
+        ),
         max_attempts_default=int(payload.get("max_attempts_default", 1)),
         cancellation_grace_seconds=float(
             payload.get("cancellation_grace_seconds", 0.1)
         ),
-        max_total_attempts=(
-            int(payload["max_total_attempts"])
-            if payload.get("max_total_attempts") is not None
+        completion_reserve_seconds=float(
+            payload.get("completion_reserve_seconds", 0.0)
+        ),
+        max_total_retries=(
+            int(payload["max_total_retries"])
+            if payload.get("max_total_retries") is not None
             else None
         ),
     )

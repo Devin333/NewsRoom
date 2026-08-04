@@ -39,6 +39,7 @@ def workflow_timeout_budget(
     workflow: WorkflowSpec,
     *,
     started_monotonic: float,
+    reserve_seconds: float = 0.0,
 ) -> WorkflowTimeoutBudget | None:
     candidates: list[tuple[str, float]] = []
     timeout_seconds = workflow.policies.timeout_policy.timeout_seconds
@@ -50,8 +51,15 @@ def workflow_timeout_budget(
     if not candidates:
         return None
     policy_source, seconds = min(candidates, key=lambda item: item[1])
+    if reserve_seconds < 0:
+        raise ValueError("reserve_seconds must be non-negative")
+    effective_seconds = seconds - float(reserve_seconds)
+    if effective_seconds <= 0:
+        raise ValueError(
+            "workflow timeout must leave a positive execution window after reserves"
+        )
     return WorkflowTimeoutBudget(
-        timeout_seconds=seconds,
+        timeout_seconds=effective_seconds,
         policy_source=policy_source,
         started_monotonic=started_monotonic,
     )
