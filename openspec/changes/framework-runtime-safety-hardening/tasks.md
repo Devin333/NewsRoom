@@ -55,4 +55,4 @@
 - [x] 7.2 Run deterministic concurrency/fault-injection repetitions and inspect for duplicate effects, stale ACKs, late buffer writes, secret leakage, and lingering owned attempt threads.
 - [x] 7.3 Run `openspec validate framework-runtime-safety-hardening --strict`, `openspec validate --all --strict`, and `git diff --check`.
 - [x] 7.4 Run `.\.venv\Scripts\python.exe -m scripts.dev compile` and mandatory `.\.venv\Scripts\python.exe -m scripts.dev smoke`; fix root causes.
-- [ ] 7.5 Update task evidence, commit with path-scoped staging, and confirm no unrelated active `durable-event-runtime` files are modified.
+- [x] 7.5 Update task evidence, commit with path-scoped staging, and confirm no unrelated active `durable-event-runtime` files are modified.

@@ -22,6 +22,7 @@ Verified on 2026-08-04 from `F:\github\NewsRoom` with the repository virtual env
 
 ## Scope Audit
 
+- Implementation and verification were committed as `0fbedc7f` (`fix(framework): harden runtime execution safety`).
 - No files under `openspec/changes/durable-event-runtime` were modified.
 - Local `.hex-skills/runtime-artifacts` output is excluded through `.gitignore` and is not part of the delivery.
 - The existing `framework.agent.artifacts` callers and architecture test require the package relocation; the moved package contains the same artifact implementation with normalized imports.
