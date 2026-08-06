@@ -3,10 +3,12 @@ import pytest
 from framework.specs import StepSpec, StepType, WorkflowSpecError
 
 
-def test_step_type_from_value_and_aliases() -> None:
+def test_step_type_from_value_normalizes_supported_values() -> None:
     assert StepType.from_value("function") is StepType.FUNCTION
-    assert StepType.from_value(StepType.TOOL) is StepType.TOOL
-    assert StepType.TOOL.value == "tool"
+    assert StepType.from_value(StepType.TOOL_CALL) is StepType.TOOL_CALL
+    assert StepType.TOOL_CALL.value == "tool_call"
+    with pytest.raises(ValueError, match="tool"):
+        StepType.from_value("tool")
 
 
 def test_step_status_helpers_and_input_output_keys() -> None:

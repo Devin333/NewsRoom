@@ -24,7 +24,6 @@ class StepType(str, Enum):
     """Workflow step runner families with stable runtime ownership boundaries."""
 
     FUNCTION = "function"
-    TOOL = "tool"
     AGENT_LOOP = "agent_loop"
     ROUTER = "router"
     QUALITY_GATE = "quality_gate"
