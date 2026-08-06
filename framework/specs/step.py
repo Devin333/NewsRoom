@@ -49,9 +49,6 @@ class StepType(str, Enum):
             return value
         return cls(str(value))
 
-    def requires_runner(self) -> bool:
-        return self not in {StepType.JOIN}
-
 
 class StepStatus(str, Enum):
     """Per-step execution state; do not use for workflow or worker task records."""
