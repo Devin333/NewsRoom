@@ -229,6 +229,17 @@ class ContextCompactionRuntime:
             )
         if planning.status is not ContextCompactionPlanningStatus.PLAN_READY:
             status = _runtime_status_for_planning(planning.status)
+            if (
+                status is not ContextCompactionRuntimeStatus.NO_COMPACTION_REQUIRED
+                and self._emit_planning_rejected(request, planning, refs) is None
+            ):
+                return self._durable_failure(
+                    source=source,
+                    initial=initial,
+                    planning=planning,
+                    refs=refs,
+                    reason_code="canonical_event_commit_failed",
+                )
             return ContextCompactionRuntimeResult(
                 status=status,
                 source_snapshot=source,
@@ -430,6 +441,31 @@ class ContextCompactionRuntime:
                 "protected_group_count": len(planning.protected_group_ids),
             },
         ) is not None
+
+    def _emit_planning_rejected(
+        self,
+        request: ContextCompactionRuntimeRequest,
+        planning: ContextCompactionPlanningResult,
+        refs: ContextDurableRefs,
+    ) -> HarnessEvent | None:
+        return self._event(
+            HarnessEventType.CONTEXT_COMPACTION_REJECTED,
+            request,
+            {
+                "source_snapshot_id": request.source_snapshot.snapshot_id,
+                "source_snapshot_checksum": request.source_snapshot.checksum,
+                "plan_id": None,
+                "planning_result_ref": (
+                    refs.planning_result.ref if refs.planning_result else None
+                ),
+                "result_snapshot_id": None,
+                "record_ref": None,
+                "aggregate_ref": None,
+                "reason_code": planning.reason_code,
+                "aggregate_outcome": None,
+                "planning_status": planning.status.value,
+            },
+        )
 
     def _emit_action(
         self,

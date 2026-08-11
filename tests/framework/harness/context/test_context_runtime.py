@@ -226,6 +226,13 @@ class _FailVerifiedEventPort(InMemoryHarnessEventPort):
         return super().record(event)
 
 
+class _FailRejectedEventPort(InMemoryHarnessEventPort):
+    def record(self, event):
+        if event.event_type is HarnessEventType.CONTEXT_COMPACTION_REJECTED:
+            raise RuntimeError("simulated durable rejection event failure")
+        return super().record(event)
+
+
 def test_verified_event_append_is_activation_commit_boundary() -> None:
     policy = _policy()
     source = _source(policy)
@@ -267,6 +274,35 @@ def test_protected_only_overflow_fails_closed() -> None:
     assert HarnessEventType.CONTEXT_COMPACTION_VERIFIED not in {
         event.event_type for event in events.events
     }
+    assert events.events[-1].event_type is HarnessEventType.CONTEXT_COMPACTION_REJECTED
+    assert events.events[-1].payload["planning_status"] == (
+        "protected_context_exceeds_window"
+    )
+
+
+def test_planning_rejection_event_failure_is_a_durable_commit_failure() -> None:
+    policy = _policy(max_input_tokens=5)
+    source = _source(policy, reconstructable=False)
+    events = _FailRejectedEventPort()
+    runtime, _, _ = _runtime(
+        _PhysicalRuntime(max_input_tokens=5),
+        event_port=events,
+    )
+
+    result = runtime.run(
+        ContextCompactionRuntimeRequest(
+            source_snapshot=source,
+            policy=policy,
+            deployment_id="deployment-runtime",
+        )
+    )
+
+    assert result.status is ContextCompactionRuntimeStatus.DURABLE_COMMIT_FAILED
+    assert result.dispatch_authorized is False
+    assert result.activation_event_id is None
+    assert [event.event_type for event in events.events] == [
+        HarnessEventType.CONTEXT_COMPACTION_PLANNED
+    ]
 
 
 @pytest.mark.parametrize("fingerprint", ["", " ", "sha256:other"])

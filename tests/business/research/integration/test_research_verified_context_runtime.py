@@ -174,6 +174,51 @@ def test_research_evidence_first_compaction_is_verified_and_replayable() -> None
     assert report.side_effects_replayed is False
 
 
+def test_research_protected_context_overflow_halts_without_verified_event() -> None:
+    policy = ContextCompactionPolicy(
+        policy_revision="policy-research-protected-v1",
+        action_order=(ContextCompactionActionType.SELECT_EVIDENCE_SPANS,),
+        max_actions=1,
+        max_summary_calls=0,
+        max_replans=1,
+        max_llm_calls=0,
+        max_input_tokens=10,
+        max_cost_usd=0.0,
+        max_turns=2,
+        keep_recent_complete_turns=0,
+    )
+    source = ContextGroupMaterializer().materialize(
+        ContextMaterializationRequest(
+            run_id="research-protected-runtime",
+            step_id="research-analysis",
+            task_binding_ref="task://research/paper-analysis/protected",
+            policy_revision=policy.policy_revision,
+            physical_profile_revision="profile-research-runtime-v1",
+            messages=({"role": "system", "content_ref": "prompt://research"},),
+        )
+    )
+    runtime, _, events = _runtime(_ResearchPhysicalContext(max_input_tokens=10))
+
+    result = runtime.run(
+        ContextCompactionRuntimeRequest(
+            source_snapshot=source,
+            policy=policy,
+            deployment_id="research-deployment",
+        )
+    )
+
+    assert result.status is (
+        ContextCompactionRuntimeStatus.PROTECTED_CONTEXT_EXCEEDS_WINDOW
+    )
+    assert result.dispatch_authorized is False
+    assert result.result_snapshot is None
+    assert result.durable_refs.compression_record is None
+    assert events.events[-1].event_type is HarnessEventType.CONTEXT_COMPACTION_REJECTED
+    assert HarnessEventType.CONTEXT_COMPACTION_VERIFIED not in {
+        event.event_type for event in events.events
+    }
+
+
 class _SummaryWorker:
     def __init__(self, result: ContextSummaryWorkerResult) -> None:
         self.result = result
