@@ -252,6 +252,9 @@ def test_evidence_selection_preserves_required_and_conflict_refs() -> None:
     ]
     assert evidence.required_citation_refs == ("citation://1",)
     assert evidence.semantic_metadata["conflict_refs"] == ("conflict://1",)
+    assert evidence.semantic_metadata["covered_group_ids"] == (
+        source.groups[-1].group_id,
+    )
     assert result.action_results[0].loss_report.omitted_span_refs == ("span://3",)
 
 

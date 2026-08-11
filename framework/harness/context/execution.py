@@ -420,6 +420,14 @@ class ContextCompactionActionExecutor:
             )
             semantic_metadata = dict(original.semantic_metadata)
             semantic_metadata["selected_span_refs"] = selected
+            semantic_metadata["covered_group_ids"] = tuple(
+                dict.fromkeys(
+                    (
+                        *tuple(semantic_metadata.get("covered_group_ids", ())),
+                        original.group_id,
+                    )
+                )
+            )
             replacement = ContextGroup(
                 group_kind=original.group_kind,
                 members=selected_members,
