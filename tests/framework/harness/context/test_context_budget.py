@@ -166,6 +166,41 @@ def test_context_assembler_uses_verified_runtime_instead_of_estimated_halving() 
     )
 
 
+def test_context_assembler_builds_a_fresh_runtime_from_the_bound_envelope() -> None:
+    physical = _PhysicalContext(max_input_tokens=1_000)
+    artifacts = FakeArtifactPort()
+    envelopes: list[str] = []
+
+    def runtime_factory(envelope, request):
+        envelopes.append(envelope.envelope_id)
+        assert request["run_id"] == "run-runtime-factory"
+        return ContextCompactionRuntime(
+            materializer=physical,
+            admission_verifier=physical,
+            artifact_port=artifacts,
+            event_port=InMemoryHarnessEventPort(),
+        )
+
+    assembler = ContextAssembler(
+        compaction_runtime_factory=runtime_factory,
+        deployment_id="deployment-assembler",
+        physical_profile_revision="profile-assembler-v1",
+    )
+
+    envelope = assembler.assemble(
+        {
+            "run_id": "run-runtime-factory",
+            "current_task_ref": "task://runtime-factory",
+            "budget": _budget(1_000),
+        }
+    )
+
+    assert envelopes == [envelope.envelope_id]
+    assert envelope.metadata["context_verification_classification"] == (
+        "versioned_no_compaction_evidence"
+    )
+
+
 def test_physical_admission_cannot_be_bypassed_by_legacy_estimate() -> None:
     physical = _PhysicalContext(max_input_tokens=30)
     artifacts = FakeArtifactPort()

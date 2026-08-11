@@ -715,6 +715,11 @@ class ResearchSinglePaperRuntime:
         ) = None,
         taxonomy_registry: TaxonomyRegistry | None = None,
         context_assembler: ContextAssembler | None = None,
+        context_assembler_factory: (
+            Callable[[str, HarnessTransitionPort], ContextAssembler] | None
+        ) = None,
+        context_max_input_tokens: int = 4_096,
+        context_max_output_tokens: int = 1_024,
         quality_gate: ResearchQualityGate | None = None,
         side_effect_store: HarnessSideEffectStorePort | None = None,
         artifact_handler_factory: Callable[..., Any] | None = None,
@@ -735,7 +740,24 @@ class ResearchSinglePaperRuntime:
         self.event_port_factory = event_port_factory
         self.scoped_event_port_factory = scoped_event_port_factory
         self.taxonomy_registry = taxonomy_registry or TaxonomyRegistry.default()
+        if context_assembler_factory is not None and not callable(
+            context_assembler_factory
+        ):
+            raise TypeError("context_assembler_factory must be callable")
+        if context_assembler is not None and context_assembler_factory is not None:
+            raise TypeError(
+                "configure context_assembler or context_assembler_factory, not both"
+            )
         self.context_assembler = context_assembler
+        self.context_assembler_factory = context_assembler_factory
+        for field_name, value in (
+            ("context_max_input_tokens", context_max_input_tokens),
+            ("context_max_output_tokens", context_max_output_tokens),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise TypeError(f"{field_name} must be a positive integer")
+        self.context_max_input_tokens = context_max_input_tokens
+        self.context_max_output_tokens = context_max_output_tokens
         self.side_effect_store = side_effect_store or InMemoryHarnessSideEffectStore()
         if not isinstance(self.side_effect_store, HarnessSideEffectStorePort):
             raise TypeError("side_effect_store must implement HarnessSideEffectStorePort")
@@ -782,10 +804,6 @@ class ResearchSinglePaperRuntime:
         request: AnalyzePaperRequest,
         run_id: str,
     ) -> ResearchAnalysisResult:
-        workspace = _ResearchRunWorkspace(
-            request=request,
-            context_assembler=self.context_assembler or ContextAssembler(),
-        )
         actor_metadata = _request_actor_metadata(request)
         event_port = (
             self.event_port_factory(run_id)
@@ -794,6 +812,17 @@ class ResearchSinglePaperRuntime:
         )
         if not isinstance(event_port, HarnessTransitionPort):
             raise TypeError("event port factory must return HarnessTransitionPort")
+        context_assembler = self.context_assembler
+        if self.context_assembler_factory is not None:
+            context_assembler = self.context_assembler_factory(run_id, event_port)
+            if not isinstance(context_assembler, ContextAssembler):
+                raise TypeError(
+                    "context_assembler_factory must return ContextAssembler"
+                )
+        workspace = _ResearchRunWorkspace(
+            request=request,
+            context_assembler=context_assembler or ContextAssembler(),
+        )
         identity_scope_ref = research_identity_scope_ref(actor_metadata)
         subject_scope_ref = research_subject_scope_ref(request.paper_id)
         run_spec = build_research_harness_run_spec(
@@ -1193,7 +1222,7 @@ class ResearchSinglePaperRuntime:
             for worker_name, worker in registry.items()
         }
         bound_registry["publish_artifacts"] = _bind_research_workspace_worker(
-            worker_type._publish_artifacts,
+            self._publish_artifacts,
             workspace,
         )
         if _dynamic_task_plan_requested(workspace.request.options):
@@ -1635,8 +1664,11 @@ class ResearchSinglePaperRuntime:
             }
         )
 
-    @staticmethod
-    def _publish_artifacts(task: dict[str, Any], workspace: "_ResearchRunWorkspace") -> HarnessWorkerResult:
+    def _publish_artifacts(
+        self,
+        task: dict[str, Any],
+        workspace: "_ResearchRunWorkspace",
+    ) -> HarnessWorkerResult:
         members: list[dict[str, Any]] = []
         actor_metadata = _request_actor_metadata(workspace.request)
 
@@ -1676,7 +1708,7 @@ class ResearchSinglePaperRuntime:
             )
         if workspace.reader_issue:
             add_member("reader-issue", workspace.reader_issue.to_dict())
-        workspace.context_envelope = ResearchSinglePaperRuntime._assemble_context(workspace)
+        workspace.context_envelope = self._assemble_context(workspace)
         workspace.context_snapshot = workspace.context_assembler.snapshot_store.load(
             workspace.context_envelope.snapshot_ref or ""
         )
@@ -1778,11 +1810,22 @@ class ResearchSinglePaperRuntime:
             effect_intent=intent,
         )
 
-    @staticmethod
-    def _assemble_context(workspace: "_ResearchRunWorkspace") -> ContextEnvelope:
+    def _assemble_context(self, workspace: "_ResearchRunWorkspace") -> ContextEnvelope:
         source_refs = []
         if workspace.research_rag_context:
             source_refs = list(workspace.research_rag_context.source_refs)
+        requested_input_tokens = workspace.request.options.get(
+            "context_max_input_tokens",
+            self.context_max_input_tokens,
+        )
+        if (
+            isinstance(requested_input_tokens, bool)
+            or not isinstance(requested_input_tokens, int)
+            or requested_input_tokens < 1
+        ):
+            raise HarnessValidationError(
+                "context_max_input_tokens must be a positive integer"
+            )
         return workspace.context_assembler.assemble(
             {
                 "run_id": workspace.request.run_id,
@@ -1813,8 +1856,11 @@ class ResearchSinglePaperRuntime:
                     str(workspace.request.memory_namespace),
                 ),
                 "budget": ContextBudget(
-                    max_input_tokens=int(workspace.request.options.get("context_max_input_tokens", 4096)),
-                    max_output_tokens=1024,
+                    max_input_tokens=min(
+                        requested_input_tokens,
+                        self.context_max_input_tokens,
+                    ),
+                    max_output_tokens=self.context_max_output_tokens,
                     max_context_segments=6,
                     max_evidence_items=8,
                     max_memory_items=6,

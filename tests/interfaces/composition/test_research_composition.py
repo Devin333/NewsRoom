@@ -293,6 +293,10 @@ def test_valid_settings_compose_full_durable_production_graph(
 
         runtime = service._analyze_use_case._runtime
         assert isinstance(runtime, ResearchSinglePaperRuntime)
+        assert runtime.context_assembler is None
+        assert runtime.context_assembler_factory is not None
+        assert runtime.context_max_input_tokens == settings.llm.max_input_tokens
+        assert runtime.context_max_output_tokens == settings.llm.max_output_tokens
         assert isinstance(runtime.source_provider, ArxivResearchSourceProvider)
         assert isinstance(runtime.source_provider._connector, ArxivConnector)
         assert isinstance(runtime.document_compiler, ResearchDocumentCompilerAdapter)

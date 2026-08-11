@@ -87,6 +87,9 @@ from infrastructure.research.artifact_publication import ResearchArtifactBundleH
 from infrastructure.research.candidate_worker import (
     StructuredResearchCandidateWorker,
 )
+from infrastructure.research.context_runtime import (
+    build_research_context_assembler,
+)
 from infrastructure.research.document_compiler import (
     ResearchDocumentCompilerAdapter,
 )
@@ -1349,6 +1352,19 @@ def _build_configured_composition(
                 tenant_id=research_event_tenant_id(actor_metadata),
             )
 
+        def context_assembler_factory(
+            _run_id: str,
+            event_port: HarnessTransitionPort,
+        ):
+            return build_research_context_assembler(
+                artifact_port=artifact_port,
+                event_port=event_port,
+                provider=settings.llm.provider,
+                model=settings.llm.model,
+                max_input_tokens=settings.llm.max_input_tokens,
+                max_output_tokens=settings.llm.max_output_tokens,
+            )
+
         recovery_source = _DurableResearchRunRecoverySource(
             artifact_port=artifact_port,
             run_store=run_store,
@@ -1393,6 +1409,9 @@ def _build_configured_composition(
             artifact_port=artifact_port,
             event_port_factory=event_port_factory,
             scoped_event_port_factory=scoped_event_port_factory,
+            context_assembler_factory=context_assembler_factory,
+            context_max_input_tokens=settings.llm.max_input_tokens,
+            context_max_output_tokens=settings.llm.max_output_tokens,
             side_effect_store=side_effect_store,
             artifact_handler_factory=ResearchArtifactBundleHandler,
             dynamic_task_plan_runner_factory=dynamic_task_plan_runner_factory,

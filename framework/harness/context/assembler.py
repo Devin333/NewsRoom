@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
 from framework.harness.context.budget import ContextBudgetEstimator
 from framework.harness.context.cache import ContextCachePolicyBuilder
@@ -41,6 +41,10 @@ class ContextAssembler:
         cache_policy_builder: ContextCachePolicyBuilder | None = None,
         budget_estimator: ContextBudgetEstimator | None = None,
         compaction_runtime: _ContextCompactionRuntimePort | None = None,
+        compaction_runtime_factory: (
+            Callable[[ContextEnvelope, Mapping[str, Any]], _ContextCompactionRuntimePort]
+            | None
+        ) = None,
         deployment_id: str | None = None,
         physical_profile_revision: str | None = None,
         compaction_policy: ContextCompactionPolicy | None = None,
@@ -50,6 +54,14 @@ class ContextAssembler:
         ):
             raise HarnessValidationError(
                 "compaction_runtime must be ContextCompactionRuntime"
+            )
+        if compaction_runtime_factory is not None and not callable(
+            compaction_runtime_factory
+        ):
+            raise HarnessValidationError("compaction_runtime_factory must be callable")
+        if compaction_runtime is not None and compaction_runtime_factory is not None:
+            raise HarnessValidationError(
+                "configure compaction_runtime or compaction_runtime_factory, not both"
             )
         if compaction_policy is not None and not isinstance(
             compaction_policy, ContextCompactionPolicy
@@ -61,6 +73,7 @@ class ContextAssembler:
         self.cache_policy_builder = cache_policy_builder or ContextCachePolicyBuilder()
         self.budget_estimator = budget_estimator or ContextBudgetEstimator()
         self.compaction_runtime = compaction_runtime
+        self.compaction_runtime_factory = compaction_runtime_factory
         self.deployment_id = _optional_text(deployment_id, "deployment_id")
         self.physical_profile_revision = _optional_text(
             physical_profile_revision,
@@ -121,7 +134,14 @@ class ContextAssembler:
         request: Mapping[str, Any],
         legacy_budget_passed: bool,
     ) -> ContextEnvelope:
-        if self.compaction_runtime is None:
+        compaction_runtime = self.compaction_runtime
+        if self.compaction_runtime_factory is not None:
+            compaction_runtime = self.compaction_runtime_factory(envelope, request)
+            if not isinstance(compaction_runtime, _ContextCompactionRuntimePort):
+                raise HarnessValidationError(
+                    "compaction_runtime_factory must return ContextCompactionRuntime"
+                )
+        if compaction_runtime is None:
             if not legacy_budget_passed:
                 self._event(
                     "context_compaction_rejected",
@@ -176,7 +196,7 @@ class ContextAssembler:
                 control_decision_refs=tuple(request.get("control_decision_refs", ())),
             )
         )
-        result = self.compaction_runtime.run(
+        result = compaction_runtime.run(
             _runtime_request(
                 source_snapshot=source,
                 policy=policy,

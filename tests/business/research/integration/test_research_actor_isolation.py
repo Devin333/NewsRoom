@@ -36,6 +36,7 @@ from framework.harness import (
     RAGTranscript,
 )
 from framework.shared.json import stable_json_dumps
+from infrastructure.research.context_runtime import build_research_context_assembler
 from interfaces.services.research_service import (
     InMemoryResearchRunStore,
     ResearchActorInput,
@@ -399,6 +400,17 @@ def _shared_production_service(
         rag_runtime=rag_runtime,
         artifact_port=artifacts,
         event_port_factory=lambda _run_id: InMemoryHarnessEventPort(),
+        context_assembler_factory=lambda _run_id, event_port: (
+            build_research_context_assembler(
+                artifact_port=artifacts,
+                event_port=event_port,
+                provider="test-provider",
+                model="test-model",
+                max_input_tokens=8_192,
+                max_output_tokens=1_024,
+            )
+        ),
+        context_max_input_tokens=8_192,
     )
     return (
         ResearchApplicationService(

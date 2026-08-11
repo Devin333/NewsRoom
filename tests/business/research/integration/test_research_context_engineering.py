@@ -101,3 +101,36 @@ def test_protected_research_context_overflow_fails_closed() -> None:
         event.event_type for event in context_events.events
     }
     assert context_assembler.events[-1]["event_type"] == "context_compaction_rejected"
+
+
+def test_request_cannot_expand_the_composition_context_limit() -> None:
+    artifact_port = FakeArtifactPort()
+    context_assembler, _, _ = verified_context_assembler(
+        max_input_tokens=8_192,
+        artifact_port=artifact_port,
+    )
+    result = AnalyzePaperUseCase(
+        ResearchSinglePaperRuntime(
+            source_provider=FakeResearchSourceProvider(),
+            document_compiler=FakeResearchDocumentCompiler(),
+            llm_worker=FakeResearchLLMWorker(),
+            github_repository=FakeGithubRepositoryPort(),
+            rag_runtime=FakeResearchRAGRuntime(),
+            artifact_port=artifact_port,
+            event_port_factory=lambda run_id: InMemoryHarnessEventPort(),
+            context_assembler=context_assembler,
+            context_max_input_tokens=8_192,
+        )
+    ).analyze(
+        AnalyzePaperRequest(
+            run_id="research-run-context-policy-cap",
+            paper_id="paper-harness-001",
+            source_ref="https://arxiv.org/abs/2606.00123",
+            user_id="user-1",
+            options={"context_max_input_tokens": 32_768},
+        )
+    )
+
+    assert result.context_envelope is not None
+    assert result.context_envelope.budget is not None
+    assert result.context_envelope.budget.max_input_tokens == 8_192
