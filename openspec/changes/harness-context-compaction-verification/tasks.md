@@ -1,11 +1,11 @@
 ## 1. Versioned Semantic Models
 
-- [ ] 1.1 Add strict enums and immutable `ContextGroupMember`, `ContextGroup`, protection-reason, reconstruction-policy, and tool-transaction state models with versioned `to_dict()` / `from_dict()`.
-- [ ] 1.2 Add immutable `ContextCompactionPolicy` with trusted action order, recent-tail/evidence rules, failure policy, and validated action/summary/replan/token/cost/turn bounds.
-- [ ] 1.3 Add immutable `ContextCompactionAction`, `ContextCompactionPlan`, action-result, loss-report, and typed outcome models with checksum-derived identity.
-- [ ] 1.4 Add strict `ContextSummaryClaim` and `ContextSummaryCandidate` models covering group/source support, omissions, unresolved questions, tool outcomes, loss risk, artifact ref, and worker/model/schema revisions.
-- [ ] 1.5 Add versioned source/result snapshot and `ContextCompressionRecord` models binding plan/actions/counts/groups/refs/gates/verdict/profile revisions without embedding sensitive bodies.
-- [ ] 1.6 Export new contracts through `framework.harness.context` and `framework.harness` while retaining explicit legacy-read types.
+- [x] 1.1 Add strict enums and immutable `ContextGroupMember`, `ContextGroup`, protection-reason, reconstruction-policy, and tool-transaction state models with versioned `to_dict()` / `from_dict()`.
+- [x] 1.2 Add immutable `ContextCompactionPolicy` with trusted action order, recent-tail/evidence rules, failure policy, and validated action/summary/replan/token/cost/turn bounds.
+- [x] 1.3 Add immutable `ContextCompactionAction`, `ContextCompactionPlan`, action-result, loss-report, and typed outcome models with checksum-derived identity.
+- [x] 1.4 Add strict `ContextSummaryClaim` and `ContextSummaryCandidate` models covering group/source support, omissions, unresolved questions, tool outcomes, loss risk, artifact ref, and worker/model/schema revisions.
+- [x] 1.5 Add versioned source/result snapshot and `ContextCompressionRecord` models binding plan/actions/counts/groups/refs/gates/verdict/profile revisions without embedding sensitive bodies.
+- [x] 1.6 Export new contracts through `framework.harness.context` and `framework.harness` while retaining explicit legacy-read types.
 
 ## 2. Group Materialization and Structural Validation
 

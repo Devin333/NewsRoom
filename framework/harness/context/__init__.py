@@ -5,6 +5,17 @@ from framework.harness.context.budget import ContextBudgetEstimator, ContextBudg
 from framework.harness.context.cache import ContextCachePolicyBuilder
 from framework.harness.context.compatibility import context_payload
 from framework.harness.context.compression import ContextCompressor
+from framework.harness.context.compaction_models import (
+    REVERSIBLE_CONTEXT_ACTIONS,
+    ContextCompactionAction,
+    ContextCompactionActionResult,
+    ContextCompactionActionType,
+    ContextCompactionOutcome,
+    ContextCompactionPlan,
+    ContextCompactionPolicy,
+    ContextLossReport,
+    ContextLossRisk,
+)
 from framework.harness.context.fake import (
     FakeContextAssembler,
     FakeContextBudgetEstimator,
@@ -40,12 +51,31 @@ from framework.harness.context.models import (
     ContextSegmentType,
     ContextSnapshot,
 )
+from framework.harness.context.group_models import (
+    ContextGroup,
+    ContextGroupKind,
+    ContextGroupMember,
+    ContextGroupMemberKind,
+    ContextProtectionReason,
+    ContextReconstructionPolicy,
+    ContextToolTransactionState,
+)
 from framework.harness.context.snapshot import ContextSnapshotStore
+from framework.harness.context.summary_models import (
+    ContextSummaryCandidate,
+    ContextSummaryClaim,
+)
+from framework.harness.context.verified_records import (
+    ContextCompressionRecordV2,
+    ContextSemanticSnapshot,
+    ContextSemanticSnapshotKind,
+)
 
 __all__ = [
     "CONTEXT_SEGMENT_ORDER",
     "CONTROL_PLANE_PRESERVED_FIELDS",
     "CompressionRecord",
+    "REVERSIBLE_CONTEXT_ACTIONS",
     "ContextAssembler",
     "ContextBudget",
     "ContextBudgetEstimator",
@@ -59,10 +89,25 @@ __all__ = [
     "ContextCompressionSummary",
     "ContextCompressionLossGate",
     "ContextCompressor",
+    "ContextCompactionAction",
+    "ContextCompactionActionResult",
+    "ContextCompactionActionType",
+    "ContextCompactionOutcome",
+    "ContextCompactionPlan",
+    "ContextCompactionPolicy",
+    "ContextCompressionRecordV2",
     "ContextEnvelope",
     "ContextGateResult",
     "ContextPrivacyGate",
     "ContextProvenanceGate",
+    "ContextGroup",
+    "ContextGroupKind",
+    "ContextGroupMember",
+    "ContextGroupMemberKind",
+    "ContextLossReport",
+    "ContextLossRisk",
+    "ContextProtectionReason",
+    "ContextReconstructionPolicy",
     "ContextReplayGate",
     "ContextSchemaPreservationGate",
     "ContextSegment",
@@ -71,6 +116,11 @@ __all__ = [
     "ContextSnapshot",
     "ContextSnapshotStore",
     "ContextStablePrefixGate",
+    "ContextSemanticSnapshot",
+    "ContextSemanticSnapshotKind",
+    "ContextSummaryCandidate",
+    "ContextSummaryClaim",
+    "ContextToolTransactionState",
     "FakeContextAssembler",
     "FakeContextBudgetEstimator",
     "FakeContextCachePolicyBuilder",
