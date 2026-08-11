@@ -176,6 +176,10 @@ class ContextCompressionRecordV2:
     record_id: str | None = None
     checksum: str | None = None
     created_at: Any = field(default_factory=utc_now)
+    prepared_fingerprint: str | None = None
+    initial_admission_evidence_id: str | None = None
+    final_admission_evidence_id: str | None = None
+    materialization_revision: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -198,6 +202,17 @@ class ContextCompressionRecordV2:
                 required_text(getattr(self, field_name), field=field_name),
             )
         object.__setattr__(self, "step_id", optional_text(self.step_id, field="step_id"))
+        for field_name in (
+            "prepared_fingerprint",
+            "initial_admission_evidence_id",
+            "final_admission_evidence_id",
+            "materialization_revision",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                optional_text(getattr(self, field_name), field=field_name),
+            )
         actions = tuple(self.action_results)
         if not all(isinstance(result, ContextCompactionActionResult) for result in actions):
             raise HarnessValidationError(
@@ -276,6 +291,10 @@ class ContextCompressionRecordV2:
             "profile_revision": self.profile_revision,
             "tokenizer_revision": self.tokenizer_revision,
             "normalizer_revision": self.normalizer_revision,
+            "prepared_fingerprint": self.prepared_fingerprint,
+            "initial_admission_evidence_id": self.initial_admission_evidence_id,
+            "final_admission_evidence_id": self.final_admission_evidence_id,
+            "materialization_revision": self.materialization_revision,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -319,6 +338,10 @@ class ContextCompressionRecordV2:
             profile_revision=payload.pop("profile_revision"),
             tokenizer_revision=payload.pop("tokenizer_revision"),
             normalizer_revision=payload.pop("normalizer_revision"),
+            prepared_fingerprint=payload.pop("prepared_fingerprint", None),
+            initial_admission_evidence_id=payload.pop("initial_admission_evidence_id", None),
+            final_admission_evidence_id=payload.pop("final_admission_evidence_id", None),
+            materialization_revision=payload.pop("materialization_revision", None),
             schema_revision=payload.pop(
                 "schema_revision",
                 CONTEXT_COMPRESSION_RECORD_SCHEMA_REVISION,

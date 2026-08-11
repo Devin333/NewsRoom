@@ -22,7 +22,9 @@ from framework.harness.context.planning_models import (
 )
 from framework.harness.context.verified_common import (
     frozen_mapping,
+    reject_fields,
     required_text,
+    strict_payload,
     text_tuple,
 )
 from framework.harness.context.verified_records import ContextSemanticSnapshot
@@ -151,6 +153,20 @@ class ContextAggregateGateResult:
             "details": dict(self.details),
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ContextAggregateGateResult":
+        payload = strict_payload(value, model="ContextAggregateGateResult")
+        result = cls(
+            gate_name=payload.pop("gate"),
+            passed=payload.pop("passed"),
+            input_ref=payload.pop("input_ref"),
+            result_ref=payload.pop("result_ref"),
+            reason_code=payload.pop("reason_code"),
+            details=payload.pop("details", {}),
+        )
+        reject_fields(payload, model="ContextAggregateGateResult")
+        return result
+
 
 @dataclass(frozen=True)
 class ContextAggregateVerificationResult:
@@ -226,6 +242,40 @@ class ContextAggregateVerificationResult:
             "reason_code": self.reason_code,
             "dispatch_authorized": self.dispatch_authorized,
         }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> "ContextAggregateVerificationResult":
+        payload = strict_payload(value, model="ContextAggregateVerificationResult")
+        raw_gates = payload.pop("gates")
+        if not isinstance(raw_gates, (list, tuple)):
+            raise HarnessValidationError(
+                "ContextAggregateVerificationResult.gates must be a list"
+            )
+        dispatch_authorized = payload.pop("dispatch_authorized", None)
+        result = cls(
+            source_snapshot_id=payload.pop("source_snapshot_id"),
+            source_snapshot_checksum=payload.pop("source_snapshot_checksum"),
+            result_snapshot_id=payload.pop("result_snapshot_id"),
+            result_snapshot_checksum=payload.pop("result_snapshot_checksum"),
+            physical_admission_evidence_id=payload.pop(
+                "physical_admission_evidence_id"
+            ),
+            gates=tuple(
+                ContextAggregateGateResult.from_dict(gate) for gate in raw_gates
+            ),
+            passed=payload.pop("passed"),
+            outcome=payload.pop("outcome"),
+            reason_code=payload.pop("reason_code"),
+        )
+        if dispatch_authorized is not None and dispatch_authorized != result.dispatch_authorized:
+            raise HarnessValidationError(
+                "aggregate dispatch_authorized projection is inconsistent"
+            )
+        reject_fields(payload, model="ContextAggregateVerificationResult")
+        return result
 
 
 class ContextAggregateVerifier:

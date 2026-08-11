@@ -21,6 +21,11 @@ from framework.harness.context.execution import (
     ContextCompactionExecutionResult,
     ContextCompactionExecutionStatus,
 )
+from framework.harness.context.durable_store import (
+    ContextDurableRefs,
+    ContextVerifiedArtifactStore,
+    ContextVerifiedStorePort,
+)
 from framework.harness.context.fake import (
     FakeContextAssembler,
     FakeContextBudgetEstimator,
@@ -85,6 +90,13 @@ from framework.harness.context.planning_models import (
     ContextPlanningBudgetUsage,
 )
 from framework.harness.context.snapshot import ContextSnapshotStore
+from framework.harness.context.runtime import (
+    ContextCompactionRuntime,
+    ContextCompactionRuntimeRequest,
+    ContextCompactionRuntimeResult,
+    ContextCompactionRuntimeStatus,
+    ContextPhysicalMaterializerPort,
+)
 from framework.harness.context.summary_models import (
     ContextSummaryCandidate,
     ContextSummaryClaim,
@@ -138,6 +150,10 @@ __all__ = [
     "ContextCompactionActionExecutor",
     "ContextCompactionExecutionResult",
     "ContextCompactionExecutionStatus",
+    "ContextCompactionRuntime",
+    "ContextCompactionRuntimeRequest",
+    "ContextCompactionRuntimeResult",
+    "ContextCompactionRuntimeStatus",
     "ContextCompactionActionDefinition",
     "ContextCompactionActionRegistry",
     "ContextCompactionPlanner",
@@ -151,11 +167,13 @@ __all__ = [
     "ContextCompactionPolicy",
     "ContextCompressionRecordV2",
     "ContextEnvelope",
+    "ContextDurableRefs",
     "ContextGateResult",
     "ContextPrivacyGate",
     "ContextPhysicalAdmissionEvidence",
     "ContextPhysicalAdmissionVerifier",
     "ContextPhysicalMaterialization",
+    "ContextPhysicalMaterializerPort",
     "ContextPlanningBudgetUsage",
     "ContextProvenanceGate",
     "ContextGroup",
@@ -189,6 +207,8 @@ __all__ = [
     "ContextSummaryWorkerPort",
     "ContextSummaryWorkerResult",
     "ContextToolTransactionState",
+    "ContextVerifiedArtifactStore",
+    "ContextVerifiedStorePort",
     "FakeContextAssembler",
     "FakeContextBudgetEstimator",
     "FakeContextCachePolicyBuilder",

@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from framework.events.canonical import checksum_for
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.shared.json import to_jsonable
 
 
 def required_text(value: Any, *, field: str) -> str:
@@ -62,7 +63,7 @@ def mapping_tuple(value: Any, *, field: str) -> tuple[dict[str, Any], ...]:
         not isinstance(item, Mapping) for item in value
     ):
         raise HarnessValidationError(f"{field} must be a list of objects")
-    return tuple(deepcopy(dict(item)) for item in value)
+    return tuple(deepcopy(to_jsonable(dict(item))) for item in value)
 
 
 def strict_payload(value: Any, *, model: str) -> dict[str, Any]:

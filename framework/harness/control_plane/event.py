@@ -23,6 +23,11 @@ class HarnessEventType(StrEnum):
     WORKER_RESULT_RECORDED = "worker_result_recorded"
     GATE_EVALUATED = "gate_evaluated"
     CHECKPOINT_CREATED = "checkpoint_created"
+    CONTEXT_COMPACTION_PLANNED = "context_compaction_planned"
+    CONTEXT_COMPACTION_ACTION_APPLIED = "context_compaction_action_applied"
+    CONTEXT_SUMMARY_CANDIDATE_CREATED = "context_summary_candidate_created"
+    CONTEXT_COMPACTION_VERIFIED = "context_compaction_verified"
+    CONTEXT_COMPACTION_REJECTED = "context_compaction_rejected"
 
 
 @dataclass(frozen=True)
