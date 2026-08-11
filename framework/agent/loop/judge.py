@@ -3,7 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from framework.llm.structured_output import LLMStructuredOutputValidationError, validate_structured_output
+from framework.llm.structured_output import (
+    LLMStructuredOutputValidationError,
+    compile_structured_output_contract,
+    structured_output_response_fingerprint,
+    validate_compiled_structured_output,
+)
 from framework.agent.loop.extensions import OutputValidator
 from framework.agent.models import AgentAction, AgentSpec, JudgeDecision, JudgeVerdict
 
@@ -100,10 +105,19 @@ class OutputJudge:
                 policy_violations=pre_policy_violations,
             )
 
-        schema_errors = [
-            *pre_schema_errors,
-            *self._schema_errors(output, agent.output_schema),
-        ]
+        (
+            managed_schema_errors,
+            structured_output_diagnostics,
+            structured_output_contract,
+            response_fingerprint,
+        ) = self._schema_validation(
+            output,
+            agent.output_schema,
+            execution_metadata=action.metadata.get(
+                "structured_output_validation"
+            ),
+        )
+        schema_errors = [*pre_schema_errors, *managed_schema_errors]
         validation_errors: list[str] = list(pre_validation_errors)
         tool_policy = agent.resolved_tool_policy()
         policy_violations = list(pre_policy_violations)
@@ -147,6 +161,9 @@ class OutputJudge:
                 schema_errors=schema_errors,
                 validation_errors=validation_errors,
                 policy_violations=policy_violations,
+                structured_output_diagnostics=structured_output_diagnostics,
+                structured_output_contract=structured_output_contract,
+                response_fingerprint=response_fingerprint,
             )
 
         if missing_output_keys or schema_errors or validation_errors or policy_violations:
@@ -167,26 +184,59 @@ class OutputJudge:
                 schema_errors=schema_errors,
                 validation_errors=validation_errors,
                 policy_violations=policy_violations,
+                structured_output_diagnostics=structured_output_diagnostics,
+                structured_output_contract=structured_output_contract,
+                response_fingerprint=response_fingerprint,
             )
 
         return JudgeVerdict(
             decision=JudgeDecision.ACCEPT,
             confidence=1.0,
             feedback="accepted",
+            structured_output_contract=structured_output_contract,
+            response_fingerprint=response_fingerprint,
         )
 
-    def _schema_errors(
+    def _schema_validation(
         self,
         output: dict[str, Any],
         output_schema: dict[str, Any] | None,
-    ) -> list[str]:
+        *,
+        execution_metadata: Any = None,
+    ) -> tuple[list[str], list[dict[str, Any]], dict[str, Any] | None, str | None]:
         if output_schema is None:
-            return []
+            return [], [], None, None
+        contract = compile_structured_output_contract(
+            output_schema,
+            schema_name="agent_output",
+        )
+        fingerprint = structured_output_response_fingerprint(output)
+        execution_identity = contract.to_dict()
+        if (
+            isinstance(execution_metadata, dict)
+            and execution_metadata.get("validated") is True
+            and execution_metadata.get("schema_digest") == contract.schema_digest
+            and execution_metadata.get("response_fingerprint") == fingerprint
+        ):
+            for field in (
+                "projection_digest",
+                "projection_mode",
+                "provider_capability_revision",
+            ):
+                value = execution_metadata.get(field)
+                if isinstance(value, str) and value:
+                    execution_identity[field] = value
         try:
-            validate_structured_output(output, output_schema)
+            validate_compiled_structured_output(output, contract)
         except LLMStructuredOutputValidationError as exc:
-            return [str(exc)]
-        return []
+            diagnostics = [item.to_dict() for item in exc.diagnostics]
+            return (
+                [item["message"] for item in diagnostics],
+                diagnostics,
+                execution_identity,
+                fingerprint,
+            )
+        return [], [], execution_identity, fingerprint
 
     def _contains_secret(self, value: Any) -> bool:
         if isinstance(value, str):

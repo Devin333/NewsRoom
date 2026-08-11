@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone as _tz
@@ -243,17 +244,30 @@ class LLMRouter:
         *,
         resolution_trace: Iterable[dict[str, Any]],
     ) -> LLMResponse:
-        contract = _compile_route_structured_output_contract(
-            request,
-            route_id=route_id,
-        )
         route = self._route(route_id)
+        route_events: list[LLMRouterEvent] = []
+        try:
+            contract = _compile_route_structured_output_contract(
+                request,
+                route_id=route_id,
+            )
+        except LLMRouteError as exc:
+            self._record_structured_output_preflight_failure(
+                route_events,
+                route_id=route.route_id,
+                error=exc,
+            )
+            raise
         attempted_deployments: list[str] = []
         errors: list[dict[str, Any]] = []
         deployment_chain = route.deployment_chain()
         resolution_trace = _safe_resolution_trace(resolution_trace)
-        route_events: list[LLMRouterEvent] = []
         overflow_recovery_used = False
+        self._record_structured_output_contract_compiled(
+            route_events,
+            route_id=route.route_id,
+            contract=contract,
+        )
         self._record_event(
             route_events,
             "llm_route_started",
@@ -561,6 +575,13 @@ class LLMRouter:
                 if cooldown_state is not None:
                     error_payload["cooldown_state"] = cooldown_state.to_dict()
                 errors.append(error_payload)
+                self._record_structured_output_rejection(
+                    route_events,
+                    route=route,
+                    deployment=deployment,
+                    error=exc,
+                    contract=contract,
+                )
                 has_fallback = index < len(deployment_chain) - 1
                 self._record_event(
                     route_events,
@@ -741,6 +762,13 @@ class LLMRouter:
                         resolution_trace=resolution_trace,
                     ) from None
 
+            self._record_structured_output_accepted(
+                route_events,
+                route=route,
+                deployment=deployment,
+                response=response,
+            )
+
             if self._cooldown_tracker is not None:
                 self._cooldown_tracker.record_success(deployment_id)
             try:
@@ -833,6 +861,21 @@ class LLMRouter:
                     response=response,
                     write_authorized=cache_attempt.write_authorized,
                 )
+                if prepared_request.output_schema is not None:
+                    self._record_event(
+                        route_events,
+                        "structured_output_cache_validation",
+                        route.route_id,
+                        deployment=deployment,
+                        metadata={
+                            "phase": "write",
+                            "outcome": (
+                                "stored" if write_result.stored else "rejected"
+                            ),
+                            "reason": write_result.reason,
+                            "provider_call": True,
+                        },
+                    )
                 write_event = (
                     "llm_cache_write_succeeded"
                     if write_result.stored
@@ -925,17 +968,30 @@ class LLMRouter:
         *,
         resolution_trace: Iterable[dict[str, Any]],
     ) -> Iterator[LLMStreamEvent]:
-        contract = _compile_route_structured_output_contract(
-            request,
-            route_id=route_id,
-        )
         route = self._route(route_id)
+        route_events: list[LLMRouterEvent] = []
+        try:
+            contract = _compile_route_structured_output_contract(
+                request,
+                route_id=route_id,
+            )
+        except LLMRouteError as exc:
+            self._record_structured_output_preflight_failure(
+                route_events,
+                route_id=route.route_id,
+                error=exc,
+            )
+            raise
         attempted_deployments: list[str] = []
         errors: list[dict[str, Any]] = []
         deployment_chain = route.deployment_chain()
         resolution_trace = _safe_resolution_trace(resolution_trace)
-        route_events: list[LLMRouterEvent] = []
         overflow_recovery_used = False
+        self._record_structured_output_contract_compiled(
+            route_events,
+            route_id=route.route_id,
+            contract=contract,
+        )
         self._record_event(
             route_events,
             "llm_route_started",
@@ -1337,6 +1393,13 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from None
             except LLMProviderError as exc:
+                self._record_structured_output_rejection(
+                    route_events,
+                    route=route,
+                    deployment=deployment,
+                    error=exc,
+                    contract=contract,
+                )
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -1505,6 +1568,13 @@ class LLMRouter:
                 raise
             except LLMProviderError as exc:
                 _close_iterator(source_iterator)
+                self._record_structured_output_rejection(
+                    route_events,
+                    route=route,
+                    deployment=deployment,
+                    error=exc,
+                    contract=contract,
+                )
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -1651,6 +1721,12 @@ class LLMRouter:
 
             capture_result = capture.finalize()
             response = capture_result.response
+            self._record_structured_output_accepted(
+                route_events,
+                route=route,
+                deployment=deployment,
+                response=response,
+            )
             write_after_exhaustion = False
             deferred_no_write_reason: tuple[str, dict[str, Any]] | None = None
             if not capture_result.cacheable:
@@ -1809,6 +1885,13 @@ class LLMRouter:
                 pass
             except LLMProviderError as exc:
                 _close_iterator(source_iterator)
+                self._record_structured_output_rejection(
+                    route_events,
+                    route=route,
+                    deployment=deployment,
+                    error=exc,
+                    contract=contract,
+                )
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -2053,6 +2136,23 @@ class LLMRouter:
                             "result": write_status,
                             "size_bytes": write_result.size_bytes,
                         }
+                        if prepared_request.output_schema is not None:
+                            self._record_event(
+                                route_events,
+                                "structured_output_cache_validation",
+                                route.route_id,
+                                deployment=deployment,
+                                metadata={
+                                    "phase": "write",
+                                    "outcome": (
+                                        "stored"
+                                        if write_result.stored
+                                        else "rejected"
+                                    ),
+                                    "reason": write_result.reason,
+                                    "provider_call": True,
+                                },
+                            )
                         if write_status == "backend_error" and write_result.reason:
                             outcome_metadata["error_class"] = write_result.reason
                         self._record_stream_cache_outcome(
@@ -2381,6 +2481,30 @@ class LLMRouter:
         state.reason = read_result.lookup.status.value
         state.age_seconds = read_result.lookup.age_seconds
         duration_ms = round((time.perf_counter() - started_at) * 1_000, 3)
+        if request.output_schema is not None:
+            self._record_event(
+                events,
+                "structured_output_cache_validation",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    "phase": "read",
+                    "outcome": (
+                        "validated_hit"
+                        if read_result.hit
+                        else read_result.lookup.status.value
+                    ),
+                    "reason": read_result.lookup.reason,
+                    "schema_digest": (
+                        preparation.key.structured_output_identity.schema_digest
+                        if preparation.key
+                        and preparation.key.structured_output_identity is not None
+                        else None
+                    ),
+                    "validation_duration_seconds": duration_ms / 1_000,
+                    "provider_call": False,
+                },
+            )
         if read_result.hit:
             state.response = read_result.response
             self._record_event(
@@ -2623,6 +2747,12 @@ class LLMRouter:
     ) -> LLMResponse:
         if state.response is None:
             raise RuntimeError("cache hit response is required")
+        self._record_structured_output_accepted(
+            events,
+            route=route,
+            deployment=deployment,
+            response=state.response,
+        )
         self._record_event(
             events,
             "llm_deployment_attempt_succeeded",
@@ -2693,6 +2823,159 @@ class LLMRouter:
             route_id=route_id,
             agent_id=agent_id,
             task_type=task_type,
+        )
+
+    def _record_structured_output_contract_compiled(
+        self,
+        events: list[LLMRouterEvent],
+        *,
+        route_id: str,
+        contract: StructuredOutputContract | None,
+    ) -> None:
+        if contract is None:
+            return
+        schema_bytes = len(
+            json.dumps(
+                contract.canonical_schema,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        self._record_event(
+            events,
+            "structured_output_contract_compiled",
+            route_id,
+            metadata={
+                "schema_digest": contract.schema_digest,
+                "schema_revision": contract.schema_revision,
+                "schema_dialect": contract.dialect,
+                "typed_adapter_revision": contract.typed_adapter_revision,
+                "schema_bytes": schema_bytes,
+                "provider_call": False,
+            },
+        )
+
+    def _record_structured_output_preflight_failure(
+        self,
+        events: list[LLMRouterEvent],
+        *,
+        route_id: str,
+        error: LLMRouteError,
+    ) -> None:
+        diagnostic: dict[str, Any] = {}
+        if error.errors:
+            raw_diagnostics = error.errors[0].get("diagnostics")
+            if isinstance(raw_diagnostics, list) and raw_diagnostics:
+                first = raw_diagnostics[0]
+                if isinstance(first, dict):
+                    diagnostic = first
+        self._record_event(
+            events,
+            "structured_output_schema_preflight_failed",
+            route_id,
+            metadata={
+                "issue_code": diagnostic.get("code") or error.error_type,
+                "instance_path": list(diagnostic.get("instance_path") or []),
+                "schema_path": list(diagnostic.get("schema_path") or []),
+                "validator": diagnostic.get("validator"),
+                "issue_count": 1 if diagnostic else 0,
+                "provider_call": False,
+            },
+        )
+
+    def _record_structured_output_rejection(
+        self,
+        events: list[LLMRouterEvent],
+        *,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        error: LLMProviderError,
+        contract: StructuredOutputContract | None,
+    ) -> None:
+        event_type = {
+            "structured_output_parse_error": "structured_output_decode_rejected",
+            "structured_output_validation_error": (
+                "structured_output_local_validation_failed"
+            ),
+            "structured_output_typed_validation_error": (
+                "structured_output_typed_validation_failed"
+            ),
+        }.get(error.error_type)
+        if (
+            event_type == "structured_output_local_validation_failed"
+            and error.diagnostics
+            and error.diagnostics[0].get("code")
+            == "structured_output_typed_validation_error"
+        ):
+            event_type = "structured_output_typed_validation_failed"
+        if event_type is None:
+            return
+        diagnostic = error.diagnostics[0] if error.diagnostics else {}
+        self._record_event(
+            events,
+            event_type,
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                "schema_digest": contract.schema_digest if contract else None,
+                "schema_revision": contract.schema_revision if contract else None,
+                "schema_dialect": contract.dialect if contract else None,
+                "capability_revision": (
+                    deployment.structured_output_capability.revision
+                    if deployment.structured_output_capability is not None
+                    else None
+                ),
+                "projection_mode": (
+                    "json_object_local_gate"
+                    if deployment.structured_output_capability is not None
+                    and deployment.structured_output_capability.mode == "json_object"
+                    else (
+                        deployment.structured_output_capability.mode
+                        if deployment.structured_output_capability is not None
+                        else None
+                    )
+                ),
+                "issue_code": diagnostic.get("code"),
+                "instance_path": list(diagnostic.get("instance_path") or []),
+                "schema_path": list(diagnostic.get("schema_path") or []),
+                "validator": diagnostic.get("validator"),
+                "issue_count": len(error.diagnostics),
+                "response_fingerprint": error.response_fingerprint,
+                "provider_call": True,
+            },
+        )
+
+    def _record_structured_output_accepted(
+        self,
+        events: list[LLMRouterEvent],
+        *,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        response: LLMResponse,
+    ) -> None:
+        validation = response.metadata.get("structured_output_validation")
+        if not isinstance(validation, dict) or validation.get("validated") is not True:
+            return
+        self._record_event(
+            events,
+            "structured_output_validation_accepted",
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                key: validation.get(key)
+                for key in (
+                    "schema_digest",
+                    "schema_revision",
+                    "schema_dialect",
+                    "typed_adapter_revision",
+                    "projection_digest",
+                    "projection_mode",
+                    "provider_capability_revision",
+                    "response_fingerprint",
+                )
+            },
         )
 
     def _record_event(
@@ -3100,6 +3383,7 @@ _SAFE_ROUTE_ERROR_FIELDS = frozenset(
         "provider_call",
         "provider_reported_limit_tokens",
         "provider_reported_usage_tokens",
+        "response_fingerprint",
         "retryable",
         "status_code",
         "visible_output",

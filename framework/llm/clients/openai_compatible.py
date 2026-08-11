@@ -26,6 +26,8 @@ from framework.llm.structured_output import (
     compile_structured_output_contract,
     decode_structured_output,
     project_structured_output_contract,
+    structured_output_response_fingerprint,
+    structured_output_text_fingerprint,
     validate_compiled_structured_output,
 )
 from framework.llm.clients.tool_adapters import (
@@ -54,6 +56,7 @@ class LLMProviderError(RuntimeError):
         status_code: int | None = None,
         attempts: int = 1,
         diagnostics: Iterable[dict[str, Any]] | None = None,
+        response_fingerprint: str | None = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider
@@ -64,6 +67,7 @@ class LLMProviderError(RuntimeError):
         self.status_code = status_code
         self.attempts = attempts
         self.diagnostics = tuple(dict(item) for item in (diagnostics or ()))
+        self.response_fingerprint = response_fingerprint
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -79,6 +83,8 @@ class LLMProviderError(RuntimeError):
         }
         if self.diagnostics:
             payload["diagnostics"] = [dict(item) for item in self.diagnostics]
+        if self.response_fingerprint:
+            payload["response_fingerprint"] = self.response_fingerprint
         if redact:
             return redact_sensitive_values(payload)
         return payload
@@ -404,7 +410,7 @@ class OpenAICompatibleClient:
             execution_request,
             contract=contract,
             projection=projection,
-            validated=structured_output is not None,
+            structured_output=structured_output,
         )
         yield LLMStreamEvent(
             event_type="message_complete",
@@ -709,7 +715,7 @@ class OpenAICompatibleClient:
             request,
             contract=contract,
             projection=projection,
-            validated=structured_output is not None,
+            structured_output=structured_output,
         )
         return LLMResponse(
             content=content,
@@ -750,6 +756,7 @@ class OpenAICompatibleClient:
                 retryable=False,
                 attempts=attempts,
                 diagnostics=(item.to_dict() for item in exc.diagnostics),
+                response_fingerprint=structured_output_text_fingerprint(content),
             ) from exc
         if contract is not None:
             try:
@@ -766,6 +773,9 @@ class OpenAICompatibleClient:
                     retryable=False,
                     attempts=attempts,
                     diagnostics=(item.to_dict() for item in exc.diagnostics),
+                    response_fingerprint=structured_output_response_fingerprint(
+                        structured_output
+                    ),
                 ) from exc
         return structured_output
 
@@ -775,13 +785,13 @@ class OpenAICompatibleClient:
         *,
         contract: StructuredOutputContract | None,
         projection: ProviderSchemaProjection | None,
-        validated: bool,
+        structured_output: dict[str, Any] | None,
     ) -> dict[str, Any]:
         if not _expects_structured_output(request):
             return {}
         return {
             "structured_output_validation": {
-                "validated": validated,
+                "validated": structured_output is not None,
                 "schema_name": (
                     request.output_schema_name
                     if request.output_schema is not None
@@ -824,6 +834,11 @@ class OpenAICompatibleClient:
                 ),
                 "provider_native_json_mode": _uses_provider_native_json_mode(
                     request
+                ),
+                "response_fingerprint": (
+                    structured_output_response_fingerprint(structured_output)
+                    if structured_output is not None
+                    else None
                 ),
             }
         }

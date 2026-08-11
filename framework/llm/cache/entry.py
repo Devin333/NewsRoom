@@ -12,12 +12,14 @@ from framework.llm.models.request import LLMRequest
 from framework.llm.models.response import LLMResponse
 from framework.llm.models.usage import TokenUsage
 from framework.llm.structured_output import (
-    LLMStructuredOutputValidationError,
-    validate_structured_output,
+    ManagedStructuredOutputError,
+    StructuredOutputCacheIdentity,
+    require_managed_structured_output,
+    validate_compiled_structured_output,
 )
 
 
-CACHE_ENTRY_SCHEMA_VERSION = "v1"
+CACHE_ENTRY_SCHEMA_VERSION = "v2"
 _SAFE_RESPONSE_METADATA_KEYS = {
     "finish_reason",
     "response_format",
@@ -39,6 +41,7 @@ class CacheEntry:
     source_provider: str
     source_model: str
     response: dict[str, Any]
+    structured_output_identity: StructuredOutputCacheIdentity | None = None
 
     @classmethod
     def from_response(
@@ -61,6 +64,7 @@ class CacheEntry:
             source_provider=key.provider,
             source_model=key.model,
             response=projected,
+            structured_output_identity=key.structured_output_identity,
         )
 
     def to_response(self, *, request: LLMRequest | None = None) -> LLMResponse:
@@ -78,6 +82,11 @@ class CacheEntry:
             "source_provider": self.source_provider,
             "source_model": self.source_model,
             "response": deepcopy(self.response),
+            "structured_output_identity": (
+                self.structured_output_identity.to_dict()
+                if self.structured_output_identity is not None
+                else None
+            ),
         }
 
     def to_json_bytes(self) -> bytes:
@@ -97,6 +106,21 @@ class CacheEntry:
             raise CacheResponseValidationError("cache entry response must be an object")
         response = dict(response_payload)
         CacheResponseValidator.restore(response)
+        raw_identity = payload.get("structured_output_identity")
+        if raw_identity is not None and not isinstance(raw_identity, Mapping):
+            raise CacheResponseValidationError(
+                "structured-output cache identity must be an object or null"
+            )
+        try:
+            structured_output_identity = (
+                StructuredOutputCacheIdentity.from_metadata(raw_identity)
+                if isinstance(raw_identity, Mapping)
+                else None
+            )
+        except ManagedStructuredOutputError as exc:
+            raise CacheResponseValidationError(
+                "structured-output cache identity is invalid"
+            ) from exc
         return cls(
             entry_schema_version=version,
             cache_key_version=key_version,
@@ -108,6 +132,7 @@ class CacheEntry:
             source_provider=_required_text(payload.get("source_provider"), "source_provider"),
             source_model=_required_text(payload.get("source_model"), "source_model"),
             response=response,
+            structured_output_identity=structured_output_identity,
         )
 
     @classmethod
@@ -130,6 +155,10 @@ class CacheEntry:
             raise CacheResponseValidationError("cache deployment identity mismatch")
         if self.source_provider != key.provider or self.source_model != key.model:
             raise CacheResponseValidationError("cache provider identity mismatch")
+        if self.structured_output_identity != key.structured_output_identity:
+            raise CacheResponseValidationError(
+                "cache structured-output identity mismatch"
+            )
 
 
 class CacheResponseValidator:
@@ -152,9 +181,15 @@ class CacheResponseValidator:
         if request.output_schema is not None:
             if response.structured_output is None:
                 raise CacheResponseValidationError("structured output is required")
+            contract = request.structured_output_contract()
+            if contract is None:
+                raise CacheResponseValidationError(
+                    "structured-output request has no compiled contract"
+                )
             try:
-                validate_structured_output(response.structured_output, request.output_schema)
-            except LLMStructuredOutputValidationError as exc:
+                require_managed_structured_output(request=request, response=response)
+                validate_compiled_structured_output(response.structured_output, contract)
+            except (ManagedStructuredOutputError, TypeError, ValueError) as exc:
                 raise CacheResponseValidationError("structured output validation failed") from exc
 
         format_type = _response_format_type(request.response_format)

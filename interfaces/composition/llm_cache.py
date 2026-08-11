@@ -44,8 +44,8 @@ class LLMCacheSettings:
     mode: CacheMode = CacheMode.DISABLED
     backend: str = "redis"
     namespace: str = "newsroom:llm-cache"
-    key_version: str = "v1"
-    cache_generation: str = "v1"
+    key_version: str = "v2"
+    cache_generation: str = "v2"
     ttl_seconds: float = 300.0
     max_entry_bytes: int = 1_048_576
     connect_timeout_seconds: float = 1.0
@@ -111,8 +111,8 @@ class LLMCacheSettings:
             _invalid("NEWS_LLM_CACHE_BACKEND", "memory is limited to explicit local/test mode")
 
         namespace = _validated_namespace(values.get("NEWS_LLM_CACHE_NAMESPACE"))
-        key_version = _identifier_env(values, "NEWS_LLM_CACHE_KEY_VERSION", "v1")
-        cache_generation = _identifier_env(values, "NEWS_LLM_CACHE_GENERATION", "v1")
+        key_version = _identifier_env(values, "NEWS_LLM_CACHE_KEY_VERSION", "v2")
+        cache_generation = _identifier_env(values, "NEWS_LLM_CACHE_GENERATION", "v2")
         ttl_seconds = _number_env(
             values,
             "NEWS_LLM_CACHE_TTL_SECONDS",

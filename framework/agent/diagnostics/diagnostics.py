@@ -130,6 +130,23 @@ class AgentLoopStallDetector:
         judge_retries: int,
         empty_output_retries: int = 0,
     ) -> StallDetection:
+        if trace.repeated_structured_output_rejection():
+            summary = "structured-output repair repeated an unchanged rejected candidate"
+            return StallDetection(
+                stalled=True,
+                stop_reason=AgentLoopStopReason.JUDGE_RETRY_EXHAUSTED,
+                summary=summary,
+                issue=AgentLoopIssue(
+                    code="structured_output_unchanged_retry",
+                    message=summary,
+                    severity=AgentLoopDiagnosticSeverity.ERROR,
+                    iteration=iteration,
+                    metadata={
+                        "judge_retries": judge_retries,
+                        "max_judge_retries": self.policy.max_judge_retries,
+                    },
+                ),
+            )
         if empty_output_retries > self.policy.max_judge_retries:
             summary = (
                 "empty output retry limit exceeded: "

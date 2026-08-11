@@ -44,6 +44,8 @@ def test_agent_loop_step_outcome_exposes_trajectory_summary() -> None:
     assert outcome.metrics["trajectory_summary"]["iteration_count"] == 1
     assert outcome.metrics["trajectory_summary"]["termination_reason"] == "final_output_accepted"
     assert outcome.trace_events[0]["event_type"] == "agent_loop_trajectory"
+    assert outcome.trace_events[1]["event_type"] == "structured_output_validation_accepted"
+    assert "raw-secret" not in str(outcome.trace_events)
 
 
 def test_agent_loop_step_runner_passes_present_optional_reads() -> None:
@@ -149,6 +151,20 @@ class _FakeAgentRunner:
             output={"summary": "ok"},
             iterations=1,
             metrics=AgentLoopMetrics(iterations=1),
+            events=[
+                {
+                    "event_type": "structured_output_validation_accepted",
+                    "agent_id": "agent-1",
+                    "iteration": 1,
+                    "contract": {"schema_digest": "sha256:" + "a" * 64},
+                    "response_fingerprint": "sha256:" + "b" * 64,
+                    "budget_disposition": "accepted_for_domain_gates",
+                },
+                {
+                    "event_type": "llm_call",
+                    "raw_output": "raw-secret",
+                },
+            ],
             trace={"agent_id": "agent-1", "trace_id": "trace-1", "summary": {}},
             trajectory=trajectory,
             termination_reason="final_output_accepted",

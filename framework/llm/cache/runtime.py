@@ -32,6 +32,7 @@ from framework.llm.cache.key import (
 from framework.llm.cache.policy import LLMCachePolicy
 from framework.llm.models.request import LLMRequest
 from framework.llm.models.response import LLMResponse
+from framework.llm.structured_output import StructuredOutputCacheIdentity
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,17 @@ class LLMCacheRuntime:
         eligibility = self.policy.evaluate(request)
         if not eligibility.eligible or eligibility.context is None:
             return CachePreparation(eligibility=eligibility)
+        if (
+            request.output_schema is not None
+            and StructuredOutputCacheIdentity.from_request(request) is None
+        ):
+            return CachePreparation(
+                eligibility=replace(
+                    eligibility,
+                    eligible=False,
+                    reason="unmanaged_structured_output",
+                )
+            )
         try:
             key = self.key_factory.build(
                 request=request,

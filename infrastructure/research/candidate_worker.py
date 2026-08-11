@@ -22,11 +22,12 @@ from framework.llm.clients.openai_compatible import (
     OpenAICompatibleClient,
 )
 from framework.llm.context.estimator import estimate_request_tokens
-from framework.llm.models import LLMRequest
+from framework.llm.models import LLMRequest, LLMResponse
 from framework.llm.redaction import redact_sensitive_values
 from framework.llm.structured_output import (
-    LLMStructuredOutputValidationError,
-    validate_structured_output,
+    ManagedStructuredOutputError,
+    compile_structured_output_contract,
+    require_managed_structured_output_for_contract,
 )
 
 from infrastructure.research.errors import ResearchAdapterError
@@ -608,19 +609,23 @@ class StructuredResearchCandidateWorker:
 
     @staticmethod
     def _extract_structured_output(response: Any, *, task: str) -> dict[str, Any]:
-        structured = (
-            response.get("structured_output")
-            if isinstance(response, Mapping)
-            else getattr(response, "structured_output", None)
-        )
+        normalized_response = LLMResponse.from_any(response)
+        structured = normalized_response.structured_output
         if not isinstance(structured, dict):
             raise ResearchCandidateOutputError(
                 "Research candidate response did not contain a structured object",
                 task=task,
             )
         try:
-            validate_structured_output(structured, _SCHEMAS[task])
-        except (LLMStructuredOutputValidationError, TypeError, ValueError) as exc:
+            contract = compile_structured_output_contract(
+                _SCHEMAS[task],
+                schema_name=f"research_{task}",
+            )
+            require_managed_structured_output_for_contract(
+                response=normalized_response,
+                contract=contract,
+            )
+        except (ManagedStructuredOutputError, TypeError, ValueError) as exc:
             raise ResearchCandidateOutputError(
                 "Research candidate response failed structured validation",
                 task=task,

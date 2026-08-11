@@ -12,6 +12,7 @@ from framework.harness import RAGBudget, RAGSessionSpec, RetrievalGoal, WorkerRA
 from framework.llm import (
     LOCAL_STRUCTURED_OUTPUT_DIALECT,
     ProviderStructuredOutputCapability,
+    LLMResponse,
     compile_structured_output_contract,
     structured_output_enforcement_keywords,
 )
@@ -118,6 +119,19 @@ def test_non_standard_json_number_fails_closed(
             task="candidate_three_minute_read",
             payload=_valid_payload("candidate_three_minute_read"),
         )
+
+
+def test_worker_rejects_unmanaged_structured_terminal_output() -> None:
+    task = "candidate_three_minute_read"
+
+    class UnmanagedClient:
+        def complete(self, request):  # type: ignore[no-untyped-def]
+            return LLMResponse(structured_output=_valid_output(task))
+
+    worker = StructuredResearchCandidateWorker(UnmanagedClient())  # type: ignore[arg-type]
+
+    with pytest.raises(ResearchCandidateOutputError):
+        worker.generate_candidate(task=task, payload=_valid_payload(task))
 
 
 @pytest.mark.parametrize("location", ["top", "nested"])

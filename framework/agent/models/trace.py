@@ -330,6 +330,9 @@ class JudgeTrace:
     schema_errors: list[str] = field(default_factory=list)
     validation_errors: list[str] = field(default_factory=list)
     policy_violations: list[str] = field(default_factory=list)
+    structured_output_diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    structured_output_contract: dict[str, Any] | None = None
+    response_fingerprint: str | None = None
 
     @classmethod
     def from_verdict(cls, iteration: int, verdict: JudgeVerdict) -> JudgeTrace:
@@ -342,6 +345,15 @@ class JudgeTrace:
             schema_errors=list(verdict.schema_errors),
             validation_errors=list(verdict.validation_errors),
             policy_violations=list(verdict.policy_violations),
+            structured_output_diagnostics=[
+                dict(item) for item in verdict.structured_output_diagnostics
+            ],
+            structured_output_contract=(
+                dict(verdict.structured_output_contract)
+                if verdict.structured_output_contract is not None
+                else None
+            ),
+            response_fingerprint=verdict.response_fingerprint,
         )
 
     @classmethod
@@ -357,6 +369,17 @@ class JudgeTrace:
                 str(item) for item in payload.get("validation_errors", [])
             ],
             policy_violations=[str(item) for item in payload.get("policy_violations", [])],
+            structured_output_diagnostics=[
+                dict(item)
+                for item in payload.get("structured_output_diagnostics", [])
+                if isinstance(item, dict)
+            ],
+            structured_output_contract=(
+                dict(payload["structured_output_contract"])
+                if isinstance(payload.get("structured_output_contract"), dict)
+                else None
+            ),
+            response_fingerprint=_optional_text(payload.get("response_fingerprint")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -369,6 +392,15 @@ class JudgeTrace:
             "schema_errors": list(self.schema_errors),
             "validation_errors": list(self.validation_errors),
             "policy_violations": list(self.policy_violations),
+            "structured_output_diagnostics": [
+                dict(item) for item in self.structured_output_diagnostics
+            ],
+            "structured_output_contract": (
+                dict(self.structured_output_contract)
+                if self.structured_output_contract is not None
+                else None
+            ),
+            "response_fingerprint": self.response_fingerprint,
         }
 
 
@@ -624,6 +656,21 @@ class AgentLoopTrace:
                 break
             count += 1
         return count
+
+    def repeated_structured_output_rejection(self) -> bool:
+        if len(self.judges) < 2:
+            return False
+        previous, current = self.judges[-2:]
+        if previous.decision != "retry" or current.decision != "retry":
+            return False
+        if not previous.response_fingerprint or (
+            previous.response_fingerprint != current.response_fingerprint
+        ):
+            return False
+        return bool(current.structured_output_diagnostics) and (
+            _diagnostic_identity(previous.structured_output_diagnostics)
+            == _diagnostic_identity(current.structured_output_diagnostics)
+        )
 
     def summary(self) -> dict[str, Any]:
         repeated_signatures = {}
@@ -928,3 +975,17 @@ def _iteration_error(iteration: IterationTrace) -> dict[str, Any] | None:
             "error_message": iteration.tool_call.error_message,
         }
     return None
+
+
+def _diagnostic_identity(
+    diagnostics: list[dict[str, Any]],
+) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        (
+            item.get("code"),
+            tuple(item.get("instance_path") or ()),
+            tuple(item.get("schema_path") or ()),
+            item.get("validator"),
+        )
+        for item in diagnostics
+    )

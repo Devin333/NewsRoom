@@ -5,6 +5,7 @@ from typing import Any
 
 from framework.agent.models import AgentLoopEventType
 from framework.events.trace import TraceContext, trace_fields
+from framework.llm.structured_output.observability import StructuredOutputEvent
 
 
 @dataclass(frozen=True)
@@ -28,8 +29,15 @@ class AgentLoopEvent:
 
 
 class AgentLoopEventRecorder:
-    def __init__(self, *, agent_id: str, trace_context: TraceContext | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        agent_id: str,
+        trace_context: TraceContext | None = None,
+        run_id: str | None = None,
+    ) -> None:
         self.agent_id = agent_id
+        self.run_id = run_id
         self.trace_context = (
             trace_context.child(agent_id=agent_id)
             if trace_context is not None
@@ -310,6 +318,75 @@ class AgentLoopEventRecorder:
             payload={"verdict": dict(verdict)},
         )
 
+    def structured_output_validation_accepted(
+        self,
+        *,
+        iteration: int,
+        verdict: dict[str, Any],
+        repair_count: int = 0,
+    ) -> None:
+        self.emit(
+            AgentLoopEventType.STRUCTURED_OUTPUT_VALIDATION_ACCEPTED,
+            iteration=iteration,
+            payload={
+                **_structured_output_event_payload(
+                verdict,
+                event_type="structured_output_validation_accepted",
+                attempt_ref=str(iteration),
+                budget_disposition="accepted_for_domain_gates",
+                    run_id=self.run_id,
+                ),
+                "repair_count": max(0, int(repair_count)),
+            },
+        )
+
+    def structured_output_repair_requested(
+        self,
+        *,
+        iteration: int,
+        verdict: dict[str, Any],
+        repair_attempt: int,
+        max_repairs: int,
+    ) -> None:
+        self.emit(
+            AgentLoopEventType.STRUCTURED_OUTPUT_REPAIR_REQUESTED,
+            iteration=iteration,
+            payload={
+                **_structured_output_event_payload(
+                    verdict,
+                    event_type="structured_output_repair_requested",
+                    attempt_ref=str(iteration),
+                    budget_disposition="repair_authorized",
+                    run_id=self.run_id,
+                ),
+                "repair_attempt": repair_attempt,
+                "max_repairs": max_repairs,
+                "remaining_repairs": max(0, max_repairs - repair_attempt),
+            },
+        )
+
+    def structured_output_repair_budget_exhausted(
+        self,
+        *,
+        iteration: int,
+        verdict: dict[str, Any],
+        stop_reason: str,
+    ) -> None:
+        self.emit(
+            AgentLoopEventType.STRUCTURED_OUTPUT_REPAIR_BUDGET_EXHAUSTED,
+            iteration=iteration,
+            payload={
+                **_structured_output_event_payload(
+                    verdict,
+                    event_type="structured_output_repair_budget_exhausted",
+                    attempt_ref=str(iteration),
+                    budget_disposition="halt",
+                    run_id=self.run_id,
+                ),
+                "stop_reason": stop_reason,
+            },
+        )
+
     def judge_retry(
         self,
         *,
@@ -435,3 +512,59 @@ def event_type_counts(events: list[dict[str, Any]]) -> dict[str, int]:
         event_type = str(event.get("event_type") or "")
         counts[event_type] = counts.get(event_type, 0) + 1
     return counts
+
+
+def _structured_output_event_payload(
+    verdict: dict[str, Any],
+    *,
+    event_type: str,
+    attempt_ref: str,
+    budget_disposition: str,
+    run_id: str | None,
+) -> dict[str, Any]:
+    diagnostics = verdict.get("structured_output_diagnostics")
+    safe_diagnostics = []
+    if isinstance(diagnostics, list):
+        for item in diagnostics[:20]:
+            if not isinstance(item, dict):
+                continue
+            safe_diagnostics.append(
+                {
+                    "code": item.get("code"),
+                    "instance_path": list(item.get("instance_path") or []),
+                    "schema_path": list(item.get("schema_path") or []),
+                    "validator": item.get("validator"),
+                }
+            )
+    contract = verdict.get("structured_output_contract")
+    safe_contract = dict(contract) if isinstance(contract, dict) else None
+    if safe_contract is not None:
+        safe_contract.pop("schema_name", None)
+    first_diagnostic = safe_diagnostics[0] if safe_diagnostics else {}
+    envelope = StructuredOutputEvent(
+        event_type=event_type,
+        run_id=run_id,
+        attempt_ref=attempt_ref,
+        schema_digest=(safe_contract or {}).get("schema_digest"),
+        schema_revision=(safe_contract or {}).get("schema_revision"),
+        schema_dialect=(safe_contract or {}).get("dialect"),
+        typed_adapter_revision=(safe_contract or {}).get(
+            "typed_adapter_revision"
+        ),
+        provider_capability_revision=(safe_contract or {}).get(
+            "provider_capability_revision"
+        ),
+        projection_digest=(safe_contract or {}).get("projection_digest"),
+        projection_mode=(safe_contract or {}).get("projection_mode"),
+        issue_code=first_diagnostic.get("code"),
+        instance_path=tuple(first_diagnostic.get("instance_path") or ()),
+        schema_path=tuple(first_diagnostic.get("schema_path") or ()),
+        issue_count=min(len(safe_diagnostics), 20),
+        response_fingerprint=verdict.get("response_fingerprint"),
+        budget_disposition=budget_disposition,
+    )
+    return {
+        **envelope.to_payload(),
+        "contract": safe_contract,
+        "diagnostics": safe_diagnostics,
+    }

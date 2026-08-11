@@ -9,11 +9,12 @@ from typing import Any, Mapping, Sequence
 
 from framework.llm.cache.contracts import CacheContext, CacheDependencies, CacheScope
 from framework.llm.models.request import LLMRequest
+from framework.llm.structured_output import StructuredOutputCacheIdentity
 
 
 DEFAULT_CACHE_NAMESPACE = "newsroom:llm-cache"
-DEFAULT_CACHE_KEY_VERSION = "v1"
-DEFAULT_CACHE_GENERATION = "v1"
+DEFAULT_CACHE_KEY_VERSION = "v2"
+DEFAULT_CACHE_GENERATION = "v2"
 _DOMAIN_PREFIX = b"newsroom-llm-cache\x00"
 _DIAGNOSTIC_METADATA_KEYS = {
     "call_id",
@@ -41,6 +42,7 @@ class LLMCacheKey:
     provider: str
     model: str
     cache_generation: str
+    structured_output_identity: StructuredOutputCacheIdentity | None = None
 
     @property
     def digest(self) -> str:
@@ -57,8 +59,8 @@ class LLMCacheKey:
         """Build a development-only compatibility key for `CachedLLMClient`."""
         factory = LLMCacheKeyFactory(
             secret=b"newsroom-development-cache-compatibility-only",
-            key_version="dev-v1",
-            cache_generation="dev-v1",
+            key_version="dev-v2",
+            cache_generation="dev-v2",
         )
         context = CacheContext(
             scope=CacheScope(
@@ -142,6 +144,7 @@ class LLMCacheKeyFactory:
             key_version=self.key_version,
             prepared_identity=prepared_identity,
         )
+        structured_output_identity = StructuredOutputCacheIdentity.from_request(request)
         scope_digest = self._hmac("scope", scope_payload)[:16]
         deployment_digest = self._hmac("deployment", deployment_payload)[:16]
         request_digest = self._hmac("request", request_payload)
@@ -155,6 +158,7 @@ class LLMCacheKeyFactory:
             provider=provider,
             model=model,
             cache_generation=self.cache_generation,
+            structured_output_identity=structured_output_identity,
         )
 
     def _hmac(self, domain: str, payload: Any) -> str:
@@ -194,7 +198,7 @@ def _request_semantic_payload(
         )
     semantic_metadata = {**request_metadata, **explicit_semantic}
     return {
-        "canonical_schema": "newsroom.llm-cache-request.v1",
+        "canonical_schema": "newsroom.llm-cache-request.v2",
         "cache_key_version": key_version,
         "deployment": deployment,
         "messages": request.messages,
@@ -205,6 +209,11 @@ def _request_semantic_payload(
         "response_format": request.response_format,
         "output_schema": request.output_schema,
         "output_schema_name": request.output_schema_name,
+        "structured_output_identity": (
+            StructuredOutputCacheIdentity.from_request(request).to_dict()
+            if StructuredOutputCacheIdentity.from_request(request) is not None
+            else None
+        ),
         "dependencies": context.dependencies.to_key_payload(),
         "semantic_metadata": semantic_metadata,
         "deterministic_seed": context.deterministic_seed,

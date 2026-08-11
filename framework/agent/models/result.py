@@ -18,6 +18,9 @@ class JudgeVerdict:
     schema_errors: list[str] = field(default_factory=list)
     validation_errors: list[str] = field(default_factory=list)
     policy_violations: list[str] = field(default_factory=list)
+    structured_output_diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    structured_output_contract: dict[str, Any] | None = None
+    response_fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -28,6 +31,15 @@ class JudgeVerdict:
             "schema_errors": list(self.schema_errors),
             "validation_errors": list(self.validation_errors),
             "policy_violations": list(self.policy_violations),
+            "structured_output_diagnostics": [
+                dict(item) for item in self.structured_output_diagnostics
+            ],
+            "structured_output_contract": (
+                dict(self.structured_output_contract)
+                if self.structured_output_contract is not None
+                else None
+            ),
+            "response_fingerprint": self.response_fingerprint,
         }
 
 
@@ -113,6 +125,9 @@ class AgentLoopMetrics:
     stalled_iterations: int = 0
     llm_error_count: int = 0
     llm_stream_event_count: int = 0
+    structured_output_repairs: int = 0
+    structured_output_validation_accepts: int = 0
+    structured_output_repair_budget_exhausted: int = 0
     total_tool_elapsed_ms: float = 0.0
     token_usage: TokenUsage = field(default_factory=TokenUsage)
     global_budget_check: dict[str, Any] | None = None
@@ -156,6 +171,13 @@ class AgentLoopMetrics:
             "stalled_iterations": self.stalled_iterations,
             "llm_error_count": self.llm_error_count,
             "llm_stream_event_count": self.llm_stream_event_count,
+            "structured_output_repairs": self.structured_output_repairs,
+            "structured_output_validation_accepts": (
+                self.structured_output_validation_accepts
+            ),
+            "structured_output_repair_budget_exhausted": (
+                self.structured_output_repair_budget_exhausted
+            ),
             "total_tool_elapsed_ms": self.total_tool_elapsed_ms,
             "token_usage": self.token_usage.to_dict(),
             "global_budget_check": self.global_budget_check,

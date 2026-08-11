@@ -64,6 +64,11 @@ from framework.llm.models import (
     LLMStreamEvent,
     LLMStreamAccumulator,
 )
+from framework.llm.structured_output import (
+    ManagedStructuredOutputError,
+    compile_structured_output_contract,
+    require_managed_structured_output_for_contract,
+)
 from framework.memory import (
     AgentMemoryAdapter,
     DEFAULT_AGENT_MEMORY_POLICY,
@@ -137,7 +142,10 @@ class AgentLoop:
     ) -> AgentLoopResult:
         effective_run_id = run_id or _run_id_from_inputs(inputs)
         metrics = AgentLoopMetrics()
-        events = AgentLoopEventRecorder(agent_id=agent.agent_id)
+        events = AgentLoopEventRecorder(
+            agent_id=agent.agent_id,
+            run_id=effective_run_id,
+        )
         trace = AgentLoopTrace(agent_id=agent.agent_id)
         diagnostics = AgentLoopDiagnosticsBuilder(agent_id=agent.agent_id, trace=trace)
         stall_detector = AgentLoopStallDetector(agent.loop_policy)
@@ -264,6 +272,41 @@ class AgentLoop:
                         exc=exc,
                         llm_call_artifacts=llm_call_artifacts,
                     )
+                structured_verdict = _structured_output_failure_verdict(
+                    exc,
+                    request=request,
+                )
+                if structured_verdict is not None:
+                    metrics.llm_error_count += 1
+                    safe_failure = _ManagedStructuredOutputAttemptError()
+                    trace.record_llm_error(iteration_trace, safe_failure)
+                    events.llm_failed(iteration=iteration, exc=safe_failure)
+                    last_verdict = structured_verdict
+                    trace.record_judge(iteration_trace, structured_verdict)
+                    verdict_result = self._handle_verdict(
+                        agent=agent,
+                        action=AgentAction(
+                            action_type="final_output",
+                            output={"structured_output_rejected": True},
+                        ),
+                        run_id=effective_run_id,
+                        metrics=metrics,
+                        events=events,
+                        trace=trace,
+                        diagnostics=diagnostics,
+                        stall_detector=stall_detector,
+                        iteration_trace=iteration_trace,
+                        verdict=structured_verdict,
+                        judge_retries=judge_retries,
+                        empty_output_retries=empty_output_retries,
+                        via_tool=None,
+                        llm_call_artifacts=llm_call_artifacts,
+                    )
+                    if isinstance(verdict_result, AgentLoopResult):
+                        return verdict_result
+                    judge_retries, empty_output_retries, feedback = verdict_result
+                    trace.finish_iteration(iteration_trace)
+                    continue
                 metrics.llm_error_count += 1
                 trace.record_llm_error(iteration_trace, exc)
                 events.llm_failed(iteration=iteration, exc=exc)
@@ -334,7 +377,35 @@ class AgentLoop:
 
             response_content = response.content or ""
             try:
-                action = self._action_parser.parse(response_content)
+                if response.structured_output is not None:
+                    managed_contract = compile_structured_output_contract(
+                        request.structured_output_schema_source(),
+                        schema_name=request.output_schema_name,
+                    )
+                    try:
+                        require_managed_structured_output_for_contract(
+                            response=response,
+                            contract=managed_contract,
+                        )
+                    except ManagedStructuredOutputError as exc:
+                        raise ValueError(
+                            "LLM structured response failed managed envelope validation"
+                        ) from exc
+                    action = AgentAction(
+                        action_type="final_output",
+                        output=dict(response.structured_output),
+                        metadata={
+                            "structured_output_validation": _mapping_or_empty(
+                                response.metadata.get("structured_output_validation")
+                            )
+                        },
+                    )
+                elif request.output_schema is not None:
+                    raise ValueError(
+                        "LLM structured response is missing a managed terminal object"
+                    )
+                else:
+                    action = self._action_parser.parse(response_content)
             except Exception as exc:
                 parser_errors += 1
                 metrics.parser_errors += 1
@@ -929,6 +1000,13 @@ class AgentLoop:
         if verdict.decision == JudgeDecision.ACCEPT:
             metrics.judge_accepts += 1
             events.judge_accept(iteration=iteration, verdict=verdict_payload)
+            if verdict.structured_output_contract is not None:
+                metrics.structured_output_validation_accepts += 1
+                events.structured_output_validation_accepted(
+                    iteration=iteration,
+                    verdict=verdict_payload,
+                    repair_count=judge_retries,
+                )
             return self._accepted_result(
                 agent=agent,
                 metrics=metrics,
@@ -996,6 +1074,14 @@ class AgentLoop:
                 stop_reason=stop_reason,
                 detection=detection,
                 llm_call_artifacts=llm_call_artifacts,
+            )
+        if verdict.structured_output_diagnostics:
+            metrics.structured_output_repairs += 1
+            events.structured_output_repair_requested(
+                iteration=iteration,
+                verdict=verdict_payload,
+                repair_attempt=next_judge_retries,
+                max_repairs=agent.loop_policy.max_judge_retries,
             )
         return next_judge_retries, next_empty_output_retries, feedback
 
@@ -1417,6 +1503,13 @@ class AgentLoop:
             stop_reason=stop_reason.value,
             verdict=verdict.to_dict() if verdict else None,
         )
+        if verdict is not None and verdict.structured_output_diagnostics:
+            metrics.structured_output_repair_budget_exhausted += 1
+            events.structured_output_repair_budget_exhausted(
+                iteration=iterations,
+                verdict=verdict.to_dict(),
+                stop_reason=stop_reason.value,
+            )
         return _agent_loop_result(
             loop_trace=trace,
             stop_reason=stop_reason,
@@ -1801,6 +1894,124 @@ def _is_global_budget_exception(exc: Exception) -> bool:
     return False
 
 
+def _structured_output_failure_verdict(
+    exc: Exception,
+    *,
+    request: LLMRequest,
+) -> JudgeVerdict | None:
+    if request.output_schema is None:
+        return None
+    error_payload: dict[str, Any] | None = None
+    error_type = str(getattr(exc, "error_type", "") or "")
+    if error_type in {
+        "structured_output_parse_error",
+        "structured_output_validation_error",
+        "structured_output_typed_validation_error",
+    }:
+        error_payload = {
+            "error_type": error_type,
+            "diagnostics": list(getattr(exc, "diagnostics", ()) or ()),
+            "response_fingerprint": getattr(exc, "response_fingerprint", None),
+        }
+    else:
+        for item in reversed(tuple(getattr(exc, "errors", ()) or ())):
+            if not isinstance(item, dict):
+                continue
+            nested_type = str(item.get("error_type") or "")
+            if nested_type in {
+                "structured_output_parse_error",
+                "structured_output_validation_error",
+                "structured_output_typed_validation_error",
+            }:
+                error_payload = dict(item)
+                break
+    if error_payload is None:
+        return None
+    try:
+        contract = compile_structured_output_contract(
+            request.structured_output_schema_source(),
+            schema_name=request.output_schema_name,
+        )
+    except (TypeError, ValueError):
+        return None
+
+    raw_diagnostics = error_payload.get("diagnostics")
+    diagnostics: list[dict[str, Any]] = []
+    if isinstance(raw_diagnostics, (list, tuple)):
+        for item in raw_diagnostics[: contract.limits.max_diagnostics]:
+            if not isinstance(item, dict):
+                continue
+            code = str(
+                item.get("code")
+                or error_payload.get("error_type")
+                or "structured_output_validation_error"
+            )
+            instance_path = [
+                value
+                for value in item.get("instance_path", [])
+                if isinstance(value, (str, int)) and not isinstance(value, bool)
+            ]
+            schema_path = [
+                value
+                for value in item.get("schema_path", [])
+                if isinstance(value, (str, int)) and not isinstance(value, bool)
+            ]
+            diagnostics.append(
+                {
+                    "code": code,
+                    "message": f"{code} at {_json_pointer(instance_path)}",
+                    "instance_path": instance_path,
+                    "schema_path": schema_path,
+                    "validator": (
+                        str(item["validator"])[:96]
+                        if item.get("validator") is not None
+                        else None
+                    ),
+                    "contract_digest": contract.schema_digest,
+                }
+            )
+    if not diagnostics:
+        code = str(
+            error_payload.get("error_type")
+            or "structured_output_validation_error"
+        )
+        diagnostics.append(
+            {
+                "code": code,
+                "message": f"{code} at $",
+                "instance_path": [],
+                "schema_path": [],
+                "validator": None,
+                "contract_digest": contract.schema_digest,
+            }
+        )
+    fingerprint = error_payload.get("response_fingerprint")
+    return JudgeVerdict(
+        decision=JudgeDecision.RETRY,
+        confidence=0.0,
+        feedback="structured output rejected: "
+        + "; ".join(item["message"] for item in diagnostics),
+        schema_errors=[item["message"] for item in diagnostics],
+        structured_output_diagnostics=diagnostics,
+        structured_output_contract=contract.to_dict(),
+        response_fingerprint=(fingerprint if isinstance(fingerprint, str) else None),
+    )
+
+
+class _ManagedStructuredOutputAttemptError(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("structured output failed managed validation")
+
+
+def _json_pointer(path: list[str | int]) -> str:
+    if not path:
+        return "$"
+    encoded = "/".join(
+        str(item).replace("~", "~0").replace("/", "~1") for item in path
+    )
+    return f"$/{encoded}"
+
+
 def _budget_check_from_exception(exc: Exception) -> dict[str, Any] | None:
     check = getattr(exc, "check", None)
     if check is not None and hasattr(check, "to_dict"):
@@ -1821,6 +2032,10 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _mapping_or_empty(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _action_type_value(action_type: Any) -> str:

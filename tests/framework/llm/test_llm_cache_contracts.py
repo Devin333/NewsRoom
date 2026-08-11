@@ -58,7 +58,7 @@ def test_policy_and_key_are_scope_bound_and_redacted() -> None:
     )
     assert "private prompt" not in key.to_string()
     assert "tenant-a" not in key.to_string()
-    assert key.to_string().startswith("newsroom:llm-cache:v1:")
+    assert key.to_string().startswith("newsroom:llm-cache:v2:")
 
     other = _request(tenant="tenant-b")
     other_decision = _policy().evaluate(other)

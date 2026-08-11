@@ -315,7 +315,7 @@ def _agent_loop_metrics_payload(result: Any) -> dict[str, Any]:
 
 
 def _agent_loop_trace_events(result: Any) -> list[dict[str, Any]]:
-    return [
+    events = [
         {
             "event_type": "agent_loop_trajectory",
             "trace_id": getattr(result, "trace_id", None),
@@ -325,6 +325,16 @@ def _agent_loop_trace_events(result: Any) -> list[dict[str, Any]]:
             "trajectory": [dict(item) for item in getattr(result, "trajectory", [])],
         }
     ]
+    allowed = {
+        "structured_output_repair_requested",
+        "structured_output_validation_accepted",
+        "structured_output_repair_budget_exhausted",
+    }
+    for event in getattr(result, "events", []) or []:
+        if not isinstance(event, dict) or event.get("event_type") not in allowed:
+            continue
+        events.append(dict(event))
+    return events
 
 
 __all__ = ["AgentLoopStepRunner"]

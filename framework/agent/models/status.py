@@ -74,6 +74,11 @@ class AgentLoopEventType(str, Enum):
     JUDGE_ACCEPT = "judge_accept"
     JUDGE_RETRY = "judge_retry"
     JUDGE_BLOCK = "judge_block"
+    STRUCTURED_OUTPUT_REPAIR_REQUESTED = "structured_output_repair_requested"
+    STRUCTURED_OUTPUT_VALIDATION_ACCEPTED = "structured_output_validation_accepted"
+    STRUCTURED_OUTPUT_REPAIR_BUDGET_EXHAUSTED = (
+        "structured_output_repair_budget_exhausted"
+    )
     FINAL_OUTPUT = "final_output"
     AGENT_WAITING_FOR_APPROVAL = "agent_waiting_for_approval"
     AGENT_BLOCKED = "agent_blocked"
