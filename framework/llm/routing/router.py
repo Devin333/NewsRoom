@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from framework.llm.cache import (
     CacheLookupStatus,
@@ -31,7 +31,13 @@ from framework.llm.context import (
     PreparedLLMRequest,
     build_default_request_preparer,
 )
-from framework.llm.models import LLMRequest, LLMResponse
+from framework.llm.models import (
+    LLMRequest,
+    LLMResponse,
+    LLMStreamAccumulator,
+    LLMStreamEvent,
+    TokenUsage,
+)
 from framework.llm.redaction import redact_sensitive_values
 from framework.llm.routing.cooldown import InMemoryLLMCooldownTracker, LLMCooldownState
 from framework.llm.routing.deployment import ModelDeployment
@@ -183,6 +189,39 @@ class LLMRouter:
 
     def complete(self, route_id: str, request: LLMRequest) -> LLMResponse:
         return self._complete(route_id, request, resolution_trace=())
+
+    def stream_for(
+        self,
+        request: LLMRequest,
+        *,
+        route_id: str | None = None,
+        agent_id: str | None = None,
+        task_type: str | None = None,
+    ) -> Iterator[LLMStreamEvent]:
+        resolved, resolution_trace = self._resolve_route_id_with_trace(
+            route_id=route_id,
+            agent_id=agent_id,
+            task_type=task_type,
+        )
+        if not resolved:
+            raise LLMRouteError(
+                "LLM route could not be resolved",
+                route_id=route_id or "",
+                error_type="route_not_resolved",
+                retryable=False,
+                errors=[
+                    {
+                        "agent_id": agent_id,
+                        "task_type": task_type,
+                        "routing_policy_configured": self._routing_policy is not None,
+                        "resolution_trace": resolution_trace,
+                    }
+                ],
+            )
+        return self._stream(resolved, request, resolution_trace=resolution_trace)
+
+    def stream(self, route_id: str, request: LLMRequest) -> Iterator[LLMStreamEvent]:
+        return self._stream(route_id, request, resolution_trace=())
 
     def _complete(
         self,
@@ -807,6 +846,736 @@ class LLMRouter:
             errors=errors,
             events=route_events,
             resolution_trace=resolution_trace,
+        )
+
+    def _stream(
+        self,
+        route_id: str,
+        request: LLMRequest,
+        *,
+        resolution_trace: Iterable[dict[str, Any]],
+    ) -> Iterator[LLMStreamEvent]:
+        route = self._route(route_id)
+        attempted_deployments: list[str] = []
+        errors: list[dict[str, Any]] = []
+        deployment_chain = route.deployment_chain()
+        resolution_trace = tuple(dict(item) for item in resolution_trace)
+        route_events: list[LLMRouterEvent] = []
+        overflow_recovery_used = False
+        self._record_event(
+            route_events,
+            "llm_route_started",
+            route.route_id,
+            metadata={
+                "deployment_chain": list(deployment_chain),
+                "required_capabilities": list(route.required_capabilities),
+                "resolution_trace": list(resolution_trace),
+                "stream": True,
+            },
+        )
+
+        for index, deployment_id in enumerate(deployment_chain):
+            attempted_deployments.append(deployment_id)
+            deployment = self._deployment(
+                route.route_id,
+                deployment_id,
+                attempted_deployments,
+                errors,
+            )
+            self._record_event(
+                route_events,
+                "llm_deployment_attempt_started",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    "attempt_index": index + 1,
+                    "fallback_attempt": index > 0,
+                    "stream": True,
+                },
+            )
+            if not deployment.enabled:
+                self._record_event(
+                    route_events,
+                    "llm_deployment_rejected",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={"reason": "deployment_disabled", "retryable": False},
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} deployment is disabled: {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="deployment_disabled",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                )
+            missing_capabilities = deployment.capabilities.missing(route.required_capabilities)
+            if missing_capabilities:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "missing_required_capability",
+                        "missing_capabilities": list(missing_capabilities),
+                        "retryable": False,
+                    }
+                )
+                self._record_event(
+                    route_events,
+                    "llm_deployment_rejected",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "reason": "missing_required_capability",
+                        "missing_capabilities": list(missing_capabilities),
+                        "retryable": False,
+                    },
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} deployment lacks required capabilities: {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="missing_required_capability",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                )
+
+            prepared, context_projection = self._prepare_context_attempt(
+                request=request,
+                route=route,
+                deployment=deployment,
+                events=route_events,
+            )
+            if prepared is None or not prepared.admission.provider_call_authorized:
+                admission_payload = dict(context_projection["admission"])
+                error_type = str(admission_payload["status"])
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "provider": deployment.provider,
+                        "model": deployment.model,
+                        "error_type": error_type,
+                        "retryable": False,
+                        "provider_call": False,
+                        "context_admission": context_projection,
+                    }
+                )
+                has_fallback = index < len(deployment_chain) - 1
+                if has_fallback:
+                    self._record_context_capacity_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        context_projection=context_projection,
+                    )
+                    continue
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} rejected context at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type=error_type,
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                )
+
+            prepared_request = prepared.normalized_request
+            prompt_token_count = prepared.token_count.total_input_tokens
+            cache_attempt = self._prepare_cache_attempt(
+                request=prepared_request,
+                route=route,
+                deployment=deployment,
+                events=route_events,
+                prepared=prepared,
+            )
+            if cache_attempt.hit:
+                cached_response = self._return_cache_hit(
+                    cache_attempt,
+                    request=request,
+                    prepared=prepared,
+                    route=route,
+                    deployment=deployment,
+                    attempted_deployments=attempted_deployments,
+                    fallback_used=index > 0,
+                    events=route_events,
+                    errors=errors,
+                    resolution_trace=resolution_trace,
+                    attempt_index=index + 1,
+                )
+                yield from self._cache_hit_stream_events(cached_response)
+                return
+
+            cooldown_until = self._active_cooldown_until(deployment)
+            if cooldown_until is not None:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "deployment_in_cooldown",
+                        "cooldown_until": _datetime_to_json(cooldown_until),
+                        "retryable": True,
+                    }
+                )
+                has_fallback = index < len(deployment_chain) - 1
+                self._record_event(
+                    route_events,
+                    "llm_deployment_skipped",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "reason": "deployment_in_cooldown",
+                        "cooldown_until": _datetime_to_json(cooldown_until),
+                        "retryable": True,
+                    },
+                    aliases=("deployment_skipped_cooldown",),
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                if has_fallback:
+                    self._record_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        reason="deployment_in_cooldown",
+                        errors=errors,
+                    )
+                    continue
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} deployment is in cooldown: {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="deployment_in_cooldown",
+                    retryable=True,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                )
+
+            try:
+                preflight_budget_check = self._check_global_budget_before_call(
+                    estimated_prompt_tokens=prompt_token_count,
+                )
+            except GlobalBudgetExceededError as exc:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "global_budget_exceeded",
+                        "retryable": False,
+                        "global_budget_check": exc.check.to_dict(),
+                    }
+                )
+                self._record_event(
+                    route_events,
+                    "llm_global_budget_exceeded",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "phase": "preflight",
+                        "global_budget_check": exc.check.to_dict(),
+                        "retryable": False,
+                    },
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} exceeded global budget before deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="global_budget_exceeded",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+
+            self._record_event(
+                route_events,
+                "llm_provider_call_started",
+                route.route_id,
+                deployment=deployment,
+                metadata={"provider_call": True, "stream": True},
+            )
+            source_iterator: Iterator[Any] | None = None
+            try:
+                source_iterator = iter(deployment.client.stream(prepared_request))
+                first_event = LLMStreamEvent.from_any(next(source_iterator))
+            except StopIteration as exc:
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "provider_stream_empty",
+                        "retryable": False,
+                    }
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} provider stream was empty at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="provider_stream_empty",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+            except LLMProviderError as exc:
+                errors.append(_provider_error_payload(deployment_id, exc))
+                self._record_provider_failure(deployment_id, exc)
+                self._record_event(
+                    route_events,
+                    "llm_deployment_attempt_failed",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "error_type": exc.error_type,
+                        "error_category": _canonical_error_category(exc.error_type),
+                        "status_code": exc.status_code,
+                        "retryable": exc.retryable,
+                        "attempts": exc.attempts,
+                        "provider_call": True,
+                        "stream": True,
+                    },
+                    aliases=("route_attempt_failed",),
+                )
+                has_fallback = index < len(deployment_chain) - 1
+                if isinstance(exc, LLMProviderContextOverflow):
+                    self._record_provider_context_overflow_event(
+                        route_events,
+                        route=route,
+                        deployment=deployment,
+                        prepared=prepared,
+                        error=exc,
+                    )
+                    if not overflow_recovery_used and has_fallback:
+                        overflow_recovery_used = True
+                        self._record_context_capacity_fallback_event(
+                            route_events,
+                            route_id=route.route_id,
+                            from_deployment=deployment,
+                            to_deployment_id=deployment_chain[index + 1],
+                            context_projection=prepared.to_dict(),
+                            reason="provider_context_overflow",
+                        )
+                        self._release_cache_attempt(
+                            cache_attempt,
+                            route=route,
+                            deployment=deployment,
+                            events=route_events,
+                        )
+                        continue
+                elif exc.retryable and has_fallback:
+                    self._record_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        reason=exc.error_type,
+                        errors=errors,
+                    )
+                    self._release_cache_attempt(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                    )
+                    continue
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} failed while opening stream at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type=(
+                        "provider_context_overflow"
+                        if isinstance(exc, LLMProviderContextOverflow)
+                        else "provider_error"
+                    ),
+                    retryable=exc.retryable,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+            except Exception as exc:
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "client_error",
+                        "message": str(exc),
+                        "retryable": False,
+                    }
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} client failed while opening stream at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="client_error",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+
+            accumulator = LLMStreamAccumulator()
+            terminal_event: LLMStreamEvent | None = None
+            visible_output = False
+            try:
+                accumulator.add_event(first_event)
+                if first_event.event_type == "message_complete":
+                    terminal_event = first_event
+                else:
+                    visible_output = True
+                    yield first_event
+                if source_iterator is None:
+                    raise RuntimeError("provider stream iterator is unavailable")
+                for raw_event in source_iterator:
+                    event = LLMStreamEvent.from_any(raw_event)
+                    accumulator.add_event(event)
+                    if event.event_type == "message_complete":
+                        terminal_event = event
+                        continue
+                    visible_output = True
+                    yield event
+            except GeneratorExit:
+                _close_iterator(source_iterator)
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise
+            except LLMProviderError as exc:
+                _close_iterator(source_iterator)
+                errors.append(_provider_error_payload(deployment_id, exc))
+                self._record_provider_failure(deployment_id, exc)
+                self._record_event(
+                    route_events,
+                    "llm_deployment_attempt_failed",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "error_type": exc.error_type,
+                        "error_category": _canonical_error_category(exc.error_type),
+                        "status_code": exc.status_code,
+                        "retryable": exc.retryable,
+                        "attempts": exc.attempts,
+                        "provider_call": True,
+                        "stream": True,
+                        "visible_output": visible_output,
+                    },
+                    aliases=("route_attempt_failed",),
+                )
+                if isinstance(exc, LLMProviderContextOverflow):
+                    self._record_provider_context_overflow_event(
+                        route_events,
+                        route=route,
+                        deployment=deployment,
+                        prepared=prepared,
+                        error=exc,
+                    )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} stream failed at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type=(
+                        "provider_context_overflow"
+                        if isinstance(exc, LLMProviderContextOverflow)
+                        else "provider_error"
+                    ),
+                    retryable=False if visible_output else exc.retryable,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+            except Exception as exc:
+                _close_iterator(source_iterator)
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "client_error",
+                        "message": str(exc),
+                        "retryable": False,
+                        "visible_output": visible_output,
+                    }
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} stream failed at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="client_error",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+
+            if terminal_event is None:
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "provider_stream_incomplete",
+                        "retryable": False,
+                        "visible_output": visible_output,
+                    }
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} provider stream was incomplete at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="provider_stream_incomplete",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                )
+
+            response = accumulator.to_response()
+            if self._cooldown_tracker is not None:
+                self._cooldown_tracker.record_success(deployment_id)
+            try:
+                budget_check = _check_budget(route, deployment, response)
+                global_budget_check = self._record_global_budget_call(
+                    response,
+                    deployment=deployment,
+                    budget_check=budget_check,
+                    prompt_token_estimate=prompt_token_count,
+                )
+            except (LLMBudgetExceededError, GlobalBudgetExceededError) as exc:
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                error_type = (
+                    "llm_budget_exceeded"
+                    if isinstance(exc, LLMBudgetExceededError)
+                    else "global_budget_exceeded"
+                )
+                check = exc.check.to_dict()
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": error_type,
+                        "retryable": False,
+                        "budget_check": check,
+                    }
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} exceeded stream budget at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type=error_type,
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+
+            if (
+                self._cache_runtime is not None
+                and cache_attempt.eligible
+                and self._cache_runtime.mode.writes
+            ):
+                try:
+                    self._cache_runtime.validate_response(
+                        request=prepared_request,
+                        response=response,
+                    )
+                except CacheResponseValidationError as exc:
+                    self._record_event(
+                        route_events,
+                        "llm_cache_write_failed",
+                        route.route_id,
+                        deployment=deployment,
+                        metadata={
+                            **self._cache_event_metadata(cache_attempt, provider_call=True),
+                            "reason": type(exc).__name__,
+                        },
+                    )
+                else:
+                    write_result = self._cache_runtime.write(
+                        cache_attempt.preparation,
+                        request=prepared_request,
+                        response=response,
+                        write_authorized=cache_attempt.write_authorized,
+                    )
+                    self._record_event(
+                        route_events,
+                        (
+                            "llm_cache_write_succeeded"
+                            if write_result.stored
+                            else "llm_cache_write_failed"
+                        ),
+                        route.route_id,
+                        deployment=deployment,
+                        metadata={
+                            **self._cache_event_metadata(cache_attempt, provider_call=True),
+                            "result": write_result.status.value,
+                            "reason": write_result.reason,
+                            "size_bytes": write_result.size_bytes,
+                        },
+                    )
+            self._release_cache_attempt(
+                cache_attempt,
+                route=route,
+                deployment=deployment,
+                events=route_events,
+            )
+            self._record_event(
+                route_events,
+                "llm_deployment_attempt_succeeded",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    "attempt_index": index + 1,
+                    "provider_call": True,
+                    "cache_hit": False,
+                    "stream": True,
+                    "usage": response.usage.to_dict(),
+                    "preflight_global_budget_check": (
+                        preflight_budget_check.to_dict()
+                        if preflight_budget_check is not None
+                        else None
+                    ),
+                    "budget_check": budget_check.to_dict() if budget_check is not None else None,
+                    "global_budget_check": (
+                        global_budget_check.to_dict() if global_budget_check is not None else None
+                    ),
+                },
+            )
+            self._record_event(
+                route_events,
+                "llm_route_completed",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    "attempted_deployments": list(attempted_deployments),
+                    "fallback_used": index > 0,
+                    "provider_call": True,
+                    "cache_hit": False,
+                    "stream": True,
+                },
+            )
+            routed_response = _with_routing_metadata(
+                response,
+                request=request,
+                route_id=route.route_id,
+                deployment=deployment,
+                attempted_deployments=attempted_deployments,
+                fallback_used=index > 0,
+                budget_check=budget_check,
+                global_budget_check=global_budget_check,
+                events=route_events,
+                errors=errors,
+                resolution_trace=resolution_trace,
+                cache_metadata=cache_attempt.metadata(provider_call=True),
+                prepared=prepared,
+            )
+            yield replace(terminal_event, metadata=routed_response.metadata)
+            return
+
+        raise self._build_route_error(
+            f"LLM route {route.route_id} has no deployments",
+            route_id=route.route_id,
+            error_type="empty_route",
+            retryable=False,
+            request=request,
+            attempted_deployments=attempted_deployments,
+            errors=errors,
+            events=route_events,
+            resolution_trace=resolution_trace,
+        )
+
+    def _cache_hit_stream_events(
+        self,
+        response: LLMResponse,
+    ) -> Iterator[LLMStreamEvent]:
+        yield LLMStreamEvent(
+            event_type="message_start",
+            metadata={
+                "provider": response.metadata.get("llm_provider"),
+                "model": response.metadata.get("llm_model"),
+                "cache_hit": True,
+            },
+        )
+        chunk_size = (
+            self._cache_runtime.replay_chunk_size
+            if self._cache_runtime is not None
+            else 1_024
+        )
+        content = response.content or ""
+        for offset in range(0, len(content), chunk_size):
+            yield LLMStreamEvent(
+                event_type="text_delta",
+                text_delta=content[offset : offset + chunk_size],
+            )
+        yield LLMStreamEvent(
+            event_type="usage_delta",
+            usage_delta=TokenUsage(),
+            metadata={"source_usage": response.usage.to_dict(), "cache_hit": True},
+        )
+        yield LLMStreamEvent(
+            event_type="message_complete",
+            metadata=response.metadata,
         )
 
     def _prepare_context_attempt(
@@ -1447,6 +2216,14 @@ def _provider_error_payload(deployment_id: str, error: LLMProviderError) -> dict
     payload["provider"] = payload.get("provider")
     payload["error_category"] = _canonical_error_category(str(payload.get("error_type") or ""))
     return payload
+
+
+def _close_iterator(iterator: Iterator[Any] | None) -> None:
+    if iterator is None:
+        return
+    close = getattr(iterator, "close", None)
+    if callable(close):
+        close()
 
 
 def _normalize_datetime(value: datetime) -> datetime:

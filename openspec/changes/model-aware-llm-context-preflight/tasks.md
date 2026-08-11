@@ -30,17 +30,17 @@
 
 ## 5. Router Stream Admission
 
-- [ ] 5.1 Add router `stream()` / route-resolution entrypoints that reuse the complete-path preparation, deployment ordering, budget, event, and manifest contracts.
-- [ ] 5.2 Preserve incremental normalized provider events and prohibit fallback after any user-visible stream event has been yielded.
-- [ ] 5.3 Reserve admitted input budget before opening the provider iterator and settle normalized stream usage without attributing rejected deployments.
-- [ ] 5.4 Apply the single bounded overflow fallback only before visible stream output and prove that partial streams are never spliced.
+- [x] 5.1 Add router `stream()` / route-resolution entrypoints that reuse the complete-path preparation, deployment ordering, budget, event, and manifest contracts.
+- [x] 5.2 Preserve incremental normalized provider events and prohibit fallback after any user-visible stream event has been yielded.
+- [x] 5.3 Reserve admitted input budget before opening the provider iterator and settle normalized stream usage without attributing rejected deployments.
+- [x] 5.4 Apply the single bounded overflow fallback only before visible stream output and prove that partial streams are never spliced.
 
 ## 6. Tests and Architecture Evidence
 
 - [x] 6.1 Add unit tests for profile validation, exact boundary/one-token overflow, output-default/output-limit conflicts, component sums, counter selection, forbidden fallback, stable fingerprints, and semantic non-mutation.
 - [x] 6.2 Add config and OpenAI payload golden tests for tools, response schema/format, model override, multilingual/media-shaped messages, revisions, and unknown/invalid profile fields.
 - [x] 6.3 Add router complete adversarial tests for missing profiles, oversized input, oversized output request, tool-schema-only overflow, capacity fallback, all-deployments rejection, redacted evidence, and admitted global-budget counts.
-- [ ] 6.4 Add router stream tests for complete/stream preparation parity, no iterator open on rejection, incremental delivery, no fallback after visible output, and usage accounting.
+- [x] 6.4 Add router stream tests for complete/stream preparation parity, no iterator open on rejection, incremental delivery, no fallback after visible output, and usage accounting.
 - [x] 6.5 Add provider overflow tests for HTTP 413, mapped structured HTTP 400 codes, unmapped message text, no internal retry/sleep, bounded cross-deployment recovery, and redacted drift evidence.
 - [x] 6.6 Add an architecture assertion that router admission no longer calls `estimate_request_tokens` and document that direct-client callsite convergence remains outside this change.
 
