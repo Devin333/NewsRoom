@@ -60,6 +60,7 @@ from business.research.ports.artifact_publication import (
 from infrastructure.research.artifact_port import (
     ArtifactWriteConflictError,
     FilesystemHarnessArtifactPort,
+    _is_verified_context_ref_only_artifact,
 )
 
 
@@ -763,7 +764,16 @@ class ResearchArtifactBundleHandler:
         else:
             existing_artifacts = manifest.get("artifacts")
             if isinstance(existing_artifacts, dict):
-                preexisting = set(existing_artifacts).difference({"manifest"})
+                preexisting = {
+                    artifact_type
+                    for artifact_type, path in existing_artifacts.items()
+                    if artifact_type != "manifest"
+                    and not _is_verified_context_ref_only_artifact(
+                        manifest,
+                        artifact_type=artifact_type,
+                        path=path,
+                    )
+                }
                 if preexisting:
                     raise ArtifactWriteConflictError(
                         "Research terminal publication found pre-existing canonical artifacts"
@@ -857,6 +867,7 @@ class ResearchArtifactBundleHandler:
             }
         manifest["manifest_hash"] = manifest_hash(manifest)
         return manifest
+
 
     def _read_candidate_member(
         self,

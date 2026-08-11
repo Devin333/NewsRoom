@@ -6,6 +6,7 @@ import math
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 
 import pytest
@@ -79,6 +80,30 @@ def test_round_trip_is_restart_safe_and_records_integrity_metadata(tmp_path) -> 
 
     restarted = FilesystemHarnessArtifactPort(tmp_path)
     assert restarted.read_artifact(ref.ref) == request.to_dict()
+
+
+def test_long_artifact_type_uses_bounded_hashed_path_without_changing_ref(
+    tmp_path,
+) -> None:
+    port = FilesystemHarnessArtifactPort(tmp_path)
+    artifact_type = "context-source-snapshot-" + "a" * 64
+
+    with port.bind_run("run-1"):
+        stored = port.write_artifact(
+            ArtifactWriteRequest(
+                artifact_type=artifact_type,
+                payload={"snapshot": "verified"},
+            )
+        )
+
+    manifest = port.manager.read_run_manifest("run-1")
+    relative_path = manifest["artifacts"][artifact_type]
+    assert stored.ref == f"artifact://run-1/{artifact_type}"
+    assert relative_path.startswith("artifacts/a-")
+    assert len(Path(relative_path).name) == 71
+    assert port.read_artifact(stored.ref)["payload"] == {
+        "snapshot": "verified"
+    }
 
 
 def test_same_type_identical_write_is_idempotent(tmp_path) -> None:

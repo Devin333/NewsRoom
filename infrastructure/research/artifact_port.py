@@ -30,6 +30,7 @@ from framework.harness import (
     HarnessSideEffectOutcome,
 )
 from framework.harness.control_plane.errors import HarnessValidationError
+from framework.shared.hashing import hash_text
 from framework.shared.json import stable_json_dumps
 from framework.shared.time import format_datetime, utc_now
 from infrastructure.research.diagnostics import emit_research_persistence_diagnostic
@@ -41,6 +42,20 @@ from business.research.ports.artifact_publication import (
     ResearchArtifactReadResolution,
     artifact_evidence_ref,
     artifact_member_evidence_ref,
+)
+
+
+_CONTEXT_REF_ONLY_ARTIFACT_TYPES = frozenset(
+    {
+        "context-aggregate-verification",
+        "context-compaction-action-result",
+        "context-compaction-plan",
+        "context-compaction-planning-result",
+        "context-compression-record-v2",
+        "context-physical-admission",
+        "context-result-snapshot",
+        "context-source-snapshot",
+    }
 )
 
 
@@ -798,6 +813,12 @@ class FilesystemHarnessArtifactPort:
                 raise ArtifactStoreMetadataError(
                     f"Research artifact path mismatch: {artifact_type}"
                 )
+            if _is_verified_context_ref_only_artifact(
+                manifest,
+                artifact_type=artifact_type,
+                path=path,
+            ):
+                continue
             artifact_types.append(artifact_type)
         if not artifact_types:
             raise ArtifactStoreMetadataError(
@@ -1162,7 +1183,10 @@ class FilesystemHarnessArtifactPort:
 
     @staticmethod
     def _canonical_path(artifact_type: str) -> str:
-        return f"{CANONICAL_ARTIFACT_DIRECTORY}/{artifact_type}.json"
+        file_name = f"{artifact_type}.json"
+        if len(file_name) > 80:
+            file_name = f"a-{hash_text(artifact_type)}.json"
+        return f"{CANONICAL_ARTIFACT_DIRECTORY}/{file_name}"
 
     @staticmethod
     def _canonical_ref(run_id: str, artifact_type: str) -> str:
@@ -1303,6 +1327,47 @@ def _artifact_failure_reason(exc: Exception) -> str:
     if isinstance(exc, OSError):
         return "filesystem_unavailable"
     return "other"
+
+
+def _is_verified_context_ref_only_artifact(
+    manifest: Mapping[str, Any],
+    *,
+    artifact_type: Any,
+    path: Any,
+) -> bool:
+    if not isinstance(artifact_type, str) or not isinstance(path, str):
+        return False
+    identity_suffix: str | None = None
+    for allowed_type in _CONTEXT_REF_ONLY_ARTIFACT_TYPES:
+        prefix = f"{allowed_type}-"
+        if artifact_type.startswith(prefix):
+            identity_suffix = artifact_type.removeprefix(prefix)
+            break
+    if identity_suffix is None or len(identity_suffix) != 64:
+        return False
+    try:
+        int(identity_suffix, 16)
+    except ValueError:
+        return False
+    artifact_index = manifest.get("artifact_index")
+    if not isinstance(artifact_index, list):
+        return False
+    matches = [
+        item
+        for item in artifact_index
+        if isinstance(item, Mapping)
+        and item.get("artifact_id") == artifact_type
+        and item.get("kind") == artifact_type
+        and item.get("path") == path
+    ]
+    if len(matches) != 1:
+        return False
+    metadata = matches[0].get("metadata")
+    return (
+        isinstance(metadata, Mapping)
+        and metadata.get("context_ref_only") is True
+        and metadata.get("identity_checksum") == f"sha256:{identity_suffix}"
+    )
 
 
 __all__ = [

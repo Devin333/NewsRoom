@@ -25,6 +25,7 @@ from business.research.ports.artifact_publication import (
 )
 from infrastructure.research.artifact_port import (
     ArtifactPublicationVisibilityError,
+    ArtifactWriteConflictError,
     FilesystemHarnessArtifactPort,
 )
 from infrastructure.research.artifact_publication import ResearchArtifactBundleHandler
@@ -73,6 +74,67 @@ def test_prepare_is_hidden_until_controller_terminal_publication(tmp_path: Path)
         f"artifact://{intent.run_id}/research-analysis"
     )["payload"] == {"paper_id": "paper-a"}
     assert not list((tmp_path / intent.run_id / ".rc").rglob("*.json"))
+
+
+def test_terminal_publication_preserves_verified_context_ref_only_artifact(
+    tmp_path: Path,
+) -> None:
+    port, store, handler = _handler(tmp_path)
+    intent, decision = _worker_authority()
+    identity = checksum_for({"context": "source"})
+    artifact_type = f"context-source-snapshot-{identity.removeprefix('sha256:')}"
+
+    with port.bind_run(intent.run_id):
+        store.put_decision(decision)
+        prepared = handler.prepare(intent, decision)
+        store.put_outcome(prepared)
+        port.write_artifact(
+            ArtifactWriteRequest(
+                artifact_type=artifact_type,
+                payload={"snapshot": "verified"},
+                metadata={
+                    "context_ref_only": True,
+                    "identity_checksum": identity,
+                },
+            )
+        )
+        terminal_intent, terminal_decision = _terminal_authority(prepared)
+        store.put_decision(terminal_decision)
+        published = handler.commit(terminal_intent, terminal_decision)
+
+    assert published.disposition is HarnessSideEffectDisposition.ACCEPTED
+    manifest = port.manager.read_run_manifest(intent.run_id)
+    assert artifact_type in manifest["artifacts"]
+    assert "research-analysis" in manifest["artifacts"]
+
+
+def test_terminal_publication_rejects_spoofed_context_ref_only_artifact(
+    tmp_path: Path,
+) -> None:
+    port, store, handler = _handler(tmp_path)
+    intent, decision = _worker_authority()
+    identity = checksum_for({"context": "spoofed"})
+
+    with port.bind_run(intent.run_id):
+        store.put_decision(decision)
+        prepared = handler.prepare(intent, decision)
+        store.put_outcome(prepared)
+        port.write_artifact(
+            ArtifactWriteRequest(
+                artifact_type=(
+                    "context-unregistered-" + identity.removeprefix("sha256:")
+                ),
+                payload={"snapshot": "spoofed"},
+                metadata={
+                    "context_ref_only": True,
+                    "identity_checksum": identity,
+                },
+            )
+        )
+        terminal_intent, terminal_decision = _terminal_authority(prepared)
+        store.put_decision(terminal_decision)
+        with pytest.raises(ArtifactWriteConflictError, match="pre-existing"):
+            handler.commit(terminal_intent, terminal_decision)
 
 
 def test_nth_prepare_failure_removes_owned_candidates_without_visibility(
