@@ -17,14 +17,52 @@ class LLMRequest:
     tools: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     response_format: str | dict[str, Any] | None = None
-    output_schema: dict[str, Any] | None = None
+    output_schema: Any | None = None
     output_schema_name: str = "structured_output"
+    _output_schema_source: Any | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "messages", [_message_to_dict(message) for message in self.messages])
+        schema = self.output_schema
+        if schema is None:
+            return
+        if isinstance(schema, dict):
+            object.__setattr__(self, "output_schema", deepcopy(schema))
+            return
+        model_json_schema = getattr(schema, "model_json_schema", None)
+        if not callable(model_json_schema):
+            raise TypeError("output_schema must be an object or Pydantic model class")
+        exported = model_json_schema()
+        if not isinstance(exported, dict):
+            raise TypeError("output_schema model_json_schema() must return an object")
+        object.__setattr__(self, "_output_schema_source", schema)
+        object.__setattr__(self, "output_schema", deepcopy(exported))
 
     def estimated_prompt_text(self) -> str:
         return "\n".join(str(message.get("content") or "") for message in self._message_dicts())
+
+    def structured_output_schema_source(self) -> Any | None:
+        return self._output_schema_source or self.output_schema
+
+    def clone(self, **changes: Any) -> LLMRequest:
+        values: dict[str, Any] = {
+            "messages": deepcopy(self.messages),
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "tools": deepcopy(self.tools),
+            "metadata": deepcopy(self.metadata),
+            "response_format": deepcopy(self.response_format),
+            "output_schema": self.structured_output_schema_source(),
+            "output_schema_name": self.output_schema_name,
+        }
+        values.update(changes)
+        return LLMRequest(**values)
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {

@@ -15,8 +15,13 @@ from framework.llm.models import LLMRequest, LLMResponse, TokenUsage
 from framework.llm.redaction import redact_sensitive_values
 from framework.llm.models import LLMStreamEvent
 from framework.llm.structured_output import (
+    LLMStructuredOutputParseError,
+    LLMStructuredOutputSchemaError,
     LLMStructuredOutputValidationError,
-    validate_structured_output,
+    StructuredOutputContract,
+    compile_structured_output_contract,
+    decode_structured_output,
+    validate_compiled_structured_output,
 )
 from framework.llm.clients.tool_adapters import (
     LLMToolCallParseError,
@@ -43,6 +48,7 @@ class LLMProviderError(RuntimeError):
         retryable: bool = False,
         status_code: int | None = None,
         attempts: int = 1,
+        diagnostics: Iterable[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider
@@ -52,6 +58,7 @@ class LLMProviderError(RuntimeError):
         self.retryable = retryable
         self.status_code = status_code
         self.attempts = attempts
+        self.diagnostics = tuple(dict(item) for item in (diagnostics or ()))
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -65,6 +72,8 @@ class LLMProviderError(RuntimeError):
             "status_code": self.status_code,
             "attempts": self.attempts,
         }
+        if self.diagnostics:
+            payload["diagnostics"] = [dict(item) for item in self.diagnostics]
         if redact:
             return redact_sensitive_values(payload)
         return payload
@@ -187,7 +196,8 @@ class OpenAICompatibleClient:
     def complete(self, request: LLMRequest) -> LLMResponse:
         api_key = self.config.resolve_api_key()
         try:
-            payload = self._build_payload(request)
+            contract = self._compile_structured_output_contract(request)
+            payload = self._build_payload(request, contract=contract)
         except LLMToolSchemaError as exc:
             raise LLMProviderError(
                 f"{self.config.provider} request tool schema is invalid: {exc}",
@@ -195,6 +205,15 @@ class OpenAICompatibleClient:
                 model=self.config.model,
                 error_type="schema_error",
                 retryable=False,
+            ) from exc
+        except LLMStructuredOutputSchemaError as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} structured output schema failed preflight",
+                provider=self.config.provider,
+                model=self.config.model,
+                error_type="structured_output_schema_error",
+                retryable=False,
+                diagnostics=(item.to_dict() for item in exc.diagnostics),
             ) from exc
 
         for attempt in range(1, self._retry_policy.max_attempts + 1):
@@ -207,7 +226,12 @@ class OpenAICompatibleClient:
                 error = self._error_from_network(exc, attempts=attempt)
             else:
                 response_payload = self._parse_response_payload(raw_body, attempts=attempt)
-                return self._normalize_response(response_payload, request=request, attempts=attempt)
+                return self._normalize_response(
+                    response_payload,
+                    request=request,
+                    attempts=attempt,
+                    contract=contract,
+                )
 
             if not error.retryable or attempt >= self._retry_policy.max_attempts:
                 raise error
@@ -223,7 +247,8 @@ class OpenAICompatibleClient:
     def stream(self, request: LLMRequest) -> Iterator[LLMStreamEvent]:
         api_key = self.config.resolve_api_key()
         try:
-            payload = self._build_payload(request)
+            contract = self._compile_structured_output_contract(request)
+            payload = self._build_payload(request, contract=contract)
         except LLMToolSchemaError as exc:
             raise LLMProviderError(
                 f"{self.config.provider} request tool schema is invalid: {exc}",
@@ -231,6 +256,15 @@ class OpenAICompatibleClient:
                 model=self.config.model,
                 error_type="schema_error",
                 retryable=False,
+            ) from exc
+        except LLMStructuredOutputSchemaError as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} structured output schema failed preflight",
+                provider=self.config.provider,
+                model=self.config.model,
+                error_type="structured_output_schema_error",
+                retryable=False,
+                diagnostics=(item.to_dict() for item in exc.diagnostics),
             ) from exc
         payload["stream"] = True
 
@@ -322,10 +356,29 @@ class OpenAICompatibleClient:
             },
         )
 
-    def _build_payload(self, request: LLMRequest) -> dict[str, Any]:
+    def _build_payload(
+        self,
+        request: LLMRequest,
+        *,
+        contract: StructuredOutputContract | None = None,
+    ) -> dict[str, Any]:
+        payload_request = request
+        if contract is not None:
+            payload_request = request.clone(output_schema=contract.canonical_schema)
         return build_openai_chat_payload(
-            request,
-            model=request.model or self.config.model,
+            payload_request,
+            model=payload_request.model or self.config.model,
+        )
+
+    @staticmethod
+    def _compile_structured_output_contract(
+        request: LLMRequest,
+    ) -> StructuredOutputContract | None:
+        if request.output_schema is None:
+            return None
+        return compile_structured_output_contract(
+            request.structured_output_schema_source(),
+            schema_name=request.output_schema_name,
         )
 
     def _parse_response(self, payload: dict[str, Any]) -> LLMResponse:
@@ -333,6 +386,7 @@ class OpenAICompatibleClient:
             payload,
             request=LLMRequest(messages=[]),
             attempts=1,
+            contract=None,
         )
 
     def _build_http_request(self, api_key: str, payload: dict[str, Any]) -> Request:
@@ -388,6 +442,7 @@ class OpenAICompatibleClient:
         *,
         request: LLMRequest,
         attempts: int,
+        contract: StructuredOutputContract | None,
     ) -> LLMResponse:
         choices = payload.get("choices") or []
         if not choices:
@@ -449,6 +504,7 @@ class OpenAICompatibleClient:
                 content,
                 request=request,
                 attempts=attempts,
+                contract=contract,
             )
 
         usage_payload = payload.get("usage") or {}
@@ -490,7 +546,11 @@ class OpenAICompatibleClient:
         if _expects_structured_output(request):
             validation_metadata["structured_output_validation"] = {
                 "validated": structured_output is not None,
-                "schema_name": request.output_schema_name if request.output_schema else None,
+                "schema_name": (
+                    request.output_schema_name if request.output_schema is not None else None
+                ),
+                "schema_digest": contract.schema_digest if contract is not None else None,
+                "schema_dialect": contract.dialect if contract is not None else None,
                 "provider_native_json_mode": _uses_provider_native_json_mode(request),
             }
         return LLMResponse(
@@ -516,38 +576,38 @@ class OpenAICompatibleClient:
         *,
         request: LLMRequest,
         attempts: int,
+        contract: StructuredOutputContract | None,
     ) -> dict[str, Any]:
         try:
-            structured_output = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise LLMProviderError(
-                f"{self.config.provider} structured output is not valid JSON",
-                provider=self.config.provider,
-                model=self.config.model,
-                error_type="schema_error",
-                retryable=False,
-                attempts=attempts,
-            ) from exc
-        if not isinstance(structured_output, dict):
-            raise LLMProviderError(
-                f"{self.config.provider} structured output is not a JSON object",
-                provider=self.config.provider,
-                model=self.config.model,
-                error_type="schema_error",
-                retryable=False,
-                attempts=attempts,
+            structured_output = decode_structured_output(
+                content,
+                limits=contract.limits if contract is not None else None,
             )
-        if request.output_schema is not None:
+        except LLMStructuredOutputParseError as exc:
+            raise LLMProviderError(
+                f"{self.config.provider} structured output failed strict JSON decoding",
+                provider=self.config.provider,
+                model=self.config.model,
+                error_type="structured_output_parse_error",
+                retryable=False,
+                attempts=attempts,
+                diagnostics=(item.to_dict() for item in exc.diagnostics),
+            ) from exc
+        if contract is not None:
             try:
-                validate_structured_output(structured_output, request.output_schema)
+                structured_output = validate_compiled_structured_output(
+                    structured_output,
+                    contract,
+                )
             except LLMStructuredOutputValidationError as exc:
                 raise LLMProviderError(
                     f"{self.config.provider} structured output failed schema validation: {exc}",
                     provider=self.config.provider,
                     model=self.config.model,
-                    error_type="schema_error",
+                    error_type="structured_output_validation_error",
                     retryable=False,
                     attempts=attempts,
+                    diagnostics=(item.to_dict() for item in exc.diagnostics),
                 ) from exc
         return structured_output
 
@@ -633,6 +693,7 @@ def _canonical_error_category(error_type: str) -> str:
         "tool_call_parse_error": "schema_error",
         "stream_tool_call_parse_error": "schema_error",
         "structured_output_parse_error": "schema_error",
+        "structured_output_schema_error": "schema_error",
         "structured_output_validation_error": "schema_error",
     }
     return aliases.get(error_type, error_type)

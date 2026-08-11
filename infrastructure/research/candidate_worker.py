@@ -589,7 +589,12 @@ class StructuredResearchCandidateWorker:
         *,
         task: str,
     ) -> ResearchCandidateError:
-        if isinstance(exc, LLMProviderError) and exc.error_type == "schema_error":
+        if isinstance(exc, LLMProviderError) and exc.error_type in {
+            "schema_error",
+            "structured_output_parse_error",
+            "structured_output_schema_error",
+            "structured_output_validation_error",
+        }:
             return ResearchCandidateOutputError(
                 "Research candidate response failed structured validation",
                 task=task,
@@ -614,10 +619,6 @@ class StructuredResearchCandidateWorker:
             )
         try:
             validate_structured_output(structured, _SCHEMAS[task])
-            # Python's JSON decoder accepts NaN/Infinity extensions even
-            # though they are not JSON numbers.  Reject those extensions
-            # before a domain builder or deterministic gate sees them.
-            json.dumps(structured, allow_nan=False)
         except (LLMStructuredOutputValidationError, TypeError, ValueError) as exc:
             raise ResearchCandidateOutputError(
                 "Research candidate response failed structured validation",

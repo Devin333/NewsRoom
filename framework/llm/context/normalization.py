@@ -15,7 +15,7 @@ class NormalizedLLMRequest:
     normalizer_revision: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "request", LLMRequest.from_dict(self.request.to_dict(redact=False)))
+        object.__setattr__(self, "request", self.request.clone())
         object.__setattr__(self, "payload", deepcopy(self.payload))
 
 
@@ -63,12 +63,7 @@ class CanonicalLLMRequestNormalizer:
         provider: str,
         model: str,
     ) -> NormalizedLLMRequest:
-        normalized_request = LLMRequest.from_dict(
-            {
-                **request.to_dict(redact=False),
-                "model": model,
-            }
-        )
+        normalized_request = request.clone(model=model)
         payload: dict[str, Any] = {
             "model": model,
             "messages": deepcopy(normalized_request.messages),

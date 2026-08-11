@@ -109,7 +109,7 @@ class PreparedLLMRequest:
         object.__setattr__(
             self,
             "normalized_request",
-            LLMRequest.from_dict(self.normalized_request.to_dict(redact=False)),
+            self.normalized_request.clone(),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -314,12 +314,7 @@ def _unavailable_normalized_request(
     request: LLMRequest,
     profile: ModelContextProfile,
 ) -> NormalizedLLMRequest:
-    normalized_request = LLMRequest.from_dict(
-        {
-            **request.to_dict(redact=False),
-            "model": profile.model,
-        }
-    )
+    normalized_request = request.clone(model=profile.model)
     payload = normalized_request.to_dict(redact=False)
     payload.pop("metadata", None)
     return NormalizedLLMRequest(
