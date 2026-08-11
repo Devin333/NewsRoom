@@ -1,10 +1,10 @@
 # 阶段 25：Structured Output Contract Hardening PRD
 
-> Document status: READY_FOR_OPENSPEC
+> Document status: IMPLEMENTED
 >
-> Implementation status: NOT_STARTED
+> Implementation status: COMPLETE
 >
-> Version: v1.0
+> Version: v1.1
 >
 > Priority: P0（LLM 输出契约正确性、Harness 决策安全与可回放性）
 >
@@ -15,6 +15,8 @@
 > Proposed umbrella change: `structured-output-contract-hardening`
 >
 > Last updated: 2026-08-11
+>
+> Evidence ledger: `25-structured-output-contract-hardening-evidence.md`
 
 ## 0. 一句话结论
 

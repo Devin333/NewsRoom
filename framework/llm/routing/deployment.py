@@ -77,7 +77,9 @@ class ModelDeployment:
             client=client,
             capabilities=ModelCapabilities(**capabilities_payload),
             structured_output_capability=(
-                ProviderStructuredOutputCapability(**structured_output_payload)
+                ProviderStructuredOutputCapability.from_dict(
+                    structured_output_payload
+                )
                 if isinstance(structured_output_payload, dict)
                 else None
             ),

@@ -9,12 +9,17 @@ except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 from urllib.parse import urlsplit
 
 from framework.llm.context.profile import ModelContextProfile
 from framework.llm.models.capabilities import ModelCapabilities, _normalize_capability_name
 from framework.llm.structured_output import ProviderStructuredOutputCapability
+from framework.llm.structured_output.release import (
+    ProviderStructuredOutputRelease,
+    ProviderStructuredOutputReleaseError,
+    provider_release_records_from_payload,
+)
 from framework.llm.clients.openai_compatible import (
     LLMConfigurationError,
     LLMRetryPolicy,
@@ -50,6 +55,7 @@ _TOP_LEVEL_MODEL_CONFIG_KEYS = {
     "pricing",
     "routes",
     "schema_version",
+    "structured_output_releases",
 }
 _MODEL_GROUP_CONFIG_KEYS = {"deployments"}
 _DEPLOYMENT_CONFIG_KEYS = {
@@ -81,6 +87,8 @@ _STRUCTURED_OUTPUT_CAPABILITY_KEYS = {
     "supports_json_object_fallback",
     "supports_local_refs",
     "supports_stream_terminal_validation",
+    "release_id",
+    "release_digest",
 }
 _CONTEXT_PROFILE_CONFIG_KEYS = {
     "allow_conservative_fallback",
@@ -210,6 +218,7 @@ def load_openai_compatible_deployment(
 
     payload = _load_payload(configured_path)
     validate_openai_compatible_models_config(payload)
+    release_records = _structured_output_releases_from_payload(payload)
     selected_route_id = _select_route_id(payload, route_id=route_id)
     routes = _dict_value(payload.get("routes"), field="routes", default={})
     route_payload = _dict_value(routes.get(selected_route_id), field=f"routes.{selected_route_id}", default={})
@@ -219,6 +228,7 @@ def load_openai_compatible_deployment(
         route_id=selected_route_id,
         route_payload=route_payload,
         apply_environment_overrides=apply_environment_overrides,
+        release_records=release_records,
     )
 
 
@@ -294,6 +304,7 @@ def validate_openai_compatible_models_config(payload: Any) -> None:
         raise LLMConfigurationError("model config must be an object")
     _assert_no_literal_secrets(payload)
     _assert_allowed_keys(payload, allowed=_TOP_LEVEL_MODEL_CONFIG_KEYS, field="model config")
+    release_records = _structured_output_releases_from_payload(payload)
 
     groups = _dict_value(payload.get("model_groups"), field="model_groups", default={})
     routes = _dict_value(payload.get("routes"), field="routes", default={})
@@ -325,6 +336,7 @@ def validate_openai_compatible_models_config(payload: Any) -> None:
             deployment_id = _validate_deployment_schema(
                 deployment,
                 field=f"model_groups.{group_key}.deployments[{index}]",
+                release_records=release_records,
             )
             if deployment_id in deployment_ids:
                 raise LLMConfigurationError(f"model deployment_id is duplicated: {deployment_id}")
@@ -337,6 +349,7 @@ def validate_openai_compatible_models_config(payload: Any) -> None:
         deployment_id = _validate_deployment_schema(
             deployment,
             field=f"deployments[{index}]",
+            release_records=release_records,
         )
         if deployment_id in deployment_ids:
             raise LLMConfigurationError(f"model deployment_id is duplicated: {deployment_id}")
@@ -367,7 +380,12 @@ def validate_openai_compatible_models_config(payload: Any) -> None:
             raise LLMConfigurationError(f"default_route_id does not reference a model group: {configured_default}")
 
 
-def _validate_deployment_schema(payload: dict[str, Any], *, field: str) -> str:
+def _validate_deployment_schema(
+    payload: dict[str, Any],
+    *,
+    field: str,
+    release_records: Mapping[str, ProviderStructuredOutputRelease],
+) -> str:
     if not isinstance(payload, dict):
         raise LLMConfigurationError(f"{field} must be an object")
     _assert_allowed_keys(payload, allowed=_DEPLOYMENT_CONFIG_KEYS, field=field)
@@ -400,6 +418,7 @@ def _validate_deployment_schema(payload: dict[str, Any], *, field: str) -> str:
         payload,
         provider=_provider_name_for_payload(payload),
         deployment=deployment_id,
+        release_records=release_records,
     )
     _validate_context_profile_schema(payload)
     return deployment_id
@@ -584,6 +603,7 @@ def _deployment_config(
     route_id: str,
     route_payload: dict[str, Any] | None = None,
     apply_environment_overrides: bool = True,
+    release_records: Mapping[str, ProviderStructuredOutputRelease] | None = None,
 ) -> OpenAICompatibleDeploymentConfig:
     llm_override_names = apply_environment_overrides
     provider_kind = _env_override_text(
@@ -656,6 +676,7 @@ def _deployment_config(
         payload,
         provider=provider_name,
         deployment=deployment_id,
+        release_records=release_records or {},
     )
     return OpenAICompatibleDeploymentConfig(
         deployment_id=deployment_id,
@@ -766,6 +787,7 @@ def _structured_output_capability_from_payload(
     *,
     provider: str,
     deployment: str,
+    release_records: Mapping[str, ProviderStructuredOutputRelease] | None = None,
 ) -> ProviderStructuredOutputCapability | None:
     raw = payload.get("structured_output_capability")
     if raw is None:
@@ -785,6 +807,24 @@ def _structured_output_capability_from_payload(
         raise LLMConfigurationError(
             "structured_output_capability.supported_keywords must be a list of strings"
         )
+    release_id = _optional_text(raw.get("release_id"))
+    release_digest = _optional_text(raw.get("release_digest"))
+    if (release_id is None) != (release_digest is None):
+        raise LLMConfigurationError(
+            "structured_output_capability release_id and release_digest must be provided together"
+        )
+    release: ProviderStructuredOutputRelease | None = None
+    if release_id is not None:
+        release = (release_records or {}).get(release_id)
+        if release is None:
+            raise LLMConfigurationError(
+                "structured_output_capability.release_id is not configured: "
+                + release_id
+            )
+        if release.digest != release_digest:
+            raise LLMConfigurationError(
+                "structured_output_capability.release_digest does not match release record"
+            )
     try:
         return ProviderStructuredOutputCapability(
             provider=provider,
@@ -822,10 +862,24 @@ def _structured_output_capability_from_payload(
                 raw.get("revision"),
                 field="structured_output_capability.revision",
             ),
+            release=release,
         )
     except (TypeError, ValueError) as exc:
         raise LLMConfigurationError(
             f"invalid structured_output_capability config: {exc}"
+        ) from exc
+
+
+def _structured_output_releases_from_payload(
+    payload: Mapping[str, Any],
+) -> dict[str, ProviderStructuredOutputRelease]:
+    try:
+        return provider_release_records_from_payload(
+            payload.get("structured_output_releases")
+        )
+    except ProviderStructuredOutputReleaseError as exc:
+        raise LLMConfigurationError(
+            f"invalid structured_output_releases config: {exc}"
         ) from exc
 
 

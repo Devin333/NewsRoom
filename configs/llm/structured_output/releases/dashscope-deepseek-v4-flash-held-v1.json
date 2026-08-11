@@ -1,0 +1,36 @@
+{
+  "schema_version": "provider-structured-output-release.v1",
+  "release_id": "dashscope-deepseek-v4-flash-held-v1",
+  "provider": "dashscope",
+  "deployment": "dashscope-deepseek-v4-flash",
+  "capability_revision": "dashscope-deepseek-v4-flash-unqualified-v1",
+  "approved_modes": ["native_strict"],
+  "status": "held",
+  "rollout_state": "disabled",
+  "workflow_scopes": ["research.candidate"],
+  "corpus_revision": null,
+  "corpus_digest": null,
+  "observation_revision": null,
+  "observation_digest": null,
+  "baseline_digest": null,
+  "evaluation_report_digest": null,
+  "evaluation_passed": false,
+  "evidence_kind": null,
+  "evidence_refs": [],
+  "decided_by": "harness",
+  "approved_by": null,
+  "approved_at": null,
+  "owner": "llm-platform",
+  "rollout_revision": "dashscope-deepseek-v4-flash-held-v1",
+  "rollback": {
+    "action": "reject",
+    "target_capability_revision": null,
+    "target_deployment": null,
+    "triggers": [
+      "missing_live_provider_evaluation",
+      "provider_capability_unverified"
+    ]
+  },
+  "reason": "No reviewed live provider evaluation exists; native enforcement remains disabled.",
+  "record_digest": "sha256:18a53240909f3423ea832f32d36959d70160f47387ebbf78bacd746d1b92bf83"
+}

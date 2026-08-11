@@ -7,9 +7,13 @@ from pathlib import Path
 import pytest
 
 from framework.llm import (
+    LOCAL_STRUCTURED_OUTPUT_DIALECT,
     LLMConfigurationError,
     load_openai_compatible_deployment,
     validate_openai_compatible_models_config,
+)
+from tests.framework.llm._structured_output_release import (
+    approved_structured_output_release,
 )
 
 
@@ -182,6 +186,71 @@ def test_models_config_rejects_unknown_structured_output_capability_field() -> N
     with pytest.raises(
         LLMConfigurationError,
         match="learn_from_provider_error",
+    ):
+        validate_openai_compatible_models_config(payload)
+
+
+def test_models_config_resolves_digest_bound_provider_release(
+    tmp_path: Path,
+) -> None:
+    payload = _valid_payload()
+    release = approved_structured_output_release(
+        provider="test-provider",
+        deployment="writer-primary",
+        capability_revision="writer-primary-native-v1",
+        modes=frozenset({"native_strict"}),
+    )
+    payload["structured_output_releases"] = {
+        release.release_id: release.to_dict()
+    }
+    payload["model_groups"]["writer-group"]["deployments"][0][
+        "structured_output_capability"
+    ] = {
+        "mode": "native_strict",
+        "supported_dialect": LOCAL_STRUCTURED_OUTPUT_DIALECT,
+        "supported_keywords": ["additionalProperties", "properties", "required", "type"],
+        "supports_local_refs": True,
+        "supports_stream_terminal_validation": True,
+        "revision": "writer-primary-native-v1",
+        "release_id": release.release_id,
+        "release_digest": release.digest,
+    }
+    path = _write_config(tmp_path, payload)
+
+    deployment = load_openai_compatible_deployment(path, route_id="writer")
+
+    assert deployment.structured_output_capability is not None
+    assert deployment.structured_output_capability.release == release
+    assert deployment.structured_output_capability.release_state == "enabled"
+
+
+def test_models_config_rejects_release_digest_mismatch() -> None:
+    payload = _valid_payload()
+    release = approved_structured_output_release(
+        provider="test-provider",
+        deployment="writer-primary",
+        capability_revision="writer-primary-native-v1",
+        modes=frozenset({"native_strict"}),
+    )
+    payload["structured_output_releases"] = {
+        release.release_id: release.to_dict()
+    }
+    capability = payload["model_groups"]["writer-group"]["deployments"][0][
+        "structured_output_capability"
+    ]
+    capability.update(
+        {
+            "mode": "native_strict",
+            "supported_dialect": LOCAL_STRUCTURED_OUTPUT_DIALECT,
+            "revision": "writer-primary-native-v1",
+            "release_id": release.release_id,
+            "release_digest": "sha256:" + ("0" * 64),
+        }
+    )
+
+    with pytest.raises(
+        LLMConfigurationError,
+        match="release_digest does not match",
     ):
         validate_openai_compatible_models_config(payload)
 

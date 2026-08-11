@@ -32,6 +32,9 @@ from framework.llm import (
     structured_output_enforcement_keywords,
 )
 from framework.llm.cache.stream import iter_cached_response_events
+from tests.framework.llm._structured_output_release import (
+    approved_structured_output_release,
+)
 
 
 _SCHEMA = {
@@ -54,6 +57,7 @@ def _native_capability(
     max_schema_depth: int | None = None,
 ) -> ProviderStructuredOutputCapability:
     contract = compile_structured_output_contract(schema)
+    revision = f"{deployment}-{mode}-v1"
     return ProviderStructuredOutputCapability(
         provider="test-provider",
         deployment=deployment,
@@ -70,7 +74,12 @@ def _native_capability(
         max_schema_bytes=max_schema_bytes,
         max_schema_depth=max_schema_depth,
         supports_stream_terminal_validation=stream,
-        revision=f"{deployment}-{mode}-v1",
+        revision=revision,
+        release=approved_structured_output_release(
+            provider="test-provider",
+            deployment=deployment,
+            capability_revision=revision,
+        ),
     )
 
 

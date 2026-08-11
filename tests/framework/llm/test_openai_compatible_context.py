@@ -17,6 +17,9 @@ from framework.llm import (
     ProviderStructuredOutputCapability,
     build_openai_chat_payload,
 )
+from tests.framework.llm._structured_output_release import (
+    approved_structured_output_release,
+)
 
 
 def _config() -> OpenAICompatibleConfig:
@@ -62,6 +65,11 @@ def _native_capability() -> ProviderStructuredOutputCapability:
         supported_keywords=frozenset({"properties", "required", "type"}),
         supports_stream_terminal_validation=True,
         revision="direct-context-native-v1",
+        release=approved_structured_output_release(
+            provider="test-provider",
+            deployment="direct-context-test",
+            capability_revision="direct-context-native-v1",
+        ),
     )
 
 

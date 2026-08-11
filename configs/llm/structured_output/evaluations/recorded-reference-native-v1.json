@@ -1,0 +1,179 @@
+{
+  "schema_version": "provider-observations.v1",
+  "observation_set_id": "recorded-reference-native-evaluation",
+  "revision": "recorded-reference-native-observations-v1",
+  "schema_corpus_revision": "provider-schema-corpus-v1",
+  "schema_corpus_digest": "sha256:babfc4241f3b948edd7830f2ca11b4e5b20fff3664155f5492e3dc9090466d49",
+  "provider": "recorded",
+  "deployment": "recorded-research-model",
+  "capability_revision": "recorded-research-native-v1",
+  "projection_mode": "native_strict",
+  "evidence_kind": "recorded_transport",
+  "baseline_revision": "recorded-json-object-local-gate-v1",
+  "baselines": {
+    "schema_validity_rate": 1.0,
+    "first_pass_validity_rate": 0.85,
+    "repair_success_rate": 1.0,
+    "answer_quality": 0.90,
+    "evidence_grounding": 0.93,
+    "citation_completeness": 0.95,
+    "provider_rejection_rate": 0.0,
+    "latency_p95_ms": 1700.0,
+    "average_total_tokens": 700.0,
+    "average_cost_usd": 0.002
+  },
+  "thresholds": {
+    "schema_validity_rate": 1.0,
+    "first_pass_validity_rate": 0.90,
+    "repair_success_rate": 1.0,
+    "answer_quality": 0.88,
+    "evidence_grounding": 0.90,
+    "citation_completeness": 0.93,
+    "provider_rejection_rate": 0.0,
+    "latency_p95_ms": 2000.0,
+    "average_total_tokens": 1000.0,
+    "average_cost_usd": 0.003
+  },
+  "regression_tolerances": {
+    "schema_validity_rate": 0.0,
+    "first_pass_validity_rate": 0.0,
+    "repair_success_rate": 0.0,
+    "answer_quality": 0.01,
+    "evidence_grounding": 0.01,
+    "citation_completeness": 0.01,
+    "provider_rejection_rate": 0.0,
+    "latency_p95_ms": 200.0,
+    "average_total_tokens": 100.0,
+    "average_cost_usd": 0.0005
+  },
+  "evidence_refs": [
+    "recorded-transport://structured-output/reference-v1",
+    "evaluator://research-quality/deterministic-v1"
+  ],
+  "observations": [
+    {
+      "case_id": "cap-object-1",
+      "schema_case_id": "object-required-closed-v1",
+      "split": "capability",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"title\":\"Review\",\"priority\":3}", "latency_ms": 620, "input_tokens": 260, "output_tokens": 28, "cost_usd": 0.0007}
+      ],
+      "evaluator_refs": []
+    },
+    {
+      "case_id": "cap-ref-1",
+      "schema_case_id": "local-ref-nested-v1",
+      "split": "capability",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"answer\":\"Supported finding\",\"citations\":[{\"source_id\":\"src-1\",\"claim\":\"Measured result\"}]}", "latency_ms": 810, "input_tokens": 340, "output_tokens": 64, "cost_usd": 0.0010}
+      ],
+      "evaluator_refs": []
+    },
+    {
+      "case_id": "cap-oneof-repair-1",
+      "schema_case_id": "one-of-discriminator-v1",
+      "split": "capability",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"kind\":\"paper\",\"repository\":\"org/repo\"}", "latency_ms": 690, "input_tokens": 300, "output_tokens": 30, "cost_usd": 0.0008},
+        {"response_text": "{\"kind\":\"paper\",\"paper_id\":\"p-42\"}", "latency_ms": 640, "input_tokens": 320, "output_tokens": 25, "cost_usd": 0.0008}
+      ],
+      "evaluator_refs": []
+    },
+    {
+      "case_id": "cap-conditional-1",
+      "schema_case_id": "conditional-severity-v1",
+      "split": "capability",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"severity\":\"high\",\"mitigation\":\"Disable affected route\"}", "latency_ms": 720, "input_tokens": 290, "output_tokens": 38, "cost_usd": 0.0009}
+      ],
+      "evaluator_refs": []
+    },
+    {
+      "case_id": "cap-dependent-1",
+      "schema_case_id": "dependent-owner-v1",
+      "split": "capability",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"status\":\"assigned\",\"owner\":\"qa\",\"owner_contact\":\"qa@example.invalid\"}", "latency_ms": 760, "input_tokens": 310, "output_tokens": 42, "cost_usd": 0.0009}
+      ],
+      "evaluator_refs": []
+    },
+    {
+      "case_id": "cap-numeric-1",
+      "schema_case_id": "numeric-array-semantics-v1",
+      "split": "capability",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"score\":0.86,\"ranks\":[1,2,3]}", "latency_ms": 680, "input_tokens": 280, "output_tokens": 32, "cost_usd": 0.0008}
+      ],
+      "evaluator_refs": []
+    },
+    {
+      "case_id": "research-synthesis-1",
+      "schema_case_id": "research-synthesis-v1",
+      "split": "held_out_research",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"summary\":\"The measured evidence supports the bounded conclusion.\",\"evidence_ids\":[\"ev-1\",\"ev-2\"],\"confidence\":0.91}", "latency_ms": 1120, "input_tokens": 470, "output_tokens": 78, "cost_usd": 0.0016}
+      ],
+      "answer_quality": 0.92,
+      "evidence_grounding": 0.95,
+      "citation_completeness": 1.0,
+      "evaluator_refs": ["evaluator://research-quality/case-synthesis-1"]
+    },
+    {
+      "case_id": "research-synthesis-2",
+      "schema_case_id": "research-synthesis-v1",
+      "split": "held_out_research",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"summary\":\"Two independent sources agree on the reported change.\",\"evidence_ids\":[\"ev-3\",\"ev-4\"],\"confidence\":0.88}", "latency_ms": 1260, "input_tokens": 510, "output_tokens": 82, "cost_usd": 0.0018}
+      ],
+      "answer_quality": 0.90,
+      "evidence_grounding": 0.93,
+      "citation_completeness": 0.95,
+      "evaluator_refs": ["evaluator://research-quality/case-synthesis-2"]
+    },
+    {
+      "case_id": "research-comparison-1",
+      "schema_case_id": "research-comparison-v1",
+      "split": "held_out_research",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"winner\":\"candidate\",\"reasons\":[\"Higher evidence coverage\"],\"citations\":[\"cite-1\",\"cite-2\"]}", "latency_ms": 1380, "input_tokens": 540, "output_tokens": 74, "cost_usd": 0.0019}
+      ],
+      "answer_quality": 0.91,
+      "evidence_grounding": 0.94,
+      "citation_completeness": 0.96,
+      "evaluator_refs": ["evaluator://research-quality/case-comparison-1"]
+    },
+    {
+      "case_id": "research-comparison-2",
+      "schema_case_id": "research-comparison-v1",
+      "split": "held_out_research",
+      "provider_schema_rejected": false,
+      "expected_final_valid": true,
+      "attempts": [
+        {"response_text": "{\"winner\":\"tie\",\"reasons\":[\"Equivalent supported results\"],\"citations\":[\"cite-3\"]}", "latency_ms": 1490, "input_tokens": 560, "output_tokens": 68, "cost_usd": 0.0020}
+      ],
+      "answer_quality": 0.89,
+      "evidence_grounding": 0.92,
+      "citation_completeness": 0.94,
+      "evaluator_refs": ["evaluator://research-quality/case-comparison-2"]
+    }
+  ],
+  "content_digest": "sha256:40b2202ae161f7094cfda5e285b10353fb4df6b98a41eccdff78dd4a7aee34b8"
+}

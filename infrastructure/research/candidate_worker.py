@@ -26,6 +26,7 @@ from framework.llm.models import LLMRequest, LLMResponse
 from framework.llm.redaction import redact_sensitive_values
 from framework.llm.structured_output import (
     ManagedStructuredOutputError,
+    ProviderStructuredOutputPolicy,
     compile_structured_output_contract,
     require_managed_structured_output_for_contract,
 )
@@ -545,6 +546,9 @@ class StructuredResearchCandidateWorker:
             metadata={"component": "research_candidate_worker", "task": task},
             output_schema=deepcopy(_SCHEMAS[task]),
             output_schema_name=f"research_{task}",
+            structured_output_policy=ProviderStructuredOutputPolicy(
+                workflow_scope="research.candidate"
+            ),
         )
 
     def _build_prompt(

@@ -118,10 +118,22 @@ def _write_recorded_models_config(tmp_path: Path) -> Path:
         supported_keywords.update(
             structured_output_enforcement_keywords(contract.canonical_schema)
         )
+    release_path = (
+        Path(__file__).resolve().parents[3]
+        / "configs"
+        / "llm"
+        / "structured_output"
+        / "releases"
+        / "recorded-reference-native-v1.json"
+    )
+    release_record = json.loads(release_path.read_text(encoding="utf-8"))
     config_path = tmp_path / "recorded-models.json"
     config_path.write_text(
         json.dumps(
             {
+                "structured_output_releases": {
+                    release_record["release_id"]: release_record
+                },
                 "model_groups": {
                     "recorded-research": {
                         "deployments": [
@@ -143,6 +155,8 @@ def _write_recorded_models_config(tmp_path: Path) -> Path:
                                     "supports_local_refs": True,
                                     "supports_stream_terminal_validation": True,
                                     "revision": "recorded-research-native-v1",
+                                    "release_id": release_record["release_id"],
+                                    "release_digest": release_record["record_digest"],
                                 },
                             }
                         ]

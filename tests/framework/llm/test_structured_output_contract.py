@@ -25,6 +25,9 @@ from framework.llm import (
     validate_structured_output_result,
 )
 from framework.llm.context.openai import OpenAICompatibleRequestNormalizer
+from tests.framework.llm._structured_output_release import (
+    approved_structured_output_release,
+)
 
 
 class _NestedValue(BaseModel):
@@ -74,6 +77,11 @@ def _native_capability(schema: Any) -> ProviderStructuredOutputCapability:
         supports_local_refs=True,
         supports_stream_terminal_validation=True,
         revision="direct-test-native-v1",
+        release=approved_structured_output_release(
+            provider="test-provider",
+            deployment="direct-test",
+            capability_revision="direct-test-native-v1",
+        ),
     )
 
 

@@ -11,6 +11,9 @@ from framework.llm.structured_output.contracts import (
     StructuredOutputContract,
     StructuredOutputDiagnostic,
 )
+from framework.llm.structured_output.release import (
+    ProviderStructuredOutputRelease,
+)
 
 
 ProviderStructuredOutputMode = Literal[
@@ -72,6 +75,7 @@ _SCHEMA_MAP_KEYWORDS = frozenset(
 class ProviderStructuredOutputPolicy:
     require_native_enforcement: bool = False
     allow_json_object_local_gate: bool = False
+    workflow_scope: str = "default"
 
     def __post_init__(self) -> None:
         if not isinstance(self.require_native_enforcement, bool):
@@ -82,11 +86,14 @@ class ProviderStructuredOutputPolicy:
             raise ValueError(
                 "native enforcement cannot also allow JSON-object local-gate fallback"
             )
+        scope = _required_text(self.workflow_scope, field_name="workflow_scope")
+        object.__setattr__(self, "workflow_scope", scope)
 
-    def to_dict(self) -> dict[str, bool]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "require_native_enforcement": self.require_native_enforcement,
             "allow_json_object_local_gate": self.allow_json_object_local_gate,
+            "workflow_scope": self.workflow_scope,
         }
 
     @classmethod
@@ -99,7 +106,11 @@ class ProviderStructuredOutputPolicy:
             raise TypeError("structured_output_policy must be an object")
         unknown = sorted(
             set(value)
-            - {"require_native_enforcement", "allow_json_object_local_gate"}
+            - {
+                "require_native_enforcement",
+                "allow_json_object_local_gate",
+                "workflow_scope",
+            }
         )
         if unknown:
             raise ValueError(
@@ -113,6 +124,7 @@ class ProviderStructuredOutputPolicy:
             allow_json_object_local_gate=value.get(
                 "allow_json_object_local_gate", False
             ),
+            workflow_scope=value.get("workflow_scope", "default"),
         )
 
 
@@ -129,6 +141,7 @@ class ProviderStructuredOutputCapability:
     max_schema_depth: int | None = None
     supports_stream_terminal_validation: bool = False
     revision: str = ""
+    release: ProviderStructuredOutputRelease | None = None
 
     def __post_init__(self) -> None:
         provider = _required_text(self.provider, field_name="provider")
@@ -157,6 +170,19 @@ class ProviderStructuredOutputCapability:
             self.supported_dialect
         ):
             raise ValueError("native capability requires supported_dialect")
+        if self.release is not None:
+            if not isinstance(self.release, ProviderStructuredOutputRelease):
+                raise ValueError(
+                    "release must be ProviderStructuredOutputRelease"
+                )
+            if (
+                self.release.provider != provider
+                or self.release.deployment != deployment
+                or self.release.capability_revision != revision
+            ):
+                raise ValueError(
+                    "structured-output release identity does not match capability"
+                )
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "deployment", deployment)
         object.__setattr__(self, "revision", revision)
@@ -170,6 +196,10 @@ class ProviderStructuredOutputCapability:
     @property
     def supports_json_object(self) -> bool:
         return self.mode == "json_object" or self.supports_json_object_fallback
+
+    @property
+    def release_state(self) -> str:
+        return self.release.rollout_state if self.release is not None else "disabled"
 
     def assert_identity(self, *, provider: str, deployment: str) -> None:
         if self.provider != provider or self.deployment != deployment:
@@ -192,7 +222,18 @@ class ProviderStructuredOutputCapability:
                 self.supports_stream_terminal_validation
             ),
             "revision": self.revision,
+            "release": self.release.to_dict() if self.release is not None else None,
         }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ProviderStructuredOutputCapability:
+        value = dict(payload)
+        raw_release = value.get("release")
+        if isinstance(raw_release, dict):
+            value["release"] = ProviderStructuredOutputRelease.from_dict(raw_release)
+        if isinstance(value.get("supported_keywords"), list):
+            value["supported_keywords"] = frozenset(value["supported_keywords"])
+        return cls(**value)
 
 
 @dataclass(frozen=True)
@@ -206,6 +247,12 @@ class ProviderSchemaProjection:
     enforced_keywords: frozenset[str]
     omitted_keywords: frozenset[str]
     projection_digest: str
+    provider_release_id: str | None = None
+    provider_release_digest: str | None = None
+    provider_rollout_state: str = "disabled"
+    provider_rollout_revision: str | None = None
+    evaluation_report_digest: str | None = None
+    shadow_candidate_mode: str | None = None
 
     def __post_init__(self) -> None:
         if not self.contract_digest.startswith("sha256:"):
@@ -236,6 +283,12 @@ class ProviderSchemaProjection:
             "enforced_keywords": sorted(self.enforced_keywords),
             "omitted_keywords": sorted(self.omitted_keywords),
             "projection_digest": self.projection_digest,
+            "provider_release_id": self.provider_release_id,
+            "provider_release_digest": self.provider_release_digest,
+            "provider_rollout_state": self.provider_rollout_state,
+            "provider_rollout_revision": self.provider_rollout_revision,
+            "evaluation_report_digest": self.evaluation_report_digest,
+            "shadow_candidate_mode": self.shadow_candidate_mode,
         }
 
 
@@ -259,6 +312,7 @@ def project_structured_output_contract(
         capability,
         used_keywords=used_keywords,
         streaming=streaming,
+        workflow_scope=resolved_policy.workflow_scope,
     )
     if not native_issues:
         return _build_projection(
@@ -283,11 +337,21 @@ def project_structured_output_contract(
             provider_schema=None,
             enforced_keywords=frozenset(),
             omitted_keywords=used_keywords,
+            shadow_candidate_mode=(
+                capability.mode
+                if capability.release_state == "shadow"
+                and capability.mode in _NATIVE_MODES
+                else None
+            ),
         )
 
     diagnostics = tuple(
         StructuredOutputDiagnostic(
-            code="provider_schema_ineligible",
+            code=(
+                "provider_release_ineligible"
+                if reason.startswith("provider_release_")
+                else "provider_schema_ineligible"
+            ),
             message=message,
             validator=reason,
             contract_digest=contract.schema_digest,
@@ -335,6 +399,7 @@ def _native_projection_issues(
     *,
     used_keywords: frozenset[str],
     streaming: bool,
+    workflow_scope: str,
 ) -> list[tuple[str, str]]:
     issues: list[tuple[str, str]] = []
     if capability.mode not in _NATIVE_MODES:
@@ -344,6 +409,29 @@ def _native_projection_issues(
                 "provider capability does not declare native schema enforcement",
             )
         )
+    else:
+        release = capability.release
+        if release is None:
+            issues.append(
+                (
+                    "provider_release_missing",
+                    "provider native enforcement has no approved release record",
+                )
+            )
+        else:
+            for reason in release.authorization_issues(
+                provider=capability.provider,
+                deployment=capability.deployment,
+                capability_revision=capability.revision,
+                mode=capability.mode,
+                workflow_scope=workflow_scope,
+            ):
+                issues.append(
+                    (
+                        reason,
+                        "provider native enforcement release is not eligible",
+                    )
+                )
     if capability.supported_dialect != contract.dialect:
         issues.append(
             (
@@ -408,7 +496,9 @@ def _build_projection(
     provider_schema: dict[str, Any] | None,
     enforced_keywords: frozenset[str],
     omitted_keywords: frozenset[str],
+    shadow_candidate_mode: str | None = None,
 ) -> ProviderSchemaProjection:
+    release = capability.release
     digest_payload = {
         "contract_digest": contract.schema_digest,
         "provider": capability.provider,
@@ -418,6 +508,16 @@ def _build_projection(
         "provider_schema": provider_schema,
         "enforced_keywords": sorted(enforced_keywords),
         "omitted_keywords": sorted(omitted_keywords),
+        "provider_release_id": release.release_id if release is not None else None,
+        "provider_release_digest": release.digest if release is not None else None,
+        "provider_rollout_state": capability.release_state,
+        "provider_rollout_revision": (
+            release.rollout_revision if release is not None else None
+        ),
+        "evaluation_report_digest": (
+            release.evaluation_report_digest if release is not None else None
+        ),
+        "shadow_candidate_mode": shadow_candidate_mode,
     }
     projection_digest = (
         "sha256:" + sha256(_canonical_json_bytes(digest_payload)).hexdigest()
@@ -432,6 +532,16 @@ def _build_projection(
         enforced_keywords=enforced_keywords,
         omitted_keywords=omitted_keywords,
         projection_digest=projection_digest,
+        provider_release_id=(release.release_id if release is not None else None),
+        provider_release_digest=(release.digest if release is not None else None),
+        provider_rollout_state=capability.release_state,
+        provider_rollout_revision=(
+            release.rollout_revision if release is not None else None
+        ),
+        evaluation_report_digest=(
+            release.evaluation_report_digest if release is not None else None
+        ),
+        shadow_candidate_mode=shadow_candidate_mode,
     )
 
 

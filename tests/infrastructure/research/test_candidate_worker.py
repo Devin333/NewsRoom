@@ -16,6 +16,9 @@ from framework.llm import (
     compile_structured_output_contract,
     structured_output_enforcement_keywords,
 )
+from tests.framework.llm._structured_output_release import (
+    approved_structured_output_release,
+)
 from framework.llm.clients.openai_compatible import (
     LLMProviderError,
     OpenAICompatibleClient,
@@ -530,6 +533,11 @@ def _recorded_structured_output_capability() -> ProviderStructuredOutputCapabili
         supports_local_refs=True,
         supports_stream_terminal_validation=True,
         revision="recorded-research-native-v1",
+        release=approved_structured_output_release(
+            provider="recorded",
+            deployment="recorded-model",
+            capability_revision="recorded-research-native-v1",
+        ),
     )
 
 

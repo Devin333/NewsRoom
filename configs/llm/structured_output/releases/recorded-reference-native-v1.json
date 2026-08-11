@@ -1,0 +1,41 @@
+{
+  "schema_version": "provider-structured-output-release.v1",
+  "release_id": "recorded-reference-native-v1",
+  "provider": "recorded",
+  "deployment": "recorded-research-model",
+  "capability_revision": "recorded-research-native-v1",
+  "approved_modes": ["native_strict"],
+  "status": "approved",
+  "rollout_state": "enabled",
+  "workflow_scopes": ["research.candidate", "structured-output-evaluation"],
+  "corpus_revision": "provider-schema-corpus-v1",
+  "corpus_digest": "sha256:babfc4241f3b948edd7830f2ca11b4e5b20fff3664155f5492e3dc9090466d49",
+  "observation_revision": "recorded-reference-native-observations-v1",
+  "observation_digest": "sha256:40b2202ae161f7094cfda5e285b10353fb4df6b98a41eccdff78dd4a7aee34b8",
+  "baseline_digest": "sha256:91baa5c3d754287cf0508505073de920577f7995f84dc7724638f2a5ee3c37d5",
+  "evaluation_report_digest": "sha256:a6ff539b00dc63660f35bb0776c2a4b7aa9586c2c148cd8b2447262c05b01a08",
+  "evaluation_passed": true,
+  "evidence_kind": "recorded_transport",
+  "evidence_refs": [
+    "recorded-transport://structured-output/reference-v1",
+    "evaluator://research-quality/deterministic-v1"
+  ],
+  "decided_by": "harness",
+  "approved_by": "structured-output-release-gate-v1",
+  "approved_at": "2026-08-11T00:00:00Z",
+  "owner": "llm-platform",
+  "rollout_revision": "recorded-reference-rollout-v1",
+  "rollback": {
+    "action": "json_object_local_gate",
+    "target_capability_revision": null,
+    "target_deployment": null,
+    "triggers": [
+      "schema_validity_regression",
+      "research_quality_regression",
+      "latency_or_cost_regression",
+      "operator_request"
+    ]
+  },
+  "reason": "Deterministic recorded-transport reference release; not evidence for any external provider.",
+  "record_digest": "sha256:7d3f0f0b7ef58f187f0df1905b6eca30278e4c30bb13ecf9cc2b684b7ce2bc5c"
+}

@@ -1,0 +1,178 @@
+{
+  "schema_version": "provider-schema-corpus.v1",
+  "corpus_id": "newsroom-provider-schema-capability",
+  "revision": "provider-schema-corpus-v1",
+  "upstream_sources": [
+    {
+      "repository": "https://github.com/guidance-ai/jsonschemabench",
+      "commit": "ba103c73756198dd9b149ddc7db7867da7a077f6",
+      "usage": "Feature and complexity taxonomy only; no upstream schema record is redistributed."
+    },
+    {
+      "repository": "https://github.com/json-schema-org/JSON-Schema-Test-Suite",
+      "commit": "15fe552d6cf76e29cc8165306fb6a72503fd360b",
+      "usage": "Draft 2020-12 semantic coverage checklist only; no upstream test case is copied."
+    }
+  ],
+  "license_disposition": "All cases in this file are NewsRoom-authored synthetic schemas under the repository Apache-2.0 license. JSONSchemaBench has no repository license file at the pinned revision, so its dataset rows are deliberately not copied or redistributed.",
+  "cases": [
+    {
+      "case_id": "object-required-closed-v1",
+      "category": "trivial-object",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "priority": {"type": "integer", "minimum": 1, "maximum": 5}
+        },
+        "required": ["title", "priority"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "case_id": "local-ref-nested-v1",
+      "category": "local-reference",
+      "schema": {
+        "type": "object",
+        "$defs": {
+          "citation": {
+            "type": "object",
+            "properties": {
+              "source_id": {"type": "string", "pattern": "^src-[0-9]+$"},
+              "claim": {"type": "string", "minLength": 4}
+            },
+            "required": ["source_id", "claim"],
+            "additionalProperties": false
+          }
+        },
+        "properties": {
+          "answer": {"type": "string", "minLength": 4},
+          "citations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"$ref": "#/$defs/citation"}
+          }
+        },
+        "required": ["answer", "citations"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "case_id": "one-of-discriminator-v1",
+      "category": "composition-oneOf",
+      "schema": {
+        "type": "object",
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {"const": "paper"},
+              "paper_id": {"type": "string", "minLength": 3}
+            },
+            "required": ["kind", "paper_id"],
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "kind": {"const": "project"},
+              "repository": {"type": "string", "pattern": "^[^/]+/[^/]+$"}
+            },
+            "required": ["kind", "repository"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "conditional-severity-v1",
+      "category": "conditional",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "severity": {"enum": ["low", "high"]},
+          "mitigation": {"type": "string"},
+          "monitor": {"type": "boolean"}
+        },
+        "required": ["severity"],
+        "if": {"properties": {"severity": {"const": "high"}}},
+        "then": {"required": ["mitigation"]},
+        "else": {"required": ["monitor"]},
+        "additionalProperties": false
+      }
+    },
+    {
+      "case_id": "dependent-owner-v1",
+      "category": "dependent-required",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "status": {"enum": ["open", "assigned"]},
+          "owner": {"type": "string", "minLength": 2},
+          "owner_contact": {"type": "string", "minLength": 3}
+        },
+        "required": ["status"],
+        "dependentRequired": {"owner": ["owner_contact"]},
+        "additionalProperties": false
+      }
+    },
+    {
+      "case_id": "numeric-array-semantics-v1",
+      "category": "numeric-and-unique",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "score": {"type": "number", "minimum": 0, "maximum": 1},
+          "ranks": {
+            "type": "array",
+            "minItems": 2,
+            "uniqueItems": true,
+            "items": {"type": "integer", "minimum": 1}
+          }
+        },
+        "required": ["score", "ranks"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "case_id": "research-synthesis-v1",
+      "category": "held-out-research",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "summary": {"type": "string", "minLength": 12},
+          "evidence_ids": {
+            "type": "array",
+            "minItems": 2,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^ev-[0-9]+$"}
+          },
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "required": ["summary", "evidence_ids", "confidence"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "case_id": "research-comparison-v1",
+      "category": "held-out-research-composition",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "winner": {"enum": ["candidate", "baseline", "tie"]},
+          "reasons": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 5}
+          },
+          "citations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "pattern": "^cite-[0-9]+$"}
+          }
+        },
+        "required": ["winner", "reasons", "citations"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "content_digest": "sha256:babfc4241f3b948edd7830f2ca11b4e5b20fff3664155f5492e3dc9090466d49"
+}

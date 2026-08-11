@@ -34,6 +34,9 @@ from framework.llm import (
     project_structured_output_metrics,
     structured_output_enforcement_keywords,
 )
+from tests.framework.llm._structured_output_release import (
+    approved_structured_output_release,
+)
 from framework.llm.cache import CacheEntry
 from framework.llm.clients.openai_compatible import LLMProviderError
 from framework.tool import ToolExecutor, ToolRegistry
@@ -127,6 +130,11 @@ def test_structured_stream_cache_preserves_terminal_identity_and_revalidates() -
         supports_local_refs=True,
         supports_stream_terminal_validation=True,
         revision="stream-capability-v1",
+        release=approved_structured_output_release(
+            provider="provider",
+            deployment="deployment",
+            capability_revision="stream-capability-v1",
+        ),
     )
     client = _ManagedStreamClient()
     store = InMemoryLLMCache()
@@ -482,6 +490,11 @@ def _managed_request(*, schema_revision: str) -> LLMRequest:
         supports_local_refs=True,
         supports_stream_terminal_validation=True,
         revision="capability-v1",
+        release=approved_structured_output_release(
+            provider="provider",
+            deployment="deployment",
+            capability_revision="capability-v1",
+        ),
     )
     projection = project_structured_output_contract(contract, capability)
     request = LLMRequest(
