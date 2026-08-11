@@ -60,6 +60,11 @@ from framework.harness.context.group_models import (
     ContextReconstructionPolicy,
     ContextToolTransactionState,
 )
+from framework.harness.context.materializer import (
+    ContextGroupMaterializer,
+    ContextGroupStructureValidator,
+    ContextMaterializationRequest,
+)
 from framework.harness.context.snapshot import ContextSnapshotStore
 from framework.harness.context.summary_models import (
     ContextSummaryCandidate,
@@ -104,8 +109,11 @@ __all__ = [
     "ContextGroupKind",
     "ContextGroupMember",
     "ContextGroupMemberKind",
+    "ContextGroupMaterializer",
+    "ContextGroupStructureValidator",
     "ContextLossReport",
     "ContextLossRisk",
+    "ContextMaterializationRequest",
     "ContextProtectionReason",
     "ContextReconstructionPolicy",
     "ContextReplayGate",

@@ -9,12 +9,12 @@
 
 ## 2. Group Materialization and Structural Validation
 
-- [ ] 2.1 Implement a deterministic segment/message/evidence/tool materializer that emits ordered group/member refs and stable identities from immutable source inputs.
-- [ ] 2.2 Implement role/order/output-contract validation and reject unsupported or ambiguous source shapes before planning.
-- [ ] 2.3 Implement tool-call/result transaction pairing, completion state, atomic membership, and pending/unresolved protection.
-- [ ] 2.4 Resolve trusted protection reasons for system/safety/current-task/output-contract/retry-state/evidence/control-decision groups and reject request metadata overrides.
-- [ ] 2.5 Materialize evidence groups with evidence/source/span/lineage/required-citation/query/conflict fields and stable loss-tracking identities.
-- [ ] 2.6 Add migration adapters from existing six `ContextSegment` values without treating summary strings as ordered raw message history.
+- [x] 2.1 Implement a deterministic segment/message/evidence/tool materializer that emits ordered group/member refs and stable identities from immutable source inputs.
+- [x] 2.2 Implement role/order/output-contract validation and reject unsupported or ambiguous source shapes before planning.
+- [x] 2.3 Implement tool-call/result transaction pairing, completion state, atomic membership, and pending/unresolved protection.
+- [x] 2.4 Resolve trusted protection reasons for system/safety/current-task/output-contract/retry-state/evidence/control-decision groups and reject request metadata overrides.
+- [x] 2.5 Materialize evidence groups with evidence/source/span/lineage/required-citation/query/conflict fields and stable loss-tracking identities.
+- [x] 2.6 Add migration adapters from existing six `ContextSegment` values without treating summary strings as ordered raw message history.
 
 ## 3. Policy and Deterministic Planning
 
