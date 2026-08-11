@@ -322,6 +322,14 @@ class LLMCacheRuntime:
     def validate_response(self, *, request: LLMRequest, response: LLMResponse) -> None:
         CacheResponseValidator.validate_output_contract(request=request, response=response)
 
+    def deadline_expired(self, preparation: CachePreparation) -> bool:
+        context = preparation.eligibility.context
+        return bool(
+            context is not None
+            and context.deadline_monotonic is not None
+            and self._clock() >= context.deadline_monotonic
+        )
+
     def _delete_best_effort(self, key: LLMCacheKey) -> None:
         try:
             self.store.delete(key)

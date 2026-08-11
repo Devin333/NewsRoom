@@ -29,10 +29,10 @@
 
 ## 4. Streaming Cache and Replay
 
-- [ ] 4.1 (CACHE-030) Add router-aware `stream()` orchestration using the same policy/key/lookup/single-flight/cooldown/budget/fallback path as `complete()`, accumulating only normal complete source streams.
-- [ ] 4.2 (CACHE-031) Implement bounded normalized cache-hit replay from a safe `LLMResponse` as `message_start`, text chunks, optional source-usage event, and one `message_complete`, with fresh current-call metadata and zero current provider usage.
-- [ ] 4.3 (CACHE-032) Enforce no-write behavior for source errors, malformed ordering, missing/duplicate completion, tool events/calls, consumer early close/cancellation, validation failure, oversize, and write failure after a successful stream.
-- [ ] 4.4 Add stream tests proving incremental miss delivery, completed write once, accumulator-compatible replay, no provider call/cooldown/provider-budget mutation on hit, no cached partial/tool stream, cancellation behavior, and cache-write failure isolation.
+- [x] 4.1 (CACHE-030) Add router-aware `stream()` orchestration using the same policy/key/lookup/single-flight/cooldown/budget/fallback path as `complete()`, accumulating only normal complete source streams.
+- [x] 4.2 (CACHE-031) Implement bounded normalized cache-hit replay from a safe `LLMResponse` as `message_start`, text chunks, optional source-usage event, and one `message_complete`, with fresh current-call metadata and zero current provider usage.
+- [x] 4.3 (CACHE-032) Enforce no-write behavior for source errors, malformed ordering, missing/duplicate completion, tool events/calls, consumer early close/cancellation, validation failure, oversize, and write failure after a successful stream.
+- [x] 4.4 Add stream tests proving incremental miss delivery, completed write once, accumulator-compatible replay, no provider call/cooldown/provider-budget mutation on hit, no cached partial/tool stream, cancellation behavior, and cache-write failure isolation.
 
 ## 5. Documentation, Validation, Rollout, and Archive
 

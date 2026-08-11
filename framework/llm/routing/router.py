@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone as _tz
-UTC = _tz.utc
 from typing import Any, Iterable, Iterator
 
 from framework.llm.cache import (
@@ -14,6 +13,11 @@ from framework.llm.cache import (
     LLMCacheRuntime,
     SingleFlightAcquireStatus,
     SingleFlightLease,
+)
+from framework.llm.cache.stream import (
+    LLMStreamCacheCapture,
+    LLMStreamProtocolError,
+    iter_cached_response_events,
 )
 from framework.llm.budget import (
     GlobalBudgetExceededError,
@@ -34,9 +38,7 @@ from framework.llm.context import (
 from framework.llm.models import (
     LLMRequest,
     LLMResponse,
-    LLMStreamAccumulator,
     LLMStreamEvent,
-    TokenUsage,
 )
 from framework.llm.redaction import redact_sensitive_values
 from framework.llm.routing.cooldown import InMemoryLLMCooldownTracker, LLMCooldownState
@@ -44,6 +46,9 @@ from framework.llm.routing.deployment import ModelDeployment
 from framework.llm.routing.errors import LLMRouteError
 from framework.llm.routing.events import LLMRouterEvent, LLMRouterEventSink
 from framework.llm.routing.route import LLMRoutingPolicy, ModelRoute
+
+
+UTC = _tz.utc
 
 
 @dataclass
@@ -57,6 +62,7 @@ class _RouterCacheAttempt:
     reason: str = "cache_not_configured"
     backend: str = "none"
     age_seconds: float | None = None
+    stream_outcome_recorded: bool = False
 
     @property
     def eligible(self) -> bool:
@@ -92,6 +98,10 @@ class _RouterCacheAttempt:
             "llm_logical_request_counted": True,
             "llm_logical_request_count": 1,
         }
+
+
+class _CacheReplayDeadlineExceeded(RuntimeError):
+    pass
 
 
 class LLMRouter:
@@ -996,6 +1006,23 @@ class LLMRouter:
                 events=route_events,
                 prepared=prepared,
             )
+            cache_preparation = cache_attempt.preparation
+            if (
+                self._cache_runtime is not None
+                and cache_preparation is not None
+                and self._cache_runtime.deadline_expired(cache_preparation)
+            ):
+                raise self._build_cache_deadline_error(
+                    cache_attempt,
+                    request=request,
+                    route=route,
+                    deployment=deployment,
+                    attempted_deployments=attempted_deployments,
+                    events=route_events,
+                    errors=errors,
+                    resolution_trace=resolution_trace,
+                    phase="cache_admission",
+                )
             if cache_attempt.hit:
                 cached_response = self._return_cache_hit(
                     cache_attempt,
@@ -1010,7 +1037,43 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                     attempt_index=index + 1,
                 )
-                yield from self._cache_hit_stream_events(cached_response)
+                try:
+                    yield from self._cache_hit_stream_events(
+                        cached_response,
+                        preparation=cache_preparation,
+                    )
+                except _CacheReplayDeadlineExceeded:
+                    raise self._build_cache_deadline_error(
+                        cache_attempt,
+                        request=request,
+                        route=route,
+                        deployment=deployment,
+                        attempted_deployments=attempted_deployments,
+                        events=route_events,
+                        errors=errors,
+                        resolution_trace=resolution_trace,
+                        phase="cache_replay",
+                    )
+                except GeneratorExit:
+                    self._record_stream_cache_outcome(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                        event_type="llm_cache_stream_replay_interrupted",
+                        reason="consumer_closed",
+                        provider_call=False,
+                    )
+                    raise
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_replay_completed",
+                    reason="cache_hit_replayed",
+                    provider_call=False,
+                )
                 return
 
             cooldown_until = self._active_cooldown_until(deployment)
@@ -1118,6 +1181,16 @@ class LLMRouter:
                 source_iterator = iter(deployment.client.stream(prepared_request))
                 first_event = LLMStreamEvent.from_any(next(source_iterator))
             except StopIteration as exc:
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="incomplete_stream",
+                    provider_call=True,
+                    metadata={"protocol_reason": "empty_stream"},
+                )
                 self._release_cache_attempt(
                     cache_attempt,
                     route=route,
@@ -1143,6 +1216,16 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from exc
             except LLMProviderError as exc:
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="source_interrupted",
+                    provider_call=True,
+                    metadata={"error_class": type(exc).__name__},
+                )
                 errors.append(_provider_error_payload(deployment_id, exc))
                 self._record_provider_failure(deployment_id, exc)
                 self._record_event(
@@ -1225,6 +1308,16 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from exc
             except Exception as exc:
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="source_interrupted",
+                    provider_call=True,
+                    metadata={"error_class": type(exc).__name__},
+                )
                 self._release_cache_attempt(
                     cache_attempt,
                     route=route,
@@ -1251,11 +1344,11 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from exc
 
-            accumulator = LLMStreamAccumulator()
+            capture = LLMStreamCacheCapture()
             terminal_event: LLMStreamEvent | None = None
             visible_output = False
             try:
-                accumulator.add_event(first_event)
+                first_event = capture.add(first_event)
                 if first_event.event_type == "message_complete":
                     terminal_event = first_event
                 else:
@@ -1263,16 +1356,25 @@ class LLMRouter:
                     yield first_event
                 if source_iterator is None:
                     raise RuntimeError("provider stream iterator is unavailable")
-                for raw_event in source_iterator:
-                    event = LLMStreamEvent.from_any(raw_event)
-                    accumulator.add_event(event)
-                    if event.event_type == "message_complete":
-                        terminal_event = event
-                        continue
-                    visible_output = True
-                    yield event
+                if terminal_event is None:
+                    for raw_event in source_iterator:
+                        event = capture.add(raw_event)
+                        if event.event_type == "message_complete":
+                            terminal_event = event
+                            break
+                        visible_output = True
+                        yield event
             except GeneratorExit:
                 _close_iterator(source_iterator)
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="consumer_closed",
+                    provider_call=True,
+                )
                 self._release_cache_attempt(
                     cache_attempt,
                     route=route,
@@ -1282,6 +1384,16 @@ class LLMRouter:
                 raise
             except LLMProviderError as exc:
                 _close_iterator(source_iterator)
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="source_interrupted",
+                    provider_call=True,
+                    metadata={"error_class": type(exc).__name__},
+                )
                 errors.append(_provider_error_payload(deployment_id, exc))
                 self._record_provider_failure(deployment_id, exc)
                 self._record_event(
@@ -1332,6 +1444,26 @@ class LLMRouter:
                 ) from exc
             except Exception as exc:
                 _close_iterator(source_iterator)
+                protocol_reason = (
+                    exc.reason if isinstance(exc, LLMStreamProtocolError) else None
+                )
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason=(
+                        "invalid_stream_protocol"
+                        if protocol_reason is not None
+                        else "source_interrupted"
+                    ),
+                    provider_call=True,
+                    metadata={
+                        "protocol_reason": protocol_reason,
+                        "error_class": type(exc).__name__,
+                    },
+                )
                 errors.append(
                     {
                         "deployment_id": deployment_id,
@@ -1360,6 +1492,16 @@ class LLMRouter:
                 ) from exc
 
             if terminal_event is None:
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="incomplete_stream",
+                    provider_call=True,
+                    metadata={"protocol_reason": "missing_message_complete"},
+                )
                 self._release_cache_attempt(
                     cache_attempt,
                     route=route,
@@ -1386,7 +1528,21 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 )
 
-            response = accumulator.to_response()
+            capture_result = capture.finalize()
+            response = capture_result.response
+            write_after_exhaustion = False
+            deferred_no_write_reason: tuple[str, dict[str, Any]] | None = None
+            if not capture_result.cacheable:
+                outcome_metadata = {}
+                if capture_result.protocol_reason is not None:
+                    outcome_metadata["protocol_reason"] = capture_result.protocol_reason
+                deferred_no_write_reason = (capture_result.reason, outcome_metadata)
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
             if self._cooldown_tracker is not None:
                 self._cooldown_tracker.record_success(deployment_id)
             try:
@@ -1398,6 +1554,15 @@ class LLMRouter:
                     prompt_token_estimate=prompt_token_count,
                 )
             except (LLMBudgetExceededError, GlobalBudgetExceededError) as exc:
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="budget_rejected",
+                    provider_call=True,
+                )
                 self._release_cache_attempt(
                     cache_attempt,
                     route=route,
@@ -1430,56 +1595,20 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from exc
 
-            if (
+            if capture_result.cacheable and (
                 self._cache_runtime is not None
                 and cache_attempt.eligible
                 and self._cache_runtime.mode.writes
             ):
-                try:
-                    self._cache_runtime.validate_response(
-                        request=prepared_request,
-                        response=response,
-                    )
-                except CacheResponseValidationError as exc:
-                    self._record_event(
-                        route_events,
-                        "llm_cache_write_failed",
-                        route.route_id,
-                        deployment=deployment,
-                        metadata={
-                            **self._cache_event_metadata(cache_attempt, provider_call=True),
-                            "reason": type(exc).__name__,
-                        },
-                    )
-                else:
-                    write_result = self._cache_runtime.write(
-                        cache_attempt.preparation,
-                        request=prepared_request,
-                        response=response,
-                        write_authorized=cache_attempt.write_authorized,
-                    )
-                    self._record_event(
-                        route_events,
-                        (
-                            "llm_cache_write_succeeded"
-                            if write_result.stored
-                            else "llm_cache_write_failed"
-                        ),
-                        route.route_id,
-                        deployment=deployment,
-                        metadata={
-                            **self._cache_event_metadata(cache_attempt, provider_call=True),
-                            "result": write_result.status.value,
-                            "reason": write_result.reason,
-                            "size_bytes": write_result.size_bytes,
-                        },
-                    )
-            self._release_cache_attempt(
-                cache_attempt,
-                route=route,
-                deployment=deployment,
-                events=route_events,
-            )
+                write_after_exhaustion = True
+            elif capture_result.cacheable and cache_attempt.eligible:
+                deferred_no_write_reason = (cache_attempt.reason, {})
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
             self._record_event(
                 route_events,
                 "llm_deployment_attempt_succeeded",
@@ -1530,7 +1659,301 @@ class LLMRouter:
                 cache_metadata=cache_attempt.metadata(provider_call=True),
                 prepared=prepared,
             )
-            yield replace(terminal_event, metadata=routed_response.metadata)
+            try:
+                yield replace(terminal_event, metadata=routed_response.metadata)
+            except GeneratorExit:
+                _close_iterator(source_iterator)
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="consumer_closed",
+                    provider_call=True,
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise
+
+            try:
+                if source_iterator is None:
+                    raise RuntimeError("provider stream iterator is unavailable")
+                trailing_raw_event = next(source_iterator)
+            except StopIteration:
+                pass
+            except LLMProviderError as exc:
+                _close_iterator(source_iterator)
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="source_interrupted",
+                    provider_call=True,
+                    metadata={"error_class": type(exc).__name__},
+                )
+                errors.append(_provider_error_payload(deployment_id, exc))
+                self._record_provider_failure(deployment_id, exc)
+                self._record_event(
+                    route_events,
+                    "llm_stream_terminal_invalidated",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "reason": "source_interrupted_after_message_complete",
+                        "error_class": type(exc).__name__,
+                        "provider_call": True,
+                    },
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} stream failed after completion at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type=(
+                        "provider_context_overflow"
+                        if isinstance(exc, LLMProviderContextOverflow)
+                        else "provider_error"
+                    ),
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+            except Exception as exc:
+                _close_iterator(source_iterator)
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="source_interrupted",
+                    provider_call=True,
+                    metadata={"error_class": type(exc).__name__},
+                )
+                self._record_event(
+                    route_events,
+                    "llm_stream_terminal_invalidated",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "reason": "source_interrupted_after_message_complete",
+                        "error_class": type(exc).__name__,
+                        "provider_call": True,
+                    },
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} stream failed after completion at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="client_error",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from exc
+            else:
+                try:
+                    capture.add(trailing_raw_event)
+                except Exception as exc:
+                    protocol_reason = (
+                        exc.reason
+                        if isinstance(exc, LLMStreamProtocolError)
+                        else "invalid_event"
+                    )
+                    _close_iterator(source_iterator)
+                    self._record_stream_cache_outcome(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                        event_type="llm_cache_stream_not_written",
+                        reason="invalid_stream_protocol",
+                        provider_call=True,
+                        metadata={"protocol_reason": protocol_reason},
+                    )
+                    self._record_event(
+                        route_events,
+                        "llm_stream_terminal_invalidated",
+                        route.route_id,
+                        deployment=deployment,
+                        metadata={
+                            "reason": "event_after_message_complete",
+                            "protocol_reason": protocol_reason,
+                            "provider_call": True,
+                        },
+                    )
+                    self._release_cache_attempt(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                    )
+                    raise self._build_route_error(
+                        f"LLM route {route.route_id} emitted an event after completion at deployment {deployment_id}",
+                        route_id=route.route_id,
+                        error_type="invalid_stream_protocol",
+                        retryable=False,
+                        request=request,
+                        attempted_deployments=attempted_deployments,
+                        errors=errors,
+                        events=route_events,
+                        resolution_trace=resolution_trace,
+                    ) from exc
+
+            if (
+                write_after_exhaustion
+                and self._cache_runtime is not None
+                and cache_attempt.preparation is not None
+                and self._cache_runtime.deadline_expired(cache_attempt.preparation)
+            ):
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason="caller_deadline_exceeded",
+                    provider_call=True,
+                    metadata={"phase": "post_stream_exhaustion"},
+                )
+                write_after_exhaustion = False
+
+            if deferred_no_write_reason is not None:
+                reason, outcome_metadata = deferred_no_write_reason
+                self._record_stream_cache_outcome(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                    event_type="llm_cache_stream_not_written",
+                    reason=reason,
+                    provider_call=True,
+                    metadata=outcome_metadata,
+                )
+            elif write_after_exhaustion:
+                runtime = self._cache_runtime
+                preparation = cache_attempt.preparation
+                if runtime is None or preparation is None:
+                    self._record_stream_cache_outcome(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                        event_type="llm_cache_stream_not_written",
+                        reason="cache_runtime_unavailable",
+                        provider_call=True,
+                    )
+                else:
+                    try:
+                        runtime.validate_response(
+                            request=prepared_request,
+                            response=response,
+                        )
+                    except Exception as exc:
+                        self._record_stream_cache_outcome(
+                            cache_attempt,
+                            route=route,
+                            deployment=deployment,
+                            events=route_events,
+                            event_type="llm_cache_stream_not_written",
+                            reason="output_contract_validation_failed",
+                            provider_call=True,
+                            metadata={"error_class": type(exc).__name__},
+                        )
+                    else:
+                        if runtime.deadline_expired(preparation):
+                            self._record_stream_cache_outcome(
+                                cache_attempt,
+                                route=route,
+                                deployment=deployment,
+                                events=route_events,
+                                event_type="llm_cache_stream_not_written",
+                                reason="caller_deadline_exceeded",
+                                provider_call=True,
+                                metadata={"phase": "post_validation"},
+                            )
+                            write_result = None
+                        else:
+                            try:
+                                write_result = runtime.write(
+                                    preparation,
+                                    request=prepared_request,
+                                    response=response,
+                                    write_authorized=cache_attempt.write_authorized,
+                                )
+                            except Exception as exc:
+                                self._record_stream_cache_outcome(
+                                    cache_attempt,
+                                    route=route,
+                                    deployment=deployment,
+                                    events=route_events,
+                                    event_type="llm_cache_write_failed",
+                                    reason="backend_error",
+                                    provider_call=True,
+                                    metadata={"error_class": type(exc).__name__},
+                                )
+                                write_result = None
+                        if write_result is None:
+                            self._release_cache_attempt(
+                                cache_attempt,
+                                route=route,
+                                deployment=deployment,
+                                events=route_events,
+                            )
+                            return
+                        write_status = write_result.status.value
+                        outcome_reason = (
+                            write_status
+                            if write_status in {"backend_error", "entry_too_large"}
+                            else write_result.reason or write_status
+                        )
+                        outcome_metadata: dict[str, Any] = {
+                            "result": write_status,
+                            "size_bytes": write_result.size_bytes,
+                        }
+                        if write_status == "backend_error" and write_result.reason:
+                            outcome_metadata["error_class"] = write_result.reason
+                        self._record_stream_cache_outcome(
+                            cache_attempt,
+                            route=route,
+                            deployment=deployment,
+                            events=route_events,
+                            event_type=(
+                                "llm_cache_write_succeeded"
+                                if write_result.stored
+                                else "llm_cache_write_failed"
+                            ),
+                            reason=outcome_reason,
+                            provider_call=True,
+                            metadata=outcome_metadata,
+                        )
+            self._release_cache_attempt(
+                cache_attempt,
+                route=route,
+                deployment=deployment,
+                events=route_events,
+            )
             return
 
         raise self._build_route_error(
@@ -1548,35 +1971,22 @@ class LLMRouter:
     def _cache_hit_stream_events(
         self,
         response: LLMResponse,
+        *,
+        preparation: CachePreparation | None,
     ) -> Iterator[LLMStreamEvent]:
-        yield LLMStreamEvent(
-            event_type="message_start",
-            metadata={
-                "provider": response.metadata.get("llm_provider"),
-                "model": response.metadata.get("llm_model"),
-                "cache_hit": True,
-            },
-        )
         chunk_size = (
             self._cache_runtime.replay_chunk_size
             if self._cache_runtime is not None
             else 1_024
         )
-        content = response.content or ""
-        for offset in range(0, len(content), chunk_size):
-            yield LLMStreamEvent(
-                event_type="text_delta",
-                text_delta=content[offset : offset + chunk_size],
-            )
-        yield LLMStreamEvent(
-            event_type="usage_delta",
-            usage_delta=TokenUsage(),
-            metadata={"source_usage": response.usage.to_dict(), "cache_hit": True},
-        )
-        yield LLMStreamEvent(
-            event_type="message_complete",
-            metadata=response.metadata,
-        )
+        for event in iter_cached_response_events(response, chunk_size=chunk_size):
+            if (
+                self._cache_runtime is not None
+                and preparation is not None
+                and self._cache_runtime.deadline_expired(preparation)
+            ):
+                raise _CacheReplayDeadlineExceeded
+            yield event
 
     def _prepare_context_attempt(
         self,
@@ -1916,6 +2326,91 @@ class LLMRouter:
             "key_version": metadata.get("llm_cache_key_version"),
             "key_digest_prefix": metadata.get("llm_cache_key_digest_prefix"),
         }
+
+    def _record_stream_cache_outcome(
+        self,
+        state: _RouterCacheAttempt,
+        *,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        events: list[LLMRouterEvent],
+        event_type: str,
+        reason: str,
+        provider_call: bool,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if (
+            not state.configured
+            or state.mode is CacheMode.DISABLED
+            or state.stream_outcome_recorded
+        ):
+            return
+        state.reason = reason
+        state.stream_outcome_recorded = True
+        self._record_event(
+            events,
+            event_type,
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                **self._cache_event_metadata(state, provider_call=provider_call),
+                "reason": reason,
+                **dict(metadata or {}),
+            },
+        )
+
+    def _build_cache_deadline_error(
+        self,
+        state: _RouterCacheAttempt,
+        *,
+        request: LLMRequest,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        attempted_deployments: list[str],
+        events: list[LLMRouterEvent],
+        errors: list[dict[str, Any]],
+        resolution_trace: Iterable[dict[str, Any]],
+        phase: str,
+    ) -> LLMRouteError:
+        self._record_stream_cache_outcome(
+            state,
+            route=route,
+            deployment=deployment,
+            events=events,
+            event_type=(
+                "llm_cache_stream_replay_interrupted"
+                if state.hit
+                else "llm_cache_stream_not_written"
+            ),
+            reason="caller_deadline_exceeded",
+            provider_call=False,
+            metadata={"phase": phase},
+        )
+        self._release_cache_attempt(
+            state,
+            route=route,
+            deployment=deployment,
+            events=events,
+        )
+        errors.append(
+            {
+                "deployment_id": deployment.deployment_id,
+                "error_type": "caller_deadline_exceeded",
+                "retryable": False,
+                "provider_call": False,
+            }
+        )
+        return self._build_route_error(
+            f"LLM route {route.route_id} cache operation exceeded caller deadline",
+            route_id=route.route_id,
+            error_type="caller_deadline_exceeded",
+            retryable=False,
+            request=request,
+            attempted_deployments=attempted_deployments,
+            errors=errors,
+            events=events,
+            resolution_trace=resolution_trace,
+        )
 
     def _return_cache_hit(
         self,
