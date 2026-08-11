@@ -28,8 +28,10 @@ from framework.llm import (
     LLMRouter,
     LLMCooldownPolicy,
     ModelDeployment,
+    ModelContextProfile,
     ModelRoute,
     TokenUsage,
+    build_default_request_preparer,
 )
 
 
@@ -145,16 +147,19 @@ def _seed(
     model: str = "primary-model",
     content: str = "cached response",
 ) -> None:
+    profile = _profile(deployment_id=deployment_id, provider=provider, model=model)
+    prepared = build_default_request_preparer([profile]).prepare(request, profile)
     preparation = runtime.prepare(
-        request=request,
+        request=prepared.normalized_request,
         deployment_id=deployment_id,
         provider=provider,
         model=model,
+        prepared_identity=prepared.cache_identity(),
     )
     assert preparation.key is not None
     entry = CacheEntry.from_response(
         key=preparation.key,
-        request=request,
+        request=prepared.normalized_request,
         response=LLMResponse(
             content=content,
             metadata={
@@ -173,11 +178,45 @@ def _router(
     route: ModelRoute | None = None,
     **kwargs,
 ) -> LLMRouter:
+    bound_deployments = tuple(
+        deployment
+        if deployment.context_profile is not None
+        else replace(
+            deployment,
+            context_profile=_profile(
+                deployment_id=deployment.deployment_id,
+                provider=deployment.provider,
+                model=deployment.model,
+            ),
+        )
+        for deployment in deployments
+    )
     return LLMRouter(
         routes=[route or ModelRoute(route_id="route", primary_deployment_id="primary")],
-        deployments=deployments,
+        deployments=bound_deployments,
         cache_runtime=runtime,
         **kwargs,
+    )
+
+
+def _profile(
+    *,
+    deployment_id: str,
+    provider: str,
+    model: str,
+) -> ModelContextProfile:
+    return ModelContextProfile(
+        deployment_id=deployment_id,
+        provider=provider,
+        model=model,
+        physical_context_window_tokens=8192,
+        max_output_tokens=1024,
+        default_output_tokens=256,
+        tokenizer_family="test-byte",
+        tokenizer_revision="test-v1",
+        normalizer_revision="canonical-request-v1",
+        profile_revision="test-profile-v1",
+        allow_conservative_fallback=True,
     )
 
 

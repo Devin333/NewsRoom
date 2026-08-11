@@ -74,6 +74,40 @@ def test_policy_and_key_are_scope_bound_and_redacted() -> None:
     assert key != other_key
 
 
+def test_prepared_identity_revision_changes_cache_key() -> None:
+    request = _request()
+    decision = _policy().evaluate(request)
+    assert decision.context is not None
+    factory = LLMCacheKeyFactory(secret="0123456789abcdef")
+    shared = {
+        "request": request,
+        "context": decision.context,
+        "deployment_id": "primary-v1",
+        "provider": "test",
+        "model": "model-v1",
+    }
+
+    first = factory.build(
+        **shared,
+        prepared_identity={
+            "prepared_request_fingerprint": "sha256:" + "a" * 64,
+            "profile_revision": "profile-v1",
+            "normalizer_revision": "normalizer-v1",
+        },
+    )
+    revised = factory.build(
+        **shared,
+        prepared_identity={
+            "prepared_request_fingerprint": "sha256:" + "b" * 64,
+            "profile_revision": "profile-v2",
+            "normalizer_revision": "normalizer-v1",
+        },
+    )
+
+    assert first.request_digest != revised.request_digest
+    assert "profile-v1" not in first.to_string()
+
+
 def test_policy_returns_stable_bypass_reasons() -> None:
     assert _policy().evaluate(_request(llm_cache={"scope": {}})).reason == "missing_cache_scope"
     assert _policy().evaluate(

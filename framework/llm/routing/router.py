@@ -22,7 +22,12 @@ from framework.llm.budget import (
     LLMBudgetGuard,
 )
 from framework.llm.clients.openai_compatible import LLMProviderError
-from framework.llm.context import estimate_request_tokens
+from framework.llm.context import (
+    LLMContextAdmissionStatus,
+    LLMRequestPreparer,
+    PreparedLLMRequest,
+    build_default_request_preparer,
+)
 from framework.llm.models import LLMRequest, LLMResponse
 from framework.llm.redaction import redact_sensitive_values
 from framework.llm.routing.cooldown import InMemoryLLMCooldownTracker, LLMCooldownState
@@ -92,11 +97,13 @@ class LLMRouter:
         now_fn: Any | None = None,
         event_sink: LLMRouterEventSink | None = None,
         cache_runtime: LLMCacheRuntime | None = None,
+        request_preparer: LLMRequestPreparer | None = None,
     ) -> None:
+        deployment_list = tuple(deployments)
         self._routes = {route.route_id: route for route in routes}
         self._deployments = {
             deployment.deployment_id: deployment
-            for deployment in deployments
+            for deployment in deployment_list
         }
         self._routing_policy = routing_policy
         self._cooldown_tracker = cooldown_tracker
@@ -104,6 +111,13 @@ class LLMRouter:
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
         self._event_sink = event_sink
         self._cache_runtime = cache_runtime
+        self._request_preparer = request_preparer or build_default_request_preparer(
+            profile
+            for profile in (
+                deployment.context_profile for deployment in deployment_list
+            )
+            if profile is not None
+        )
 
     def resolve_route_id(
         self,
@@ -180,7 +194,6 @@ class LLMRouter:
         deployment_chain = route.deployment_chain()
         resolution_trace = tuple(dict(item) for item in resolution_trace)
         route_events: list[LLMRouterEvent] = []
-        prompt_token_estimate = estimate_request_tokens(request)
         self._record_event(
             route_events,
             "llm_route_started",
@@ -189,7 +202,6 @@ class LLMRouter:
                 "deployment_chain": list(deployment_chain),
                 "required_capabilities": list(route.required_capabilities),
                 "resolution_trace": list(resolution_trace),
-                "estimated_prompt_tokens": prompt_token_estimate,
             },
         )
 
@@ -258,16 +270,62 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 )
 
-            cache_attempt = self._prepare_cache_attempt(
+            prepared, context_projection = self._prepare_context_attempt(
                 request=request,
                 route=route,
                 deployment=deployment,
                 events=route_events,
             )
+            if prepared is None or not prepared.admission.provider_call_authorized:
+                admission_payload = dict(context_projection["admission"])
+                error_type = str(admission_payload["status"])
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "provider": deployment.provider,
+                        "model": deployment.model,
+                        "error_type": error_type,
+                        "retryable": False,
+                        "provider_call": False,
+                        "context_admission": context_projection,
+                    }
+                )
+                has_fallback = index < len(deployment_chain) - 1
+                if has_fallback:
+                    self._record_context_capacity_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        context_projection=context_projection,
+                    )
+                    continue
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} rejected context at deployment {deployment_id}",
+                    route_id=route.route_id,
+                    error_type=error_type,
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                )
+
+            prepared_request = prepared.normalized_request
+            prompt_token_count = prepared.token_count.total_input_tokens
+            cache_attempt = self._prepare_cache_attempt(
+                request=prepared_request,
+                route=route,
+                deployment=deployment,
+                events=route_events,
+                prepared=prepared,
+            )
             if cache_attempt.hit:
                 return self._return_cache_hit(
                     cache_attempt,
                     request=request,
+                    prepared=prepared,
                     route=route,
                     deployment=deployment,
                     attempted_deployments=attempted_deployments,
@@ -335,7 +393,7 @@ class LLMRouter:
                 )
             try:
                 preflight_budget_check = self._check_global_budget_before_call(
-                    estimated_prompt_tokens=prompt_token_estimate,
+                    estimated_prompt_tokens=prompt_token_count,
                 )
             except GlobalBudgetExceededError as exc:
                 errors.append(
@@ -383,7 +441,7 @@ class LLMRouter:
                 metadata={"provider_call": True},
             )
             try:
-                response = deployment.client.complete(request)
+                response = deployment.client.complete(prepared_request)
             except LLMProviderError as exc:
                 error_payload = _provider_error_payload(deployment_id, exc)
                 cooldown_state = self._record_provider_failure(deployment_id, exc)
@@ -485,7 +543,10 @@ class LLMRouter:
                 and self._cache_runtime.mode.writes
             ):
                 try:
-                    self._cache_runtime.validate_response(request=request, response=response)
+                    self._cache_runtime.validate_response(
+                        request=prepared_request,
+                        response=response,
+                    )
                 except CacheResponseValidationError as exc:
                     errors.append(
                         {
@@ -567,7 +628,7 @@ class LLMRouter:
                     response,
                     deployment=deployment,
                     budget_check=budget_check,
-                    prompt_token_estimate=prompt_token_estimate,
+                    prompt_token_estimate=prompt_token_count,
                 )
             except GlobalBudgetExceededError as exc:
                 errors.append(
@@ -613,7 +674,7 @@ class LLMRouter:
             ):
                 write_result = self._cache_runtime.write(
                     cache_attempt.preparation,
-                    request=request,
+                    request=prepared_request,
                     response=response,
                     write_authorized=cache_attempt.write_authorized,
                 )
@@ -687,6 +748,7 @@ class LLMRouter:
                 errors=errors,
                 resolution_trace=resolution_trace,
                 cache_metadata=cache_attempt.metadata(provider_call=True),
+                prepared=prepared,
             )
 
         raise self._build_route_error(
@@ -701,6 +763,109 @@ class LLMRouter:
             resolution_trace=resolution_trace,
         )
 
+    def _prepare_context_attempt(
+        self,
+        *,
+        request: LLMRequest,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        events: list[LLMRouterEvent],
+    ) -> tuple[PreparedLLMRequest | None, dict[str, Any]]:
+        profile = deployment.context_profile
+        if profile is None:
+            admission = {
+                "status": LLMContextAdmissionStatus.PROFILE_REQUIRED.value,
+                "reason": "deployment has no trusted model context profile",
+                "provider_call_authorized": False,
+            }
+            projection: dict[str, Any] = {
+                "deployment_id": deployment.deployment_id,
+                "provider": deployment.provider,
+                "model": deployment.model,
+                "profile_revision": None,
+                "normalizer_revision": None,
+                "token_count": None,
+                "effective_budget": None,
+                "payload_fingerprint": None,
+                "admission": admission,
+            }
+            self._record_event(
+                events,
+                "llm_context_profile_resolved",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    "profile_available": False,
+                    "provider_call": False,
+                },
+            )
+            self._record_event(
+                events,
+                "llm_context_admission_decided",
+                route.route_id,
+                deployment=deployment,
+                metadata=projection,
+            )
+            return None, projection
+
+        self._record_event(
+            events,
+            "llm_context_profile_resolved",
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                "profile_available": True,
+                "profile": profile.to_dict(),
+                "provider_call": False,
+            },
+        )
+        prepared = self._request_preparer.prepare(request, profile)
+        projection = prepared.to_dict()
+        self._record_event(
+            events,
+            "llm_request_prepared",
+            route.route_id,
+            deployment=deployment,
+            metadata={**projection, "provider_call": False},
+        )
+        self._record_event(
+            events,
+            "llm_context_admission_decided",
+            route.route_id,
+            deployment=deployment,
+            metadata={**projection, "provider_call": False},
+        )
+        return prepared, projection
+
+    def _record_context_capacity_fallback_event(
+        self,
+        events: list[LLMRouterEvent],
+        *,
+        route_id: str,
+        from_deployment: ModelDeployment,
+        to_deployment_id: str,
+        context_projection: dict[str, Any],
+    ) -> LLMRouterEvent:
+        to_deployment = self._deployments.get(to_deployment_id)
+        return self._record_event(
+            events,
+            "llm_context_capacity_fallback_selected",
+            route_id,
+            deployment=to_deployment,
+            deployment_id=to_deployment_id,
+            metadata={
+                "from_deployment_id": from_deployment.deployment_id,
+                "from_provider": from_deployment.provider,
+                "from_model": from_deployment.model,
+                "to_deployment_id": to_deployment_id,
+                "to_provider": to_deployment.provider if to_deployment is not None else None,
+                "to_model": to_deployment.model if to_deployment is not None else None,
+                "reason": context_projection["admission"]["status"],
+                "context_admission": context_projection,
+                "provider_call": False,
+            },
+        )
+
     def _prepare_cache_attempt(
         self,
         *,
@@ -708,6 +873,7 @@ class LLMRouter:
         route: ModelRoute,
         deployment: ModelDeployment,
         events: list[LLMRouterEvent],
+        prepared: PreparedLLMRequest,
     ) -> _RouterCacheAttempt:
         runtime = self._cache_runtime
         if runtime is None:
@@ -725,6 +891,7 @@ class LLMRouter:
             deployment_id=deployment.deployment_id,
             provider=deployment.provider,
             model=deployment.model,
+            prepared_identity=prepared.cache_identity(),
         )
         state = _RouterCacheAttempt(
             configured=True,
@@ -915,6 +1082,7 @@ class LLMRouter:
         state: _RouterCacheAttempt,
         *,
         request: LLMRequest,
+        prepared: PreparedLLMRequest,
         route: ModelRoute,
         deployment: ModelDeployment,
         attempted_deployments: list[str],
@@ -972,6 +1140,7 @@ class LLMRouter:
             errors=errors,
             resolution_trace=resolution_trace,
             cache_metadata=cache_metadata,
+            prepared=prepared,
         )
 
     def _resolve_route_id_with_trace(
@@ -1251,6 +1420,7 @@ def _with_routing_metadata(
     events: Iterable[LLMRouterEvent],
     errors: Iterable[dict[str, Any]],
     resolution_trace: Iterable[dict[str, Any]],
+    prepared: PreparedLLMRequest,
     cache_metadata: dict[str, Any] | None = None,
 ) -> LLMResponse:
     metadata = dict(response.metadata)
@@ -1271,6 +1441,7 @@ def _with_routing_metadata(
         errors=errors,
         resolution_trace=resolution_trace,
         error=None,
+        prepared=prepared,
     )
     if cache_metadata is not None:
         safe_cache_metadata = redact_sensitive_values(dict(cache_metadata))
@@ -1294,6 +1465,7 @@ def _with_routing_metadata(
             "llm_provider_resolution_trace": [dict(item) for item in resolution_trace],
             "llm_router_events": event_payloads,
             "llm_route_manifest": manifest,
+            "llm_prepared_request": prepared.to_dict(),
         }
     )
     if budget_check is not None:
@@ -1330,6 +1502,7 @@ def _build_route_manifest(
     resolution_trace: Iterable[dict[str, Any]],
     error: dict[str, Any] | None,
     global_budget_check=None,
+    prepared: PreparedLLMRequest | None = None,
 ) -> dict[str, Any]:
     event_payloads = [dict(event) for event in events]
     errors_payload = [redact_sensitive_values(dict(item)) for item in errors]
@@ -1352,7 +1525,14 @@ def _build_route_manifest(
         "errors": errors_payload,
         "metrics": metrics,
         "redacted_request": request.to_dict(redact=True),
+        "context_admissions": [
+            dict(event.get("metadata") or {})
+            for event in event_payloads
+            if event.get("event_type") == "llm_context_admission_decided"
+        ],
     }
+    if prepared is not None:
+        manifest["prepared_request"] = prepared.to_dict()
     if response is not None:
         manifest["redacted_response"] = response.to_dict(redact=True)
     if budget_check is not None:
@@ -1389,7 +1569,10 @@ def _route_metrics(
         "attempt_count": len(list(attempted_deployments)),
         "event_count": len(event_list),
         "fallback_count": sum(
-            1 for event in event_list if event.get("event_type") == "llm_fallback_selected"
+            1
+            for event in event_list
+            if event.get("event_type")
+            in {"llm_fallback_selected", "llm_context_capacity_fallback_selected"}
         ),
         "provider_error_count": sum(
             1
@@ -1418,11 +1601,13 @@ def _strip_prior_call_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "llm_budget_",
         "llm_cache_",
         "llm_call_",
+        "llm_context_",
         "llm_deployment_",
         "llm_fallback_",
         "llm_global_budget_",
         "llm_logical_",
         "llm_provider_",
+        "llm_prepared_",
         "llm_route_",
         "llm_router_",
     )
@@ -1434,7 +1619,12 @@ def _strip_prior_call_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fallback_count(events: Iterable[LLMRouterEvent]) -> int:
-    return sum(1 for event in events if event.event_type == "llm_fallback_selected")
+    return sum(
+        1
+        for event in events
+        if event.event_type
+        in {"llm_fallback_selected", "llm_context_capacity_fallback_selected"}
+    )
 
 
 def _event_name_alias(event_type: str) -> str:

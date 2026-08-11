@@ -125,6 +125,18 @@ class PreparedLLMRequest:
             "admission": self.admission.to_dict(),
         }
 
+    def cache_identity(self) -> dict[str, str]:
+        return {
+            "prepared_request_fingerprint": self.payload_fingerprint,
+            "deployment_id": self.deployment_id,
+            "provider": self.provider,
+            "model": self.model,
+            "profile_revision": self.profile_revision,
+            "normalizer_revision": self.normalizer_revision,
+            "tokenizer_family": self.token_count.tokenizer_family,
+            "tokenizer_revision": self.token_count.tokenizer_revision,
+        }
+
 
 class LLMRequestPreparer:
     def __init__(

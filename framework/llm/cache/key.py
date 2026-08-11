@@ -120,6 +120,7 @@ class LLMCacheKeyFactory:
         deployment_id: str,
         provider: str,
         model: str,
+        prepared_identity: Mapping[str, Any] | None = None,
     ) -> LLMCacheKey:
         if context.scope is None or not context.scope.complete:
             raise CacheCanonicalizationError("complete cache scope is required")
@@ -139,6 +140,7 @@ class LLMCacheKeyFactory:
             context=context,
             deployment=deployment_payload,
             key_version=self.key_version,
+            prepared_identity=prepared_identity,
         )
         scope_digest = self._hmac("scope", scope_payload)[:16]
         deployment_digest = self._hmac("deployment", deployment_payload)[:16]
@@ -177,6 +179,7 @@ def _request_semantic_payload(
     context: CacheContext,
     deployment: dict[str, str],
     key_version: str,
+    prepared_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     request_metadata = {
         str(key): value
@@ -205,6 +208,7 @@ def _request_semantic_payload(
         "dependencies": context.dependencies.to_key_payload(),
         "semantic_metadata": semantic_metadata,
         "deterministic_seed": context.deterministic_seed,
+        "prepared_identity": dict(prepared_identity or {}),
     }
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass, replace
-from typing import Callable
+from typing import Any, Callable, Mapping
 
 from framework.llm.cache.contracts import (
     CacheEligibility,
@@ -121,6 +121,7 @@ class LLMCacheRuntime:
         deployment_id: str,
         provider: str,
         model: str,
+        prepared_identity: Mapping[str, Any] | None = None,
     ) -> CachePreparation:
         eligibility = self.policy.evaluate(request)
         if not eligibility.eligible or eligibility.context is None:
@@ -132,6 +133,7 @@ class LLMCacheRuntime:
                 deployment_id=deployment_id,
                 provider=provider,
                 model=model,
+                prepared_identity=prepared_identity,
             )
         except (CacheCanonicalizationError, TypeError, ValueError):
             return CachePreparation(

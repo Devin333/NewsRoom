@@ -423,3 +423,20 @@ def test_default_preparer_does_not_guess_unknown_normalizer_revision() -> None:
     )
 
     assert prepared.admission.status is LLMContextAdmissionStatus.NORMALIZER_UNAVAILABLE
+
+
+def test_prepared_cache_identity_is_bounded_and_versioned() -> None:
+    profile = _profile()
+    request = LLMRequest(
+        messages=[{"role": "user", "content": "secret prompt"}],
+        tools=[{"name": "secret_tool", "description": "secret schema"}],
+    )
+
+    prepared = _preparer().prepare(request, profile)
+
+    identity = prepared.cache_identity()
+    assert identity["prepared_request_fingerprint"] == prepared.payload_fingerprint
+    assert identity["profile_revision"] == "profile-v1"
+    assert identity["normalizer_revision"] == "canonical-request-v1"
+    assert "secret prompt" not in str(identity)
+    assert "secret schema" not in str(identity)
