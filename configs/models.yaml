@@ -9,6 +9,25 @@ model_groups:
         api_key: ${DASHSCOPE_API_KEY}
         timeout_seconds: 90
         max_retries: 2
+        capabilities:
+          supports_streaming: true
+          supports_tool_calling: true
+          supports_structured_output: false
+          supports_multimodal_input: false
+          supports_prompt_cache: true
+          context_window_tokens: 1000000
+          max_output_tokens: 393216
+        # Physical limits: https://help.aliyun.com/zh/model-studio/deepseek-v4-flash
+        context_profile:
+          default_output_tokens: 2048
+          tokenizer_family: dashscope-deepseek-v4
+          tokenizer_revision: byte-fallback-2026-08-11
+          normalizer_revision: openai-chat-completions-v1
+          profile_revision: dashscope-deepseek-v4-flash-2026-08-11
+          operational_input_fraction: 0.9
+          safety_margin_tokens: 4096
+          allow_conservative_fallback: true
+          provider_auto_truncation: false
 
 routes:
   daily-intelligence-writer:

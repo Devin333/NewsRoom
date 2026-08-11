@@ -38,7 +38,7 @@
 ## 6. Tests and Architecture Evidence
 
 - [x] 6.1 Add unit tests for profile validation, exact boundary/one-token overflow, output-default/output-limit conflicts, component sums, counter selection, forbidden fallback, stable fingerprints, and semantic non-mutation.
-- [ ] 6.2 Add config and OpenAI payload golden tests for tools, response schema/format, model override, multilingual/media-shaped messages, revisions, and unknown/invalid profile fields.
+- [x] 6.2 Add config and OpenAI payload golden tests for tools, response schema/format, model override, multilingual/media-shaped messages, revisions, and unknown/invalid profile fields.
 - [ ] 6.3 Add router complete adversarial tests for missing profiles, oversized input, oversized output request, tool-schema-only overflow, capacity fallback, all-deployments rejection, redacted evidence, and admitted global-budget counts.
 - [ ] 6.4 Add router stream tests for complete/stream preparation parity, no iterator open on rejection, incremental delivery, no fallback after visible output, and usage accounting.
 - [ ] 6.5 Add provider overflow tests for HTTP 413, mapped structured HTTP 400 codes, unmapped message text, no internal retry/sleep, bounded cross-deployment recovery, and redacted drift evidence.
