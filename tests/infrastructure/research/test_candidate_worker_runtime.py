@@ -7,11 +7,20 @@ import pytest
 from business.research.application import AnalyzePaperRequest, AnalyzePaperUseCase
 from business.research.application.single_paper_runtime import ResearchSinglePaperRuntime
 from framework.harness import FakeArtifactPort, InMemoryHarnessEventPort
+from framework.llm import (
+    LOCAL_STRUCTURED_OUTPUT_DIALECT,
+    ProviderStructuredOutputCapability,
+    compile_structured_output_contract,
+    structured_output_enforcement_keywords,
+)
 from framework.llm.clients.openai_compatible import (
     OpenAICompatibleClient,
     OpenAICompatibleConfig,
 )
-from infrastructure.research import StructuredResearchCandidateWorker
+from infrastructure.research import (
+    CANDIDATE_TASK_SCHEMAS,
+    StructuredResearchCandidateWorker,
+)
 from tests.business.research.fakes import (
     FakeGithubRepositoryPort,
     FakeResearchDocumentCompiler,
@@ -76,6 +85,7 @@ def test_structured_candidate_worker_runs_through_deterministic_research_gates(
                 timeout_seconds=10.0,
             ),
             transport=transport,
+            structured_output_capability=_recorded_structured_output_capability(),
         )
     )
     runtime = ResearchSinglePaperRuntime(
@@ -116,4 +126,23 @@ def test_structured_candidate_worker_runs_through_deterministic_research_gates(
         "next_step" not in worker_result["output"]
         and "quality_passed" not in worker_result["output"]
         for worker_result in result.diagnostics["worker_results"].values()
+    )
+
+
+def _recorded_structured_output_capability() -> ProviderStructuredOutputCapability:
+    supported_keywords: set[str] = set()
+    for schema in CANDIDATE_TASK_SCHEMAS.values():
+        contract = compile_structured_output_contract(schema)
+        supported_keywords.update(
+            structured_output_enforcement_keywords(contract.canonical_schema)
+        )
+    return ProviderStructuredOutputCapability(
+        provider="recorded",
+        deployment="recorded-model",
+        mode="native_strict",
+        supported_dialect=LOCAL_STRUCTURED_OUTPUT_DIALECT,
+        supported_keywords=frozenset(supported_keywords),
+        supports_local_refs=True,
+        supports_stream_terminal_validation=True,
+        revision="recorded-research-runtime-native-v1",
     )

@@ -9,6 +9,12 @@ import infrastructure.research as research_adapters
 from business.research.ports.llm_worker import ResearchCandidateWorkerPort
 from business.research.rag.adapters.plan_worker import ResearchRAGPlanWorker
 from framework.harness import RAGBudget, RAGSessionSpec, RetrievalGoal, WorkerRAGPlanner
+from framework.llm import (
+    LOCAL_STRUCTURED_OUTPUT_DIALECT,
+    ProviderStructuredOutputCapability,
+    compile_structured_output_contract,
+    structured_output_enforcement_keywords,
+)
 from framework.llm.clients.openai_compatible import (
     LLMProviderError,
     OpenAICompatibleClient,
@@ -482,6 +488,7 @@ def _recorded_worker(
             timeout_seconds=10.0,
         ),
         transport=transport,
+        structured_output_capability=_recorded_structured_output_capability(),
     )
     return (
         StructuredResearchCandidateWorker(
@@ -490,6 +497,25 @@ def _recorded_worker(
             max_output_tokens=2_048,
         ),
         requests,
+    )
+
+
+def _recorded_structured_output_capability() -> ProviderStructuredOutputCapability:
+    supported_keywords: set[str] = set()
+    for schema in CANDIDATE_TASK_SCHEMAS.values():
+        contract = compile_structured_output_contract(schema)
+        supported_keywords.update(
+            structured_output_enforcement_keywords(contract.canonical_schema)
+        )
+    return ProviderStructuredOutputCapability(
+        provider="recorded",
+        deployment="recorded-model",
+        mode="native_strict",
+        supported_dialect=LOCAL_STRUCTURED_OUTPUT_DIALECT,
+        supported_keywords=frozenset(supported_keywords),
+        supports_local_refs=True,
+        supports_stream_terminal_validation=True,
+        revision="recorded-research-native-v1",
     )
 
 

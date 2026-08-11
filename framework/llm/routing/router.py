@@ -46,6 +46,15 @@ from framework.llm.routing.deployment import ModelDeployment
 from framework.llm.routing.errors import LLMRouteError
 from framework.llm.routing.events import LLMRouterEvent, LLMRouterEventSink
 from framework.llm.routing.route import LLMRoutingPolicy, ModelRoute
+from framework.llm.structured_output import (
+    LLMStructuredOutputProjectionError,
+    LLMStructuredOutputSchemaError,
+    ProviderSchemaProjection,
+    StructuredOutputContract,
+    StructuredOutputDiagnostic,
+    compile_structured_output_contract,
+    project_structured_output_contract,
+)
 
 
 UTC = _tz.utc
@@ -234,6 +243,10 @@ class LLMRouter:
         *,
         resolution_trace: Iterable[dict[str, Any]],
     ) -> LLMResponse:
+        contract = _compile_route_structured_output_contract(
+            request,
+            route_id=route_id,
+        )
         route = self._route(route_id)
         attempted_deployments: list[str] = []
         errors: list[dict[str, Any]] = []
@@ -317,8 +330,61 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 )
 
+            try:
+                attempt_request, _provider_projection = (
+                    self._prepare_structured_output_attempt(
+                        request=request,
+                        contract=contract,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                        streaming=False,
+                    )
+                )
+            except LLMStructuredOutputProjectionError as exc:
+                errors.append(_projection_error_payload(deployment, exc))
+                self._record_event(
+                    route_events,
+                    "structured_output_provider_projection_rejected",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "provider_call": False,
+                        "contract_digest": contract.schema_digest,
+                        "capability_revision": (
+                            deployment.structured_output_capability.revision
+                            if deployment.structured_output_capability is not None
+                            else None
+                        ),
+                        "diagnostics": [
+                            item.to_dict() for item in exc.diagnostics
+                        ],
+                    },
+                )
+                if index < len(deployment_chain) - 1:
+                    self._record_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        reason="provider_schema_ineligible",
+                        errors=errors,
+                    )
+                    continue
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} has no eligible structured-output deployment",
+                    route_id=route.route_id,
+                    error_type="provider_schema_ineligible",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from None
+
             prepared, context_projection = self._prepare_context_attempt(
-                request=request,
+                request=attempt_request,
                 route=route,
                 deployment=deployment,
                 events=route_events,
@@ -859,6 +925,10 @@ class LLMRouter:
         *,
         resolution_trace: Iterable[dict[str, Any]],
     ) -> Iterator[LLMStreamEvent]:
+        contract = _compile_route_structured_output_contract(
+            request,
+            route_id=route_id,
+        )
         route = self._route(route_id)
         attempted_deployments: list[str] = []
         errors: list[dict[str, Any]] = []
@@ -949,8 +1019,65 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 )
 
+            try:
+                attempt_request, _provider_projection = (
+                    self._prepare_structured_output_attempt(
+                        request=request,
+                        contract=contract,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                        streaming=True,
+                    )
+                )
+            except LLMStructuredOutputProjectionError as exc:
+                errors.append(_projection_error_payload(deployment, exc))
+                self._record_event(
+                    route_events,
+                    "structured_output_provider_projection_rejected",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "provider_call": False,
+                        "stream": True,
+                        "contract_digest": contract.schema_digest,
+                        "capability_revision": (
+                            deployment.structured_output_capability.revision
+                            if deployment.structured_output_capability is not None
+                            else None
+                        ),
+                        "diagnostics": [
+                            item.to_dict() for item in exc.diagnostics
+                        ],
+                    },
+                )
+                if index < len(deployment_chain) - 1:
+                    self._record_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        reason="provider_schema_ineligible",
+                        errors=errors,
+                    )
+                    continue
+                raise self._build_route_error(
+                    (
+                        f"LLM route {route.route_id} has no eligible "
+                        "structured-output stream deployment"
+                    ),
+                    route_id=route.route_id,
+                    error_type="provider_schema_ineligible",
+                    retryable=False,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                ) from None
+
             prepared, context_projection = self._prepare_context_attempt(
-                request=request,
+                request=attempt_request,
                 route=route,
                 deployment=deployment,
                 events=route_events,
@@ -1982,6 +2109,79 @@ class LLMRouter:
                 raise _CacheReplayDeadlineExceeded
             yield event
 
+    def _prepare_structured_output_attempt(
+        self,
+        *,
+        request: LLMRequest,
+        contract: StructuredOutputContract | None,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        events: list[LLMRouterEvent],
+        streaming: bool,
+    ) -> tuple[LLMRequest, ProviderSchemaProjection | None]:
+        if contract is None:
+            return request, None
+        capability = deployment.structured_output_capability
+        if capability is None:
+            raise LLMStructuredOutputProjectionError(
+                "deployment has no versioned structured-output capability",
+                diagnostics=(
+                    StructuredOutputDiagnostic(
+                        code="provider_schema_ineligible",
+                        message=(
+                            "deployment has no versioned structured-output capability"
+                        ),
+                        validator="provider_capability_missing",
+                        contract_digest=contract.schema_digest,
+                    ),
+                ),
+            )
+        projection = project_structured_output_contract(
+            contract,
+            capability,
+            policy=request.structured_output_policy,
+            streaming=streaming,
+        )
+        supports_projection = getattr(
+            deployment.client,
+            "supports_structured_output_projection",
+            None,
+        )
+        if callable(supports_projection) and not supports_projection(projection):
+            raise LLMStructuredOutputProjectionError(
+                "deployment adapter cannot map the selected provider projection",
+                diagnostics=(
+                    StructuredOutputDiagnostic(
+                        code="provider_schema_ineligible",
+                        message=(
+                            "deployment adapter cannot map the selected provider projection"
+                        ),
+                        validator="provider_adapter_mapping_unsupported",
+                        contract_digest=contract.schema_digest,
+                    ),
+                ),
+            )
+        self._record_event(
+            events,
+            "structured_output_provider_projection_selected",
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                "provider_call": False,
+                "stream": streaming,
+                "schema_revision": contract.schema_revision,
+                "schema_dialect": contract.dialect,
+                **projection.to_dict(),
+            },
+        )
+        return (
+            request.with_structured_output_execution(
+                contract=contract,
+                projection=projection,
+            ),
+            projection,
+        )
+
     def _prepare_context_attempt(
         self,
         *,
@@ -2708,6 +2908,59 @@ def _provider_error_payload(deployment_id: str, error: LLMProviderError) -> dict
     return payload
 
 
+def _projection_error_payload(
+    deployment: ModelDeployment,
+    error: LLMStructuredOutputProjectionError,
+) -> dict[str, Any]:
+    capability = deployment.structured_output_capability
+    return {
+        "deployment_id": deployment.deployment_id,
+        "provider": deployment.provider,
+        "model": deployment.model,
+        "error_type": "provider_schema_ineligible",
+        "error_category": "schema_error",
+        "retryable": False,
+        "provider_call": False,
+        "capability_revision": capability.revision if capability is not None else None,
+        "diagnostics": [item.to_dict() for item in error.diagnostics],
+    }
+
+
+def _compile_route_structured_output_contract(
+    request: LLMRequest,
+    *,
+    route_id: str,
+) -> StructuredOutputContract | None:
+    if request.output_schema is None:
+        return None
+    existing = request.structured_output_contract()
+    if existing is not None:
+        return existing
+    try:
+        return compile_structured_output_contract(
+            request.structured_output_schema_source(),
+            schema_name=request.output_schema_name,
+        )
+    except LLMStructuredOutputSchemaError as exc:
+        raise LLMRouteError(
+            "LLM structured-output schema failed preflight before routing",
+            route_id=route_id,
+            error_type="structured_output_schema_error",
+            retryable=False,
+            errors=(
+                {
+                    "error_type": "structured_output_schema_error",
+                    "error_category": "schema_error",
+                    "retryable": False,
+                    "provider_call": False,
+                    "diagnostics": [
+                        item.to_dict() for item in exc.diagnostics
+                    ],
+                },
+            ),
+        ) from exc
+
+
 def _close_iterator(iterator: Iterator[Any] | None) -> None:
     if iterator is None:
         return
@@ -2831,9 +3084,11 @@ _SAFE_ROUTE_ERROR_FIELDS = frozenset(
         "attempts",
         "budget_check",
         "context_admission",
+        "capability_revision",
         "cooldown_state",
         "cooldown_until",
         "deployment_id",
+        "diagnostics",
         "error_category",
         "error_class",
         "error_type",
@@ -3073,6 +3328,8 @@ def _canonical_error_category(error_type: str) -> str:
         "tool_call_parse_error": "schema_error",
         "stream_tool_call_parse_error": "schema_error",
         "structured_output_parse_error": "schema_error",
+        "provider_schema_ineligible": "schema_error",
+        "structured_output_schema_error": "schema_error",
         "structured_output_validation_error": "schema_error",
     }
     return aliases.get(error_type, error_type)

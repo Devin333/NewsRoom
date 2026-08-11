@@ -74,7 +74,12 @@ class CanonicalLLMRequestNormalizer:
             payload["max_tokens"] = normalized_request.max_tokens
         if normalized_request.tools:
             payload["tools"] = deepcopy(normalized_request.tools)
-        if normalized_request.response_format is not None:
+        projected_response_format = structured_output_projection_format(
+            normalized_request
+        )
+        if projected_response_format is not None:
+            payload["response_format"] = projected_response_format
+        elif normalized_request.response_format is not None:
             payload["response_format"] = deepcopy(normalized_request.response_format)
         elif normalized_request.output_schema is not None:
             payload["response_format"] = {
@@ -91,6 +96,26 @@ class CanonicalLLMRequestNormalizer:
             provider=provider,
             normalizer_revision=self.revision,
         )
+
+
+def structured_output_projection_format(
+    request: LLMRequest,
+) -> dict[str, Any] | None:
+    projection = request.provider_schema_projection()
+    if projection is None:
+        return None
+    if projection.mode == "json_object_local_gate":
+        return {"type": "json_object"}
+    if projection.provider_schema is None:
+        raise ValueError("provider schema projection is missing its schema")
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": request.output_schema_name,
+            "schema": deepcopy(projection.provider_schema),
+            "strict": True,
+        },
+    }
 
 
 def _key_text(value: str, *, field: str) -> str:

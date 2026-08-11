@@ -11,8 +11,10 @@ from framework.llm import (
     LLMProviderError,
     LLMRequest,
     LLMRetryPolicy,
+    LOCAL_STRUCTURED_OUTPUT_DIALECT,
     OpenAICompatibleClient,
     OpenAICompatibleConfig,
+    ProviderStructuredOutputCapability,
     build_openai_chat_payload,
 )
 
@@ -51,6 +53,18 @@ def _http_error(status: int, payload: dict) -> HTTPError:
     )
 
 
+def _native_capability() -> ProviderStructuredOutputCapability:
+    return ProviderStructuredOutputCapability(
+        provider="test-provider",
+        deployment="direct-context-test",
+        mode="native_strict",
+        supported_dialect=LOCAL_STRUCTURED_OUTPUT_DIALECT,
+        supported_keywords=frozenset({"properties", "required", "type"}),
+        supports_stream_terminal_validation=True,
+        revision="direct-context-native-v1",
+    )
+
+
 def test_complete_and_stream_wire_payloads_share_normalizer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -64,12 +78,17 @@ def test_complete_and_stream_wire_payloads_share_normalizer(
 
     def stream_transport(http_request, timeout):  # type: ignore[no-untyped-def]
         stream_payloads.append(json.loads(http_request.data.decode("utf-8")))
+        yield (
+            b'data: {"choices":[{"delta":{"content":"{\\"answer\\":\\"ok\\"}"},'
+            b'"finish_reason":"stop"}]}\n'
+        )
         yield b"data: [DONE]\n"
 
     client = OpenAICompatibleClient(
         _config(),
         transport=transport,
         stream_transport=stream_transport,
+        structured_output_capability=_native_capability(),
     )
     request = LLMRequest(
         messages=[
@@ -108,7 +127,13 @@ def test_complete_and_stream_wire_payloads_share_normalizer(
     expected = build_openai_chat_payload(request, model="deployment-model")
     assert complete_payloads == [expected]
     assert stream_payloads == [{**expected, "stream": True}]
-    assert [event.event_type for event in events] == ["message_start", "message_complete"]
+    assert [event.event_type for event in events] == [
+        "message_start",
+        "text_delta",
+        "message_complete",
+    ]
+    assert events[1].metadata["provisional"] is True
+    assert events[-1].structured_output == {"answer": "ok"}
 
 
 def test_http_413_is_non_retryable_context_overflow_without_sleep(

@@ -4,7 +4,7 @@ import json
 import os
 import time
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import chain
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -16,11 +16,16 @@ from framework.llm.redaction import redact_sensitive_values
 from framework.llm.models import LLMStreamEvent
 from framework.llm.structured_output import (
     LLMStructuredOutputParseError,
+    LLMStructuredOutputProjectionError,
     LLMStructuredOutputSchemaError,
     LLMStructuredOutputValidationError,
+    ProviderSchemaProjection,
+    ProviderStructuredOutputCapability,
     StructuredOutputContract,
+    StructuredOutputDiagnostic,
     compile_structured_output_contract,
     decode_structured_output,
+    project_structured_output_contract,
     validate_compiled_structured_output,
 )
 from framework.llm.clients.tool_adapters import (
@@ -185,19 +190,31 @@ class OpenAICompatibleClient:
         transport: Transport | None = None,
         stream_transport: StreamTransport | None = None,
         retry_policy: LLMRetryPolicy | None = None,
+        structured_output_capability: ProviderStructuredOutputCapability | None = None,
         sleep: Sleep | None = None,
     ) -> None:
         self.config = config
         self._transport = transport or _urlopen_transport
         self._stream_transport = stream_transport or _urlopen_stream_transport
         self._retry_policy = retry_policy or LLMRetryPolicy()
+        self._structured_output_capability = structured_output_capability
         self._sleep = sleep or time.sleep
 
+    @staticmethod
+    def supports_structured_output_projection(
+        projection: ProviderSchemaProjection,
+    ) -> bool:
+        return projection.mode in {"native_strict", "json_object_local_gate"}
+
     def complete(self, request: LLMRequest) -> LLMResponse:
-        api_key = self.config.resolve_api_key()
         try:
-            contract = self._compile_structured_output_contract(request)
-            payload = self._build_payload(request, contract=contract)
+            execution_request, contract, projection = (
+                self._resolve_structured_output_execution(
+                    request,
+                    streaming=False,
+                )
+            )
+            payload = self._build_payload(execution_request)
         except LLMToolSchemaError as exc:
             raise LLMProviderError(
                 f"{self.config.provider} request tool schema is invalid: {exc}",
@@ -215,6 +232,10 @@ class OpenAICompatibleClient:
                 retryable=False,
                 diagnostics=(item.to_dict() for item in exc.diagnostics),
             ) from exc
+        except LLMStructuredOutputProjectionError as exc:
+            raise self._provider_projection_error(exc) from exc
+
+        api_key = self.config.resolve_api_key()
 
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             http_request = self._build_http_request(api_key, payload)
@@ -228,9 +249,10 @@ class OpenAICompatibleClient:
                 response_payload = self._parse_response_payload(raw_body, attempts=attempt)
                 return self._normalize_response(
                     response_payload,
-                    request=request,
+                    request=execution_request,
                     attempts=attempt,
                     contract=contract,
+                    projection=projection,
                 )
 
             if not error.retryable or attempt >= self._retry_policy.max_attempts:
@@ -245,10 +267,14 @@ class OpenAICompatibleClient:
         )
 
     def stream(self, request: LLMRequest) -> Iterator[LLMStreamEvent]:
-        api_key = self.config.resolve_api_key()
         try:
-            contract = self._compile_structured_output_contract(request)
-            payload = self._build_payload(request, contract=contract)
+            execution_request, contract, projection = (
+                self._resolve_structured_output_execution(
+                    request,
+                    streaming=True,
+                )
+            )
+            payload = self._build_payload(execution_request)
         except LLMToolSchemaError as exc:
             raise LLMProviderError(
                 f"{self.config.provider} request tool schema is invalid: {exc}",
@@ -266,7 +292,10 @@ class OpenAICompatibleClient:
                 retryable=False,
                 diagnostics=(item.to_dict() for item in exc.diagnostics),
             ) from exc
+        except LLMStructuredOutputProjectionError as exc:
+            raise self._provider_projection_error(exc) from exc
         payload["stream"] = True
+        api_key = self.config.resolve_api_key()
 
         http_request = self._build_http_request(api_key, payload)
         try:
@@ -279,14 +308,20 @@ class OpenAICompatibleClient:
         except (TimeoutError, URLError, OSError) as exc:
             raise self._error_from_network(exc, attempts=1) from exc
 
+        expects_structured_output = _expects_structured_output(execution_request)
         yield LLMStreamEvent(
             event_type="message_start",
-            metadata={"provider": self.config.provider, "model": self.config.model},
+            metadata={
+                "provider": self.config.provider,
+                "model": self.config.model,
+                "provisional": expects_structured_output,
+            },
         )
-        assembler = _OpenAIStreamToolCallAssembler(request.tools)
+        assembler = _OpenAIStreamToolCallAssembler(execution_request.tools)
         completed = False
         last_finish_reason: str | None = None
         response_id: str | None = None
+        text_parts: list[str] = []
 
         try:
             source_lines = lines if first_line is None else chain((first_line,), lines)
@@ -304,7 +339,11 @@ class OpenAICompatibleClient:
                 response_id = response_id or _optional_str(chunk.get("id"))
                 usage = _usage_from_stream_chunk(chunk)
                 if usage is not None:
-                    yield LLMStreamEvent(event_type="usage_delta", usage_delta=usage)
+                    yield LLMStreamEvent(
+                        event_type="usage_delta",
+                        usage_delta=usage,
+                        metadata={"provisional": expects_structured_output},
+                    )
                 for event in _events_from_stream_chunk(
                     chunk,
                     assembler=assembler,
@@ -315,7 +354,12 @@ class OpenAICompatibleClient:
                         last_finish_reason = event.metadata.get("finish_reason")
                         completed = True
                         continue
-                    yield event
+                    if event.event_type == "text_delta" and event.text_delta:
+                        text_parts.append(event.text_delta)
+                    yield _with_provisional_metadata(
+                        event,
+                        provisional=expects_structured_output,
+                    )
         except LLMToolCallParseError as exc:
             raise LLMProviderError(
                 f"{self.config.provider} streaming tool call parse failed: {exc}",
@@ -340,9 +384,31 @@ class OpenAICompatibleClient:
             raise self._error_from_network(exc, attempts=1) from exc
 
         if not completed:
-            last_finish_reason = last_finish_reason or "stream_ended"
+            raise LLMProviderError(
+                f"{self.config.provider} stream ended before a terminal marker",
+                provider=self.config.provider,
+                model=self.config.model,
+                error_type="provider_stream_incomplete",
+                retryable=False,
+                attempts=1,
+            )
+        structured_output = None
+        if expects_structured_output:
+            structured_output = self._parse_structured_output(
+                "".join(text_parts),
+                request=execution_request,
+                attempts=1,
+                contract=contract,
+            )
+        validation_metadata = self._structured_output_validation_metadata(
+            execution_request,
+            contract=contract,
+            projection=projection,
+            validated=structured_output is not None,
+        )
         yield LLMStreamEvent(
             event_type="message_complete",
+            structured_output=structured_output,
             metadata={
                 "provider": self.config.provider,
                 "model": self.config.model,
@@ -350,24 +416,23 @@ class OpenAICompatibleClient:
                 "finish_reason": last_finish_reason or "stop",
                 "attempts": 1,
                 "retry_count": 0,
-                "structured_output_requested": request.output_schema is not None,
-                "response_format": request.response_format,
-                "tool_count": len(request.tools),
+                "structured_output_requested": expects_structured_output,
+                "response_format_mode": (
+                    projection.mode if projection is not None else None
+                ),
+                "tool_count": len(execution_request.tools),
+                "provisional": False,
+                **validation_metadata,
             },
         )
 
     def _build_payload(
         self,
         request: LLMRequest,
-        *,
-        contract: StructuredOutputContract | None = None,
     ) -> dict[str, Any]:
-        payload_request = request
-        if contract is not None:
-            payload_request = request.clone(output_schema=contract.canonical_schema)
         return build_openai_chat_payload(
-            payload_request,
-            model=payload_request.model or self.config.model,
+            request,
+            model=request.model or self.config.model,
         )
 
     @staticmethod
@@ -381,12 +446,109 @@ class OpenAICompatibleClient:
             schema_name=request.output_schema_name,
         )
 
+    def _resolve_structured_output_execution(
+        self,
+        request: LLMRequest,
+        *,
+        streaming: bool,
+    ) -> tuple[
+        LLMRequest,
+        StructuredOutputContract | None,
+        ProviderSchemaProjection | None,
+    ]:
+        contract = request.structured_output_contract()
+        if contract is None:
+            contract = self._compile_structured_output_contract(request)
+        if contract is None:
+            return request, None, None
+
+        projection = request.provider_schema_projection()
+        if projection is None:
+            capability = self._structured_output_capability
+            if capability is None:
+                raise self._projection_ineligible_error(
+                    contract,
+                    "structured-output capability is not configured",
+                    reason="provider_capability_missing",
+                )
+            if capability.provider != self.config.provider:
+                raise self._projection_ineligible_error(
+                    contract,
+                    "structured-output capability provider does not match client",
+                    reason="provider_capability_identity_mismatch",
+                )
+            projection = project_structured_output_contract(
+                contract,
+                capability,
+                policy=request.structured_output_policy,
+                streaming=streaming,
+            )
+        if projection.contract_digest != contract.schema_digest:
+            raise self._projection_ineligible_error(
+                contract,
+                "provider projection does not match compiled contract",
+                reason="provider_projection_contract_mismatch",
+            )
+        if projection.provider != self.config.provider:
+            raise self._projection_ineligible_error(
+                contract,
+                "provider projection does not match client provider",
+                reason="provider_projection_identity_mismatch",
+            )
+        if not self.supports_structured_output_projection(projection):
+            raise self._projection_ineligible_error(
+                contract,
+                "OpenAI-compatible adapter does not implement constrained decoding",
+                reason="provider_adapter_mapping_unsupported",
+            )
+        return (
+            request.with_structured_output_execution(
+                contract=contract,
+                projection=projection,
+            ),
+            contract,
+            projection,
+        )
+
+    def _provider_projection_error(
+        self,
+        error: LLMStructuredOutputProjectionError,
+    ) -> LLMProviderError:
+        return LLMProviderError(
+            f"{self.config.provider} structured output projection is ineligible",
+            provider=self.config.provider,
+            model=self.config.model,
+            error_type="provider_schema_ineligible",
+            retryable=False,
+            diagnostics=(item.to_dict() for item in error.diagnostics),
+        )
+
+    @staticmethod
+    def _projection_ineligible_error(
+        contract: StructuredOutputContract,
+        message: str,
+        *,
+        reason: str,
+    ) -> LLMStructuredOutputProjectionError:
+        return LLMStructuredOutputProjectionError(
+            message,
+            diagnostics=(
+                StructuredOutputDiagnostic(
+                    code="provider_schema_ineligible",
+                    message=message,
+                    validator=reason,
+                    contract_digest=contract.schema_digest,
+                ),
+            ),
+        )
+
     def _parse_response(self, payload: dict[str, Any]) -> LLMResponse:
         return self._normalize_response(
             payload,
             request=LLMRequest(messages=[]),
             attempts=1,
             contract=None,
+            projection=None,
         )
 
     def _build_http_request(self, api_key: str, payload: dict[str, Any]) -> Request:
@@ -443,6 +605,7 @@ class OpenAICompatibleClient:
         request: LLMRequest,
         attempts: int,
         contract: StructuredOutputContract | None,
+        projection: ProviderSchemaProjection | None,
     ) -> LLMResponse:
         choices = payload.get("choices") or []
         if not choices:
@@ -542,17 +705,12 @@ class OpenAICompatibleClient:
                 retryable=False,
                 attempts=attempts,
             ) from exc
-        validation_metadata: dict[str, Any] = {}
-        if _expects_structured_output(request):
-            validation_metadata["structured_output_validation"] = {
-                "validated": structured_output is not None,
-                "schema_name": (
-                    request.output_schema_name if request.output_schema is not None else None
-                ),
-                "schema_digest": contract.schema_digest if contract is not None else None,
-                "schema_dialect": contract.dialect if contract is not None else None,
-                "provider_native_json_mode": _uses_provider_native_json_mode(request),
-            }
+        validation_metadata = self._structured_output_validation_metadata(
+            request,
+            contract=contract,
+            projection=projection,
+            validated=structured_output is not None,
+        )
         return LLMResponse(
             content=content,
             usage=usage,
@@ -610,6 +768,65 @@ class OpenAICompatibleClient:
                     diagnostics=(item.to_dict() for item in exc.diagnostics),
                 ) from exc
         return structured_output
+
+    @staticmethod
+    def _structured_output_validation_metadata(
+        request: LLMRequest,
+        *,
+        contract: StructuredOutputContract | None,
+        projection: ProviderSchemaProjection | None,
+        validated: bool,
+    ) -> dict[str, Any]:
+        if not _expects_structured_output(request):
+            return {}
+        return {
+            "structured_output_validation": {
+                "validated": validated,
+                "schema_name": (
+                    request.output_schema_name
+                    if request.output_schema is not None
+                    else None
+                ),
+                "schema_digest": (
+                    contract.schema_digest if contract is not None else None
+                ),
+                "schema_revision": (
+                    contract.schema_revision if contract is not None else None
+                ),
+                "schema_dialect": contract.dialect if contract is not None else None,
+                "typed_adapter_revision": (
+                    contract.typed_adapter_revision
+                    if contract is not None
+                    else None
+                ),
+                "projection_digest": (
+                    projection.projection_digest
+                    if projection is not None
+                    else None
+                ),
+                "projection_mode": (
+                    projection.mode if projection is not None else None
+                ),
+                "provider_capability_revision": (
+                    projection.provider_capability_revision
+                    if projection is not None
+                    else None
+                ),
+                "provider_enforced_keywords": (
+                    sorted(projection.enforced_keywords)
+                    if projection is not None
+                    else []
+                ),
+                "provider_omitted_keywords": (
+                    sorted(projection.omitted_keywords)
+                    if projection is not None
+                    else []
+                ),
+                "provider_native_json_mode": _uses_provider_native_json_mode(
+                    request
+                ),
+            }
+        }
 
     def _error_from_http(self, exc: HTTPError, *, attempts: int) -> LLMProviderError:
         status_code = int(exc.code)
@@ -693,6 +910,7 @@ def _canonical_error_category(error_type: str) -> str:
         "tool_call_parse_error": "schema_error",
         "stream_tool_call_parse_error": "schema_error",
         "structured_output_parse_error": "schema_error",
+        "provider_schema_ineligible": "schema_error",
         "structured_output_schema_error": "schema_error",
         "structured_output_validation_error": "schema_error",
     }
@@ -906,6 +1124,16 @@ def _events_from_stream_chunk(
     return events
 
 
+def _with_provisional_metadata(
+    event: LLMStreamEvent,
+    *,
+    provisional: bool,
+) -> LLMStreamEvent:
+    metadata = dict(event.metadata)
+    metadata["provisional"] = provisional
+    return replace(event, metadata=metadata)
+
+
 def _usage_from_stream_chunk(chunk: dict[str, Any]) -> TokenUsage | None:
     usage = chunk.get("usage")
     if not isinstance(usage, dict):
@@ -946,3 +1174,4 @@ def _urlopen_transport(request: Request, timeout_seconds: float) -> bytes:
 def _urlopen_stream_transport(request: Request, timeout_seconds: float) -> Iterable[bytes]:
     with urlopen(request, timeout=timeout_seconds) as response:
         yield from response
+    project_structured_output_contract,

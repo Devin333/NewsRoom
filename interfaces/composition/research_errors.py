@@ -13,6 +13,7 @@ class ResearchCapability(str, Enum):
     SOURCE_METADATA_MAX_BYTES = "research.source.metadata_max_bytes"
     SOURCE_PACKAGE_MAX_BYTES = "research.source.package_max_bytes"
     LLM = "research.llm"
+    LLM_ROUTE = "research.llm.route"
     LLM_PROVIDER = "research.llm.provider"
     LLM_BASE_URL = "research.llm.base_url"
     LLM_MODEL = "research.llm.model"

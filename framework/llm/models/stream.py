@@ -28,6 +28,7 @@ class LLMStreamEvent:
     tool_call: LLMToolCall | None = None
     tool_call_delta: dict[str, Any] | None = None
     usage_delta: TokenUsage | None = None
+    structured_output: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -37,6 +38,18 @@ class LLMStreamEvent:
             object.__setattr__(self, "tool_call", LLMToolCall.from_dict(self.tool_call))
         if self.usage_delta is not None:
             object.__setattr__(self, "usage_delta", TokenUsage.from_any(self.usage_delta))
+        if self.structured_output is not None:
+            if self.event_type != "message_complete":
+                raise ValueError(
+                    "structured_output is only valid on message_complete"
+                )
+            if not isinstance(self.structured_output, dict):
+                raise ValueError("structured_output must be an object")
+            object.__setattr__(
+                self,
+                "structured_output",
+                json.loads(json.dumps(self.structured_output, allow_nan=False)),
+            )
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -45,6 +58,11 @@ class LLMStreamEvent:
             "tool_call": self.tool_call.to_dict(redact=False) if self.tool_call else None,
             "tool_call_delta": dict(self.tool_call_delta or {}),
             "usage_delta": self.usage_delta.to_dict() if self.usage_delta else None,
+            "structured_output": (
+                dict(self.structured_output)
+                if self.structured_output is not None
+                else None
+            ),
             "metadata": dict(self.metadata),
         }
         if redact:
@@ -74,6 +92,11 @@ class LLMStreamEvent:
                     if value.get("usage_delta") is not None
                     else None
                 ),
+                structured_output=(
+                    dict(value["structured_output"])
+                    if isinstance(value.get("structured_output"), dict)
+                    else None
+                ),
                 metadata=dict(value.get("metadata") or {}),
             )
         return cls(
@@ -94,6 +117,11 @@ class LLMStreamEvent:
                 if getattr(value, "usage_delta", None) is not None
                 else None
             ),
+            structured_output=(
+                dict(getattr(value, "structured_output"))
+                if isinstance(getattr(value, "structured_output", None), dict)
+                else None
+            ),
             metadata=dict(getattr(value, "metadata", {}) or {}),
         )
 
@@ -105,6 +133,7 @@ class LLMStreamAccumulator:
         self._tool_call_deltas: dict[str, dict[str, Any]] = {}
         self._usage = TokenUsage()
         self._metadata = dict(metadata or {})
+        self._structured_output: dict[str, Any] | None = None
         self._started = False
         self._completed = False
         self._errored = False
@@ -174,6 +203,11 @@ class LLMStreamAccumulator:
             self._require_started(event)
             self._complete_partial_tool_calls()
             self._metadata.update(event.metadata)
+            self._structured_output = (
+                dict(event.structured_output)
+                if event.structured_output is not None
+                else None
+            )
             self._completed = True
         elif event.event_type == "error":
             self._metadata.update({"stream_error": event.metadata})
@@ -188,6 +222,11 @@ class LLMStreamAccumulator:
             content="".join(self._text_parts),
             usage=self._usage,
             metadata=dict(self._metadata),
+            structured_output=(
+                dict(self._structured_output)
+                if self._structured_output is not None
+                else None
+            ),
             tool_calls=list(self._tool_calls),
         )
 

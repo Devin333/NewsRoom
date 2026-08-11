@@ -8,6 +8,7 @@ from typing import Any
 from framework.llm.budget import ModelPricing
 from framework.llm.context.profile import ModelContextProfile
 from framework.llm.models import LLMClient, ModelCapabilities
+from framework.llm.structured_output import ProviderStructuredOutputCapability
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class ModelDeployment:
     model: str
     client: LLMClient
     capabilities: ModelCapabilities = field(default_factory=ModelCapabilities)
+    structured_output_capability: ProviderStructuredOutputCapability | None = None
     pricing: ModelPricing | None = None
     enabled: bool = True
     cooldown_until: datetime | None = None
@@ -24,6 +26,11 @@ class ModelDeployment:
     context_profile: ModelContextProfile | None = None
 
     def __post_init__(self) -> None:
+        if self.structured_output_capability is not None:
+            self.structured_output_capability.assert_identity(
+                provider=self.provider,
+                deployment=self.deployment_id,
+            )
         if self.context_profile is not None:
             self.context_profile.assert_deployment_identity(
                 deployment_id=self.deployment_id,
@@ -37,6 +44,11 @@ class ModelDeployment:
             "provider": self.provider,
             "model": self.model,
             "capabilities": self.capabilities.to_dict(),
+            "structured_output_capability": (
+                self.structured_output_capability.to_dict()
+                if self.structured_output_capability is not None
+                else None
+            ),
             "pricing": (
                 {
                     "input_usd_per_1m_tokens": self.pricing.input_usd_per_1m_tokens,
@@ -56,6 +68,7 @@ class ModelDeployment:
     @classmethod
     def from_dict(cls, payload: dict[str, Any], client: LLMClient) -> ModelDeployment:
         capabilities_payload = payload.get("capabilities") or {}
+        structured_output_payload = payload.get("structured_output_capability")
         pricing_payload = payload.get("pricing") or None
         return cls(
             deployment_id=str(payload.get("deployment_id") or ""),
@@ -63,6 +76,11 @@ class ModelDeployment:
             model=str(payload.get("model") or ""),
             client=client,
             capabilities=ModelCapabilities(**capabilities_payload),
+            structured_output_capability=(
+                ProviderStructuredOutputCapability(**structured_output_payload)
+                if isinstance(structured_output_payload, dict)
+                else None
+            ),
             pricing=(
                 ModelPricing(
                     input_usd_per_1m_tokens=pricing_payload.get("input_usd_per_1m_tokens"),

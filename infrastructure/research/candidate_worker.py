@@ -591,6 +591,7 @@ class StructuredResearchCandidateWorker:
     ) -> ResearchCandidateError:
         if isinstance(exc, LLMProviderError) and exc.error_type in {
             "schema_error",
+            "provider_schema_ineligible",
             "structured_output_parse_error",
             "structured_output_schema_error",
             "structured_output_validation_error",

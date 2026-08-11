@@ -160,6 +160,11 @@ def iter_cached_response_events(
 
     yield LLMStreamEvent(
         event_type="message_complete",
+        structured_output=(
+            deepcopy(response.structured_output)
+            if response.structured_output is not None
+            else None
+        ),
         metadata=completion_metadata,
     )
 

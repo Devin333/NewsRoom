@@ -1,8 +1,5 @@
-# llm-structured-output Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change llm-structured-output. Update Purpose after archive.
-## Requirements
 ### Requirement: LLM requests can declare structured output
 The system SHALL compile every output schema before transport and SHALL translate structured-output requests only through a versioned capability profile and immutable provider projection. A projection MUST identify its mode, contract and capability revisions, stable digest, and enforced/omitted keyword coverage. Unsupported enforcement MUST route to an eligible deployment, use an explicitly authorized JSON-object-plus-local-gate projection, or fail closed without transport; it MUST NOT silently drop schema constraints.
 
@@ -36,10 +33,3 @@ The system SHALL normalize structured response text into accepted output only af
 #### Scenario: Stream terminal validation fails
 - **WHEN** an accumulated structured stream is incomplete, invalid JSON, or violates the local contract
 - **THEN** no verified terminal event is emitted and the deterministic structured-output error is not retried as a transport failure
-
-### Requirement: Daily report drafting can consume structured output
-The system SHALL prefer structured LLM output for daily live report drafts when available.
-
-#### Scenario: LLM response contains structured report
-- **WHEN** daily live drafting receives `structured_output`
-- **THEN** it uses that object instead of reparsing raw text

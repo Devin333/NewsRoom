@@ -6,6 +6,11 @@ from typing import Any, cast
 
 from framework.llm.models.message import LLMMessage
 from framework.llm.redaction.redactor import redact_sensitive_values
+from framework.llm.structured_output.contracts import StructuredOutputContract
+from framework.llm.structured_output.projection import (
+    ProviderSchemaProjection,
+    ProviderStructuredOutputPolicy,
+)
 
 
 @dataclass(frozen=True)
@@ -19,7 +24,22 @@ class LLMRequest:
     response_format: str | dict[str, Any] | None = None
     output_schema: Any | None = None
     output_schema_name: str = "structured_output"
+    structured_output_policy: ProviderStructuredOutputPolicy = field(
+        default_factory=ProviderStructuredOutputPolicy
+    )
     _output_schema_source: Any | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _structured_output_contract: StructuredOutputContract | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _provider_schema_projection: ProviderSchemaProjection | None = field(
         default=None,
         init=False,
         repr=False,
@@ -27,7 +47,16 @@ class LLMRequest:
     )
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "messages", [_message_to_dict(message) for message in self.messages])
+        object.__setattr__(
+            self,
+            "messages",
+            [_message_to_dict(message) for message in self.messages],
+        )
+        object.__setattr__(
+            self,
+            "structured_output_policy",
+            ProviderStructuredOutputPolicy.from_any(self.structured_output_policy),
+        )
         schema = self.output_schema
         if schema is None:
             return
@@ -49,6 +78,27 @@ class LLMRequest:
     def structured_output_schema_source(self) -> Any | None:
         return self._output_schema_source or self.output_schema
 
+    def structured_output_contract(self) -> StructuredOutputContract | None:
+        return self._structured_output_contract
+
+    def provider_schema_projection(self) -> ProviderSchemaProjection | None:
+        return self._provider_schema_projection
+
+    def with_structured_output_execution(
+        self,
+        *,
+        contract: StructuredOutputContract,
+        projection: ProviderSchemaProjection,
+    ) -> LLMRequest:
+        if self.output_schema is None:
+            raise ValueError("structured-output execution requires output_schema")
+        if projection.contract_digest != contract.schema_digest:
+            raise ValueError("provider projection does not match structured-output contract")
+        result = self.clone()
+        object.__setattr__(result, "_structured_output_contract", contract)
+        object.__setattr__(result, "_provider_schema_projection", projection)
+        return result
+
     def clone(self, **changes: Any) -> LLMRequest:
         values: dict[str, Any] = {
             "messages": deepcopy(self.messages),
@@ -60,9 +110,31 @@ class LLMRequest:
             "response_format": deepcopy(self.response_format),
             "output_schema": self.structured_output_schema_source(),
             "output_schema_name": self.output_schema_name,
+            "structured_output_policy": self.structured_output_policy,
         }
         values.update(changes)
-        return LLMRequest(**values)
+        result = LLMRequest(**values)
+        schema_changed = bool(
+            {"output_schema", "output_schema_name"}.intersection(changes)
+        )
+        policy_changed = "structured_output_policy" in changes
+        if not schema_changed and self._structured_output_contract is not None:
+            object.__setattr__(
+                result,
+                "_structured_output_contract",
+                self._structured_output_contract,
+            )
+        if (
+            not schema_changed
+            and not policy_changed
+            and self._provider_schema_projection is not None
+        ):
+            object.__setattr__(
+                result,
+                "_provider_schema_projection",
+                self._provider_schema_projection,
+            )
+        return result
 
     def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -81,6 +153,9 @@ class LLMRequest:
         if self.output_schema is not None:
             payload["output_schema"] = deepcopy(self.output_schema)
             payload["output_schema_name"] = self.output_schema_name
+            payload["structured_output_policy"] = (
+                self.structured_output_policy.to_dict()
+            )
         if redact:
             return redact_sensitive_values(payload)
         return payload
@@ -99,6 +174,9 @@ class LLMRequest:
             response_format=deepcopy(payload.get("response_format")),
             output_schema=deepcopy(payload.get("output_schema")),
             output_schema_name=str(payload.get("output_schema_name") or "structured_output"),
+            structured_output_policy=ProviderStructuredOutputPolicy.from_any(
+                payload.get("structured_output_policy")
+            ),
         )
 
     def _message_dicts(self) -> list[dict[str, Any]]:

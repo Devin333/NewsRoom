@@ -41,6 +41,8 @@ def test_from_env_builds_immutable_defaults_without_creating_storage(
     assert settings.source.api_url == "https://export.arxiv.org/api/query"
     assert settings.source.cache_size == 128
     assert settings.source.package_max_bytes == 120_000_000
+    assert settings.llm.route_id == "writer-primary"
+    assert settings.llm.models_config_path is None
     assert settings.llm.provider == "openai-compatible"
     assert settings.llm.api_key_env == "DASHSCOPE_API_KEY"
     assert settings.llm.max_attempts == 2
@@ -84,6 +86,8 @@ def test_from_env_normalizes_all_research_configuration_groups(tmp_path: Path) -
         "NEWS_RESEARCH_SOURCE_METADATA_MAX_BYTES": "8000000",
         "NEWS_RESEARCH_SOURCE_PACKAGE_MAX_BYTES": "200000000",
         "NEWS_RESEARCH_LLM_PROVIDER": "OpenAI-Compatible",
+        "NEWS_RESEARCH_LLM_ROUTE_ID": "research-analysis-v2",
+        "NEWS_RESEARCH_MODELS_CONFIG": "config/research-models.json",
         "NEWS_RESEARCH_LLM_BASE_URL": "https://llm.example/v1/",
         "NEWS_RESEARCH_LLM_MODEL": "vendor/model-v2",
         "NEWS_RESEARCH_LLM_API_KEY_ENV": "RESEARCH_LLM_SECRET",
@@ -127,6 +131,10 @@ def test_from_env_normalizes_all_research_configuration_groups(tmp_path: Path) -
     assert settings.source.cache_size == 256
     assert settings.source.timeout_seconds == 45.5
     assert settings.llm.provider == "openai-compatible"
+    assert settings.llm.route_id == "research-analysis-v2"
+    assert settings.llm.models_config_path == (
+        tmp_path / "config" / "research-models.json"
+    ).resolve()
     assert settings.llm.base_url == "https://llm.example/v1"
     assert settings.llm.model == "vendor/model-v2"
     assert settings.llm.api_key_env == "RESEARCH_LLM_SECRET"

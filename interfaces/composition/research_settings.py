@@ -65,6 +65,8 @@ class ResearchSourceSettings:
 
 @dataclass(frozen=True, slots=True)
 class ResearchLLMSettings:
+    route_id: str
+    models_config_path: Path | None
     provider: str
     base_url: str
     model: str
@@ -75,6 +77,16 @@ class ResearchLLMSettings:
     max_output_tokens: int
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "route_id",
+            _identifier(self.route_id, "research.llm.route", max_length=128),
+        )
+        if self.models_config_path is not None and (
+            not isinstance(self.models_config_path, Path)
+            or not self.models_config_path.is_absolute()
+        ):
+            _invalid("research.llm.route")
         object.__setattr__(
             self,
             "provider",
@@ -322,6 +334,17 @@ class ResearchRuntimeSettings:
         )
 
         llm = ResearchLLMSettings(
+            route_id=_first_text(
+                values,
+                ("NEWS_RESEARCH_LLM_ROUTE_ID",),
+                "writer-primary",
+            ),
+            models_config_path=_optional_file_path_from_env(
+                values,
+                ("NEWS_RESEARCH_MODELS_CONFIG", "NEWS_MODELS_CONFIG"),
+                base=base,
+                capability="research.llm.route",
+            ),
             provider=_first_text(
                 values,
                 ("NEWS_RESEARCH_LLM_PROVIDER", "NEWS_LLM_PROVIDER"),
@@ -613,6 +636,27 @@ def _root_from_env(
         _invalid(capability)
     _directory_root(path, capability)
     return path
+
+
+def _optional_file_path_from_env(
+    values: Mapping[str, str],
+    names: tuple[str, ...],
+    *,
+    base: Path,
+    capability: str,
+) -> Path | None:
+    raw = _first_text(values, names, "")
+    if not raw:
+        return None
+    if "\x00" in raw:
+        _invalid(capability)
+    try:
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = base / path
+        return path.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        _invalid(capability)
 
 
 def _directory_root(path: Path, capability: str) -> None:

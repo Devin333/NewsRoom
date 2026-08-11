@@ -4,7 +4,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from framework.llm.context.normalization import NormalizedLLMRequest
+from framework.llm.context.normalization import (
+    NormalizedLLMRequest,
+    structured_output_projection_format,
+)
 from framework.llm.clients.tool_adapters import to_openai_tools
 from framework.llm.models.request import LLMRequest
 
@@ -56,6 +59,9 @@ def build_openai_chat_payload(
 
 
 def openai_response_format(request: LLMRequest) -> dict[str, Any] | None:
+    projected = structured_output_projection_format(request)
+    if projected is not None:
+        return projected
     if request.response_format is not None:
         if isinstance(request.response_format, str):
             return {"type": request.response_format}

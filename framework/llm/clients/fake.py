@@ -53,14 +53,35 @@ class FakeLLMClient:
 
     def stream(self, request: LLMRequest) -> Iterable[LLMStreamEvent]:
         response = self.complete(request)
+        provisional = request.output_schema is not None
         yield LLMStreamEvent(
             event_type="message_start",
-            metadata={"provider": "fake", "model": response.model or "fake-llm"},
+            metadata={
+                "provider": "fake",
+                "model": response.model or "fake-llm",
+                "provisional": provisional,
+            },
         )
         if response.content:
-            yield LLMStreamEvent(event_type="text_delta", text_delta=response.content)
+            yield LLMStreamEvent(
+                event_type="text_delta",
+                text_delta=response.content,
+                metadata={"provisional": provisional},
+            )
         for tool_call in response.tool_calls:
-            yield LLMStreamEvent(event_type="tool_call_complete", tool_call=tool_call)
-        yield LLMStreamEvent(event_type="usage_delta", usage_delta=response.usage)
-        yield LLMStreamEvent(event_type="message_complete", metadata=response.metadata)
+            yield LLMStreamEvent(
+                event_type="tool_call_complete",
+                tool_call=tool_call,
+                metadata={"provisional": provisional},
+            )
+        yield LLMStreamEvent(
+            event_type="usage_delta",
+            usage_delta=response.usage,
+            metadata={"provisional": provisional},
+        )
+        yield LLMStreamEvent(
+            event_type="message_complete",
+            structured_output=response.structured_output,
+            metadata={**response.metadata, "provisional": False},
+        )
 

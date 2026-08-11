@@ -46,9 +46,14 @@ from business.research.ports.artifact_publication import (
 )
 from business.research.ports.chunk_store import ChunkStorePort
 from framework.llm.clients.openai_compatible import (
+    LLMConfigurationError,
     LLMRetryPolicy,
     OpenAICompatibleClient,
     OpenAICompatibleConfig,
+)
+from framework.llm.clients.config import (
+    OpenAICompatibleDeploymentConfig,
+    load_openai_compatible_deployment,
 )
 from framework.events.canonical import checksum_for
 from framework.harness import (
@@ -122,6 +127,7 @@ from business.research.workflows import (
 from interfaces.composition.research_errors import (
     ResearchCapability,
     ResearchCompositionError,
+    ResearchConfigurationError,
     ResearchRuntimeUnavailableError,
 )
 from interfaces.composition.research_settings import (
@@ -1011,6 +1017,24 @@ def _research_service_error(error: ResearchCompositionError) -> ResearchServiceE
     )
 
 
+def _resolve_research_llm_deployment(
+    settings: ResearchRuntimeSettings,
+) -> OpenAICompatibleDeploymentConfig:
+    try:
+        deployment = load_openai_compatible_deployment(
+            settings.llm.models_config_path,
+            route_id=settings.llm.route_id,
+            apply_environment_overrides=False,
+        )
+    except LLMConfigurationError as exc:
+        raise ResearchConfigurationError((ResearchCapability.LLM_ROUTE,)) from exc
+    if deployment.config.model != settings.llm.model:
+        raise ResearchConfigurationError((ResearchCapability.LLM_MODEL,))
+    if deployment.config.base_url.rstrip("/") != settings.llm.base_url.rstrip("/"):
+        raise ResearchConfigurationError((ResearchCapability.LLM_BASE_URL,))
+    return deployment
+
+
 def _build_research_chunk_store(
     settings: ResearchRAGSettings,
     *,
@@ -1129,9 +1153,10 @@ def _build_configured_composition(
             ),
         )
 
+        llm_deployment = _resolve_research_llm_deployment(settings)
         llm_client = OpenAICompatibleClient(
             OpenAICompatibleConfig(
-                provider=settings.llm.provider,
+                provider=llm_deployment.config.provider,
                 base_url=settings.llm.base_url,
                 model=settings.llm.model,
                 api_key_env=settings.llm.api_key_env,
@@ -1139,6 +1164,9 @@ def _build_configured_composition(
             ),
             retry_policy=LLMRetryPolicy(
                 max_attempts=settings.llm.max_attempts,
+            ),
+            structured_output_capability=(
+                llm_deployment.structured_output_capability
             ),
         )
         candidate_worker = _compose_component(

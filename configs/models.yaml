@@ -17,6 +17,13 @@ model_groups:
           supports_prompt_cache: true
           context_window_tokens: 1000000
           max_output_tokens: 393216
+        structured_output_capability:
+          mode: none
+          supported_keywords: []
+          supports_local_refs: false
+          supports_json_object_fallback: false
+          supports_stream_terminal_validation: false
+          revision: dashscope-deepseek-v4-flash-unqualified-v1
         # Physical limits: https://help.aliyun.com/zh/model-studio/deepseek-v4-flash
         context_profile:
           default_output_tokens: 2048

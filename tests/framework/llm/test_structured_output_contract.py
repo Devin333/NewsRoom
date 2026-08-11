@@ -13,11 +13,14 @@ from framework.llm import (
     LLMStructuredOutputParseError,
     LLMStructuredOutputSchemaError,
     LLMStructuredOutputValidationError,
+    LOCAL_STRUCTURED_OUTPUT_DIALECT,
     OpenAICompatibleClient,
     OpenAICompatibleConfig,
+    ProviderStructuredOutputCapability,
     StructuredOutputLimits,
     compile_structured_output_contract,
     decode_structured_output,
+    structured_output_enforcement_keywords,
     validate_structured_output,
     validate_structured_output_result,
 )
@@ -56,6 +59,22 @@ def _response_body(content: str) -> bytes:
             "usage": {"prompt_tokens": 2, "completion_tokens": 2},
         }
     ).encode("utf-8")
+
+
+def _native_capability(schema: Any) -> ProviderStructuredOutputCapability:
+    contract = compile_structured_output_contract(schema)
+    return ProviderStructuredOutputCapability(
+        provider="test-provider",
+        deployment="direct-test",
+        mode="native_strict",
+        supported_dialect=LOCAL_STRUCTURED_OUTPUT_DIALECT,
+        supported_keywords=structured_output_enforcement_keywords(
+            contract.canonical_schema
+        ),
+        supports_local_refs=True,
+        supports_stream_terminal_validation=True,
+        revision="direct-test-native-v1",
+    )
 
 
 def _local_ref_schema() -> dict[str, Any]:
@@ -305,6 +324,9 @@ def test_client_strict_decode_failure_is_non_retryable(
         _config(),
         transport=transport,
         retry_policy=LLMRetryPolicy(max_attempts=3),
+        structured_output_capability=_native_capability(
+            {"type": "object", "properties": {"value": {}}}
+        ),
     )
     with pytest.raises(LLMProviderError) as raised:
         client.complete(
@@ -330,7 +352,11 @@ def test_client_sends_canonical_schema_and_returns_typed_output(
         payloads.append(json.loads(request.data.decode("utf-8")))
         return _response_body('{"nested":{"label":"abc"},"label_length":3}')
 
-    client = OpenAICompatibleClient(_config(), transport=transport)
+    client = OpenAICompatibleClient(
+        _config(),
+        transport=transport,
+        structured_output_capability=_native_capability(_TypedOutput),
+    )
     response = client.complete(LLMRequest(messages=[], output_schema=_TypedOutput))
 
     provider_schema = payloads[0]["response_format"]["json_schema"]["schema"]
@@ -357,7 +383,11 @@ def test_client_returns_bounded_typed_diagnostics(
             json.dumps({"nested": {"label": secret}, "label_length": 1})
         )
 
-    client = OpenAICompatibleClient(_config(), transport=transport)
+    client = OpenAICompatibleClient(
+        _config(),
+        transport=transport,
+        structured_output_capability=_native_capability(_TypedOutput),
+    )
     with pytest.raises(LLMProviderError) as raised:
         client.complete(LLMRequest(messages=[], output_schema=_TypedOutput))
 

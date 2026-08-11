@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from framework.llm.context.profile import ModelContextProfile
 from framework.llm.models.capabilities import ModelCapabilities, _normalize_capability_name
+from framework.llm.structured_output import ProviderStructuredOutputCapability
 from framework.llm.clients.openai_compatible import (
     LLMConfigurationError,
     LLMRetryPolicy,
@@ -67,7 +68,19 @@ _DEPLOYMENT_CONFIG_KEYS = {
     "model_capabilities",
     "provider",
     "provider_name",
+    "structured_output_capability",
     "timeout_seconds",
+}
+_STRUCTURED_OUTPUT_CAPABILITY_KEYS = {
+    "max_schema_bytes",
+    "max_schema_depth",
+    "mode",
+    "revision",
+    "supported_dialect",
+    "supported_keywords",
+    "supports_json_object_fallback",
+    "supports_local_refs",
+    "supports_stream_terminal_validation",
 }
 _CONTEXT_PROFILE_CONFIG_KEYS = {
     "allow_conservative_fallback",
@@ -125,6 +138,7 @@ class OpenAICompatibleDeploymentConfig:
     route_id: str
     config: OpenAICompatibleConfig
     capabilities: ModelCapabilities = ModelCapabilities()
+    structured_output_capability: ProviderStructuredOutputCapability | None = None
     required_capabilities: tuple[str, ...] = ()
     fallback_deployment_ids: tuple[str, ...] = ()
     enabled: bool = True
@@ -137,7 +151,11 @@ class OpenAICompatibleDeploymentConfig:
         return LLMRetryPolicy(max_attempts=max(1, self.max_retries + 1))
 
     def build_client(self) -> OpenAICompatibleClient:
-        return OpenAICompatibleClient(self.config, retry_policy=self.retry_policy())
+        return OpenAICompatibleClient(
+            self.config,
+            retry_policy=self.retry_policy(),
+            structured_output_capability=self.structured_output_capability,
+        )
 
     def build_model_deployment(self) -> ModelDeployment:
         from framework.llm.routing.deployment import ModelDeployment
@@ -148,6 +166,7 @@ class OpenAICompatibleDeploymentConfig:
             model=self.config.model,
             client=self.build_client(),
             capabilities=self.capabilities,
+            structured_output_capability=self.structured_output_capability,
             enabled=self.enabled,
             metadata={
                 "route_id": self.route_id,
@@ -169,6 +188,7 @@ def load_openai_compatible_deployment(
     path: str | Path | None = None,
     *,
     route_id: str | None = None,
+    apply_environment_overrides: bool = True,
 ) -> OpenAICompatibleDeploymentConfig:
     configured_path, required = _default_model_config_path(path)
     if configured_path is None:
@@ -198,6 +218,7 @@ def load_openai_compatible_deployment(
         deployment_payload,
         route_id=selected_route_id,
         route_payload=route_payload,
+        apply_environment_overrides=apply_environment_overrides,
     )
 
 
@@ -375,6 +396,11 @@ def _validate_deployment_schema(payload: dict[str, Any], *, field: str) -> str:
     if "enabled" in payload:
         _validate_boolish(payload.get("enabled"), field=f"{field}.enabled")
     _capabilities_from_payload(payload)
+    _structured_output_capability_from_payload(
+        payload,
+        provider=_provider_name_for_payload(payload),
+        deployment=deployment_id,
+    )
     _validate_context_profile_schema(payload)
     return deployment_id
 
@@ -557,11 +583,13 @@ def _deployment_config(
     *,
     route_id: str,
     route_payload: dict[str, Any] | None = None,
+    apply_environment_overrides: bool = True,
 ) -> OpenAICompatibleDeploymentConfig:
+    llm_override_names = apply_environment_overrides
     provider_kind = _env_override_text(
         payload,
         "provider",
-        env_names=("NEWS_LLM_PROVIDER",),
+        env_names=("NEWS_LLM_PROVIDER",) if llm_override_names else (),
         field="provider",
         required=True,
     )
@@ -571,7 +599,7 @@ def _deployment_config(
         _env_override_text(
             payload,
             "provider_name",
-            env_names=("NEWS_LLM_PROVIDER_NAME",),
+            env_names=("NEWS_LLM_PROVIDER_NAME",) if llm_override_names else (),
             field="provider_name",
             required=False,
         )
@@ -582,12 +610,15 @@ def _deployment_config(
         payload,
         "api_base",
         aliases=("base_url", "api_url"),
-        env_names=("NEWS_LLM_BASE_URL",),
+        env_names=("NEWS_LLM_BASE_URL",) if llm_override_names else (),
         field="api_base",
         required=True,
     )
     _validate_url(base_url, field="api_base")
-    api_key_env = _api_key_env(payload)
+    api_key_env = _api_key_env(
+        payload,
+        apply_environment_overrides=apply_environment_overrides,
+    )
     timeout_seconds = _positive_float(
         payload.get("timeout_seconds", 90.0),
         field="timeout_seconds",
@@ -610,7 +641,7 @@ def _deployment_config(
     model = _env_override_text(
         payload,
         "model",
-        env_names=("NEWS_LLM_MODEL",),
+        env_names=("NEWS_LLM_MODEL",) if llm_override_names else (),
         field="model",
         required=True,
     )
@@ -620,6 +651,11 @@ def _deployment_config(
         provider=provider_name,
         model=model,
         capabilities=capabilities,
+    )
+    structured_output_capability = _structured_output_capability_from_payload(
+        payload,
+        provider=provider_name,
+        deployment=deployment_id,
     )
     return OpenAICompatibleDeploymentConfig(
         deployment_id=deployment_id,
@@ -632,6 +668,7 @@ def _deployment_config(
             timeout_seconds=timeout_seconds,
         ),
         capabilities=capabilities,
+        structured_output_capability=structured_output_capability,
         required_capabilities=required_capabilities,
         fallback_deployment_ids=fallback_deployment_ids,
         enabled=enabled,
@@ -642,15 +679,26 @@ def _deployment_config(
     )
 
 
-def _api_key_env(payload: dict[str, Any]) -> str:
+def _api_key_env(
+    payload: dict[str, Any],
+    *,
+    apply_environment_overrides: bool = True,
+) -> str:
     api_key_env = _optional_text(
-        os.getenv("NEWS_LLM_API_KEY_ENV") or payload.get("api_key_env")
+        (
+            os.getenv("NEWS_LLM_API_KEY_ENV")
+            if apply_environment_overrides
+            else None
+        )
+        or payload.get("api_key_env")
     )
     if api_key_env:
         if _ENV_NAME_RE.fullmatch(api_key_env) is None:
             raise LLMConfigurationError("api_key_env must be an environment variable name")
         return api_key_env
-    override_secret = _optional_text(os.getenv("NEWS_LLM_API_KEY"))
+    override_secret = _optional_text(
+        os.getenv("NEWS_LLM_API_KEY") if apply_environment_overrides else None
+    )
     if override_secret:
         raise LLMConfigurationError(
             "NEWS_LLM_API_KEY must not be used in model diagnostics; set NEWS_LLM_API_KEY_ENV"
@@ -711,6 +759,87 @@ def _capabilities_from_payload(payload: dict[str, Any]) -> ModelCapabilities:
         )
     except TypeError as exc:
         raise LLMConfigurationError(f"invalid capabilities config: {exc}") from exc
+
+
+def _structured_output_capability_from_payload(
+    payload: dict[str, Any],
+    *,
+    provider: str,
+    deployment: str,
+) -> ProviderStructuredOutputCapability | None:
+    raw = payload.get("structured_output_capability")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise LLMConfigurationError("structured_output_capability must be an object")
+    _assert_allowed_keys(
+        raw,
+        allowed=_STRUCTURED_OUTPUT_CAPABILITY_KEYS,
+        field="structured_output_capability",
+    )
+    supported_keywords = raw.get("supported_keywords", [])
+    if not isinstance(supported_keywords, list) or not all(
+        isinstance(keyword, str) and keyword.strip()
+        for keyword in supported_keywords
+    ):
+        raise LLMConfigurationError(
+            "structured_output_capability.supported_keywords must be a list of strings"
+        )
+    try:
+        return ProviderStructuredOutputCapability(
+            provider=provider,
+            deployment=deployment,
+            mode=_required_text(
+                raw.get("mode"),
+                field="structured_output_capability.mode",
+            ),
+            supported_dialect=_optional_text(raw.get("supported_dialect")),
+            supported_keywords=frozenset(supported_keywords),
+            supports_local_refs=_strict_bool(
+                raw.get("supports_local_refs", False),
+                field="structured_output_capability.supports_local_refs",
+            ),
+            supports_json_object_fallback=_strict_bool(
+                raw.get("supports_json_object_fallback", False),
+                field="structured_output_capability.supports_json_object_fallback",
+            ),
+            max_schema_bytes=_optional_positive_int(
+                raw.get("max_schema_bytes"),
+                field="structured_output_capability.max_schema_bytes",
+            ),
+            max_schema_depth=_optional_positive_int(
+                raw.get("max_schema_depth"),
+                field="structured_output_capability.max_schema_depth",
+            ),
+            supports_stream_terminal_validation=_strict_bool(
+                raw.get("supports_stream_terminal_validation", False),
+                field=(
+                    "structured_output_capability."
+                    "supports_stream_terminal_validation"
+                ),
+            ),
+            revision=_required_text(
+                raw.get("revision"),
+                field="structured_output_capability.revision",
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise LLMConfigurationError(
+            f"invalid structured_output_capability config: {exc}"
+        ) from exc
+
+
+def _provider_name_for_payload(payload: dict[str, Any]) -> str:
+    provider_kind = _required_text(payload.get("provider"), field="provider")
+    return _optional_text(payload.get("provider_name")) or (
+        "dashscope" if provider_kind == "dashscope" else provider_kind
+    )
+
+
+def _strict_bool(value: Any, *, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise LLMConfigurationError(f"{field} must be a boolean")
+    return value
 
 
 def _validate_context_profile_schema(payload: dict[str, Any]) -> None:

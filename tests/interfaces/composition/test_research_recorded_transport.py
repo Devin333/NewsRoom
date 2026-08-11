@@ -20,8 +20,14 @@ from business.research.application.single_paper_runtime import (
 )
 from business.research.workflows import PAPER_ANALYSIS_GATE_REFERENCES
 from framework.harness import HarnessEventType, HarnessReplayReader
+from framework.llm import (
+    LOCAL_STRUCTURED_OUTPUT_DIALECT,
+    compile_structured_output_contract,
+    structured_output_enforcement_keywords,
+)
 from infrastructure.research import (
     ArxivResearchSourceProvider,
+    CANDIDATE_TASK_SCHEMAS,
     FilesystemHarnessArtifactPort,
     FilesystemResearchRunStore,
     StructuredResearchCandidateWorker,
@@ -89,17 +95,70 @@ class _RecordedHTTPResponse:
 
 
 def _recorded_environment(tmp_path: Path) -> dict[str, str]:
+    models_config = _write_recorded_models_config(tmp_path)
     return {
         "RECORDED_RESEARCH_API_KEY": "recorded-transport-only",
         "NEWS_RESEARCH_LLM_API_KEY_ENV": "RECORDED_RESEARCH_API_KEY",
         "NEWS_RESEARCH_LLM_BASE_URL": "https://recorded-llm.invalid/v1",
         "NEWS_RESEARCH_LLM_MODEL": "recorded-research-model",
+        "NEWS_RESEARCH_LLM_ROUTE_ID": "recorded-research",
         "NEWS_RESEARCH_LLM_MAX_ATTEMPTS": "1",
+        "NEWS_MODELS_CONFIG": str(models_config),
         "NEWS_RESEARCH_ROOT": str(tmp_path / "research"),
         "NEWS_RESEARCH_ARTIFACT_ROOT": str(tmp_path / "artifacts"),
         "NEWS_RESEARCH_RUN_STORE_ROOT": str(tmp_path / "run-store"),
         "NEWS_RESEARCH_RAG_LOCAL_ROOT": str(tmp_path / "chunks"),
     }
+
+
+def _write_recorded_models_config(tmp_path: Path) -> Path:
+    supported_keywords: set[str] = set()
+    for schema in CANDIDATE_TASK_SCHEMAS.values():
+        contract = compile_structured_output_contract(schema)
+        supported_keywords.update(
+            structured_output_enforcement_keywords(contract.canonical_schema)
+        )
+    config_path = tmp_path / "recorded-models.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "model_groups": {
+                    "recorded-research": {
+                        "deployments": [
+                            {
+                                "deployment_id": "recorded-research-model",
+                                "provider": "openai-compatible",
+                                "provider_name": "recorded",
+                                "model": "recorded-research-model",
+                                "api_base": "https://recorded-llm.invalid/v1",
+                                "api_key_env": "RECORDED_RESEARCH_API_KEY",
+                                "structured_output_capability": {
+                                    "mode": "native_strict",
+                                    "supported_dialect": (
+                                        LOCAL_STRUCTURED_OUTPUT_DIALECT
+                                    ),
+                                    "supported_keywords": sorted(
+                                        supported_keywords
+                                    ),
+                                    "supports_local_refs": True,
+                                    "supports_stream_terminal_validation": True,
+                                    "revision": "recorded-research-native-v1",
+                                },
+                            }
+                        ]
+                    }
+                },
+                "routes": {
+                    "recorded-research": {
+                        "model_group": "recorded-research"
+                    }
+                },
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return config_path
 
 
 def _settings(tmp_path: Path) -> ResearchRuntimeSettings:
@@ -265,7 +324,7 @@ def test_recorded_transports_execute_full_production_research_analysis(
             {"paper_id": _PAPER_ID},
         )
 
-        assert analyzed.status_code == 200
+        assert analyzed.status_code == 200, analyzed.text
         response = analyzed.json()["data"]
         assert mcp_analyzed.status_code == 200
         mcp_analyze_payload = mcp_analyzed.json()["data"]

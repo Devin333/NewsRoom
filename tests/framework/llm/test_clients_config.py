@@ -46,6 +46,14 @@ def _valid_payload() -> dict:
                             "context_window_tokens": 8192,
                             "max_output_tokens": 1024,
                         },
+                        "structured_output_capability": {
+                            "mode": "json_object",
+                            "supported_keywords": [],
+                            "supports_local_refs": False,
+                            "supports_json_object_fallback": False,
+                            "supports_stream_terminal_validation": True,
+                            "revision": "writer-primary-json-object-v1",
+                        },
                         "context_profile": {
                             "default_output_tokens": 256,
                             "tokenizer_family": "test-tokenizer",
@@ -107,12 +115,75 @@ def test_load_openai_compatible_deployment_validates_and_selects_route(tmp_path:
     assert deployment.context_profile.max_output_tokens == 1024
     assert deployment.context_profile.default_output_tokens == 256
     assert deployment.context_profile.allow_conservative_fallback is True
+    assert deployment.structured_output_capability is not None
+    assert deployment.structured_output_capability.mode == "json_object"
+    assert (
+        deployment.structured_output_capability.revision
+        == "writer-primary-json-object-v1"
+    )
 
     model_deployment = deployment.build_model_deployment()
     assert model_deployment.deployment_id == deployment.deployment_id
     assert model_deployment.provider == "test-provider"
     assert model_deployment.model == "test-model"
     assert model_deployment.context_profile == deployment.context_profile
+    assert (
+        model_deployment.structured_output_capability
+        == deployment.structured_output_capability
+    )
+
+
+def test_deployment_loader_can_freeze_file_identity_without_global_overrides(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write_config(tmp_path, _valid_payload())
+    monkeypatch.setenv("NEWS_LLM_PROVIDER_NAME", "override-provider")
+    monkeypatch.setenv("NEWS_LLM_BASE_URL", "https://override.example/v1")
+    monkeypatch.setenv("NEWS_LLM_MODEL", "override-model")
+    monkeypatch.setenv("NEWS_LLM_API_KEY_ENV", "OVERRIDE_LLM_KEY")
+
+    overridden = load_openai_compatible_deployment(path, route_id="writer")
+    frozen = load_openai_compatible_deployment(
+        path,
+        route_id="writer",
+        apply_environment_overrides=False,
+    )
+
+    assert overridden.config.provider == "override-provider"
+    assert overridden.config.base_url == "https://override.example/v1"
+    assert overridden.config.model == "override-model"
+    assert overridden.config.api_key_env == "OVERRIDE_LLM_KEY"
+    assert frozen.config.provider == "test-provider"
+    assert frozen.config.base_url == "https://llm.example/v1"
+    assert frozen.config.model == "test-model"
+    assert frozen.config.api_key_env == "TEST_LLM_API_KEY"
+
+
+def test_models_config_rejects_unversioned_structured_output_capability() -> None:
+    payload = _valid_payload()
+    del payload["model_groups"]["writer-group"]["deployments"][0][
+        "structured_output_capability"
+    ]["revision"]
+
+    with pytest.raises(
+        LLMConfigurationError,
+        match="structured_output_capability.revision",
+    ):
+        validate_openai_compatible_models_config(payload)
+
+
+def test_models_config_rejects_unknown_structured_output_capability_field() -> None:
+    payload = _valid_payload()
+    payload["model_groups"]["writer-group"]["deployments"][0][
+        "structured_output_capability"
+    ]["learn_from_provider_error"] = True
+
+    with pytest.raises(
+        LLMConfigurationError,
+        match="learn_from_provider_error",
+    ):
+        validate_openai_compatible_models_config(payload)
 
 
 def test_models_config_rejects_route_referencing_unknown_group() -> None:
