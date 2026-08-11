@@ -158,10 +158,8 @@ class LLMRouter:
                 retryable=False,
                 errors=[
                     {
-                        "agent_id": agent_id,
-                        "task_type": task_type,
                         "routing_policy_configured": self._routing_policy is not None,
-                        "resolution_trace": trace,
+                        "resolution_trace": _safe_resolution_trace(trace),
                     }
                 ],
             )
@@ -188,10 +186,8 @@ class LLMRouter:
                 retryable=False,
                 errors=[
                     {
-                        "agent_id": agent_id,
-                        "task_type": task_type,
                         "routing_policy_configured": self._routing_policy is not None,
-                        "resolution_trace": resolution_trace,
+                        "resolution_trace": _safe_resolution_trace(resolution_trace),
                     }
                 ],
             )
@@ -221,10 +217,8 @@ class LLMRouter:
                 retryable=False,
                 errors=[
                     {
-                        "agent_id": agent_id,
-                        "task_type": task_type,
                         "routing_policy_configured": self._routing_policy is not None,
-                        "resolution_trace": resolution_trace,
+                        "resolution_trace": _safe_resolution_trace(resolution_trace),
                     }
                 ],
             )
@@ -244,7 +238,7 @@ class LLMRouter:
         attempted_deployments: list[str] = []
         errors: list[dict[str, Any]] = []
         deployment_chain = route.deployment_chain()
-        resolution_trace = tuple(dict(item) for item in resolution_trace)
+        resolution_trace = _safe_resolution_trace(resolution_trace)
         route_events: list[LLMRouterEvent] = []
         overflow_recovery_used = False
         self._record_event(
@@ -484,7 +478,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
 
             self._record_event(
                 route_events,
@@ -558,7 +552,7 @@ class LLMRouter:
                         errors=errors,
                         events=route_events,
                         resolution_trace=resolution_trace,
-                    ) from exc
+                    ) from None
                 if exc.retryable and has_fallback:
                     self._record_fallback_event(
                         route_events,
@@ -591,13 +585,13 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
             except Exception as exc:
                 errors.append(
                     {
                         "deployment_id": deployment_id,
                         "error_type": "client_error",
-                        "message": str(exc),
+                        "error_class": type(exc).__name__,
                         "retryable": False,
                     }
                 )
@@ -608,7 +602,7 @@ class LLMRouter:
                     deployment=deployment,
                     metadata={
                         "error_type": "client_error",
-                        "message": str(exc),
+                        "error_class": type(exc).__name__,
                         "retryable": False,
                         "provider_call": True,
                     },
@@ -630,7 +624,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
 
             if (
                 cache_attempt.eligible
@@ -642,7 +636,7 @@ class LLMRouter:
                         request=prepared_request,
                         response=response,
                     )
-                except CacheResponseValidationError as exc:
+                except CacheResponseValidationError:
                     errors.append(
                         {
                             "deployment_id": deployment_id,
@@ -679,7 +673,7 @@ class LLMRouter:
                         errors=errors,
                         events=route_events,
                         resolution_trace=resolution_trace,
-                    ) from exc
+                    ) from None
 
             if self._cooldown_tracker is not None:
                 self._cooldown_tracker.record_success(deployment_id)
@@ -717,7 +711,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
             try:
                 global_budget_check = self._record_global_budget_call(
                     response,
@@ -761,7 +755,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
             if (
                 self._cache_runtime is not None
                 and cache_attempt.eligible
@@ -869,7 +863,7 @@ class LLMRouter:
         attempted_deployments: list[str] = []
         errors: list[dict[str, Any]] = []
         deployment_chain = route.deployment_chain()
-        resolution_trace = tuple(dict(item) for item in resolution_trace)
+        resolution_trace = _safe_resolution_trace(resolution_trace)
         route_events: list[LLMRouterEvent] = []
         overflow_recovery_used = False
         self._record_event(
@@ -1167,7 +1161,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
 
             self._record_event(
                 route_events,
@@ -1180,7 +1174,7 @@ class LLMRouter:
             try:
                 source_iterator = iter(deployment.client.stream(prepared_request))
                 first_event = LLMStreamEvent.from_any(next(source_iterator))
-            except StopIteration as exc:
+            except StopIteration:
                 self._record_stream_cache_outcome(
                     cache_attempt,
                     route=route,
@@ -1214,7 +1208,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
             except LLMProviderError as exc:
                 self._record_stream_cache_outcome(
                     cache_attempt,
@@ -1306,7 +1300,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
             except Exception as exc:
                 self._record_stream_cache_outcome(
                     cache_attempt,
@@ -1328,7 +1322,7 @@ class LLMRouter:
                     {
                         "deployment_id": deployment_id,
                         "error_type": "client_error",
-                        "message": str(exc),
+                        "error_class": type(exc).__name__,
                         "retryable": False,
                     }
                 )
@@ -1342,7 +1336,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
 
             capture = LLMStreamCacheCapture()
             terminal_event: LLMStreamEvent | None = None
@@ -1441,7 +1435,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
             except Exception as exc:
                 _close_iterator(source_iterator)
                 protocol_reason = (
@@ -1468,7 +1462,7 @@ class LLMRouter:
                     {
                         "deployment_id": deployment_id,
                         "error_type": "client_error",
-                        "message": str(exc),
+                        "error_class": type(exc).__name__,
                         "retryable": False,
                         "visible_output": visible_output,
                     }
@@ -1489,7 +1483,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
 
             if terminal_event is None:
                 self._record_stream_cache_outcome(
@@ -1593,7 +1587,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
 
             if capture_result.cacheable and (
                 self._cache_runtime is not None
@@ -1731,7 +1725,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
             except Exception as exc:
                 _close_iterator(source_iterator)
                 self._record_stream_cache_outcome(
@@ -1771,7 +1765,7 @@ class LLMRouter:
                     errors=errors,
                     events=route_events,
                     resolution_trace=resolution_trace,
-                ) from exc
+                ) from None
             else:
                 try:
                     capture.add(trailing_raw_event)
@@ -1819,7 +1813,7 @@ class LLMRouter:
                         errors=errors,
                         events=route_events,
                         resolution_trace=resolution_trace,
-                    ) from exc
+                    ) from None
 
             if (
                 write_after_exhaustion
@@ -2558,7 +2552,7 @@ class LLMRouter:
                 "to_model": to_deployment.model if to_deployment is not None else None,
                 "reason": reason,
                 "error_count": len(errors),
-                "errors": [dict(error) for error in errors],
+                "errors": [_safe_route_error_payload(error) for error in errors],
             },
             aliases=("fallback_selected",),
         )
@@ -2588,6 +2582,7 @@ class LLMRouter:
             },
         )
         event_payloads = _event_payloads(events)
+        safe_errors = [_safe_route_error_payload(error) for error in errors]
         manifest = _build_route_manifest(
             route_id=route_id,
             status="failed",
@@ -2598,7 +2593,7 @@ class LLMRouter:
             fallback_used=_fallback_count(events) > 0,
             budget_check=None,
             events=event_payloads,
-            errors=errors,
+            errors=safe_errors,
             resolution_trace=resolution_trace,
             error={
                 "message": message,
@@ -2613,7 +2608,7 @@ class LLMRouter:
             error_type=error_type,
             retryable=retryable,
             attempted_deployments=attempted_deployments,
-            errors=errors,
+            errors=safe_errors,
             events=event_payloads,
             manifest=manifest,
         )
@@ -2805,7 +2800,7 @@ def _with_routing_metadata(
             "llm_logical_request_count": metrics["logical_request_count"],
             "llm_provider_call_count": metrics["provider_call_count"],
             "llm_cache_hit_count": metrics["cache_hit_count"],
-            "llm_provider_resolution_trace": [dict(item) for item in resolution_trace],
+            "llm_provider_resolution_trace": list(_safe_resolution_trace(resolution_trace)),
             "llm_router_events": event_payloads,
             "llm_route_manifest": manifest,
             "llm_prepared_request": prepared.to_dict(),
@@ -2830,6 +2825,89 @@ def _event_payloads(events: Iterable[LLMRouterEvent | dict[str, Any]]) -> list[d
     return payloads
 
 
+_SAFE_ROUTE_ERROR_FIELDS = frozenset(
+    {
+        "attempt_index",
+        "attempts",
+        "budget_check",
+        "context_admission",
+        "cooldown_state",
+        "cooldown_until",
+        "deployment_id",
+        "error_category",
+        "error_class",
+        "error_type",
+        "global_budget_check",
+        "missing_capabilities",
+        "model",
+        "protocol_reason",
+        "provider",
+        "provider_call",
+        "provider_reported_limit_tokens",
+        "provider_reported_usage_tokens",
+        "retryable",
+        "status_code",
+        "visible_output",
+    }
+)
+_SAFE_RESOLUTION_TRACE_FIELDS = frozenset({"matched", "route_id", "source"})
+_SAFE_MESSAGE_ROLES = frozenset({"assistant", "developer", "system", "tool", "user"})
+
+
+def _safe_resolution_trace(
+    resolution_trace: Iterable[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        {
+            key: value
+            for key, value in dict(item).items()
+            if key in _SAFE_RESOLUTION_TRACE_FIELDS
+        }
+        for item in resolution_trace
+    )
+
+
+def _safe_route_error_payload(error: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        key: value
+        for key, value in dict(error).items()
+        if key in _SAFE_ROUTE_ERROR_FIELDS
+    }
+    if "error_type" not in payload:
+        payload["error_type"] = "redacted_error_detail"
+    return redact_sensitive_values(payload)
+
+
+def _safe_request_diagnostic_projection(request: LLMRequest) -> dict[str, Any]:
+    message_roles = []
+    for message in request.messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip().lower()
+        message_roles.append(role if role in _SAFE_MESSAGE_ROLES else "unknown")
+    return {
+        "message_count": len(request.messages),
+        "message_roles": message_roles,
+        "tool_count": len(request.tools),
+        "metadata_field_count": len(request.metadata),
+        "temperature": request.temperature,
+        "max_tokens": request.max_tokens,
+        "response_format_present": request.response_format is not None,
+        "output_schema_present": request.output_schema is not None,
+    }
+
+
+def _safe_response_diagnostic_projection(response: LLMResponse) -> dict[str, Any]:
+    content = response.content if isinstance(response.content, str) else ""
+    return {
+        "content_present": response.content is not None,
+        "content_char_count": len(content),
+        "structured_output_present": response.structured_output is not None,
+        "tool_call_count": len(response.tool_calls),
+        "usage": response.usage.to_dict(),
+    }
+
+
 def _build_route_manifest(
     *,
     route_id: str,
@@ -2848,7 +2926,7 @@ def _build_route_manifest(
     prepared: PreparedLLMRequest | None = None,
 ) -> dict[str, Any]:
     event_payloads = [dict(event) for event in events]
-    errors_payload = [redact_sensitive_values(dict(item)) for item in errors]
+    errors_payload = [_safe_route_error_payload(item) for item in errors]
     attempted_deployment_list = list(attempted_deployments)
     metrics = _route_metrics(event_payloads, attempted_deployment_list)
     manifest: dict[str, Any] = {
@@ -2863,11 +2941,11 @@ def _build_route_manifest(
         "attempted_deployments": attempted_deployment_list,
         "fallback_used": fallback_used,
         "fallback_count": metrics["fallback_count"],
-        "provider_resolution_trace": [redact_sensitive_values(dict(item)) for item in resolution_trace],
+        "provider_resolution_trace": list(_safe_resolution_trace(resolution_trace)),
         "events": event_payloads,
         "errors": errors_payload,
         "metrics": metrics,
-        "redacted_request": request.to_dict(redact=True),
+        "redacted_request": _safe_request_diagnostic_projection(request),
         "context_admissions": [
             dict(event.get("metadata") or {})
             for event in event_payloads
@@ -2877,7 +2955,7 @@ def _build_route_manifest(
     if prepared is not None:
         manifest["prepared_request"] = prepared.to_dict()
     if response is not None:
-        manifest["redacted_response"] = response.to_dict(redact=True)
+        manifest["redacted_response"] = _safe_response_diagnostic_projection(response)
     if budget_check is not None:
         manifest["budget_check"] = budget_check.to_dict()
     if global_budget_check is not None:

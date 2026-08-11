@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ from framework.llm import (
     LLMResponse,
     LLMRouteError,
     LLMRouter,
+    LLMRoutingPolicy,
     LLMCooldownPolicy,
     ModelDeployment,
     ModelContextProfile,
@@ -73,19 +75,31 @@ class FailingReadWriteCache:
 
 
 class RetryableFailureClient:
-    def __init__(self) -> None:
+    def __init__(self, message: str = "temporary failure") -> None:
         self.call_count = 0
+        self.message = message
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         self.call_count += 1
         raise LLMProviderError(
-            "temporary failure",
+            self.message,
             provider="test",
             model="primary-model",
             error_type="server_error",
             retryable=True,
             status_code=503,
         )
+
+    def stream(self, request: LLMRequest):  # type: ignore[no-untyped-def]
+        raise AssertionError("stream is outside this router complete test")
+
+
+class SensitiveFailureClient:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        raise RuntimeError(self.message)
 
     def stream(self, request: LLMRequest):  # type: ignore[no-untyped-def]
         raise AssertionError("stream is outside this router complete test")
@@ -262,6 +276,304 @@ def test_cache_hit_precedes_cooldown_and_provider_budget_and_is_current_call_met
     event_payload = json.dumps(response.metadata["llm_router_events"], sort_keys=True)
     assert "classify this stable input" not in event_payload
     assert "tenant-a" not in event_payload
+
+
+def test_cache_entry_events_manifest_and_metrics_exclude_sensitive_material() -> None:
+    prompt_secret = "raw-prompt-security-marker"
+    normalized_response = "normalized-response-security-marker"
+    raw_provider_response = "raw-provider-response-security-marker"
+    response_model_secret = "response-model-security-marker"
+    role_secret = "message-role-security-marker"
+    tool_argument_secret = "tool-argument-security-marker"
+    tenant_scope = "tenant-scope-security-marker"
+    project_scope = "project-scope-security-marker"
+    policy_scope = "policy-scope-security-marker"
+    hmac_secret = "0123456789abcdef"
+    base_request = _request()
+    request = replace(
+        base_request,
+        messages=[{"role": role_secret, "content": prompt_secret}],
+        metadata={
+            **base_request.metadata,
+            "llm_cache": {
+                **base_request.metadata["llm_cache"],
+                "scope": {
+                    "tenant_id": tenant_scope,
+                    "project_id": project_scope,
+                    "policy_scope": policy_scope,
+                },
+            },
+        },
+    )
+    cache = CountingCache()
+    runtime = _runtime(CacheMode.READ_WRITE, cache)
+    profile = _profile(
+        deployment_id="primary",
+        provider="test",
+        model="primary-model",
+    )
+    prepared = build_default_request_preparer([profile]).prepare(request, profile)
+    preparation = runtime.prepare(
+        request=prepared.normalized_request,
+        deployment_id="primary",
+        provider="test",
+        model="primary-model",
+        prepared_identity=prepared.cache_identity(),
+    )
+    assert preparation.key is not None
+    full_key = preparation.key.to_string()
+    recorded = []
+    response = _router(
+        runtime,
+        ModelDeployment(
+            "primary",
+            "test",
+            "primary-model",
+            FakeLLMClient(
+                [
+                    LLMResponse(
+                        content=normalized_response,
+                        model=response_model_secret,
+                        metadata={"finish_reason": "stop"},
+                        raw={
+                            "provider_response": raw_provider_response,
+                            "tool_arguments": {"credential": tool_argument_secret},
+                        },
+                    )
+                ]
+            ),
+        ),
+        event_sink=recorded.append,
+        routing_policy=LLMRoutingPolicy(default_route_id="route"),
+    ).complete_for(
+        request,
+        agent_id=tenant_scope,
+        task_type=project_scope,
+    )
+
+    lookup = cache.get(preparation.key)
+    assert lookup.entry is not None
+    entry_payload = lookup.entry.to_json_bytes().decode("utf-8")
+    diagnostic_payload = json.dumps(
+        {
+            "events": [event.to_dict(redact=False) for event in recorded],
+            "manifest": response.metadata["llm_route_manifest"],
+            "metrics": response.metadata["llm_route_manifest"]["metrics"],
+        },
+        sort_keys=True,
+    )
+    for forbidden in (
+        prompt_secret,
+        raw_provider_response,
+        role_secret,
+        tool_argument_secret,
+        tenant_scope,
+        project_scope,
+        policy_scope,
+        hmac_secret,
+        full_key,
+    ):
+        assert forbidden not in entry_payload
+        assert forbidden not in diagnostic_payload
+    assert normalized_response in entry_payload
+    assert normalized_response not in diagnostic_payload
+    assert response_model_secret not in diagnostic_payload
+
+    tool_request = replace(
+        request,
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "credential": {"const": tool_argument_secret},
+                        },
+                    },
+                },
+            }
+        ],
+    )
+    tool_events = []
+    tool_response = _router(
+        runtime,
+        ModelDeployment(
+            "primary",
+            "test",
+            "primary-model",
+            FakeLLMClient(["tool-path-response-security-marker"]),
+        ),
+        event_sink=tool_events.append,
+    ).complete("route", tool_request)
+    tool_diagnostics = json.dumps(
+        {
+            "events": [event.to_dict(redact=False) for event in tool_events],
+            "manifest": tool_response.metadata["llm_route_manifest"],
+            "metrics": tool_response.metadata["llm_route_manifest"]["metrics"],
+        },
+        sort_keys=True,
+    )
+    for forbidden in (
+        prompt_secret,
+        "tool-path-response-security-marker",
+        tool_argument_secret,
+        tenant_scope,
+        project_scope,
+        policy_scope,
+    ):
+        assert forbidden not in tool_diagnostics
+
+
+def test_route_error_rendering_and_diagnostics_exclude_sensitive_material() -> None:
+    prompt_secret = "error-prompt-security-marker"
+    raw_provider_response = "error-provider-response-security-marker"
+    tool_argument_secret = "error-tool-argument-security-marker"
+    tenant_scope = "error-tenant-scope-security-marker"
+    project_scope = "error-project-scope-security-marker"
+    policy_scope = "error-policy-scope-security-marker"
+    hmac_secret = "0123456789abcdef"
+    base_request = _request()
+    runtime = _runtime(CacheMode.READ_WRITE, CountingCache())
+    profile = _profile(
+        deployment_id="primary",
+        provider="test",
+        model="primary-model",
+    )
+    prepared = build_default_request_preparer([profile]).prepare(base_request, profile)
+    preparation = runtime.prepare(
+        request=prepared.normalized_request,
+        deployment_id="primary",
+        provider="test",
+        model="primary-model",
+        prepared_identity=prepared.cache_identity(),
+    )
+    assert preparation.key is not None
+    full_key = preparation.key.to_string()
+    request = replace(
+        base_request,
+        messages=[{"role": "user", "content": prompt_secret}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "arguments": {"credential": tool_argument_secret},
+                },
+            }
+        ],
+        metadata={
+            **base_request.metadata,
+            "llm_cache": {
+                **base_request.metadata["llm_cache"],
+                "scope": {
+                    "tenant_id": tenant_scope,
+                    "project_id": project_scope,
+                    "policy_scope": policy_scope,
+                },
+            },
+        },
+    )
+    failure_message = " | ".join(
+        (
+            prompt_secret,
+            raw_provider_response,
+            tool_argument_secret,
+            tenant_scope,
+            project_scope,
+            policy_scope,
+            hmac_secret,
+            full_key,
+        )
+    )
+    recorded = []
+    with pytest.raises(LLMRouteError) as raised:
+        _router(
+            runtime,
+            ModelDeployment(
+                "primary",
+                "test",
+                "primary-model",
+                SensitiveFailureClient(failure_message),
+            ),
+            event_sink=recorded.append,
+        ).complete("route", request)
+
+    rendered = "\n".join(
+        (
+            str(raised.value),
+            repr(raised.value),
+            "".join(traceback.format_exception(raised.value)),
+            json.dumps(raised.value.to_dict(redact=False), sort_keys=True),
+            json.dumps(
+                [event.to_dict(redact=False) for event in recorded],
+                sort_keys=True,
+            ),
+        )
+    )
+    for forbidden in (
+        prompt_secret,
+        raw_provider_response,
+        tool_argument_secret,
+        tenant_scope,
+        project_scope,
+        policy_scope,
+        hmac_secret,
+        full_key,
+    ):
+        assert forbidden not in rendered
+    assert raised.value.errors == (
+        {
+            "deployment_id": "primary",
+            "error_type": "client_error",
+            "error_class": "RuntimeError",
+            "retryable": False,
+        },
+    )
+
+    with pytest.raises(LLMRouteError) as provider_raised:
+        _router(
+            _runtime(CacheMode.READ_WRITE, CountingCache()),
+            ModelDeployment(
+                "primary",
+                "test",
+                "primary-model",
+                RetryableFailureClient(failure_message),
+            ),
+        ).complete("route", request)
+    provider_rendered = "".join(traceback.format_exception(provider_raised.value))
+    for forbidden in (
+        prompt_secret,
+        raw_provider_response,
+        tool_argument_secret,
+        tenant_scope,
+        project_scope,
+        policy_scope,
+        hmac_secret,
+        full_key,
+    ):
+        assert forbidden not in provider_rendered
+
+    unresolved_router = _router(
+        _runtime(CacheMode.DISABLED, None),
+        ModelDeployment(
+            "primary",
+            "test",
+            "primary-model",
+            FakeLLMClient(["unused"]),
+        ),
+        routing_policy=LLMRoutingPolicy(),
+    )
+    with pytest.raises(LLMRouteError) as unresolved:
+        unresolved_router.complete_for(
+            request,
+            agent_id=tenant_scope,
+            task_type=project_scope,
+        )
+    unresolved_payload = json.dumps(unresolved.value.to_dict(redact=False), sort_keys=True)
+    assert tenant_scope not in unresolved_payload
+    assert project_scope not in unresolved_payload
 
 
 @pytest.mark.parametrize(

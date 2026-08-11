@@ -3,11 +3,9 @@ from __future__ import annotations
 import pytest
 
 from framework.llm.cache import (
-    CacheContext,
     CacheEntry,
     CacheMode,
     CacheResponseValidationError,
-    CacheScope,
     LLMCacheKeyFactory,
     LLMCachePolicy,
 )
@@ -132,7 +130,8 @@ def test_policy_returns_stable_bypass_reasons() -> None:
 def test_entry_projection_strips_request_and_route_metadata() -> None:
     request = _request()
     decision = _policy().evaluate(request)
-    key = LLMCacheKeyFactory(secret="0123456789abcdef").build(
+    hmac_secret = "0123456789abcdef"
+    key = LLMCacheKeyFactory(secret=hmac_secret).build(
         request=request,
         context=decision.context,
         deployment_id="primary-v1",
@@ -144,7 +143,11 @@ def test_entry_projection_strips_request_and_route_metadata() -> None:
         request=request,
         response=LLMResponse(
             content="answer",
-            raw={"authorization": "secret"},
+            raw={
+                "provider_response": "raw-provider-response",
+                "tool_arguments": {"credential": "tool-argument-secret"},
+                "authorization": "provider-authorization-secret",
+            },
             metadata={
                 "run_id": "run-secret",
                 "llm_router_events": [{"prompt": "private prompt"}],
@@ -153,9 +156,19 @@ def test_entry_projection_strips_request_and_route_metadata() -> None:
         ),
     )
     encoded = entry.to_json_bytes().decode("utf-8")
-    assert "authorization" not in encoded
-    assert "run-secret" not in encoded
-    assert "private prompt" not in encoded
+    for forbidden in (
+        "private prompt",
+        "raw-provider-response",
+        "tool-argument-secret",
+        "tenant-a",
+        "project-a",
+        "policy-v1",
+        hmac_secret,
+        key.to_string(),
+        "provider-authorization-secret",
+        "run-secret",
+    ):
+        assert forbidden not in encoded
     assert entry.to_response().content == "answer"
 
 
