@@ -176,9 +176,29 @@ class ContextCompactionPolicy:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ContextCompactionPolicy:
         payload = strict_payload(value, model="ContextCompactionPolicy")
+        action_order = _policy_sequence(
+            payload.pop("action_order"),
+            field="action_order",
+            required=True,
+        )
+        protected_group_kinds = _policy_sequence(
+            payload.pop("protected_group_kinds", ()),
+            field="protected_group_kinds",
+        )
+        protected_reasons = _policy_sequence(
+            payload.pop("protected_reasons", ()),
+            field="protected_reasons",
+        )
+        allowed_loss_risks = _policy_sequence(
+            payload.pop(
+                "allowed_loss_risks",
+                (ContextLossRisk.NONE, ContextLossRisk.LOW),
+            ),
+            field="allowed_loss_risks",
+        )
         result = cls(
             policy_revision=payload.pop("policy_revision"),
-            action_order=tuple(payload.pop("action_order")),
+            action_order=action_order,
             max_actions=payload.pop("max_actions"),
             max_summary_calls=payload.pop("max_summary_calls"),
             max_replans=payload.pop("max_replans"),
@@ -187,11 +207,9 @@ class ContextCompactionPolicy:
             max_cost_usd=payload.pop("max_cost_usd"),
             max_turns=payload.pop("max_turns"),
             keep_recent_complete_turns=payload.pop("keep_recent_complete_turns", 4),
-            protected_group_kinds=tuple(payload.pop("protected_group_kinds", ())),
-            protected_reasons=tuple(payload.pop("protected_reasons", ())),
-            allowed_loss_risks=tuple(
-                payload.pop("allowed_loss_risks", (ContextLossRisk.NONE, ContextLossRisk.LOW))
-            ),
+            protected_group_kinds=protected_group_kinds,
+            protected_reasons=protected_reasons,
+            allowed_loss_risks=allowed_loss_risks,
             failure_policy=payload.pop("failure_policy", "halt"),
             schema_revision=payload.pop(
                 "schema_revision",
@@ -201,6 +219,20 @@ class ContextCompactionPolicy:
         )
         reject_fields(payload, model="ContextCompactionPolicy")
         return result
+
+
+def _policy_sequence(
+    value: Any,
+    *,
+    field: str,
+    required: bool = False,
+) -> tuple[Any, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise HarnessValidationError(f"{field} must be a list")
+    result = tuple(value)
+    if required and not result:
+        raise HarnessValidationError(f"{field} must not be empty")
+    return result
 
 
 @dataclass(frozen=True)
@@ -287,6 +319,10 @@ class ContextCompactionPlan:
     protected_group_ids: tuple[str, ...]
     policy_revision: str
     physical_profile_revision: str
+    initial_admission_ref: str
+    max_llm_calls: int
+    max_cost_usd: float
+    max_turns: int
     schema_revision: str = CONTEXT_COMPACTION_PLAN_SCHEMA_REVISION
     plan_id: str | None = None
     identity_checksum: str | None = None
@@ -298,6 +334,7 @@ class ContextCompactionPlan:
             "task_binding_ref",
             "policy_revision",
             "physical_profile_revision",
+            "initial_admission_ref",
             "schema_revision",
         ):
             object.__setattr__(
@@ -320,6 +357,23 @@ class ContextCompactionPlan:
             self,
             "max_replans",
             non_negative_int(self.max_replans, field="max_replans"),
+        )
+        object.__setattr__(
+            self,
+            "max_llm_calls",
+            non_negative_int(self.max_llm_calls, field="max_llm_calls"),
+        )
+        if (
+            isinstance(self.max_cost_usd, bool)
+            or not isinstance(self.max_cost_usd, (int, float))
+            or float(self.max_cost_usd) < 0
+        ):
+            raise HarnessValidationError("max_cost_usd must be non-negative")
+        object.__setattr__(self, "max_cost_usd", float(self.max_cost_usd))
+        object.__setattr__(
+            self,
+            "max_turns",
+            positive_int(self.max_turns, field="max_turns"),
         )
         actions = tuple(self.actions)
         if not all(isinstance(action, ContextCompactionAction) for action in actions):
@@ -355,10 +409,14 @@ class ContextCompactionPlan:
             "max_actions": self.max_actions,
             "max_summary_calls": self.max_summary_calls,
             "max_replans": self.max_replans,
+            "max_llm_calls": self.max_llm_calls,
+            "max_cost_usd": self.max_cost_usd,
+            "max_turns": self.max_turns,
             "actions": [action.identity_projection() for action in self.actions],
             "protected_group_ids": list(self.protected_group_ids),
             "policy_revision": self.policy_revision,
             "physical_profile_revision": self.physical_profile_revision,
+            "initial_admission_ref": self.initial_admission_ref,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -383,10 +441,14 @@ class ContextCompactionPlan:
             max_actions=payload.pop("max_actions"),
             max_summary_calls=payload.pop("max_summary_calls"),
             max_replans=payload.pop("max_replans"),
+            max_llm_calls=payload.pop("max_llm_calls"),
+            max_cost_usd=payload.pop("max_cost_usd"),
+            max_turns=payload.pop("max_turns"),
             actions=tuple(ContextCompactionAction.from_dict(action) for action in raw_actions),
             protected_group_ids=tuple(payload.pop("protected_group_ids", ())),
             policy_revision=payload.pop("policy_revision"),
             physical_profile_revision=payload.pop("physical_profile_revision"),
+            initial_admission_ref=payload.pop("initial_admission_ref"),
             schema_revision=payload.pop(
                 "schema_revision",
                 CONTEXT_COMPACTION_PLAN_SCHEMA_REVISION,

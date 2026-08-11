@@ -65,6 +65,20 @@ from framework.harness.context.materializer import (
     ContextGroupStructureValidator,
     ContextMaterializationRequest,
 )
+from framework.harness.context.planning import (
+    ContextCompactionActionDefinition,
+    ContextCompactionActionRegistry,
+    ContextCompactionPlanner,
+    ContextCompactionPlanningRequest,
+    ContextCompactionPlanValidator,
+    ContextCompactionPolicyResolver,
+)
+from framework.harness.context.planning_models import (
+    ContextCompactionPlanningResult,
+    ContextCompactionPlanningStatus,
+    ContextPhysicalAdmissionEvidence,
+    ContextPlanningBudgetUsage,
+)
 from framework.harness.context.snapshot import ContextSnapshotStore
 from framework.harness.context.summary_models import (
     ContextSummaryCandidate,
@@ -97,6 +111,14 @@ __all__ = [
     "ContextCompactionAction",
     "ContextCompactionActionResult",
     "ContextCompactionActionType",
+    "ContextCompactionActionDefinition",
+    "ContextCompactionActionRegistry",
+    "ContextCompactionPlanner",
+    "ContextCompactionPlanningRequest",
+    "ContextCompactionPlanningResult",
+    "ContextCompactionPlanningStatus",
+    "ContextCompactionPlanValidator",
+    "ContextCompactionPolicyResolver",
     "ContextCompactionOutcome",
     "ContextCompactionPlan",
     "ContextCompactionPolicy",
@@ -104,6 +126,8 @@ __all__ = [
     "ContextEnvelope",
     "ContextGateResult",
     "ContextPrivacyGate",
+    "ContextPhysicalAdmissionEvidence",
+    "ContextPlanningBudgetUsage",
     "ContextProvenanceGate",
     "ContextGroup",
     "ContextGroupKind",

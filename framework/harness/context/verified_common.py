@@ -40,7 +40,21 @@ def text_tuple(
 def frozen_mapping(value: Any, *, field: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise HarnessValidationError(f"{field} must be an object")
-    return MappingProxyType(deepcopy(dict(value)))
+    return MappingProxyType(
+        {key: _deep_freeze(item) for key, item in value.items()}
+    )
+
+
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _deep_freeze(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_deep_freeze(item) for item in value)
+    return deepcopy(value)
 
 
 def mapping_tuple(value: Any, *, field: str) -> tuple[dict[str, Any], ...]:

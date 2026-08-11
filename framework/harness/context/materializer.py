@@ -486,6 +486,27 @@ class ContextGroupMaterializer:
                 evidence.get("required_citation_refs", ()),
                 field="evidence.required_citation_refs",
             )
+            required_span_refs = text_tuple(
+                evidence.get("required_span_refs", ()),
+                field="evidence.required_span_refs",
+            )
+            selected_span_refs = text_tuple(
+                evidence.get("selected_span_refs", span_refs),
+                field="evidence.selected_span_refs",
+                required=True,
+            )
+            if not set(required_span_refs).issubset(span_refs):
+                raise HarnessValidationError(
+                    "evidence.required_span_refs must belong to span_refs"
+                )
+            if not set(selected_span_refs).issubset(span_refs):
+                raise HarnessValidationError(
+                    "evidence.selected_span_refs must belong to span_refs"
+                )
+            if not set(required_span_refs).issubset(selected_span_refs):
+                raise HarnessValidationError(
+                    "evidence.selected_span_refs must retain required_span_refs"
+                )
             conflict_refs = text_tuple(
                 evidence.get("conflict_refs", ()),
                 field="evidence.conflict_refs",
@@ -521,6 +542,9 @@ class ContextGroupMaterializer:
                         "evidence_id": evidence_id,
                         "lineage_refs": list(lineage_refs),
                         "conflict_refs": list(conflict_refs),
+                        "required_span_refs": list(required_span_refs),
+                        "selected_span_refs": list(selected_span_refs),
+                        "whole_group_required": required,
                     },
                     diagnostic_metadata=_mapping_value(
                         evidence.get("diagnostic_metadata", {}),
@@ -787,6 +811,8 @@ _EVIDENCE_FIELDS = frozenset(
         "lineage_refs",
         "required",
         "required_citation_refs",
+        "required_span_refs",
+        "selected_span_refs",
         "source_refs",
         "span_refs",
     }

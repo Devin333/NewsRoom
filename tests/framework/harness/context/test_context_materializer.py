@@ -305,8 +305,8 @@ def test_evidence_materialization_preserves_lineage_citations_and_conflicts() ->
     assert evidence.query_binding_ref == "task://current"
     assert evidence.required_citation_refs == ("citation://1",)
     assert evidence.protection_reasons == (ContextProtectionReason.REQUIRED_EVIDENCE,)
-    assert evidence.semantic_metadata["lineage_refs"] == ["lineage://extract-1"]
-    assert evidence.semantic_metadata["conflict_refs"] == ["evidence://conflict-1"]
+    assert evidence.semantic_metadata["lineage_refs"] == ("lineage://extract-1",)
+    assert evidence.semantic_metadata["conflict_refs"] == ("evidence://conflict-1",)
 
 
 @pytest.mark.parametrize("field", ["source_refs", "span_refs", "lineage_refs"])

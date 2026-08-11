@@ -18,11 +18,11 @@
 
 ## 3. Policy and Deterministic Planning
 
-- [ ] 3.1 Implement strict composition parsing for compaction policy and fail fast on unknown/unregistered actions or invalid bounds.
-- [ ] 3.2 Implement the deterministic planner over source snapshot, task/query binding, protection state, initial physical admission, and policy revision.
-- [ ] 3.3 Enforce reversible-before-lossy action ordering and stable plan ids for equivalent inputs.
-- [ ] 3.4 Reject plans that target partial tool transactions, protected groups, stale source snapshots, unauthorized tools, or out-of-policy actions.
-- [ ] 3.5 Return typed no-plan/protected-context/action-budget outcomes without unbounded internal replanning.
+- [x] 3.1 Implement strict composition parsing for compaction policy and fail fast on unknown/unregistered actions or invalid bounds.
+- [x] 3.2 Implement the deterministic planner over source snapshot, task/query binding, protection state, initial physical admission, and policy revision.
+- [x] 3.3 Enforce reversible-before-lossy action ordering and stable plan ids for equivalent inputs.
+- [x] 3.4 Reject plans that target partial tool transactions, protected groups, stale source snapshots, unauthorized tools, or out-of-policy actions.
+- [x] 3.5 Return typed no-plan/protected-context/action-budget outcomes without unbounded internal replanning.
 
 ## 4. Typed Action Execution
 

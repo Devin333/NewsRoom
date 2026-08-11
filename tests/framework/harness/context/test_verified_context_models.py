@@ -214,6 +214,10 @@ def test_plan_identity_binds_source_policy_profile_and_actions() -> None:
         protected_group_ids=("context-group://protected",),
         policy_revision="policy-v1",
         physical_profile_revision="profile-v1",
+        initial_admission_ref="context-physical-admission://one",
+        max_llm_calls=1,
+        max_cost_usd=0.2,
+        max_turns=2,
     )
 
     assert ContextCompactionPlan.from_dict(plan.to_dict()) == plan
@@ -239,6 +243,10 @@ def test_plan_rejects_summary_action_above_summary_budget() -> None:
             protected_group_ids=(),
             policy_revision="policy-v1",
             physical_profile_revision="profile-v1",
+            initial_admission_ref="context-physical-admission://one",
+            max_llm_calls=1,
+            max_cost_usd=0.2,
+            max_turns=2,
         )
 
 
