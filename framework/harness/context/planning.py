@@ -632,6 +632,13 @@ class ContextCompactionPlanner:
             policy.max_input_tokens,
             admission.max_input_tokens,
         )
+        if target_input_tokens < 1:
+            return self._result(
+                request,
+                status=ContextCompactionPlanningStatus.NO_ALLOWED_COMPACTION,
+                protected_group_ids=protected_group_ids,
+                reason_code="physical_profile_has_no_input_capacity",
+            )
         if admission.admitted and admission.input_tokens <= target_input_tokens:
             return self._result(
                 request,

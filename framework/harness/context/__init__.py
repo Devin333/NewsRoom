@@ -103,6 +103,13 @@ from framework.harness.context.verified_records import (
     ContextSemanticSnapshot,
     ContextSemanticSnapshotKind,
 )
+from framework.harness.context.verification import (
+    ContextAggregateGateResult,
+    ContextAggregateVerificationResult,
+    ContextAggregateVerifier,
+    ContextPhysicalAdmissionVerifier,
+    ContextPhysicalMaterialization,
+)
 
 __all__ = [
     "CONTEXT_SEGMENT_ORDER",
@@ -110,6 +117,9 @@ __all__ = [
     "CompressionRecord",
     "REVERSIBLE_CONTEXT_ACTIONS",
     "ContextAssembler",
+    "ContextAggregateGateResult",
+    "ContextAggregateVerificationResult",
+    "ContextAggregateVerifier",
     "ContextBudget",
     "ContextBudgetEstimator",
     "ContextBudgetGate",
@@ -144,6 +154,8 @@ __all__ = [
     "ContextGateResult",
     "ContextPrivacyGate",
     "ContextPhysicalAdmissionEvidence",
+    "ContextPhysicalAdmissionVerifier",
+    "ContextPhysicalMaterialization",
     "ContextPlanningBudgetUsage",
     "ContextProvenanceGate",
     "ContextGroup",

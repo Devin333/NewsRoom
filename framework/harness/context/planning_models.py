@@ -85,8 +85,6 @@ class ContextPhysicalAdmissionEvidence:
                 field_name,
                 non_negative_int(getattr(self, field_name), field=field_name),
             )
-        if self.max_input_tokens < 1:
-            raise HarnessValidationError("max_input_tokens must be positive")
         if not isinstance(self.group_input_tokens, Mapping):
             raise HarnessValidationError("group_input_tokens must be an object")
         group_counts: dict[str, int] = {}

@@ -44,10 +44,10 @@
 
 ## 6. Aggregate Post-Compaction VERIFY
 
-- [ ] 6.1 Define the `ContextPhysicalAdmissionVerifier` port and bounded prepared-evidence result without importing provider/tokenizer implementation into semantic Harness logic.
-- [ ] 6.2 Implement the Change 1 adapter that prepares the exact result materialization for a resolved deployment/profile and returns fingerprint/count/budget/admission revisions.
-- [ ] 6.3 Implement versioned structure, protection, tool-transaction, provenance, evidence/loss, action-budget, snapshot-integrity, and physical-admission gates.
-- [ ] 6.4 Implement aggregate verdict evidence that binds every gate to the same source/result snapshots and rejects legacy boolean-only gates.
+- [x] 6.1 Define the `ContextPhysicalAdmissionVerifier` port and bounded prepared-evidence result without importing provider/tokenizer implementation into semantic Harness logic.
+- [x] 6.2 Implement the Change 1 adapter that prepares the exact result materialization for a resolved deployment/profile and returns fingerprint/count/budget/admission revisions.
+- [x] 6.3 Implement versioned structure, protection, tool-transaction, provenance, evidence/loss, action-budget, snapshot-integrity, and physical-admission gates.
+- [x] 6.4 Implement aggregate verdict evidence that binds every gate to the same source/result snapshots and rejects legacy boolean-only gates.
 - [ ] 6.5 Prohibit result promotion and provider dispatch when legacy estimates fit but prepared physical admission fails.
 
 ## 7. Bounded Runtime and Assembler Integration
