@@ -155,7 +155,8 @@ def test_context_assembler_uses_verified_runtime_instead_of_estimated_halving() 
     assert envelope.metadata["context_verification_classification"] == (
         "versioned_verified_evidence"
     )
-    assert envelope.metadata["context_dispatch_authorized"] is True
+    assert envelope.metadata["context_dispatch_authorized"] is False
+    assert envelope.metadata["context_dispatch_authorization_required"] is True
     assert envelope.metadata["context_prepared_fingerprint"].startswith("sha256:")
     assert envelope.metadata["context_durable_refs"]["compression_record"]
     assert envelope.token_estimate <= 100

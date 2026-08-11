@@ -228,7 +228,11 @@ class ContextAssembler:
                     and result.result_snapshot.snapshot_id != result.source_snapshot.snapshot_id
                     else "versioned_no_compaction_evidence"
                 ),
-                "context_dispatch_authorized": True,
+                # The envelope is a legacy compatibility projection, not the
+                # exact provider request admitted by the runtime. Downstream
+                # dispatch must rematerialize and match this fingerprint.
+                "context_dispatch_authorized": False,
+                "context_dispatch_authorization_required": True,
                 "context_prepared_fingerprint": evidence.prepared_fingerprint,
                 "context_activation_event_id": result.activation_event_id,
                 "context_source_snapshot_id": result.source_snapshot.snapshot_id,

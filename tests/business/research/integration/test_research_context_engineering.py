@@ -58,7 +58,10 @@ def test_rag_context_writes_snapshot_before_llm_visible_artifacts() -> None:
     assert result.context_envelope.metadata["context_verification_classification"] == (
         "versioned_no_compaction_evidence"
     )
-    assert result.context_envelope.metadata["context_dispatch_authorized"] is True
+    assert result.context_envelope.metadata["context_dispatch_authorized"] is False
+    assert result.context_envelope.metadata[
+        "context_dispatch_authorization_required"
+    ] is True
     assert context_events.events[-1].event_type is HarnessEventType.CONTEXT_COMPACTION_PLANNED
 
 
