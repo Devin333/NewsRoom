@@ -13,6 +13,7 @@ from framework.llm.context import (
     LLMTokenCounterRegistry,
     ModelContextProfile,
     OpenAICompatibleRequestNormalizer,
+    build_default_request_preparer,
     build_openai_chat_payload,
 )
 from framework.llm.clients.fake import FakeLLMClient
@@ -396,3 +397,29 @@ def test_openai_payload_preserves_multilingual_media_message_shape() -> None:
     assert payload["messages"] == request.messages
     assert payload["messages"] is not request.messages
     assert payload["response_format"] == {"type": "json_object"}
+
+
+def test_default_preparer_registers_known_normalizer_by_profile_revision() -> None:
+    profile = _profile(
+        provider="dashscope",
+        normalizer_revision="openai-chat-completions-v1",
+    )
+
+    prepared = build_default_request_preparer([profile]).prepare(
+        LLMRequest(messages=[{"role": "user", "content": "hello"}]),
+        profile,
+    )
+
+    assert prepared.admission.status is LLMContextAdmissionStatus.ADMITTED
+    assert prepared.normalizer_revision == "openai-chat-completions-v1"
+
+
+def test_default_preparer_does_not_guess_unknown_normalizer_revision() -> None:
+    profile = _profile(normalizer_revision="unknown-provider-v9")
+
+    prepared = build_default_request_preparer([profile]).prepare(
+        LLMRequest(messages=[{"role": "user", "content": "hello"}]),
+        profile,
+    )
+
+    assert prepared.admission.status is LLMContextAdmissionStatus.NORMALIZER_UNAVAILABLE

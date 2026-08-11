@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from framework.llm.context.compression import LLMContextCompressor
 from framework.llm.context.estimator import estimate_request_tokens
+from framework.llm.context.factory import build_default_request_preparer
 from framework.llm.context.guard import (
     LLMContextCheck,
     LLMContextGuard,
@@ -62,6 +63,7 @@ __all__ = [
     "PreparedLLMRequest",
     "TokenCountMethod",
     "build_openai_chat_payload",
+    "build_default_request_preparer",
     "estimate_request_tokens",
     "openai_response_format",
     "prepared_request_fingerprint",
