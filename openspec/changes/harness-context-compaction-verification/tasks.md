@@ -31,16 +31,16 @@
 - [x] 4.3 Implement `REDUCE_AUTHORIZED_TOOL_SET` against existing trusted authorization and pending-transaction constraints.
 - [x] 4.4 Implement query-bound `SELECT_EVIDENCE_SPANS` with required citation/lineage/conflict preservation and explicit omitted-span loss reporting.
 - [x] 4.5 Implement `COMPACT_OLD_CONVERSATION` over complete turns/transactions while preserving the policy-defined recent complete tail.
-- [ ] 4.6 Implement `SUMMARIZE_GROUPS` as a bounded candidate-producing action that never mutates the active snapshot before verification.
-- [ ] 4.7 Implement the bounded action executor with action/summary/replan/token/cost/turn accounting and immutable action results.
+- [x] 4.6 Implement `SUMMARIZE_GROUPS` as a bounded candidate-producing action that never mutates the active snapshot before verification.
+- [x] 4.7 Implement the bounded action executor with action/summary/replan/token/cost/turn accounting and immutable action results.
 
 ## 5. Summary Candidate Ports and Gates
 
-- [ ] 5.1 Define replaceable summary-worker and summary-artifact ports plus deterministic fakes; do not install an implicit production LLM client.
-- [ ] 5.2 Validate candidate schema and reject free-text-only or authority-bearing worker outputs.
-- [ ] 5.3 Verify every candidate group/source/evidence/span/artifact/tool-outcome ref against the source snapshot and current authorization.
-- [ ] 5.4 Verify claim support, required evidence/citation coverage, protected facts, conflicts, omission declarations, recent tail, and policy-bounded loss risk.
-- [ ] 5.5 Prove rejected candidates leave source/result activation unchanged and cannot emit verified events or recursively call the summary worker.
+- [x] 5.1 Define replaceable summary-worker and summary-artifact ports plus deterministic fakes; do not install an implicit production LLM client.
+- [x] 5.2 Validate candidate schema and reject free-text-only or authority-bearing worker outputs.
+- [x] 5.3 Verify every candidate group/source/evidence/span/artifact/tool-outcome ref against the source snapshot and current authorization.
+- [x] 5.4 Verify claim support, required evidence/citation coverage, protected facts, conflicts, omission declarations, recent tail, and policy-bounded loss risk.
+- [x] 5.5 Prove rejected candidates leave source/result activation unchanged and cannot emit verified events or recursively call the summary worker.
 
 ## 6. Aggregate Post-Compaction VERIFY
 

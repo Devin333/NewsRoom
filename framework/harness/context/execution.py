@@ -31,6 +31,14 @@ from framework.harness.context.planning_models import (
     ContextPhysicalAdmissionEvidence,
     ContextPlanningBudgetUsage,
 )
+from framework.harness.context.summary import (
+    ContextSummaryArtifactPort,
+    ContextSummaryCandidateVerifier,
+    ContextSummaryMaterializer,
+    ContextSummaryRequest,
+    ContextSummaryWorkerPort,
+    ContextSummaryWorkerResult,
+)
 from framework.harness.context.verified_records import (
     ContextSemanticSnapshot,
     ContextSemanticSnapshotKind,
@@ -109,12 +117,32 @@ class ContextCompactionActionExecutor:
         artifact_port: ArtifactPort,
         *,
         registry: ContextCompactionActionRegistry | None = None,
+        summary_worker: ContextSummaryWorkerPort | None = None,
+        summary_artifact_port: ContextSummaryArtifactPort | None = None,
     ) -> None:
         if not isinstance(artifact_port, ArtifactPort):
             raise HarnessValidationError("artifact_port must implement ArtifactPort")
         self._artifact_port = artifact_port
         self._registry = registry or ContextCompactionActionRegistry.standard()
         self._validator = ContextCompactionPlanValidator(self._registry)
+        if summary_worker is not None and not isinstance(
+            summary_worker,
+            ContextSummaryWorkerPort,
+        ):
+            raise HarnessValidationError(
+                "summary_worker must implement ContextSummaryWorkerPort"
+            )
+        if summary_artifact_port is not None and not isinstance(
+            summary_artifact_port,
+            ContextSummaryArtifactPort,
+        ):
+            raise HarnessValidationError(
+                "summary_artifact_port must resolve summary artifact checksums"
+            )
+        self._summary_worker = summary_worker
+        self._summary_artifact_port = summary_artifact_port
+        self._summary_verifier = ContextSummaryCandidateVerifier()
+        self._summary_materializer = ContextSummaryMaterializer()
 
     def execute(
         self,
@@ -156,13 +184,29 @@ class ContextCompactionActionExecutor:
                     reason_code="turn_budget_exhausted_during_execution",
                 )
             if action.action_type is ContextCompactionActionType.SUMMARIZE_GROUPS:
-                return self._halt(
-                    status=ContextCompactionExecutionStatus.SUMMARY_REJECTED,
+                if self._summary_worker is None or self._summary_artifact_port is None:
+                    return self._halt(
+                        status=ContextCompactionExecutionStatus.SUMMARY_REJECTED,
+                        source_snapshot=source_snapshot,
+                        action_results=action_results,
+                        usage=current_usage,
+                        reason_code="summary_worker_not_injected",
+                    )
+                summary_result = self._execute_summary_action(
+                    action,
+                    current_groups=tuple(current_groups),
                     source_snapshot=source_snapshot,
-                    action_results=action_results,
+                    policy=policy,
+                    plan=plan,
                     usage=current_usage,
-                    reason_code="summary_worker_not_injected",
+                    action_results=action_results,
                 )
+                if isinstance(summary_result, ContextCompactionExecutionResult):
+                    return summary_result
+                current_groups, action_result, current_usage = summary_result
+                action_results.append(action_result)
+                summary_refs.append(action_result.summary_candidate_ref or "")
+                continue
             current_groups, action_result = self._apply_action(
                 action,
                 current_groups=tuple(current_groups),
@@ -199,6 +243,106 @@ class ContextCompactionActionExecutor:
             reconstruction_refs=tuple(reconstruction_refs),
             summary_refs=tuple(summary_refs),
         )
+
+    def _execute_summary_action(
+        self,
+        action: ContextCompactionAction,
+        *,
+        current_groups: tuple[ContextGroup, ...],
+        source_snapshot: ContextSemanticSnapshot,
+        policy: ContextCompactionPolicy,
+        plan: ContextCompactionPlan,
+        usage: ContextPlanningBudgetUsage,
+        action_results: list[ContextCompactionActionResult],
+    ) -> tuple[
+        tuple[ContextGroup, ...],
+        ContextCompactionActionResult,
+        ContextPlanningBudgetUsage,
+    ] | ContextCompactionExecutionResult:
+        if usage.summary_calls >= plan.max_summary_calls:
+            return self._halt(
+                status=ContextCompactionExecutionStatus.SUMMARY_REJECTED,
+                source_snapshot=source_snapshot,
+                action_results=action_results,
+                usage=usage,
+                reason_code="summary_call_budget_exhausted",
+            )
+        if usage.llm_calls >= plan.max_llm_calls:
+            return self._halt(
+                status=ContextCompactionExecutionStatus.SUMMARY_REJECTED,
+                source_snapshot=source_snapshot,
+                action_results=action_results,
+                usage=usage,
+                reason_code="summary_llm_budget_exhausted",
+            )
+        request = ContextSummaryRequest(
+            source_snapshot_id=source_snapshot.snapshot_id,
+            source_snapshot_checksum=source_snapshot.checksum,
+            task_binding_ref=source_snapshot.task_binding_ref,
+            policy_revision=policy.policy_revision,
+            target_group_ids=action.target_group_ids,
+            protected_group_ids=plan.protected_group_ids,
+            max_input_tokens=plan.target_input_tokens,
+            max_cost_usd=max(0.0, plan.max_cost_usd - usage.cost_usd),
+            summary_call_index=usage.summary_calls,
+        )
+        worker_result = self._summary_worker.generate(request)
+        if not isinstance(worker_result, ContextSummaryWorkerResult):
+            return self._halt(
+                status=ContextCompactionExecutionStatus.SUMMARY_REJECTED,
+                source_snapshot=source_snapshot,
+                action_results=action_results,
+                usage=usage,
+                reason_code="summary_worker_result_contract_invalid",
+            )
+        next_usage = ContextPlanningBudgetUsage(
+            actions=usage.actions,
+            summary_calls=usage.summary_calls + 1,
+            replans=usage.replans,
+            llm_calls=usage.llm_calls + 1,
+            input_tokens=usage.input_tokens + worker_result.input_tokens,
+            cost_usd=usage.cost_usd + worker_result.cost_usd,
+            turns=usage.turns + 1,
+        )
+        if worker_result.input_tokens > plan.target_input_tokens:
+            return self._halt(
+                status=ContextCompactionExecutionStatus.SUMMARY_REJECTED,
+                source_snapshot=source_snapshot,
+                action_results=action_results,
+                usage=next_usage,
+                reason_code="summary_input_budget_exceeded",
+            )
+        if next_usage.cost_usd > plan.max_cost_usd:
+            return self._halt(
+                status=ContextCompactionExecutionStatus.COST_BUDGET_EXHAUSTED,
+                source_snapshot=source_snapshot,
+                action_results=action_results,
+                usage=next_usage,
+                reason_code="summary_cost_budget_exhausted",
+            )
+        try:
+            self._summary_verifier.verify(
+                worker_result.candidate,
+                source_snapshot=source_snapshot,
+                target_group_ids=action.target_group_ids,
+                policy=policy,
+                artifact_port=self._summary_artifact_port,
+            )
+            groups, action_result = self._summary_materializer.apply(
+                worker_result.candidate,
+                source_snapshot=source_snapshot,
+                action=action,
+                current_groups=current_groups,
+            )
+        except HarnessValidationError:
+            return self._halt(
+                status=ContextCompactionExecutionStatus.SUMMARY_REJECTED,
+                source_snapshot=source_snapshot,
+                action_results=action_results,
+                usage=next_usage,
+                reason_code="summary_candidate_rejected_by_deterministic_gates",
+            )
+        return groups, action_result, next_usage
 
     def _apply_action(
         self,

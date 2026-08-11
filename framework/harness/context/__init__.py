@@ -89,6 +89,15 @@ from framework.harness.context.summary_models import (
     ContextSummaryCandidate,
     ContextSummaryClaim,
 )
+from framework.harness.context.summary import (
+    ContextSummaryArtifactPort,
+    ContextSummaryCandidateVerifier,
+    ContextSummaryMaterializer,
+    ContextSummaryRequest,
+    ContextSummaryVerificationResult,
+    ContextSummaryWorkerPort,
+    ContextSummaryWorkerResult,
+)
 from framework.harness.context.verified_records import (
     ContextCompressionRecordV2,
     ContextSemanticSnapshot,
@@ -159,7 +168,14 @@ __all__ = [
     "ContextSemanticSnapshot",
     "ContextSemanticSnapshotKind",
     "ContextSummaryCandidate",
+    "ContextSummaryArtifactPort",
+    "ContextSummaryCandidateVerifier",
     "ContextSummaryClaim",
+    "ContextSummaryMaterializer",
+    "ContextSummaryRequest",
+    "ContextSummaryVerificationResult",
+    "ContextSummaryWorkerPort",
+    "ContextSummaryWorkerResult",
     "ContextToolTransactionState",
     "FakeContextAssembler",
     "FakeContextBudgetEstimator",
