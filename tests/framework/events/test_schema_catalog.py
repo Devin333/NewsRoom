@@ -310,6 +310,89 @@ def test_default_catalog_registers_workflow_and_harness_aliases() -> None:
     ) == {"workflow_id": "wf-1", "workflow_version": "1", "profile": "live"}
 
 
+def test_default_catalog_registers_ref_only_context_compaction_events() -> None:
+    catalog = default_event_schema_catalog()
+    schema = "newsroom.harness-event/v1"
+    checksum = "sha256:" + "a" * 64
+    projection = {"projection_schema": "harness-safe-summary/v1"}
+    payloads = {
+        "context_compaction_planned": {
+            **projection,
+            "source_snapshot_id": "context-snapshot-v2://source",
+            "source_snapshot_checksum": checksum,
+            "initial_admission_id": "context-admission://initial",
+            "initial_admission_ref": "artifact://initial",
+            "planning_result_ref": "artifact://planning",
+            "plan_ref": None,
+            "plan_id": None,
+            "status": "no_compaction_required",
+            "reason_code": "physical_admission_passed",
+            "protected_group_count": 3,
+        },
+        "context_compaction_action_applied": {
+            **projection,
+            "plan_id": "context-plan://plan",
+            "action_id": "context-action://action",
+            "action_type": "replace_with_reference",
+            "action_result_ref": "artifact://action",
+            "source_snapshot_id": "context-snapshot-v2://source",
+            "result_group_count": 4,
+            "applied": True,
+            "reason_code": "reference_replaced",
+        },
+        "context_summary_candidate_created": {
+            **projection,
+            "plan_id": "context-plan://plan",
+            "action_id": "context-action://action",
+            "action_result_ref": "artifact://action",
+            "candidate_ref": "artifact://candidate",
+        },
+        "context_compaction_verified": {
+            **projection,
+            "source_snapshot_id": "context-snapshot-v2://source",
+            "source_snapshot_checksum": checksum,
+            "result_snapshot_id": "context-snapshot-v2://result",
+            "result_snapshot_checksum": checksum,
+            "plan_id": "context-plan://plan",
+            "record_ref": "artifact://record",
+            "aggregate_ref": "artifact://aggregate",
+            "initial_admission_ref": "artifact://initial",
+            "final_admission_ref": "artifact://final",
+            "prepared_fingerprint": checksum,
+            "before_input_tokens": 4097,
+            "after_input_tokens": 2048,
+            "policy_revision": "policy-v1",
+            "profile_revision": "profile-v1",
+            "gate_names": ["context_physical_admission@1"],
+        },
+        "context_compaction_rejected": {
+            **projection,
+            "source_snapshot_id": "context-snapshot-v2://source",
+            "source_snapshot_checksum": checksum,
+            "plan_id": None,
+            "planning_result_ref": "artifact://planning",
+            "result_snapshot_id": None,
+            "record_ref": None,
+            "aggregate_ref": None,
+            "reason_code": "protected_context_exceeds_window",
+            "aggregate_outcome": None,
+            "planning_status": "protected_context_exceeds_window",
+        },
+    }
+
+    for event_type, payload in payloads.items():
+        assert catalog.validate(event_type, schema, payload) == payload
+
+    with pytest.raises(EventSchemaValidationError) as raw_body:
+        catalog.validate(
+            "context_compaction_planned",
+            schema,
+            {**payloads["context_compaction_planned"], "raw_prompt": "secret"},
+        )
+    assert raw_body.value.path == "$"
+    assert raw_body.value.rule == "additionalProperties"
+
+
 def test_default_catalog_validates_exact_reference_only_task_plan_events() -> None:
     catalog = default_event_schema_catalog()
     graph_checksum = checksum_for({"graph": "task-plan"})

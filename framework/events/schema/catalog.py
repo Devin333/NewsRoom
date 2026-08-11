@@ -629,6 +629,11 @@ HARNESS_EVENT_ALIASES = (
     "worker_result_recorded",
     "gate_evaluated",
     "checkpoint_created",
+    "context_compaction_planned",
+    "context_compaction_action_applied",
+    "context_summary_candidate_created",
+    "context_compaction_verified",
+    "context_compaction_rejected",
 )
 
 HARNESS_TRANSITION_EVENT_TYPE = "harness_transition_committed"
@@ -2184,7 +2189,167 @@ def _harness_payload_schema(event_type: str) -> dict[str, Any]:
             },
             required=("checkpoint_id",),
         )
+    if event_type.startswith("context_"):
+        return _context_compaction_payload_schema(event_type)
     raise EventSchemaError(f"Harness event schema is not defined: {event_type}")
+
+
+def _context_compaction_payload_schema(event_type: str) -> dict[str, Any]:
+    snapshot_properties = {
+        "projection_schema": {"const": "harness-safe-summary/v1"},
+        "source_snapshot_id": _TEXT,
+        "source_snapshot_checksum": _CHECKSUM_TEXT,
+    }
+    if event_type == "context_compaction_planned":
+        return _payload_schema(
+            properties={
+                **snapshot_properties,
+                "initial_admission_id": _TEXT,
+                "initial_admission_ref": _NULLABLE_TEXT,
+                "planning_result_ref": _NULLABLE_TEXT,
+                "plan_ref": _NULLABLE_TEXT,
+                "plan_id": _NULLABLE_TEXT,
+                "status": {
+                    "enum": [
+                        "plan_ready",
+                        "no_compaction_required",
+                        "protected_context_exceeds_window",
+                        "no_allowed_compaction",
+                        "action_budget_exhausted",
+                    ]
+                },
+                "reason_code": _TEXT,
+                "protected_group_count": _NONNEGATIVE_INTEGER,
+            },
+            required=(
+                "projection_schema",
+                "source_snapshot_id",
+                "source_snapshot_checksum",
+                "initial_admission_id",
+                "initial_admission_ref",
+                "planning_result_ref",
+                "plan_ref",
+                "plan_id",
+                "status",
+                "reason_code",
+                "protected_group_count",
+            ),
+        )
+    if event_type == "context_compaction_action_applied":
+        return _payload_schema(
+            properties={
+                "projection_schema": {"const": "harness-safe-summary/v1"},
+                "plan_id": _TEXT,
+                "action_id": _TEXT,
+                "action_type": {
+                    "enum": [
+                        "drop_reconstructable_group",
+                        "replace_with_reference",
+                        "reduce_authorized_tool_set",
+                        "select_evidence_spans",
+                        "compact_old_conversation",
+                        "summarize_groups",
+                    ]
+                },
+                "action_result_ref": _TEXT,
+                "source_snapshot_id": _TEXT,
+                "result_group_count": _NONNEGATIVE_INTEGER,
+                "applied": _BOOLEAN,
+                "reason_code": _TEXT,
+            },
+            required=(
+                "projection_schema",
+                "plan_id",
+                "action_id",
+                "action_type",
+                "action_result_ref",
+                "source_snapshot_id",
+                "result_group_count",
+                "applied",
+                "reason_code",
+            ),
+        )
+    if event_type == "context_summary_candidate_created":
+        return _payload_schema(
+            properties={
+                "projection_schema": {"const": "harness-safe-summary/v1"},
+                "plan_id": _TEXT,
+                "action_id": _TEXT,
+                "action_result_ref": _TEXT,
+                "candidate_ref": _TEXT,
+            },
+            required=(
+                "projection_schema",
+                "plan_id",
+                "action_id",
+                "action_result_ref",
+                "candidate_ref",
+            ),
+        )
+    if event_type == "context_compaction_verified":
+        return _payload_schema(
+            properties={
+                **snapshot_properties,
+                "result_snapshot_id": _TEXT,
+                "result_snapshot_checksum": _CHECKSUM_TEXT,
+                "plan_id": _TEXT,
+                "record_ref": _TEXT,
+                "aggregate_ref": _TEXT,
+                "initial_admission_ref": _TEXT,
+                "final_admission_ref": _TEXT,
+                "prepared_fingerprint": _CHECKSUM_TEXT,
+                "before_input_tokens": _NONNEGATIVE_INTEGER,
+                "after_input_tokens": _NONNEGATIVE_INTEGER,
+                "policy_revision": _TEXT,
+                "profile_revision": _TEXT,
+                "gate_names": _ARRAY_OF_TEXT,
+            },
+            required=(
+                "projection_schema",
+                "source_snapshot_id",
+                "source_snapshot_checksum",
+                "result_snapshot_id",
+                "result_snapshot_checksum",
+                "plan_id",
+                "record_ref",
+                "aggregate_ref",
+                "initial_admission_ref",
+                "final_admission_ref",
+                "prepared_fingerprint",
+                "before_input_tokens",
+                "after_input_tokens",
+                "policy_revision",
+                "profile_revision",
+                "gate_names",
+            ),
+        )
+    if event_type == "context_compaction_rejected":
+        return _payload_schema(
+            properties={
+                **snapshot_properties,
+                "plan_id": _NULLABLE_TEXT,
+                "planning_result_ref": _NULLABLE_TEXT,
+                "result_snapshot_id": _NULLABLE_TEXT,
+                "record_ref": _NULLABLE_TEXT,
+                "aggregate_ref": _NULLABLE_TEXT,
+                "reason_code": _TEXT,
+                "aggregate_outcome": _NULLABLE_TEXT,
+                "planning_status": _TEXT,
+            },
+            required=(
+                "projection_schema",
+                "source_snapshot_id",
+                "source_snapshot_checksum",
+                "plan_id",
+                "planning_result_ref",
+                "result_snapshot_id",
+                "record_ref",
+                "aggregate_ref",
+                "reason_code",
+                "aggregate_outcome",
+            ),
+        )
+    raise EventSchemaError(f"Context compaction event schema is not defined: {event_type}")
 
 
 def _workflow_sensitivity_policy(event_type: str) -> SensitivityPolicy:

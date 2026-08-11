@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from framework.harness import ContextCacheScope, ContextSegmentType, FakeRAGSessionController, RAGContextPackAssembler
+from dataclasses import replace
+
+import pytest
+
+from framework.harness import ContextCacheScope, ContextSegmentType, FakeRAGSessionController, HarnessValidationError, RAGContextPackAssembler
 from framework.harness.context.fake import FakeContextAssembler
 from framework.harness.rag.fake import fake_rag_session_spec
 from framework.harness.rag.models import EvidenceCandidate
@@ -8,7 +12,15 @@ from framework.harness.rag.policy import RAGExecutionPolicy
 
 
 def test_context_pack_assembler_routes_rag_payload_through_context_assembler() -> None:
-    spec = fake_rag_session_spec()
+    original_spec = fake_rag_session_spec()
+    spec = replace(
+        original_spec,
+        context_policy={
+            **original_spec.context_policy,
+            "max_input_tokens": 8_192,
+            "max_output_tokens": 2_048,
+        },
+    )
     assembler = RAGContextPackAssembler(FakeContextAssembler())
     evidence = (
         EvidenceCandidate(
@@ -34,6 +46,14 @@ def test_context_pack_assembler_routes_rag_payload_through_context_assembler() -
     )
 
     envelope = assembler.envelopes[0]
+    assert envelope.budget is not None
+    assert envelope.budget.max_input_tokens == 8_192
+    assert envelope.budget.max_output_tokens == 2_048
+    assert pack.budget_snapshot is not None
+    assert (
+        pack.budget_snapshot.context_tokens_used
+        <= original_spec.budget.max_context_tokens
+    )
     assert pack.metadata["context_snapshot_ref"]
     assert pack.artifact_refs == ("artifact://paper/method-image", "artifact://retrieval/request-1")
     assert pack.evidence_trace == (
@@ -67,3 +87,27 @@ def test_fake_runtime_context_pack_keeps_dynamic_results_out_of_stable_prefix() 
     assert result.context_pack.metadata["stable_prefix_contains_dynamic_rag"] is False
     assert "accepted_evidence" not in envelope.stable_prefix.get(ContextSegmentType.GLOBAL_POLICY.value, {})
     assert ContextSegmentType.EVIDENCE_MEMORY.value in envelope.dynamic_tail
+
+
+@pytest.mark.parametrize("invalid_limit", [True, "8192", 0])
+def test_context_pack_assembler_rejects_invalid_model_input_limit(
+    invalid_limit: object,
+) -> None:
+    original_spec = fake_rag_session_spec()
+    spec = replace(
+        original_spec,
+        context_policy={
+            **original_spec.context_policy,
+            "max_input_tokens": invalid_limit,
+        },
+    )
+
+    with pytest.raises(
+        HarnessValidationError,
+        match="context_policy.max_input_tokens",
+    ):
+        RAGContextPackAssembler(FakeContextAssembler()).assemble(
+            spec=spec,
+            accepted_evidence=(),
+            policy=RAGExecutionPolicy.from_session_spec(spec),
+        )

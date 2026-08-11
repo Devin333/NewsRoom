@@ -822,6 +822,8 @@ class ResearchSinglePaperRuntime:
         workspace = _ResearchRunWorkspace(
             request=request,
             context_assembler=context_assembler or ContextAssembler(),
+            context_max_input_tokens=self.context_max_input_tokens,
+            context_max_output_tokens=self.context_max_output_tokens,
         )
         identity_scope_ref = research_identity_scope_ref(actor_metadata)
         subject_scope_ref = research_subject_scope_ref(request.paper_id)
@@ -1222,7 +1224,7 @@ class ResearchSinglePaperRuntime:
             for worker_name, worker in registry.items()
         }
         bound_registry["publish_artifacts"] = _bind_research_workspace_worker(
-            self._publish_artifacts,
+            worker_type._publish_artifacts,
             workspace,
         )
         if _dynamic_task_plan_requested(workspace.request.options):
@@ -1291,6 +1293,14 @@ class ResearchSinglePaperRuntime:
             session_id=stable_research_id("research_rag", workspace.request.run_id, workspace.paper.paper_id),
             goal=goal,
             budget=_rag_budget_from_options(workspace.request.options),
+        )
+        session_spec = replace(
+            session_spec,
+            context_policy={
+                **session_spec.context_policy,
+                "max_input_tokens": _effective_context_input_limit(workspace),
+                "max_output_tokens": workspace.context_max_output_tokens,
+            },
         )
         rag_context = self.rag_runtime.run(session_spec=session_spec, document=workspace.document)
         workspace.rag_context_pack = getattr(self.rag_runtime, "last_context_pack", None)
@@ -1664,8 +1674,8 @@ class ResearchSinglePaperRuntime:
             }
         )
 
+    @staticmethod
     def _publish_artifacts(
-        self,
         task: dict[str, Any],
         workspace: "_ResearchRunWorkspace",
     ) -> HarnessWorkerResult:
@@ -1708,7 +1718,9 @@ class ResearchSinglePaperRuntime:
             )
         if workspace.reader_issue:
             add_member("reader-issue", workspace.reader_issue.to_dict())
-        workspace.context_envelope = self._assemble_context(workspace)
+        workspace.context_envelope = ResearchSinglePaperRuntime._assemble_context(
+            workspace
+        )
         workspace.context_snapshot = workspace.context_assembler.snapshot_store.load(
             workspace.context_envelope.snapshot_ref or ""
         )
@@ -1810,22 +1822,11 @@ class ResearchSinglePaperRuntime:
             effect_intent=intent,
         )
 
-    def _assemble_context(self, workspace: "_ResearchRunWorkspace") -> ContextEnvelope:
+    @staticmethod
+    def _assemble_context(workspace: "_ResearchRunWorkspace") -> ContextEnvelope:
         source_refs = []
         if workspace.research_rag_context:
             source_refs = list(workspace.research_rag_context.source_refs)
-        requested_input_tokens = workspace.request.options.get(
-            "context_max_input_tokens",
-            self.context_max_input_tokens,
-        )
-        if (
-            isinstance(requested_input_tokens, bool)
-            or not isinstance(requested_input_tokens, int)
-            or requested_input_tokens < 1
-        ):
-            raise HarnessValidationError(
-                "context_max_input_tokens must be a positive integer"
-            )
         return workspace.context_assembler.assemble(
             {
                 "run_id": workspace.request.run_id,
@@ -1856,11 +1857,8 @@ class ResearchSinglePaperRuntime:
                     str(workspace.request.memory_namespace),
                 ),
                 "budget": ContextBudget(
-                    max_input_tokens=min(
-                        requested_input_tokens,
-                        self.context_max_input_tokens,
-                    ),
-                    max_output_tokens=self.context_max_output_tokens,
+                    max_input_tokens=_effective_context_input_limit(workspace),
+                    max_output_tokens=workspace.context_max_output_tokens,
                     max_context_segments=6,
                     max_evidence_items=8,
                     max_memory_items=6,
@@ -1908,6 +1906,8 @@ class ResearchSinglePaperRuntime:
 class _ResearchRunWorkspace:
     request: AnalyzePaperRequest
     context_assembler: ContextAssembler
+    context_max_input_tokens: int = 4_096
+    context_max_output_tokens: int = 1_024
     paper: ResearchPaper | None = None
     source_record: PaperSourceRecord | None = None
     document: ResearchDocument | None = None
@@ -1939,6 +1939,18 @@ class _ResearchRunWorkspace:
     compression_records: list[dict[str, Any]] = field(default_factory=list)
     skill_experience_refs: list[str] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
+
+
+def _effective_context_input_limit(workspace: _ResearchRunWorkspace) -> int:
+    requested = workspace.request.options.get(
+        "context_max_input_tokens",
+        workspace.context_max_input_tokens,
+    )
+    if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+        raise HarnessValidationError(
+            "context_max_input_tokens must be a positive integer"
+        )
+    return min(requested, workspace.context_max_input_tokens)
 
 
 class _CompatibilityResearchArtifactBundleHandler:

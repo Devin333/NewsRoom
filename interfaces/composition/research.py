@@ -13,6 +13,7 @@ from business.research.application.ask_paper import AskPaperUseCase
 from business.research.application.bounded_document_rag import (
     BoundedDocumentRAGRuntime,
 )
+from business.research.application.paper_rag_session import PaperRAGSession
 from business.research.application.run_disposition import (
     ResearchRunDispositionReconciler,
     classify_research_run_record,
@@ -51,6 +52,7 @@ from framework.llm.clients.openai_compatible import (
 )
 from framework.events.canonical import checksum_for
 from framework.harness import (
+    ContextAssembler,
     ContextEnvelope,
     HarnessEvent,
     HarnessEventType,
@@ -65,6 +67,7 @@ from framework.harness import (
     HarnessBudgetSnapshot,
     HarnessBudget,
     ResolvedSubAgentTaskAdapter,
+    RAGSessionSpec,
     SubAgentRuntime,
     TaskPlanResultVerifier,
     DurableTaskPlanStore,
@@ -1155,7 +1158,6 @@ def _build_configured_composition(
 
         chunk_store, chunk_resources = _build_research_chunk_store(settings.rag)
         owned_resources.extend(chunk_resources)
-        rag_runtime = BoundedDocumentRAGRuntime(chunk_store)
         artifact_port = _compose_component(
             ResearchCapability.ARTIFACT,
             lambda: FilesystemHarnessArtifactPort(
@@ -1355,7 +1357,7 @@ def _build_configured_composition(
         def context_assembler_factory(
             _run_id: str,
             event_port: HarnessTransitionPort,
-        ):
+        ) -> ContextAssembler:
             return build_research_context_assembler(
                 artifact_port=artifact_port,
                 event_port=event_port,
@@ -1364,6 +1366,25 @@ def _build_configured_composition(
                 max_input_tokens=settings.llm.max_input_tokens,
                 max_output_tokens=settings.llm.max_output_tokens,
             )
+
+        def rag_context_assembler_factory(spec: RAGSessionSpec) -> ContextAssembler:
+            actor_metadata = {
+                key: spec.source_policy[key]
+                for key in ("tenant_id", "user_id", "memory_namespace")
+                if spec.source_policy.get(key)
+            }
+            return context_assembler_factory(
+                spec.run_id,
+                scoped_event_port_factory(spec.run_id, actor_metadata),
+            )
+
+        rag_runtime = BoundedDocumentRAGRuntime(
+            chunk_store,
+            session_factory=lambda scoped_store: PaperRAGSession(
+                scoped_store,
+                context_assembler_factory=rag_context_assembler_factory,
+            ),
+        )
 
         recovery_source = _DurableResearchRunRecoverySource(
             artifact_port=artifact_port,

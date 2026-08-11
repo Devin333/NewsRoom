@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from framework.harness.context.assembler import ContextAssembler
 from framework.harness.memory.ports import MemoryPort
+from framework.harness.rag.context_pack_assembler import RAGContextPackAssembler
 from framework.harness.rag.session import BoundedRAGSessionController, RAGSessionResult
 from framework.harness.rag.models import RAGBudget, RAGSessionSpec
 from framework.harness.rag.planner import WorkerRAGPlanner
@@ -51,7 +54,14 @@ class PaperRAGSession:
         generation_policy: dict[str, object] | None = None,
         relevance_scorer: RelevanceScorerPort | None = None,
         memory: MemoryPort | None = None,
+        context_assembler_factory: (
+            Callable[[RAGSessionSpec], ContextAssembler] | None
+        ) = None,
     ) -> None:
+        if context_assembler_factory is not None and not callable(
+            context_assembler_factory
+        ):
+            raise TypeError("context_assembler_factory must be callable")
         self._chunk_store = chunk_store
         self._policy_builder = ResearchRAGPolicyBuilder()
         self._budget = budget or RAGBudget.safe_default()
@@ -66,6 +76,7 @@ class PaperRAGSession:
         self._generation_policy = dict(generation_policy or {})
         self._relevance_scorer = relevance_scorer
         self._memory = memory
+        self._context_assembler_factory = context_assembler_factory
 
     def run(
         self,
@@ -122,6 +133,15 @@ class PaperRAGSession:
             )
         if self._answer_worker is not None:
             controller_kwargs["answer_worker"] = self._answer_worker
+        if self._context_assembler_factory is not None:
+            context_assembler = self._context_assembler_factory(spec)
+            if not isinstance(context_assembler, ContextAssembler):
+                raise TypeError(
+                    "context_assembler_factory must return ContextAssembler"
+                )
+            controller_kwargs["context_pack_assembler"] = RAGContextPackAssembler(
+                context_assembler
+            )
         controller = BoundedRAGSessionController(**controller_kwargs)
         return controller.run(spec)
 

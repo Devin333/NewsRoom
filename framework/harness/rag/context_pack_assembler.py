@@ -183,14 +183,49 @@ def _visible_evidence(
 
 def _context_budget_from_rag_policy(policy: RAGExecutionPolicy) -> ContextBudget:
     return ContextBudget(
-        max_input_tokens=max(policy.budget.max_context_tokens, 1),
-        max_output_tokens=int(policy.context_policy.get("max_output_tokens", 1024)),
+        max_input_tokens=_context_policy_integer(
+            policy,
+            "max_input_tokens",
+            max(policy.budget.max_context_tokens, 1),
+            minimum=1,
+        ),
+        max_output_tokens=_context_policy_integer(
+            policy,
+            "max_output_tokens",
+            1_024,
+            minimum=1,
+        ),
         max_context_segments=6,
         max_evidence_items=policy.budget.max_context_items,
         max_memory_items=policy.budget.max_memory_hits,
-        max_artifact_refs=int(policy.context_policy.get("max_artifact_refs", 12)),
-        reserved_output_tokens=int(policy.context_policy.get("reserved_output_tokens", 256)),
+        max_artifact_refs=_context_policy_integer(
+            policy,
+            "max_artifact_refs",
+            12,
+            minimum=0,
+        ),
+        reserved_output_tokens=_context_policy_integer(
+            policy,
+            "reserved_output_tokens",
+            256,
+            minimum=0,
+        ),
     )
+
+
+def _context_policy_integer(
+    policy: RAGExecutionPolicy,
+    field_name: str,
+    default: int,
+    *,
+    minimum: int,
+) -> int:
+    value = policy.context_policy.get(field_name, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise HarnessValidationError(
+            f"context_policy.{field_name} must be an integer greater than or equal to {minimum}"
+        )
+    return value
 
 
 def _source_refs(*groups: tuple[EvidenceCandidate, ...]) -> tuple[str, ...]:
