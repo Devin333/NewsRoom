@@ -16,6 +16,11 @@ from framework.harness.context.compaction_models import (
     ContextLossReport,
     ContextLossRisk,
 )
+from framework.harness.context.execution import (
+    ContextCompactionActionExecutor,
+    ContextCompactionExecutionResult,
+    ContextCompactionExecutionStatus,
+)
 from framework.harness.context.fake import (
     FakeContextAssembler,
     FakeContextBudgetEstimator,
@@ -111,6 +116,9 @@ __all__ = [
     "ContextCompactionAction",
     "ContextCompactionActionResult",
     "ContextCompactionActionType",
+    "ContextCompactionActionExecutor",
+    "ContextCompactionExecutionResult",
+    "ContextCompactionExecutionStatus",
     "ContextCompactionActionDefinition",
     "ContextCompactionActionRegistry",
     "ContextCompactionPlanner",

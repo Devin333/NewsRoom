@@ -26,11 +26,11 @@
 
 ## 4. Typed Action Execution
 
-- [ ] 4.1 Implement `DROP_RECONSTRUCTABLE_GROUP` with complete-group removal and durable reconstruction refs.
-- [ ] 4.2 Implement `REPLACE_WITH_REFERENCE` using a real injected artifact/reference port and checksum-bound refs rather than fabricated URIs.
-- [ ] 4.3 Implement `REDUCE_AUTHORIZED_TOOL_SET` against existing trusted authorization and pending-transaction constraints.
-- [ ] 4.4 Implement query-bound `SELECT_EVIDENCE_SPANS` with required citation/lineage/conflict preservation and explicit omitted-span loss reporting.
-- [ ] 4.5 Implement `COMPACT_OLD_CONVERSATION` over complete turns/transactions while preserving the policy-defined recent complete tail.
+- [x] 4.1 Implement `DROP_RECONSTRUCTABLE_GROUP` with complete-group removal and durable reconstruction refs.
+- [x] 4.2 Implement `REPLACE_WITH_REFERENCE` using a real injected artifact/reference port and checksum-bound refs rather than fabricated URIs.
+- [x] 4.3 Implement `REDUCE_AUTHORIZED_TOOL_SET` against existing trusted authorization and pending-transaction constraints.
+- [x] 4.4 Implement query-bound `SELECT_EVIDENCE_SPANS` with required citation/lineage/conflict preservation and explicit omitted-span loss reporting.
+- [x] 4.5 Implement `COMPACT_OLD_CONVERSATION` over complete turns/transactions while preserving the policy-defined recent complete tail.
 - [ ] 4.6 Implement `SUMMARIZE_GROUPS` as a bounded candidate-producing action that never mutates the active snapshot before verification.
 - [ ] 4.7 Implement the bounded action executor with action/summary/replan/token/cost/turn accounting and immutable action results.
 
