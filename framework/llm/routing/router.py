@@ -21,7 +21,10 @@ from framework.llm.budget import (
     LLMBudgetExceededError,
     LLMBudgetGuard,
 )
-from framework.llm.clients.openai_compatible import LLMProviderError
+from framework.llm.clients.openai_compatible import (
+    LLMProviderContextOverflow,
+    LLMProviderError,
+)
 from framework.llm.context import (
     LLMContextAdmissionStatus,
     LLMRequestPreparer,
@@ -194,6 +197,7 @@ class LLMRouter:
         deployment_chain = route.deployment_chain()
         resolution_trace = tuple(dict(item) for item in resolution_trace)
         route_events: list[LLMRouterEvent] = []
+        overflow_recovery_used = False
         self._record_event(
             route_events,
             "llm_route_started",
@@ -464,6 +468,48 @@ class LLMRouter:
                     },
                     aliases=("route_attempt_failed",),
                 )
+                if isinstance(exc, LLMProviderContextOverflow):
+                    self._record_provider_context_overflow_event(
+                        route_events,
+                        route=route,
+                        deployment=deployment,
+                        prepared=prepared,
+                        error=exc,
+                    )
+                    if not overflow_recovery_used and has_fallback:
+                        overflow_recovery_used = True
+                        self._record_context_capacity_fallback_event(
+                            route_events,
+                            route_id=route.route_id,
+                            from_deployment=deployment,
+                            to_deployment_id=deployment_chain[index + 1],
+                            context_projection=prepared.to_dict(),
+                            reason="provider_context_overflow",
+                        )
+                        self._release_cache_attempt(
+                            cache_attempt,
+                            route=route,
+                            deployment=deployment,
+                            events=route_events,
+                        )
+                        continue
+                    self._release_cache_attempt(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                    )
+                    raise self._build_route_error(
+                        f"LLM route {route.route_id} observed provider context overflow at deployment {deployment_id}",
+                        route_id=route.route_id,
+                        error_type="provider_context_overflow",
+                        retryable=False,
+                        request=request,
+                        attempted_deployments=attempted_deployments,
+                        errors=errors,
+                        events=route_events,
+                        resolution_trace=resolution_trace,
+                    ) from exc
                 if exc.retryable and has_fallback:
                     self._record_fallback_event(
                         route_events,
@@ -845,6 +891,7 @@ class LLMRouter:
         from_deployment: ModelDeployment,
         to_deployment_id: str,
         context_projection: dict[str, Any],
+        reason: str | None = None,
     ) -> LLMRouterEvent:
         to_deployment = self._deployments.get(to_deployment_id)
         return self._record_event(
@@ -860,9 +907,33 @@ class LLMRouter:
                 "to_deployment_id": to_deployment_id,
                 "to_provider": to_deployment.provider if to_deployment is not None else None,
                 "to_model": to_deployment.model if to_deployment is not None else None,
-                "reason": context_projection["admission"]["status"],
+                "reason": reason or context_projection["admission"]["status"],
                 "context_admission": context_projection,
                 "provider_call": False,
+            },
+        )
+
+    def _record_provider_context_overflow_event(
+        self,
+        events: list[LLMRouterEvent],
+        *,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        prepared: PreparedLLMRequest,
+        error: LLMProviderContextOverflow,
+    ) -> LLMRouterEvent:
+        return self._record_event(
+            events,
+            "llm_provider_context_overflow_observed",
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                "prepared_request": prepared.to_dict(),
+                "provider_status_code": error.status_code,
+                "provider_error_code": error.provider_error_code,
+                "provider_reported_limit_tokens": error.provider_reported_limit_tokens,
+                "provider_reported_usage_tokens": error.provider_reported_usage_tokens,
+                "provider_call": True,
             },
         )
 

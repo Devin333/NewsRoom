@@ -10,6 +10,7 @@ from framework.llm import (
     FakeLLMClient,
     GlobalBudgetPolicy,
     GlobalBudgetTracker,
+    LLMProviderContextOverflow,
     LLMRequest,
     LLMRequestNormalizerRegistry,
     LLMRequestPreparer,
@@ -53,6 +54,27 @@ class _RecordingBudgetTracker(GlobalBudgetTracker):
     def reserve_llm_call(self, estimated_prompt_tokens=None):  # type: ignore[no-untyped-def]
         self.reserved_prompt_tokens.append(estimated_prompt_tokens)
         return super().reserve_llm_call(estimated_prompt_tokens)
+
+
+class _OverflowClient:
+    def __init__(self, model: str) -> None:
+        self.model = model
+        self.call_count = 0
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        self.call_count += 1
+        raise LLMProviderContextOverflow(
+            "bounded context overflow",
+            provider="test",
+            model=self.model,
+            status_code=413,
+            provider_error_code="context_length_exceeded",
+            provider_reported_limit_tokens=128,
+            provider_reported_usage_tokens=129,
+        )
+
+    def stream(self, request: LLMRequest):  # type: ignore[no-untyped-def]
+        raise AssertionError("stream is not used by complete tests")
 
 
 def _profile(
@@ -330,3 +352,79 @@ def test_router_admission_does_not_use_legacy_rough_token_estimator() -> None:
     source = inspect.getsource(router_module.LLMRouter)
 
     assert "estimate_request_tokens" not in source
+
+
+def test_provider_overflow_uses_one_cross_deployment_recovery() -> None:
+    primary = _OverflowClient("primary-model")
+    fallback = FakeLLMClient(["recovered"])
+    router = _router(
+        [
+            ModelDeployment(
+                "primary",
+                "test",
+                "primary-model",
+                primary,
+                context_profile=_profile("primary", "primary-model"),
+            ),
+            ModelDeployment(
+                "fallback",
+                "test",
+                "fallback-model",
+                fallback,
+                context_profile=_profile("fallback", "fallback-model"),
+            ),
+        ]
+    )
+
+    response = router.complete("route", LLMRequest(messages=[{"role": "user", "content": "x"}]))
+
+    assert response.content == "recovered"
+    assert primary.call_count == 1
+    assert fallback.call_count == 1
+    overflow_event = next(
+        event
+        for event in response.metadata["llm_router_events"]
+        if event["event_type"] == "llm_provider_context_overflow_observed"
+    )
+    assert overflow_event["metadata"]["provider_reported_limit_tokens"] == 128
+    assert overflow_event["metadata"]["provider_reported_usage_tokens"] == 129
+    assert "bounded context overflow" not in json.dumps(overflow_event)
+
+
+def test_second_provider_overflow_does_not_open_another_fallback() -> None:
+    primary = _OverflowClient("primary-model")
+    fallback = _OverflowClient("fallback-model")
+    third = FakeLLMClient(["must not be called"])
+    router = _router(
+        [
+            ModelDeployment(
+                "primary",
+                "test",
+                "primary-model",
+                primary,
+                context_profile=_profile("primary", "primary-model"),
+            ),
+            ModelDeployment(
+                "fallback",
+                "test",
+                "fallback-model",
+                fallback,
+                context_profile=_profile("fallback", "fallback-model"),
+            ),
+            ModelDeployment(
+                "third",
+                "test",
+                "third-model",
+                third,
+                context_profile=_profile("third", "third-model"),
+            ),
+        ]
+    )
+
+    with pytest.raises(LLMRouteError) as raised:
+        router.complete("route", LLMRequest(messages=[{"role": "user", "content": "x"}]))
+
+    assert raised.value.error_type == "provider_context_overflow"
+    assert primary.call_count == 1
+    assert fallback.call_count == 1
+    assert third.call_count == 0

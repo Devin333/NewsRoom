@@ -26,7 +26,7 @@
 - [x] 4.2 Implement typed profile/input/output/counter capacity rejection and deterministic configured fallback without provider calls, cooldown changes, or budget reservations for rejected deployments.
 - [x] 4.3 Dispatch only the admitted normalized request and reserve/settle global budget using the admitted total input count instead of the legacy rough estimate.
 - [x] 4.4 Emit redacted profile/prepared/admission/capacity-fallback events and attach the admitted prepared projection to response metadata and route manifests.
-- [ ] 4.5 Implement bounded provider-overflow recovery to at most one different eligible deployment, with no same-deployment redispatch or cooldown mutation.
+- [x] 4.5 Implement bounded provider-overflow recovery to at most one different eligible deployment, with no same-deployment redispatch or cooldown mutation.
 
 ## 5. Router Stream Admission
 
@@ -41,7 +41,7 @@
 - [x] 6.2 Add config and OpenAI payload golden tests for tools, response schema/format, model override, multilingual/media-shaped messages, revisions, and unknown/invalid profile fields.
 - [x] 6.3 Add router complete adversarial tests for missing profiles, oversized input, oversized output request, tool-schema-only overflow, capacity fallback, all-deployments rejection, redacted evidence, and admitted global-budget counts.
 - [ ] 6.4 Add router stream tests for complete/stream preparation parity, no iterator open on rejection, incremental delivery, no fallback after visible output, and usage accounting.
-- [ ] 6.5 Add provider overflow tests for HTTP 413, mapped structured HTTP 400 codes, unmapped message text, no internal retry/sleep, bounded cross-deployment recovery, and redacted drift evidence.
+- [x] 6.5 Add provider overflow tests for HTTP 413, mapped structured HTTP 400 codes, unmapped message text, no internal retry/sleep, bounded cross-deployment recovery, and redacted drift evidence.
 - [x] 6.6 Add an architecture assertion that router admission no longer calls `estimate_request_tokens` and document that direct-client callsite convergence remains outside this change.
 
 ## 7. Validation and Delivery
