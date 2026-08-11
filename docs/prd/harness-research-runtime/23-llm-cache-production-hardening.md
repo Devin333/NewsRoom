@@ -1,8 +1,8 @@
 # 阶段 23：LLM Response Cache 生产化硬化 PRD
 
-> Document status: READY_FOR_OPENSPEC
+> Document status: FINAL
 >
-> Implementation status: NOT_STARTED
+> Implementation status: IMPLEMENTED
 >
 > Version: v1.0
 >
@@ -12,7 +12,7 @@
 >
 > Proposed OpenSpec change: `llm-cache-production-hardening`
 >
-> Last updated: 2026-08-10
+> Last updated: 2026-08-11
 
 ## 0. 一句话结论
 
