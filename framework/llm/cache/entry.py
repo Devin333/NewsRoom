@@ -137,6 +137,10 @@ class CacheResponseValidator:
     def validate(cls, *, request: LLMRequest, response: LLMResponse) -> None:
         if response.tool_calls:
             raise CacheResponseValidationError("tool call responses are not cacheable")
+        cls.validate_output_contract(request=request, response=response)
+
+    @classmethod
+    def validate_output_contract(cls, *, request: LLMRequest, response: LLMResponse) -> None:
         if response.content is not None and not isinstance(response.content, str):
             raise CacheResponseValidationError("response content must be text or null")
         if response.structured_output is not None and not isinstance(

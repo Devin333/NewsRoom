@@ -17,6 +17,7 @@ from framework.llm.cache.contracts import (
     SingleFlightAcquireStatus,
     SingleFlightCoordinator,
     SingleFlightLease,
+    SingleFlightReleaseResult,
 )
 from framework.llm.cache.entry import (
     CacheEntry,
@@ -301,16 +302,23 @@ class LLMCacheRuntime:
             lookup=replace(last.lookup, reason=last.lookup.reason or "singleflight_wait_timeout"),
         )
 
-    def release_singleflight(self, lease: SingleFlightLease | None) -> None:
+    def release_singleflight(
+        self,
+        lease: SingleFlightLease | None,
+    ) -> SingleFlightReleaseResult | None:
         if lease is None or self.coordinator is None:
-            return
+            return None
         try:
-            self.coordinator.release_singleflight(lease)
-        except Exception:
-            return
+            return self.coordinator.release_singleflight(lease)
+        except Exception as exc:
+            return SingleFlightReleaseResult(
+                released=False,
+                backend_error=True,
+                reason=type(exc).__name__,
+            )
 
     def validate_response(self, *, request: LLMRequest, response: LLMResponse) -> None:
-        CacheResponseValidator.validate(request=request, response=response)
+        CacheResponseValidator.validate_output_contract(request=request, response=response)
 
     def _delete_best_effort(self, key: LLMCacheKey) -> None:
         try:

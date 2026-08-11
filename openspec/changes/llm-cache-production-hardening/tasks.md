@@ -9,14 +9,14 @@
 
 ## 2. Router, Accounting, Events, and Composition Boundary
 
-- [ ] 2.1 (CACHE-010) Inject an optional framework cache runtime into `LLMRouter` and move exact lookup into each deployment attempt after enabled/capability validation and before cooldown/global provider budget admission.
-- [ ] 2.2 (CACHE-011) Implement deployment-specific hit/miss/bypass decoration and primary/fallback identity isolation; remove reuse of stale call/run/event metadata from cached responses.
-- [ ] 2.3 (CACHE-012) Add explicit logical-request versus physical-provider-call accounting to router traces/budget interaction while preserving existing `max_llm_calls`, provider token/cost, cooldown, and fallback semantics on miss/bypass paths.
-- [ ] 2.4 (CACHE-013) Emit redacted cache lifecycle evidence through existing `LLMRouterEventSink` for eligibility, lookup, hit, miss, bypass, corruption, single-flight, backend failures, and writes.
+- [x] 2.1 (CACHE-010) Inject an optional framework cache runtime into `LLMRouter` and move exact lookup into each deployment attempt after enabled/capability validation and before cooldown/global provider budget admission.
+- [x] 2.2 (CACHE-011) Implement deployment-specific hit/miss/bypass decoration and primary/fallback identity isolation; remove reuse of stale call/run/event metadata from cached responses.
+- [x] 2.3 (CACHE-012) Add explicit logical-request versus physical-provider-call accounting to router traces/budget interaction while preserving existing `max_llm_calls`, provider token/cost, cooldown, and fallback semantics on miss/bypass paths.
+- [x] 2.4 (CACHE-013) Emit redacted cache lifecycle evidence through existing `LLMRouterEventSink` for eligibility, lookup, hit, miss, bypass, corruption, single-flight, backend failures, and writes.
 - [ ] 2.5 (CACHE-014) Add typed cache runtime settings and an explicit composition factory that injects framework ports into the router, creates no backend under `disabled`, and keeps endpoints/business/provider clients from creating cache singletons.
-- [ ] 2.6 (CACHE-040) Implement `disabled`, `observe`, `write_only`, and `read_write` mode behavior with per-task allowlists and no behavior change in disabled mode.
+- [x] 2.6 (CACHE-040) Implement `disabled`, `observe`, `write_only`, and `read_write` mode behavior with per-task allowlists and no behavior change in disabled mode.
 - [ ] 2.7 (CACHE-042) Remove the client-owned production cache wrapping path or reduce it to a documented non-production compatibility boundary; ensure no production route runs duplicate client and router cache lifecycles.
-- [ ] 2.8 Add router/budget/fallback/event tests for cooldown-hit ordering, disabled/capability rejection, global-budget bypass on hit, logical/provider counters, cache failure fail-open, stale metadata stripping, fallback isolation, modes, and framework import direction.
+- [x] 2.8 Add router/budget/fallback/event tests for cooldown-hit ordering, disabled/capability rejection, global-budget bypass on hit, logical/provider counters, cache failure fail-open, stale metadata stripping, fallback isolation, modes, and framework import direction.
 
 ## 3. Redis Store, Codec, and Single Flight
 

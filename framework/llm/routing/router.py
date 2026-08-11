@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import replace
+import time
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from typing import Any, Iterable
 
+from framework.llm.cache import (
+    CacheLookupStatus,
+    CacheMode,
+    CachePreparation,
+    CacheResponseValidationError,
+    LLMCacheRuntime,
+    SingleFlightAcquireStatus,
+    SingleFlightLease,
+)
 from framework.llm.budget import (
     GlobalBudgetExceededError,
     GlobalBudgetTracker,
@@ -21,6 +31,55 @@ from framework.llm.routing.errors import LLMRouteError
 from framework.llm.routing.events import LLMRouterEvent, LLMRouterEventSink
 from framework.llm.routing.route import LLMRoutingPolicy, ModelRoute
 
+
+@dataclass
+class _RouterCacheAttempt:
+    configured: bool = False
+    mode: CacheMode = CacheMode.DISABLED
+    preparation: CachePreparation | None = None
+    response: LLMResponse | None = None
+    lease: SingleFlightLease | None = None
+    write_authorized: bool = True
+    reason: str = "cache_not_configured"
+    backend: str = "none"
+    age_seconds: float | None = None
+
+    @property
+    def eligible(self) -> bool:
+        return self.preparation is not None and self.preparation.eligible
+
+    @property
+    def hit(self) -> bool:
+        return self.response is not None
+
+    def metadata(self, *, provider_call: bool) -> dict[str, Any] | None:
+        if not self.configured:
+            return None
+        key = self.preparation.key if self.preparation is not None else None
+        return {
+            "llm_cache_mode": self.mode.value,
+            "llm_cacheable": (
+                self.preparation.eligibility.eligible
+                if self.preparation is not None
+                else False
+            ),
+            "llm_cache_hit": self.hit,
+            "llm_cache_source": "cache" if self.hit else (
+                "provider" if provider_call else "bypass"
+            ),
+            "llm_cache_reason": self.reason,
+            "llm_cache_key_version": key.key_version if key is not None else None,
+            "llm_cache_key_digest_prefix": key.short_digest() if key is not None else None,
+            "llm_cache_age_seconds": self.age_seconds,
+            "llm_cache_backend": self.backend,
+            "llm_provider_call": provider_call,
+            "llm_budget_cost_counted": provider_call,
+            "llm_budget_request_counted": True,
+            "llm_logical_request_counted": True,
+            "llm_logical_request_count": 1,
+        }
+
+
 class LLMRouter:
     def __init__(
         self,
@@ -32,6 +91,7 @@ class LLMRouter:
         global_budget_tracker: GlobalBudgetTracker | None = None,
         now_fn: Any | None = None,
         event_sink: LLMRouterEventSink | None = None,
+        cache_runtime: LLMCacheRuntime | None = None,
     ) -> None:
         self._routes = {route.route_id: route for route in routes}
         self._deployments = {
@@ -43,6 +103,7 @@ class LLMRouter:
         self._global_budget_tracker = global_budget_tracker
         self._now_fn = now_fn or (lambda: datetime.now(UTC))
         self._event_sink = event_sink
+        self._cache_runtime = cache_runtime
 
     def resolve_route_id(
         self,
@@ -164,50 +225,6 @@ class LLMRouter:
                     events=route_events,
                     resolution_trace=resolution_trace,
                 )
-            cooldown_until = self._active_cooldown_until(deployment)
-            if cooldown_until is not None:
-                errors.append(
-                    {
-                        "deployment_id": deployment_id,
-                        "error_type": "deployment_in_cooldown",
-                        "cooldown_until": _datetime_to_json(cooldown_until),
-                        "retryable": True,
-                    }
-                )
-                has_fallback = index < len(deployment_chain) - 1
-                self._record_event(
-                    route_events,
-                    "llm_deployment_skipped",
-                    route.route_id,
-                    deployment=deployment,
-                    metadata={
-                        "reason": "deployment_in_cooldown",
-                        "cooldown_until": _datetime_to_json(cooldown_until),
-                        "retryable": True,
-                    },
-                    aliases=("deployment_skipped_cooldown",),
-                )
-                if has_fallback:
-                    self._record_fallback_event(
-                        route_events,
-                        route_id=route.route_id,
-                        from_deployment=deployment,
-                        to_deployment_id=deployment_chain[index + 1],
-                        reason="deployment_in_cooldown",
-                        errors=errors,
-                    )
-                    continue
-                raise self._build_route_error(
-                    f"LLM route {route.route_id} deployment is in cooldown: {deployment_id}",
-                    route_id=route.route_id,
-                    error_type="deployment_in_cooldown",
-                    retryable=True,
-                    request=request,
-                    attempted_deployments=attempted_deployments,
-                    errors=errors,
-                    events=route_events,
-                    resolution_trace=resolution_trace,
-                )
             missing_capabilities = deployment.capabilities.missing(route.required_capabilities)
             if missing_capabilities:
                 errors.append(
@@ -241,6 +258,81 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 )
 
+            cache_attempt = self._prepare_cache_attempt(
+                request=request,
+                route=route,
+                deployment=deployment,
+                events=route_events,
+            )
+            if cache_attempt.hit:
+                return self._return_cache_hit(
+                    cache_attempt,
+                    request=request,
+                    route=route,
+                    deployment=deployment,
+                    attempted_deployments=attempted_deployments,
+                    fallback_used=index > 0,
+                    events=route_events,
+                    errors=errors,
+                    resolution_trace=resolution_trace,
+                    attempt_index=index + 1,
+                )
+            cooldown_until = self._active_cooldown_until(deployment)
+            if cooldown_until is not None:
+                errors.append(
+                    {
+                        "deployment_id": deployment_id,
+                        "error_type": "deployment_in_cooldown",
+                        "cooldown_until": _datetime_to_json(cooldown_until),
+                        "retryable": True,
+                    }
+                )
+                has_fallback = index < len(deployment_chain) - 1
+                self._record_event(
+                    route_events,
+                    "llm_deployment_skipped",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        "reason": "deployment_in_cooldown",
+                        "cooldown_until": _datetime_to_json(cooldown_until),
+                        "retryable": True,
+                    },
+                    aliases=("deployment_skipped_cooldown",),
+                )
+                if has_fallback:
+                    self._record_fallback_event(
+                        route_events,
+                        route_id=route.route_id,
+                        from_deployment=deployment,
+                        to_deployment_id=deployment_chain[index + 1],
+                        reason="deployment_in_cooldown",
+                        errors=errors,
+                    )
+                    self._release_cache_attempt(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                    )
+                    continue
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
+                raise self._build_route_error(
+                    f"LLM route {route.route_id} deployment is in cooldown: {deployment_id}",
+                    route_id=route.route_id,
+                    error_type="deployment_in_cooldown",
+                    retryable=True,
+                    request=request,
+                    attempted_deployments=attempted_deployments,
+                    errors=errors,
+                    events=route_events,
+                    resolution_trace=resolution_trace,
+                )
             try:
                 preflight_budget_check = self._check_global_budget_before_call(
                     estimated_prompt_tokens=prompt_token_estimate,
@@ -265,6 +357,12 @@ class LLMRouter:
                         "retryable": False,
                     },
                 )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
                 raise self._build_route_error(
                     f"LLM route {route.route_id} exceeded global budget before deployment {deployment_id}",
                     route_id=route.route_id,
@@ -277,6 +375,13 @@ class LLMRouter:
                     resolution_trace=resolution_trace,
                 ) from exc
 
+            self._record_event(
+                route_events,
+                "llm_provider_call_started",
+                route.route_id,
+                deployment=deployment,
+                metadata={"provider_call": True},
+            )
             try:
                 response = deployment.client.complete(request)
             except LLMProviderError as exc:
@@ -297,6 +402,7 @@ class LLMRouter:
                         "status_code": exc.status_code,
                         "retryable": exc.retryable,
                         "attempts": exc.attempts,
+                        "provider_call": True,
                     },
                     aliases=("route_attempt_failed",),
                 )
@@ -309,7 +415,19 @@ class LLMRouter:
                         reason=exc.error_type,
                         errors=errors,
                     )
+                    self._release_cache_attempt(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                    )
                     continue
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
                 raise self._build_route_error(
                     f"LLM route {route.route_id} failed at deployment {deployment_id}",
                     route_id=route.route_id,
@@ -339,8 +457,15 @@ class LLMRouter:
                         "error_type": "client_error",
                         "message": str(exc),
                         "retryable": False,
+                        "provider_call": True,
                     },
                     aliases=("route_attempt_failed",),
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
                 )
                 raise self._build_route_error(
                     f"LLM route {route.route_id} client failed at deployment {deployment_id}",
@@ -353,6 +478,52 @@ class LLMRouter:
                     events=route_events,
                     resolution_trace=resolution_trace,
                 ) from exc
+
+            if (
+                cache_attempt.eligible
+                and self._cache_runtime is not None
+                and self._cache_runtime.mode.writes
+            ):
+                try:
+                    self._cache_runtime.validate_response(request=request, response=response)
+                except CacheResponseValidationError as exc:
+                    errors.append(
+                        {
+                            "deployment_id": deployment_id,
+                            "error_type": "structured_output_validation_error",
+                            "retryable": False,
+                        }
+                    )
+                    self._record_event(
+                        route_events,
+                        "llm_deployment_attempt_failed",
+                        route.route_id,
+                        deployment=deployment,
+                        metadata={
+                            "error_type": "structured_output_validation_error",
+                            "error_category": "schema_error",
+                            "retryable": False,
+                            "provider_call": True,
+                        },
+                        aliases=("route_attempt_failed",),
+                    )
+                    self._release_cache_attempt(
+                        cache_attempt,
+                        route=route,
+                        deployment=deployment,
+                        events=route_events,
+                    )
+                    raise self._build_route_error(
+                        f"LLM route {route.route_id} response validation failed at deployment {deployment_id}",
+                        route_id=route.route_id,
+                        error_type="provider_error",
+                        retryable=False,
+                        request=request,
+                        attempted_deployments=attempted_deployments,
+                        errors=errors,
+                        events=route_events,
+                        resolution_trace=resolution_trace,
+                    ) from exc
 
             if self._cooldown_tracker is not None:
                 self._cooldown_tracker.record_success(deployment_id)
@@ -373,6 +544,12 @@ class LLMRouter:
                     route.route_id,
                     deployment=deployment,
                     metadata={"budget_check": exc.check.to_dict(), "retryable": False},
+                )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
                 )
                 raise self._build_route_error(
                     f"LLM route {route.route_id} exceeded budget at deployment {deployment_id}",
@@ -412,6 +589,12 @@ class LLMRouter:
                         "retryable": False,
                     },
                 )
+                self._release_cache_attempt(
+                    cache_attempt,
+                    route=route,
+                    deployment=deployment,
+                    events=route_events,
+                )
                 raise self._build_route_error(
                     f"LLM route {route.route_id} exceeded global budget at deployment {deployment_id}",
                     route_id=route.route_id,
@@ -423,6 +606,40 @@ class LLMRouter:
                     events=route_events,
                     resolution_trace=resolution_trace,
                 ) from exc
+            if (
+                self._cache_runtime is not None
+                and cache_attempt.eligible
+                and self._cache_runtime.mode.writes
+            ):
+                write_result = self._cache_runtime.write(
+                    cache_attempt.preparation,
+                    request=request,
+                    response=response,
+                    write_authorized=cache_attempt.write_authorized,
+                )
+                write_event = (
+                    "llm_cache_write_succeeded"
+                    if write_result.stored
+                    else "llm_cache_write_failed"
+                )
+                self._record_event(
+                    route_events,
+                    write_event,
+                    route.route_id,
+                    deployment=deployment,
+                    metadata={
+                        **self._cache_event_metadata(cache_attempt, provider_call=True),
+                        "result": write_result.status.value,
+                        "reason": write_result.reason,
+                        "size_bytes": write_result.size_bytes,
+                    },
+                )
+            self._release_cache_attempt(
+                cache_attempt,
+                route=route,
+                deployment=deployment,
+                events=route_events,
+            )
             self._record_event(
                 route_events,
                 "llm_deployment_attempt_succeeded",
@@ -430,6 +647,8 @@ class LLMRouter:
                 deployment=deployment,
                 metadata={
                     "attempt_index": index + 1,
+                    "provider_call": True,
+                    "cache_hit": False,
                     "usage": response.usage.to_dict(),
                     "preflight_global_budget_check": (
                         preflight_budget_check.to_dict()
@@ -450,6 +669,8 @@ class LLMRouter:
                 metadata={
                     "attempted_deployments": list(attempted_deployments),
                     "fallback_used": index > 0,
+                    "provider_call": True,
+                    "cache_hit": False,
                 },
             )
 
@@ -465,6 +686,7 @@ class LLMRouter:
                 events=route_events,
                 errors=errors,
                 resolution_trace=resolution_trace,
+                cache_metadata=cache_attempt.metadata(provider_call=True),
             )
 
         raise self._build_route_error(
@@ -477,6 +699,279 @@ class LLMRouter:
             errors=errors,
             events=route_events,
             resolution_trace=resolution_trace,
+        )
+
+    def _prepare_cache_attempt(
+        self,
+        *,
+        request: LLMRequest,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        events: list[LLMRouterEvent],
+    ) -> _RouterCacheAttempt:
+        runtime = self._cache_runtime
+        if runtime is None:
+            return _RouterCacheAttempt()
+        if runtime.mode is CacheMode.DISABLED:
+            return _RouterCacheAttempt(
+                configured=True,
+                mode=runtime.mode,
+                reason="cache_disabled",
+                backend=runtime.backend_name,
+            )
+
+        preparation = runtime.prepare(
+            request=request,
+            deployment_id=deployment.deployment_id,
+            provider=deployment.provider,
+            model=deployment.model,
+        )
+        state = _RouterCacheAttempt(
+            configured=True,
+            mode=runtime.mode,
+            preparation=preparation,
+            reason=preparation.eligibility.reason,
+            backend=runtime.backend_name,
+        )
+        event_metadata = self._cache_event_metadata(state, provider_call=False)
+        self._record_event(
+            events,
+            "llm_cache_eligibility_evaluated",
+            route.route_id,
+            deployment=deployment,
+            metadata=event_metadata,
+        )
+        if not preparation.eligible:
+            self._record_event(
+                events,
+                "llm_cache_bypassed",
+                route.route_id,
+                deployment=deployment,
+                metadata=event_metadata,
+            )
+            return state
+        if runtime.mode is CacheMode.OBSERVE:
+            state.reason = "observe_only"
+            return state
+        if runtime.mode is CacheMode.WRITE_ONLY:
+            state.reason = "write_only"
+            return state
+
+        started_at = time.perf_counter()
+        self._record_event(
+            events,
+            "llm_cache_lookup_started",
+            route.route_id,
+            deployment=deployment,
+            metadata=event_metadata,
+        )
+        read_result = runtime.read(preparation, request=request)
+        state.backend = read_result.lookup.backend
+        state.reason = read_result.lookup.status.value
+        state.age_seconds = read_result.lookup.age_seconds
+        duration_ms = round((time.perf_counter() - started_at) * 1_000, 3)
+        if read_result.hit:
+            state.response = read_result.response
+            self._record_event(
+                events,
+                "llm_cache_hit",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    **self._cache_event_metadata(state, provider_call=False),
+                    "duration_ms": duration_ms,
+                },
+            )
+            return state
+
+        lookup_event = {
+            CacheLookupStatus.CORRUPT: "llm_cache_corrupt_entry",
+            CacheLookupStatus.BACKEND_ERROR: "llm_cache_backend_error",
+        }.get(read_result.lookup.status, "llm_cache_miss")
+        self._record_event(
+            events,
+            lookup_event,
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                **self._cache_event_metadata(state, provider_call=False),
+                "duration_ms": duration_ms,
+            },
+        )
+
+        admission = runtime.admit_singleflight(preparation)
+        state.write_authorized = admission.write_authorized
+        state.lease = admission.lease
+        if admission.result.status is SingleFlightAcquireStatus.ACQUIRED:
+            if admission.lease is not None:
+                recheck = runtime.read(preparation, request=request)
+                if recheck.hit:
+                    state.response = recheck.response
+                    state.reason = "hit_after_singleflight_acquire"
+                    state.age_seconds = recheck.lookup.age_seconds
+                    self._release_cache_attempt(
+                        state,
+                        route=route,
+                        deployment=deployment,
+                        events=events,
+                    )
+                    self._record_event(
+                        events,
+                        "llm_cache_hit",
+                        route.route_id,
+                        deployment=deployment,
+                        metadata=self._cache_event_metadata(state, provider_call=False),
+                    )
+            return state
+
+        if admission.result.status is SingleFlightAcquireStatus.BUSY:
+            wait_started = time.perf_counter()
+            waited = runtime.wait_for_entry(preparation, request=request)
+            wait_ms = round((time.perf_counter() - wait_started) * 1_000, 3)
+            state.write_authorized = False
+            state.reason = waited.lookup.reason or waited.lookup.status.value
+            state.age_seconds = waited.lookup.age_seconds
+            self._record_event(
+                events,
+                "llm_cache_singleflight_waited",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    **self._cache_event_metadata(state, provider_call=False),
+                    "duration_ms": wait_ms,
+                    "result": waited.lookup.status.value,
+                },
+            )
+            if waited.hit:
+                state.response = waited.response
+                state.reason = "hit_after_singleflight_wait"
+                self._record_event(
+                    events,
+                    "llm_cache_hit",
+                    route.route_id,
+                    deployment=deployment,
+                    metadata=self._cache_event_metadata(state, provider_call=False),
+                )
+            return state
+
+        state.reason = admission.result.reason or "singleflight_backend_error"
+        state.write_authorized = False
+        self._record_event(
+            events,
+            "llm_cache_backend_error",
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                **self._cache_event_metadata(state, provider_call=False),
+                "operation": "singleflight_acquire",
+            },
+        )
+        return state
+
+    def _release_cache_attempt(
+        self,
+        state: _RouterCacheAttempt,
+        *,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        events: list[LLMRouterEvent],
+    ) -> None:
+        runtime = self._cache_runtime
+        if runtime is None or state.lease is None:
+            return
+        result = runtime.release_singleflight(state.lease)
+        state.lease = None
+        if result is not None and (result.backend_error or not result.released):
+            self._record_event(
+                events,
+                "llm_cache_backend_error" if result.backend_error else "llm_cache_bypassed",
+                route.route_id,
+                deployment=deployment,
+                metadata={
+                    **self._cache_event_metadata(state, provider_call=False),
+                    "operation": "singleflight_release",
+                    "reason": result.reason,
+                },
+            )
+
+    def _cache_event_metadata(
+        self,
+        state: _RouterCacheAttempt,
+        *,
+        provider_call: bool,
+    ) -> dict[str, Any]:
+        metadata = state.metadata(provider_call=provider_call) or {}
+        return {
+            "cache_mode": state.mode.value,
+            "backend": state.backend,
+            "reason_code": state.reason,
+            "provider_call": provider_call,
+            "key_version": metadata.get("llm_cache_key_version"),
+            "key_digest_prefix": metadata.get("llm_cache_key_digest_prefix"),
+        }
+
+    def _return_cache_hit(
+        self,
+        state: _RouterCacheAttempt,
+        *,
+        request: LLMRequest,
+        route: ModelRoute,
+        deployment: ModelDeployment,
+        attempted_deployments: list[str],
+        fallback_used: bool,
+        events: list[LLMRouterEvent],
+        errors: list[dict[str, Any]],
+        resolution_trace: Iterable[dict[str, Any]],
+        attempt_index: int,
+    ) -> LLMResponse:
+        if state.response is None:
+            raise RuntimeError("cache hit response is required")
+        self._record_event(
+            events,
+            "llm_deployment_attempt_succeeded",
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                "attempt_index": attempt_index,
+                "provider_call": False,
+                "cache_hit": True,
+                "source_usage": state.response.usage.to_dict(),
+            },
+        )
+        self._record_event(
+            events,
+            "llm_route_completed",
+            route.route_id,
+            deployment=deployment,
+            metadata={
+                "attempted_deployments": list(attempted_deployments),
+                "fallback_used": fallback_used,
+                "provider_call": False,
+                "cache_hit": True,
+            },
+        )
+        cache_metadata = state.metadata(provider_call=False) or {}
+        cache_metadata["llm_cache_source_usage"] = state.response.usage.to_dict()
+        cache_metadata["llm_provider_usage"] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cached_input_tokens": 0,
+            "total_tokens": 0,
+        }
+        return _with_routing_metadata(
+            state.response,
+            request=request,
+            route_id=route.route_id,
+            deployment=deployment,
+            attempted_deployments=attempted_deployments,
+            fallback_used=fallback_used,
+            budget_check=None,
+            global_budget_check=None,
+            events=events,
+            errors=errors,
+            resolution_trace=resolution_trace,
+            cache_metadata=cache_metadata,
         )
 
     def _resolve_route_id_with_trace(
@@ -756,8 +1251,11 @@ def _with_routing_metadata(
     events: Iterable[LLMRouterEvent],
     errors: Iterable[dict[str, Any]],
     resolution_trace: Iterable[dict[str, Any]],
+    cache_metadata: dict[str, Any] | None = None,
 ) -> LLMResponse:
     metadata = dict(response.metadata)
+    if cache_metadata and cache_metadata.get("llm_cache_hit"):
+        metadata = _strip_prior_call_metadata(metadata)
     event_payloads = _event_payloads(events)
     manifest = _build_route_manifest(
         route_id=route_id,
@@ -774,6 +1272,10 @@ def _with_routing_metadata(
         resolution_trace=resolution_trace,
         error=None,
     )
+    if cache_metadata is not None:
+        safe_cache_metadata = redact_sensitive_values(dict(cache_metadata))
+        manifest["cache"] = safe_cache_metadata
+        metadata.update(safe_cache_metadata)
     metrics = dict(manifest["metrics"])
     metadata.update(
         {
@@ -786,6 +1288,9 @@ def _with_routing_metadata(
             "llm_attempted_deployments": list(attempted_deployments),
             "llm_fallback_count": metrics["fallback_count"],
             "llm_router_event_count": metrics["event_count"],
+            "llm_logical_request_count": metrics["logical_request_count"],
+            "llm_provider_call_count": metrics["provider_call_count"],
+            "llm_cache_hit_count": metrics["cache_hit_count"],
             "llm_provider_resolution_trace": [dict(item) for item in resolution_trace],
             "llm_router_events": event_payloads,
             "llm_route_manifest": manifest,
@@ -872,6 +1377,15 @@ def _route_metrics(
 ) -> dict[str, Any]:
     event_list = [dict(event) for event in events]
     return {
+        "logical_request_count": 1,
+        "provider_call_count": sum(
+            1
+            for event in event_list
+            if event.get("event_type") == "llm_provider_call_started"
+        ),
+        "cache_hit_count": sum(
+            1 for event in event_list if event.get("event_type") == "llm_cache_hit"
+        ),
         "attempt_count": len(list(attempted_deployments)),
         "event_count": len(event_list),
         "fallback_count": sum(
@@ -889,6 +1403,33 @@ def _route_metrics(
             if event.get("event_type") == "llm_deployment_skipped"
             and (event.get("metadata") or {}).get("reason") == "deployment_in_cooldown"
         ),
+    }
+
+
+def _strip_prior_call_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    exact_keys = {
+        "call_id",
+        "request_id",
+        "run_id",
+        "span_id",
+        "trace_id",
+    }
+    stale_prefixes = (
+        "llm_budget_",
+        "llm_cache_",
+        "llm_call_",
+        "llm_deployment_",
+        "llm_fallback_",
+        "llm_global_budget_",
+        "llm_logical_",
+        "llm_provider_",
+        "llm_route_",
+        "llm_router_",
+    )
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in exact_keys and not key.startswith(stale_prefixes)
     }
 
 
