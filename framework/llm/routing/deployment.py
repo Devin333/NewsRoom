@@ -6,6 +6,7 @@ UTC = _tz.utc
 from typing import Any
 
 from framework.llm.budget import ModelPricing
+from framework.llm.context.profile import ModelContextProfile
 from framework.llm.models import LLMClient, ModelCapabilities
 
 
@@ -20,6 +21,15 @@ class ModelDeployment:
     enabled: bool = True
     cooldown_until: datetime | None = None
     metadata: dict[str, Any] | None = None
+    context_profile: ModelContextProfile | None = None
+
+    def __post_init__(self) -> None:
+        if self.context_profile is not None:
+            self.context_profile.assert_deployment_identity(
+                deployment_id=self.deployment_id,
+                provider=self.provider,
+                model=self.model,
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -38,6 +48,9 @@ class ModelDeployment:
             "enabled": self.enabled,
             "cooldown_until": _datetime_to_json(self.cooldown_until),
             "metadata": dict(self.metadata or {}),
+            "context_profile": (
+                self.context_profile.to_dict() if self.context_profile is not None else None
+            ),
         }
 
     @classmethod
@@ -60,6 +73,11 @@ class ModelDeployment:
             ),
             enabled=bool(payload.get("enabled", True)),
             metadata=dict(payload.get("metadata") or {}),
+            context_profile=(
+                ModelContextProfile(**payload["context_profile"])
+                if isinstance(payload.get("context_profile"), dict)
+                else None
+            ),
         )
 
 

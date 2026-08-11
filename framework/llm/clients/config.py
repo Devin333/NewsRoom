@@ -9,9 +9,10 @@ except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from framework.llm.context.profile import ModelContextProfile
 from framework.llm.models.capabilities import ModelCapabilities, _normalize_capability_name
 from framework.llm.clients.openai_compatible import (
     LLMConfigurationError,
@@ -19,6 +20,9 @@ from framework.llm.clients.openai_compatible import (
     OpenAICompatibleClient,
     OpenAICompatibleConfig,
 )
+
+if TYPE_CHECKING:
+    from framework.llm.routing.deployment import ModelDeployment
 
 
 DEFAULT_MODELS_CONFIG_PATH = Path("configs/models.yaml")
@@ -55,6 +59,7 @@ _DEPLOYMENT_CONFIG_KEYS = {
     "base_url",
     "capabilities",
     "cooldown_seconds",
+    "context_profile",
     "deployment_id",
     "enabled",
     "max_retries",
@@ -63,6 +68,20 @@ _DEPLOYMENT_CONFIG_KEYS = {
     "provider",
     "provider_name",
     "timeout_seconds",
+}
+_CONTEXT_PROFILE_CONFIG_KEYS = {
+    "allow_conservative_fallback",
+    "context_window_tokens",
+    "default_output_tokens",
+    "max_output_tokens",
+    "normalizer_revision",
+    "operational_input_fraction",
+    "physical_context_window_tokens",
+    "profile_revision",
+    "provider_auto_truncation",
+    "safety_margin_tokens",
+    "tokenizer_family",
+    "tokenizer_revision",
 }
 _ROUTE_CONFIG_KEYS = {
     "budget_policy",
@@ -112,12 +131,30 @@ class OpenAICompatibleDeploymentConfig:
     cooldown_seconds: int | None = None
     max_retries: int = 0
     budget_policy: dict[str, Any] = None  # type: ignore[assignment]
+    context_profile: ModelContextProfile | None = None
 
     def retry_policy(self) -> LLMRetryPolicy:
         return LLMRetryPolicy(max_attempts=max(1, self.max_retries + 1))
 
     def build_client(self) -> OpenAICompatibleClient:
         return OpenAICompatibleClient(self.config, retry_policy=self.retry_policy())
+
+    def build_model_deployment(self) -> ModelDeployment:
+        from framework.llm.routing.deployment import ModelDeployment
+
+        return ModelDeployment(
+            deployment_id=self.deployment_id,
+            provider=self.config.provider,
+            model=self.config.model,
+            client=self.build_client(),
+            capabilities=self.capabilities,
+            enabled=self.enabled,
+            metadata={
+                "route_id": self.route_id,
+                "cooldown_seconds": self.cooldown_seconds,
+            },
+            context_profile=self.context_profile,
+        )
 
 
 def build_openai_compatible_client_from_config(
@@ -338,6 +375,7 @@ def _validate_deployment_schema(payload: dict[str, Any], *, field: str) -> str:
     if "enabled" in payload:
         _validate_boolish(payload.get("enabled"), field=f"{field}.enabled")
     _capabilities_from_payload(payload)
+    _validate_context_profile_schema(payload)
     return deployment_id
 
 
@@ -568,19 +606,28 @@ def _deployment_config(
         field="cooldown_seconds",
     )
     budget_policy = _budget_policy_from_route_payload(route_payload or {})
+    deployment_id = _required_text(payload.get("deployment_id"), field="deployment_id")
+    model = _env_override_text(
+        payload,
+        "model",
+        env_names=("NEWS_LLM_MODEL",),
+        field="model",
+        required=True,
+    )
+    context_profile = _context_profile_from_payload(
+        payload,
+        deployment_id=deployment_id,
+        provider=provider_name,
+        model=model,
+        capabilities=capabilities,
+    )
     return OpenAICompatibleDeploymentConfig(
-        deployment_id=_required_text(payload.get("deployment_id"), field="deployment_id"),
+        deployment_id=deployment_id,
         route_id=route_id,
         config=OpenAICompatibleConfig(
             provider=provider_name,
             base_url=base_url,
-            model=_env_override_text(
-                payload,
-                "model",
-                env_names=("NEWS_LLM_MODEL",),
-                field="model",
-                required=True,
-            ),
+            model=model,
             api_key_env=api_key_env,
             timeout_seconds=timeout_seconds,
         ),
@@ -591,6 +638,7 @@ def _deployment_config(
         cooldown_seconds=cooldown_seconds,
         max_retries=max_retries,
         budget_policy=budget_policy,
+        context_profile=context_profile,
     )
 
 
@@ -663,6 +711,146 @@ def _capabilities_from_payload(payload: dict[str, Any]) -> ModelCapabilities:
         )
     except TypeError as exc:
         raise LLMConfigurationError(f"invalid capabilities config: {exc}") from exc
+
+
+def _validate_context_profile_schema(payload: dict[str, Any]) -> None:
+    raw_profile = payload.get("context_profile")
+    if raw_profile is None:
+        return
+    if not isinstance(raw_profile, dict):
+        raise LLMConfigurationError("context_profile must be an object")
+    _assert_allowed_keys(
+        raw_profile,
+        allowed=_CONTEXT_PROFILE_CONFIG_KEYS,
+        field="context_profile",
+    )
+    capabilities = _capabilities_from_payload(payload)
+    physical_limit = raw_profile.get(
+        "physical_context_window_tokens",
+        raw_profile.get("context_window_tokens", capabilities.context_window_tokens),
+    )
+    max_output = raw_profile.get("max_output_tokens", capabilities.max_output_tokens)
+    if physical_limit is None:
+        raise LLMConfigurationError(
+            "context_profile.physical_context_window_tokens or "
+            "capabilities.context_window_tokens is required"
+        )
+    if max_output is None:
+        raise LLMConfigurationError(
+            "context_profile.max_output_tokens or capabilities.max_output_tokens is required"
+        )
+    physical_limit_value = _positive_int(
+        physical_limit,
+        field="context_profile.physical_context_window_tokens",
+    )
+    max_output_value = _positive_int(
+        max_output,
+        field="context_profile.max_output_tokens",
+    )
+    default_output = _positive_int(
+        raw_profile.get("default_output_tokens"),
+        field="context_profile.default_output_tokens",
+    )
+    if default_output > max_output_value:
+        raise LLMConfigurationError(
+            "context_profile.default_output_tokens must not exceed max_output_tokens"
+        )
+    fraction = _positive_float(
+        raw_profile.get("operational_input_fraction", 0.9),
+        field="context_profile.operational_input_fraction",
+    )
+    if fraction > 1:
+        raise LLMConfigurationError("context_profile.operational_input_fraction must not exceed 1")
+    _non_negative_int(
+        raw_profile.get("safety_margin_tokens", 0),
+        field="context_profile.safety_margin_tokens",
+    )
+    for field_name in (
+        "tokenizer_family",
+        "tokenizer_revision",
+        "normalizer_revision",
+        "profile_revision",
+    ):
+        _required_text(raw_profile.get(field_name), field=f"context_profile.{field_name}")
+    for field_name in ("allow_conservative_fallback", "provider_auto_truncation"):
+        if field_name in raw_profile:
+            _validate_boolish(raw_profile.get(field_name), field=f"context_profile.{field_name}")
+    if physical_limit_value <= max_output_value:
+        raise LLMConfigurationError(
+            "context_profile physical context window must be greater than max_output_tokens"
+        )
+
+
+def _context_profile_from_payload(
+    payload: dict[str, Any],
+    *,
+    deployment_id: str,
+    provider: str,
+    model: str,
+    capabilities: ModelCapabilities,
+) -> ModelContextProfile | None:
+    raw_profile = payload.get("context_profile")
+    if raw_profile is None:
+        return None
+    if not isinstance(raw_profile, dict):
+        raise LLMConfigurationError("context_profile must be an object")
+    physical_limit = raw_profile.get(
+        "physical_context_window_tokens",
+        raw_profile.get("context_window_tokens", capabilities.context_window_tokens),
+    )
+    max_output = raw_profile.get("max_output_tokens", capabilities.max_output_tokens)
+    try:
+        return ModelContextProfile(
+            provider=provider,
+            model=model,
+            deployment_id=deployment_id,
+            physical_context_window_tokens=_positive_int(
+                physical_limit,
+                field="context_profile.physical_context_window_tokens",
+            ),
+            max_output_tokens=_positive_int(
+                max_output,
+                field="context_profile.max_output_tokens",
+            ),
+            default_output_tokens=_positive_int(
+                raw_profile.get("default_output_tokens"),
+                field="context_profile.default_output_tokens",
+            ),
+            tokenizer_family=_required_text(
+                raw_profile.get("tokenizer_family"),
+                field="context_profile.tokenizer_family",
+            ),
+            tokenizer_revision=_required_text(
+                raw_profile.get("tokenizer_revision"),
+                field="context_profile.tokenizer_revision",
+            ),
+            normalizer_revision=_required_text(
+                raw_profile.get("normalizer_revision"),
+                field="context_profile.normalizer_revision",
+            ),
+            profile_revision=_required_text(
+                raw_profile.get("profile_revision"),
+                field="context_profile.profile_revision",
+            ),
+            operational_input_fraction=_positive_float(
+                raw_profile.get("operational_input_fraction", 0.9),
+                field="context_profile.operational_input_fraction",
+            ),
+            safety_margin_tokens=_non_negative_int(
+                raw_profile.get("safety_margin_tokens", 0),
+                field="context_profile.safety_margin_tokens",
+            ),
+            allow_conservative_fallback=_bool_value(
+                raw_profile.get("allow_conservative_fallback"),
+                default=False,
+            ),
+            provider_auto_truncation=_bool_value(
+                raw_profile.get("provider_auto_truncation"),
+                default=False,
+            ),
+        )
+    except ValueError as exc:
+        raise LLMConfigurationError(f"invalid context_profile config: {exc}") from exc
 
 
 def _required_capabilities_from_route_payload(*, route_payload: dict[str, Any]) -> tuple[str, ...]:

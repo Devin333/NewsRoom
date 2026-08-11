@@ -44,6 +44,17 @@ def _valid_payload() -> dict:
                         "capabilities": {
                             "supports_tool_calling": True,
                             "context_window_tokens": 8192,
+                            "max_output_tokens": 1024,
+                        },
+                        "context_profile": {
+                            "default_output_tokens": 256,
+                            "tokenizer_family": "test-tokenizer",
+                            "tokenizer_revision": "v1",
+                            "normalizer_revision": "openai-chat-completions-v1",
+                            "profile_revision": "profile-v1",
+                            "operational_input_fraction": 0.9,
+                            "safety_margin_tokens": 64,
+                            "allow_conservative_fallback": True,
                         },
                     },
                     {
@@ -88,6 +99,20 @@ def test_load_openai_compatible_deployment_validates_and_selects_route(tmp_path:
     assert deployment.config.api_key_env == "TEST_LLM_API_KEY"
     assert deployment.fallback_deployment_ids == ("writer-fallback",)
     assert deployment.required_capabilities == ("tool_calling",)
+    assert deployment.context_profile is not None
+    assert deployment.context_profile.deployment_id == "writer-primary"
+    assert deployment.context_profile.provider == "test-provider"
+    assert deployment.context_profile.model == "test-model"
+    assert deployment.context_profile.physical_context_window_tokens == 8192
+    assert deployment.context_profile.max_output_tokens == 1024
+    assert deployment.context_profile.default_output_tokens == 256
+    assert deployment.context_profile.allow_conservative_fallback is True
+
+    model_deployment = deployment.build_model_deployment()
+    assert model_deployment.deployment_id == deployment.deployment_id
+    assert model_deployment.provider == "test-provider"
+    assert model_deployment.model == "test-model"
+    assert model_deployment.context_profile == deployment.context_profile
 
 
 def test_models_config_rejects_route_referencing_unknown_group() -> None:
@@ -163,6 +188,62 @@ def test_models_config_rejects_unknown_capability_field() -> None:
 
     with pytest.raises(LLMConfigurationError, match=r"capabilities contains unsupported field\(s\): supports_toolz"):
         validate_openai_compatible_models_config(payload)
+
+
+def test_models_config_rejects_unknown_context_profile_field() -> None:
+    payload = _valid_payload()
+    payload["model_groups"]["writer-group"]["deployments"][0]["context_profile"][
+        "tokenizer_verzion"
+    ] = "v2"
+
+    with pytest.raises(
+        LLMConfigurationError,
+        match=r"context_profile contains unsupported field\(s\): tokenizer_verzion",
+    ):
+        validate_openai_compatible_models_config(payload)
+
+
+def test_models_config_requires_context_profile_capacity_from_profile_or_capabilities() -> None:
+    payload = _valid_payload()
+    deployment = payload["model_groups"]["writer-group"]["deployments"][0]
+    deployment["capabilities"].pop("max_output_tokens")
+
+    with pytest.raises(
+        LLMConfigurationError,
+        match=r"context_profile\.max_output_tokens or capabilities\.max_output_tokens is required",
+    ):
+        validate_openai_compatible_models_config(payload)
+
+
+def test_models_config_rejects_context_profile_default_above_model_maximum() -> None:
+    payload = _valid_payload()
+    payload["model_groups"]["writer-group"]["deployments"][0]["context_profile"][
+        "default_output_tokens"
+    ] = 2048
+
+    with pytest.raises(
+        LLMConfigurationError,
+        match="default_output_tokens must not exceed max_output_tokens",
+    ):
+        validate_openai_compatible_models_config(payload)
+
+
+def test_context_profile_can_define_physical_limits_without_capability_aliases(
+    tmp_path: Path,
+) -> None:
+    payload = _valid_payload()
+    deployment_payload = payload["model_groups"]["writer-group"]["deployments"][0]
+    deployment_payload["capabilities"].pop("context_window_tokens")
+    deployment_payload["capabilities"].pop("max_output_tokens")
+    deployment_payload["context_profile"]["physical_context_window_tokens"] = 16384
+    deployment_payload["context_profile"]["max_output_tokens"] = 2048
+    path = _write_config(tmp_path, payload)
+
+    deployment = load_openai_compatible_deployment(path, route_id="writer")
+
+    assert deployment.context_profile is not None
+    assert deployment.context_profile.physical_context_window_tokens == 16384
+    assert deployment.context_profile.max_output_tokens == 2048
 
 
 def test_models_config_requires_api_key_reference() -> None:
