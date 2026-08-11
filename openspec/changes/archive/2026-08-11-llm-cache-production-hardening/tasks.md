@@ -39,4 +39,4 @@
 - [x] 5.1 (CACHE-041) Update configuration documentation, cache rollout/runbook guidance, generation/key-version bump procedures, targeted invalidation boundaries, rollback-to-disabled behavior, and secret handling.
 - [x] 5.2 Add regression tests proving no raw prompt/response/tool arguments/scope/secret/full key are present in cache entries, exceptions, router events, or metric payloads.
 - [x] 5.3 (CACHE-043) Run and fix `python -m scripts.dev compile`, focused framework and infrastructure cache tests, relevant broad LLM/storage tests, `python -m scripts.dev smoke`, `openspec validate llm-cache-production-hardening --strict`, and `git diff --check`.
-- [ ] 5.4 Mark completed OpenSpec tasks only after their implementation and test evidence pass; archive the change only after every deterministic acceptance gate and production wiring deletion is verified.
+- [x] 5.4 Mark completed OpenSpec tasks only after their implementation and test evidence pass; archive the change only after every deterministic acceptance gate and production wiring deletion is verified.
