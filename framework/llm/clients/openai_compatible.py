@@ -5,10 +5,12 @@ import os
 import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from itertools import chain
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from framework.llm.context.openai import build_openai_chat_payload, openai_response_format
 from framework.llm.models import LLMRequest, LLMResponse, TokenUsage
 from framework.llm.redaction import redact_sensitive_values
 from framework.llm.models import LLMStreamEvent
@@ -20,7 +22,6 @@ from framework.llm.clients.tool_adapters import (
     LLMToolCallParseError,
     LLMToolSchemaError,
     parse_openai_tool_calls,
-    to_openai_tools,
 )
 
 
@@ -64,6 +65,50 @@ class LLMProviderError(RuntimeError):
             "status_code": self.status_code,
             "attempts": self.attempts,
         }
+        if redact:
+            return redact_sensitive_values(payload)
+        return payload
+
+
+class LLMProviderContextOverflow(LLMProviderError):
+    """Stable non-transient provider context-window overflow."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        deployment_id: str | None = None,
+        status_code: int | None = None,
+        attempts: int = 1,
+        provider_error_code: str | None = None,
+        provider_reported_limit_tokens: int | None = None,
+        provider_reported_usage_tokens: int | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            provider=provider,
+            model=model,
+            deployment_id=deployment_id,
+            error_type="context_length",
+            retryable=False,
+            status_code=status_code,
+            attempts=attempts,
+        )
+        self.provider_error_code = provider_error_code
+        self.provider_reported_limit_tokens = provider_reported_limit_tokens
+        self.provider_reported_usage_tokens = provider_reported_usage_tokens
+
+    def to_dict(self, *, redact: bool = True) -> dict[str, Any]:
+        payload = super().to_dict(redact=False)
+        payload.update(
+            {
+                "provider_error_code": self.provider_error_code,
+                "provider_reported_limit_tokens": self.provider_reported_limit_tokens,
+                "provider_reported_usage_tokens": self.provider_reported_usage_tokens,
+            }
+        )
         if redact:
             return redact_sensitive_values(payload)
         return payload
@@ -191,7 +236,10 @@ class OpenAICompatibleClient:
 
         http_request = self._build_http_request(api_key, payload)
         try:
-            lines = self._stream_transport(http_request, self.config.timeout_seconds)
+            lines = iter(self._stream_transport(http_request, self.config.timeout_seconds))
+            first_line = next(lines)
+        except StopIteration:
+            first_line = None
         except HTTPError as exc:
             raise self._error_from_http(exc, attempts=1) from exc
         except (TimeoutError, URLError, OSError) as exc:
@@ -207,7 +255,8 @@ class OpenAICompatibleClient:
         response_id: str | None = None
 
         try:
-            for raw_line in lines:
+            source_lines = lines if first_line is None else chain((first_line,), lines)
+            for raw_line in source_lines:
                 line = _stream_line_text(raw_line)
                 if not line or line.startswith(":"):
                     continue
@@ -251,6 +300,8 @@ class OpenAICompatibleClient:
                 retryable=False,
                 attempts=1,
             ) from exc
+        except HTTPError as exc:
+            raise self._error_from_http(exc, attempts=1) from exc
         except (TimeoutError, URLError, OSError) as exc:
             raise self._error_from_network(exc, attempts=1) from exc
 
@@ -272,21 +323,10 @@ class OpenAICompatibleClient:
         )
 
     def _build_payload(self, request: LLMRequest) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "model": request.model or self.config.model,
-            "messages": request.messages,
-        }
-        if request.temperature is not None:
-            payload["temperature"] = request.temperature
-        if request.max_tokens is not None:
-            payload["max_tokens"] = request.max_tokens
-        if request.tools:
-            payload["tools"] = to_openai_tools(request.tools)
-
-        response_format = _provider_response_format(request)
-        if response_format is not None:
-            payload["response_format"] = response_format
-        return payload
+        return build_openai_chat_payload(
+            request,
+            model=request.model or self.config.model,
+        )
 
     def _parse_response(self, payload: dict[str, Any]) -> LLMResponse:
         return self._normalize_response(
@@ -513,6 +553,22 @@ class OpenAICompatibleClient:
 
     def _error_from_http(self, exc: HTTPError, *, attempts: int) -> LLMProviderError:
         status_code = int(exc.code)
+        provider_payload = _read_bounded_http_error_payload(exc)
+        provider_error_code = _provider_error_code(provider_payload)
+        if status_code == 413 or provider_error_code in _CONTEXT_OVERFLOW_CODES:
+            limit_tokens, usage_tokens = _provider_overflow_token_diagnostics(
+                provider_payload
+            )
+            return LLMProviderContextOverflow(
+                f"{self.config.provider} request exceeded provider context capacity",
+                provider=self.config.provider,
+                model=self.config.model,
+                status_code=status_code,
+                attempts=attempts,
+                provider_error_code=provider_error_code,
+                provider_reported_limit_tokens=limit_tokens,
+                provider_reported_usage_tokens=usage_tokens,
+            )
         retryable = status_code in self._retry_policy.retryable_status_codes
         error_type = _error_type_from_http_status(status_code)
         return LLMProviderError(
@@ -582,20 +638,86 @@ def _canonical_error_category(error_type: str) -> str:
     return aliases.get(error_type, error_type)
 
 
-def _provider_response_format(request: LLMRequest) -> dict[str, Any] | None:
-    if request.response_format is not None:
-        if isinstance(request.response_format, str):
-            return {"type": request.response_format}
-        return dict(request.response_format)
-    if request.output_schema is not None:
-        return {
-            "type": "json_schema",
-            "json_schema": {
-                "name": request.output_schema_name or "structured_output",
-                "strict": True,
-                "schema": request.output_schema,
-            },
-        }
+_MAX_PROVIDER_ERROR_BODY_BYTES = 64 * 1024
+_MAX_PROVIDER_TOKEN_DIAGNOSTIC = 2_000_000_000
+_CONTEXT_OVERFLOW_CODES = {
+    "context_length_exceeded",
+    "context_window_exceeded",
+    "max_context_length_exceeded",
+}
+_PROVIDER_LIMIT_TOKEN_KEYS = (
+    "context_limit_tokens",
+    "context_window_tokens",
+    "limit_tokens",
+    "max_context_tokens",
+    "max_context_length",
+)
+_PROVIDER_USAGE_TOKEN_KEYS = (
+    "input_tokens",
+    "prompt_tokens",
+    "requested_tokens",
+    "total_tokens",
+)
+
+
+def _read_bounded_http_error_payload(exc: HTTPError) -> dict[str, Any] | None:
+    try:
+        raw_body = exc.read(_MAX_PROVIDER_ERROR_BODY_BYTES + 1)
+    except Exception:
+        return None
+    if not isinstance(raw_body, bytes) or len(raw_body) > _MAX_PROVIDER_ERROR_BODY_BYTES:
+        return None
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _provider_error_code(payload: dict[str, Any] | None) -> str | None:
+    if payload is None:
+        return None
+    error = payload.get("error")
+    raw_code = error.get("code") if isinstance(error, dict) else payload.get("code")
+    if not isinstance(raw_code, str):
+        return None
+    code = raw_code.strip().casefold()
+    if not code or len(code) > 128:
+        return None
+    if any(character not in "abcdefghijklmnopqrstuvwxyz0123456789._-" for character in code):
+        return None
+    return code
+
+
+def _provider_overflow_token_diagnostics(
+    payload: dict[str, Any] | None,
+) -> tuple[int | None, int | None]:
+    if payload is None:
+        return None, None
+    error = payload.get("error")
+    sources: list[dict[str, Any]] = [payload]
+    if isinstance(error, dict):
+        sources.insert(0, error)
+        details = error.get("details")
+        if isinstance(details, dict):
+            sources.insert(0, details)
+    return (
+        _first_bounded_token_value(sources, _PROVIDER_LIMIT_TOKEN_KEYS),
+        _first_bounded_token_value(sources, _PROVIDER_USAGE_TOKEN_KEYS),
+    )
+
+
+def _first_bounded_token_value(
+    sources: Iterable[dict[str, Any]],
+    keys: tuple[str, ...],
+) -> int | None:
+    for source in sources:
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, bool) or not isinstance(value, int):
+                continue
+            if 0 <= value <= _MAX_PROVIDER_TOKEN_DIAGNOSTIC:
+                return value
     return None
 
 
@@ -611,7 +733,7 @@ def _expects_structured_output(request: LLMRequest) -> bool:
 
 
 def _uses_provider_native_json_mode(request: LLMRequest) -> bool:
-    response_format = _provider_response_format(request)
+    response_format = openai_response_format(request)
     if not isinstance(response_format, dict):
         return False
     return response_format.get("type") in {"json_object", "json_schema"}
@@ -763,4 +885,3 @@ def _urlopen_transport(request: Request, timeout_seconds: float) -> bytes:
 def _urlopen_stream_transport(request: Request, timeout_seconds: float) -> Iterable[bytes]:
     with urlopen(request, timeout=timeout_seconds) as response:
         yield from response
-

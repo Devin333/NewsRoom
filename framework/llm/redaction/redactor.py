@@ -28,6 +28,8 @@ NON_SENSITIVE_TOKEN_KEYS = {
     "output_tokens",
     "physical_limit_tokens",
     "prompt_tokens",
+    "provider_reported_limit_tokens",
+    "provider_reported_usage_tokens",
     "protocol_overhead_tokens",
     "reasoning_tokens",
     "requested_output_tokens",

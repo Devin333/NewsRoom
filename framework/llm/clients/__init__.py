@@ -12,6 +12,7 @@ from framework.llm.clients.config import (
 from framework.llm.clients.fake import FakeLLMClient
 from framework.llm.clients.openai_compatible import (
     LLMConfigurationError,
+    LLMProviderContextOverflow,
     LLMProviderError,
     LLMRetryPolicy,
     OpenAICompatibleClient,
@@ -31,6 +32,7 @@ __all__ = [
     "FakeLLMClient",
     "LLMClient",
     "LLMConfigurationError",
+    "LLMProviderContextOverflow",
     "LLMProviderError",
     "LLMRetryPolicy",
     "LLMToolCallParseError",

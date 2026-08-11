@@ -10,15 +10,15 @@
 - [x] 2.1 Define provider request-normalizer and token-counter ports plus registries keyed by provider/tokenizer family and version.
 - [x] 2.2 Implement component-level `LLMTokenCount` validation for messages, tools, response schema/format, media, protocol overhead, method, and revisions.
 - [x] 2.3 Implement the explicitly labeled canonical UTF-8-byte conservative fallback and fail closed when the profile forbids fallback and no counter is registered.
-- [ ] 2.4 Extract a pure OpenAI-compatible payload normalizer shared by preflight and provider dispatch, covering model, messages, tools, response format/output schema, max output, temperature, and media-bearing message payloads.
+- [x] 2.4 Extract a pure OpenAI-compatible payload normalizer shared by preflight and provider dispatch, covering model, messages, tools, response format/output schema, max output, temperature, and media-bearing message payloads.
 - [x] 2.5 Implement the request preparer that resolves output reserve, computes the effective input budget, counts the normalized payload, produces the fingerprint, and returns a typed admission without mutating semantic context.
 
 ## 3. Deployment Configuration and Provider Overflow
 
 - [x] 3.1 Add strict versioned context-profile configuration parsing, allowed-key validation, and migration from complete existing capability window/output values.
 - [x] 3.2 Bind parsed profiles to `ModelDeployment` and reject mismatched deployment/provider/model identity before routing.
-- [ ] 3.3 Switch `OpenAICompatibleClient.complete()` and `.stream()` to the shared payload normalizer with golden tests proving wire payload parity.
-- [ ] 3.4 Add `LLMProviderContextOverflow`, map HTTP 413 and explicitly supported structured provider overflow codes, preserve bounded numeric diagnostics, and prohibit internal retry/sleep.
+- [x] 3.3 Switch `OpenAICompatibleClient.complete()` and `.stream()` to the shared payload normalizer with golden tests proving wire payload parity.
+- [x] 3.4 Add `LLMProviderContextOverflow`, map HTTP 413 and explicitly supported structured provider overflow codes, preserve bounded numeric diagnostics, and prohibit internal retry/sleep.
 
 ## 4. Router Complete Admission
 
